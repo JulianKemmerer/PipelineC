@@ -1,6 +1,6 @@
 # PipelineC
 C for hardware architectures based on pipelines
 
-(for now)
+Please see the wiki. https://github.com/JulianKemmerer/PipelineC/wiki
 
 
