@@ -1,0 +1,17 @@
+*.pyc
+tests/parser.out
+tests/*tab.py
+build
+yacctab.py
+lextab.py
+dist
+MANIFEST
+*.exe
+*.o
+parser.out
+*.orig
+*.rej
+.tox
+utils/z.c
+*.egg-info
+
