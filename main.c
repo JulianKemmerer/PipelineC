@@ -112,8 +112,9 @@ axis32_t serialize(udp_tx_payload_t payload)
 			serialize_data = payload.data;
 			
 			// Output data
-			serialize_rv.data = float_32_0(serialize_data.x0);
+			serialize_rv.data = float_31_0(serialize_data.x0);
 			serialize_rv.valid = 1;
+			serialize_rv.last = 1;
 			serialize_state = X0;
 		}
 	/*

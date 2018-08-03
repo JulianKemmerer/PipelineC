@@ -791,7 +791,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			func_name = float_const_func_name
 			text += '''
 // BIT SELECT
-''' + result_t + " " + func_name+"("+ in_t + ''' in)
+''' + result_t + " " + func_name+"("+ in_t + ''' x)
 {
 	//TODO
 }

@@ -1559,7 +1559,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(lo
 	out_vhdl_type = "std_logic_vector(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	in : ''' + in_vhdl_type + ''';
+	x : ''' + in_vhdl_type + ''';
 	return_output : ''' + out_vhdl_type + ''';
 '''
 
@@ -1569,7 +1569,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(lo
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.return_output := std_logic_vector(in);
+		write_pipe.return_output := std_logic_vector(x);
 
 '''
 

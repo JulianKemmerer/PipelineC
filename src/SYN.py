@@ -2226,6 +2226,7 @@ def GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic):
 	toks = logic.func_name.split("_")
 	is_nmux = False
 	
+	# TODO: update this for nsum
 	if len(toks) == 2:
 		is_nmux = (toks[0].startswith("uint") or toks[0].startswith("int")) and toks[1].startswith("mux")
 		# Wow so hacky
