@@ -19,7 +19,7 @@ Con: Poor results (compared to hand written hardware description language)
     to
 B)
 Pro: Excellent results
-Con: So low level you might as well be written in a hardware description language
+Con: So low level you might as well be writing in a hardware description language
 ```
 On the A) side you make little to no modifications to the original C code. Any software developer off the street can be up and running quickly. 
 
