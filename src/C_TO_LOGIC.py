@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import math
+import hashlib
 
 from subprocess import Popen, PIPE
 from collections import OrderedDict
@@ -28,6 +29,7 @@ MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
 BIN_OP_LOGIC_NAME_PREFIX="BIN_OP"
 STRUCT_RD_FUNC_NAME_PREFIX = "STRUCT_RD"
+ARRAY_REF_CONST_FUNC_NAME_PREFIX = "ARRAY_REF_CONST"
 RAW_HDL_PREFIX = "RAW_HDL"
 BOOL_C_TYPE = "uint1_t"
 
@@ -886,7 +888,7 @@ def WIRE_IS_CONSTANT(wire, logic_inst_name):
 	
 	rv = last_tok.startswith(CONST_PREFIX)
 	
-	if (CONST_PREFIX in wire) and not(rv):
+	if (CONST_PREFIX in wire) and not(rv) and not(ARRAY_REF_CONST_FUNC_NAME_PREFIX in wire):
 		print "WHJAT!?"
 		print "logic_inst_name",logic_inst_name
 		print "wire",wire
@@ -1210,8 +1212,10 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 		ret = C_AST_STRUCTREF_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
 		return ret
 		'''
-	elif type(c_ast_node) == c_ast.ID or type(c_ast_node) == c_ast.StructRef:
+	elif type(c_ast_node) == c_ast.ID or type(c_ast_node) == c_ast.StructRef :
 		return C_AST_ID_OR_STRUCTREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
+	elif type(c_ast_node) == c_ast.ArrayRef:
+		return C_AST_ARRAYREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.Assignment:
 		return C_AST_ASSIGNMENT_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
 	else:
@@ -1281,12 +1285,37 @@ def GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref):
 		name_wire = str(c_ast_structref.name.name)
 		names_list = [name_wire, c_ast_structref.field.name]
 		return names_list
+	elif type(c_ast_structref.name) == c_ast.ArrayRef:
+		names_list = GET_NAMES_LIST_FROM_ARRAYREF(c_ast_structref.name)
+		names_list = names_list + [c_ast_structref.field.name]
+		return names_list
 	else:
-		print "What is this c ast node doing in a struct ref?", 
+		print "Need entry in GET_NAMES_LIST_FROM_STRUCTREF", 
 		casthelp(c_ast_structref.name)
 		sys.exit(0)
 	
 	return rv
+
+'''	
+def GET_NAMES_LIST_FROM_ARRAYREF(c_ast_arrayref):
+	casthelp(c_ast_arrayref)
+	sys.exit(0)
+	
+	if type(c_ast_structref.name) == c_ast.StructRef:
+		names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref.name)
+		names_list = names_list + [c_ast_structref.field.name]
+		return names_list
+	elif type(c_ast_structref.name) == c_ast.ID:
+		name_wire = str(c_ast_structref.name.name)
+		names_list = [name_wire, c_ast_structref.field.name]
+		return names_list
+	elif type(c_ast_structref.name) == c_ast.ArrayRef:
+		names_list = GET_NAMES_LIST_FROM_ARRAYREF(c_ast_structref.name)
+		names_list = names_list + [c_ast_structref.field.name]
+		return names_list
+	else:
+		print "Need entry in GET_NAMES_LIST_FROM_STRUCTREF", 
+'''	
 	
 def GET_LEAF_FIELD_NAME_FROM_STRUCTREF(c_ast_structref):
 	names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref)
@@ -1296,21 +1325,23 @@ def GET_LEAF_FIELD_NAME_FROM_STRUCTREF(c_ast_structref):
 def GET_BASE_VARIABLE_NAME_FROM_STRUCTREF(c_ast_structref):
 	names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref)
 	return names_list[0]
-	'''
-	if type(c_ast_structref.name) == c_ast.StructRef:
-		return GET_BASE_VARIABLE_NAME_FROM_STRUCTREF(c_ast_structref.name)
-	elif type(c_ast_structref.name) == c_ast.ID:
-		name_wire = str(c_ast_structref.name.name)
-		return name_wire
-	else:
-		print "What is this c ast node doing in a struct ref?", 
-		casthelp(c_ast_structref.name)
-		sys.exit(0)
-	'''
+
 	
 def C_AST_STRUCTREF_TO_ORIG_WIRE_NAME(c_ast_structref):
 	names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref)
 	return ".".join(names_list)
+	#return c_ast_structref.field.name
+
+'''
+def C_AST_ARRAYREF_TO_ORIG_WIRE_NAME(c_ast_arrayref):
+	# FOR ASSIGNMENT
+	# TODO
+	print "Do C_AST_ARRAYREF_TO_ORIG_WIRE_NAME for asingment"
+	print 0/0
+	sys.exit(0)
+	#names_list = GET_NAMES_LIST_FROM_ARRAYREF(c_ast_arrayref)
+	#return ".".join(names_list) #Uhh?
+'''
 		
 def C_AST_NODE_TO_MOST_RECENT_WIRE_NAME(c_ast_node,existing_logic):
 	orig_var_name = C_AST_NODE_TO_ORIG_VAR_NAME(c_ast_node)
@@ -1360,14 +1391,31 @@ def C_AST_NODE_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(c_ast_node, existing_logic):
 		sys.exit(0)
 		
 def C_AST_NODE_TO_ORIG_WIRE_NAME(c_ast_node):
+	# This needs to be resursive?
+	# Maybe can loop
+	curr_node = c_ast_node
+	
+	# Get text for curr
+	curr_text = None
 	if type(c_ast_node) == c_ast.ID:
-		return C_AST_ID_TO_ORIG_WIRE_NAME(c_ast_node)
+		curr_text = C_AST_ID_TO_ORIG_WIRE_NAME(c_ast_node)
 	elif type(c_ast_node) == c_ast.StructRef:
-		return C_AST_STRUCTREF_TO_ORIG_WIRE_NAME(c_ast_node)
+		curr_text = C_AST_STRUCTREF_TO_ORIG_WIRE_NAME(c_ast_node)
+	elif type(c_ast_node) == c_ast.ArrayRef:
+		curr_text = C_AST_ARRAYREF_TO_ORIG_WIRE_NAME(c_ast_node)
+	#elif type(c_ast_node) == c_ast.Constant:
+	#	curr_text = C_AST_CONSTANT_TO_ORIG_WIRE_NAME(c_ast_node)
 	else:
 		print "No entry in C_AST_NODE_TO_ORIG_WIRE_NAME"
 		casthelp(c_ast_node)
 		sys.exit(0)
+			
+	# Done?
+	return curr_text
+	
+
+def C_AST_CONSTANT_TO_ORIG_WIRE_NAME(c_ast_node):
+	return str(c_ast_node.value)
 		
 def GET_MOST_RECENT_ALIAS(logic,orig_var_name):
 	if orig_var_name in logic.wire_aliases_over_time:
@@ -1521,7 +1569,6 @@ def GET_STRUCTREF_TYPE(c_ast_structref, parser_state):
 def GET_STRUCTREF_WIRE_TYPE(structref_orig_wire, parser_state):
 	# Descend hierarchy to this particular struct ref
 	field_names = structref_orig_wire.split(".")
-	#print "field_names",field_names
 
 	# Get base variable name
 	var_name = field_names[0]
@@ -1609,11 +1656,24 @@ def C_AST_NODE_TO_ORIG_VAR_NAME(c_ast_node):
 	else:
 		print "WHat C_AST_NODE_TO_ORIG_VAR_NAME", c_ast_node
 		sys.exit(0)
+
 	
 def ORIG_WIRE_NAME_TO_C_TYPE(orig_wire_name,parser_state):	
 	# Is this an orig var name? no dots
 	if "." in orig_wire_name:
 		c_type = GET_STRUCTREF_WIRE_TYPE(orig_wire_name, parser_state)
+		'''
+	elif ORIG_WIRE_NAME_IS_ARRAYREF(orig_wire_name):
+		# Remove subscript
+		orig_wire_no_sub = REMOVE_ARRAY_SUBSCRIPT(orig_wire_name)
+		# Get type of wire without subscript, should be array type
+		array_type = ORIG_WIRE_NAME_TO_C_TYPE(orig_wire_no_sub,parser_state)
+		if not C_TYPE_IS_ARRAY(array_type):
+			print "Wtf not array type?"
+			sys.exit(0)
+		array_item_type = REMOVE_ARRAY_SUBSCRIPT(array_type)
+		return array_item_type
+	'''
 	else:
 		if orig_wire_name in parser_state.existing_logic.wire_to_c_type:
 			c_type = parser_state.existing_logic.wire_to_c_type[orig_wire_name]
@@ -1770,25 +1830,185 @@ def GET_STRUCT_RD_INPUT_PORT_NAME_FROM_DRIVING_WIRE(driving_wire, parser_state):
 		
 	return port_name
 	
+
+# Struct read is different from array read since:
+# At the time of struct read it is possible to narrow down the 
+# renamed intermediate wires that of what the struct ref is referreing
+# for an array reference the "struct locations in memory / memory addrs" cannot be known ahead of time
+# Always need to input entire array unless constant, when constant do like struct ref?
+
+	'''
+DID you do struct ref wrong?
+CANT PROCESS AS single x.y.z expression
+Need to recursively get X, with .y  ... then get output of that DOT z
+fuck
+
+ONly diff between constant array and dynamic is where the "branches" start in the structref/array search
+# Since arrays are written to like structs, COPY ON READ
+Structref and constant array look very similar
+'''
+
+	'''
+def C_AST_REF_TO_LOGIC(c_ast_ref,driven_wire_names, prepend_text, parser_state):
+
+
+	# Need to recursively identify the wire that is the result of dereferencing
+	return C_AST_REF_TO_LOGIC(c_ast_arrayref,driven_wire_names, prepend_text, parser_state)
+'''
+
+
 	
 # ID could be a struct ID which needs struct read logic
 # So combine ID and STRUCTREF
-def C_AST_ID_OR_STRUCTREF_TO_LOGIC(c_ast_id_or_structref,driven_wire_names, prepend_text, parser_state):
+def C_AST_ID_OR_STRUCTREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state):
 	# Convert this into orig wire read
-	orig_wire_name = C_AST_NODE_TO_ORIG_WIRE_NAME(c_ast_id_or_structref)	
+	orig_wire_name = C_AST_NODE_TO_ORIG_WIRE_NAME(c_ast_node)
 	
 	# Is the ID an ENUM constant?
 	is_enum_const = ID_OR_STRUCTREF_IS_ENUM_CONST(orig_wire_name, parser_state.existing_logic, parser_state)
 	if is_enum_const:
 		#print "orig_wire_name",orig_wire_name,"is_enum_const"
-		return C_AST_ENUM_CONST_TO_LOGIC(c_ast_id_or_structref,driven_wire_names, prepend_text, parser_state)
+		return C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	else:
 		#print orig_wire_name,"IS NOT ENUM CONST"
-		return READ_ORIG_WIRE_LOGIC(orig_wire_name, driven_wire_names, c_ast_id_or_structref, prepend_text, parser_state)
+		return READ_ORIG_WIRE_LOGIC(orig_wire_name, driven_wire_names, c_ast_node, prepend_text, parser_state)
 
+'''
+def ORIG_WIRE_NAME_IS_ARRAYREF(orig_wire_name):
+	return "[" in orig_wire_name and orig_wire_name.endswith("]")
+'''
+
+def REMOVE_LAST_ARRAY_SUBSCRIPT(wire):
+	return wire.split("[")[0]
 def ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(orig_wire_name):
-	return orig_wire_name.split(".")[0]
+	struct_base_var_name = orig_wire_name.split(".")[0]
+	'''
+	if ORIG_WIRE_NAME_IS_ARRAYREF(struct_base_var_name):
+		# Remove subscript
+		struct_base_var_name = REMOVE_ARRAY_SUBSCRIPT(struct_base_var_name)
+	'''
+	return struct_base_var_name
 	
+def C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type):
+	toks = input_array_type.split("[")
+	#print toks
+	elem_type = toks[0]
+	dims = []
+	for tok_i in range(1,len(toks)):
+		tok = toks[tok_i]
+		dim = int(tok.replace("]",""))
+		dims.append(dim)
+	return elem_type, dims
+	
+def GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type):
+	elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type)
+	output_dims = dims[1:]
+	output_type = elem_type
+	for output_dim in output_dims:
+		output_type = output_type + "[" + str(output_dim) + "]"
+		
+	return output_type
+
+
+#_omg_fuck_me_this_is_dumb = 0
+def C_AST_ARRAYREF_TO_LOGIC(c_ast_arrayref,driven_wire_names, prepend_text, parser_state):
+	#casthelp(c_ast_arrayref)
+	#print str(c_ast_arrayref)
+	#children = c_ast_arrayref.children()
+	#print c_ast_arrayref.subscript
+	#print c_ast_arrayref.coord
+	# array ref
+	# <expr>[<subscript>]
+	
+	# What do we know that identifies this array ref?
+	# holy shit column numbers are useless here
+	# fuck this is dumb
+	# But I tried a few even more dumb things first
+	# Fuck
+	hash_ext = "_" + ((hashlib.md5(str(c_ast_arrayref)).hexdigest())[0:4]) # Uh 4 chars enough?
+
+	# Is this a constant array ref?
+	# Fuck only accept constants for now
+	# Will eventually need to evaluate expressions from constant loop variables
+	subscript_node = c_ast_arrayref.subscript
+	if type(subscript_node) == c_ast.Constant:
+		func_name = ARRAY_REF_CONST_FUNC_NAME_PREFIX + hash_ext
+	else:
+		print "Non constant array reference at:", c_ast_arrayref.coord
+		sys.exit(0)
+	func_inst_name = BUILD_INST_NAME(prepend_text,func_name, c_ast_arrayref)
+	
+	# The name expression is is just a wire
+	# Name that wire
+	array_input_port_name = "input_array"
+	input_expr_wire = func_inst_name + "_interm_" + array_input_port_name
+	
+	# Get logic that drives input array
+	name_node = c_ast_arrayref.name
+	input_array_logic = C_AST_NODE_TO_LOGIC(name_node, [input_expr_wire], prepend_text, parser_state)
+	parser_state.existing_logic.MERGE_COMB_LOGIC(input_array_logic)
+	if input_expr_wire not in parser_state.existing_logic.wire_to_c_type:
+		print parser_state.existing_logic.wire_to_c_type
+	input_array_type = parser_state.existing_logic.wire_to_c_type[input_expr_wire]
+	
+	# Can we look up type of array
+	#print "=========="
+	#print "func_inst_name",func_inst_name
+	#print "INput array type:", input_array_type
+	elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type)
+	n_dims = len(dims)
+	#print "n_dims",n_dims
+	#print "dims",dims
+	
+	# Subscript width is based on how widethe inner subscript is
+	subscript_bits = int(math.ceil(math.log(dims[0], 2)))
+	subscript_type = "uint" + str(subscript_bits) + "_t"
+	# Subscript is another wire
+	subscript_input_port_name = "subscript"
+	subscript_wire = func_inst_name + "_interm_" + subscript_input_port_name
+	parser_state.existing_logic.wire_to_c_type[subscript_wire] = subscript_type
+	
+	# Get logic that drives subscript
+	subscript_logic = C_AST_NODE_TO_LOGIC(subscript_node, [subscript_wire], prepend_text, parser_state)
+	parser_state.existing_logic.MERGE_COMB_LOGIC(subscript_logic)
+	
+	# Remove inner subscript to form output type
+	output_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type)
+	
+
+	#print "output_type",output_type
+	
+	
+	# Connect the input array and subscript to an array ref function
+	c_ast_node_2_driven_input_wire_names = OrderedDict()
+	# N input port names named by their arg name
+	# Decompose inputs to N ARG FUNCTION
+	# Dont use input nodes
+	use_input_nodes_fuck_it = False
+	# INput array
+	input_port_wire = func_inst_name+SUBMODULE_MARKER+array_input_port_name
+	c_ast_node_2_driven_input_wire_names[input_expr_wire] = [input_port_wire]
+	parser_state.existing_logic.wire_to_c_type[input_port_wire] = input_array_type
+	# Subscript
+	subscript_port_wire = func_inst_name+SUBMODULE_MARKER+subscript_input_port_name
+	c_ast_node_2_driven_input_wire_names[subscript_wire] = [subscript_port_wire]
+	parser_state.existing_logic.wire_to_c_type[subscript_port_wire] = subscript_type
+	# Output
+	output_port_name = RETURN_WIRE_NAME		
+	output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
+	parser_state.existing_logic.wire_to_c_type[output_wire] = output_type
+	
+	
+	func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_names, output_wire, driven_wire_names,prepend_text,c_ast_arrayref,parser_state,use_input_nodes_fuck_it)
+	parser_state.existing_logic.MERGE_COMB_LOGIC(func_logic)
+	
+	# Santy set types of driven wires based on output wire type?
+	for driven_wire_name in driven_wire_names:
+		parser_state.existing_logic.wire_to_c_type[driven_wire_name] = output_type
+	
+	return parser_state.existing_logic
+	
+
 
 def READ_ORIG_WIRE_LOGIC(orig_wire_name, driven_wire_names, c_ast_node, prepend_text, parser_state):
 	
@@ -1799,15 +2019,6 @@ def READ_ORIG_WIRE_LOGIC(orig_wire_name, driven_wire_names, c_ast_node, prepend_
 	# Get the base var name
 	base_var_name = ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(orig_wire_name)
 	c_type = ORIG_WIRE_NAME_TO_C_TYPE(orig_wire_name, parser_state)
-	
-	'''
-	# Replace ENUM with INT type of input wire so cast happens? :/?
-	if c_type in parser_state.enum_to_ids_dict:
-		num_ids = len(parser_state.enum_to_ids_dict[c_type])
-		bits = int(math.ceil(math.log(num_ids,2)))
-		c_type = "uint" + str(bits) + "_t"
-		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = "uint" + str(right_width) + "_t"	
-	'''
 	
 	
 	# This is the first place we should see a global reference in terms of this function/logic
@@ -1835,6 +2046,9 @@ def READ_ORIG_WIRE_LOGIC(orig_wire_name, driven_wire_names, c_ast_node, prepend_
 	# Does most recent alias cover entire wire?
 	# Break orig wire name to all branches
 	all_wires = ORIG_WIRE_NAME_TO_ALL_BRANCH_WIRES(orig_wire_name, parser_state)
+	
+	#print "orig_wire_name",orig_wire_name
+	#print "all_wires",all_wires
 	
 	# Find the first alias (IN REVERSE ORDER) that elminates some branches
 	remaining_wires = all_wires[:]
@@ -2237,11 +2451,13 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 	return rv
 	
 def C_AST_COORD_STR(c_ast_node_cord):
-	file_coord_str = str(c_ast_node_cord)
+	c_ast_node_cord
+	
+	file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)
 	# Get leaf name (just stem file name of file hierarcy)
 	file_coord_str = LEAF_NAME(file_coord_str)
 	#file_coord_str = file_coord_str.replace(".","_").replace(":","_")
-	file_coord_str = file_coord_str.replace(":","_")
+	#file_coord_str = file_coord_str.replace(":","_")
 	# Lose readability for sake of having DOTs mean struct ref in wire names
 	file_coord_str = file_coord_str.replace(".","_")
 	return file_coord_str
@@ -2659,7 +2875,6 @@ def BUILD_INST_NAME(prepend_text,func_name, c_ast_node):
 	file_coord_str = C_AST_COORD_STR(c_ast_node.coord)
 	inst_name = prepend_text+ func_name + "[" + file_coord_str + "]"
 	return inst_name
-
 def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
 	func_name_2_logic = parser_state.FuncName2Logic
 	func_name = str(c_ast_func_call.name.name)
@@ -3015,6 +3230,60 @@ def CONNECT_WIRES_LOGIC(driving_wire, driven_wire_names):
 		rv.wire_driven_by[driven_wire_name] = driving_wire
 	return rv	
 	
+# int x[2]     returns "int", 2
+# int x[2][2]  returns "int[2]", 2
+def C_AST_ARRAYDECL_TO_ELEM_TYPE_AND_DIM(array_decl):
+	#casthelp(array_decl)
+	#print 
+	#sys.exit(0)
+	
+	# Will be N nested ArrayDecls with dimensions folowed by the element type
+	children = array_decl.children()
+	dims = []
+	while len(children)>1 and children[1][0]=='dim':
+		# Get the dimension
+		dim = int(children[1][1].value)
+		dims.append(dim)
+		array_decl = children[0][1]
+		children = array_decl.children()
+		
+	# Reverse order from parsing
+	#dims = dims[::-1]
+	
+	# Get base type
+	# Array decl is now holding the inner type
+	type_decl = array_decl
+	type_name = type_decl.type.names[0]
+	#casthelp(type_decl)
+	#print "type_name",type_name
+	
+	 
+	
+	# Append everything but last dim
+	elem_type = type_name
+	for dim_i in range(0, len(dims)-1):
+		elem_type = elem_type + "[" + str(dims[dim_i]) + "]"
+	
+	dim = dims[len(dims)-1]
+	#print elem_type
+	#print dim
+	#sys.exit(0)
+	return elem_type,dim
+	
+	
+	
+def C_AST_PARAM_DECL_TO_C_TYPE(param_decl):
+	# Need to get array type differently 
+	if type(param_decl.type) == c_ast.ArrayDecl:
+		elem_type, dim = C_AST_ARRAYDECL_TO_ELEM_TYPE_AND_DIM(param_decl.type)
+		array_type = elem_type + "[" + str(dim) + "]"
+		#print "array_type",array_type
+		return array_type			
+	else:
+		# Non array decl
+		#print "Non array decl", param_decl
+		return param_decl.type.type.names[0]
+	
 def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	rv = Logic()
 	# Save the c_ast node
@@ -3032,11 +3301,11 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	# Then get input wire names from the function def
 	for param_decl in c_ast_funcdef.decl.type.args.params:
 		input_wire_name = param_decl.name
-		rv.wire_to_c_type[input_wire_name] = param_decl.type.type.names[0]
-		#print "rv.wire_to_c_type[input_wire_name]","input_wire_name=",input_wire_name, rv.wire_to_c_type[input_wire_name],"=", param_decl.type.type.names[0]
 		rv.inputs.append(input_wire_name)
 		rv.wires.append(input_wire_name)
-		
+		c_type = C_AST_PARAM_DECL_TO_C_TYPE(param_decl)
+		rv.wire_to_c_type[input_wire_name] = c_type
+	
 	# Merge with logic from the body of the func def
 	existing_logic=rv
 	driven_wire_names=[]
@@ -3315,12 +3584,19 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file):
 		rv[struct_name] = dict()
 		for child in struct_def.decls:
 			# Assume type decl	
-			#casthelp(child)
 			field_name = str(child.name)
-			type_name = str(child.children()[0][1].children()[0][1].names[0])
+			if type(child.type) == c_ast.ArrayDecl:
+				#TODO 
+				print " GET MULTIPLE DIMENSIONS!"
+				sys.exit(0)
+				
+				dim = int(child.type.dim.value)
+				base_type = child.type.type.type.names[0]
+				type_name = base_type + "[" + str(dim) + "]"	
+			else:
+				# Non array
+				type_name = str(child.children()[0][1].children()[0][1].names[0])
 			rv[struct_name][field_name] = type_name
-			
-			
 			
 	return rv
 	

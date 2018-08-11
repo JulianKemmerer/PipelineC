@@ -30,6 +30,9 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
+	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
+		wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return wires_decl_text
 	else:
 		print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
 		sys.exit(0)
@@ -63,6 +66,9 @@ def GET_RAW_HDL_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params
 		return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return package_stages_text
+	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
+		wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	else:
 		print "C_BUILT_IN_C_PROCEDURE_PACKAGE_STAGES_TEXT for", logic.func_name,"?"
@@ -156,6 +162,9 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 
 
 	return wires_decl_text, text
+	
+	
+
 	
 def GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -1714,6 +1723,38 @@ def GET_BIT_ASSIGN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_
 
 	return wires_decl_text, text
 	
+	
+def GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	# TODO check for ints only?
+	# ONLY INTS FOR NOW
+	input_array_type = logic.wire_to_c_type[logic.inputs[0]]
+	sub_type = logic.wire_to_c_type[logic.inputs[1]]
+	input_array_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_array_type, parser_state)
+	sub_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(sub_type, parser_state)
+	
+
+	# Get out type from input array type?
+	output_c_type = C_TO_LOGIC.GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type)
+	out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_c_type, parser_state)
+	
+	wires_decl_text = '''
+	input_array : ''' + input_array_vhdl_type + ''';
+	subscript : ''' + sub_vhdl_type + ''';
+	return_output : ''' + out_vhdl_type + ''';
+'''
+
+	# Bit concat must always be zero clock
+	if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+		print "Cannot do a const array ref in multiple clocks!?"
+		sys.exit(0)
+		
+	text = '''
+		write_pipe.return_output := input_array(to_integer(subscript));
+
+'''
+
+	return wires_decl_text, text
 	
 	
 def GET_BIT_SLICE_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low):

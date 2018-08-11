@@ -739,7 +739,7 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	for submodule_name_and_latency in submodule_names_and_latencies:
 		s += submodule_name_and_latency
 		
-	hash_ext = "_" + hashlib.md5(s).hexdigest()
+	hash_ext = "_" + ((hashlib.md5(s).hexdigest())[0:4]) #4 chars enough?
 	
 		
 	return hash_ext
@@ -2197,6 +2197,8 @@ def IS_BITWISE_OP(logic):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
 		return False
+	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
+		return False
 	else:
 		print "Is logic.func_name", logic.func_name, "a bitwise operator?"
 		sys.exit(0)	
@@ -2328,6 +2330,10 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
 				logic.total_logic_levels = 0
 				print "STRUCT READ:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			# CONST ARRAY REF
+			elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
+				logic.total_logic_levels = 0
+				print "CONST ARRAY REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			# 0 LLs HDL insert lookup table
 			elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
 			      logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):

@@ -25,7 +25,7 @@ parser_state.LogicInstLookupTable = SYN.ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(parser_
 logic = parser_state.LogicInstLookupTable[top_level_func_name]
 
 print "================== Doing Optional Modelsim Debug ================================"
-MODELSIM.DO_OPTIONAL_DEBUG(False)
+MODELSIM.DO_OPTIONAL_DEBUG(True)
 
 print "================== Beginning Throughput Sweep ================================"
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(logic, parser_state, mhz)

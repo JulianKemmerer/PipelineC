@@ -3,7 +3,7 @@
 #
 # CLexer class: lexer for the C language
 #
-# Copyright (C) 2008-2015, Eli Bendersky
+# Eli Bendersky [https://eli.thegreenplace.net/]
 # License: BSD
 #------------------------------------------------------------------------------
 import re
@@ -52,8 +52,8 @@ class CLexer(object):
         # Allow either "# line" or "# <num>" to support GCC's
         # cpp output
         #
-        self.line_pattern = re.compile('([ \t]*line\W)|([ \t]*\d+)')
-        self.pragma_pattern = re.compile('[ \t]*pragma\W')
+        self.line_pattern = re.compile(r'([ \t]*line\W)|([ \t]*\d+)')
+        self.pragma_pattern = re.compile(r'[ \t]*pragma\W')
 
     def build(self, **kwargs):
         """ Builds the lexer from the specification. Must be
@@ -102,11 +102,11 @@ class CLexer(object):
     keywords = (
         '_BOOL', '_COMPLEX', 'AUTO', 'BREAK', 'CASE', 'CHAR', 'CONST',
         'CONTINUE', 'DEFAULT', 'DO', 'DOUBLE', 'ELSE', 'ENUM', 'EXTERN',
-        'FLOAT', 'FOR', 'GOTO', 'IF', 'INLINE', 'INT', 'LONG', 
+        'FLOAT', 'FOR', 'GOTO', 'IF', 'INLINE', 'INT', 'LONG',
         'REGISTER', 'OFFSETOF',
         'RESTRICT', 'RETURN', 'SHORT', 'SIGNED', 'SIZEOF', 'STATIC', 'STRUCT',
         'SWITCH', 'TYPEDEF', 'UNION', 'UNSIGNED', 'VOID',
-        'VOLATILE', 'WHILE',
+        'VOLATILE', 'WHILE', '__INT128',
     )
 
     keyword_map = {}
@@ -171,7 +171,9 @@ class CLexer(object):
         'ELLIPSIS',
 
         # pre-processor
-        'PPHASH',      # '#'
+        'PPHASH',       # '#'
+        'PPPRAGMA',     # 'pragma'
+        'PPPRAGMASTR',
     )
 
     ##
@@ -219,7 +221,7 @@ class CLexer(object):
     string_char = r"""([^"\\\n]|"""+escape_sequence+')'
     string_literal = '"'+string_char+'*"'
     wstring_literal = 'L'+string_literal
-    bad_string_literal = '"'+string_char+'*'+bad_escape+string_char+'*"'
+    bad_string_literal = '"'+string_char+'*?'+bad_escape+string_char+'*"'
 
     # floating constants (K&R2: A.2.5.3)
     exponent_part = r"""([eE][-+]?[0-9]+)"""
@@ -274,7 +276,6 @@ class CLexer(object):
 
     def t_ppline_NEWLINE(self, t):
         r'\n'
-
         if self.pp_line is None:
             self._error('line number missing in #line', t)
         else:
@@ -304,15 +305,14 @@ class CLexer(object):
 
     def t_pppragma_PPPRAGMA(self, t):
         r'pragma'
-        pass
+        return t
 
-    t_pppragma_ignore = ' \t<>.-{}();=+-*/$%@&^~!?:,0123456789'
+    t_pppragma_ignore = ' \t'
 
-    @TOKEN(string_literal)
-    def t_pppragma_STR(self, t): pass
-
-    @TOKEN(identifier)
-    def t_pppragma_ID(self, t): pass
+    def t_pppragma_STR(self, t):
+        '.+'
+        t.type = 'PPPRAGMASTR'
+        return t
 
     def t_pppragma_error(self, t):
         self._error('invalid #pragma directive', t)
@@ -482,4 +482,3 @@ class CLexer(object):
     def t_error(self, t):
         msg = 'Illegal character %s' % repr(t.value[0])
         self._error(msg, t)
-

@@ -202,6 +202,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	if  (
 		  logic_func_name.startswith(VHDL_INSERT.HDL_INSERT) or # HDl text insert, so yeah is raw hdl
 		  logic_func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX) or # Structref is raw vhdl
+		  logic_func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX + "_") or
 		( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 	    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -342,6 +343,46 @@ type ''' + enum_name + ''' is (
 	);
 	'''
 			types_written.append(struct_name)
+			
+			
+			
+	# Arrays
+	# C arrays are multidimensional and single element type
+	# Find all array types - need to do this since array types are not (right now) 
+	# declared/typedef individually like structs
+	array_types = []
+	for inst_name in parser_state.LogicInstLookupTable:
+		logic = parser_state.LogicInstLookupTable[inst_name]
+		for wire in logic.wire_to_c_type:
+			c_type = logic.wire_to_c_type[wire]
+			if C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
+				array_types.append(c_type)
+	# Write VHDL type for each
+	lines= []
+	for array_type in array_types:
+		vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type,parser_state)
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+		# type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
+		for i in range(len(dims)-1, -1, -1):
+			new_dims = dims[i:]
+			new_type = elem_type
+			for new_dim in new_dims:
+				new_type += "[" + str(new_dim) + "]"
+			new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type,parser_state)
+			inner_type_dims = new_dims[1:]
+			inner_type = elem_type
+			for inner_type_dim in inner_type_dims:
+				inner_type += "[" + str(inner_type_dim) + "]"
+			inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
+			line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
+			if line not in lines:
+				text += line
+				lines.append(line)
+	
+	
+	
+				
+	
 
 	text += '''
 end c_structs_pkg;
@@ -1134,6 +1175,16 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
 		print 0/0
 	return c_type_str in parser_state.enum_to_ids_dict
 	
+def C_TYPE_IS_ARRAY(c_type):
+	return "[" in c_type and c_type.endswith("]")
+	
+def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
+	# Just replace brackets with _
+	# And add array
+	c_array_type_str = c_array_type_str.replace("]","")
+	vhdl_type = c_array_type_str.replace("[","_")
+	# Like fuck it for now, dont think about it
+	return vhdl_type
 	
 def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
 	# Check for int types
@@ -1155,6 +1206,8 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
 	elif C_TYPE_IS_ENUM(c_type_str, parser_state):
 		# Use same type from C
 		return c_type_str
+	elif C_TYPE_IS_ARRAY(c_type_str):
+		return C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str)		
 	else:
 		print "Unknown VHDL type for C type: '" + c_type_str + "'"
 		#print 0/0
@@ -1171,6 +1224,18 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
 	elif C_TYPE_IS_ENUM(c_type_str, parser_state):
 		# Null is always first,left value
 		return c_type_str + "'left"
+	elif C_TYPE_IS_ARRAY(c_type_str):
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
+		text = ""
+		for dim in dims:
+			text += "(others => "
+		# Null type
+		elem_null = C_TYPE_STR_TO_VHDL_NULL_STR(elem_type, parser_state)
+		text += elem_null
+		# Close parens
+		for dim in dims:
+			text += ")"
+		return text
 	else:
 		print "Unknown VHDL null str for C type: '" + c_type_str + "'"
 		print 0/0
