@@ -181,7 +181,7 @@ axis32_t transmit(udp_tx_payload_t payload)
 	ip_tx.header.iden = 0;
 	ip_tx.header.flags = 0;
 	ip_tx.header.frag = 0;
-	ip_tx.header.ttl = 0;
+	ip_tx.header.ttl = 1;
 	ip_tx.header.protocol = 17; // UDP
 	ip_tx.header.checksum = 0; // Calculated for you
 	ip_tx.header.src_ip = 16909060; //0x01020304

@@ -32,22 +32,27 @@ typedef enum ip32_rx_state_t {
 	CHKSUM,
 	SRC_IP,
 	DST_IP,
-	PAYLOAD
+	PAYLOAD,
+	WAIT_AXIS_TLAST
 } ip32_rx_state_t;
 
 ip32_rx_state_t ip32_rx_state;
 ip32_frame_t ip32_rx_output;
-
+uint16_t ip32_remaining_length;
 
 ip32_frame_t ip_32_rx(axis32_t axis)
 {
+	// Get keep bytes before endianess change
+	uint3_t keep_bytes;
+	keep_bytes = axis32_keep_bytes(axis.keep);	
+	
 	// This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
 	axis.data = bswap_32(axis.data);
 	axis.keep = uint4_0_3(axis.keep);
 	
 	// Default no payload
 	ip32_rx_output.payload.valid = 0;
-	
+
 	// Wait for valid data
 	if(axis.valid == 1)
 	{
@@ -58,10 +63,12 @@ ip32_frame_t ip_32_rx(axis32_t axis)
 			ip32_rx_output.header.dscp = uint32_23_18(axis.data);
 			ip32_rx_output.header.ecn = uint32_17_16(axis.data);
 			ip32_rx_output.header.total_length = uint32_15_0(axis.data);
+			ip32_remaining_length = ip32_rx_output.header.total_length;
 			ip32_rx_state = FLAGS;
 		}
 		else if(ip32_rx_state==FLAGS)
-		{
+		{   
+			// ip32_remaining_length = 16 + payload
 			ip32_rx_output.header.iden = uint32_31_16(axis.data);
 			ip32_rx_output.header.flags = uint32_15_13(axis.data);
 			ip32_rx_output.header.frag = uint32_12_0(axis.data);
@@ -69,6 +76,7 @@ ip32_frame_t ip_32_rx(axis32_t axis)
 		}
 		else if(ip32_rx_state==CHKSUM)
 		{
+			// ip32_remaining_length = 12 + payload
 			ip32_rx_output.header.ttl = uint32_31_24(axis.data);
 			ip32_rx_output.header.protocol = uint32_23_16(axis.data);
 			ip32_rx_output.header.checksum = uint32_15_0(axis.data);
@@ -76,25 +84,65 @@ ip32_frame_t ip_32_rx(axis32_t axis)
 		}
 		else if(ip32_rx_state==SRC_IP)
 		{
+			// ip32_remaining_length = 8 + payload
 			ip32_rx_output.header.src_ip = uint32_31_0(axis.data);
 			ip32_rx_state = DST_IP;
 		}
 		else if(ip32_rx_state==DST_IP)
 		{
+			// ip32_remaining_length = 4 + payload
 			ip32_rx_output.header.dst_ip = uint32_31_0(axis.data);
 			// Assuming no option for now so
 			ip32_rx_state = PAYLOAD;
 		}
 		else if(ip32_rx_state==PAYLOAD)
 		{
+			// ip32_remaining_length = payload 
+			
 			// YAY simple 32b aligned
 			ip32_rx_output.payload = axis;
 			
+			// More bytes after these max 4?
+			if(5 > ip32_remaining_length)
+			{
+				// These are last bytes
+				ip32_rx_output.payload.last = 1;
+				// Get proper keep
+				uint4_t keep;
+				keep = axis32_bytes_keep(ip32_remaining_length);
+				ip32_rx_output.payload.keep = uint4_0_3(keep); // This was written for big endian 
+				
+				// Does axis agree?
+				if (axis.last == 1)
+				{
+					// Yes, back to initial state
+					ip32_rx_state = LEN;
+				}	
+				else
+				{
+					// Oversized frame
+					// Wait for padding bytes to be received
+					ip32_rx_state = WAIT_AXIS_TLAST;
+				}
+			}
+			
+			// Regardless of IP length, undersize frames will return to LEN
 			if (axis.last == 1)
 			{
 				ip32_rx_state = LEN;
-			}			
+			}
 		}
+		else if(ip32_rx_state==WAIT_AXIS_TLAST)
+		{
+			// Wait for axis tlast
+			if (axis.last == 1)
+			{
+				ip32_rx_state = LEN;
+			}
+		}
+		
+		// Decrement remaining length
+		ip32_remaining_length = ip32_remaining_length - keep_bytes;	
 	}
 	
 	// This was written for big endian (didnt know axis was little endian) so change endianess of data and keep

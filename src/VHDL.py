@@ -27,14 +27,14 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
 
 def GET_INST_NAME(Logic, use_leaf_name):
 	if use_leaf_name:
-		return C_TO_LOGIC.LEAF_NAME(Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_")).strip("_").replace("__","_") # hacky fo sho
+		return C_TO_LOGIC.LEAF_NAME(Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_")).strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
 	else:
 		# Need to use leaf name
 		print "Need to use leaf name"
 		sys.exit(0)
 		
 # VHDL variable name or const expression
-def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, parser_state):
+def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, Logic, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	#print "GET_CONST_MASKED_INPUT_WIRE_TEXT input_wire",input_wire
 	container_logic = C_TO_LOGIC.GET_CONTAINER_LOGIC_FOR_SUBMODULE_INST(submodule_inst_name, LogicInstLookupTable)
@@ -44,7 +44,7 @@ def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, parser_stat
 			sys.exit(0)		
 		else:
 			# Regular variable input required
-			return C_TO_LOGIC.LEAF_NAME(input_wire,True)
+			return WIRE_TO_VHDL_NAME(input_wire, Logic)
 	else:
 		# Got container logic
 		const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(input_wire, container_logic)
@@ -56,7 +56,7 @@ def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, parser_stat
 			return type_resolved_const_id
 		else:	
 			# Regular variable input
-			return C_TO_LOGIC.LEAF_NAME(input_wire,True)
+			return WIRE_TO_VHDL_NAME(input_wire, Logic)
 
 def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable):	
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
@@ -78,11 +78,12 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		rv += "	" + C_TO_LOGIC.LEAF_NAME(input_name,True) + " : in " + vhdl_type_str + ";" + "\n"
+		
+		rv += "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
 	
 	# Output is type of return wire
 	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
-	rv += "	" + C_TO_LOGIC.LEAF_NAME(Logic.outputs[0],True) + " : out " + vhdl_type_str + "" + "\n"
+	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
 	rv += "end " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top;" + "\n"
@@ -98,13 +99,13 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		rv += "signal " + C_TO_LOGIC.LEAF_NAME(input_name,True) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
+		rv += "signal " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
 		
 	rv += "\n"
 	
 	# Output reg
 	output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
-	rv += "signal " + C_TO_LOGIC.LEAF_NAME(Logic.outputs[0],True) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
 
 	rv += "begin" + "\n"
 	rv += "	" + "process(clk) is" + "\n"
@@ -117,7 +118,7 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		rv += "	" + "	" + "	" + C_TO_LOGIC.LEAF_NAME(input_name,True) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, parser_state) + ";" + "\n"
+		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, Logic, parser_state) + ";" + "\n"
 	
 	# Pipeline register read as variable		
 	rv += "	" + "	" + "	" + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers := " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_r;" + "\n"
@@ -125,19 +126,19 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	# Single procedure call with multiple inputs
 	rv += "	" + "	" + "	" + GET_INST_NAME(Logic,use_leaf_name=True) + "("
 	for input_name in Logic.inputs:
-		rv += C_TO_LOGIC.LEAF_NAME(input_name,True) + "_input_reg, " 
+		rv += WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg, " 
 	rv += GET_INST_NAME(Logic,use_leaf_name=True) + "_registers, " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output);" + "\n"
 	
 	# Pipeline register write to reg	
 	rv += "	" + "	" + "	" +  GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_r <= " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers" + ";\n"
 	
 	# Output reg	
-	rv += "	" + "	" + "	" + C_TO_LOGIC.LEAF_NAME(Logic.outputs[0],True) + "_output_reg <= " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output;" + "\n"
+	rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg <= " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output;" + "\n"
 	
 	rv += "	" + "	" + "end if;" + "\n"		
 	rv += "	" + "end process;" + "\n"
 		
-	rv += "	" + C_TO_LOGIC.LEAF_NAME(Logic.outputs[0],True) +" <= " + C_TO_LOGIC.LEAF_NAME(Logic.outputs[0],True) + "_output_reg;" + "\n"
+	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) +" <= " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg;" + "\n"
 	rv += "end arch;" + "\n"
 	
 	if not os.path.exists(output_directory):
@@ -186,6 +187,11 @@ def C_TYPE_IS_INT_N(type_str):
 # Includes intN and uintN
 def C_TYPES_ARE_INTEGERS(c_types):
 	for c_type in c_types:
+		if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+			elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+			c_type = elem_type
+			#print "c_type",c_type
+		
 		if not( C_TYPE_IS_INT_N(c_type) or C_TYPE_IS_UINT_N(c_type) ):
 			return False
 	return True
@@ -201,8 +207,9 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	# IS RAW VHDL
 	if  (
 		  logic_func_name.startswith(VHDL_INSERT.HDL_INSERT) or # HDl text insert, so yeah is raw hdl
-		  logic_func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX) or # Structref is raw vhdl
-		  logic_func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX + "_") or
+		  #logic_func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX) or # Structref is raw vhdl
+		  #logic_func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX + "_") or
+		  logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
 		( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 	    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -245,21 +252,8 @@ def GET_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTab
 		package_file_text = GET_C_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable)
 	
 	return package_file_text
-	
-'''	
-def GET_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[logic.inst_name]
-	per_stage_text = None
-	# C built in logic is static in the stages code here but coded as generic
-	if len(logic.submodule_instances) <= 0:
-		per_stage_text = RAW_VHDL.GET_RAW_HDL_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, LogicInstLookupTable, timing_params)
-	else:
-		per_stage_text = GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable)
-	
-	return per_stage_text
-'''
-	
+
+
 def WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state):
 	
 	text = ""
@@ -288,6 +282,51 @@ type ''' + enum_name + ''' is (
 );
 '''
 
+	# Arrays of non structs (base C types)
+	# C arrays are multidimensional and single element type
+	# Find all array types - need to do this since array types are not (right now) 
+	# declared/typedef individually like structs
+	array_types = []
+	for inst_name in parser_state.LogicInstLookupTable:
+		logic = parser_state.LogicInstLookupTable[inst_name]
+		for wire in logic.wire_to_c_type:
+			c_type = logic.wire_to_c_type[wire]
+			if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
+				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+				if not C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
+					array_types.append(c_type)
+	# Get types from struct defs too?
+	for struct_name in parser_state.struct_to_field_type_dict:
+		field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
+		for field_name in field_type_dict:
+			field_type = field_type_dict[field_name]
+			if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
+				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+				if not C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
+					array_types.append(field_type)					
+	# Write VHDL type for each
+	lines= []
+	for array_type in array_types:
+		vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type,parser_state)
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+		# type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
+		for i in range(len(dims)-1, -1, -1):
+			new_dims = dims[i:]
+			new_type = elem_type
+			for new_dim in new_dims:
+				new_type += "[" + str(new_dim) + "]"
+			new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type,parser_state)
+			inner_type_dims = new_dims[1:]
+			inner_type = elem_type
+			for inner_type_dim in inner_type_dims:
+				inner_type += "[" + str(inner_type_dim) + "]"
+			inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
+			line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
+			if line not in lines:
+				text += line
+				lines.append(line)
+
+
 
 	# Hacky resolve struct dependencies
 	done = False
@@ -313,7 +352,10 @@ type ''' + enum_name + ''' is (
 				continue
 					
 			
-			# Type
+			# Typeif C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
+				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type):
+					array_types.append(field_type)	
 			text += '''
 	type ''' + struct_name + ''' is record
 	'''
@@ -346,7 +388,7 @@ type ''' + enum_name + ''' is (
 			
 			
 			
-	# Arrays
+	# Arrays of structs
 	# C arrays are multidimensional and single element type
 	# Find all array types - need to do this since array types are not (right now) 
 	# declared/typedef individually like structs
@@ -355,8 +397,20 @@ type ''' + enum_name + ''' is (
 		logic = parser_state.LogicInstLookupTable[inst_name]
 		for wire in logic.wire_to_c_type:
 			c_type = logic.wire_to_c_type[wire]
-			if C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
-				array_types.append(c_type)
+			if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
+				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
+					array_types.append(c_type)
+	# Get types from struct defs too?
+	for struct_name in parser_state.struct_to_field_type_dict:
+		field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
+		for field_name in field_type_dict:
+			field_type = field_type_dict[field_name]
+			if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
+				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
+					array_types.append(field_type)	
+							
 	# Write VHDL type for each
 	lines= []
 	for array_type in array_types:
@@ -733,26 +787,7 @@ end function;\n
 	
 	return package_file_name
 	
-	'''
-def GET_SUBMODULE_INST_NAME_FROM_PROCEDURE_NAME(procedure_name, LogicInstLookupTable):
-	# Procedure name is made via
-	# 	procedure_name = GET_INST_NAME(submodule_logic, use_leaf_name=True)
-	most_matching_inst = None
-	for inst_name in LogicInstLookupTable:
-		inst_logic = LogicInstLookupTable[inst_name]
-		inst_procedure_name = GET_INST_NAME(inst_logic, use_leaf_name=True)
-		if inst_procedure_name == procedure_name:
-			if most_matching_inst is None:
-				most_matching_inst = inst_name
-			else:
-				print "Two matching instances for procedure name"
-				print "procedure_name",procedure_name
-				print "most_matchign_inst",most_matchign_inst
-				print "other matching inst_name",inst_name
-				sys.exit(0)
-				
-	return most_matching_inst
-	'''
+
 
 			
 # Returns dict[stage_num]=stage_text
@@ -838,27 +873,6 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 		
 			
 	return RHS
-
-	'''
-def GET_PER_STAGE_LOCAL_TIME_ORDER_SUBMODULE_INSTANCE_NAMES(logic, parser_state, LogicInst2TimingParams):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = LogicInst2TimingParams[logic.inst_name]
-	per_stage_text = GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, parser_state, LogicInst2TimingParams)
-	per_stage_time_order = dict()
-	for stage_num in per_stage_text:
-		per_stage_time_order[stage_num] = []
-		stage_time_order = []
-		text = per_stage_text[stage_num]
-		# Loop over text and find submodule leaf names
-		for line in text.split("\n"):
-			if not(":=" in line) and  ("(" in line) and (")" in line):
-				procedure_name = line.split("(")[0].strip()
-				submodule_inst = GET_SUBMODULE_INST_NAME_FROM_PROCEDURE_NAME(procedure_name, LogicInstLookupTable)
-				submodule_logic = LogicInstLookupTable[submodule_inst]
-				per_stage_time_order[stage_num].append(submodule_inst)
-					
-	return per_stage_time_order
-	'''
 
 
 	
@@ -1099,15 +1113,15 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 	if C_TO_LOGIC.SUBMODULE_MARKER in wire_name:
 		just_local_wire_name = wire_name.replace(Logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
 		leaf_name = C_TO_LOGIC.LEAF_NAME(just_local_wire_name)	
-		new_wire_name = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace(".","DOT").replace("[","_").replace("]","")
-		return new_wire_name
 	else:
-		return C_TO_LOGIC.LEAF_NAME(wire_name)
+		leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
+		
+	return leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
 
 
 def GET_SUBMODULE_REGS_WRITE_PIPE_VAR(submodule_inst_name):
 	new_inst_name = C_TO_LOGIC.LEAF_NAME(submodule_inst_name, do_submodule_split=True)
-	new_inst_name = new_inst_name.replace(".","_").replace("[","_").replace("]","")
+	new_inst_name = new_inst_name.replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
 	return new_inst_name + "_registers"
 
 
@@ -1155,7 +1169,7 @@ def GET_PACKAGE_NAME(logic,TimingParamsLookupTable, parser_state):
 def GET_PACKAGE_FILENAME(logic,TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[logic.inst_name]
-	short_inst_name = C_TO_LOGIC.LEAF_NAME(logic.inst_name, do_submodule_split=True)
+	short_inst_name = C_TO_LOGIC.LEAF_NAME(logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
 	#short_inst_name = leaf.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace("__","_") # rerrrreeaalllu hacky fo sho
 	package_filename = short_inst_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_pkg.pkg.vhd"
 	return package_filename
@@ -1163,20 +1177,7 @@ def GET_PACKAGE_FILENAME(logic,TimingParamsLookupTable, parser_state):
 def GET_TOP_NAME(Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-	
-def C_TYPE_IS_STRUCT(c_type_str, parser_state):
-	if parser_state is None:
-		print 0/0
-	return c_type_str in parser_state.struct_to_field_type_dict
-	
-def C_TYPE_IS_ENUM(c_type_str, parser_state):
-	if parser_state is None:
-		print 0/0
-	return c_type_str in parser_state.enum_to_ids_dict
-	
-def C_TYPE_IS_ARRAY(c_type):
-	return "[" in c_type and c_type.endswith("]")
+	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 	
 def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
 	# Just replace brackets with _
@@ -1200,13 +1201,13 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
 		return "unsigned(0 downto 0)"
 	elif c_type_str =="float":
 		return "std_logic_vector(31 downto 0)"
-	elif C_TYPE_IS_STRUCT(c_type_str, parser_state):
+	elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
 		# Use same type from C
 		return c_type_str
-	elif C_TYPE_IS_ENUM(c_type_str, parser_state):
+	elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
 		# Use same type from C
 		return c_type_str
-	elif C_TYPE_IS_ARRAY(c_type_str):
+	elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
 		return C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str)		
 	else:
 		print "Unknown VHDL type for C type: '" + c_type_str + "'"
@@ -1218,13 +1219,13 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
 	# Check for int types
 	if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str) or (c_type_str == C_TO_LOGIC.BOOL_C_TYPE) or (c_type_str =="float"):
 		return "(others => '0')"
-	elif C_TYPE_IS_STRUCT(c_type_str, parser_state):
+	elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
 		# Use same type from C
 		return c_type_str + "_NULL"
-	elif C_TYPE_IS_ENUM(c_type_str, parser_state):
+	elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
 		# Null is always first,left value
 		return c_type_str + "'left"
-	elif C_TYPE_IS_ARRAY(c_type_str):
+	elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
 		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
 		text = ""
 		for dim in dims:

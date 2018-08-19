@@ -13,6 +13,8 @@ c_file = "main.c"
 top_level_func_name = "main"
 mhz=31.25
 
+print "TODO: IMPLEMENT LT/E for fucks sake"
+
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 
@@ -25,7 +27,7 @@ parser_state.LogicInstLookupTable = SYN.ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(parser_
 logic = parser_state.LogicInstLookupTable[top_level_func_name]
 
 print "================== Doing Optional Modelsim Debug ================================"
-MODELSIM.DO_OPTIONAL_DEBUG(True)
+MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(logic, parser_state, mhz)

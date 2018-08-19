@@ -70,6 +70,8 @@ def send_udp(payload, dst_port, dst_ip, dst_mac):
 if __name__ == "__main__":
 	#TWO_NUMS = struct.pack("!QQ", 123, 456)
 	TWO_NUMS = struct.pack("!ff", 1.23, 4.56)
+	#LONG_STR = "Hello this is a test of a longer packet since minimum frames sizes add padding it seems?" #struct.pack("!s", 
+	#print "LONG_STR",LONG_STR
 	print( ("Sent %d-byte Ethernet packet on " + INTERFACE) %
 	      send_udp(TWO_NUMS, 5678, "5.6.7.8", "\xFE\xED\xFA\xCE\xBE\xEF") )
 		

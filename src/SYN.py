@@ -647,6 +647,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 		if has_lls and is_zero_clk:
 			# GEt max lls this stage
+			if stage_num not in rv.stage_per_ll_submodules_map:
+				print "It looks like you are describing zero levels of logic?"
+				sys.exit(0)
 			rv.max_lls_per_stage[stage_num] = max(rv.stage_per_ll_submodules_map[stage_num].keys()) +1 # +1 since 0 indexed
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 		# TODO? reset ll offsets?
@@ -2149,7 +2152,7 @@ def GET_OUTPUT_DIRECTORY(Logic, implement):
 		#output_directory = IMP_OUTPUT_DIRECTORY + "/" + Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
 	else:
 		# Syn
-		 output_directory = SYN_OUTPUT_DIRECTORY + "/" + Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+		 output_directory = SYN_OUTPUT_DIRECTORY + "/" + Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
 		#output_directory = SYN_OUTPUT_DIRECTORY + "/" + VHDL.GET_INST_NAME(Logic, use_leaf_name=True)
 	return output_directory
 
@@ -2195,9 +2198,11 @@ def IS_BITWISE_OP(logic):
 	elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
 		  logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):	
 		return False
-	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
-		return False
-	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
+	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
+	#	return False
+	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
+	#	return False
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
 		return False
 	else:
 		print "Is logic.func_name", logic.func_name, "a bitwise operator?"
@@ -2217,6 +2222,8 @@ def IS_USER_CODE(logic):
 	#TODO
 	#not_user_code = logic.is_c_built_in or SW_LIB.IS_AUTO_GENERATED(logic)
 	#return not not_user_code
+
+	
 	user_code = (not logic.is_c_built_in and not SW_LIB.IS_AUTO_GENERATED(logic)) or (not VHDL.C_TYPES_ARE_INTEGERS(input_types))
 	return user_code
 		
@@ -2326,14 +2333,19 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) and len(logic.inputs) == 3: # Cond input too
 				logic.total_logic_levels = 1
 				print "2 Input MUX:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
-			# STRUCT READ
-			elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
+			## STRUCT READ
+			#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
+			#	logic.total_logic_levels = 0
+			#	print "STRUCT READ:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			## CONST ARRAY REF
+			#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
+			#	logic.total_logic_levels = 0
+			#	print "CONST ARRAY REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				
+			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
 				logic.total_logic_levels = 0
-				print "STRUCT READ:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
-			# CONST ARRAY REF
-			elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
-				logic.total_logic_levels = 0
-				print "CONST ARRAY REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "CONST REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				
 			# 0 LLs HDL insert lookup table
 			elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
 			      logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):
@@ -2365,7 +2377,7 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 				
 				
 				# Cache total logic levels syn result if not user code
-				if not IS_USER_CODE(logic):
+				if not IS_USER_CODE(logic) and not(logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX)):
 					filepath = GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic)
 					if not os.path.exists(LLS_CACHE_DIR):
 						os.makedirs(LLS_CACHE_DIR)					

@@ -582,7 +582,8 @@ route_design
 
 # return path 
 def WRITE_CLK_XDC(output_directory, clock_mhz):
-	out_filename = str(clock_mhz) + "MHz.xdc"
+	#out_filename = str(clock_mhz) + "MHz.xdc"
+	out_filename = "clock.xdc"
 	out_filepath = output_directory+"/"+out_filename
 	
 	# MHX to ns
@@ -601,9 +602,9 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,LogicInst2Ti
 	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams, clock_mhz,parser_state, implement)
 	hash_ext = timing_params.GET_HASH_EXT(LogicInst2TimingParams, parser_state)
 	if implement:
-		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".imp.tcl"
+		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".imp.tcl"
 	else:	
-		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".syn.tcl"
+		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".syn.tcl"
 	out_filepath = output_directory+"/"+out_filename
 	f=open(out_filepath,"w")
 	f.write(syn_imp_and_report_timing_tcl)
@@ -643,7 +644,7 @@ def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, impl
 	# Set log path
 	if hash_ext is None:
 		hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-	log_path = output_directory + "/vivado" + "_" +  str(total_latency) + "CLK_" + str(clock_mhz) + "MHz" + hash_ext + ".log"
+	log_path = output_directory + "/vivado" + "_" +  str(total_latency) + "CLK" + hash_ext + ".log"
 	#vivado -mode batch -source <your_Tcl_script>
 			
 	# Use same configs based on to speed up run time?

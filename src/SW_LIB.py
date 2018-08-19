@@ -6,6 +6,7 @@ import re
 import C_TO_LOGIC
 import VHDL
 
+# Hey lets bootstrap for fun
 
 BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"

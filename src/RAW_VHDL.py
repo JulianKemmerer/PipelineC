@@ -27,11 +27,14 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	elif str(logic.c_ast_node.coord).split(":")[0].endswith(SW_LIB.BIT_MANIP_HEADER_FILE):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
-	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
-		return wires_decl_text
-	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
+	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	return wires_decl_text
+	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
+	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	return wires_decl_text
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
+		wires_decl_text, package_stages_text = GET_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
 	else:
 		print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
@@ -64,11 +67,14 @@ def GET_RAW_HDL_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params
 	elif str(logic.c_ast_node.coord).split(":")[0].endswith(SW_LIB.BIT_MANIP_HEADER_FILE):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
-	elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
-		return package_stages_text
-	elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
+	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	return package_stages_text
+	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
+	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	return package_stages_text
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
+		wires_decl_text, package_stages_text = GET_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	else:
 		print "C_BUILT_IN_C_PROCEDURE_PACKAGE_STAGES_TEXT for", logic.func_name,"?"
@@ -166,11 +172,141 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	
 
 	
+def GET_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+	#print "======="
+	#print "logic.func_name",logic.func_name
+	ref_str = logic.func_name.replace(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_","")
+	
+	# Try to recover ref toks
+	# Get ref toks as best we can
+	ref_tok_strs = ref_str.split(C_TO_LOGIC.REF_TOK_DELIM)
+	ref_toks = []
+	for ref_tok_str in ref_tok_strs:
+		if ref_tok_str.isdigit():
+			# Array ref
+			ref_toks.append(int(ref_tok_str))
+		else:
+			ref_toks.append(ref_tok_str)
+			
+	orig_var_name = ref_toks[0]
+
+	#print "orig_var_name",orig_var_name
+	
+	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	container_logic = LogicInstLookupTable[logic.containing_inst]
+	#print "container_logic.wire_to_c_type",container_logic.wire_to_c_type
+	#BAH fuck is this normal?
+	orig_var_name_inst_name = logic.containing_inst + C_TO_LOGIC.SUBMODULE_MARKER + orig_var_name
+	if orig_var_name_inst_name not in container_logic.wire_to_c_type:
+		for wire in container_logic.wire_to_c_type:
+			print wire, container_logic.wire_to_c_type[wire]
+		#print container_logic.wire_to_c_type
+			
+	base_c_type = container_logic.wire_to_c_type[orig_var_name_inst_name]
+	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state) # Structs handled and have same name as C types
+	
+	wires_decl_text = ""
+	wires_decl_text +=  '''	
+	base : ''' + base_vhdl_type + ''';'''
+	
+
+	#print "logic.func_name",logic.func_name
+		
+	# Then wire for each input
+	for input_port_inst_name in logic.inputs:
+		input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
+		input_port_type_c_type = logic.wire_to_c_type[input_port_inst_name]
+		input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state)
+		vhdl_input_port = input_port.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+		
+		wires_decl_text +=  '''	
+	''' + vhdl_input_port + ''' : ''' + input_port_type + ''';'''
+	
+	# Then output
+	output_c_type = logic.wire_to_c_type[logic.outputs[0]]
+	output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_c_type,parser_state)
+	wires_decl_text +=  '''	
+	return_output : ''' + output_vhdl_type + ''';'''
+	
+	# The text is the writes in correct order
+	text = ""
+	# Inputs drive base, any undriven wires here should have syn error right?
+	for input_port_inst_name in logic.inputs:
+		input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
+		vhdl_input_port = input_port.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+		#print "input_port",input_port
+		
+		# Get ref toks as best we can
+		ref_tok_strs = input_port.split(C_TO_LOGIC.REF_TOK_DELIM)
+		# doesnt need base variable name, is already named 'base'
+		ref_tok_strs = ref_tok_strs[1:]
+		ref_toks = []
+		for ref_tok_str in ref_tok_strs:
+			if ref_tok_str.isdigit():
+				# Array ref
+				ref_toks.append(int(ref_tok_str))
+			else:
+				ref_toks.append(ref_tok_str)
+		
+		# Build vhdl str doing the reference assignment to base
+		vhdl_ref_str = ""
+		for ref_tok in ref_toks:
+			if type(ref_tok) == int:
+				vhdl_ref_str += "(" + str(ref_tok) + ")"
+			elif type(ref_tok) == str:
+				vhdl_ref_str += "." + ref_tok
+			else:
+				print "Only constant references right now blbblbaaaghghhh!", c_ast_ref.coord
+				sys.exit(0)
+		
+		text += '''
+	    write_pipe.base''' + vhdl_ref_str + ''' := write_pipe.''' + vhdl_input_port + ''';'''
+	    
+	    
+	    
+	# Then base drives return_output
+	# Need to parse func name
+	# Build vhdl str doing the output reference
+	vhdl_ref_str = ""
+	output_ref_toks_str = logic.func_name.replace(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX+"_","")
+	#.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
+	#print "output_ref_toks_str",output_ref_toks_str
+	ref_tok_strs = output_ref_toks_str.split(C_TO_LOGIC.REF_TOK_DELIM)
+	# Output doesnt need base variable name, is already named 'base'
+	ref_tok_strs = ref_tok_strs[1:]
+	ref_toks = []
+	for ref_tok_str in ref_tok_strs:
+		if ref_tok_str.isdigit():
+			# Array ref
+			ref_toks.append(int(ref_tok_str))
+		else:
+			ref_toks.append(ref_tok_str)
+	for ref_tok in ref_toks:
+		if type(ref_tok) == int:
+			vhdl_ref_str += "(" + str(ref_tok) + ")"
+		elif type(ref_tok) == str:
+			vhdl_ref_str += "." + ref_tok
+		else:
+			print "Only constant references right now blbblbaaaghghhh!", c_ast_ref.coord
+			sys.exit(0)
+	
+	text += '''
+		write_pipe.return_output := write_pipe.base''' + vhdl_ref_str + ''';'''
+	   
+	#print "=="
+	#print "logic.inst_name",logic.inst_name
+	#print wires_decl_text
+	#print  text
+	#sys.exit(0)
+	
+	return wires_decl_text, text
+
+	
 def GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	#wires_decl_text, package_stages_text = 
 	# Parse the func name into base var and fields
-	orig_wire_name = logic.func_name.replace(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX + "_","")
+	#orig_wire_name = 
 	
 	# Orig wire might be whole struct with no DOTS
 	
