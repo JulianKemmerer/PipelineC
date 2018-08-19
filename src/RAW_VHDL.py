@@ -92,6 +92,8 @@ def GET_BIN_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	if str(logic.c_ast_node.op) == ">" or str(logic.c_ast_node.op) == ">=":
 		return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
+	if str(logic.c_ast_node.op) == "<" or str(logic.c_ast_node.op) == "<=":
+		return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
 	elif str(logic.c_ast_node.op) == "+":
 		return GET_BIN_OP_PLUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	elif str(logic.c_ast_node.op) == "-":
@@ -1327,12 +1329,26 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(lo
 		print "Only u/int binary op plus for now!", logic.wire_to_c_types
 		sys.exit(0)
 		
+def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	# Binary operation between what two types?
+	# Only ints for now, check all inputs
+	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
+		print "BLAH CANT COMBINE INT LT/LTE IN SAME RAW VHDL TODO: take from float lt lte??"
+		sys.exit(0)
+		return #GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
+	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
+		return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
+	else:
+		print "Binary op LT for type?"
+		sys.exit(0)
+		
 def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
-		print "BLAH CANT COMBINE INT GT/GTE SAME RAW VHDL  take from float gt gte"
+		print "BLAH CANT COMBINE INT GT/GTE IN SAME RAW VHDL TODO: take from float gt gte"
 		sys.exit(0)
 		return #GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
@@ -1457,6 +1473,101 @@ def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''	
+	
+	
+def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	left_type = logic.wire_to_c_type[logic.inputs[0]]
+	right_type = logic.wire_to_c_type[logic.inputs[1]]
+	left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+	right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+	max_width = max(left_width,right_width)
+	wires_decl_text = '''
+	return_output_bool : boolean;
+	return_output : unsigned(0 downto 0);
+	right : unsigned(''' + str(right_width-1) + ''' downto 0);
+	left : unsigned(''' + str(left_width-1) + ''' downto 0);
+	right_resized : unsigned(''' + str(max_width-1) + ''' downto 0);
+	left_resized : unsigned(''' + str(max_width-1) + ''' downto 0);
+	inequality_found : boolean;
+'''
+	
+	
+	# TODO: FIX extra logic levels
+	
+	# Do each bit over a clock cycle 
+	width = max_width
+	max_clocks = width
+	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
+		print "Cannot do a c built in uint binary LT operation of",max_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
+		sys.exit(0) # Eventually fix
+	
+		
+	# How many bits per stage?
+	# 0th stage is combinatorial logic
+	num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+	
+	
+		
+	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+	
+	
+	
+	# Write loops to do operation
+	text = ""
+	text += '''
+	-- num_stages = ''' + str(num_stages) + '''
+	'''
+	text += '''
+		if STAGE = 0 then
+			write_pipe.right_resized := resize(write_pipe.right, ''' + str(max_width) + ''');
+			write_pipe.left_resized := resize(write_pipe.left, ''' + str(max_width) + ''');
+			write_pipe.inequality_found := false; -- Must be at stage 0
+	'''
+	
+	# Write bound of loop per stage 
+	stage = 0
+	up_bound = width - 1 # Skip sign (which should be 0 for abs values)
+	low_bound = up_bound - bits_per_stage_dict[stage] + 1
+	for stage in range(0, num_stages):
+		# Do stage logic / bit pos increment if > 0 bits this stage
+		if bits_per_stage_dict[stage] > 0:
+			text +=	'''
+				--  bits_per_stage_dict[''' + str(stage) + '''] = ''' + str(bits_per_stage_dict[stage]) + ''' 
+				--- Assign output based on compare range for this stage
+				if write_pipe.inequality_found = false then
+					write_pipe.inequality_found := ( write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') /= write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') ) ;
+					-- Compare magnitude
+					write_pipe.return_output_bool := ( write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') ''' + op_str + ''' write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') );
+				end if;'''
+		
+		
+		# More stages?
+		if stage == (num_stages - 1):
+			# Last stage so no else if
+			text += '''
+			
+			if write_pipe.return_output_bool then
+				write_pipe.return_output := (others => '1');
+			else
+				write_pipe.return_output := (others => '0');
+			end if;
+			
+		end if;'''
+			return wires_decl_text,text
+		else:
+			# Next stage
+			# Set next vals
+			stage = stage + 1
+			# Do stage logic / bit pos increment 
+			up_bound = up_bound - bits_per_stage_dict[stage-1]
+			low_bound = up_bound - bits_per_stage_dict[stage] + 1
+			# More stages to go
+			text += '''		
+		elsif STAGE = ''' + str(stage) + ''' then '''
+		
+
+# TODO: Combine GT+LT? Since using op_str?
 		
 def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable

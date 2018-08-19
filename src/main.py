@@ -13,8 +13,6 @@ c_file = "main.c"
 top_level_func_name = "main"
 mhz=31.25
 
-print "TODO: IMPLEMENT LT/E for fucks sake"
-
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 
