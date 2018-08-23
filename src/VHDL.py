@@ -1060,26 +1060,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 	# If a constant 
 	if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name, inst_name):
-		inst_name = ""
-		if Logic.inst_name is not None:
-			inst_name = Logic.inst_name
-		local_name = wire_name.replace(inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-		
-		# Ge tlast submodule tok
-		toks = local_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
-		last_tok = toks[len(toks)-1]
-		local_name = last_tok	
-		
-		# What type of const
-		# Strip off CONST_
-		stripped_wire_name = local_name
-		if local_name.startswith(C_TO_LOGIC.CONST_PREFIX):
-			stripped_wire_name = local_name[len(C_TO_LOGIC.CONST_PREFIX):]
-		#print "stripped_wire_name",stripped_wire_name
-		# Split on under
-		toks = stripped_wire_name.split("_")
-		
-		ami_digit = toks[0]
+		ami_digit = C_TO_LOGIC.GET_MAYBE_DIGIT_FROM_CONST_WIRE(wire_name, Logic, parser_state)
 		ami_digit_no_neg = ami_digit.strip("-")
 		if ami_digit.isdigit():
 			# Check for unsigned digit constant

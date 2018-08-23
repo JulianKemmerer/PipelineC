@@ -778,6 +778,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 					return None
 				
 				# Indicate this submodule ends a stage
+				print new_slice_pos, "slice_through_submodule_level_marker", slice_through_submodule_level_marker
 				slice_through_submodule_level_marker = True
 				timing_params.stage_to_last_abs_submodule_level[slice_ends_stage]=ending_submodule_level
 				#print "stage_per_ll_submodule_level_map",zero_clk_pipeline_map.stage_per_ll_submodule_level_map
@@ -837,6 +838,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				#print "	Slicing:", submodule_inst
 				#print "		@", slice_pos
 
+
+				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
 				if containing_logic.uses_globals:
 					# Can't slice globals, return index of bad slice
 					return slice_index

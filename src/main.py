@@ -11,7 +11,7 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz=31.25
+mhz=SYN.INF_MHZ # TEST 31.25
 
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()

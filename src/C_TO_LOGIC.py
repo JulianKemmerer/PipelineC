@@ -863,6 +863,10 @@ def make_rev_label_dict(labels):
 
 	
 def WIRE_IS_CONSTANT(wire, logic_inst_name):
+	if logic_inst_name is None:
+		logic_inst_name = ""
+		# Uhhhh?? ^^
+	
 	# Remove inst name
 	new_wire = wire.replace(logic_inst_name+SUBMODULE_MARKER,"")
 	
@@ -1208,6 +1212,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 	#	return C_AST_ARRAYREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.Assignment:
 		return C_AST_ASSIGNMENT_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
+	elif type(c_ast_node) == c_ast.For:
+		return C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
 	else:
 		#start here
 		print "Cannot parse c ast node to logic: ",c_ast_node
@@ -1374,6 +1380,73 @@ def GET_MOST_RECENT_ALIAS(logic,orig_var_name):
 		
 		
 		
+# Bleh this is useful for for loop
+# Maybe if I keep it near the regular assignment I will remember to fix bugs here too
+# Maybe
+def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_names, prepend_text, parser_state):	
+	lhs_ref_toks = [lhs_orig_var_name]
+	# For now only do constant on RHS
+	if type(rhs) is not int:
+		print "Can't fake none constant assignment for now..."
+		sys.exit(0)
+	
+	func_name_2_logic = parser_state.FuncName2Logic
+	existing_logic = parser_state.existing_logic
+	
+	rv = Logic()
+	if existing_logic is not None:
+		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	# BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
+	# BUT LEFT SIDE MUST RESULT IN VARIABLE ADDRESS / wire?
+	#^^^^^^^^^^^^^^^^^
+	
+	
+	
+	# Assignments are ordered over time with existing logic
+	# Assigning to a variable creates an alias
+	# future reads on this variable are done from the alias
+	lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, c_ast_node, parser_state)
+	#print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
+		
+	# /\
+	# SET LHS TYPE
+	parser_state.existing_logic = rv
+	lhs_c_type = C_AST_REF_TOKS_TO_C_TYPE(lhs_ref_toks, c_ast_node, parser_state)
+	if not(lhs_orig_var_name in rv.variable_names):
+		rv.variable_names.append(lhs_orig_var_name)
+	# Type of alias wire is same as original wire
+	rv.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
+	
+
+	driven_wire_names=[lhs_next_wire_assignment_alias]
+	# Do constant number RHS as driver 
+	wire_name = CONST_PREFIX + str(rhs) + "_" + C_AST_COORD_STR(c_ast_node.coord)
+	const_connect_logic = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
+	rv = rv.MERGE_COMB_LOGIC(const_connect_logic)
+	rv.wire_to_c_type[wire_name]=lhs_c_type
+
+
+	# Add alias to list in existing logic
+	existing_aliases = []
+	if lhs_orig_var_name in rv.wire_aliases_over_time:
+		existing_aliases = rv.wire_aliases_over_time[lhs_orig_var_name]
+	new_aliases = existing_aliases
+	
+    # Dont double add aliases
+	if not(lhs_next_wire_assignment_alias in new_aliases):
+		new_aliases = new_aliases + [lhs_next_wire_assignment_alias]
+	rv.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
+	rv.alias_to_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
+	rv.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
+	
+
+	
+	# Update parser state since merged in exsiting logic earlier
+	parser_state.existing_logic = rv
+	
+	
+	return rv
+
 
 
 
@@ -1446,6 +1519,8 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 			
 		# Record using globals
 		rv.uses_globals = True
+		#print "rv.func_name",rv.func_name, rv.uses_globals
+		
 		
 		# Record change in parser state
 		parser_state.existing_logic = rv
@@ -1473,10 +1548,6 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	#print "lhs_c_type",lhs_c_type
 	#print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
 
-	
-	###### DO EVUALTION OF RIGHT SIDE FIRST BEFORE MAKING ALIAS OF LEFT SIDE
-	# Need intermediate wire 
-	
 	#print "c_ast_assignment.rvalue"
 	#casthelp(c_ast_assignment.rvalue)
 	driven_wire_names=[lhs_next_wire_assignment_alias]
@@ -1494,11 +1565,6 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	# Merge existing and rhs logic
 	rv = rv.MERGE_SEQ_LOGIC(rhs_to_lhs_logic)	
 
-	############## LEFT SIDE
-
-	
-	
-	
 	# Add alias to list in existing logic
 	existing_aliases = []
 	if lhs_orig_var_name in rv.wire_aliases_over_time:
@@ -1548,6 +1614,7 @@ def GET_STRUCTREF_WIRE_TYPE(structref_orig_wire, parser_state):
 			
 		# Record using globals
 		parser_state.existing_logic.uses_globals = True
+		#print "func_name",parser_state.existing_logic.func_name, parser_state.existing_logic.uses_globals
 	
 		
 	# Get the type of this base name
@@ -1848,19 +1915,51 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
 def C_TYPE_IS_ARRAY(c_type):
 	return "[" in c_type and c_type.endswith("]")
 	
+	
+
+	
+# Returns None if ID is not driven by constant
+def RESOLVE_CONST_ID(c_ast_id, parser_state):
+	orig_var_name = str(c_ast_id.name)
+	# Get most recent alias
+	mra = GET_MOST_RECENT_ALIAS(parser_state.existing_logic, orig_var_name)
+	# See if this is directly driven by constant
+	const_driving_wire = FIND_CONST_DRIVING_WIRE(mra, parser_state.existing_logic)
+	if const_driving_wire is None:
+		return None
+	
+	# Get value from this constant
+	maybe_digit = GET_MAYBE_DIGIT_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
+	if not maybe_digit.isdigit():
+		return None
+	
+	return int(maybe_digit)
+	
+	
+# Returns None if not resolved
+def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, parser_state):
+	if type(c_ast_array_ref.subscript) == c_ast.Constant:
+		const = int(c_ast_array_ref.subscript.value)
+		return const
+	elif type(c_ast_array_ref.subscript) == c_ast.ID:
+		return RESOLVE_CONST_ID(c_ast_array_ref.subscript,parser_state)
+	else:	
+		print "I don't know how to resolve the array ref at", c_ast_ref.subscript.coord
+		sys.exit(0)
+
 def C_AST_REF_TO_TOKENS(c_ast_ref, parser_state):
 	toks = []
 	if type(c_ast_ref) == c_ast.ID:
 		toks += [str(c_ast_ref.name)]
 	elif type(c_ast_ref) == c_ast.ArrayRef:
 		# Only constant array ref right now	
-		if type(c_ast_ref.subscript) != c_ast.Constant:
-			print "Non constant array ref?", c_ast_ref.subscript.coords
+		const = RESOLVE_CONST_ARRAY_REF(c_ast_ref, parser_state)
+		if const is None:
+			print "Non constant array ref?", c_ast_ref.subscript.coord
 			sys.exit(0)
 		# Name is a ref node
 		toks += C_AST_REF_TO_TOKENS(c_ast_ref.name, parser_state)
-		toks += [int(c_ast_ref.subscript.value)]
-
+		toks += [const]
 	elif type(c_ast_ref) == c_ast.StructRef:
 		# Name is a ref node
 		toks += C_AST_REF_TO_TOKENS(c_ast_ref.name, parser_state)
@@ -1889,6 +1988,7 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 			
 		# Record using globals
 		parser_state.existing_logic.uses_globals = True
+		#print "2 func_name",parser_state.existing_logic.func_name, parser_state.existing_logic.uses_globals
 	
 		
 	# Get the type of this base name
@@ -2020,6 +2120,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			
 		# Record using globals
 		parser_state.existing_logic.uses_globals = True
+		#print "3 func_name",parser_state.existing_logic.func_name, parser_state.existing_logic.uses_globals
 	
 	
 	# Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
@@ -2371,6 +2472,29 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
 		 
 	return rv
 	
+def GET_MAYBE_DIGIT_FROM_CONST_WIRE(wire_name, Logic, parser_state):
+	inst_name = ""
+	if Logic.inst_name is not None:
+		inst_name = Logic.inst_name
+	local_name = wire_name.replace(inst_name+SUBMODULE_MARKER,"")
+	
+	# Ge tlast submodule tok
+	toks = local_name.split(SUBMODULE_MARKER)
+	last_tok = toks[len(toks)-1]
+	local_name = last_tok	
+	
+	# What type of const
+	# Strip off CONST_
+	stripped_wire_name = local_name
+	if local_name.startswith(CONST_PREFIX):
+		stripped_wire_name = local_name[len(CONST_PREFIX):]
+	#print "stripped_wire_name",stripped_wire_name
+	# Split on under
+	toks = stripped_wire_name.split("_")
+	
+	ami_digit = toks[0]
+
+	return ami_digit
 
 # Const jsut makes wire with CONST name
 def C_AST_CONSTANT_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state, is_negated=False):
@@ -2549,7 +2673,166 @@ def C_AST_COORD_STR(c_ast_node_cord):
 	file_coord_str = file_coord_str.replace(".","_")
 	return file_coord_str
 
+
+
+def GET_FOR_LOOP_VAR_AND_INIT_VAL(c_ast_for_init, parser_state):
+	# Only support simple assignment right now
+	if type(c_ast_for_init) == c_ast.Assignment:
+		# Left node must be id
+		# Right node must be constant
+		if (type(c_ast_for_init.lvalue) == c_ast.ID) and (type(c_ast_for_init.rvalue) == c_ast.Constant):
+			# Left node must is assumed to be loop variable
+			loop_var = str(c_ast_for_init.lvalue.name)
+			# Right node is assumed to be value
+			init_val = int(c_ast_for_init.rvalue.value)			
+		else:
+			return None
+	else:
+		return None
 	
+	return loop_var, init_val
+
+def EVAL_FOR_NEXT(i_value, loop_var, c_ast_for_next, parser_state):	
+	if type(c_ast_for_next) == c_ast.Assignment:
+		if str(c_ast_for_next.op) == "=":
+			#print "here1"
+			# Left must be loop var
+			# Right must be binary op
+			if (c_ast_for_next.lvalue.name == loop_var) and (type(c_ast_for_next.rvalue) == c_ast.BinaryOp):
+				#print "here2"
+				# bin op  must be add or sub
+				op_str = str(c_ast_for_next.rvalue.op)
+				if op_str == "+" or op_str == "-":
+					#print "here3"
+					# One of the sides of the bin op must be loop var, the other constant
+					if (type(c_ast_for_next.rvalue.right) == c_ast.ID) and (type(c_ast_for_next.rvalue.left) == c_ast.Constant):
+						# Left is constant
+						value = int(c_ast_for_next.rvalue.left.value)
+					elif (type(c_ast_for_next.rvalue.right) == c_ast.Constant) and (type(c_ast_for_next.rvalue.left) == c_ast.ID):	
+						# Right is constant
+						value = int(c_ast_for_next.rvalue.right.value)
+					else:
+						return None
+					
+					# DO op
+					if op_str == "+":
+						return i_value + value
+					elif op_str == "-":
+						return i_value - value
+			
+
+	return None
+
+	
+	
+def EVAL_FOR_COND(i_value, loop_var, c_ast_for_cond, parser_state):
+	if type(c_ast_for_cond) == c_ast.BinaryOp:
+		#print "here2"
+		# bin op  must be add or sub
+		op_str = str(c_ast_for_cond.op)
+		if op_str == "<" or op_str == "<=" or op_str == ">" or op_str == ">=":
+			#print "here3"
+			# One of the sides of the bin op must be loop var, the other constant
+			if (type(c_ast_for_cond.right) == c_ast.ID) and (type(c_ast_for_cond.left) == c_ast.Constant):
+				# Left is constant
+				value = int(c_ast_for_cond.left.value)
+			elif (type(c_ast_for_cond.right) == c_ast.Constant) and (type(c_ast_for_cond.left) == c_ast.ID):	
+				# Right is constant
+				value = int(c_ast_for_cond.right.value)
+			else:
+				return None
+			
+			# DO op
+			if op_str == "<":
+				return i_value < value
+			elif op_str == "<=":
+				return i_value <= value
+			elif op_str == ">":
+				return i_value > value
+			elif op_str == ">=":
+				return i_value >= value
+
+	return None
+
+def GET_FOR_LOOP_VAR_AND_RANGE(c_ast_for, parser_state):
+	# Use the init, cond, next  to figure out
+	# 	Loop variable
+	#   Constant range
+	#print "TODO: GET_FOR_LOOP_VAR_AND_RANGE"
+	
+	# Init gives loop var and starting value
+	loop_var_AND_init_value = GET_FOR_LOOP_VAR_AND_INIT_VAL(c_ast_for.init, parser_state)
+	if loop_var_AND_init_value is None:
+		print "I dont know how to handle what you are doing in the for loop initializer at", c_ast_for.init.coord
+		sys.exit(0)
+	loop_var, init_value = loop_var_AND_init_value
+	
+	# Only simple cond and next handled
+	
+	# OK lets do this the weird way
+	val_range = [init_value]
+	i_value = init_value
+	while True:
+		# Do 
+		# {
+		
+		# Next
+		next_i_value = EVAL_FOR_NEXT(i_value, loop_var, c_ast_for.next, parser_state)
+		if next_i_value is None:
+			print "I dont know how to handle what you are doing in the for loop next statement at", c_ast_for.next.coord
+			sys.exit(0)
+		# Cond
+		cond_eval = EVAL_FOR_COND(next_i_value, loop_var, c_ast_for.cond, parser_state) 
+		if cond_eval is None:
+			print "I dont know how to handle what you are doing in the for loop condition at", c_ast_for.cond.coord
+			sys.exit(0)
+		if cond_eval:
+			val_range.append(next_i_value)
+		i_value = next_i_value
+
+		# }
+		# While (         )
+		if not  (cond_eval):
+			break
+
+	return loop_var, val_range
+	
+def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+	existing_logic = parser_state.existing_logic
+	rv = Logic()
+	rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	
+	# Do init first
+	#init_logic = C_AST_NODE_TO_LOGIC(c_ast_node.init, [], prepend_text, parser_state)
+	#rv = rv.MERGE_SEQ_LOGIC(init_logic)
+	
+	# Not actually evaluating the "variable" part of the loop
+	# We are unrolling it
+	
+	# Use the init, cond, next  to figure out
+	# 	Loop variable
+	#   Constant range
+	loop_var, loop_range = GET_FOR_LOOP_VAR_AND_RANGE(c_ast_node, parser_state)
+	
+	# Do the 'statement' N times
+	# Actually involves doing
+	#   loop var = i
+	#   'statement'
+	for i in loop_range:
+		# Set loop var equal to i
+		# Like an assignment
+		loop_prepend_text = prepend_text + "FOR_" + loop_var + "_" + str(i).replace("-","neg") + "_"
+		iter_assign_logic = FAKE_ASSIGNMENT_TO_LOGIC(loop_var, i, c_ast_node, driven_wire_names, loop_prepend_text, parser_state)
+		rv = rv.MERGE_SEQ_LOGIC(iter_assign_logic)
+		# Do the statement
+		statement_logic = C_AST_NODE_TO_LOGIC(c_ast_node.stmt, [], loop_prepend_text, parser_state)
+		rv = rv.MERGE_SEQ_LOGIC(statement_logic)
+		
+	
+	# Done?
+	parser_state.existing_logic = rv
+	return rv
+
 
 def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	existing_logic = parser_state.existing_logic
@@ -2943,9 +3226,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 	
 	# Raw vhdl stuff shouldnt use globals right?
 	# So assign using globals based on func name to logic entry
-	if func_name in func_name_2_logic:
-		func_logic = func_name_2_logic[func_name]
-		rv.uses_globals = rv.uses_globals or func_logic.uses_globals	
+	# Is this how we intended to use "uses_globals" ?
+	# Is flag for only current logic not accumulation of logic hierarchy?
+	#if func_name in func_name_2_logic:
+	#	func_logic = func_name_2_logic[func_name]
+	#	rv.uses_globals = rv.uses_globals or func_logic.uses_globals	
 	
 	
 	#print "C_AST_N_ARG_FUNC_INST_TO_LOGIC rv.wires",rv.wires
@@ -3548,6 +3833,10 @@ def PARSE_FILE(top_level_func_name, c_file):
 			print "Elaborating hierarchy down to raw HDL logic..."	
 			parser_state.LogicInstLookupTable = RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(top_level_func_name, top_level_func_name, parser_state, unadjusted_logic_lookup_table_so_far, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
+		
+		#for inst_name in parser_state.LogicInstLookupTable:
+		#	print inst_name, "uses_globals",parser_state.LogicInstLookupTable[inst_name].uses_globals
+		#sys.exit(0)
 		
 		
 		# Write cache
