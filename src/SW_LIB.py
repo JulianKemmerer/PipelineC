@@ -38,6 +38,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
 	lookups.append(bit_manip_func_name_logic_lookup)
 	
+	#print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
 	
 	# Some (small?) math operations on bit specific types, ex. abs() which is not 0LLs - takes logic since twos complement
 	# But also shouldnt implement as *-1 since more LLs
@@ -45,13 +46,21 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	bit_math_func_name_logic_lookup = GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
 	lookups.append(bit_math_func_name_logic_lookup)
 	
+	#print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
 	
 	# Combine lookups
 	rv = dict()
 	for func_name_logic_lookup in lookups:
+		
 		for func_name in func_name_logic_lookup:
 			if not(func_name in rv):
 				rv[func_name] = func_name_logic_lookup[func_name]
+				
+				#print "func_name (func_name_logic_lookup)",func_name
+				#if len(func_name_logic_lookup[func_name].wire_drives) == 0:
+				#	print "BAD!"
+				#	sys.exit(0)
+				
 			else:
 				# For now allow if from bit manip
 				#print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
@@ -476,123 +485,170 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# Parse to list of width toks
 	nsum_func_names = []
 	# uint24_sum24(left_resized);
-	for type_regex in ["uint[0-9]+_sum[0-9]+\s?\("]:
-		p = re.compile(type_regex)
-		nsum_func_names = p.findall(c_text)
-		nsum_func_names = list(set(nsum_func_names))
-		for nsum_func_name in nsum_func_names:
-			nsum_func_name = nsum_func_name.strip("(").strip()
-			toks = nsum_func_name.split("_")
-			type_prefix = toks[0]
-			sum_name = toks[1]
-			n = int(sum_name.replace("sum",""))
-			type_width = int(type_prefix.replace("uint",""))
-			# Sum 2 would be bit width increase of 1
-			max_in_val = (math.pow(2,type_width)-1)
-			max_sum = max_in_val * n
-			result_width = int(math.ceil(math.log(max_sum+1,2)))
-			result_t = "uint" + str(result_width) + "_t"
-			in_t = type_prefix + "_t"	
-			func_name = type_prefix + "_" + sum_name
-			var_2_type = dict()
-			text += '''
-#include "bit_manip.h"			
-			
-// ''' + str(n) + ''' MUX
-''' + result_t + " " + func_name+"("
-			# List each input
-			for i in range(0, n):
-				text += in_t + " in" + str(i) + ","
-				var_2_type["in" + str(i)]=in_t
-			# Remove last comma
-			text = text.strip(",")
-			text += ''')
-{'''
-
-			layer_nodes = []
-			for n in range(0,n):
-				layer_nodes.append("in" + str(n))
-				
-			layer=0
-			node=0
-			
-			text += '''
-			// Binary summation of partial sums
-		'''
-		 
-			
-			# DO
-			while True: 
-				text += '''
-			// Layer + ''' + str(layer) + '''
-		'''
-				node = 0
-				new_layer_nodes = []
-				# Write adds in pairs
-				# While 2 args to add
-				while(len(layer_nodes) >= 2):
-					left_arg = layer_nodes.pop(0)
-					right_arg = layer_nodes.pop(0)
-					left_t = var_2_type[left_arg]
-					right_t = var_2_type[right_arg]
-					# Sum type is max width+1
-					left_width = int(left_t.replace("uint","").replace("int","").replace("_t",""))
-					right_width = int(right_t.replace("uint","").replace("int","").replace("_t",""))
-					max_width = max(left_width,right_width)
-					sum_width = max_width+1
-					
-					sum_t = "uint" + str(sum_width) + "_t"
-					sum_var = "sum_layer" + str(layer) + "_node" + str(node)
-					var_2_type[sum_var] = sum_t
-					text += '''	''' + sum_t + ''' ''' + sum_var + ''';
-			''' + sum_var + ''' = ''' + left_arg + " + " + right_arg + ''';
-		'''
-					# This sum node is on next layer
-					new_layer_nodes.append(sum_var)
-					node += 1
-				
-				# Out of while loop	
-				# < 2 nodes left to sum in this node
-				if len(layer_nodes) == 1:
-					# One node left
-					the_arg = layer_nodes.pop(0)
-					the_t = var_2_type[the_arg]
-					sum_t = the_t			
-					sum_var = "sum_layer" + str(layer) + "_node" + str(node)
-					var_2_type[sum_var] = sum_t
-					text += '''	// Odd node in layer
-			''' + sum_t + ''' ''' + sum_var + ''';
-			''' + sum_var + ''' = ''' + the_arg + ''';
-			'''
-					# This sum node is on next layer
-					new_layer_nodes.append(sum_var)
-					node += 1
-					
-				
-				# WHILE
-				if len(new_layer_nodes) >= 2:
-					# Continue
-					layer_nodes = new_layer_nodes
-					layer += 1
+	for type_regex in ["uint[0-9]+","uint[0-9]+_array","float","float_array"]:
+		for regex in [type_regex+"_sum[0-9]+\s?\("]:
+			p = re.compile(regex)
+			nsum_func_names = p.findall(c_text)
+			nsum_func_names = list(set(nsum_func_names))
+			for nsum_func_name in nsum_func_names:
+				nsum_func_name = nsum_func_name.strip("(").strip()
+				toks = nsum_func_name.split("_")
+				# type_prefix=float_array
+				if len(toks) == 2:
+					type_prefix = toks[0]
+					sum_name = toks[1]
 				else:
-					# DONE
-					break;
-			
-			# Done with outer layer while loop
+					type_prefix = toks[0] + "_" + toks[1]
+					sum_name = toks[2]
 				
-			# Do return
-			return_var = "sum_layer" + str(layer) + "_node" + str(node-1)
-			return_t = var_2_type[return_var]
-			text += '''
-			''' + "// Return" + '''
-			''' + return_t + ''' rv;
-			rv = ''' + return_var + ''';
-			return rv;
-		}
-		'''
+				# how many to sum?				
+				n_sum = int(sum_name.replace("sum",""))
+				#print "n_sum",n_sum
+				
+				# Result type?
+				if "float" in type_prefix:
+					result_t = "float"
+				else:
+					type_width = int(type_prefix.replace("uint",""))
+					# Sum 2 would be bit width increase of 1
+					max_in_val = (math.pow(2,type_width)-1)
+					max_sum = max_in_val * n_sum
+					result_width = int(math.ceil(math.log(max_sum+1,2)))
+					result_t = "uint" + str(result_width) + "_t"
+				# input type?
+				if "array" in type_prefix:
+					in_t = type_prefix.replace("_array","") # Need to construct with var name
+				else:
+					in_t = type_prefix + "_t"	
+				
+				func_name = type_prefix + "_" + sum_name
+				var_2_type = dict()
+				text += '''
+	#include "bit_manip.h"			
+				
+	// ''' + str(n_sum) + ''' sum
+	''' + result_t + " " + func_name+"("
+				if "array" in type_prefix:
+					var_2_type["x"]=in_t + "[" + str(n_sum) + "]"
+					text += in_t + " x" + "[" + str(n_sum) + "]"
+				else: 
+					# List each input
+					for i in range(0, n):
+						text += in_t + " x" + str(i) + ","
+						var_2_type["x" + str(i)]=in_t
+					# Remove last comma
+					text = text.strip(",")
+					
+				text += ''')
+	{'''
 
-	#print "BIT_MATH_HEADER_FILE"
-	#print text
+				layer_nodes = []
+				if "array" in type_prefix:
+					for n in range(0,n_sum):
+						var = "x[" + str(n) + "]"
+						layer_nodes.append(var)
+						var_2_type[var] = in_t
+				else:
+					for n in range(0,n_sum):
+						layer_nodes.append("x" + str(n))
+						
+				layer=0
+				node=0
+				
+				text += '''
+				// Binary summation of partial sums
+			'''
+			 
+				
+				# DO
+				while True: 
+					text += '''
+				// Layer + ''' + str(layer) + '''
+			'''
+					node = 0
+					new_layer_nodes = []
+					# Write adds in pairs
+					# While 2 args to add
+					while(len(layer_nodes) >= 2):
+						left_arg = layer_nodes.pop(0)
+						right_arg = layer_nodes.pop(0)
+						left_t = var_2_type[left_arg]
+						right_t = var_2_type[right_arg]
+						if "float" in type_prefix:
+							sum_t = "float"
+						else:
+							# Sum type is max width+1
+							left_width = int(left_t.replace("uint","").replace("int","").replace("_t",""))
+							right_width = int(right_t.replace("uint","").replace("int","").replace("_t",""))
+							max_width = max(left_width,right_width)
+							sum_width = max_width+1
+							sum_t = "uint" + str(sum_width) + "_t"
+							
+						
+						sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+						var_2_type[sum_var] = sum_t
+						text += '''	''' + sum_t + ''' ''' + sum_var + ''';
+				''' + sum_var + ''' = ''' + left_arg + " + " + right_arg + ''';
+			'''
+						# This sum node is on next layer
+						new_layer_nodes.append(sum_var)
+						node += 1
+					
+					# Out of while loop	
+					# < 2 nodes left to sum in this node
+					if len(layer_nodes) == 1:
+						# One node left
+						the_arg = layer_nodes.pop(0)
+						the_t = var_2_type[the_arg]
+						sum_t = the_t			
+						sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+						var_2_type[sum_var] = sum_t
+						text += '''	// Odd node in layer
+				''' + sum_t + ''' ''' + sum_var + ''';
+				''' + sum_var + ''' = ''' + the_arg + ''';
+				'''
+						# This sum node is on next layer
+						new_layer_nodes.append(sum_var)
+						node += 1
+						
+					
+					# WHILE
+					if len(new_layer_nodes) >= 2:
+						# Continue
+						layer_nodes = new_layer_nodes
+						layer += 1
+					else:
+						# DONE
+						break;
+				
+				# Done with outer layer while loop
+					
+				# Do return
+				return_var = "sum_layer" + str(layer) + "_node" + str(node-1)
+				return_t = var_2_type[return_var]
+				text += '''
+				''' + "// Return" + '''
+				''' + return_t + ''' rv;
+				rv = ''' + return_var + ''';
+				return rv;
+			}
+			'''
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+
 	
 	
 	outfile = BIT_MATH_HEADER_FILE
@@ -604,6 +660,15 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	parser_state.FuncName2Logic = bit_manip_func_name_logic_lookup # dict()  
 	parse_body = True # BIT MATH IS SW IMPLEMENTATION
 	func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state, parse_body)
+	
+	for func_name in func_name_2_logic:
+		func_logic = func_name_2_logic[func_name]
+		if len(func_logic.wire_drives) == 0:
+			print "BIT_MATH_HEADER_FILE"
+			print text
+			print "Bad parsing of BIT MATH",func_name
+			sys.exit(0)
+	
 	return func_name_2_logic
 
 
@@ -826,6 +891,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
 
 	
+	#print "BIT_MANIP_HEADER_FILE"
 	#print text
 
 	

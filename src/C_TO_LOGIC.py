@@ -19,6 +19,8 @@ import SW_LIB
 import SYN
 import VHDL_INSERT
 
+#LOGIC_MERGE_DEBUG=True # Fuck me, nice checking code seems to make things slow?
+
 
 
 RETURN_WIRE_NAME = "return_output"
@@ -139,10 +141,10 @@ def casthelp(arg):
 def LIST_UNION(a,b):
 	return list( set().union(*[a,b]) )
 
-def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
-	d1 = copy.copy(d1_arg)
-	d2 = copy.copy(d2_arg)
-	rv = d1
+def C_AST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
+	d1 = d1_arg
+	d2 = d2_arg
+	rv = copy.deepcopy(d1)
 	for key in d2:
 		if key in d1:
 			v1 = d1[key]
@@ -155,17 +157,36 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
 				print 0/0
 				sys.exit(0)
 			else:
-				rv[key] = d2[key]
+				rv[key] = d2[key] # Dont need deepcopy or copy since is c_ast node?
 		else:
 			# Key only in d2
-			rv[key] = d2[key]
+			rv[key] = d2[key] # Dont need deepcopy or copy since is c_ast node?
 			
 	return rv
+	
+def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
+	for key in d2:
+		if key in d1:
+			v1 = d1[key]
+			v2 = d2[key]
+			if C_AST_COORD_STR(v1.coord) != C_AST_COORD_STR(v2.coord):
+				print "C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",d1,d2
+				print "key", key
+				print "v1",C_AST_COORD_STR(v1.coord)
+				print "v2",C_AST_COORD_STR(v2.coord)
+				print 0/0
+				sys.exit(0)
+	
+	# Do merge with dict methods
+	rv = copy.deepcopy(d1)
+	rv.update(copy.deepcopy(d2))
+	
+	return rv
 
-def LIST_VAL_UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
-	d1 = copy.copy(d1_arg)
-	d2 = copy.copy(d2_arg)
-	rv = d1
+def LIST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
+	d1 = d1_arg 
+	d2 = d2_arg
+	rv = copy.deepcopy(d1)
 	for key in d2:
 		if key in d1:
 			v1 = d1[key]
@@ -178,17 +199,63 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
 				print 0/0
 				sys.exit(0)
 			else:
-				rv[key] = d2[key]
+				rv[key] = d2[key][:]
 		else:
 			# Key only in d2
-			rv[key] = d2[key]
+			rv[key] = d2[key][:]
 			
 	return rv
+	
+	
+def LIST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
+	for key in d2:
+		if key in d1:
+			v1 = d1[key]
+			v2 = d2[key]
+			if str(v1) != str(v2):
+				print "List val dicts aren't unique:",d1,d2
+				print "key", key
+				print "v1",v1
+				print "v2",v2
+				print 0/0
+				sys.exit(0)
+				
+				
+	# Do merge with dict methods
+	rv = copy.deepcopy(d1)
+	rv.update(copy.deepcopy(d2))
+	
+	return rv
 
-def UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
-	d1 = copy.copy(d1_arg)
-	d2 = copy.copy(d2_arg)
-	rv = d1
+
+def UNIQUE_KEY_DICT_MERGE(d1,d2):
+	# Check that are unique
+	for key in d2:
+		#if key in d1:
+		try:
+			v1 = d1[key]
+			v2 = d2[key]
+			if v1 != v2:
+				print "Dicts aren't unique:",d1,d2
+				print "key", key
+				print "v1",v1
+				print "v2",v2
+				print 0/0
+				sys.exit(0)
+		except:
+			pass
+				
+	# Do merge with dict methods
+	rv = copy.deepcopy(d1)
+	rv.update(copy.deepcopy(d2))
+	
+	return rv
+
+
+def UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
+	d1 = d1_arg 
+	d2 = d2_arg
+	rv = copy.deepcopy(d1)
 	for key in d2:
 		if key in d1:
 			v1 = d1[key]
@@ -201,23 +268,23 @@ def UNIQUE_KEY_DICT_MERGE(d1_arg,d2_arg):
 				print 0/0
 				sys.exit(0)
 			else:
-				rv[key] = d2[key]
+				rv[key] = copy.deepcopy(d2[key])
 		else:
 			# Key only in d2
-			rv[key] = d2[key]
+			rv[key] = copy.deepcopy(d2[key])
 			
 	return rv
 	
 def DICT_LIST_VALUE_MERGE(d1_arg,d2_arg):
-	d1 = copy.copy(d1_arg)
-	d2 = copy.copy(d2_arg)
-	rv = d1
+	d1 = d1_arg 
+	d2 = d2_arg 
+	rv = copy.deepcopy(d1)
 	for key in d2:
-		if key in rv:
+		if key in d1:
 			# Result is union of two lists
-			rv[key] = LIST_UNION(rv[key],d2[key])
+			rv[key] = LIST_UNION(d1[key],d2[key])
 		else:
-			rv[key] = d2[key]
+			rv[key] = copy.deepcopy(d2[key])
 			
 	return rv   
 	
@@ -406,12 +473,12 @@ class Logic:
 				print 0/0
 				sys.exit(0)
 			else:
-				rv.inputs = copy.deepcopy(logic_a.inputs)
+				rv.inputs = logic_a.inputs[:]
 		else:
 			# Default a
-			rv.inputs = copy.deepcopy(logic_a.inputs)
+			rv.inputs = logic_a.inputs[:]
 			if len(logic_a.inputs) <= 0:
-				rv.inputs = copy.deepcopy(logic_b.inputs)
+				rv.inputs = logic_b.inputs[:]
 		
 		if len(logic_a.outputs) > 0 and len(logic_b.outputs) > 0:
 			# Check for equal
@@ -421,19 +488,29 @@ class Logic:
 				print logic_b.inst_name, logic_b.outputs
 				sys.exit(0)
 			else:
-				rv.outputs = copy.deepcopy(logic_a.outputs)
+				rv.outputs = logic_a.outputs[:]
 		else:
 			# Default a
-			rv.outputs = copy.deepcopy(logic_a.outputs)
+			rv.outputs = logic_a.outputs[:]
 			if len(logic_a.outputs) <= 0:
-				rv.outputs = copy.deepcopy(logic_b.outputs)
+				rv.outputs = logic_b.outputs[:]
 			
 		
 		# Merge dicts
 		rv.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(logic_a.wire_to_c_type,logic_b.wire_to_c_type)
 		rv.submodule_instances = UNIQUE_KEY_DICT_MERGE(logic_a.submodule_instances,logic_b.submodule_instances)	
 		rv.wire_driven_by = UNIQUE_KEY_DICT_MERGE(logic_a.wire_driven_by,logic_b.wire_driven_by)
+		
+		# WTF MERGE BUG?
+		lens = len(logic_a.wire_drives)+ len(logic_b.wire_drives)
 		rv.wire_drives = DICT_LIST_VALUE_MERGE(logic_a.wire_drives,logic_b.wire_drives)
+		if lens > 0 and len(rv.wire_drives) == 0:
+			print "logic_a.wire_drives",logic_a.wire_drives
+			print "logic_b.wire_drives",logic_b.wire_drives
+			print "Should have at least",lens, "entries..."
+			print "MERGE COMB rv.wire_drives",rv.wire_drives
+			print "WTF"
+			sys.exit(0)
 		
 		# C ast node values wont be == , manual check with coord str
 		rv.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(logic_a.submodule_instance_to_c_ast_node,logic_b.submodule_instance_to_c_ast_node)
@@ -530,6 +607,7 @@ class Logic:
 		first_logic = self
 		rv = Logic()
 		
+		#print "===="
 		#print "first_logic.wire_drives", first_logic.wire_drives 
 		#print "first_logic.wire_driven_by", first_logic.wire_driven_by 
 		#print "second_logic.wire_drives", second_logic.wire_drives 
@@ -577,12 +655,12 @@ class Logic:
 				print second_logic.inst_name, second_logic.inputs
 				sys.exit(0)
 			else:
-				rv.inputs = copy.deepcopy(first_logic.inputs)
+				rv.inputs = first_logic.inputs[:]
 		else:
 			# Default first_logic
 			rv.inputs = first_logic.inputs
 			if len(first_logic.inputs) <= 0:
-				rv.outputs = copy.deepcopy(second_logic.inputs)
+				rv.outputs = second_logic.inputs[:]
 		
 		if len(first_logic.outputs) > 0 and len(second_logic.outputs) > 0:
 			# Check for equal
@@ -592,12 +670,12 @@ class Logic:
 				print second_logic.inst_name, second_logic.outputs
 				sys.exit(0)
 			else:
-				rv.outputs = copy.deepcopy(first_logic.outputs)
+				rv.outputs = first_logic.outputs[:]
 		else:
 			# Default first_logic
 			rv.outputs = first_logic.outputs
 			if len(first_logic.outputs) <= 0:
-				rv.outputs = copy.deepcopy(second_logic.outputs)
+				rv.outputs = second_logic.outputs[:]
 		
 		
 		
@@ -642,9 +720,9 @@ class Logic:
 								#print 0/0
 								sys.exit(0)
 						# Got match, first is subset of second, update first to match second
-						first_logic.wire_drives[orig_var] = second_driven_wires[:]
+						first_logic.wire_drives[orig_var] = copy.deepcopy(second_driven_wires)
 						for second_driven_wire in second_driven_wires:
-							first_logic.wire_driven_by[second_driven_wire] = second_logic.wire_driven_by[second_driven_wire]						
+							first_logic.wire_driven_by[second_driven_wire] = second_logic.wire_driven_by[second_driven_wire]
 						
 					else:
 						# First has same or more, cant match second at this point
@@ -673,10 +751,6 @@ class Logic:
 						sys.exit(0)
 						
 		
-		#print "AFTER first_logic.wire_drives", first_logic.wire_drives 
-		#print "first_logic.wire_driven_by", first_logic.wire_driven_by 
-		#print "second_logic.wire_drives", second_logic.wire_drives 
-		#print "second_logic.wire_driven_by", second_logic.wire_driven_by 
 		
 		# wire_driven_by can't have multiple drivers over time and
 		# should error out in normal merge below
@@ -697,7 +771,7 @@ class Logic:
 				first = first_logic.wire_aliases_over_time[var_name]
 				second = second_logic.wire_aliases_over_time[var_name]
 				# Start with including first
-				rv.wire_aliases_over_time[var_name] = copy.deepcopy(first)
+				rv.wire_aliases_over_time[var_name] = first[:]
 				
 				# Check that the aliases over time are equal 
 				# in the period of time they share (the first logic)
@@ -717,28 +791,43 @@ class Logic:
 			else:
 				# First only alias (second does not have alias)
 				# Merged value is first only
-				rv.wire_aliases_over_time[var_name] = copy.deepcopy(first_logic.wire_aliases_over_time[var_name])
+				rv.wire_aliases_over_time[var_name] = first_logic.wire_aliases_over_time[var_name][:]
 		# Then include wire_aliases_over_time ONLY from second logic
 		for var_name in second_logic.wire_aliases_over_time:
 			# And first logic does not
 			if not(var_name in first_logic.wire_aliases_over_time):
 				# Merged value is just from second logic
 				second = second_logic.wire_aliases_over_time[var_name]
-				rv.wire_aliases_over_time[var_name] = copy.deepcopy(second)
+				rv.wire_aliases_over_time[var_name] = second[:]
 		
 		# To not error in normal MERGE_LOGIC below, first and second logic must have same 
 		# resulting wire_aliases_over_time
-		modified_first_logic = copy.copy(first_logic)
-		modified_second_logic = copy.copy(second_logic)
-		modified_first_logic.wire_aliases_over_time = copy.deepcopy(rv.wire_aliases_over_time)
-		modified_second_logic.wire_aliases_over_time = copy.deepcopy(rv.wire_aliases_over_time)
+		modified_first_logic = copy.deepcopy(first_logic)
+		modified_second_logic = copy.deepcopy(second_logic)
+		modified_first_logic.wire_aliases_over_time = rv.wire_aliases_over_time
+		modified_second_logic.wire_aliases_over_time = rv.wire_aliases_over_time
 		
 		# orig_wire_name Only one orig wire name per alias, handled in MERGE_LOGIC
+		
+		
+		#print "PRE_COMB first_logic.wire_drives", modified_first_logic.wire_drives 
+		#print "first_logic.wire_driven_by", modified_first_logic.wire_driven_by 
+		#print "second_logic.wire_drives", modified_second_logic.wire_drives 
+		#print "second_logic.wire_driven_by", modified_second_logic.wire_driven_by 
+		
+		
 		
 		# Then merge logic as normal
 		tmp = modified_first_logic.MERGE_COMB_LOGIC(modified_second_logic)
 		
+		#print "MID_COMB tmp.wire_drives", tmp.wire_drives 
+		#print "tmp.wire_driven_by", tmp.wire_driven_by 
+		
 		rv = rv.MERGE_COMB_LOGIC(tmp)
+		
+		
+		#print "POS_COMB rv.wire_drives", rv.wire_drives 
+		#print "rv.wire_driven_by", rv.wire_driven_by 
 		
 		return rv	
 			
@@ -1009,6 +1098,9 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_p
 		submodule_logic.wire_to_c_type[output_port_name]=c_type
 		
 	else:
+		print "containing_func_logic.func_name",containing_func_logic.func_name
+		print "output_wire_name",output_wire_name
+		print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
 		print "Input type to output type mapping assumption for built in submodule output "
 		print submodule_logic.func_name
 		print submodule_logic.inst_name
@@ -1032,7 +1124,12 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_p
 def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, parser_state, containing_func_logic):
 	out_dir = SYN.GET_OUTPUT_DIRECTORY(partially_complete_logic, implement=False)
 	# Get C code depending on function
+	#print "BUILD_LOGIC_AS_C_CODE"
 	#print "partially_complete_logic.func_name",partially_complete_logic.func_name
+	#print "partially_complete_logic.inst_name",partially_complete_logic.inst_name
+	#print "containing_func_logic.func_name",containing_func_logic.func_name
+	#print "containing_func_logic.inst_name",containing_func_logic.inst_name
+	#print "=================================================================="
 	if partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
 		# Get the c code
 		c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
@@ -1133,13 +1230,17 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 		prepend_text=""
 		logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
 		#logic = C_AST_NODE_TO_LOGIC(func_def,existing_logic, driven_wire_names, prepend_text, func_name_2_logic)
+		
+		#print "GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT", logic.func_name, logic.wire_drives
+		
 		func_name_2_logic[logic.func_name] = logic
 		func_name_2_logic[logic.func_name].inst_name = logic.func_name 
 	return func_name_2_logic
 	
 		
 # WHY CAN I NEVER REMEMBER DICT() IS NOT IMMUTABLE (AKA needs copy operator)
-	
+# BECAUSE YOU ARE A PIECE OF SHIT	
+
 # Returns list of logics
 def MERGE_LOGIC_LISTS(logics_a,logics_b):
 	# Mere logic items if same name
@@ -1915,6 +2016,9 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
 def C_TYPE_IS_ARRAY(c_type):
 	return "[" in c_type and c_type.endswith("]")
 	
+#def C_TYPE_IS_BUILT_IN(c_type):
+	
+#def C_TYPES_ARE_BUILT_IN(input_types):
 	
 
 	
@@ -2661,8 +2765,15 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 			
 	return rv
 	
+_C_AST_COORD_STR_cache = dict()
+print "Keep _C_AST_COORD_STR_cache?"
 def C_AST_COORD_STR(c_ast_node_cord):
-	c_ast_node_cord
+	global _C_AST_COORD_STR_cache
+	#if c_ast_node_cord in  _C_AST_COORD_STR_cache:
+	try:
+		return _C_AST_COORD_STR_cache[str(c_ast_node_cord)]
+	except:
+		pass
 	
 	file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)
 	# Get leaf name (just stem file name of file hierarcy)
@@ -2671,6 +2782,12 @@ def C_AST_COORD_STR(c_ast_node_cord):
 	#file_coord_str = file_coord_str.replace(":","_")
 	# Lose readability for sake of having DOTs mean struct ref in wire names
 	file_coord_str = file_coord_str.replace(".","_")
+	
+	
+	
+	_C_AST_COORD_STR_cache[str(c_ast_node_cord)] = file_coord_str
+	
+	
 	return file_coord_str
 
 
@@ -2877,20 +2994,20 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	prepend_text_false = ""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_false"+"/" # Line numbers should be enough?
 	driven_wire_names=[] 
 	#
-	parser_state_for_true = copy.copy(parser_state)
+	parser_state_for_true = copy.deepcopy(parser_state)
 	parser_state_for_true.existing_logic = rv
 	mux_true_port_name = c_ast_node.children()[1][0]
 	true_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iftrue, driven_wire_names, prepend_text_true, parser_state_for_true)
 	#
 	if len(c_ast_node.children()) >= 3:
 		# Do false branch
-		parser_state_for_false = copy.copy(parser_state)
+		parser_state_for_false = copy.deepcopy(parser_state)
 		parser_state_for_false.existing_logic = rv
 		mux_false_port_name = c_ast_node.children()[2][0]
 		false_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text_false, parser_state_for_false)
 	else:
 		# No false branch false logic if identical to existing logic
-		false_logic = copy.copy(parser_state.existing_logic)
+		false_logic = copy.deepcopy(parser_state.existing_logic)
 		mux_false_port_name = "iffalse" # Will this work?
 	
 	# Var names cant be mixed type per C spec
@@ -3001,14 +3118,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 
 			# Using each branches logic use id_or_structref logic to form read wire driving T/F ports
 			# TRUE
-			parser_state_for_true = copy.copy(parser_state)
+			parser_state_for_true = copy.deepcopy(parser_state)
 			parser_state_for_true.existing_logic = true_logic
 			true_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_true_connection_wire_name], "TRUE_INPUT_MUX_", parser_state_for_true)
 			# Merge in read
 			true_logic = true_logic.MERGE_COMB_LOGIC(true_read_logic)
 			
 			# FALSE
-			parser_state_for_false = copy.copy(parser_state)
+			parser_state_for_false = copy.deepcopy(parser_state)
 			parser_state_for_false.existing_logic = false_logic
 			false_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_false_connection_wire_name], "FALSE_INPUT_MUX_", parser_state_for_false)
 			# Merge in read
@@ -3689,6 +3806,9 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	if parse_body:
 		parser_state.existing_logic = rv
 		body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)
+		
+		#print "C_AST_FUNC_DEF_TO_LOGIC", rv.func_name, "body_logic.wire_drives",body_logic.wire_drives
+		
 		rv = body_logic.MERGE_COMB_LOGIC(rv)
 				
 	# Sanity check for return
@@ -3830,6 +3950,10 @@ def PARSE_FILE(top_level_func_name, c_file):
 			print "Using cached hierarchy elaboration for '",top_level_func_name,"'"
 			parser_state.LogicInstLookupTable = logic_lookup_table_cache
 		else:
+			
+			print "TEMP STOP BEFORE ELABORATE"
+			sys.exit(0)
+			
 			print "Elaborating hierarchy down to raw HDL logic..."	
 			parser_state.LogicInstLookupTable = RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(top_level_func_name, top_level_func_name, parser_state, unadjusted_logic_lookup_table_so_far, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
@@ -4050,7 +4174,7 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 	if logic_lookup_table_so_far is None:
 		new_logic_lookup_table_so_far = dict()
 	else:
-		new_logic_lookup_table_so_far = logic_lookup_table_so_far # copy.deepcopy(logic_lookup_table_so_far)
+		new_logic_lookup_table_so_far = logic_lookup_table_so_far 
 	
 	if unadjusted_logic_lookup_table_so_far is None:
 		unadjusted_logic_lookup_table_so_far = dict()
@@ -4068,10 +4192,10 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 	
 	# Set instance for thsi submodule in lookup table	
 	if (adjusted_containing_logic_inst_name,orig_logic_inst_name) in unadjusted_logic_lookup_table_so_far:
-		orig_inst_logic = copy.copy(unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_logic_inst_name)])
+		orig_inst_logic = copy.deepcopy(unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_logic_inst_name)])
 	elif orig_logic_func_name in func_name_2_logic:
 		# Logic parsed from C files
-		orig_func_logic = copy.copy(func_name_2_logic[orig_logic_func_name])
+		orig_func_logic = copy.deepcopy(func_name_2_logic[orig_logic_func_name])
 		# Create artificial inst logic with inst name from func arg
 		orig_inst_logic = orig_func_logic
 		orig_inst_logic.inst_name = orig_logic_inst_name	
@@ -4084,7 +4208,8 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 		adjusted_containing_logic_inst = new_logic_lookup_table_so_far[adjusted_containing_logic_inst_name]
 		containing_logic_func_name = adjusted_containing_logic_inst.func_name
 		if containing_logic_func_name in func_name_2_logic:
-			containing_func_logic = func_name_2_logic[containing_logic_func_name]		
+			containing_func_logic = func_name_2_logic[containing_logic_func_name]
+			#print "1 containing_func_logic.func_name",containing_func_logic.func_name 
 		
 		# If not found search func lookup table for containers with matching submodule instances
 		if containing_func_logic is None:
@@ -4100,6 +4225,7 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 							print 0/0
 							sys.exit(0)
 						containing_func_logic = func_logic
+						#print "2 containing_func_logic.func_name",containing_func_logic.func_name 
 		
 		# if not found search the logic lookup table
 		# Look up containing func logic for this submodule inst		
@@ -4110,19 +4236,33 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 				for unadjusted_submodule_inst in unadjusted_inst_logic.submodule_instances:
 					submodule_func_name = unadjusted_inst_logic.submodule_instances[unadjusted_submodule_inst]
 					if (unadjusted_submodule_inst == orig_logic_inst_name) and (submodule_func_name == orig_logic_func_name):
-						if not(unadjusted_containing_inst_logic is None):
-							print "1)new_logic_lookup_table_so_far ONly one containering logic here"
-							print "unadjusted_containing_inst_logic.inst_name",unadjusted_containing_inst_logic.inst_name
-							print "potential unadjusted_inst_logic.inst_name",unadjusted_inst_logic.inst_name
-							print "unadjusted_logic_lookup_table_so_far",unadjusted_logic_lookup_table_so_far
-							print 0/0
-							sys.exit(0)
+						if unadjusted_containing_inst_logic is not None:
+							#print "CURR: unadjusted_containing_inst_logic.inst_name",unadjusted_containing_inst_logic.inst_name
+							#print "MAYBE: potential unadjusted_inst_logic.inst_name",unadjusted_inst_logic.inst_name
+							#print "=="
+							if unadjusted_containing_inst_logic.inst_name != unadjusted_inst_logic.inst_name:
+								print "1)new_logic_lookup_table_so_far ONly one containering logic here"
+								print "unadjusted_inst_logic",unadjusted_inst_logic.inst_name
+								print "adjusted_containing_logic_inst",adjusted_containing_logic_inst.inst_name
+								print "unadjusted_submodule_inst",unadjusted_submodule_inst
+								print "submodule_func_name",submodule_func_name
+								print "CURR: unadjusted_containing_inst_logic.inst_name",unadjusted_containing_inst_logic.inst_name
+								print "MAYBE: potential unadjusted_inst_logic.inst_name",unadjusted_inst_logic.inst_name
+								#print "unadjusted_logic_lookup_table_so_far",unadjusted_logic_lookup_table_so_far
+								#print 0/0
+								sys.exit(0)
 						unadjusted_containing_inst_logic = unadjusted_inst_logic
 			
 			containing_func_logic = unadjusted_containing_inst_logic
+			#print "3 containing_func_logic.func_name",containing_func_logic.func_name 
 			
 		
-		if not(containing_func_logic is None):
+		if containing_func_logic is not None:
+			#print "FINAL containing_func_logic.func_name",containing_func_logic.func_name
+			#if ( "float_array_sum" in containing_func_logic.func_name) and (len(containing_func_logic.wire_drives) == 0):
+			#	print "FUCK!"
+			#	sys.exit(0)
+			
 			orig_inst_logic = BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic,new_inst_name_prepend_text, orig_logic_inst_name, parser_state)
 						
 		else:

@@ -1,30 +1,43 @@
-#include "eth_32.c"
-#include "ip_32.c"
-#include "udp_32.c"
 
-typedef struct the_array_t
+// Hacked up version of https://www.geeksforgeeks.org/c-program-multiply-two-matrices/
+
+#include "uintN_t.h"
+
+
+#define N 3
+#define float_array_sumN float_array_sum3
+#define iter_t uint2_t
+
+typedef struct an_array_t
 {
-	uint16_t a[3][3];
-} the_array_t;
+	float a[N][N];
+} an_array_t;
 
-// Increment everything by z
-the_array_t main(uint16_t x[3][3], uint16_t z)
+
+an_array_t main(float mat1[N][N], float mat2[N][N])
 {
-	the_array_t rv;
-	uint16_t y[3][3];
-
-	uint3_t i;
-	uint3_t j;
-	
-	for(i=0; i < 3; i = i+1)
-	{
-		for(j=0; j < 3; j = j+1)
-		{
-			y[i][j] = x[i][j] + z;
-		}
-	}
-	
-	rv.a = y; 
-	
-	return rv;
+	float res[N][N];
+    iter_t i;
+    iter_t j;
+    iter_t k;
+    
+    float k_res[N];
+    for (i = 0; i < N; i = i + 1)
+    {
+        for (j = 0; j < N; j = j + 1)
+        {
+            for (k = 0; k < N; k = k + 1)
+            {
+                 k_res[k] = mat1[i][k]*mat2[k][j];
+			}
+			// Accumulate k_res into res[i][j]
+			res[i][j] = float_array_sumN(k_res);
+        }
+    }
+    
+    an_array_t rv;
+    rv.a = res;
+    return rv;
 }
+
+

@@ -770,7 +770,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_
 				-- DOIGN SUB OP,  carry indicates -1
 				-- Sub signed values
 				write_pipe.intermediate := (others => '0'); -- Zero out for this stage
-				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed("0" & write_pipe.carry) );	
+				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.carry) );	
 	'''
 
 			text +=	'''
@@ -893,7 +893,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES
 				-- DOIGN SUB OP,  carry indicates -1
 				-- Sub signed values
 				write_pipe.intermediate := (others => '0'); -- Zero out for this stage
-				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed("0" & write_pipe.carry) );	
+				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.carry) );	
 	'''
 
 			text +=	'''
@@ -1120,11 +1120,11 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_
 			# No carry for stage 0
 			if stage == 0:
 				text += '''
-				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) );'''
+				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) );'''
 			else:
 				text += '''
-				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) );'''
-				
+				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) );'''
+			
 			text += '''
 				-- New carry is msb of intermediate
 				write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
@@ -1259,8 +1259,8 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_T
 
 				-- Adding unsigned values
 				write_pipe.intermediate := (others => '0'); -- Zero out for this stage
-				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) );	
-				--write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned("0" & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned("0" & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0))  );	
+				write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) );	
+				--write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0))  );	
 				--write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0)) + unsigned(write_pipe.carry) );
 				
 	'''			
@@ -1891,7 +1891,7 @@ def GET_BIT_CONCAT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.return_output := unsigned(std_logic_vector(x) & std_logic_vector(y));
+		write_pipe.return_output := unsigned(std_logic_vector(x)) & unsigned(std_logic_vector(y));
 
 '''
 

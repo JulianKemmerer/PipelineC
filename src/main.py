@@ -13,6 +13,10 @@ c_file = "main.c"
 top_level_func_name = "main"
 mhz=SYN.INF_MHZ # TEST 31.25
 
+print "OPTIMIZE AWAY CONSTANT IF and constant float mult by 1?"
+print "Be a real C compiler yo"
+print "Does const work in C? Use that for 'compile time' constant replacement?"
+
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 
