@@ -157,20 +157,20 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 				print 0/0
 				sys.exit(0)
 			else:
-				rv[key] = d2[key] # Dont need deepcopy or copy since is c_ast node?
+				rv[key] = d2[key] # Dont need deep copy or copy since is c_ast node?
 		else:
 			# Key only in d2
-			rv[key] = d2[key] # Dont need deepcopy or copy since is c_ast node?
+			rv[key] = d2[key] # Dont need deep copy or copy since is c_ast node?
 			
 	return rv
 	
-def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
+def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 	for key in d2:
-		if key in d1:
-			v1 = d1[key]
+		if key in self_d1:
+			v1 = self_d1[key]
 			v2 = d2[key]
 			if C_AST_COORD_STR(v1.coord) != C_AST_COORD_STR(v2.coord):
-				print "C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",d1,d2
+				print "C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",self_d1,d2
 				print "key", key
 				print "v1",C_AST_COORD_STR(v1.coord)
 				print "v2",C_AST_COORD_STR(v2.coord)
@@ -178,8 +178,9 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
 				sys.exit(0)
 	
 	# Do merge with dict methods
-	rv = copy.deepcopy(d1)
-	rv.update(copy.deepcopy(d2))
+	rv = self_d1
+	#rv.update(copy.deepcopy(d2))
+	rv.update(d2)
 	
 	return rv
 
@@ -207,13 +208,13 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 	return rv
 	
 	
-def LIST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
+def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 	for key in d2:
-		if key in d1:
-			v1 = d1[key]
+		if key in self_d1:
+			v1 = self_d1[key]
 			v2 = d2[key]
 			if str(v1) != str(v2):
-				print "List val dicts aren't unique:",d1,d2
+				print "List val dicts aren't unique:",self_d1,d2
 				print "key", key
 				print "v1",v1
 				print "v2",v2
@@ -222,21 +223,22 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE(d1,d2):
 				
 				
 	# Do merge with dict methods
-	rv = copy.deepcopy(d1)
-	rv.update(copy.deepcopy(d2))
+	rv = self_d1
+	#rv.update(copy.deepcopy(d2))
+	rv.update(d2)
 	
 	return rv
 
 
-def UNIQUE_KEY_DICT_MERGE(d1,d2):
+def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 	# Check that are unique
 	for key in d2:
 		#if key in d1:
 		try:
-			v1 = d1[key]
+			v1 = self_d1[key]
 			v2 = d2[key]
 			if v1 != v2:
-				print "Dicts aren't unique:",d1,d2
+				print "Dicts aren't unique:",self_d1,d2
 				print "key", key
 				print "v1",v1
 				print "v2",v2
@@ -246,8 +248,9 @@ def UNIQUE_KEY_DICT_MERGE(d1,d2):
 			pass
 				
 	# Do merge with dict methods
-	rv = copy.deepcopy(d1)
-	rv.update(copy.deepcopy(d2))
+	rv = self_d1
+	#rv.update(copy.deepcopy(d2))
+	rv.update(d2)
 	
 	return rv
 
@@ -275,16 +278,15 @@ def UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 			
 	return rv
 	
-def DICT_LIST_VALUE_MERGE(d1_arg,d2_arg):
-	d1 = d1_arg 
-	d2 = d2_arg 
-	rv = copy.deepcopy(d1)
+def DICT_LIST_VALUE_MERGE(self_d1,d2):
+	rv = self_d1
 	for key in d2:
-		if key in d1:
+		if key in self_d1:
 			# Result is union of two lists
-			rv[key] = LIST_UNION(d1[key],d2[key])
+			rv[key] = LIST_UNION(self_d1[key],d2[key])
 		else:
-			rv[key] = copy.deepcopy(d2[key])
+			#rv[key] = copy.deepcopy(d2[key])
+			rv[key] = d2[key]
 			
 	return rv   
 	
@@ -366,9 +368,9 @@ class Logic:
 		# My containing inst?
 		self.containing_inst = None
 	
+	# Modify self,
+	# Returns none
 	def INST_LOGIC_ADJUST_W_PREPEND(self, new_inst_name_prepend_text):
-		# Return logic
-		logic = copy.deepcopy(self)
 
 		# FUNC NAME STAYS SAME self.func_name=None #function, operation
 		
@@ -377,328 +379,329 @@ class Logic:
 		if self.inst_name == "main":
 			# Allow prepend if raw hdl
 			if new_inst_name_prepend_text == (RAW_HDL_PREFIX + "_"):
-				logic.inst_name = new_inst_name_prepend_text + self.inst_name
+				self.inst_name = new_inst_name_prepend_text + self.inst_name
 			elif new_inst_name_prepend_text != "":
 				print 'new_inst_name_prepend_text != ""', new_inst_name_prepend_text
 				sys.exit(0)
 			else:
 				# All good to ignore prepend
-				logic.inst_name = self.inst_name
+				self.inst_name = self.inst_name
 		else:
 			'''
 			# C built in has c ast coord already
-			if logic.is_c_built_in or (len(logic.submodule_instances) <= 0):
-				logic.inst_name = new_inst_name_prepend_text + self.inst_name 
+			if self.is_c_built_in or (len(self.submodule_instances) <= 0):
+				self.inst_name = new_inst_name_prepend_text + self.inst_name 
 			else:
-				logic.inst_name = new_inst_name_prepend_text + self.inst_name + "_" + C_AST_COORD_STR(c_ast_node_when_used.coord)
+				self.inst_name = new_inst_name_prepend_text + self.inst_name + "_" + C_AST_COORD_STR(c_ast_node_when_used.coord)
 			'''
-			logic.inst_name = new_inst_name_prepend_text + self.inst_name
+			self.inst_name = new_inst_name_prepend_text + self.inst_name
 			
 			#print "GET_INST_NAME_ADJUSTED_LOGIC"
-			#print "logic.func_name",logic.func_name
+			#print "self.func_name",self.func_name
 			#print "new_inst_name_prepend_text",new_inst_name_prepend_text
 			#print "self.inst_name ",self.inst_name 
 			#print "C_AST_COORD_STR", C_AST_COORD_STR(c_ast_node_when_used.coord)
 			#print ""
 			
 				
-		prepend_text = logic.inst_name + SUBMODULE_MARKER
+		prepend_text = self.inst_name + SUBMODULE_MARKER
 		
 		# Then do regular prepend
-		return logic.PREPEND_TEXT(prepend_text)
+		self.PREPEND_TEXT(prepend_text)
 		
-	def MERGE_COMB_LOGIC(self,logic_b):
-		logic_a = self
-		rv = Logic()
+		return None
 		
+	# Merges logic_b into self
+	# Returns none intentionally
+	def MERGE_COMB_LOGIC(self,logic_b):		
 		# Func name must match if set
-		if (logic_a.func_name is not None) and (logic_b.func_name is not None):
-			if logic_a.func_name != logic_b.func_name:
+		if (self.func_name is not None) and (logic_b.func_name is not None):
+			if self.func_name != logic_b.func_name:
 				print "Cannot merge comb logic with mismatching func names!"
-				print logic_a.func_name
+				print self.func_name
 				print logic_b.func_name
 			else:
-				rv.func_name = logic_a.func_name
+				self.func_name = self.func_name
 		# Otherwise use whichever is set
-		elif logic_a.func_name is not None:
-			rv.func_name = logic_a.func_name
+		elif self.func_name is not None:
+			self.func_name = self.func_name
 		else:
-			rv.func_name = logic_b.func_name
+			self.func_name = logic_b.func_name
 		
 		# Inst must match if set
-		if (logic_a.inst_name is not None) and (logic_b.inst_name is not None):
-			if logic_a.inst_name != logic_b.inst_name:
+		if (self.inst_name is not None) and (logic_b.inst_name is not None):
+			if self.inst_name != logic_b.inst_name:
 				print "Cannot merge comb logic with mismatching instance names!"
-				print logic_a.inst_name
+				print self.inst_name
 				print logic_b.inst_name
 			else:
-				rv.inst_name = logic_a.inst_name
+				self.inst_name = self.inst_name
 		# Otherwise use whichever is set
-		elif logic_a.inst_name is not None:
-			rv.inst_name = logic_a.inst_name
+		elif self.inst_name is not None:
+			self.inst_name = self.inst_name
 		else:
-			rv.inst_name = logic_b.inst_name
+			self.inst_name = logic_b.inst_name
 			
 		# C built in status must match if set
-		if (logic_a.is_c_built_in is not None) and (logic_b.is_c_built_in is not None):
-			if logic_a.is_c_built_in != logic_b.is_c_built_in:
+		if (self.is_c_built_in is not None) and (logic_b.is_c_built_in is not None):
+			if self.is_c_built_in != logic_b.is_c_built_in:
 				print "Cannot merge comb logic with mismatching is_c_built_in !"
-				print logic_a.inst_name, logic_a.is_c_built_in
+				print self.inst_name, self.is_c_built_in
 				print logic_b.inst_name, logic_b.is_c_built_in
 				sys.exit(0)
 			else:
-				rv.is_c_built_in = logic_a.is_c_built_in
+				self.is_c_built_in = self.is_c_built_in
 		# Otherwise use whichever is set
-		elif logic_a.is_c_built_in is not None:
-			rv.is_c_built_in = logic_a.is_c_built_in
+		elif self.is_c_built_in is not None:
+			self.is_c_built_in = self.is_c_built_in
 		else:
-			rv.is_c_built_in = logic_b.is_c_built_in
+			self.is_c_built_in = logic_b.is_c_built_in
 			
 		# Absorb true values of using globals
-		rv.uses_globals = logic_a.uses_globals or logic_b.uses_globals
+		self.uses_globals = self.uses_globals or logic_b.uses_globals
 		
 		# Merge lists
-		rv.wires = LIST_UNION(logic_a.wires,logic_b.wires)
-		rv.global_wires = LIST_UNION(logic_a.global_wires,logic_b.global_wires)
-		rv.variable_names = LIST_UNION(logic_a.variable_names,logic_b.variable_names)
+		self.wires = LIST_UNION(self.wires,logic_b.wires)
+		self.global_wires = LIST_UNION(self.global_wires,logic_b.global_wires)
+		self.variable_names = LIST_UNION(self.variable_names,logic_b.variable_names)
 		
 		# I/O order matters - check that
 		# If one is empty then thats fine
-		if len(logic_a.inputs) > 0 and len(logic_b.inputs) > 0:
+		if len(self.inputs) > 0 and len(logic_b.inputs) > 0:
 			# Check for equal
-			if logic_a.inputs != logic_b.inputs:
+			if self.inputs != logic_b.inputs:
 				print "Cannot merge comb logic with mismatching inputs !"
-				print logic_a.inst_name, logic_a.inputs
+				print self.inst_name, self.inputs
 				print logic_b.inst_name, logic_b.inputs
 				print 0/0
 				sys.exit(0)
 			else:
-				rv.inputs = logic_a.inputs[:]
+				self.inputs = self.inputs[:]
 		else:
 			# Default a
-			rv.inputs = logic_a.inputs[:]
-			if len(logic_a.inputs) <= 0:
-				rv.inputs = logic_b.inputs[:]
+			self.inputs = self.inputs[:]
+			if len(self.inputs) <= 0:
+				self.inputs = logic_b.inputs[:]
 		
-		if len(logic_a.outputs) > 0 and len(logic_b.outputs) > 0:
+		if len(self.outputs) > 0 and len(logic_b.outputs) > 0:
 			# Check for equal
-			if logic_a.outputs != logic_b.outputs:
+			if self.outputs != logic_b.outputs:
 				print "Cannot merge comb logic with mismatching outputs !"
-				print logic_a.inst_name, logic_a.outputs
+				print self.inst_name, self.outputs
 				print logic_b.inst_name, logic_b.outputs
 				sys.exit(0)
 			else:
-				rv.outputs = logic_a.outputs[:]
+				self.outputs = self.outputs[:]
 		else:
 			# Default a
-			rv.outputs = logic_a.outputs[:]
-			if len(logic_a.outputs) <= 0:
-				rv.outputs = logic_b.outputs[:]
+			self.outputs = self.outputs[:]
+			if len(self.outputs) <= 0:
+				self.outputs = logic_b.outputs[:]
 			
 		
 		# Merge dicts
-		rv.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(logic_a.wire_to_c_type,logic_b.wire_to_c_type)
-		rv.submodule_instances = UNIQUE_KEY_DICT_MERGE(logic_a.submodule_instances,logic_b.submodule_instances)	
-		rv.wire_driven_by = UNIQUE_KEY_DICT_MERGE(logic_a.wire_driven_by,logic_b.wire_driven_by)
+		self.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(self.wire_to_c_type,logic_b.wire_to_c_type)
+		self.submodule_instances = UNIQUE_KEY_DICT_MERGE(self.submodule_instances,logic_b.submodule_instances)	
+		self.wire_driven_by = UNIQUE_KEY_DICT_MERGE(self.wire_driven_by,logic_b.wire_driven_by)
 		
 		# WTF MERGE BUG?
-		lens = len(logic_a.wire_drives)+ len(logic_b.wire_drives)
-		rv.wire_drives = DICT_LIST_VALUE_MERGE(logic_a.wire_drives,logic_b.wire_drives)
-		if lens > 0 and len(rv.wire_drives) == 0:
-			print "logic_a.wire_drives",logic_a.wire_drives
+		lens = len(self.wire_drives)+ len(logic_b.wire_drives)
+		self.wire_drives = DICT_LIST_VALUE_MERGE(self.wire_drives,logic_b.wire_drives)
+		if lens > 0 and len(self.wire_drives) == 0:
+			print "self.wire_drives",self.wire_drives
 			print "logic_b.wire_drives",logic_b.wire_drives
 			print "Should have at least",lens, "entries..."
-			print "MERGE COMB rv.wire_drives",rv.wire_drives
+			print "MERGE COMB self.wire_drives",self.wire_drives
 			print "WTF"
 			sys.exit(0)
 		
 		# C ast node values wont be == , manual check with coord str
-		rv.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(logic_a.submodule_instance_to_c_ast_node,logic_b.submodule_instance_to_c_ast_node)
-		rv.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(logic_a.submodule_instance_to_input_port_names,logic_b.submodule_instance_to_input_port_names)
+		self.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_c_ast_node,logic_b.submodule_instance_to_c_ast_node)
+		self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_input_port_names,logic_b.submodule_instance_to_input_port_names)
 
 		
 		# Also for both wire drives and driven by, remove wire driving self:
 		# wire_driven_by
 		new_wire_driven_by = dict()
-		for driven_wire in rv.wire_driven_by:
+		for driven_wire in self.wire_driven_by:
 			# Filter out self driving
-			driving_wire = rv.wire_driven_by[driven_wire]
+			driving_wire = self.wire_driven_by[driven_wire]
 			if driving_wire != driven_wire:
 				new_wire_driven_by[driven_wire] = driving_wire
 		
 		#print "new_wire_driven_by",new_wire_driven_by
-		rv.wire_driven_by = new_wire_driven_by
+		self.wire_driven_by = new_wire_driven_by
 		
 		# wire_drives
 		new_wire_drives = dict()
-		for driving_wire in rv.wire_drives:
-			driven_wires = rv.wire_drives[driving_wire]
+		for driving_wire in self.wire_drives:
+			driven_wires = self.wire_drives[driving_wire]
 			new_driven_wires = []
 			for driven_wire in driven_wires:
 				if driven_wire != driving_wire:
 					new_driven_wires.append(driven_wire)	
 			new_wire_drives[driving_wire] = new_driven_wires
-		rv.wire_drives=new_wire_drives
+		self.wire_drives=new_wire_drives
 				
 		'''		
 		# If one node is null then use other
-		if logic_a.c_ast_node is None:
-			rv.c_ast_node = logic_b.c_ast_node
+		if self.c_ast_node is None:
+			self.c_ast_node = logic_b.c_ast_node
 		if logic_b.c_ast_node is None:
-			rv.c_ast_node = logic_a.c_ast_node
+			self.c_ast_node = self.c_ast_node
 		'''
 		# C ast must match if set
-		if (logic_a.c_ast_node is not None) and (logic_b.c_ast_node is not None):
+		if (self.c_ast_node is not None) and (logic_b.c_ast_node is not None):
 			# For now its the same c ast node if its the same coord
 			# If causes problems... abandon then
-			if C_AST_COORD_STR(logic_a.c_ast_node.coord) != C_AST_COORD_STR(logic_b.c_ast_node.coord):
+			if C_AST_COORD_STR(self.c_ast_node.coord) != C_AST_COORD_STR(logic_b.c_ast_node.coord):
 				print "Cannot merge comb logic with mismatching c_ast_node!"
-				print logic_a.func_name
+				print self.func_name
 				print logic_b.func_name
-				print logic_a.c_ast_node
+				print self.c_ast_node
 				print logic_b.c_ast_node
 				print 0/0
 				sys.exit(0)
 			else:
-				rv.c_ast_node = logic_a.c_ast_node
+				self.c_ast_node = self.c_ast_node
 		# Otherwise use whichever is set
-		elif logic_a.c_ast_node is not None:
-			rv.c_ast_node = logic_a.c_ast_node
+		elif self.c_ast_node is not None:
+			self.c_ast_node = self.c_ast_node
 		else:
-			rv.c_ast_node = logic_b.c_ast_node
+			self.c_ast_node = logic_b.c_ast_node
 		
 		
 		
 		# Only way this makes sense with MERGE_SEQUENTIAL_LOGIC
 		# is for dicts to be equal (checked python docs for eq syntax)
-		if logic_a.wire_aliases_over_time != logic_b.wire_aliases_over_time:
+		if self.wire_aliases_over_time != logic_b.wire_aliases_over_time:
 			# Only OK if one dict is completely empty
-			if not(logic_a.wire_aliases_over_time == dict() or logic_b.wire_aliases_over_time == dict()):		
+			if not(self.wire_aliases_over_time == dict() or logic_b.wire_aliases_over_time == dict()):		
 				print "Aliases over time do not match in MERGE_COMB_LOGIC!"
-				print logic_a.wire_aliases_over_time
+				print self.wire_aliases_over_time
 				print logic_b.wire_aliases_over_time
 				sys.exit(0)
-		rv.wire_aliases_over_time = copy.deepcopy(logic_a.wire_aliases_over_time)
-		if logic_a.wire_aliases_over_time == dict():
-			rv.wire_aliases_over_time = copy.deepcopy(logic_b.wire_aliases_over_time)
+
+		if self.wire_aliases_over_time == dict():
+			self.wire_aliases_over_time = logic_b.wire_aliases_over_time
 
 		# Only one orig wire name per alias
-		rv.alias_to_orig_var_name = UNIQUE_KEY_DICT_MERGE(logic_a.alias_to_orig_var_name,logic_b.alias_to_orig_var_name)
-		rv.alias_to_ref_toks = UNIQUE_KEY_DICT_MERGE(logic_a.alias_to_ref_toks,logic_b.alias_to_ref_toks) 
+		self.alias_to_orig_var_name = UNIQUE_KEY_DICT_MERGE(self.alias_to_orig_var_name,logic_b.alias_to_orig_var_name)
+		self.alias_to_ref_toks = UNIQUE_KEY_DICT_MERGE(self.alias_to_ref_toks,logic_b.alias_to_ref_toks) 
 		
 		# Code text keep whichever is set
-		if (logic_a.c_code_text is not None) and (logic_b.c_code_text is not None):
-			if logic_a.c_code_text != logic_b.c_code_text:
+		if (self.c_code_text is not None) and (logic_b.c_code_text is not None):
+			if self.c_code_text != logic_b.c_code_text:
 				print "Cannot merge comb logic with mismatching c_code_text!"
-				print logic_a.c_code_text
+				print self.c_code_text
 				print logic_b.c_code_text
 			else:
-				rv.c_code_text = logic_a.c_code_text
+				self.c_code_text = self.c_code_text
 		# Otherwise use whichever is set
-		elif logic_a.c_code_text is not None:
-			rv.c_code_text = logic_a.c_code_text
+		elif self.c_code_text is not None:
+			self.c_code_text = self.c_code_text
 		else:
-			rv.c_code_text = logic_b.c_code_text
+			self.c_code_text = logic_b.c_code_text
 		
-		return rv
-		
+		return None
+			
+	
 	# Function to merge logic with implied execution order
-	def MERGE_SEQ_LOGIC(self, second_logic):
-		first_logic = self
-		rv = Logic()
-		
+	# Merges with self
+	# Intentionally returns None
+	def MERGE_SEQ_LOGIC(self, second_logic):		
 		#print "===="
-		#print "first_logic.wire_drives", first_logic.wire_drives 
-		#print "first_logic.wire_driven_by", first_logic.wire_driven_by 
+		#print "self.wire_drives", self.wire_drives 
+		#print "self.wire_driven_by", self.wire_driven_by 
 		#print "second_logic.wire_drives", second_logic.wire_drives 
 		#print "second_logic.wire_driven_by", second_logic.wire_driven_by 
 		
 		# Func name must match if set
-		if (first_logic.func_name is not None) and (second_logic.func_name is not None):
-			if first_logic.func_name != second_logic.func_name:
+		if (self.func_name is not None) and (second_logic.func_name is not None):
+			if self.func_name != second_logic.func_name:
 				print "Cannot merge comb logic with mismatching func names!"
-				print first_logic.func_name
+				print self.func_name
 				print second_logic.func_name
 		# Otherwise use whichever is set
-		if first_logic.func_name is not None:
-			rv.func_name = first_logic.func_name
+		if self.func_name is not None:
+			self.func_name = self.func_name
 		else:
-			rv.func_name = second_logic.func_name
+			self.func_name = second_logic.func_name
 		
 		# Inst must match if set
-		if (first_logic.inst_name is not None) and (second_logic.inst_name is not None):
-			if first_logic.inst_name != second_logic.inst_name:
+		if (self.inst_name is not None) and (second_logic.inst_name is not None):
+			if self.inst_name != second_logic.inst_name:
 				print "Cannot merge comb logic with mismatching instance names!"
-				print first_logic.inst_name
+				print self.inst_name
 				print second_logic.inst_name
 		# Otherwise use whichever is set
-		if first_logic.inst_name is not None:
-			rv.inst_name = first_logic.inst_name
+		if self.inst_name is not None:
+			self.inst_name = self.inst_name
 		else:
-			rv.inst_name = second_logic.inst_name	
+			self.inst_name = second_logic.inst_name	
 		
 		# Merge lists
-		rv.wires = LIST_UNION(first_logic.wires,second_logic.wires)
-		rv.global_wires = LIST_UNION(first_logic.global_wires,second_logic.global_wires)
-		rv.variable_names = LIST_UNION(first_logic.variable_names,second_logic.variable_names)
+		self.wires = LIST_UNION(self.wires,second_logic.wires)
+		self.global_wires = LIST_UNION(self.global_wires,second_logic.global_wires)
+		self.variable_names = LIST_UNION(self.variable_names,second_logic.variable_names)
 		
 		# Absorb true values of using globals
-		rv.uses_globals = first_logic.uses_globals or second_logic.uses_globals
+		self.uses_globals = self.uses_globals or second_logic.uses_globals
 		
 		# I/O order matters - check that
 		# If one is empty then thats fine
-		if len(first_logic.inputs) > 0 and len(second_logic.inputs) > 0:
+		if len(self.inputs) > 0 and len(second_logic.inputs) > 0:
 			# Check for equal
-			if first_logic.inputs != second_logic.inputs:
+			if self.inputs != second_logic.inputs:
 				print "Cannot merge seq logic with mismatching inputs !"
-				print first_logic.inst_name, first_logic.inputs
+				print self.inst_name, self.inputs
 				print second_logic.inst_name, second_logic.inputs
 				sys.exit(0)
 			else:
-				rv.inputs = first_logic.inputs[:]
+				self.inputs = self.inputs[:]
 		else:
-			# Default first_logic
-			rv.inputs = first_logic.inputs
-			if len(first_logic.inputs) <= 0:
-				rv.outputs = second_logic.inputs[:]
+			# Default self
+			self.inputs = self.inputs
+			if len(self.inputs) <= 0:
+				self.outputs = second_logic.inputs[:]
 		
-		if len(first_logic.outputs) > 0 and len(second_logic.outputs) > 0:
+		if len(self.outputs) > 0 and len(second_logic.outputs) > 0:
 			# Check for equal
-			if first_logic.outputs != second_logic.outputs:
+			if self.outputs != second_logic.outputs:
 				print "Cannot merge seq logic with mismatching outputs !"
-				print first_logic.inst_name, first_logic.outputs
+				print self.inst_name, self.outputs
 				print second_logic.inst_name, second_logic.outputs
 				sys.exit(0)
 			else:
-				rv.outputs = first_logic.outputs[:]
+				self.outputs = self.outputs[:]
 		else:
-			# Default first_logic
-			rv.outputs = first_logic.outputs
-			if len(first_logic.outputs) <= 0:
-				rv.outputs = second_logic.outputs[:]
+			# Default self
+			self.outputs = self.outputs
+			if len(self.outputs) <= 0:
+				self.outputs = second_logic.outputs[:]
 		
 		
 		
-		rv.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(first_logic.wire_to_c_type,second_logic.wire_to_c_type)
+		self.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(self.wire_to_c_type,second_logic.wire_to_c_type)
 		
 		# Merge dict
-		rv.submodule_instances = UNIQUE_KEY_DICT_MERGE(first_logic.submodule_instances,second_logic.submodule_instances)
-		rv.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(first_logic.submodule_instance_to_c_ast_node,second_logic.submodule_instance_to_c_ast_node)
-		rv.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(first_logic.submodule_instance_to_input_port_names,second_logic.submodule_instance_to_input_port_names)
+		self.submodule_instances = UNIQUE_KEY_DICT_MERGE(self.submodule_instances,second_logic.submodule_instances)
+		self.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_c_ast_node,second_logic.submodule_instance_to_c_ast_node)
+		self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_input_port_names,second_logic.submodule_instance_to_input_port_names)
 		
 		
 		# Driving wires need to reflect over time
 		# Last alias from first logic replaces original wire name in second logic
 		# self.wire_drives = dict() # wire_name -> [driven,wire,names]
-		for orig_var in first_logic.wire_aliases_over_time:
+		for orig_var in self.wire_aliases_over_time:
 			# And the var drives second_logic 
 			if orig_var in second_logic.wire_drives:
 				# First logic has aliases for orig var
 				# Second logic has record of the orig var driving things
 				# Both first and second logic should have same driven wies
 				first_driven_wires = []
-				if orig_var in first_logic.wire_drives:
-					first_driven_wires = first_logic.wire_drives[orig_var]
+				if orig_var in self.wire_drives:
+					first_driven_wires = self.wire_drives[orig_var]
 				second_driven_wires = []
 				if orig_var in second_logic.wire_drives:
 					second_driven_wires = second_logic.wire_drives[orig_var]
@@ -720,18 +723,18 @@ class Logic:
 								#print 0/0
 								sys.exit(0)
 						# Got match, first is subset of second, update first to match second
-						first_logic.wire_drives[orig_var] = copy.deepcopy(second_driven_wires)
+						self.wire_drives[orig_var] = second_driven_wires
 						for second_driven_wire in second_driven_wires:
-							first_logic.wire_driven_by[second_driven_wire] = second_logic.wire_driven_by[second_driven_wire]
+							self.wire_driven_by[second_driven_wire] = second_logic.wire_driven_by[second_driven_wire]
 						
 					else:
 						# First has same or more, cant match second at this point
 						print "orig_var",orig_var
-						aliases = first_logic.wire_aliases_over_time[orig_var]
+						aliases = self.wire_aliases_over_time[orig_var]
 						print "first aliases",aliases
 						last_alias = aliases[len(aliases)-1]
 						print "first logic last_alias",last_alias
-						print "first_logic.wire_drives[orig_var]",first_driven_wires
+						print "self.wire_drives[orig_var]",first_driven_wires
 						print "second_logic.wire_drives[orig_var]",second_driven_wires
 						# Get the last alias for that var from first logic
 						print "second aliases", second_logic.wire_aliases_over_time[orig_var]
@@ -756,22 +759,22 @@ class Logic:
 		# should error out in normal merge below
 		
 		# If one node is null then use other
-		if first_logic.c_ast_node is None:
-			rv.c_ast_node = second_logic.c_ast_node
+		if self.c_ast_node is None:
+			self.c_ast_node = second_logic.c_ast_node
 		if second_logic.c_ast_node is None:
-			rv.c_ast_node = first_logic.c_ast_node
+			self.c_ast_node = self.c_ast_node
 		
 		# wire_aliases_over_time	
 		# Do first+second first
 		# If first logic has aliases over time
-		for var_name in first_logic.wire_aliases_over_time:
+		for var_name in self.wire_aliases_over_time:
 			if var_name in second_logic.wire_aliases_over_time:
 				# And so does second
 				# Merged value is first plus second
-				first = first_logic.wire_aliases_over_time[var_name]
+				first = self.wire_aliases_over_time[var_name]
 				second = second_logic.wire_aliases_over_time[var_name]
 				# Start with including first
-				rv.wire_aliases_over_time[var_name] = first[:]
+				self.wire_aliases_over_time[var_name] = first[:]
 				
 				# Check that the aliases over time are equal 
 				# in the period of time they share (the first logic)
@@ -785,63 +788,66 @@ class Logic:
 				
 				# Equal in shared time so only append not shared part of second
 				for i in range(len(first), len(second)):
-					rv.wire_aliases_over_time[var_name].append(second[i])
-				#print "rv.wire_aliases_over_time",rv.wire_aliases_over_time
+					self.wire_aliases_over_time[var_name].append(second[i])
+				#print "self.wire_aliases_over_time",self.wire_aliases_over_time
 					
 			else:
 				# First only alias (second does not have alias)
 				# Merged value is first only
-				rv.wire_aliases_over_time[var_name] = first_logic.wire_aliases_over_time[var_name][:]
+				self.wire_aliases_over_time[var_name] = self.wire_aliases_over_time[var_name][:]
 		# Then include wire_aliases_over_time ONLY from second logic
 		for var_name in second_logic.wire_aliases_over_time:
 			# And first logic does not
-			if not(var_name in first_logic.wire_aliases_over_time):
+			if not(var_name in self.wire_aliases_over_time):
 				# Merged value is just from second logic
 				second = second_logic.wire_aliases_over_time[var_name]
-				rv.wire_aliases_over_time[var_name] = second[:]
+				self.wire_aliases_over_time[var_name] = second[:]
 		
 		# To not error in normal MERGE_LOGIC below, first and second logic must have same 
 		# resulting wire_aliases_over_time
-		modified_first_logic = copy.deepcopy(first_logic)
-		modified_second_logic = copy.deepcopy(second_logic)
-		modified_first_logic.wire_aliases_over_time = rv.wire_aliases_over_time
-		modified_second_logic.wire_aliases_over_time = rv.wire_aliases_over_time
+		#modified_first_logic = copy.deepcopy(self)
+		
+		#modified_second_logic = copy.deepcopy(second_logic) 
+		modified_second_logic = second_logic
+		
+		#modified_first_logic.wire_aliases_over_time = self.wire_aliases_over_time
+		modified_second_logic.wire_aliases_over_time = self.wire_aliases_over_time
 		
 		# orig_wire_name Only one orig wire name per alias, handled in MERGE_LOGIC
 		
 		
-		#print "PRE_COMB first_logic.wire_drives", modified_first_logic.wire_drives 
-		#print "first_logic.wire_driven_by", modified_first_logic.wire_driven_by 
+		#print "PRE_COMB self.wire_drives", modified_first_logic.wire_drives 
+		#print "self.wire_driven_by", modified_first_logic.wire_driven_by 
 		#print "second_logic.wire_drives", modified_second_logic.wire_drives 
 		#print "second_logic.wire_driven_by", modified_second_logic.wire_driven_by 
 		
 		
 		
 		# Then merge logic as normal
-		tmp = modified_first_logic.MERGE_COMB_LOGIC(modified_second_logic)
+		self.MERGE_COMB_LOGIC(modified_second_logic)
 		
 		#print "MID_COMB tmp.wire_drives", tmp.wire_drives 
 		#print "tmp.wire_driven_by", tmp.wire_driven_by 
 		
-		rv = rv.MERGE_COMB_LOGIC(tmp)
+		#self.MERGE_COMB_LOGIC(modified_first_logic)
 		
 		
-		#print "POS_COMB rv.wire_drives", rv.wire_drives 
-		#print "rv.wire_driven_by", rv.wire_driven_by 
+		#print "POS_COMB self.wire_drives", self.wire_drives 
+		#print "self.wire_driven_by", self.wire_driven_by 
 		
-		return rv	
+		return None
 			
-			
+	# Modify self
+	# Return None
 	def PREPEND_TEXT(self, prepend_text):
-		logic = copy.deepcopy(self)
-		logic.variable_names = STR_LIST_PREPEND(self.variable_names, prepend_text) #   # List of original variable names
-		logic.wires = STR_LIST_PREPEND(self.wires, prepend_text) # =[]  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
-		logic.inputs = STR_LIST_PREPEND(self.inputs, prepend_text) # =[] #["a","b"]
-		logic.outputs = STR_LIST_PREPEND(self.outputs, prepend_text) # =[] #["return"]
-		logic.global_wires = STR_LIST_PREPEND(self.global_wires, prepend_text)
-		logic.submodule_instances = STR_DICT_KEY_PREPREND(self.submodule_instances, prepend_text) #  = dict() # instance name -> logic func_name
-		logic.submodule_instance_to_c_ast_node = STR_DICT_KEY_PREPREND(self.submodule_instance_to_c_ast_node, prepend_text) #  = dict() # Mostly for c built in C functions
-		logic.submodule_instance_to_input_port_names = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.submodule_instance_to_input_port_names, prepend_text)
+		self.variable_names = STR_LIST_PREPEND(self.variable_names, prepend_text) #   # List of original variable names
+		self.wires = STR_LIST_PREPEND(self.wires, prepend_text) # =[]  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
+		self.inputs = STR_LIST_PREPEND(self.inputs, prepend_text) # =[] #["a","b"]
+		self.outputs = STR_LIST_PREPEND(self.outputs, prepend_text) # =[] #["return"]
+		self.global_wires = STR_LIST_PREPEND(self.global_wires, prepend_text)
+		self.submodule_instances = STR_DICT_KEY_PREPREND(self.submodule_instances, prepend_text) #  = dict() # instance name -> self func_name
+		self.submodule_instance_to_c_ast_node = STR_DICT_KEY_PREPREND(self.submodule_instance_to_c_ast_node, prepend_text) #  = dict() # Mostly for c built in C functions
+		self.submodule_instance_to_input_port_names = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.submodule_instance_to_input_port_names, prepend_text)
 		# self.c_ast_node = None
 	
 		# Python graph example was dict() of strings so this
@@ -850,26 +856,26 @@ class Logic:
 		# Wire names with a dot means sub module connection
 		# func0.a  is a port on the func0 instance
 		# Connections are given as two lists "drives" and "driven by"
-		logic.wire_drives = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_drives, prepend_text) #  = dict() # wire_name -> [driven,wire,names]
-		logic.wire_driven_by = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_driven_by, prepend_text) #  = dict() # wire_name -> driving wire
+		self.wire_drives = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_drives, prepend_text) #  = dict() # wire_name -> [driven,wire,names]
+		self.wire_driven_by = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_driven_by, prepend_text) #  = dict() # wire_name -> driving wire
 		
-		# To keep track of C execution over time in logic graph,
+		# To keep track of C execution over time in self graph,
 		# each assignment assigns to a renamed variable, renamed
 		# variables keep execution order
 		# Need to keep dicts for variable names
-		logic.wire_aliases_over_time = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_aliases_over_time, prepend_text) #  = dict() # orig var name -> [list,of,renamed,wire,names] # Further in list is further in time
-		logic.alias_to_orig_var_name = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.alias_to_orig_var_name, prepend_text) #  = dict() # alias -> orig var name
-		logic.alias_to_ref_toks = STR_DICT_KEY_PREPREND(self.alias_to_ref_toks, prepend_text) 
+		self.wire_aliases_over_time = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.wire_aliases_over_time, prepend_text) #  = dict() # orig var name -> [list,of,renamed,wire,names] # Further in list is further in time
+		self.alias_to_orig_var_name = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.alias_to_orig_var_name, prepend_text) #  = dict() # alias -> orig var name
+		self.alias_to_ref_toks = STR_DICT_KEY_PREPREND(self.alias_to_ref_toks, prepend_text) 
 		
 		# Need to look up types by wire name
-		logic.wire_to_c_type = STR_DICT_KEY_PREPREND(self.wire_to_c_type, prepend_text) #  = dict() # wire_to_c_type[wire_name] -> c_type_str
+		self.wire_to_c_type = STR_DICT_KEY_PREPREND(self.wire_to_c_type, prepend_text) #  = dict() # wire_to_c_type[wire_name] -> c_type_str
 		
-		# For timing, levels of logic
+		# For timing, levels of self
 		# this is populated by vendor tool
 		#self.total_logic_levels=None
 		
 		
-		return logic
+		return None
 		
 		
 			
@@ -995,6 +1001,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_p
 	submodule_logic = Logic()
 	submodule_logic.is_c_built_in = True
 	# Look up logic name for the submodule instance
+	#print "containing_func_logic.func_name",containing_func_logic.func_name
 	#print "containing_func_logic.submodule_instances",containing_func_logic.submodule_instances
 	submodule_logic_name = containing_func_logic.submodule_instances[submodule_inst_name]
 	#print "submodule_inst_name",submodule_inst_name
@@ -1176,7 +1183,7 @@ def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, 
 	FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(c_code_text, fake_filename, parser_state, parse_body = True)
 	
 	# Get the other partial logic if it exists
-	if not(func_name in FuncName2Logic):
+	if not(func_name in FuncName2Logic ):
 		print "I cant find func name",func_name,"in the C code so far"
 		print "c_code_text"
 		print c_code_text
@@ -1185,7 +1192,7 @@ def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, 
 		print sw_func_name_2_logic
 		print "CHECK CODE PARSING autogenerated stuff?"
 		sys.exit(0)
-	other_partial_logic = FuncName2Logic[func_name]
+	other_partial_logic = FuncName2Logic [func_name]
 	
 	#print "partially_complete_logic.func_name",partially_complete_logic.func_name
 	#print "partially_complete_logic.inst_name",partially_complete_logic.inst_name
@@ -1209,18 +1216,19 @@ def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, 
 	# Combine two partial logics
 	#print "partially_complete_logic.c_ast_node.coord", partially_complete_logic.c_ast_node.coord
 	#print "other_partial_logic.c_ast_node.coord", other_partial_logic.c_ast_node.coord
-	merged_logic = partially_complete_logic.MERGE_COMB_LOGIC(other_partial_logic)
+	partially_complete_logic.MERGE_COMB_LOGIC(other_partial_logic)
 	#print "merged_logic.c_ast_node.coord", merged_logic.c_ast_node.coord
 	
 	#print "merged_logic.inst_name", merged_logic.inst_name
 	#print "merged_logic.func_name", merged_logic.func_name
 	
-	return merged_logic
+	return partially_complete_logic
 		
 	
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parser_state, parse_body):
 	# Build function name to logic from func defs from files
-	func_name_2_logic = copy.deepcopy(parser_state.FuncName2Logic)
+	func_name_2_logic = copy.deepcopy(parser_state.FuncName2Logic) #copy.deepcopy(parser_state.FuncName2Logic)   #### Uh need this copy so bit manip/math funcs not directly in C text are accumulated over time wtf? TODO: Fix 
+	#func_name_2_logic = dict()
 	
 	func_defs = GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename)
 	for func_def in func_defs:
@@ -1241,6 +1249,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 # WHY CAN I NEVER REMEMBER DICT() IS NOT IMMUTABLE (AKA needs copy operator)
 # BECAUSE YOU ARE A PIECE OF SHIT	
 
+'''
 # Returns list of logics
 def MERGE_LOGIC_LISTS(logics_a,logics_b):
 	# Mere logic items if same name
@@ -1250,27 +1259,27 @@ def MERGE_LOGIC_LISTS(logics_a,logics_b):
 	both_lists = logics_a + logics_b
 	
 	for logic in both_lists:
-		logic_into_table = None
+		# Put this logic into the table
+		logic_into_table = logic
+		# Merge with something already in table
 		if logic.name in logic_lookup_table:
 			logic_from_table = logic_lookup_table[logic.name]
-			logic_into_table = logic.MERGE_COMB_LOGIC(logic_from_table)
-		else:
-			logic_into_table = logic
+			logic_into_table.MERGE_COMB_LOGIC(logic_from_table)
 			
-		if not(logic_into_table is None):
-			logic_lookup_table[logic.name] = logic_into_table
+		logic_lookup_table[logic.name] = logic_into_table
 			
 	return logic_lookup_table.values()
-	
+'''
 
 # Node needs context for variable renaming over time, can give existing logic
 def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
-	func_name_2_logic = parser_state.FuncName2Logic
+	#func_name_2_logic = parser_state.FuncName2Logic
 	
-	rv = Logic()
-	existing_logic_copy = Logic()
-	if parser_state.existing_logic is not None:
-		existing_logic_copy = rv.MERGE_COMB_LOGIC(parser_state.existing_logic)
+	#rv = Logic()
+	
+	#existing_logic_copy = Logic()
+	#if parser_state.existing_logic is not None:
+	#	existing_logic_copy = rv.MERGE_COMB_LOGIC(parser_state.existing_logic)
 	
 	# Cover logic as far up in c ast tree as possible
 	# Each node will have function to deal with node type:
@@ -1322,10 +1331,11 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 		print "driven_wire_names=",driven_wire_names
 		sys.exit(0)
 		
-	# Update parser state since merged in exsiting logic earlier
-	parser_state.existing_logic = rv
+	
+	## Update parser state since merged in exsiting logic earlier
+	#parser_state.existing_logic = rv
 		
-	return rv
+	#return rv
 	
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 	# Check for double return
@@ -1355,7 +1365,7 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 		ref_toks = [global_wire]
 		connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [global_wire], prepend_text, parser_state)
 		#connect_logic = READ_ORIG_WIRE_LOGIC(global_wire, [global_wire], c_ast_return, prepend_text, parser_state)
-		return_logic = return_logic.MERGE_COMB_LOGIC(connect_logic)
+		return_logic.MERGE_COMB_LOGIC(connect_logic)
 	
 	
 	parser_state.existing_logic = return_logic
@@ -1496,7 +1506,7 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 	
 	rv = Logic()
 	if existing_logic is not None:
-		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+		rv.MERGE_COMB_LOGIC(existing_logic)
 	# BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
 	# BUT LEFT SIDE MUST RESULT IN VARIABLE ADDRESS / wire?
 	#^^^^^^^^^^^^^^^^^
@@ -1523,7 +1533,7 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 	# Do constant number RHS as driver 
 	wire_name = CONST_PREFIX + str(rhs) + "_" + C_AST_COORD_STR(c_ast_node.coord)
 	const_connect_logic = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
-	rv = rv.MERGE_COMB_LOGIC(const_connect_logic)
+	rv.MERGE_COMB_LOGIC(const_connect_logic)
 	rv.wire_to_c_type[wire_name]=lhs_c_type
 
 
@@ -1598,7 +1608,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	
 	rv = Logic()
 	if existing_logic is not None:
-		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+		rv = existing_logic
 	# BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
 	# BUT LEFT SIDE MUST RESULT IN VARIABLE ADDRESS / wire?
 	#^^^^^^^^^^^^^^^^^
@@ -1664,7 +1674,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 
 	
 	# Merge existing and rhs logic
-	rv = rv.MERGE_SEQ_LOGIC(rhs_to_lhs_logic)	
+	rv.MERGE_SEQ_LOGIC(rhs_to_lhs_logic)	
 
 	# Add alias to list in existing logic
 	existing_aliases = []
@@ -2417,7 +2427,8 @@ def GET_SIMPLE_CONNECT_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepen
 	if not(existing_logic is None):
 		first_logic = existing_logic
 		second_logic = connect_logic
-		seq_merged_logic = first_logic.MERGE_SEQ_LOGIC(second_logic)
+		first_logic.MERGE_SEQ_LOGIC(second_logic)
+		seq_merged_logic = first_logic
 
 		# Look up that type and make sure if the driven wire names have types that they match	
 		#print c_ast_id.coord
@@ -2547,7 +2558,7 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
 	wire_name =  CONST_PREFIX + str(value) + "$" + C_AST_COORD_STR(c_ast_node.coord)
 	rv = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
 	
-	rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	rv.MERGE_COMB_LOGIC(existing_logic)
 	
 
 	### FUCK CAN'T DO ENUM TYPE CHECKING SINCE OPERATORS IMPLEMENTED AS unsigned compare (not num type compare, for pipelining...)
@@ -2617,7 +2628,7 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_s
 	wire_name =  CONST_PREFIX + str(value) + "_" + C_AST_COORD_STR(c_ast_node.coord)
 	rv = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
 	
-	rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	rv.MERGE_COMB_LOGIC(existing_logic)
 	
 	# Use type of driven wire if available
 	c_type_str = None
@@ -2641,7 +2652,7 @@ def C_AST_ARRAYDECL_TO_LOGIC(c_ast_array_decl, prepend_text, parser_state):
 	# All we need is wire name right now
 	rv = Logic()
 	if not(existing_logic is None):
-		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+		rv = existing_logic
 	
 	#c_ast_array_decl.show()
 	name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl)
@@ -2692,7 +2703,7 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
 	# All we need is wire name right now
 	rv = Logic()
 	if not(existing_logic is None):
-		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+		rv = existing_logic
 	
 	# Dont use prepend text for decl since cant decl twice?
 	# TODO check this if it does work and I forget about it
@@ -2734,7 +2745,7 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 	# Assumption: Compound logic block items imply execution order
 	rv = Logic()
 	if existing_logic is not None:
-		rv = rv.MERGE_COMB_LOGIC(existing_logic)
+		rv = existing_logic
 		
 	if not(c_ast_compound.block_items is None):
 		for block_item in c_ast_compound.block_items:
@@ -2752,7 +2763,8 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 			#print "PRE SEQ MERGE rv.wire_drives", rv.wire_drives 
 			#print "PRE SEQ MERGE rv.wire_driven_by", rv.wire_driven_by 
 			
-			rv = prev_logic.MERGE_SEQ_LOGIC(next_logic)
+			prev_logic.MERGE_SEQ_LOGIC(next_logic)
+			rv = prev_logic
 			
 			# Update parser state since merged in exsiting logic
 			parser_state.existing_logic = rv
@@ -2916,8 +2928,7 @@ def GET_FOR_LOOP_VAR_AND_RANGE(c_ast_for, parser_state):
 	
 def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 	existing_logic = parser_state.existing_logic
-	rv = Logic()
-	rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	rv = existing_logic
 	
 	# Do init first
 	#init_logic = C_AST_NODE_TO_LOGIC(c_ast_node.init, [], prepend_text, parser_state)
@@ -2940,10 +2951,10 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 		# Like an assignment
 		loop_prepend_text = prepend_text + "FOR_" + loop_var + "_" + str(i).replace("-","neg") + "_"
 		iter_assign_logic = FAKE_ASSIGNMENT_TO_LOGIC(loop_var, i, c_ast_node, driven_wire_names, loop_prepend_text, parser_state)
-		rv = rv.MERGE_SEQ_LOGIC(iter_assign_logic)
+		rv.MERGE_SEQ_LOGIC(iter_assign_logic)
 		# Do the statement
 		statement_logic = C_AST_NODE_TO_LOGIC(c_ast_node.stmt, [], loop_prepend_text, parser_state)
-		rv = rv.MERGE_SEQ_LOGIC(statement_logic)
+		rv.MERGE_SEQ_LOGIC(statement_logic)
 		
 	
 	# Done?
@@ -2957,8 +2968,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	
 	# Each if is just an IF ELSE (no explicit logic for "else if")
 	# If logic is MUX with SEL, TRUE, and FALSE logic connected
-	rv = Logic()
-	rv = rv.MERGE_COMB_LOGIC(existing_logic)
+	rv = existing_logic
 		
 	# One submodule MUX instance per variable contains in the if at this location
 	# Name comes from location in file
@@ -2983,7 +2993,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	cond_logic = C_AST_NODE_TO_LOGIC(c_ast_node.cond, [mux_intermediate_cond_wire_wo_var_name], prepend_text, parser_state)
 	first = rv
 	second = cond_logic
-	rv = first.MERGE_SEQ_LOGIC(second)
+	first.MERGE_SEQ_LOGIC(second)
+	rv = first
 	parser_state.existing_logic = rv
 	
 	
@@ -2994,8 +3005,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	prepend_text_false = ""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_false"+"/" # Line numbers should be enough?
 	driven_wire_names=[] 
 	#
-	parser_state_for_true = copy.deepcopy(parser_state)
-	parser_state_for_true.existing_logic = rv
+	parser_state_for_true = copy.deepcopy(parser_state) #copy.copy(parser_state)
+	parser_state_for_true.existing_logic = rv; #copy.deepcopy(rv)
 	mux_true_port_name = c_ast_node.children()[1][0]
 	true_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iftrue, driven_wire_names, prepend_text_true, parser_state_for_true)
 	#
@@ -3007,7 +3018,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 		false_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text_false, parser_state_for_false)
 	else:
 		# No false branch false logic if identical to existing logic
-		false_logic = copy.deepcopy(parser_state.existing_logic)
+		false_logic = copy.deepcopy(parser_state.existing_logic) #copy.deepcopy(parser_state.existing_logic)
 		mux_false_port_name = "iffalse" # Will this work?
 	
 	# Var names cant be mixed type per C spec
@@ -3102,8 +3113,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			connect_logic.submodule_instance_to_c_ast_node[mux_inst_name]=c_ast_node
 			connect_logic.submodule_instance_to_input_port_names[mux_inst_name]=[mux_cond_port_name,mux_true_port_name,mux_false_port_name]
 			# Apply to both branches here?
-			true_logic = true_logic.MERGE_COMB_LOGIC(connect_logic)
-			false_logic = false_logic.MERGE_COMB_LOGIC(connect_logic)
+			true_logic.MERGE_COMB_LOGIC(connect_logic)
+			false_logic.MERGE_COMB_LOGIC(connect_logic)
 			
 			# Connect true and false wires using id_or_structref read logic
 			mux_true_connection_wire_name = mux_inst_name + SUBMODULE_MARKER + mux_true_port_name
@@ -3122,14 +3133,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			parser_state_for_true.existing_logic = true_logic
 			true_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_true_connection_wire_name], "TRUE_INPUT_MUX_", parser_state_for_true)
 			# Merge in read
-			true_logic = true_logic.MERGE_COMB_LOGIC(true_read_logic)
+			true_logic.MERGE_COMB_LOGIC(true_read_logic)
 			
 			# FALSE
 			parser_state_for_false = copy.deepcopy(parser_state)
 			parser_state_for_false.existing_logic = false_logic
 			false_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_false_connection_wire_name], "FALSE_INPUT_MUX_", parser_state_for_false)
 			# Merge in read
-			false_logic = false_logic.MERGE_COMB_LOGIC(false_read_logic)
+			false_logic.MERGE_COMB_LOGIC(false_read_logic)
 			
 			# Cant handle outputs here since outputs are added as last alias
 			# But can add alias to single list yet since havent merged true and false
@@ -3173,9 +3184,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	true_logic.wire_aliases_over_time = new_true_false_logic_wire_aliases_over_time
 	false_logic.wire_aliases_over_time = new_true_false_logic_wire_aliases_over_time
 	# Merge the true and false logic as parallel COMB logic since aliases over time fixed above
-	true_false_merged = true_logic.MERGE_COMB_LOGIC(false_logic)
-	
-	
+	true_logic.MERGE_COMB_LOGIC(false_logic)
+	true_false_merged = true_logic
 	
 
 	# After TF merge we can have correct alias list include the mux output
@@ -3248,8 +3258,8 @@ def LEAF_NAME(name, do_submodule_split=False):
 # Connect certain input nodes to certain lists of wire names
 # dict[c_ast_node] => [list of driven wire names]
 def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parser_state):
-	rv = Logic()
-	rv = rv.MERGE_COMB_LOGIC(parser_state.existing_logic)
+	rv = parser_state.existing_logic
+	
 
 	# Get logic for each connection and merge
 	for c_ast_node in c_ast_node_2_driven_wire_names:
@@ -3259,7 +3269,8 @@ def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parse
 		l = C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
 		first = rv
 		second = l
-		rv = first.MERGE_SEQ_LOGIC(second)
+		first.MERGE_SEQ_LOGIC(second)
+		rv = first
 		parser_state.existing_logic = rv		
 	
 	return rv
@@ -3268,8 +3279,7 @@ def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parse
 def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_names, output_wire_name, output_wire_driven_wire_names, prepend_text, func_c_ast_node, parser_state, use_input_nodes_fuck_it=True):
 	func_name_2_logic = parser_state.FuncName2Logic
 	existing_logic = parser_state.existing_logic
-	rv = Logic()
-	rv = existing_logic.MERGE_COMB_LOGIC(rv)
+	rv = existing_logic
 	func_inst_name = BUILD_INST_NAME(prepend_text,func_name, func_c_ast_node)
 	# Sub module inst
 	rv.submodule_instances[func_inst_name] = func_name
@@ -3283,7 +3293,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 		#  ... All arguments are evaluated. Order not defined (as per standard). But all implementations of C/C++ (that I know of) evaluate function arguments from right to left. <<<<<<<<<<<<<<<<TTODO: Fix me? baaaaaaaaahhh
 		parser_state.existing_logic = rv
 		in_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_input_wire_names, prepend_text, parser_state)
-		rv = in_logic.MERGE_COMB_LOGIC(rv)		
+		rv.MERGE_COMB_LOGIC(in_logic)		
 	else:
 		# The nodes are jsut the connections driving wire names, loop doing CONNECT_WIRES_LOGIC
 		for driving_wire in c_ast_node_2_driven_input_wire_names:
@@ -3295,7 +3305,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 			driven_input_port_wire = driven_input_port_wires[0]
 			if type(driving_wire) == type(driven_input_port_wire): #Both must be wires
 				connect_logic = CONNECT_WIRES_LOGIC(driving_wire,[driven_input_port_wire])
-				rv = connect_logic.MERGE_COMB_LOGIC(rv)
+				rv.MERGE_COMB_LOGIC(connect_logic)
 				
 	# Get list of input port names in order
 	input_port_names = []
@@ -3326,7 +3336,10 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 				# Set type for this wire by type of wire that drives this
 				driving_wire = rv.wire_driven_by[driven_input_wire_name]
 				# Type of driving wire
+				#if driving_wire not in rv.wire_to_c_type
 				driving_wire_c_type = rv.wire_to_c_type[driving_wire]
+				
+				
 				if driven_input_wire_name not in rv.wire_to_c_type:
 					rv.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
 			
@@ -3354,8 +3367,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 	# Outputs
 	# Finally connect the output of DO_THROUGHPUT_SWEEPthis operation to each of the driven wires
 	out_logic = CONNECT_WIRES_LOGIC(output_wire_name, output_wire_driven_wire_names)	
-	rv = out_logic.MERGE_COMB_LOGIC(rv)
-	
+	rv.MERGE_COMB_LOGIC(out_logic)
 	# Update parser state since merged in exsiting logic earlier
 	parser_state.existing_logic = rv
 
@@ -3592,8 +3604,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	parser_state.existing_logic.wire_to_c_type[bin_op_output] = output_c_type
 	#print " ----- ", bin_op_output, output_c_type
 	
-	rv = Logic()
-	rv = rv.MERGE_COMB_LOGIC(parser_state.existing_logic)
+	rv = parser_state.existing_logic
 	
 	
 	# Inputs
@@ -3605,7 +3616,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	
 	# FIRST PROCESS THE INPUT CONNECTIONS ALONE
 	in_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_input_wire_names, prepend_text, parser_state)
-	parser_state.existing_logic = parser_state.existing_logic.MERGE_COMB_LOGIC(in_logic)
+	parser_state.existing_logic.MERGE_COMB_LOGIC(in_logic)
 	left_type = None
 	# Was either input type evaluated?
 	if bin_op_left_input in in_logic.wire_to_c_type:
@@ -3809,7 +3820,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		
 		#print "C_AST_FUNC_DEF_TO_LOGIC", rv.func_name, "body_logic.wire_drives",body_logic.wire_drives
 		
-		rv = body_logic.MERGE_COMB_LOGIC(rv)
+		rv.MERGE_COMB_LOGIC(body_logic)
 				
 	# Sanity check for return
 	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_AUTO_GENERATED(rv):
@@ -3895,7 +3906,6 @@ class ParserState:
 	def __init__(self):
 		self.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
 		self.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-		#self.RawHdlLogic = None
 		self.existing_logic = None # Temp working copy of logic ? idk it should work
 		self.struct_to_field_type_dict = dict()
 		self.enum_to_ids_dict = dict()
@@ -3910,6 +3920,7 @@ def PARSE_FILE(top_level_func_name, c_file):
 		print "Parsing PipelinedC code..."
 		# Get SW existing logic for this c file
 		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)
+		
 		# Get the parsed struct def info
 		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(c_file)
 		# Get the parsed enum info
@@ -3951,12 +3962,18 @@ def PARSE_FILE(top_level_func_name, c_file):
 			parser_state.LogicInstLookupTable = logic_lookup_table_cache
 		else:
 			
-			print "TEMP STOP BEFORE ELABORATE"
-			sys.exit(0)
+			main_func_logic = parser_state.FuncName2Logic["main"]
+			first_sub = main_func_logic.submodule_instances.keys()[0]
+			if SUBMODULE_MARKER in first_sub:
+				print "Main func logic submodule inst has submodule marker?"
+				print first_sub
+				sys.exit(0)
 			
 			print "Elaborating hierarchy down to raw HDL logic..."	
 			parser_state.LogicInstLookupTable = RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(top_level_func_name, top_level_func_name, parser_state, unadjusted_logic_lookup_table_so_far, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
+			print "TEMP STOP AFTER ELAB"
+			sys.exit(0)
 		
 		#for inst_name in parser_state.LogicInstLookupTable:
 		#	print inst_name, "uses_globals",parser_state.LogicInstLookupTable[inst_name].uses_globals
@@ -4107,7 +4124,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(c_files, parser_state, parse_body = True):
 	existing_func_name_2_logic = parser_state.FuncName2Logic
 	
 	# Build function name to logic from func defs from files
-	func_name_2_logic = copy.deepcopy(existing_func_name_2_logic)
+	func_name_2_logic = copy.deepcopy(existing_func_name_2_logic) #copy.deepcopy(existing_func_name_2_logic)
 	
 	# Loop over C files in order and collect func logic (not instance) from func defs
 	# Each func def needs existing logic func name lookup
@@ -4153,7 +4170,12 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(c_files, parser_state, parse_body = True):
 			
 def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_inst_name, parser_state, unadjusted_logic_lookup_table_so_far=None, adjusted_containing_logic_inst_name="", c_ast_node_when_used=None, recursion_level=0):	
 	#if recursion_level==0:
-	#	print "...Recursing from instance: '",LEAF_NAME(orig_logic_inst_name),"'"
+	print "=="
+	print "...Recursing from instance: '",LEAF_NAME(orig_logic_inst_name),"'"
+	print "...Recursing from instance: '",orig_logic_inst_name,"'"
+	print "...orig_logic_func_name:",orig_logic_func_name
+	print "...adjusted_containing_logic_inst_name:",adjusted_containing_logic_inst_name
+	
 	
 	new_inst_name_prepend_text = adjusted_containing_logic_inst_name + SUBMODULE_MARKER
 	if orig_logic_func_name == "main":
@@ -4192,7 +4214,11 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 	
 	# Set instance for thsi submodule in lookup table	
 	if (adjusted_containing_logic_inst_name,orig_logic_inst_name) in unadjusted_logic_lookup_table_so_far:
-		orig_inst_logic = copy.deepcopy(unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_logic_inst_name)])
+		#orig_inst_logic = copy.deepcopy(unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_logic_inst_name)])
+		
+		# Nothing to change?
+		return new_logic_lookup_table_so_far
+		
 	elif orig_logic_func_name in func_name_2_logic:
 		# Logic parsed from C files
 		orig_func_logic = copy.deepcopy(func_name_2_logic[orig_logic_func_name])
@@ -4257,12 +4283,7 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 			#print "3 containing_func_logic.func_name",containing_func_logic.func_name 
 			
 		
-		if containing_func_logic is not None:
-			#print "FINAL containing_func_logic.func_name",containing_func_logic.func_name
-			#if ( "float_array_sum" in containing_func_logic.func_name) and (len(containing_func_logic.wire_drives) == 0):
-			#	print "FUCK!"
-			#	sys.exit(0)
-			
+		if containing_func_logic is not None:			
 			orig_inst_logic = BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic,new_inst_name_prepend_text, orig_logic_inst_name, parser_state)
 						
 		else:
@@ -4289,37 +4310,26 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 			sys.exit(0)
 		
 		
+	# Save copy of orig_inst_logic before prepend
+	orig_inst_logic_no_prepend = copy.deepcopy(orig_inst_logic)	
+	inst_logic = orig_inst_logic
+	inst_logic.INST_LOGIC_ADJUST_W_PREPEND(new_inst_name_prepend_text)
+
+	# Save this in rv
+	new_logic_lookup_table_so_far[inst_logic.inst_name] = inst_logic
 
 	# Since the original unadjusted instance name is not unique enough
 	# Ex. A use of uint23_mux23 has a submodule MUX_layer0_node0 exactly as uint24_mux24 does so can store MUX_layer0_node0 as the inst name alone
 	# Need to store containing inst too
-	unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_inst_logic.inst_name)] = copy.deepcopy(orig_inst_logic)	
+	unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_inst_logic_no_prepend.inst_name)] = orig_inst_logic_no_prepend
 	
 	
-	
-	
-	# Adjust original logic for instance name
-	#print "type(unadjusted_logic_lookup_table_so_far)",type(unadjusted_logic_lookup_table_so_far)
-	#print "unadjusted_logic_lookup_table_so_far",unadjusted_logic_lookup_table_so_far
-	#print "orig_logic.inst_name",orig_logic.inst_name
-	#print "new_inst_name_prepend_text",new_inst_name_prepend_text
-	inst_logic = orig_inst_logic.INST_LOGIC_ADJUST_W_PREPEND(new_inst_name_prepend_text)
-	#print "After INST_NAME_ADJUSTED"
-	#print "inst_logic.inst_name",inst_logic.inst_name
-	#print "inst_logic.submodule_instances",inst_logic.submodule_instances
-	new_logic_lookup_table_so_far[inst_logic.inst_name] = inst_logic
-	#print "inst_logic.inst_name",inst_logic.inst_name
-	#print "orig_inst_logic.c_ast_node.coord",orig_inst_logic.c_ast_node.coord
-	#print "coord",inst_logic.c_ast_node.coord
-	
-
 	
 	# Then recursively do submodules
-	#print "orig_inst_logic.submodule_instances",orig_inst_logic.submodule_instances
-	#print "orig_inst_logic has submodule_instances",orig_inst_logic.submodule_instances
-	for orig_submodule_logic_inst_name in orig_inst_logic.submodule_instances:
-		orig_submodule_logic_func_name = orig_inst_logic.submodule_instances[orig_submodule_logic_inst_name]
-		submodule_c_ast_node_when_used = orig_inst_logic.submodule_instance_to_c_ast_node[orig_submodule_logic_inst_name]
+	# USING local names from orig_inst_logic_no_prepend
+	for orig_submodule_logic_inst_name in orig_inst_logic_no_prepend.submodule_instances:
+		orig_submodule_logic_func_name = orig_inst_logic_no_prepend.submodule_instances[orig_submodule_logic_inst_name]
+		submodule_c_ast_node_when_used = orig_inst_logic_no_prepend.submodule_instance_to_c_ast_node[orig_submodule_logic_inst_name]
 		#print ""
 		#print "RECURSIVELY DOING RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE"
 		#submodule_new_inst_name_prepend_text = inst_logic.inst_name + SUBMODULE_MARKER

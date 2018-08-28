@@ -51,7 +51,6 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	# Combine lookups
 	rv = dict()
 	for func_name_logic_lookup in lookups:
-		
 		for func_name in func_name_logic_lookup:
 			if not(func_name in rv):
 				rv[func_name] = func_name_logic_lookup[func_name]
@@ -663,7 +662,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	
 	for func_name in func_name_2_logic:
 		func_logic = func_name_2_logic[func_name]
-		if len(func_logic.wire_drives) == 0:
+		if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE):
 			print "BIT_MATH_HEADER_FILE"
 			print text
 			print "Bad parsing of BIT MATH",func_name
