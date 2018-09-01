@@ -318,6 +318,16 @@ def STR_DICT_KEY_AND_ALL_VALUES_PREPREND(d,prepend_text):
 
 class Logic:
 	def __init__(self):
+		
+		####### MODIFY DEEP COPY TOO
+		#
+		#
+		#
+		#
+		#
+		#	
+		
+		
 		self.func_name=None #function, operation
 		self.inst_name=None
 		self.variable_names=[] # List of original variable names
@@ -365,8 +375,51 @@ class Logic:
 		# Save C code text for later
 		self.c_code_text = None
 		
-		# My containing inst?
+		# My containing inst? (name, string)
 		self.containing_inst = None
+	
+	
+	# Help!
+	def DEEPCOPY(self):
+		rv = Logic()
+		rv.func_name = self.func_name
+		rv.inst_name = self.inst_name
+		rv.variable_names = self.variable_names[:] # List of original variable names
+		rv.wires = self.wires[:]  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
+		rv.inputs = self.inputs[:] #["a","b"]
+		rv.outputs = self.outputs[:] #["return"]
+		rv.global_wires = self.global_wires[:]
+		rv.uses_globals = self.uses_globals
+		rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
+		rv.c_ast_node = copy.copy(self.c_ast_node) # Uhhh seemed wrong ?
+		rv.is_c_built_in = self.is_c_built_in
+		rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
+		rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
+		rv.wire_drives = self.DEEPCOPY_DICT_LIST(self.wire_drives)
+		rv.wire_driven_by = dict(self.wire_driven_by) # wire_name -> driving wire #IMMUTABLE
+		rv.wire_aliases_over_time = self.DEEPCOPY_DICT_LIST(self.wire_aliases_over_time)
+		rv.alias_to_orig_var_name = dict(self.alias_to_orig_var_name) #IMMUTABLE
+		rv.alias_to_ref_toks = self.DEEPCOPY_DICT_LIST(self.alias_to_ref_toks) # alias -> [ref,toks]
+		rv.wire_to_c_type = dict(self.wire_to_c_type) #IMMUTABLE
+		rv.total_logic_levels = self.total_logic_levels
+		rv.c_code_text = self.c_code_text
+		rv.containing_inst = self.containing_inst
+		
+		return rv
+		
+	# Really, help! # Replace with deep copy?
+	def DEEPCOPY_DICT_LIST(self, d):
+		rv = dict()
+		for key in d:
+			rv[key] = d[key][:]
+		return rv
+		
+	def DEEPCOPY_DICT_COPY(self, d):
+		rv = dict()
+		for key in d:
+			rv[key] = copy.copy(d[key])
+		return rv
+	
 	
 	# Modify self,
 	# Returns none
@@ -1120,7 +1173,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_p
 		pass
 	# NOT RAW VHDL (assumed to be built from C code then)
 	else:
-		submodule_logic = BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, submodule_logic, parser_state, containing_func_logic)
+		submodule_logic = BUILD_LOGIC_AS_C_CODE(submodule_logic, parser_state, containing_func_logic)
 	
 	
 	# Do here for early debug
@@ -1128,71 +1181,85 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_p
 			
 	return submodule_logic
 	
-def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, parser_state, containing_func_logic):
-	out_dir = SYN.GET_OUTPUT_DIRECTORY(partially_complete_logic, implement=False)
-	# Get C code depending on function
-	#print "BUILD_LOGIC_AS_C_CODE"
-	#print "partially_complete_logic.func_name",partially_complete_logic.func_name
-	#print "partially_complete_logic.inst_name",partially_complete_logic.inst_name
-	#print "containing_func_logic.func_name",containing_func_logic.func_name
-	#print "containing_func_logic.inst_name",containing_func_logic.inst_name
-	#print "=================================================================="
-	if partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
-		# Get the c code
-		c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">")
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">=")
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir)
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir)
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
-	elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
-		c_code_text = SW_LIB.GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+_other_partial_logic_cache = dict()
+def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_func_logic):
+	# The binary operators and their input types completely define the operator
+	# So Cache the other partial logic
+	cache_tok = partially_complete_logic.func_name
+	for in_wire in partially_complete_logic.inputs:
+		c_type = partially_complete_logic.wire_to_c_type[in_wire]
+		cache_tok += "_" + c_type
+		
+	if cache_tok in _other_partial_logic_cache:
+		other_partial_logic = _other_partial_logic_cache[cache_tok]
 	else:
-		print "How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.func_name, "?"
-		sys.exit(0)
+		out_dir = SYN.GET_OUTPUT_DIRECTORY(partially_complete_logic, implement=False)
+		# Get C code depending on function
+		#print "BUILD_LOGIC_AS_C_CODE"
+		#print "partially_complete_logic.func_name",partially_complete_logic.func_name
+		#print "partially_complete_logic.inst_name",partially_complete_logic.inst_name
+		#print "containing_func_logic.func_name",containing_func_logic.func_name
+		#print "containing_func_logic.inst_name",containing_func_logic.inst_name
+		#print "=================================================================="
+		if partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
+			# Get the c code
+			c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">")
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">=")
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir)
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir)
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+		elif partially_complete_logic.func_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+		else:
+			print "How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.func_name, "?"
+			sys.exit(0)	
+			
+		# Use the c code to get the logic
+		partially_complete_logic.c_code_text = c_code_text
 		
-	# Use the c code to get the logic
-	partially_complete_logic.c_code_text = c_code_text
-	
-	#print "c_code_text"
-	#print c_code_text
-	
-	# And read logic
-	#print "partially_complete_logic.
-	fake_filename = VHDL.GET_INST_NAME(partially_complete_logic, use_leaf_name=True) + ".c"
-	#print "fake_filename",fake_filename
-	out_path = out_dir + "/" + fake_filename
+		#print "c_code_text"
+		#print c_code_text
 		
-	# Parse and return the only func def
-	func_name = partially_complete_logic.func_name
-	#print ""
-	#print "BUILD_BIN_OP_MULT_LOGIC_AS_C_CODE"
-	sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_code_text, parser_state)
-	# Merge into existing
-	for sw_func_name in sw_func_name_2_logic:
-		#print "sw_func_name",sw_func_name
-		parser_state.FuncName2Logic[sw_func_name] = sw_func_name_2_logic[sw_func_name]
-	
-	FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(c_code_text, fake_filename, parser_state, parse_body = True)
-	
-	# Get the other partial logic if it exists
-	if not(func_name in FuncName2Logic ):
-		print "I cant find func name",func_name,"in the C code so far"
-		print "c_code_text"
-		print c_code_text
-		print "========="
-		print "sw_func_name_2_logic"
-		print sw_func_name_2_logic
-		print "CHECK CODE PARSING autogenerated stuff?"
-		sys.exit(0)
-	other_partial_logic = copy.deepcopy(FuncName2Logic[func_name]) #Deepcopy unneeded?
+		# And read logic
+		#print "partially_complete_logic.
+		fake_filename = VHDL.GET_INST_NAME(partially_complete_logic, use_leaf_name=True) + ".c"
+		#print "fake_filename",fake_filename
+		out_path = out_dir + "/" + fake_filename
+			
+		# Parse and return the only func def
+		func_name = partially_complete_logic.func_name
+		print "...",cache_tok
+		#print ""
+		#print "BUILD_BIN_OP_MULT_LOGIC_AS_C_CODE"
+		sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_code_text, parser_state)
+		# Merge into existing
+		for sw_func_name in sw_func_name_2_logic:
+			#print "sw_func_name",sw_func_name
+			parser_state.FuncName2Logic[sw_func_name] = sw_func_name_2_logic[sw_func_name]
+		
+		FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(c_code_text, fake_filename, parser_state, parse_body = True)
+		
+		# Get the other partial logic if it exists
+		if not(func_name in FuncName2Logic ):
+			print "I cant find func name",func_name,"in the C code so far"
+			print "c_code_text"
+			print c_code_text
+			print "========="
+			print "sw_func_name_2_logic"
+			print sw_func_name_2_logic
+			print "CHECK CODE PARSING autogenerated stuff?"
+			sys.exit(0)
+		other_partial_logic = FuncName2Logic[func_name].DEEPCOPY() #copy.deepcopy(FuncName2Logic[func_name]) #Deepcopy unneeded?
+		# CACHE THIS
+		_other_partial_logic_cache[cache_tok] = other_partial_logic
 	
 	#print "partially_complete_logic.func_name",partially_complete_logic.func_name
 	#print "partially_complete_logic.inst_name",partially_complete_logic.inst_name
@@ -1224,8 +1291,19 @@ def BUILD_LOGIC_AS_C_CODE(new_inst_name_prepend_text, partially_complete_logic, 
 	
 	return partially_complete_logic
 		
-	
+#print "Keep _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache?"
+#_GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache = dict()
+# Wow so hacky
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parser_state, parse_body):
+	'''
+	global _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache
+	cache_tok = (text,fake_filename)
+	try:
+		return _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]
+	except:
+		pass
+	'''
+	
 	# Build function name to logic from func defs from files
 	func_name_2_logic = copy.deepcopy(parser_state.FuncName2Logic) #copy.deepcopy(parser_state.FuncName2Logic)   #### Uh need this copy so bit manip/math funcs not directly in C text are accumulated over time wtf? TODO: Fix 
 	#func_name_2_logic = dict()
@@ -1243,6 +1321,12 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 		
 		func_name_2_logic[logic.func_name] = logic
 		func_name_2_logic[logic.func_name].inst_name = logic.func_name 
+	
+	
+	'''
+	_GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]=func_name_2_logic
+	'''
+	
 	return func_name_2_logic
 	
 		
@@ -2777,15 +2861,16 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 			
 	return rv
 	
-_C_AST_COORD_STR_cache = dict()
-print "Keep _C_AST_COORD_STR_cache?"
+#_C_AST_COORD_STR_cache = dict()
+#print "Keep _C_AST_COORD_STR_cache?"
 def C_AST_COORD_STR(c_ast_node_cord):
+	'''
 	global _C_AST_COORD_STR_cache
-	#if c_ast_node_cord in  _C_AST_COORD_STR_cache:
 	try:
 		return _C_AST_COORD_STR_cache[str(c_ast_node_cord)]
 	except:
 		pass
+	'''
 	
 	file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)
 	# Get leaf name (just stem file name of file hierarcy)
@@ -2796,9 +2881,9 @@ def C_AST_COORD_STR(c_ast_node_cord):
 	file_coord_str = file_coord_str.replace(".","_")
 	
 	
-	
+	'''
 	_C_AST_COORD_STR_cache[str(c_ast_node_cord)] = file_coord_str
-	
+	'''
 	
 	return file_coord_str
 
@@ -3005,20 +3090,20 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	prepend_text_false = ""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_false"+"/" # Line numbers should be enough?
 	driven_wire_names=[] 
 	#
-	parser_state_for_true = copy.deepcopy(parser_state) #copy.copy(parser_state)
-	parser_state_for_true.existing_logic = rv; #copy.deepcopy(rv)
+	parser_state_for_true = copy.copy(parser_state) # copy.deepcopy(parser_state) 
+	parser_state_for_true.existing_logic = rv.DEEPCOPY() #copy.deepcopy(rv); #rv
 	mux_true_port_name = c_ast_node.children()[1][0]
 	true_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iftrue, driven_wire_names, prepend_text_true, parser_state_for_true)
 	#
 	if len(c_ast_node.children()) >= 3:
 		# Do false branch
-		parser_state_for_false = copy.deepcopy(parser_state)
-		parser_state_for_false.existing_logic = rv
+		parser_state_for_false = copy.copy(parser_state) # copy.deepcopy(parser_state)
+		parser_state_for_false.existing_logic = rv.DEEPCOPY() #copy.deepcopy(rv); #rv
 		mux_false_port_name = c_ast_node.children()[2][0]
 		false_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text_false, parser_state_for_false)
 	else:
 		# No false branch false logic if identical to existing logic
-		false_logic = copy.deepcopy(parser_state.existing_logic) #copy.deepcopy(parser_state.existing_logic)
+		false_logic = parser_state.existing_logic.DEEPCOPY() #copy.deepcopy(parser_state.existing_logic) 
 		mux_false_port_name = "iffalse" # Will this work?
 	
 	# Var names cant be mixed type per C spec
@@ -3129,14 +3214,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 
 			# Using each branches logic use id_or_structref logic to form read wire driving T/F ports
 			# TRUE
-			parser_state_for_true = copy.deepcopy(parser_state)
+			parser_state_for_true = copy.copy(parser_state) # copy.deepcopy(parser_state)
 			parser_state_for_true.existing_logic = true_logic
 			true_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_true_connection_wire_name], "TRUE_INPUT_MUX_", parser_state_for_true)
 			# Merge in read
 			true_logic.MERGE_COMB_LOGIC(true_read_logic)
 			
 			# FALSE
-			parser_state_for_false = copy.deepcopy(parser_state)
+			parser_state_for_false = copy.copy(parser_state) # copy.deepcopy(parser_state)
 			parser_state_for_false.existing_logic = false_logic
 			false_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_false_connection_wire_name], "FALSE_INPUT_MUX_", parser_state_for_false)
 			# Merge in read
@@ -3428,16 +3513,26 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
 	# Decompose inputs to N ARG FUNCTION
 	func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_names, output_wire, driven_wire_names,prepend_text,c_ast_func_call,parser_state)	
 	
-	#print "func_logic.inst_name",func_logic.inst_name
-	
-	# Save c ast node of binary op
-	
+	# Sanity check?
 	if not(output_wire in func_logic.wire_to_c_type):
 		print "444444444444   output_wire in func_logic.wire_to_c_type", bin_op_output in func_logic.wire_to_c_type
 		sys.exit(0)
 		
+	
+	# Update state
 	parser_state.existing_logic = func_logic
 		
+	
+	# Check input types match
+	for input_port in func_def_logic_object.inputs:
+		input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port
+		input_type = parser_state.existing_logic.wire_to_c_type[input_port_wire]
+		driving_wire = parser_state.existing_logic.wire_driven_by[input_port_wire]
+		driving_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
+		#if input_type != driving_type and (not VHDL.C_TYPES_ARE_INTEGERS([input_type,driving_type]) or C_TYPE_IS_ARRAY(input_type)):
+		#	print "Mismatching input types for function",func_name,"at", c_ast_func_call.coord
+		#	sys.exit(0)
+	
 	
 	return func_logic
 	
@@ -3911,6 +4006,42 @@ class ParserState:
 		self.enum_to_ids_dict = dict()
 		self.global_info = dict()
 		self.global_mhz_limit = None
+		
+		
+import sys
+from numbers import Number
+from collections import Set, Mapping, deque
+
+try: # Python 2
+    zero_depth_bases = (basestring, Number, xrange, bytearray)
+    iteritems = 'iteritems'
+except NameError: # Python 3
+    zero_depth_bases = (str, bytes, Number, range, bytearray)
+    iteritems = 'items'
+
+def getsize(obj_0):
+    """Recursively iterate to sum size of object & members."""
+    _seen_ids = set()
+    def inner(obj):
+        obj_id = id(obj)
+        if obj_id in _seen_ids:
+            return 0
+        _seen_ids.add(obj_id)
+        size = sys.getsizeof(obj)
+        if isinstance(obj, zero_depth_bases):
+            pass # bypass remaining control flow and return
+        elif isinstance(obj, (tuple, list, Set, deque)):
+            size += sum(inner(i) for i in obj)
+        elif isinstance(obj, Mapping) or hasattr(obj, iteritems):
+            size += sum(inner(k) + inner(v) for k, v in getattr(obj, iteritems)())
+        # Check for custom object instances - may subclass above too
+        if hasattr(obj, '__dict__'):
+            size += inner(vars(obj))
+        if hasattr(obj, '__slots__'): # can have __slots__ with __dict__
+            size += sum(inner(getattr(obj, s)) for s in obj.__slots__ if hasattr(obj, s))
+        return size
+    return inner(obj_0)
+    
 	
 # Returns ParserState
 def PARSE_FILE(top_level_func_name, c_file):
@@ -3972,8 +4103,7 @@ def PARSE_FILE(top_level_func_name, c_file):
 			print "Elaborating hierarchy down to raw HDL logic..."	
 			parser_state.LogicInstLookupTable = RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(top_level_func_name, top_level_func_name, parser_state, unadjusted_logic_lookup_table_so_far, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
-			print "TEMP STOP AFTER ELAB"
-			sys.exit(0)
+			
 		
 		#for inst_name in parser_state.LogicInstLookupTable:
 		#	print inst_name, "uses_globals",parser_state.LogicInstLookupTable[inst_name].uses_globals
@@ -3984,9 +4114,24 @@ def PARSE_FILE(top_level_func_name, c_file):
 		# top_level_func_name = main = inst name
 		top_level_logic = parser_state.LogicInstLookupTable[top_level_func_name]
 		
-		WRITE_LOGIC_INST_LOOKUP_CACHE(top_level_logic, parser_state.LogicInstLookupTable)
+
+		# TEST
+		#print "SIZE:", getsize(top_level_logic)
+		#top_level_logic.c_ast_node = None
+		#top_level_logic.submodule_instance_to_c_ast_node = None
+		#print "     ", getsize(top_level_logic)
+		#print "==="
+		#sys.exit(0)
+		
+		
+		
+		
+		#print "TEMP STOP AFTER ELAB"
+		#sys.exit(0)
 		
 		print "Writing generated pipelined C code to output directories..."
+		WRITE_LOGIC_INST_LOOKUP_CACHE(top_level_logic, parser_state.LogicInstLookupTable)
+		
 		for inst_name in parser_state.LogicInstLookupTable:
 			logic = parser_state.LogicInstLookupTable[inst_name]
 			if not(logic.c_code_text is None):
@@ -4124,7 +4269,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(c_files, parser_state, parse_body = True):
 	existing_func_name_2_logic = parser_state.FuncName2Logic
 	
 	# Build function name to logic from func defs from files
-	func_name_2_logic = copy.deepcopy(existing_func_name_2_logic) #copy.deepcopy(existing_func_name_2_logic)
+	func_name_2_logic = copy.deepcopy(existing_func_name_2_logic) #copy.deepcopy(existing_func_name_2_logic)  # Needed?
 	
 	# Loop over C files in order and collect func logic (not instance) from func defs
 	# Each func def needs existing logic func name lookup
@@ -4167,15 +4312,15 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(c_files, parser_state, parse_body = True):
 	'''
 			
 	return func_name_2_logic
+	
 			
 def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_inst_name, parser_state, unadjusted_logic_lookup_table_so_far=None, adjusted_containing_logic_inst_name="", c_ast_node_when_used=None, recursion_level=0):	
 	#if recursion_level==0:
-	print "=="
-	print "...Recursing from instance: '",LEAF_NAME(orig_logic_inst_name),"'"
-	print "...Recursing from instance: '",orig_logic_inst_name,"'"
-	print "...orig_logic_func_name:",orig_logic_func_name
-	print "...adjusted_containing_logic_inst_name:",adjusted_containing_logic_inst_name
-	
+	#print "=="
+	#print "...Recursing from instance: '",orig_logic_inst_name,"'"
+	#print "...orig_logic_func_name:",orig_logic_func_name
+	#print "...adjusted_containing_logic_inst_name:",adjusted_containing_logic_inst_name
+	#print "Recursing from:", adjusted_containing_logic_inst_name + SUBMODULE_MARKER + orig_logic_inst_name
 	
 	new_inst_name_prepend_text = adjusted_containing_logic_inst_name + SUBMODULE_MARKER
 	if orig_logic_func_name == "main":
@@ -4197,10 +4342,18 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 		new_logic_lookup_table_so_far = dict()
 	else:
 		new_logic_lookup_table_so_far = logic_lookup_table_so_far 
-	
+		
 	if unadjusted_logic_lookup_table_so_far is None:
 		unadjusted_logic_lookup_table_so_far = dict()
 		
+		
+	# Does this speed things up?
+	# NO AS IT SHOULD NOT (not doing unecessary recursive calls)
+	#new_inst_name = new_inst_name_prepend_text + orig_logic_inst_name
+	#if new_inst_name in unadjusted_logic_lookup_table_so_far:
+	#	# Nothing to do
+	#	return new_logic_lookup_table_so_far
+
 	
 	#print ""
 	#print "RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE"
@@ -4211,32 +4364,39 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 	#print "orig_logic_inst_name in unadjusted_logic_lookup_table_so_far",orig_logic_inst_name in unadjusted_logic_lookup_table_so_far
 	#print "orig_logic_func_name in func_name_2_logic",orig_logic_func_name in func_name_2_logic
 	
-	
+	'''
 	# Set instance for thsi submodule in lookup table	
 	if (adjusted_containing_logic_inst_name,orig_logic_inst_name) in unadjusted_logic_lookup_table_so_far:
 		#orig_inst_logic = copy.deepcopy(unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_logic_inst_name)])
 		
+		# THIS SERVES AS CHECK ON RECURSIVE LOOP?
+		
 		# Nothing to change?
 		return new_logic_lookup_table_so_far
-		
-	elif orig_logic_func_name in func_name_2_logic:
+	'''
+	
+	# Is this a function parsed from C code?
+	if orig_logic_func_name in func_name_2_logic:
 		# Logic parsed from C files
-		orig_func_logic = copy.deepcopy(func_name_2_logic[orig_logic_func_name])
+		orig_func_logic = func_name_2_logic[orig_logic_func_name].DEEPCOPY() #copy.deepcopy(func_name_2_logic[orig_logic_func_name])
 		# Create artificial inst logic with inst name from func arg
 		orig_inst_logic = orig_func_logic
-		orig_inst_logic.inst_name = orig_logic_inst_name	
+		orig_inst_logic.inst_name = orig_logic_inst_name
 	else:
-		# C built in logic
-		# Look up containing logic for this submodule isnt
+		# C built in logic (not parsed from function definitions)
+		
+		# Look up containing func logic for this submodule isnt
 		containing_func_logic = None
 		
-		# Try to use adjusted_containing_logic_inst_name
+		# Try to use full inst name of containing module
 		adjusted_containing_logic_inst = new_logic_lookup_table_so_far[adjusted_containing_logic_inst_name]
 		containing_logic_func_name = adjusted_containing_logic_inst.func_name
 		if containing_logic_func_name in func_name_2_logic:
 			containing_func_logic = func_name_2_logic[containing_logic_func_name]
 			#print "1 containing_func_logic.func_name",containing_func_logic.func_name 
 		
+		# Why is this needed too?
+		'''
 		# If not found search func lookup table for containers with matching submodule instances
 		if containing_func_logic is None:
 			for func_name in func_name_2_logic:
@@ -4252,10 +4412,15 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 							sys.exit(0)
 						containing_func_logic = func_logic
 						#print "2 containing_func_logic.func_name",containing_func_logic.func_name 
+		'''
 		
+		
+		# Why is this needed?
+		'''
 		# if not found search the logic lookup table
 		# Look up containing func logic for this submodule inst		
 		if containing_func_logic is None:
+			print "Searching N", len(unadjusted_logic_lookup_table_so_far)
 			unadjusted_containing_inst_logic = None
 			for tup_key in unadjusted_logic_lookup_table_so_far:
 				unadjusted_inst_logic = unadjusted_logic_lookup_table_so_far[tup_key]
@@ -4281,7 +4446,25 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 			
 			containing_func_logic = unadjusted_containing_inst_logic
 			#print "3 containing_func_logic.func_name",containing_func_logic.func_name 
+		'''
+		
+		# Containing module must not be in parsed C code
+		if containing_func_logic is None:
+			# Break apart the adjusted_containing_logic_inst_name
+			# To find just func name 
+			# Lookup containing_func_logic by name in func_name_2_logic
+			#print "orig_logic_func_name",orig_logic_func_name
+			#print "orig_logic_inst_name",orig_logic_inst_name
+			#print "adjusted_containing_logic_inst_name",adjusted_containing_logic_inst_name
+			#print "containing_logic_func_name",containing_logic_func_name
 			
+			# Because recursive, the upper level modules should be in lookup
+			#in_dict = adjusted_containing_logic_inst_name in unadjusted_logic_lookup_table_so_far
+			#print "in_dict",in_dict
+			
+			#sys.exit(0)
+		
+			containing_func_logic = unadjusted_logic_lookup_table_so_far[adjusted_containing_logic_inst_name]
 		
 		if containing_func_logic is not None:			
 			orig_inst_logic = BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic,new_inst_name_prepend_text, orig_logic_inst_name, parser_state)
@@ -4291,6 +4474,7 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 			print "!!!!!!!!!!!!!!!!!"
 			print "BAH! Cant find logic that contains orig_logic_inst_name",orig_logic_inst_name
 			print "orig_logic_func_name",orig_logic_func_name
+			print "containing inst:",adjusted_containing_logic_inst_name
 			print "=== ALL NON_RAW_HDL func_name_2_logic ===="
 			for func_name in func_name_2_logic:
 				func_logic = func_name_2_logic[func_name]
@@ -4311,18 +4495,19 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 		
 		
 	# Save copy of orig_inst_logic before prepend
-	orig_inst_logic_no_prepend = copy.deepcopy(orig_inst_logic)	
+	orig_inst_logic_no_prepend = orig_inst_logic.DEEPCOPY() #copy.deepcopy(orig_inst_logic)	
 	inst_logic = orig_inst_logic
 	inst_logic.INST_LOGIC_ADJUST_W_PREPEND(new_inst_name_prepend_text)
 
 	# Save this in rv
 	new_logic_lookup_table_so_far[inst_logic.inst_name] = inst_logic
+	
 
 	# Since the original unadjusted instance name is not unique enough
 	# Ex. A use of uint23_mux23 has a submodule MUX_layer0_node0 exactly as uint24_mux24 does so can store MUX_layer0_node0 as the inst name alone
 	# Need to store containing inst too
-	unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_inst_logic_no_prepend.inst_name)] = orig_inst_logic_no_prepend
-	
+	#unadjusted_logic_lookup_table_so_far[(adjusted_containing_logic_inst_name,orig_inst_logic_no_prepend.inst_name)] = orig_inst_logic_no_prepend
+	unadjusted_logic_lookup_table_so_far[inst_logic.inst_name] = orig_inst_logic_no_prepend
 	
 	
 	# Then recursively do submodules

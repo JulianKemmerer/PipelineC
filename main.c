@@ -4,9 +4,9 @@
 #include "uintN_t.h"
 
 
-#define N 2
-#define float_array_sumN float_array_sum2
-#define iter_t uint1_t
+#define N 4
+#define float_array_sumN float_array_sum4
+#define iter_t uint2_t
 
 typedef struct an_array_t
 {

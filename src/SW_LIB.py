@@ -24,11 +24,14 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
 	c_text = C_TO_LOGIC.preprocess_file(c_file)
 	#print c_text
 	return GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
-	
+
+
+# Uhh this seems wrong? But works for now?
 def IS_AUTO_GENERATED(logic):
-	#print "IS_AUTO_GENERATED",logic.inst_name, logic.c_ast_node.coord
-	return ( str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE) or
-	         str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE) )
+	#print "IS_AUTO_GENERATED",logic.func_name, logic.inst_name, logic.c_ast_node.coord
+	return ( ( str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE) or
+	              str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE)     ) and
+	         not logic.is_c_built_in )
 	
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# DONT FORGET TO CHANGE IS_AUTO_GENERATED
