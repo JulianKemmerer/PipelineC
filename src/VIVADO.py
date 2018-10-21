@@ -319,7 +319,8 @@ class ParsedTimingReport:
 				sys.exit(0)
 
 			
-			if ("design main_top has unconnected port " in syn_output_line):
+			# Unconnected ports are maybe problem?
+			if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
 				print syn_output_line
 				
 				
@@ -435,7 +436,7 @@ class ParsedTimingReport:
 		
 		#LOOPS
 		if self.has_loops or self.has_latch_loops:
-			print single_timing_report
+			#print single_timing_report
 			#print syn_output_line
 			print "TIMING LOOPS!"
 			## Do debug?
@@ -443,7 +444,7 @@ class ParsedTimingReport:
 			#do_debug=True
 			#print "ASSUMING LATENCY=",latency
 			#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-			sys.exit(0)
+			#sys.exit(0)
 		
 		
 		# Multiple timign report stuff
@@ -547,6 +548,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	rv += "set_msg_config -id {Synth 8-4471} -limit 10000" + "\n"
 	# [Synth 8-3332] Sequential element removed
 	rv += "set_msg_config -id {Synth 8-3332} -limit 10000" + "\n"
+	# [Synth 8-3331] design has unconnected port
+	rv += "set_msg_config -id {Synth 8-3331} -limit 10000" + "\n"
 
 	rv += "synth_design -top " + VHDL.GET_INST_NAME(Logic,use_leaf_name=True) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	
@@ -928,17 +931,19 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 	return max_match_inst
 	
 	
-	
+'''
 # Searches pipeline for raw hdl submodule that will split the stage with most LLs stage
-def GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_SYN_REG_NAMES(logic, start_reg_name, end_reg_name, LogicLookupTable, TimingParamsLookupTable, parsed_timing_report):
+def GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_SYN_REG_NAMES(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report):
+	LogicLookupTable = parser_state.LogicInstLookupTable
+	
 	print "START:",start_reg_name
 	print "=>"
 	print "END:",end_reg_name
 	
-	start_stage, end_stage = GET_START_STAGE_END_STAGE_FROM_REGS(logic, start_reg_name, end_reg_name, LogicLookupTable, TimingParamsLookupTable, parsed_timing_report)
+	start_stage, end_stage = GET_START_STAGE_END_STAGE_FROM_REGS(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report)
 	
 	print "	Start stage =",start_stage
 	print "	End stage =",end_stage
 
-	return  GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_STAGE_END_STAGES(logic, start_stage, end_stage, LogicLookupTable, TimingParamsLookupTable, parsed_timing_report)
-
+	return  GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_STAGE_END_STAGES(logic, start_stage, end_stage, parser_state, TimingParamsLookupTable, parsed_timing_report)
+'''

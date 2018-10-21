@@ -118,8 +118,9 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, Logic, parser_state) + ";" + "\n"
-	
+		#rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, Logic, parser_state) + ";" + "\n"
+		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + WIRE_TO_VHDL_NAME(input_name, Logic) + ";" + "\n"
+		
 	# Pipeline register read as variable		
 	rv += "	" + "	" + "	" + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers := " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_r;" + "\n"
 	
@@ -207,8 +208,6 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	# IS RAW VHDL
 	if  (
 		  logic_func_name.startswith(VHDL_INSERT.HDL_INSERT) or # HDl text insert, so yeah is raw hdl
-		  #logic_func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX) or # Structref is raw vhdl
-		  #logic_func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX + "_") or
 		  logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
 		( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -225,7 +224,9 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 		return True
 	
 	# IS NOT RAW VHDL
-	if (  logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME)                                          or
+	if (  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")                                                                    or  
+		  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")                                                                or
+		  logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME)                                          or
 		  logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MULT_NAME)                                         or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SL_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or # ASSUME FOR NOW
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SR_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or # ASSUME FOR NOW
@@ -266,96 +267,118 @@ use ieee.numeric_std.all;
 
 package c_structs_pkg is
 '''
-	# Enum types
-	for enum_name in parser_state.enum_to_ids_dict.keys():		
-		# Type
-		text += '''
-type ''' + enum_name + ''' is (
-'''	
-		ids_list = parser_state.enum_to_ids_dict[enum_name]
-		for field in ids_list:
-			text += '''
-	''' + field + ''','''
-		
-		text = text.strip(",")
-		text += '''
-);
-'''
-
-	# Arrays of non structs (base C types)
-	# C arrays are multidimensional and single element type
-	# Find all array types - need to do this since array types are not (right now) 
-	# declared/typedef individually like structs
-	array_types = []
-	for inst_name in parser_state.LogicInstLookupTable:
-		logic = parser_state.LogicInstLookupTable[inst_name]
-		for wire in logic.wire_to_c_type:
-			c_type = logic.wire_to_c_type[wire]
-			if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
-				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-				if not C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
-					array_types.append(c_type)
-	# Get types from struct defs too?
-	for struct_name in parser_state.struct_to_field_type_dict:
-		field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
-		for field_name in field_type_dict:
-			field_type = field_type_dict[field_name]
-			if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
-				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
-				if not C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
-					array_types.append(field_type)					
-	# Write VHDL type for each
-	lines= []
-	for array_type in array_types:
-		vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type,parser_state)
-		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
-		# type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
-		for i in range(len(dims)-1, -1, -1):
-			new_dims = dims[i:]
-			new_type = elem_type
-			for new_dim in new_dims:
-				new_type += "[" + str(new_dim) + "]"
-			new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type,parser_state)
-			inner_type_dims = new_dims[1:]
-			inner_type = elem_type
-			for inner_type_dim in inner_type_dims:
-				inner_type += "[" + str(inner_type_dim) + "]"
-			inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
-			line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
-			if line not in lines:
-				text += line
-				lines.append(line)
-
-
-
-	# Hacky resolve struct dependencies
-	done = False
+	
+	
+	# Do this stupid dumb loop to resolve dependencies
+	# Hacky resolve dependencies
 	types_written = []
+	# Uhh sooopppaa hacky
+	for i in range(1, 257):
+		types_written.append("uint" + str(i) + "_t")
+		types_written.append("int" + str(i) + "_t")
+	
+	
+	# Write structs
+	done = False
 	while not done:
 		done = True
+	
+	
+		######## ENUMS
+		# Enum types
+		for enum_name in parser_state.enum_to_ids_dict.keys():		
+			if enum_name not in types_written:
+				done = False
+				types_written.append(enum_name)
+				# Type
+				text += '''
+	type ''' + enum_name + ''' is (
+		'''	
+				ids_list = parser_state.enum_to_ids_dict[enum_name]
+				for field in ids_list:
+					text += '''
+			''' + field + ''','''
+				
+				text = text.strip(",")
+				text += '''
+	);
+	'''
+
+	
+		########## ARRAYS
+		# Arrays of non structs (base C types)
+		# C arrays are multidimensional and single element type
+		# Find all array types - need to do this since array types are not (right now) 
+		# declared/typedef individually like structs
+		array_types = []
+		for inst_name in parser_state.LogicInstLookupTable:
+			logic = parser_state.LogicInstLookupTable[inst_name]
+			for wire in logic.wire_to_c_type:
+				c_type = logic.wire_to_c_type[wire]
+				if (c_type not in types_written) and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and (c_type not in array_types):
+					elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+					if elem_type in types_written:
+						array_types.append(c_type)
+		# Get array types declared in structs
+		for struct_name in parser_state.struct_to_field_type_dict:
+			field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
+			for field_name in field_type_dict:
+				field_type = field_type_dict[field_name]
+				if  (field_type not in types_written) and C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
+					elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+					if elem_type in types_written:
+						array_types.append(field_type)	
+									
+		# Write VHDL type for each
+		for array_type in array_types:
+			vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type,parser_state)
+			elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+			# type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
+			for i in range(len(dims)-1, -1, -1):
+				# Build type
+				new_dims = dims[i:]
+				new_type = elem_type
+				for new_dim in new_dims:
+					new_type += "[" + str(new_dim) + "]"
+				
+				# Write the type if nto already written
+				if new_type not in types_written:
+					types_written.append(new_type)
+					done = False
+					new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type,parser_state)
+					inner_type_dims = new_dims[1:]
+					inner_type = elem_type
+					for inner_type_dim in inner_type_dims:
+						inner_type += "[" + str(inner_type_dim) + "]"
+					inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
+					line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
+					text += line
+	
+
+		######## STRUCTS
 		for struct_name in reversed(parser_state.struct_to_field_type_dict.keys()):
+			#print "STRUCT",struct_name
 			# When to stop?
 			if struct_name in types_written:
-				continue
-			done = False
-				
+				continue	
+							
 			# Resolve dependencies:
 			# Check if all the types for this struct are written or not structs
 			field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
-			field_types_written_or_not_struct = True
+			field_types_written = True
 			for field in field_type_dict:
 				c_type = field_type_dict[field]
-				if not( (c_type in types_written) or (c_type not in parser_state.struct_to_field_type_dict)  ):
-					field_types_written_or_not_struct = False
+				if c_type not in types_written:
+					field_types_written = False
 					break
-			if not field_types_written_or_not_struct:
+			if not field_types_written:
 				continue
 					
 			
-			# Typeif C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
-				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
-				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type):
-					array_types.append(field_type)	
+			# Write type
+			types_written.append(struct_name)
+			done = False
+				
 			text += '''
 	type ''' + struct_name + ''' is record
 	'''
@@ -384,58 +407,11 @@ type ''' + enum_name + ''' is (
 			text += '''
 	);
 	'''
-			types_written.append(struct_name)
 			
 			
-			
-	# Arrays of structs
-	# C arrays are multidimensional and single element type
-	# Find all array types - need to do this since array types are not (right now) 
-	# declared/typedef individually like structs
-	array_types = []
-	for inst_name in parser_state.LogicInstLookupTable:
-		logic = parser_state.LogicInstLookupTable[inst_name]
-		for wire in logic.wire_to_c_type:
-			c_type = logic.wire_to_c_type[wire]
-			if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and not(c_type in array_types):
-				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
-					array_types.append(c_type)
-	# Get types from struct defs too?
-	for struct_name in parser_state.struct_to_field_type_dict:
-		field_type_dict = parser_state.struct_to_field_type_dict[struct_name]
-		for field_name in field_type_dict:
-			field_type = field_type_dict[field_name]
-			if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type) and not(field_type in array_types):
-				elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
-				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type, parser_state):
-					array_types.append(field_type)	
-							
-	# Write VHDL type for each
-	lines= []
-	for array_type in array_types:
-		vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type,parser_state)
-		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
-		# type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
-		for i in range(len(dims)-1, -1, -1):
-			new_dims = dims[i:]
-			new_type = elem_type
-			for new_dim in new_dims:
-				new_type += "[" + str(new_dim) + "]"
-			new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type,parser_state)
-			inner_type_dims = new_dims[1:]
-			inner_type = elem_type
-			for inner_type_dim in inner_type_dims:
-				inner_type += "[" + str(inner_type_dim) + "]"
-			inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
-			line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
-			if line not in lines:
-				text += line
-				lines.append(line)
-	
-	
-	
-				
+		
+	######################
+	# End dumb while loop				
 	
 
 	text += '''
@@ -1096,8 +1072,11 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 		leaf_name = C_TO_LOGIC.LEAF_NAME(just_local_wire_name)	
 	else:
 		leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
-		
-	return leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+	
+	#print "leaf_name",leaf_name
+	rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+	#print rv
+	return rv
 
 
 def GET_SUBMODULE_REGS_WRITE_PIPE_VAR(submodule_inst_name):
