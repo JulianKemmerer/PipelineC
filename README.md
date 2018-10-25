@@ -9,6 +9,8 @@
 
 C for hardware architectures based on pipelines.
 
+Get started by reading the wiki. https://github.com/JulianKemmerer/PipelineC/wiki
+
 PipelineC code generates synthesizable VHDL describing a hardware pipeline. This is the most basic feature of most industry High Level Synthesis (HLS) tools.
 
 The spectrum of HLS tools tends to look like so:
@@ -27,4 +29,4 @@ On the B) side of things you are likely doing a complete rewrite of the code fro
 
 Right now PipelineC is closer to the B side of things - closer to writing hardware description language. I haven't made it too ugly yet and so far only basic hardware knowledge is required. I want writing PipelineC to feel like solving a programming puzzle in C, not a whole new programming language. The rules of the puzzle hide/imply hardware concepts.
 
-Get started by reading the wiki. https://github.com/JulianKemmerer/PipelineC/wiki
+
