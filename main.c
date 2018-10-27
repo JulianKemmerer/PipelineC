@@ -1,180 +1,231 @@
-#include "uintN_t.h"
-#include "intN_t.h"
-#include "bit_manip.h"
-#include "bit_math.h"
+// These are pipeline C modules I have already written
+#include "eth_32.c"
+#include "ip_32.c"
+#include "udp_32.c"
 
-// Float adds std_logic_vector in VHDL
-// Adds are complicated
-float main(float left, float right)
+// I'm going to define some structs so swapping out 
+// what is in the udp payload is a less annoying.
+// I should code generate much of this.
+
+// The struct we intended to receive via UDP
+#define RX_SIZE 8 // No sizeof() right now
+#define RX_UDP_LENGTH 16 // 8 + 8 byte header
+#define RX_IP_LENGTH 36 // 16 + 20 byte header
+// (^ did not nest definitions since cant have 
+// multiple add operations on a single line right now, dumb I know)
+typedef struct rx_data_t
 {
-	// Get exponent for left and right
-	uint8_t left_exponent;
-	left_exponent = float_30_23(left);
-	uint8_t right_exponent;
-	right_exponent = float_30_23(right);
+	float x0;
+	float x1;
+} rx_data_t;
+
+// Add a valid signal to the RX data so we know when its ready
+typedef struct udp_rx_payload_t
+{
+	rx_data_t data;
+	uint1_t valid;
+} udp_rx_payload_t;
+
+// The struct we intended to send via UDP
+#define TX_SIZE 4 // No sizeof() right now
+#define TX_UDP_LENGTH 12 // 4 + 8 byte header
+#define TX_IP_LENGTH 32 // 12 + 20 byte header
+// (^ did not nest definitions since cant have 
+// multiple add operations on a single line right now, dumb I know)
+typedef struct tx_data_t
+{
+	float x0;
+} tx_data_t;
+
+// Add a valid signal to the data so we know when its ready
+typedef struct udp_tx_payload_t
+{
+	tx_data_t data;
+	uint1_t valid;
+} udp_tx_payload_t;
+
+// Logic to get RX data from AXIS UDP payload 4 bytes at a time
+// (TOTALY could benefit from code generation)
+typedef enum deserialize_state_t {
+	X0,
+	X1
+} deserialize_state_t;
+deserialize_state_t deserialize_state;
+udp_rx_payload_t deserialize_rv;
+udp_rx_payload_t deserialize(axis32_t axis)
+{
+	// Dont have all the data to return yet
+	deserialize_rv.valid = 0;
+
+	// Likely need to swap endianess
+	axis.data = bswap_32(axis.data);
+	axis.keep = uint4_0_3(axis.keep);
+	
+	if (axis.valid == 1)
+	{
+		if(deserialize_state==X0)
+		{
+			deserialize_rv.data.x0 = float_uint32(axis.data);
+			deserialize_state = X1;
+		}
+		else // X1
+		{
+			deserialize_rv.data.x1 = float_uint32(axis.data);
+			// Got all the data  now
+			deserialize_rv.valid = 1;
+			// Back to start
+			deserialize_state = X0;
+		}
 		
-	float x;
-	float y;
-	// Step 1: Copy inputs so that left's exponent >= than right's.
-	// ?????????MAYBE TODO: 
-	//		Is this only needed for shift operation that takes unsigned only?
-	// 		ALLOW SHIFT BY NEGATIVE?????
-	//		OR NO since that looses upper MSBs of mantissa which not acceptable? IDK too many drinks
-	if ( right_exponent > left_exponent ) // Lazy switch to GT
-	{
-	   x = right;  
-	   y = left;
-	}
-	else
-	{ 
-	   x = left;
-	   y = right;
+		// Always reset if last
+		if(axis.last == 1)
+		{
+			deserialize_state = X0;
+		}
 	}
 	
-	// Step 2: Break apart into S E M
-	// X
-	uint23_t x_mantissa;	
-	x_mantissa = float_22_0(x);
-	uint8_t x_exponent;
-	x_exponent = float_30_23(x);
-	uint1_t x_sign;
-	x_sign = float_31_31(x);
-	// Y
-	uint23_t y_mantissa;
-	y_mantissa = float_22_0(y);
-	uint8_t y_exponent;
-	y_exponent = float_30_23(y);
-	uint1_t y_sign;
-	y_sign = float_31_31(y);
-	
-	// Mantissa needs +3b wider
-	// 	[sign][overflow][hidden][23 bit mantissa]
-	// Put 0's in overflow bit and sign bit
-	// Put a 1 hidden bit if exponent is non-zero.
-	// X
-	// Determine hidden bit
-	uint1_t x_hidden_bit;
-	if(x_exponent == 0) // lazy swith to ==
-	{
-		x_hidden_bit = 0;
-	}
-	else
-	{
-		x_hidden_bit = 1;
-	}
-	// Apply hidden bit
-	uint24_t x_mantissa_w_hidden_bit; 
-	x_mantissa_w_hidden_bit = uint1_uint23(x_hidden_bit, x_mantissa);
-	// Y
-	// Determine hidden bit
-	uint1_t y_hidden_bit;
-	if(y_exponent == 0) // lazy swith to ==
-	{
-		y_hidden_bit = 0;
-	}
-	else
-	{
-		y_hidden_bit = 1;
-	}
-	// Apply hidden bit
-	uint24_t y_mantissa_w_hidden_bit; 
-	y_mantissa_w_hidden_bit = uint1_uint23(y_hidden_bit, y_mantissa);
-
-	// Step 3: Un-normalize Y (including hidden bit) so that xexp == yexp.
-	// Already swapped left/right based on exponent
-	// diff will be >= 0
-	uint8_t diff;
-	diff = x_exponent - y_exponent;
-	// Shift y by diff (bit manip pipelined function)
-	uint24_t y_mantissa_w_hidden_bit_unnormalized;
-	y_mantissa_w_hidden_bit_unnormalized = y_mantissa_w_hidden_bit >> diff;
-	
-	// Step 4: If necessary, negate mantissas (twos comp) such that add makes sense
-	// STEP 2.B moved here
-	// Make wider for twos comp/sign
-	int25_t x_mantissa_w_hidden_bit_sign_adj;
-	int25_t y_mantissa_w_hidden_bit_sign_adj;
-	if(x_sign) //if(x_sign == 1)
-	{
-		x_mantissa_w_hidden_bit_sign_adj = uint24_negate(x_mantissa_w_hidden_bit); //Returns +1 wider signed, int25t
-	}
-	else
-	{
-		x_mantissa_w_hidden_bit_sign_adj = x_mantissa_w_hidden_bit;
-	}
-	if(y_sign) // if(y_sign == 1)
-	{
-		y_mantissa_w_hidden_bit_sign_adj = uint24_negate(y_mantissa_w_hidden_bit_unnormalized);
-	}
-	else
-	{
-		y_mantissa_w_hidden_bit_sign_adj = y_mantissa_w_hidden_bit_unnormalized;
-	}
-	
-	// Step 5: Compute sum 
-	int26_t sum_mantissa;
-	sum_mantissa = x_mantissa_w_hidden_bit_sign_adj + y_mantissa_w_hidden_bit_sign_adj;
-
-	// Step 6: Save sign flag and take absolute value of sum.
-	uint1_t sum_sign;
-	sum_sign = int26_25_25(sum_mantissa);
-	uint26_t sum_mantissa_unsigned;
-	sum_mantissa_unsigned = int26_abs(sum_mantissa);
-
-	// Step 7: Normalize sum and exponent. (Three cases.)
-	uint1_t sum_overflow;
-	sum_overflow = uint26_24_24(sum_mantissa_unsigned);
-	uint8_t sum_exponent_normalized;
-	uint23_t sum_mantissa_unsigned_normalized;
-	if (sum_overflow) //if ( sum_overflow == 1 )
-	{
-	   // Case 1: Sum overflow.
-	   //         Right shift significand by 1 and increment exponent.
-	   sum_exponent_normalized = x_exponent + 1;
-	   sum_mantissa_unsigned_normalized = uint26_23_1(sum_mantissa_unsigned);
-	}
-    else if(sum_mantissa_unsigned == 0) // laxy switch to ==
-    {
-	   //
-	   // Case 3: Sum is zero.
-	   sum_exponent_normalized = 0;
-	   sum_mantissa_unsigned_normalized = 0;
-	}
-	else
-	{
-	   // Case 2: Sum is nonzero and did not overflow.
-	   // Dont waste zeros at start of mantissa
-	   // Find position of first non-zero digit from left
-	   // Know bit25(sign) and bit24(overflow) are not set
-	   // Hidden bit is [23], can narrow down to 24b wide including hidden bit 
-	   uint24_t sum_mantissa_unsigned_narrow;
-	   sum_mantissa_unsigned_narrow = sum_mantissa_unsigned;
-	   uint5_t leading_zeros; // width = ceil(log2(len(sumsig)))
-	   leading_zeros = count0s_uint24(sum_mantissa_unsigned_narrow); // Count from left/msbs downto, uintX_count0s counts from right
-	   // NOT CHECKING xexp < adj
-	   // Case 2b: Adjust significand and exponent.
-	   sum_exponent_normalized = x_exponent - leading_zeros;
-	   sum_mantissa_unsigned_normalized = sum_mantissa_unsigned_narrow << leading_zeros;
-    }
-	
-	// Declare the output portions
-	uint23_t z_mantissa;
-	uint8_t z_exponent;
-	uint1_t z_sign;
-	z_sign = sum_sign;
-	z_exponent = sum_exponent_normalized;
-	z_mantissa = sum_mantissa_unsigned_normalized;
-	// Assemble output	
-	return float_uint1_uint8_uint23(z_sign, z_exponent, z_mantissa);
+	return deserialize_rv;
 }
 
-
-/*
-int25_t main(int25_t x_mantissa_w_hidden_bit_sign_adj,
-	int25_t y_mantissa_w_hidden_bit_sign_adj)
+// Logic to put TX data into AXIS 4 bytes at a time for UDP payload
+// (TOTALY could benefit from code generation)
+typedef enum serialize_state_t {
+	X0
+} serialize_state_t;
+serialize_state_t serialize_state;
+tx_data_t serialize_data;
+axis32_t serialize_rv;
+axis32_t serialize(udp_tx_payload_t payload)
 {
-	int25_t sum_mantissa;
-	sum_mantissa = x_mantissa_w_hidden_bit_sign_adj + y_mantissa_w_hidden_bit_sign_adj;
+	// No output data yet
+	serialize_rv.valid = 0;
+	serialize_rv.last = 0;
+	serialize_rv.keep = 15;
 	
-	return sum_mantissa;
-}*/
+	/*
+	if(serialize_state==X0)
+	{*/
+		// Wait for valid to get started
+		if(payload.valid)
+		{
+			// Save copy of input data
+			serialize_data = payload.data;
+			
+			// Output data
+			serialize_rv.data = float_31_0(serialize_data.x0);
+			serialize_rv.valid = 1;
+			serialize_rv.last = 1;
+			serialize_state = X0;
+		}
+	/*
+	}
+	else //X0_LSB
+	{
+		// data = x0[31:0]
+		serialize_rv.data = uint64_31_0(serialize_data.x0);
+		serialize_rv.valid = 1;
+		serialize_rv.last = 1;
+		serialize_state = X0_MSB;
+	}*/
+	
+	// Likely need to swap endianess
+	serialize_rv.data = bswap_32(serialize_rv.data);
+	serialize_rv.keep = uint4_0_3(serialize_rv.keep);
+	
+	return serialize_rv;
+}
+
+// Receive UDP payload data from the ethernet port
+udp_rx_payload_t receive(axis32_t mac_axis_rx)
+{
+	// Receive the ETH frame
+	eth32_frame_t eth_rx;
+	eth_rx = eth_32_rx(mac_axis_rx);
+	
+	// Receive IP packet
+	ip32_frame_t ip_rx;
+	ip_rx = ip_32_rx(eth_rx.payload);
+	
+	// Receive UDP packet
+	udp32_frame_t udp_rx;
+	udp_rx = udp_32_rx(ip_rx.payload);
+	
+	// Deserialize the rx data from the UDP AXIS
+	udp_rx_payload_t rv;
+	rv = deserialize(udp_rx.payload);
+	return rv;
+}
+
+// Transmit UDP payload data out the ethernet port
+axis32_t transmit(udp_tx_payload_t payload)
+{
+	// Serialize the tx data into AXIS for UDP payload
+	axis32_t tx_data;
+	tx_data = serialize(payload);
+	
+	// Send the data inside a udp packet
+	udp32_frame_t udp_tx;
+	udp_tx.header.src_port = 1234;
+	udp_tx.header.dst_port = 5678;
+	udp_tx.header.length = TX_UDP_LENGTH;
+	udp_tx.payload = tx_data;
+	
+	// Form Tx IP packet with UDP packet as payload
+	ip32_frame_t ip_tx;
+	// MUST fully initialize local variables for now
+	ip_tx.header.ver = 4;
+	ip_tx.header.ihl = 5;
+	ip_tx.header.dscp = 0;
+	ip_tx.header.ecn = 0;
+	ip_tx.header.total_length = TX_IP_LENGTH;
+	ip_tx.header.iden = 0;
+	ip_tx.header.flags = 0;
+	ip_tx.header.frag = 0;
+	ip_tx.header.ttl = 1;
+	ip_tx.header.protocol = 17; // UDP
+	ip_tx.header.checksum = 0; // Calculated for you
+	ip_tx.header.src_ip = 16909060; //0x01020304
+	ip_tx.header.dst_ip = 84281096; //0x05060708
+	ip_tx.payload = udp_32_tx(udp_tx);
+	
+	// Form Tx ETH frame with ip packet as payload
+	eth32_frame_t eth_tx;
+	eth_tx.header.dst_mac = uint24_uint24(66051, 263430); // 0x010203 040506
+	eth_tx.header.src_mac = uint24_uint24(658188, 920847); // 0x0A0B0C 0E0D0F
+	eth_tx.header.ethertype = 2048; // IP
+	eth_tx.payload = ip_32_tx(ip_tx); // Payload is IP tx packet
+	
+	// Transmit the ETH frame
+	axis32_t mac_axis_tx;
+	mac_axis_tx = eth_32_tx(eth_tx);
+	
+	return mac_axis_tx;
+}
+
+// Do something with RX data to form TX data
+tx_data_t foo(rx_data_t rx_data)
+{
+	tx_data_t tx_data;
+	// Like add two numbers! Rock on!
+	tx_data.x0 = rx_data.x0 + rx_data.x1;
+	return tx_data;
+}
+
+// Input: AXIS from TEMAC
+// Output: AXIS to TEMAC
+axis32_t main(axis32_t mac_axis_rx)
+{
+	// Receive data from the ethernet port
+	udp_rx_payload_t rx_payload;
+	rx_payload = receive(mac_axis_rx);
+	
+	// Do some work to form transmit data
+	udp_tx_payload_t tx_payload;
+	tx_payload.data = foo(rx_payload.data);
+	tx_payload.valid = rx_payload.valid;
+	
+	// Transmit data out the ethernet port
+	axis32_t mac_axis_tx;
+	mac_axis_tx = transmit(tx_payload);
+	return mac_axis_tx;
+}

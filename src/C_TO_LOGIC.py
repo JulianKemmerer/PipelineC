@@ -233,8 +233,7 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 	# Check that are unique
 	for key in d2:
-		#if key in d1:
-		try:
+		if key in self_d1:
 			v1 = self_d1[key]
 			v2 = d2[key]
 			if v1 != v2:
@@ -244,8 +243,8 @@ def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 				print "v2",v2
 				print 0/0
 				sys.exit(0)
-		except:
-			pass
+		#except:
+		#	pass
 				
 	# Do merge with dict methods
 	rv = self_d1
@@ -345,10 +344,10 @@ class Logic:
 		
 		
 		# Mostly for c built in C functions
-		# TODO: make self.submodule_instances into dict of fake logic objects?
 		self.submodule_instance_to_c_ast_node = dict()
 		self.submodule_instance_to_input_port_names = dict()
 		self.ref_submodule_instance_to_input_port_driven_ref_toks = dict()
+		self.ref_submodule_instance_to_ref_toks = dict()
 		
 		# Python graph example was dict() of strings so this
 		# string based wire naming makes Pythonic sense.
@@ -408,6 +407,7 @@ class Logic:
 		rv.c_code_text = self.c_code_text
 		rv.containing_inst = self.containing_inst
 		rv.ref_submodule_instance_to_input_port_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_input_port_driven_ref_toks)
+		rv.ref_submodule_instance_to_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_ref_toks)
 		
 		return rv
 		
@@ -576,6 +576,7 @@ class Logic:
 		self.submodule_instance_to_c_ast_node = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_c_ast_node,logic_b.submodule_instance_to_c_ast_node)
 		self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(self.submodule_instance_to_input_port_names,logic_b.submodule_instance_to_input_port_names)
 		self.ref_submodule_instance_to_input_port_driven_ref_toks = LIST_VAL_UNIQUE_KEY_DICT_MERGE(self.ref_submodule_instance_to_input_port_driven_ref_toks,logic_b.ref_submodule_instance_to_input_port_driven_ref_toks)
+		self.ref_submodule_instance_to_ref_toks = LIST_VAL_UNIQUE_KEY_DICT_MERGE(self.ref_submodule_instance_to_ref_toks, logic_b.ref_submodule_instance_to_ref_toks)
 		
 		# Also for both wire drives and driven by, remove wire driving self:
 		# wire_driven_by
@@ -906,6 +907,7 @@ class Logic:
 		self.submodule_instance_to_c_ast_node = STR_DICT_KEY_PREPREND(self.submodule_instance_to_c_ast_node, prepend_text) #  = dict() # Mostly for c built in C functions
 		self.submodule_instance_to_input_port_names = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.submodule_instance_to_input_port_names, prepend_text)
 		self.ref_submodule_instance_to_input_port_driven_ref_toks = STR_DICT_KEY_PREPREND(self.ref_submodule_instance_to_input_port_driven_ref_toks, prepend_text)
+		self.ref_submodule_instance_to_ref_toks = STR_DICT_KEY_PREPREND(self.ref_submodule_instance_to_ref_toks, prepend_text)
 		# self.c_ast_node = None
 	
 		# Python graph example was dict() of strings so this
@@ -1909,6 +1911,9 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# get inst name
 		func_inst_name = BUILD_INST_NAME(prepend_text,func_name, c_ast_assignment.lvalue)
 		output_wire_name = func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+		# Save ref toks for this ref submodule
+		parser_state.existing_logic.ref_submodule_instance_to_ref_toks[func_inst_name] = lhs_ref_toks
+		
 		
 		# DO INPUT WIRES
 		# (elem_val, ref_tok0, ref_tok1, ..., var_dim0, var_dim1, ...)
@@ -1940,7 +1945,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		for ref_toks in reduced_ref_toks_list:
 			input_port_name = "ref_toks_" + str(ref_toks_i)
 			ref_toks_i += 1
-			#input_port_name = HACKY_STR_ENCODE_REF_TOKS(ref_toks, c_ast_assignment.lvalue, parser_state)
+			
 			## if base variable then call it base
 			#if len(ref_toks) == 1:
 			#	input_port_name = "base_var"			
@@ -1960,6 +1965,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 			
 			# SET ref_submodule_instance_to_input_port_driven_ref_toks
 			parser_state.existing_logic.ref_submodule_instance_to_input_port_driven_ref_toks[func_inst_name].append(ref_toks)
+			
 			
 			
 		# Do C_AST_NODE_TO_LOGIC for var_dim c_ast_nodes
@@ -2453,7 +2459,31 @@ def REF_TOKS_STARTS_WITH(ref_toks, starting_ref_toks, parser_state):
 
 def REF_TOKS_IN_REF_TOKS_LIST(ref_toks, ref_toks_list):
 	return ref_toks in ref_toks_list
-	
+
+
+def WIRE_TO_REF_TOKS(wire, parser_state):
+	# Get ref toks for this alias
+	if wire in parser_state.existing_logic.alias_to_ref_toks:
+		driven_ref_toks = parser_state.existing_logic.alias_to_ref_toks[wire]
+	else:
+		# Must be orig variable name
+		if wire in parser_state.existing_logic.variable_names:
+			driven_ref_toks=[wire]
+		# Or input
+		elif wire in parser_state.existing_logic.inputs:
+			driven_ref_toks=[wire]
+		# Or global ~
+		elif wire in parser_state.global_info:
+			driven_ref_toks=[wire]
+		else:
+			print "wire:",wire
+			print "var name?:",parser_state.existing_logic.variable_names
+			print "does not have associatated ref toks", parser_state.existing_logic.alias_to_ref_toks
+			print 0/0
+			sys.exit(0)
+			
+	return driven_ref_toks
+
 # THIS IS DIFFERENT FROM REDUCE DONE ABOVE
 def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_node, parser_state):
 	
@@ -2461,22 +2491,8 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_node, parse
 	#print "~~~~"
 	#print "alias", alias
 	#print "remaining_ref_toks",remaining_ref_toks
-	
-	# Get ref toks for this alias
-	if alias in parser_state.existing_logic.alias_to_ref_toks:
-		driven_ref_toks = parser_state.existing_logic.alias_to_ref_toks[alias]
-	else:
-		# Must be orig variable name
-		if alias in parser_state.existing_logic.variable_names:
-			driven_ref_toks=[alias]
-		# Or input
-		elif alias in parser_state.existing_logic.inputs:
-			driven_ref_toks=[alias]
-		else:
-			print "alias:",alias
-			print "var name?:",parser_state.existing_logic.variable_names
-			print "does not have associatated ref toks", parser_state.existing_logic.alias_to_ref_toks
-			sys.exit(0)
+		
+	driven_ref_toks = WIRE_TO_REF_TOKS(alias, parser_state)
 		
 	
 	new_remaining_ref_toks = []
@@ -2635,6 +2651,7 @@ def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, parser_state):
 		print "I don't know how to resolve the array ref at", c_ast_ref.subscript.coord
 		sys.exit(0)
 
+# ONLY USE THIS WITH REF C AST NODES
 def C_AST_REF_TO_TOKENS(c_ast_ref, parser_state):
 	toks = []
 	if type(c_ast_ref) == c_ast.ID:
@@ -2656,6 +2673,7 @@ def C_AST_REF_TO_TOKENS(c_ast_ref, parser_state):
 		toks += [str(c_ast_ref.field.name)]
 	else:
 		print "Uh what node in C_AST_REF_TO_TOKENS?",c_ast_ref
+		print 0/0
 		sys.exit(0)
 		
 	# Reverse reverse
@@ -2761,29 +2779,6 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 			sys.exit(0)
 			
 	return current_c_type
-	
-def HACKY_STR_ENCODE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
-	rv = ""
-	# For now only deal with constant
-	for i in range(0,len(ref_toks)):
-		ref_tok = ref_toks[i]
-		if type(ref_tok) == int:
-			# Array ref
-			rv += REF_TOK_DELIM + str(ref_tok)
-		elif type(ref_tok) == str:
-			if i == 0:
-				# Base var
-				rv += ref_tok
-			else:
-				# Struct ref
-				rv += REF_TOK_DELIM + ref_tok
-		elif isinstance(ref_tok, c_ast.Node):
-			rv += REF_TOK_DELIM + "*"
-		else:
-			print "What kind of ref is this?", c_ast_ref.coord
-			sys.exit(0)
-	
-	return rv
 	
 
 def C_AST_ID_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):	
@@ -2965,7 +2960,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
 			prefix = VAR_REF_RD_FUNC_NAME_PREFIX
 				
-		#func_name = prefix + "_" + HACKY_STR_ENCODE_REF_TOKS(ref_toks, c_ast_ref, parser_state) #  gaaaaahhhh
+		
 		# NEEDS TO BE LEGIT C FUNC NAME
 		func_name = prefix
 		# Cant cache all refs?
@@ -3004,10 +2999,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		# Build list of driven ref toks and reduce
 		driven_ref_toks_list = []
 		for driving_alias in driving_aliases:
-			if driving_alias in parser_state.existing_logic.alias_to_ref_toks:
-				driven_ref_toks = parser_state.existing_logic.alias_to_ref_toks[driving_alias]
-			else:
-				driven_ref_toks = [driving_alias]
+			driven_ref_toks = WIRE_TO_REF_TOKS(driving_alias, parser_state)
 			driven_ref_toks_list.append(driven_ref_toks)
 		# Reduce
 		#print "driven_ref_toks_list",driven_ref_toks_list
@@ -3060,10 +3052,11 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		'''
 		
 		
-		
-		
-		
+		# Get inst name
 		func_inst_name = BUILD_INST_NAME(prepend_text,func_name, c_ast_ref)
+		# Save ref toks for this ref submodule
+		parser_state.existing_logic.ref_submodule_instance_to_ref_toks[func_inst_name] = ref_toks
+		
 		
 		# Input wire is most recent copy of input ID node 
 		c_ast_node_2_driven_input_wire_names = OrderedDict()
@@ -3081,13 +3074,10 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		for driving_alias in driving_aliases:
 			#print "driving_alias",driving_alias
 			# Build an input port name based off the tokens this alias drives?
-			if driving_alias in parser_state.existing_logic.alias_to_ref_toks:
-				driven_ref_toks = parser_state.existing_logic.alias_to_ref_toks[driving_alias]
-			else:
-				driven_ref_toks = [driving_alias]
+			driven_ref_toks = WIRE_TO_REF_TOKS(driving_alias, parser_state)
 			
 			# dont get input ref toks from input names
-			#input_port_name = HACKY_STR_ENCODE_REF_TOKS(driven_ref_toks, c_ast_ref, parser_state)
+			
 			# if base variable then call it base
 			#if len(driven_ref_toks) == 1:
 			#	input_port_name = "base_var"
@@ -3738,6 +3728,28 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 	# Done?
 	parser_state.existing_logic = rv
 	return rv
+	
+def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
+	rv = ""
+	# For now only deal with constant
+	for i in range(0,len(ref_toks)):
+		ref_tok = ref_toks[i]
+		if type(ref_tok) == int:
+			# Array ref
+			rv += "_" + str(ref_tok)
+		elif type(ref_tok) == str:
+			if i == 0:
+				# Base var
+				rv += ref_tok
+			else:
+				# Struct ref
+				rv += "_" + ref_tok
+		elif isinstance(ref_tok, c_ast.Node):
+			rv += "_" + "VAR"
+		else:
+			print "What kind of ref is this?", ref_toks, c_ast_ref.coord
+			sys.exit(0)
+	return rv
 
 
 def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
@@ -3874,12 +3886,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 		# Save this for later too
 		var_name_2_all_ref_toks_list[var_name] = all_ref_toks_list[:]
 		
+	
+
 		# Now do MUX inst logic		
 		for ref_toks in all_ref_toks_list:
 			##### SHARE COND WIRE DRIVEN drives SUBMODULE INST COND PORT
 			##### NOT TRUE FALSE SPECIFIC  ######
 			# indivudal mux submodule per orig wire
-			ref_tok_id_str = HACKY_STR_ENCODE_REF_TOKS(ref_toks, c_ast_node, parser_state)
+			ref_tok_id_str = C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_node)
 			mux_inst_name = prepend_text+MUX_LOGIC_NAME+"_"+ref_tok_id_str+"_"+file_coord_str
 			# Instance per variable cond port is driven by intermediate wire with var name	
 			mux_inst_cond_wire = mux_inst_name + SUBMODULE_MARKER + mux_cond_port_name
@@ -3909,14 +3923,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			# TRUE
 			parser_state_for_true = copy.copy(parser_state) # copy.deepcopy(parser_state)
 			parser_state_for_true.existing_logic = true_logic
-			true_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_true_connection_wire_name], "TRUE_INPUT_MUX_", parser_state_for_true)
+			true_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_true_connection_wire_name], "TRUE_INPUT_"+MUX_LOGIC_NAME+"_"+ref_tok_id_str+"_", parser_state_for_true)
 			# Merge in read
 			true_logic.MERGE_COMB_LOGIC(true_read_logic)
 			
 			# FALSE
 			parser_state_for_false = copy.copy(parser_state) # copy.deepcopy(parser_state)
 			parser_state_for_false.existing_logic = false_logic
-			false_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_false_connection_wire_name], "FALSE_INPUT_MUX_", parser_state_for_false)
+			false_read_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [mux_false_connection_wire_name], "FALSE_INPUT_"+MUX_LOGIC_NAME+"_"+ref_tok_id_str+"_", parser_state_for_false)
 			# Merge in read
 			false_logic.MERGE_COMB_LOGIC(false_read_logic)
 			
@@ -3990,7 +4004,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 		
 		# Ok to add to same list multiple times for each orig_wire
 		for ref_toks in all_if_ref_toks_list:
-			ref_tok_id_str = HACKY_STR_ENCODE_REF_TOKS(ref_toks, c_ast_node, parser_state)
+			ref_tok_id_str = C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_node)
 			mux_inst_name = prepend_text+MUX_LOGIC_NAME+"_"+ref_tok_id_str+"_"+file_coord_str
 			mux_connection_wire_name = mux_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
 			true_false_merged.alias_to_orig_var_name[mux_connection_wire_name] = variable
@@ -4745,10 +4759,10 @@ def PARSE_FILE(top_level_func_name, c_file):
 		print "Parsing PipelinedC code..."
 		# Get the parsed struct def info
 		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(c_file)
-
+		#for struct_type in parser_state.struct_to_field_type_dict :
+		#	print struct_type,parser_state.struct_to_field_type_dict[struct_type]
 		# Get SW existing logic for this c file
-		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)		
-		
+		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)
 		# Get the parsed enum info
 		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(c_file)
 		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict

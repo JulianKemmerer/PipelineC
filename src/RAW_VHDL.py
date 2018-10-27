@@ -210,8 +210,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	#container_func_logic = parser_state.FuncName2Logic[container_logic.func_name]
 	parser_state.existing_logic = container_logic
 	
-	
-	ref_toks = C_TO_LOGIC.C_AST_REF_TO_TOKENS(logic.c_ast_node, parser_state)
+	ref_toks = container_logic.ref_submodule_instance_to_ref_toks[logic.inst_name]
 	orig_var_name = ref_toks[0]
 	#print orig_var_name
 	#sys.exit(0)

@@ -39,10 +39,12 @@ class TimingParams:
 		self.hash_ext = None
 		self.timing_report_stage_range = None
 		
+		
 	def INVALIDATE_CACHE(self):
 		self.calcd_total_latency = None
 		self.hash_ext = None
 		self.timing_report_stage_range = None
+		self.cache_slices = None
 		
 	def GET_ABS_STAGE_RANGE_FROM_TIMING_REPORT(self, parsed_timing_report, parser_state, TimingParamsLookupTable):
 		if self.timing_report_stage_range is None:
@@ -55,9 +57,14 @@ class TimingParams:
 	# mAKE CACHED VERSION
 	def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
 		if self.calcd_total_latency is None:
+			#if self.logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
+			#	print "RECALC LATENCY!", self.logic.inst_name
 			self.calcd_total_latency = self.CALC_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+			#if self.logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
+			#	print "RECALC LATENCY:", self.logic.inst_name, "calcd_total_latency", self.calcd_total_latency
 		#else:
-		#	print "Using cache!", self.logic.inst_name, "calcd_total_latency", self.calcd_total_latency
+		#	if self.logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
+		#		print "Using cache!", self.logic.inst_name, "calcd_total_latency", self.calcd_total_latency
 		return self.calcd_total_latency
 		
 	# Haha why uppercase everywhere ...
@@ -78,6 +85,18 @@ class TimingParams:
 	def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
 		if self.hash_ext is None:
 			self.hash_ext = BUILD_HASH_EXT(self.logic, TimingParamsLookupTable, parser_state)
+			#self.cache_slices = self.slices
+			
+		'''
+		lookup_slices = TimingParamsLookupTable[self.logic.inst_name].slices
+		if (self.slices != self.cache_slices) or (lookup_slices != self.cache_slices):
+			print "Using hash ext that does match cache slices?"
+			print "self.slices",self.slices
+			print "self.cache_slices",self.cache_slices
+			print "lookup_slices",lookup_slices
+			print 0/0
+			sys.exit(0)
+		'''
 		
 		return self.hash_ext
 		
@@ -104,6 +123,10 @@ class TimingParams:
 	def SET_RAW_HDL_SLICE(self, slice_index, slice_point):
 		self.slices[slice_index]=slice_point
 		self.slices = sorted(self.slices)
+		self.INVALIDATE_CACHE()
+	
+	def SET_LAST_SUBMODULE_LEVEL(self, stage, level):
+		self.stage_to_last_abs_submodule_level[stage]=level
 		self.INVALIDATE_CACHE()
 		
 	def GET_SUBMODULE_LATENCY(self, submodule_inst_name, parser_state, TimingParamsLookupTable):
@@ -189,12 +212,18 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 		print "DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!"
 		print 0/0
 		sys.exit(0)
+		
+	# FORGIVE ME - never
+	print_debug = False #logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]" #False #logic.func_name == "main" #True
 	
-	#print "logic.func_name",logic.func_name
-	#print "logic.inst_name",logic.inst_name
+	if print_debug:
+		print "GET_PIPELINE_MAP:"
+		print "logic.func_name",logic.func_name
+		print "logic.inst_name",logic.inst_name
 	has_lls = logic.total_logic_levels is not None
 	
-	#print "has_lls",has_lls
+	if print_debug:
+		print "has_lls",has_lls
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	is_zero_clk = len(timing_params.slices) == 0
@@ -203,19 +232,16 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 	#print "timing_params.stage_to_last_abs_submodule_level",timing_params.stage_to_last_abs_submodule_level
 	
 	# Try to use cached pipeline map
-	
 	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state)
 	if not(cached_pipeline_map is None):
-		#print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
+		if print_debug:
+			print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
 		rv = cached_pipeline_map
 		return rv
-	
 	
 	# Else do logic below
 	
 	
-	# FORGIVE ME - never
-	print_debug = False
 	
 	if print_debug:
 		print "==============================Getting pipline map======================================="
@@ -666,8 +692,10 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 	
 	
 	
-	# Write cache
-	WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state)
+	# Write cache if we had logic levels otherwise was not worth caching?
+	if has_lls:
+		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state)
+		
 	return rv
 
 #return submodule_level_markers, ending_submodule_levels
@@ -697,16 +725,27 @@ def GET_SHELL_CMD_OUTPUT(cmd_str):
 	
 def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	
+	'''
 	# Need unique ID for this configuration of submodules, regular submodules use latency as keey
 	submodule_names_and_latencies = []
-	
 	# Top level starts with just inst name and RAW HDL slices (if applicable)
 	top_level_str = Logic.inst_name + "_"
 	if len(Logic.submodule_instances) <= 0:
 		timing_params = TimingParamsLookupTable[Logic.inst_name]
 		top_level_str += str(timing_params.slices) + "_"
 	submodule_names_and_latencies.append(top_level_str)
+	'''
+	# All modules get sliced, not just raw hdl
+	# Might even be through submodule markers so would never slice all the way down to raw HDL
+	top_level_str = Logic.inst_name + "_"
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	top_level_str += str(timing_params.slices)
+	# Top level slices ALONE should uniquely identify a pipeline configuration
+	# Dont need to go down into submodules
+	s = top_level_str
 	
+	'''
 	# Fake recurses through every submodule instance
 	next_logics = []
 	for submodule_inst in Logic.submodule_instances:
@@ -743,16 +782,17 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	s = ""
 	for submodule_name_and_latency in submodule_names_and_latencies:
 		s += submodule_name_and_latency
+	'''
+	
 		
 	hash_ext = "_" + ((hashlib.md5(s).hexdigest())[0:4]) #4 chars enough?
-	
 		
 	return hash_ext
 	
 # Returns updated TimingParamsLookupTable
 # None if sliced through globals
 def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state, TimingParamsLookupTable, write_files=True):	
-	print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
+	#print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
 	# Get timing params for this logic
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	# Add slice
@@ -764,6 +804,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	# Raw HDL doesnt need further slicing, bottom of hierarchy
 	if len(logic.submodule_instances) > 0:
+		#print "logic.submodule_instances",logic.submodule_instances
 		# Get the zero clock pipeline map for this logic
 		zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(logic, parser_state)
 		total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
@@ -783,12 +824,13 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Indicate this submodule ends a stage
 				#print new_slice_pos, "slice_through_submodule_level_marker", slice_through_submodule_level_marker
 				slice_through_submodule_level_marker = True
-				timing_params.stage_to_last_abs_submodule_level[slice_ends_stage]=ending_submodule_level
+				timing_params.SET_LAST_SUBMODULE_LEVEL(slice_ends_stage, ending_submodule_level)
 				#print "stage_per_ll_submodule_level_map",zero_clk_pipeline_map.stage_per_ll_submodule_level_map
 				#print "logic.inst_name",logic.inst_name
 				#print "submodule levels:",submodule_level_markers
 				#print "slice:",new_slice_pos
 				#print "ends stage:",slice_ends_stage
+				#print "at submodule level:",ending_submodule_level
 				#print "=="
 				
 		# Write into timing params dict
@@ -853,7 +895,6 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Might be bas slice
 				if type(TimingParamsLookupTable) is not dict:
 					return TimingParamsLookupTable
-				
 	
 	if write_files:	
 		# Final write package
@@ -873,7 +914,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 # Returns index of bad slices
 def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_state, write_files=True):	
-	print "GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES", logic.inst_name, current_slices, "write_files",write_files
+	#print "GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES", logic.inst_name, current_slices, "write_files",write_files
 	# Reset to initial timing params before adding slices
 	TimingParamsLookupTable = dict()
 	for logic_inst_name in parser_state.LogicInstLookupTable: 
@@ -883,7 +924,7 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	
 	# Do slice to main logic for each slice
 	for current_slice_i in current_slices:
-		print "	current_slice_i:",current_slice_i
+		#print "	current_slice_i:",current_slice_i
 		TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, current_slice_i, parser_state, TimingParamsLookupTable, write_files)
 		# Might be bad slice
 		if type(TimingParamsLookupTable) is not dict:
@@ -894,7 +935,8 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	if est_total_latency != total_latency:
 		print "Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency
-		print "slices:",current_slices
+		print "current slices:",current_slices
+		print "timing_params.slices",timing_params.slices
 		print "timing_params.stage_to_last_abs_submodule_level",timing_params.stage_to_last_abs_submodule_level
 		for logic_inst_name in parser_state.LogicInstLookupTable: 
 			logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
@@ -2635,7 +2677,10 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state):
 				print "WTF? cant load pipeline map file",filepath
 				print sys.exc_info()[0]                                                                
 				#sys.exit(0)
-				return None								
+				return None		
+			#if Logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
+			#	print "timing_params.slices:",timing_params.slices 
+			#	print "Using pipeline map file:", filename
 			return pipe_line_map
 	return None	
 	

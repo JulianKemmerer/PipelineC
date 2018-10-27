@@ -573,7 +573,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 					text += in_t + " x" + "[" + str(n_sum) + "]"
 				else: 
 					# List each input
-					for i in range(0, n):
+					for i in range(0, n_sum):
 						text += in_t + " x" + str(i) + ","
 						var_2_type["x" + str(i)]=in_t
 					# Remove last comma
@@ -995,7 +995,8 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	## Fuck need to put array in struct
 	# Then need to allow cast from struct wray to array type in VHDL?
 
-	ref_toks = C_TO_LOGIC.C_AST_REF_TO_TOKENS(partially_complete_logic.c_ast_node, parser_state)
+
+	ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic.inst_name]
 	orig_var_name = ref_toks[0]
 	
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
@@ -1284,8 +1285,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	#$@@@@ 
 	#$$Need to get base type of LHS
 	# Input ref toks can be base value so need to start with base type
-	
-	lhs_ref_toks = C_TO_LOGIC.C_AST_REF_TO_TOKENS(partially_complete_logic.c_ast_node, parser_state)
+	lhs_ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic.inst_name]
 	orig_var_name = lhs_ref_toks[0]
 	base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
 	

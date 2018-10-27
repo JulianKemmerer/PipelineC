@@ -276,6 +276,8 @@ package c_structs_pkg is
 	for i in range(1, 257):
 		types_written.append("uint" + str(i) + "_t")
 		types_written.append("int" + str(i) + "_t")
+	# Oh dont forget to be extra dumb
+	types_written.append("float")
 	
 	
 	# Write structs
@@ -306,7 +308,6 @@ package c_structs_pkg is
 
 	
 		########## ARRAYS
-		# Arrays of non structs (base C types)
 		# C arrays are multidimensional and single element type
 		# Find all array types - need to do this since array types are not (right now) 
 		# declared/typedef individually like structs
@@ -356,8 +357,8 @@ package c_structs_pkg is
 	
 
 		######## STRUCTS
-		for struct_name in reversed(parser_state.struct_to_field_type_dict.keys()):
-			#print "STRUCT",struct_name
+		for struct_name in parser_state.struct_to_field_type_dict:
+			#print "STRUCT",struct_name, struct_name in types_written
 			# When to stop?
 			if struct_name in types_written:
 				continue	
@@ -369,6 +370,7 @@ package c_structs_pkg is
 			for field in field_type_dict:
 				c_type = field_type_dict[field]
 				if c_type not in types_written:
+					#print c_type, "NOT IN TYPES WRITTEN"
 					field_types_written = False
 					break
 			if not field_types_written:
@@ -1057,9 +1059,30 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 		else:
 			# ASSUMING ENUM AAUAUGHGHGHG????
 			#print "wire_name",wire_name
+			toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
+			toks.reverse()
+			local_name = toks[0]
+			enum_wire = local_name.split("$")[0]
+			if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
+				print "Non const enum constant?",enum_wire
+				sys.exit(0)
+			enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
 			#print "local_name",local_name
-			#print "stripped_wire_name",stripped_wire_name
-			return stripped_wire_name.split("$")[0]
+			#print "enum_name",enum_name
+			
+			# Sanity check that enum exists?
+			match = False
+			for enum_type in parser_state.enum_to_ids_dict:
+				ids = parser_state.enum_to_ids_dict[enum_type]
+				if enum_name in ids:
+					match = True
+					break
+			if not match:
+				print parser_state.enum_to_ids_dict
+				print enum_name, "doesn't look like an ENUM constant?"
+				sys.exit(0)
+			
+			return enum_name
 		
 	else:
 		#print wire_name, "IS NOT CONSTANT"
