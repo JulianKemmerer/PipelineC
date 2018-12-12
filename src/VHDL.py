@@ -514,6 +514,7 @@ use ieee.numeric_std.all;\n"""
 			# Skip globals too
 			if wire_name in logic.global_wires:
 				continue
+			# Dont skip volatile globals, they are like regular wires
 				
 			#print "wire_name", wire_name
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, logic, parser_state)
@@ -564,19 +565,27 @@ type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_global_registers_t is r
 		# Each func instance gets records
 		package_file_text += '''
 	-- Global vars\n'''
-	
-		## Get just global vars from global wires
-		#global_vars = []
-		#for global_wire in logic.global_wires:
-		#	orig_var_name = ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(global_wire)
-		#	global_vars.append(orig_var_name)
-		
+		#print "logic.global_wires",logic.global_wires
 		for global_wire in logic.global_wires:
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, logic, parser_state)
-			#print "wire_name",wire_name
 			vhdl_name = WIRE_TO_VHDL_NAME(global_wire, logic)
 			package_file_text += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
 		package_file_text += "end record;\n"
+		
+	# VOLATILE GLOBALS
+	if len(logic.volatile_global_wires) > 0:
+		package_file_text += '''
+-- Type holding all volatile global registers
+type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_volatile_global_registers_t is record'''
+		# Each func instance gets records
+		package_file_text += '''
+	-- Volatile global vars\n'''
+		for volatile_global_wire in logic.volatile_global_wires:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(volatile_global_wire, logic, parser_state)
+			vhdl_name = WIRE_TO_VHDL_NAME(volatile_global_wire, logic)
+			package_file_text += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
+		package_file_text += "end record;\n"
+		
 		
 		
 	# ALL REGISTERS
@@ -594,6 +603,12 @@ type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_registers_t is record
 	if len(logic.global_wires) > 0:
 		package_file_text += '''
 	global_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_global_registers_t;'''
+	# Volatile global regs
+	if len(logic.volatile_global_wires) > 0:
+		package_file_text += '''
+	volatile_global_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_volatile_global_registers_t;'''
+	
+	
 	
 	package_file_text += '''	
 end record;
@@ -635,6 +650,11 @@ begin
 	# Do each global var
 	for global_wire in logic.global_wires:
 		package_file_text += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, logic) + " := " + WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state) + ";\n"
+	# Volatile globals too?
+	for volatile_global_wire in logic.volatile_global_wires:
+		package_file_text += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := " + WIRE_TO_VHDL_NULL_STR(volatile_global_wire, logic, parser_state) + ";\n"
+	
+	
 	
 	# Null out each submodule
 	for submodule_inst in logic.submodule_instances:
@@ -676,6 +696,11 @@ end function;\n
 		package_file_text += "	" + "-- Global registers read once per clock\n"
 		package_file_text += "	" + "variable read_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_global_registers_t;\n"
 		package_file_text += "	" + "variable write_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_global_registers_t;\n"
+	# Volatile global regs
+	if len(logic.volatile_global_wires) > 0:
+		package_file_text += "	" + "-- Volatile global registers read once per clock\n"
+		package_file_text += "	" + "variable read_volatile_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_volatile_global_registers_t;\n"
+		package_file_text += "	" + "variable write_volatile_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_volatile_global_registers_t;\n"
 	
 	
 	# BEGIN BEGIN BEGIN
@@ -707,7 +732,16 @@ end function;\n
 	-- Default write contents of global regs
 	write_global_regs := read_global_regs;
 '''
-		
+	# Volatile globals
+	if len(logic.volatile_global_wires) > 0:
+		package_file_text += '''
+	-- VOLATILE GLOBAL REGS
+	-- Default read volatile global regs once per clock
+	read_volatile_global_regs := registers.volatile_global_regs;
+	-- Default write contents of volatile global regs
+	write_volatile_global_regs := read_volatile_global_regs;
+'''
+	
 	package_file_text += "	-- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
 	package_file_text += "	-- LATENCY=0 is combinational logic\n"
 	package_file_text += "	" + "for STAGE in 0 to " + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY loop\n"
@@ -718,6 +752,10 @@ end function;\n
 		#package_file_text += "	" + "	" + "	" + "read_pipe." + C_TO_LOGIC.LEAF_NAME(input_wire,True) + " := " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,logic.inst_name, parser_state.LogicInstLookupTable) + ";\n"
 		#package_file_text += "	" + "	" + "	" + "read_pipe." + C_TO_LOGIC.LEAF_NAME(input_wire,True) + " := " + C_TO_LOGIC.LEAF_NAME(input_wire,True) + ";\n"
 		package_file_text += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, logic) + ";\n"
+	# Also mux volatile global regs into wires
+	package_file_text += "	" + "	" + "	" + "-- Mux in volatile globals\n"
+	for volatile_global_wire in logic.volatile_global_wires:
+		package_file_text += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + ";\n"
 		
 	package_file_text += "	" + "	" + "else\n"
 	package_file_text += "	" + "	" + "	" + "-- Default read from previous stage\n"
@@ -736,18 +774,27 @@ end function;\n
 	package_file_text += "	" + "end loop;\n"
 	package_file_text += "\n"
 	package_file_text += "	" + "-- Last stage of pipeline return wire to function return wire\n"
-	# Need conversion to return wire?
-	# BAH DONT DO THAT NOW	
 	package_file_text += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " := " + "write_self_regs(" + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY)." + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
-	# Regs
+	package_file_text += "	" + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
+	for volatile_global_wire in logic.volatile_global_wires:
+		package_file_text += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := write_self_regs(" + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + ";\n"
+	package_file_text += "\n"	
+	
+	# ~~~ REGISTERS
 	package_file_text += "	" + "-- Per clock write back registers\n"
 	package_file_text += "	" + "registers.self := write_self_regs;\n"
-	# Submodules if not raw hdl
+	# 	Submodules if not raw hdl
 	if len(logic.submodule_instances) > 0:
 		package_file_text += "	" + "registers.submodules := write_submodule_regs;\n"
-	# Globals
+	# 	Globals
 	if len(logic.global_wires) > 0:
 		package_file_text += "	" + "registers.global_regs := write_global_regs;\n"
+	# 	Volatile globals
+	if len(logic.volatile_global_wires) > 0:
+		package_file_text += "	" + "registers.volatile_global_regs := write_volatile_global_regs;\n"
+	# ~~~~~~~~~~~~~~~
+	
+		
 	package_file_text += "end procedure;\n"
 	package_file_text += "\n"
 	package_file_text += "end " + package_name + ";\n"
@@ -1008,6 +1055,7 @@ def GET_RHS(driving_wire_to_handle, logic, parser_state, TimingParamsLookupTable
 		#print "DRIVING WIRE GLOBAL"						
 		# Globals come from input regs to this procedure
 		RHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+	# Volatile globals are like regular wires
 	else:
 		# Otherwise use regular wire connection
 		RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
@@ -1025,6 +1073,7 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 		#print "DRIVING WIRE GLOBAL"						
 		# Globals come from input regs to this procedure
 		LHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
+	# Volatile globals are like regular wires
 	else:
 		# Otherwise use regular wire connection
 		LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)

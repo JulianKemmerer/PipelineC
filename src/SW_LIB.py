@@ -1066,7 +1066,18 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	'''
 	
 	# Assign ref toks into base type
-	text += base_c_type + " base;\n"
+	if C_TO_LOGIC.C_TYPE_IS_ARRAY(base_c_type):
+		# Dimensions go after variable name
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(base_c_type)
+		text += elem_type + " base"
+		for dim in dims:
+			text += "[" + str(dim) + "]"
+		text += ";\n"			
+	else:
+		# Regular non array
+		text += base_c_type + " base;\n"
+	
+	
 	text += "	// Assign ref toks to base\n"
 	# Do ref toks
 	ref_toks_i = 0
@@ -1267,15 +1278,205 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 }'''
 
 
-	print "GET_VAR_REF_RD_C_CODE text"
-	print text
+	#print "GET_VAR_REF_RD_C_CODE text"
+	#print text
 	#sys.exit(0)
 	
 	return text
 	
 	
-		
 def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+	# Each element gets a single mux comapring == sel
+	# Old code was bloated in muxing multiple copies of huge array
+
+	# Input ref toks can be base value so need to start with base type
+	lhs_ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic.inst_name]
+	orig_var_name = lhs_ref_toks[0]
+	base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
+	
+	
+	#print lhs_ref_toks
+	#print "base_c_type",base_c_type
+	#sys.exit(0)
+	
+
+
+	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+	
+	func_c_name = partially_complete_logic.func_name #.replace("[","_").replace("]","_").replace("__","_")
+	
+	text = ""
+	
+	text += '''
+#include "uintN_t.h"
+#include "''' + BIT_MATH_HEADER_FILE + '''"
+
+// Var ref assignment\n'''
+
+	# Do type defs for input structs and output array (if output is array)
+	for input_wire in partially_complete_logic.inputs:
+		input_t = partially_complete_logic.wire_to_c_type[input_wire]
+		if C_TO_LOGIC.C_TYPE_IS_STRUCT(input_t, parser_state):
+			text += '''typedef uint8_t ''' + input_t + "; // FUCK\n"
+	if C_TO_LOGIC.C_TYPE_IS_STRUCT(output_t, parser_state):
+		text += '''typedef uint8_t ''' + output_t + "; // FUCK\n"
+
+	# FUNC DEF
+	text += output_t + ''' ''' + func_c_name + '''('''
+	
+	# Inputs
+	for input_wire in partially_complete_logic.inputs:
+		input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+		input_t = partially_complete_logic.wire_to_c_type[input_wire]
+		if C_TO_LOGIC.C_TYPE_IS_ARRAY(input_t):
+			# Dimensions go after variable name
+			elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_t)
+			text += elem_type + " " + input_c_name
+			for dim in dims:
+				text += "[" + str(dim) + "]"
+			text += ", "			
+		else:
+			# Regular non array
+			text += input_t + " " + input_c_name + ", "
+	
+	
+	# Remove last ","
+	text = text.rstrip(", ")
+	# End line
+	text += ''')
+{
+	'''
+	
+	# First need to assign ref tokens into type matching return
+	# Assign ref toks into base type
+	if C_TO_LOGIC.C_TYPE_IS_ARRAY(base_c_type):
+		# Dimensions go after variable name
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(base_c_type)
+		text += elem_type + " base"
+		for dim in dims:
+			text += "[" + str(dim) + "]"
+		text += ";\n"			
+	else:
+		# Regular non array
+		text += base_c_type + " base;\n"
+	
+	
+	text += "	// Assign ref toks to base\n"
+	# Do ref toks
+	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic.inst_name]
+	ref_toks_i = 0
+	for input_wire in partially_complete_logic.inputs[1:]: 
+		if "var_dim_" not in input_wire:
+			input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+			
+			# ref toks not from port name
+			driven_ref_toks = driven_ref_toks_list[ref_toks_i]
+			ref_toks_i += 1
+			
+			# Expand to constant refs
+			expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(driven_ref_toks, partially_complete_logic.c_ast_node, parser_state)
+			for expanded_ref_toks in expanded_ref_tok_list:
+				# Make str
+				lhs = "base"
+				for expanded_ref_tok in expanded_ref_toks[1:]: # Skip base var name:
+					if type(expanded_ref_tok) == int:
+						lhs += "[" + str(expanded_ref_tok) + "]"
+					elif type(expanded_ref_tok) == str:
+						lhs += "." + expanded_ref_tok
+					else:
+						print "WTF var ref input wire as input ref tok to var ref??", expanded_ref_tok
+						sys.exit(0)
+				
+				# Do assignment
+				text += "	" + lhs + " = " + input_c_name + ";\n"
+			
+	# Then make a bunch of copies of rv, one for each possible i,j,k variable dimension
+	# Get var dimension types
+	var_dim_types = []
+	var_dim_input_wires = []
+	for input_wire in partially_complete_logic.inputs[1:]: 
+		if "var_dim_" in input_wire:
+			c_type = partially_complete_logic.wire_to_c_type[input_wire]
+			var_dim_types.append(c_type)
+			var_dim_input_wires.append(input_wire)
+	
+	
+	text += "	// Copy base into rv\n"
+	text += "	" + output_t + " rv;\n"
+	## BBAAAH parser_state.existing_logic needs to be containing logic
+	parser_state.existing_logic = containing_func_logic
+	# Need to assign base into rv output
+	# Output type is just N dimension array of the element type 
+	# N dims are variable ref toks
+	# Loop over all the variable dimensions
+	# Do so with expanded ref toks
+	var_dim_ref_tok_indices, var_dims, var_dim_iter_types = C_TO_LOGIC.GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state)
+	expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state)
+	for expanded_ref_toks in expanded_ref_tok_list:
+		# LHS is just variable ref dims
+		lhs = "rv.data"
+		for index in var_dim_ref_tok_indices:
+			lhs += "[" + str(expanded_ref_toks[index]) + "]"
+		
+		# RHS is full ref toks
+		rhs = "base"
+		for expanded_ref_tok in expanded_ref_toks[1:]: # Skip base var name
+			if type(expanded_ref_tok) == int:
+				rhs += "[" + str(expanded_ref_tok) + "]"
+			elif type(expanded_ref_tok) == str:
+				rhs += "." + expanded_ref_tok
+			else:
+				print "WTF var ref input wire as input ref tok to var ref?? rhs", expanded_ref_tok
+				sys.exit(0)
+				
+		text += "	" + lhs + " = " + rhs + ";\n" 
+		
+		
+		
+	# Do a mux for each element
+	text += "	// Do mux for each element\n"
+	for expanded_ref_toks in expanded_ref_tok_list:
+		text += "	" + "if(\n"
+		# Do each var dim
+		for var_dim_i in range(0, len(var_dim_ref_tok_indices)):
+			index = var_dim_ref_tok_indices[var_dim_i]
+			text += "		(" + "var_dim_" + str(var_dim_i) + " == " + str(expanded_ref_toks[index]) + ") &\n"
+		# Remove last and
+		text = text[:-len("&\n")]
+		# End if ()
+		text += "\n	)\n"
+		text += "	{\n"
+		
+		# Build lhs		
+		# LHS is just variable ref dims
+		lhs = "rv.data"
+		for var_dim_i in range(0, len(var_dim_ref_tok_indices)):
+			index = var_dim_ref_tok_indices[var_dim_i]
+			lhs += "[" + str(expanded_ref_toks[index]) + "]"
+		
+		# Assign elem to it
+		text += "		" + lhs + " = elem_val;\n"
+		text += "	}\n"
+		
+	
+	
+	text += '''
+	return rv;
+}'''
+
+
+	#print "GET_VAR_REF_ASSIGN_C_CODE text"
+	#print text
+	#sys.exit(0)
+	
+	return text
+	
+	
+	
+	
+	
+		
+def GET_VAR_REF_ASSIGN_C_CODE_old(partially_complete_logic, containing_func_logic, out_dir, parser_state):
 
 	#@@@@ Need to solve can't reutnr arry and any type NMUX name problem (struct_t_muxN name?)
 	## Fuck need to put array in struct
@@ -1343,7 +1544,19 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	'''
 	
 	# First need to assign ref tokens into type matching return
-	text += base_c_type + " base;\n"
+	# Assign ref toks into base type
+	if C_TO_LOGIC.C_TYPE_IS_ARRAY(base_c_type):
+		# Dimensions go after variable name
+		elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(base_c_type)
+		text += elem_type + " base"
+		for dim in dims:
+			text += "[" + str(dim) + "]"
+		text += ";\n"			
+	else:
+		# Regular non array
+		text += base_c_type + " base;\n"
+	
+	
 	text += "	// Assign ref toks to base\n"
 	# Do ref toks
 	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic.inst_name]
@@ -1570,8 +1783,8 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 }'''
 
 
-	print "GET_VAR_REF_ASSIGN_C_CODE text"
-	print text
+	#print "GET_VAR_REF_ASSIGN_C_CODE text"
+	#print text
 	#sys.exit(0)
 	
 	return text

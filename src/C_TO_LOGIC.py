@@ -138,8 +138,16 @@ def casthelp(arg):
 	except:
 		pass; 
 		
-def LIST_UNION(a,b):
-	return list( set().union(*[a,b]) )
+def LIST_UNION(self_a,b):
+	# Ummm?
+	if self_a == b:
+		return self_a
+	
+	#return list( set().union(*[a,b]) )
+	# uhh faster?
+	self_a.extend(b)
+	return list(set(self_a))
+	
 
 def C_AST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 	d1 = d1_arg
@@ -165,6 +173,10 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 	return rv
 	
 def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
+	# uh?
+	if self_d1 == d2:
+		return self_d1
+	
 	for key in d2:
 		if key in self_d1:
 			v1 = self_d1[key]
@@ -209,6 +221,10 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE_old(d1_arg,d2_arg):
 	
 	
 def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
+	# Uhhh?
+	if self_d1 == d2:
+		return self_d1
+	
 	for key in d2:
 		if key in self_d1:
 			v1 = self_d1[key]
@@ -231,6 +247,10 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 
 
 def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
+	# Uhh?
+	if self_d1 == d2:
+		return self_d1
+	
 	# Check that are unique
 	for key in d2:
 		if key in self_d1:
@@ -336,6 +356,7 @@ class Logic:
 		self.inputs=[] #["a","b"] 
 		self.outputs=[] #["return"]
 		self.global_wires=[]
+		self.volatile_global_wires=[]
 		self.uses_globals = False
 		self.submodule_instances = dict() # instance name -> logic func_name
 		self.c_ast_node = None
@@ -391,6 +412,7 @@ class Logic:
 		rv.inputs = self.inputs[:] #["a","b"]
 		rv.outputs = self.outputs[:] #["return"]
 		rv.global_wires = self.global_wires[:]
+		rv.volatile_global_wires = self.volatile_global_wires[:]
 		rv.uses_globals = self.uses_globals
 		rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
 		rv.c_ast_node = copy.copy(self.c_ast_node) # Uhhh seemed wrong ?
@@ -471,6 +493,10 @@ class Logic:
 	# Merges logic_b into self
 	# Returns none intentionally
 	def MERGE_COMB_LOGIC(self,logic_b):		
+		# Um...?
+		if self == logic_b:
+			return None
+		
 		# Func name must match if set
 		if (self.func_name is not None) and (logic_b.func_name is not None):
 			if self.func_name != logic_b.func_name:
@@ -520,6 +546,7 @@ class Logic:
 		# Merge lists
 		self.wires = LIST_UNION(self.wires,logic_b.wires)
 		self.global_wires = LIST_UNION(self.global_wires,logic_b.global_wires)
+		self.volatile_global_wires = LIST_UNION(self.volatile_global_wires,logic_b.volatile_global_wires)
 		self.variable_names = LIST_UNION(self.variable_names,logic_b.variable_names)
 		
 		# I/O order matters - check that
@@ -632,6 +659,7 @@ class Logic:
 		
 		# Only way this makes sense with MERGE_SEQUENTIAL_LOGIC
 		# is for dicts to be equal (checked python docs for eq syntax)
+		# Uhhh.... seems wrong?
 		if self.wire_aliases_over_time != logic_b.wire_aliases_over_time:
 			# Only OK if one dict is completely empty
 			if not(self.wire_aliases_over_time == dict() or logic_b.wire_aliases_over_time == dict()):		
@@ -668,6 +696,10 @@ class Logic:
 	# Merges with self
 	# Intentionally returns None
 	def MERGE_SEQ_LOGIC(self, second_logic):		
+		# Um...?
+		if self == second_logic:
+			return None
+		
 		#print "===="
 		#print "self.wire_drives", self.wire_drives 
 		#print "self.wire_driven_by", self.wire_driven_by 
@@ -701,6 +733,7 @@ class Logic:
 		# Merge lists
 		self.wires = LIST_UNION(self.wires,second_logic.wires)
 		self.global_wires = LIST_UNION(self.global_wires,second_logic.global_wires)
+		self.volatile_global_wires = LIST_UNION(self.volatile_global_wires,second_logic.volatile_global_wires)
 		self.variable_names = LIST_UNION(self.variable_names,second_logic.variable_names)
 		
 		# Absorb true values of using globals
@@ -903,6 +936,7 @@ class Logic:
 		self.inputs = STR_LIST_PREPEND(self.inputs, prepend_text) # =[] #["a","b"]
 		self.outputs = STR_LIST_PREPEND(self.outputs, prepend_text) # =[] #["return"]
 		self.global_wires = STR_LIST_PREPEND(self.global_wires, prepend_text)
+		self.volatile_global_wires = STR_LIST_PREPEND(self.volatile_global_wires, prepend_text)
 		self.submodule_instances = STR_DICT_KEY_PREPREND(self.submodule_instances, prepend_text) #  = dict() # instance name -> self func_name
 		self.submodule_instance_to_c_ast_node = STR_DICT_KEY_PREPREND(self.submodule_instance_to_c_ast_node, prepend_text) #  = dict() # Mostly for c built in C functions
 		self.submodule_instance_to_input_port_names = STR_DICT_KEY_AND_ALL_VALUES_PREPREND(self.submodule_instance_to_input_port_names, prepend_text)
@@ -1057,6 +1091,9 @@ def WIRE_IS_SUBMODULE_PORT(wire, logic):
 	
 
 def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, new_inst_name_prepend_text, submodule_inst_name, parser_state):	
+	#print "containing_func_logic.func_name, new_inst_name_prepend_text, submodule_inst_name"
+	#print containing_func_logic.func_name, "|", new_inst_name_prepend_text, "|", submodule_inst_name
+	#print "====================================================================================="
 	# Construct a fake 'submodule_logic' with correct name, inputs, outputs
 	submodule_logic = Logic()
 	submodule_logic.is_c_built_in = True
@@ -1218,8 +1255,6 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_fun
 		# Parse and return the only func def
 		func_name = partially_complete_logic.func_name
 		print "...",cache_tok.replace(partially_complete_logic.func_name+"_", partially_complete_logic.func_name + " : ")
-		#print ""
-		#print "BUILD_BIN_OP_MULT_LOGIC_AS_C_CODE"
 		sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_code_text, parser_state)
 		# Merge into existing
 		for sw_func_name in sw_func_name_2_logic:
@@ -1272,25 +1307,33 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_fun
 	
 	return partially_complete_logic
 		
-#print "Keep _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache?"
+# DOESNT SEEM TO HELP
+#print "Keep _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache? 849"
 #_GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache = dict()
-# Wow so hacky
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parser_state, parse_body):
-	'''
-	global _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache
-	cache_tok = (text,fake_filename)
-	try:
-		return _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]
-	except:
-		pass
-	'''
+	#print "GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT"
+	#print text
+	#print fake_filename
+	
+	
+	#global _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache
+	#cache_tok = text+fake_filename
+	#try:
+	#	return _GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]
+	#except:
+	#	pass
+	
 	
 	# Build function name to logic from func defs from files
 	func_name_2_logic = copy.deepcopy(parser_state.FuncName2Logic) #copy.deepcopy(parser_state.FuncName2Logic)   #### Uh need this copy so bit manip/math funcs not directly in C text are accumulated over time wtf? TODO: Fix 
 	#func_name_2_logic = dict()
 	
 	func_defs = GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename)
+	#print "== done parsing"
+	
+	
 	for func_def in func_defs:
+		#print "...func def"
 		# Each func def produces a single logic item
 		existing_logic=None
 		driven_wire_names=[]
@@ -1303,38 +1346,16 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 		func_name_2_logic[logic.func_name] = logic
 		func_name_2_logic[logic.func_name].inst_name = logic.func_name 
 	
+	#print "===================================================="
 	
-	'''
-	_GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]=func_name_2_logic
-	'''
+	#_GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT_cache[cache_tok]=func_name_2_logic
+	
 	
 	return func_name_2_logic
 	
 		
 # WHY CAN I NEVER REMEMBER DICT() IS NOT IMMUTABLE (AKA needs copy operator)
 # BECAUSE YOU ARE A PIECE OF SHIT	
-
-'''
-# Returns list of logics
-def MERGE_LOGIC_LISTS(logics_a,logics_b):
-	# Mere logic items if same name
-	# Store as dict name-> logic
-	# Return as list
-	logic_lookup_table = dict()
-	both_lists = logics_a + logics_b
-	
-	for logic in both_lists:
-		# Put this logic into the table
-		logic_into_table = logic
-		# Merge with something already in table
-		if logic.name in logic_lookup_table:
-			logic_from_table = logic_lookup_table[logic.name]
-			logic_into_table.MERGE_COMB_LOGIC(logic_from_table)
-			
-		logic_lookup_table[logic.name] = logic_into_table
-			
-	return logic_lookup_table.values()
-'''
 
 # Node needs context for variable renaming over time, can give existing logic
 def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
@@ -1420,15 +1441,21 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 	##### Bleh do the easier hard coded for 0 clk way for now
 	
 	# Also tie all globals to global wire
-	# Collpase struct ref hierarchy to get top most orig wire name nodes	
-	#print "parser_state.existing_logic.global_wires",parser_state.existing_logic.global_wires
-	#global_ref_toks_list = REDUCE_REF_TOKS(global_ref_toks_list parser_state.existing_logic.global_wires, parser_state)
+	# Collpase struct ref hierarchy to get top most orig wire name nodes
 	#print "global_orig_wire_names",global_orig_wire_names
 	# Whooray
 	for global_wire in parser_state.existing_logic.global_wires:
 		# Read ref_toks takes care of it
 		ref_toks = [global_wire]
 		connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [global_wire], prepend_text, parser_state)
+		#connect_logic = READ_ORIG_WIRE_LOGIC(global_wire, [global_wire], c_ast_return, prepend_text, parser_state)
+		return_logic.MERGE_COMB_LOGIC(connect_logic)
+		
+	# Same for volatile globals
+	for volatile_global_wire in parser_state.existing_logic.volatile_global_wires:
+		# Read ref_toks takes care of it
+		ref_toks = [volatile_global_wire]
+		connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [volatile_global_wire], prepend_text, parser_state)
 		#connect_logic = READ_ORIG_WIRE_LOGIC(global_wire, [global_wire], c_ast_return, prepend_text, parser_state)
 		return_logic.MERGE_COMB_LOGIC(connect_logic)
 	
@@ -1700,6 +1727,39 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 
+def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
+	# Regular globals
+	if maybe_global_var in parser_state.global_info:
+		# Oh fucklles account for inst logic?\
+		global_var_inst_name = maybe_global_var
+		if parser_state.existing_logic.inst_name is not None:
+			global_var_inst_name = parser_state.existing_logic.inst_name + SUBMODULE_MARKER + maybe_global_var
+		
+		# Copy info into existing_logic
+		parser_state.existing_logic.wire_to_c_type[global_var_inst_name] = parser_state.global_info[maybe_global_var].type_name
+
+		# Add as global_wrie 
+		if global_var_inst_name not in parser_state.existing_logic.global_wires:
+			parser_state.existing_logic.global_wires.append(global_var_inst_name)
+			
+		# Record using globals
+		parser_state.existing_logic.uses_globals = True
+		#print "rv.func_name",rv.func_name, rv.uses_globals
+		
+	# Volatile globals
+	if maybe_global_var in parser_state.volatile_global_info:
+		print "TODO volatile adjsuit for inst blah blahj fuck"
+		# Copy info into existing_logic
+		parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.volatile_global_info[maybe_global_var].type_name
+		
+		# Add as volatile global_wrie
+		if maybe_global_var not in parser_state.existing_logic.volatile_global_wires:
+			parser_state.existing_logic.volatile_global_wires.append(maybe_global_var)
+
+
+	return parser_state.existing_logic
+
+
 # If this works great, if not ill be so sad
 # Sadness forever
 
@@ -1721,25 +1781,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	
 	#### GLOBALS \/
 	# This is the first place we should see a global reference in terms of this function/logic
-	if lhs_orig_var_name in parser_state.global_info:
-		# Copy info into existing_logic
-		rv.wire_to_c_type[lhs_orig_var_name] = parser_state.global_info[lhs_orig_var_name].type_name
-		
-		#lhs_c_type = C_AST_REF_TOKS_TO_C_TYPE(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
-		#rv.wire_to_c_type[lhs_orig_wire_name] = lhs_c_type
-
-		# Add as global
-		#if lhs_orig_wire_name not in rv.global_wires:
-		#	rv.global_wires.append(lhs_orig_wire_name)
-		if lhs_orig_var_name not in rv.global_wires:
-			rv.global_wires.append(lhs_orig_var_name)
-			
-		# Record using globals
-		rv.uses_globals = True
-		#print "rv.func_name",rv.func_name, rv.uses_globals
-		
-		# Record change in parser state
-		parser_state.existing_logic = rv
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
 	
 	lhs_base_type = parser_state.existing_logic.wire_to_c_type[lhs_orig_var_name]
 	const_lhs = C_AST_REF_TOKS_ARE_CONST(lhs_ref_toks)
@@ -1850,7 +1892,8 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# output/elem type
 		func_name += "_" + lhs_elem_c_type.replace("[","").replace("]","")
 		# Base type
-		func_name += "_" +lhs_base_type
+		lhs_base_var_type_c_name = lhs_base_type.replace("[","_").replace("]","")
+		func_name += "_" +lhs_base_var_type_c_name
 		# output ref toks --dont include base var name
 		for ref_tok in lhs_ref_toks[1:]:
 			if type(ref_tok) == int:
@@ -2233,9 +2276,28 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 	
 	return ref_toks_list
 		
-	
+_REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache = dict()
 # For now stick with string wires instead of toks list
 def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
+	# Try to get cache
+	# Build key
+	ref_toks_str = ""
+	for ref_tok in ref_toks:
+		if type(ref_tok) == int:
+			ref_toks_str += "_" + str(ref_tok)
+		elif type(ref_tok) == str:
+			ref_toks_str += "_" + ref_tok
+		elif isinstance(ref_tok, c_ast.Node):
+			ref_toks_str += "_" + "VAR"
+		else:
+			print "What is ref tok bleh?sdkhjgsd???", ref_tok
+			sys.exit(0)
+	# Try for cache
+	try:
+		return _REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache[ref_toks_str]
+	except:
+		pass
+	
 	# Current c type
 	c_type = C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state)
 
@@ -2330,6 +2392,10 @@ def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 			if variable_ref_toks_exist:
 				break
 				
+			
+			
+	# Update cache
+	_REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache[ref_toks_str] = rv
 				
 	return rv
 	
@@ -2439,7 +2505,7 @@ def REDUCE_REF_TOKS(ref_toks_list, c_ast_node, parser_state):
 	#sys.exit(0)
 	return rv_ref_toks_list
 
-# Will need to cvhange this for variable ref toks?
+
 def REF_TOKS_STARTS_WITH(ref_toks, starting_ref_toks, parser_state):
 	for ref_tok_i in range(0, len(starting_ref_toks)):
 		if ref_tok_i > len(ref_toks) - 1:
@@ -2474,6 +2540,9 @@ def WIRE_TO_REF_TOKS(wire, parser_state):
 			driven_ref_toks=[wire]
 		# Or global ~
 		elif wire in parser_state.global_info:
+			driven_ref_toks=[wire]
+		# Or volatile global
+		elif wire in parser_state.volatile_global_info:
 			driven_ref_toks=[wire]
 		else:
 			print "wire:",wire
@@ -2681,7 +2750,28 @@ def C_AST_REF_TO_TOKENS(c_ast_ref, parser_state):
 		
 	return toks
 	
+_C_AST_REF_TOKS_TO_C_TYPE_cache = dict()	
 def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
+	
+	# Try to get cache
+	# Build key
+	ref_toks_str = ""
+	for ref_tok in ref_toks:
+		if type(ref_tok) == int:
+			ref_toks_str += "_" + str(ref_tok)
+		elif type(ref_tok) == str:
+			ref_toks_str += "_" + ref_tok
+		elif isinstance(ref_tok, c_ast.Node):
+			ref_toks_str += "_" + "VAR"
+		else:
+			print "What is ref tok bleh?sdsd???", ref_tok
+			sys.exit(0)
+	# Try for cache
+	try:
+		return _C_AST_REF_TOKS_TO_C_TYPE_cache[ref_toks_str]
+	except:
+		pass
+	
 	
 	# Get base variable name
 	#print "ref_toks",ref_toks
@@ -2691,18 +2781,7 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	#	print "C_AST_REF_TOKS_TO_C_TYPE ref_toks",ref_toks
 	
 	# This is the first place we should see a global reference in terms of this function/logic
-	if var_name in parser_state.global_info:
-		# Copy info into existing_logic
-		parser_state.existing_logic.wire_to_c_type[var_name] = parser_state.global_info[var_name].type_name
-
-		# Add as global
-		if var_name not in parser_state.existing_logic.global_wires:
-			parser_state.existing_logic.global_wires.append(var_name)
-			
-		# Record using globals
-		parser_state.existing_logic.uses_globals = True
-		#print "2 func_name",parser_state.existing_logic.func_name, parser_state.existing_logic.uses_globals
-	
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state)
 		
 	# Get the type of this base name
 	inst_adj_var_name = var_name
@@ -2778,6 +2857,10 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 			print "What kind of reference is this?", c_ast_ref.coord
 			sys.exit(0)
 			
+			
+	# Write cache	
+	_C_AST_REF_TOKS_TO_C_TYPE_cache[ref_toks_str] = current_c_type
+			
 	return current_c_type
 	
 
@@ -2817,18 +2900,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	c_type = C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state)
 
 	# This is the first place we should see a global reference in terms of this function/logic
-	if base_var_name in parser_state.global_info:
-		# Copy info into existing_logic
-		parser_state.existing_logic.wire_to_c_type[base_var_name] = parser_state.global_info[base_var_name].type_name
-
-		# Add as global
-		if base_var_name not in parser_state.existing_logic.global_wires:
-			parser_state.existing_logic.global_wires.append(base_var_name)
-			
-		# Record using globals
-		parser_state.existing_logic.uses_globals = True
-		#print "3 func_name",parser_state.existing_logic.func_name, parser_state.existing_logic.uses_globals
-	
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(base_var_name, parser_state)
 	
 	# Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
 	driving_aliases_over_time = [base_var_name]
@@ -2977,8 +3049,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		
 		# Base type of the ref
 		base_var_type = parser_state.existing_logic.wire_to_c_type[base_var_name]
-		base_var_type_c_name = base_var_type.replace("[","]")
-		func_name += "_" + base_var_type
+		base_var_type_c_name = base_var_type.replace("[","_").replace("]","")
+		func_name += "_" + base_var_type_c_name
 		
 		# Output ref toks
 		for ref_tok in ref_toks[1:]: # Skip base var name
@@ -3250,6 +3322,7 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
 	#   known to enum
 	#	input
 	#	global
+	#   volatile global
 	#	variable
 	# 	output
 	#
@@ -3259,6 +3332,8 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
 	elif ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in existing_logic.inputs:
 		return False
 	elif (maybe_not_enum_wire in existing_logic.global_wires) or (ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in parser_state.global_info):
+		return False
+	elif (maybe_not_enum_wire in existing_logic.volatile_global_wires) or (ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in parser_state.volatile_global_info):
 		return False
 	elif ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in existing_logic.variable_names:
 		return False
@@ -3282,6 +3357,7 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, parser_state):
 	#   known to enum const
 	#	input
 	#	global
+	#   volatile global
 	#	variable
 	# 	output
 	#
@@ -3296,6 +3372,8 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, parser_state):
 	elif base_name in existing_logic.inputs:
 		return False
 	elif (base_name in existing_logic.global_wires) or (base_name in parser_state.global_info):
+		return False
+	elif (base_name in existing_logic.volatile_global_wires) or (base_name in parser_state.volatile_global_info):
 		return False
 	elif base_name in existing_logic.variable_names:
 		return False
@@ -3822,7 +3900,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	#print "==== IF",file_coord_str,"======="
 	for var_name in merge_var_names:		
 		# vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
-		declared_in_this_if = not(var_name in existing_logic.variable_names) and (var_name not in parser_state.global_info)
+		declared_in_this_if = not(var_name in existing_logic.variable_names) and (var_name not in parser_state.global_info) and (var_name not in parser_state.volatile_global_info)
 		if declared_in_this_if:
 			#print var_name, "declared_in_this_if"
 			continue
@@ -3985,7 +4063,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	# But since by def those drivings dont overlap then order doesnt really matter
 	for variable in merge_var_names:
 		# vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
-		declared_in_this_if = not(variable in existing_logic.variable_names) and (variable not in parser_state.global_info)
+		declared_in_this_if = not(variable in existing_logic.variable_names) and (variable not in parser_state.global_info) and (variable not in parser_state.volatile_global_info)
 		if declared_in_this_if:
 			continue
 			
@@ -4095,9 +4173,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 				print driven_input_port_wires
 				assert len(driven_input_port_wires) == 1
 			driven_input_port_wire = driven_input_port_wires[0]
-			if type(driving_wire) == type(driven_input_port_wire): #Both must be wires
-				connect_logic = CONNECT_WIRES_LOGIC(driving_wire,[driven_input_port_wire])
-				rv.MERGE_COMB_LOGIC(connect_logic)
+			#if type(driving_wire) == type(driven_input_port_wire): #Both must be wires
+			rv = APPLY_CONNECT_WIRES_LOGIC(rv, driving_wire,[driven_input_port_wire])
 				
 	# Get list of input port names in order
 	input_port_names = []
@@ -4143,16 +4220,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 		# Set this type for the output if not set already? # This seems really hacky
 		for output_wire_driven_wire_name in output_wire_driven_wire_names:
 			if(not(output_wire_driven_wire_name in rv.wire_to_c_type)):
-				rv.wire_to_c_type[output_wire_driven_wire_name] = output_type
-	
-	
-	# Raw vhdl stuff shouldnt use globals right?
-	# So assign using globals based on func name to logic entry
-	# Is this how we intended to use "uses_globals" ?
-	# Is flag for only current logic not accumulation of logic hierarchy?
-	#if func_name in func_name_2_logic:
-	#	func_logic = func_name_2_logic[func_name]
-	#	rv.uses_globals = rv.uses_globals or func_logic.uses_globals	
+				rv.wire_to_c_type[output_wire_driven_wire_name] = output_type	
 	
 	
 	#print "C_AST_N_ARG_FUNC_INST_TO_LOGIC rv.wires",rv.wires
@@ -4528,14 +4596,34 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 			return FIND_CONST_DRIVING_WIRE(driving_wire, logic)
 		else:
 			return None		
-
-def CONNECT_WIRES_LOGIC(driving_wire, driven_wire_names):
-	rv = Logic()
-	rv.wires = [driving_wire] + driven_wire_names
-	rv.wire_drives[driving_wire] = driven_wire_names
+			
+def CONNECT_WIRES_LOGIC(driving_wire, driven_wire_names):	
+	return APPLY_CONNECT_WIRES_LOGIC(Logic(), driving_wire, driven_wire_names)
+	
+def APPLY_CONNECT_WIRES_LOGIC(logic, driving_wire, driven_wire_names):
+	# Add wires if not there
+	if driving_wire not in logic.wires:
+		logic.wires.append(driving_wire)	
 	for driven_wire_name in driven_wire_names:
-		rv.wire_driven_by[driven_wire_name] = driving_wire
-	return rv	
+		if driven_wire_name not in logic.wires:
+			logic.wires.append(driven_wire_name)
+		
+	# Record wire_drives
+	all_driven_wire_names = []
+	# Start with existing driven wires
+	if driving_wire in logic.wire_drives:
+		all_driven_wire_names = logic.wire_drives[driving_wire]
+	# Append the new wires
+	for driven_wire_name in driven_wire_names:
+		if driven_wire_name not in all_driven_wire_names:
+			all_driven_wire_names.append(driven_wire_name)
+	# Save
+	logic.wire_drives[driving_wire] = all_driven_wire_names
+	# Record wire_driven_by
+	for driven_wire_name in driven_wire_names:
+		logic.wire_driven_by[driven_wire_name] = driving_wire
+		
+	return logic
 	
 # int x[2]     returns "x", "int", 2
 # int x[2][2]  returns "x", "int[2]", 2
@@ -4713,6 +4801,7 @@ class ParserState:
 		self.struct_to_field_type_dict = dict()
 		self.enum_to_ids_dict = dict()
 		self.global_info = dict()
+		self.volatile_global_info = dict()
 		self.global_mhz_limit = None
 		
 		
@@ -4768,6 +4857,8 @@ def PARSE_FILE(top_level_func_name, c_file):
 		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict
 		# Get global variable info
 		parser_state = GET_GLOBAL_INFO(parser_state, c_file)
+		# Get volatile globals
+		parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state, c_file)
 		# Get the function definitions
 		parser_state.FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE([c_file], parser_state)
 		# Fuck me add struct info for array wrapper
@@ -4779,15 +4870,15 @@ def PARSE_FILE(top_level_func_name, c_file):
 			print "There doesnt seem to be as function called '", top_level_func_name,"' in the file '",c_file,"'"
 			sys.exit(0)
 			
-		# Check for double use of globals the dumb way to print useful info
+		# Check for double use of globals+volatiles the dumb way to print useful info
 		for func_name1 in parser_state.FuncName2Logic:
 			func1_logic = parser_state.FuncName2Logic[func_name1]
 			for func_name2 in parser_state.FuncName2Logic:
 				if func_name2 == func_name1:
 					continue
 				func2_logic = parser_state.FuncName2Logic[func_name2]
-				for func1_global in func1_logic.global_wires:
-					if func1_global in func2_logic.global_wires:
+				for func1_global in (func1_logic.global_wires + func1_logic.volatile_global_wires):
+					if func1_global in (func2_logic.global_wires + func2_logic.volatile_global_wires):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
@@ -4815,31 +4906,11 @@ def PARSE_FILE(top_level_func_name, c_file):
 			print "Elaborating hierarchy down to raw HDL logic..."	
 			parser_state.LogicInstLookupTable = RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(top_level_func_name, top_level_func_name, parser_state, unadjusted_logic_lookup_table_so_far, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
-			
-		
-		#for inst_name in parser_state.LogicInstLookupTable:
-		#	print inst_name, "uses_globals",parser_state.LogicInstLookupTable[inst_name].uses_globals
-		#sys.exit(0)
-		
 		
 		# Write cache
 		# top_level_func_name = main = inst name
 		top_level_logic = parser_state.LogicInstLookupTable[top_level_func_name]
-		
 
-		# TEST
-		#print "SIZE:", getsize(top_level_logic)
-		#top_level_logic.c_ast_node = None
-		#top_level_logic.submodule_instance_to_c_ast_node = None
-		#print "     ", getsize(top_level_logic)
-		#print "==="
-		#sys.exit(0)
-		
-		
-		
-		
-		#print "TEMP STOP AFTER ELAB"
-		#sys.exit(0)
 		
 		print "Writing generated pipelined C code to output directories..."
 		WRITE_LOGIC_INST_LOOKUP_CACHE(top_level_logic, parser_state.LogicInstLookupTable)
@@ -4880,7 +4951,6 @@ class GlobalInfo:
 	def __init__(self):
 		self.name = None
 		self.type_name = None
-		#self.file nvm not allowing extern so should not need
 		
 def GET_GLOBAL_INFO(parser_state, c_file):
 	# Read in file with C parser and get function def nodes
@@ -4904,6 +4974,29 @@ def GET_GLOBAL_INFO(parser_state, c_file):
 				
 		# Save info
 		parser_state.global_info[global_info.name] = global_info
+			
+	return parser_state
+	
+def GET_VOLATILE_GLOBAL_INFO(parser_state, c_file):
+	# Read in file with C parser and get function def nodes
+	parser_state.volatile_global_info = dict()
+	
+	volatile_global_defs = GET_C_AST_VOLATILE_GLOBALS(c_file)
+	
+	for volatile_global_def in volatile_global_defs:
+		global_info = GlobalInfo()
+		global_info.name = str(volatile_global_def.name)
+		c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(volatile_global_def)
+		global_info.type_name = c_type
+		
+		# Check for multiple types!
+		if global_info.name in parser_state.volatile_global_info:
+			if parser_state.volatile_global_info[global_info.name].type_name != global_info.type_name:
+				print "Volatile global variable with multiple types?", global_info.name
+				sys.exit(0)
+				
+		# Save info
+		parser_state.volatile_global_info[global_info.name] = global_info
 			
 	return parser_state
 
@@ -5135,58 +5228,7 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 			containing_func_logic = func_name_2_logic[containing_logic_func_name]
 			#print "1 containing_func_logic.func_name",containing_func_logic.func_name 
 		
-		# Why is this needed too?
-		'''
-		# If not found search func lookup table for containers with matching submodule instances
-		if containing_func_logic is None:
-			for func_name in func_name_2_logic:
-				func_logic = func_name_2_logic[func_name]
-				for submodule_inst in func_logic.submodule_instances:
-					submodule_func_name = func_logic.submodule_instances[submodule_inst]
-					if (submodule_inst == orig_logic_inst_name) and (submodule_func_name == orig_logic_func_name):
-						if not(containing_func_logic is None):
-							print "func_logic ONly one containering logic here"
-							print "orig_logic_inst_name",orig_logic_inst_name
-							print "orig_logic_func_name",orig_logic_func_name
-							print 0/0
-							sys.exit(0)
-						containing_func_logic = func_logic
-						#print "2 containing_func_logic.func_name",containing_func_logic.func_name 
-		'''
 		
-		
-		# Why is this needed?
-		'''
-		# if not found search the logic lookup table
-		# Look up containing func logic for this submodule inst		
-		if containing_func_logic is None:
-			print "Searching N", len(unadjusted_logic_lookup_table_so_far)
-			unadjusted_containing_inst_logic = None
-			for tup_key in unadjusted_logic_lookup_table_so_far:
-				unadjusted_inst_logic = unadjusted_logic_lookup_table_so_far[tup_key]
-				for unadjusted_submodule_inst in unadjusted_inst_logic.submodule_instances:
-					submodule_func_name = unadjusted_inst_logic.submodule_instances[unadjusted_submodule_inst]
-					if (unadjusted_submodule_inst == orig_logic_inst_name) and (submodule_func_name == orig_logic_func_name):
-						if unadjusted_containing_inst_logic is not None:
-							#print "CURR: unadjusted_containing_inst_logic.inst_name",unadjusted_containing_inst_logic.inst_name
-							#print "MAYBE: potential unadjusted_inst_logic.inst_name",unadjusted_inst_logic.inst_name
-							#print "=="
-							if unadjusted_containing_inst_logic.inst_name != unadjusted_inst_logic.inst_name:
-								print "1)new_logic_lookup_table_so_far ONly one containering logic here"
-								print "unadjusted_inst_logic",unadjusted_inst_logic.inst_name
-								print "adjusted_containing_logic_inst",adjusted_containing_logic_inst.inst_name
-								print "unadjusted_submodule_inst",unadjusted_submodule_inst
-								print "submodule_func_name",submodule_func_name
-								print "CURR: unadjusted_containing_inst_logic.inst_name",unadjusted_containing_inst_logic.inst_name
-								print "MAYBE: potential unadjusted_inst_logic.inst_name",unadjusted_inst_logic.inst_name
-								#print "unadjusted_logic_lookup_table_so_far",unadjusted_logic_lookup_table_so_far
-								#print 0/0
-								sys.exit(0)
-						unadjusted_containing_inst_logic = unadjusted_inst_logic
-			
-			containing_func_logic = unadjusted_containing_inst_logic
-			#print "3 containing_func_logic.func_name",containing_func_logic.func_name 
-		'''
 		
 		# Containing module must not be in parsed C code
 		if containing_func_logic is None:
@@ -5341,10 +5383,41 @@ def GET_C_AST_GLOBALS(c_filename):
 	# Get type defs
 	variable_defs = GET_TYPE_FROM_LIST(c_ast.Decl, c_file_ast.ext)
 	
+	# Filter OUT volatile
+	non_volatile_global_defs = []
+	for variable_def in variable_defs:
+		#print variable_def
+		#print variable_def.quals
+		if 'volatile' not in variable_def.quals:
+			non_volatile_global_defs.append(variable_def)
+	
 	#print variable_defs
 	#sys.exit(0)
 		
-	return variable_defs
+	return non_volatile_global_defs
+	
+def GET_C_AST_VOLATILE_GLOBALS(c_filename):
+	c_file_ast = GET_C_FILE_AST(c_filename)
+	#c_file_ast.show()
+	#print c_file_ast.ext
+	#sys.exit(0)
+	# Get type defs
+	variable_defs = GET_TYPE_FROM_LIST(c_ast.Decl, c_file_ast.ext)
+	
+	# Filter TO volatile
+	volatile_global_defs = []
+	for variable_def in variable_defs:
+		#print variable_def
+		#print variable_def.quals
+		if 'volatile' in variable_def.quals:
+			volatile_global_defs.append(variable_def)
+		
+	#sys.exit(0)
+	
+	#print variable_defs
+	#sys.exit(0)
+		
+	return volatile_global_defs
 
 # Filter out a certain type from a list
 # Im dumb at python

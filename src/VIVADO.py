@@ -39,6 +39,9 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
 	elif "[global_regs]" in reg_name:
 		# Global regs are always in relative stage 0
 		return 0
+	elif "[volatile_global_regs]" in reg_name:
+		# Volatile global regs are always in relative stage 0???
+		return 0
 		
 	else:
 		print "GET_SELF_OFFSET_FROM_REG_NAME no self, no global",reg_name

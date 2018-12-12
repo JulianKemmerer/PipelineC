@@ -55,8 +55,8 @@ class TimingParams:
 		
 	# I was dumb and used get latency all over
 	# mAKE CACHED VERSION
-	def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
-		if self.calcd_total_latency is None:
+	def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None, force_recalc=False):
+		if self.calcd_total_latency is None or force_recalc:
 			#if self.logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
 			#	print "RECALC LATENCY!", self.logic.inst_name
 			self.calcd_total_latency = self.CALC_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
@@ -78,7 +78,8 @@ class TimingParams:
 			print 0/0
 			sys.exit(0)
 			
-		pipeline_map = GET_PIPELINE_MAP(self.logic, parser_state, TimingParamsLookupTable)
+		force_pipelinemap_recalc = True
+		pipeline_map = GET_PIPELINE_MAP(self.logic, parser_state, TimingParamsLookupTable, force_pipelinemap_recalc)
 		latency = pipeline_map.num_stages - 1
 		return latency
 		
@@ -206,7 +207,7 @@ class PipelineMap:
 #    | |                   |_|                                                         |_|       \    /       
 #    |_|
 # 
-def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
+def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=False):
 	# RAW HDL doesnt need this
 	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
 		print "DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!"
@@ -233,11 +234,16 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 	
 	# Try to use cached pipeline map
 	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state)
+	# Sanity check latency against cache if force recalc
+	cached_total_latency = None
 	if not(cached_pipeline_map is None):
-		if print_debug:
-			print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
-		rv = cached_pipeline_map
-		return rv
+		cached_total_latency = cached_pipeline_map.num_stages - 1
+		if not force_recalc:
+			if print_debug:
+				print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
+			rv = cached_pipeline_map
+			return rv
+	
 	
 	# Else do logic below
 	
@@ -259,8 +265,12 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 	# Keep a list of wires that are have been driven so far
 	# Search this list to filter which submodules are in each level
 	wires_driven_so_far = []
-	wires_driven_so_far = wires_driven_so_far + logic.inputs + logic.global_wires
-	fully_driven_submodule_inst_name_2_logic = dict() # Keep track of sumodules done so far
+	# Some wires are driven to start with
+	wires_driven_so_far += logic.inputs 
+	wires_driven_so_far += logic.global_wires
+	wires_driven_so_far += logic.volatile_global_wires
+	# Keep track of submodules done so far
+	fully_driven_submodule_inst_name_2_logic = dict() 
 	
 	# Also "CONST" wires representing constants like '2' are already driven
 	for wire in logic.wires:
@@ -369,14 +379,15 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 														
 							# Add driven wire to wires driven so far
 							# Record driving this wire, at this logic level offset
-						
-							if not(driven_wire in wires_driven_so_far):
-								wires_driven_so_far.append(driven_wire)
+							if driven_wire in wires_driven_so_far and (driven_wire not in logic.global_wires) and (driven_wire not in logic.volatile_global_wires):
+								# Already handled this wire
+								continue
+							wires_driven_so_far.append(driven_wire)
 								
-								# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-								if has_lls and is_zero_clk:
-									lls_offset_when_driven[driven_wire] = lls_offset_when_driven[driving_wire]
-								#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~		
+							# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+							if has_lls and is_zero_clk:
+								lls_offset_when_driven[driven_wire] = lls_offset_when_driven[driving_wire]
+							#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~		
 							
 							# If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
 							# as way to ensure correct multi clock behavior	
@@ -696,6 +707,15 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable):
 	if has_lls:
 		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state)
 		
+		
+	# Sanity check against cache
+	my_total_latency = rv.num_stages - 1
+	if (cached_total_latency is not None) and (cached_total_latency != my_total_latency):
+		print "Wtf!? Cached pipeline map latency is not right?"
+		print "cached_total_latency",cached_total_latency
+		print "my_total_latency",my_total_latency
+		sys.exit(0)
+		
 	return rv
 
 #return submodule_level_markers, ending_submodule_levels
@@ -792,7 +812,7 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 # Returns updated TimingParamsLookupTable
 # None if sliced through globals
 def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state, TimingParamsLookupTable, write_files=True):	
-	#print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
+	print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
 	# Get timing params for this logic
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	# Add slice
@@ -801,6 +821,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	slice_ends_stage = slice_index
 	# Write into timing params dict
 	TimingParamsLookupTable[logic.inst_name] = timing_params
+	
+	# Double check slice
+	est_total_latency = len(timing_params.slices)
 	
 	# Raw HDL doesnt need further slicing, bottom of hierarchy
 	if len(logic.submodule_instances) > 0:
@@ -827,11 +850,11 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				timing_params.SET_LAST_SUBMODULE_LEVEL(slice_ends_stage, ending_submodule_level)
 				#print "stage_per_ll_submodule_level_map",zero_clk_pipeline_map.stage_per_ll_submodule_level_map
 				#print "logic.inst_name",logic.inst_name
-				#print "submodule levels:",submodule_level_markers
-				#print "slice:",new_slice_pos
-				#print "ends stage:",slice_ends_stage
-				#print "at submodule level:",ending_submodule_level
-				#print "=="
+				print "submodule levels:",submodule_level_markers
+				print "slice:",new_slice_pos
+				print "ends stage:",slice_ends_stage
+				print "at submodule level:",ending_submodule_level
+				print "=="
 				
 		# Write into timing params dict
 		TimingParamsLookupTable[logic.inst_name] = timing_params
@@ -854,17 +877,13 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 			
 			# Get submodules at this offset
 			submodule_insts = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][lls_offset]
+			print "submodule_insts @ ",lls_offset, submodule_insts
 			# Given the known start offset what is the local offset for each submodule?
 			# Slice each submodule at that offset
 			for submodule_inst in submodule_insts:
 				# Only slice when >= 1 LL and not in a global function
 				submodule_logic = parser_state.LogicInstLookupTable[submodule_inst]
-				#print "submodule_inst",submodule_inst
-				#print "submodule_logic.containing_inst",submodule_logic.containing_inst
 				containing_logic = parser_state.LogicInstLookupTable[submodule_logic.containing_inst]
-				#print "submodule_inst",submodule_inst
-				#print "submodule_logic.containing_inst",submodule_logic.containing_inst
-				#print "containing_logic.uses_globals",containing_logic.uses_globals
 				if submodule_logic.total_logic_levels <= 0:
 					continue
 
@@ -880,8 +899,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Convert to percent to add slice
 				submodule_total_lls = submodule_logic.total_logic_levels
 				slice_pos = float(local_offset_w_decimal) / float(submodule_total_lls)			
-				#print "	Slicing:", submodule_inst
-				#print "		@", slice_pos
+				print "	Slicing:", submodule_inst
+				print "		@", slice_pos
 
 
 				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
@@ -892,7 +911,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Slice into that submodule
 				TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(submodule_logic, slice_pos, parser_state, TimingParamsLookupTable, write_files)	
 				
-				# Might be bas slice
+				# Might be bad slice
 				if type(TimingParamsLookupTable) is not dict:
 					return TimingParamsLookupTable
 	
@@ -908,6 +927,35 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	
 	#print logic.inst_name, "len(timing_params.slices)", len(timing_params.slices)
+	
+	
+	# Check latency here too	
+	# FUCKBUGZ - check for calc errror
+	timing_params = TimingParamsLookupTable[logic.inst_name]
+	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	force_recalc = True
+	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
+	if total_latency_maybe_recalc != total_latency_recalc:
+		print "logic.inst_name",logic.inst_name
+		print "Wtf the cached latency is wrong!?2"
+		print "total_latency_maybe_recalc 2",total_latency_maybe_recalc
+		print "total_latency_recalc2 ",total_latency_recalc
+		sys.exit(0)
+	total_latency = total_latency_recalc	
+	if est_total_latency != total_latency:
+		print "logic.inst_name",logic.inst_name
+		print "Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency
+		print "Adding new slice:2", new_slice_pos
+		print "timing_params.slices2",timing_params.slices
+		print "timing_params.stage_to_last_abs_submodule_level2",timing_params.stage_to_last_abs_submodule_level
+		for logic_inst_name in parser_state.LogicInstLookupTable: 
+			logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
+			timing_params_i = TimingParams(logic_i)
+			print "logic_i.inst_name2",logic_i.inst_name, timing_params_i.slices, timing_params_i.stage_to_last_abs_submodule_level
+		
+		sys.exit(0)
+	
+	
 	
 	return TimingParamsLookupTable
 	
@@ -932,7 +980,17 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	
 	est_total_latency = len(current_slices)
 	timing_params = TimingParamsLookupTable[logic.inst_name]
-	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	
+	# FUCKBUGZ - check for calc errror
+	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	force_recalc = True
+	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
+	if total_latency_maybe_recalc != total_latency_recalc:
+		print "Wtf the cached latency is wrong!?"
+		print "total_latency_maybe_recalc",total_latency_maybe_recalc
+		print "total_latency_recalc",total_latency_recalc
+		sys.exit(0)
+	total_latency = total_latency_recalc	
 	if est_total_latency != total_latency:
 		print "Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency
 		print "current slices:",current_slices
@@ -2451,7 +2509,8 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 				print "SYN:", C_TO_LOGIC.LEAF_NAME(logic.inst_name, True)," TOTAL LOGIC LEVELS:", logic.total_logic_levels, "MHz:",mhz
 				
 				# Record worst global
-				if len(logic.global_wires) > 0:
+				#if len(logic.global_wires) > 0:
+				if logic.uses_globals:
 					if mhz < min_mhz:
 						min_mhz_func_name = logic.func_name
 						min_mhz = mhz
