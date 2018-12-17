@@ -104,7 +104,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	text = ""
-	text += '''
+	header_text = '''
 #include "uintN_t.h"
 #include "intN_t.h"
 	'''	
@@ -688,34 +688,38 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 			
 			
 			
-
-	
-	
-	outfile = BIT_MATH_HEADER_FILE
-	
-	
-	parser_state_copy = copy.copy(parser_state)
-	# Keep everything except logic stuff
-	parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
-	parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-	parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
-	
-	# NEED MANIP in MATH
-	bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(text,parser_state)  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
-	parser_state_copy.FuncName2Logic = bit_manip_func_name_logic_lookup # dict() 
-	
-	parse_body = True # BIT MATH IS SW IMPLEMENTATION
-	func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
-	
-	for func_name in func_name_2_logic:
-		func_logic = func_name_2_logic[func_name]
-		if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE):
-			print "BIT_MATH_HEADER_FILE"
-			print text
-			print "Bad parsing of BIT MATH",func_name
-			sys.exit(0)
-	
-	return func_name_2_logic
+	if text != "":
+		# Ok had some code, include headers
+		text = header_text + text
+		
+		
+		outfile = BIT_MATH_HEADER_FILE
+		parser_state_copy = copy.copy(parser_state)
+		# Keep everything except logic stuff
+		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
+		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+		
+		# NEED MANIP in MATH
+		bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(text,parser_state)  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
+		parser_state_copy.FuncName2Logic = bit_manip_func_name_logic_lookup # dict() 
+		
+		parse_body = True # BIT MATH IS SW IMPLEMENTATION
+		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		
+		for func_name in func_name_2_logic:
+			func_logic = func_name_2_logic[func_name]
+			if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE):
+				print "BIT_MATH_HEADER_FILE"
+				print text
+				print "Bad parsing of BIT MATH",func_name
+				sys.exit(0)
+		
+		return func_name_2_logic
+		
+	else:
+		# No code, no funcs
+		return dict()
 
 
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
@@ -723,7 +727,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# TODO: Do bit select and bit dup as "const int"
 	
 	text = ""
-	text += '''
+	header_text = '''
 #include "uintN_t.h"
 #include "intN_t.h"
 	'''	
@@ -936,24 +940,29 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 '''
 
 
-	
-	#print "BIT_MANIP_HEADER_FILE"
-	#print text
+	if text != "":
+		# Ok had some code, include headers
+		text = header_text + text
 
-	
-	#Just bit manip for now
-	outfile = BIT_MANIP_HEADER_FILE
-	# "GET_SW_FUNC_NAME_LOGIC_LOOKUP outfile",outfile
-	
-	# Parse the c doe to logic lookup
-	parser_state_copy = copy.copy(parser_state)
-	# Keep everything except logic stuff
-	parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
-	parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-	parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
-	parse_body = False # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
-	func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
-	return func_name_2_logic
+		#print "BIT_MANIP_HEADER_FILE"
+		#print text
+		
+		#Just bit manip for now
+		outfile = BIT_MANIP_HEADER_FILE
+		# "GET_SW_FUNC_NAME_LOGIC_LOOKUP outfile",outfile
+		
+		# Parse the c doe to logic lookup
+		parser_state_copy = copy.copy(parser_state)
+		# Keep everything except logic stuff
+		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
+		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+		parse_body = False # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
+		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		return func_name_2_logic
+	else:
+		# No code, no funcs
+		return dict()
 
 
 def GENERATE_INT_N_HEADERS(max_bit_width=256):
@@ -963,8 +972,8 @@ def GENERATE_INT_N_HEADERS(max_bit_width=256):
 	# Do signed and unsigned
 	for u in ["","u"]: 
 		min_width = 1
-		if u=="":
-			min_width = 2
+		#if u=="":
+		#	min_width = 2
 		for bitwidth in range(min_width,max_bit_width+1):
 			standard_type = u + "int8_t"
 			if bitwidth > 8:
@@ -981,6 +990,9 @@ def GENERATE_INT_N_HEADERS(max_bit_width=256):
 				text += "//"
 			
 			text += "typedef " + standard_type + " " + the_type + ";\n"
+	
+		#print "GENERATE_INT_N_HEADERS"
+		#print text
 	
 		filename = u + "intN_t.h"
 		f=open(filename,"w")

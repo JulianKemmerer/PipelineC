@@ -86,6 +86,10 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
         raise RuntimeError("Unable to invoke 'cpp'.  " +
             'Make sure its path was passed correctly\n' +
             ('Original error: %s' % e))
+    except Exception as e:
+		print "Something went wrong preprocessing:"
+		print "File:",filename
+		raise e
 
     return text
     
@@ -2279,9 +2283,13 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 _REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache = dict()
 # For now stick with string wires instead of toks list
 def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
+	debug = False
+	debug = ("VAR_REF_ASSIGN_uint8_t_uint8_t_8_VAR_a1a4" in parser_state.existing_logic.func_name) and (ref_toks[0] == "rv")
+	
+	
 	# Try to get cache
 	# Build key
-	ref_toks_str = ""
+	ref_toks_str = parser_state.existing_logic.func_name[:]
 	for ref_tok in ref_toks:
 		if type(ref_tok) == int:
 			ref_toks_str += "_" + str(ref_tok)
@@ -2755,7 +2763,7 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	
 	# Try to get cache
 	# Build key
-	ref_toks_str = ""
+	ref_toks_str = parser_state.existing_logic.func_name[:]
 	for ref_tok in ref_toks:
 		if type(ref_tok) == int:
 			ref_toks_str += "_" + str(ref_tok)
@@ -2893,7 +2901,13 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
 	
 	return C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state)
 	
-def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state):			
+def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state):				
+	
+	# FUCK
+	debug = False
+	#debug = (len(driven_wire_names)==1) and (driven_wire_names[0]==RETURN_WIRE_NAME) and (ref_toks[0] == "rv") and ("VAR_REF_ASSIGN_uint8_t_uint8_t_8_VAR_a1a4" in parser_state.existing_logic.func_name)
+	
+		
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]
 	# What type is this reference?
@@ -2903,7 +2917,13 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(base_var_name, parser_state)
 	
 	# Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
-	driving_aliases_over_time = [base_var_name]
+	driving_aliases_over_time = []
+	# Base variable is only driven if an input, global, volatile global, or in wire driven by
+	if ( (base_var_name in parser_state.existing_logic.inputs) or
+	     (base_var_name in parser_state.existing_logic.global_wires) or
+	     (base_var_name in parser_state.existing_logic.volatile_global_wires) or
+	     (base_var_name in parser_state.existing_logic.wire_driven_by) ):
+		driving_aliases_over_time += [base_var_name]
 	aliases_over_time = []
 	if base_var_name in parser_state.existing_logic.wire_aliases_over_time:
 		aliases_over_time = parser_state.existing_logic.wire_aliases_over_time[base_var_name]
@@ -2918,11 +2938,16 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	all_ref_toks = REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state)
 	#sys.exit(0)
 	
-	#print "=="
-	#print "orig_wire_name",orig_wire_name
-	#print "ref_toks",ref_toks
-	#print "driving_aliases_over_time",driving_aliases_over_time
-	#print "all_ref_toks",all_ref_toks
+	
+	debug = len(driving_aliases_over_time)==0
+	
+	
+	if debug:
+		print "=="
+		print "inst name",parser_state.existing_logic.inst_name
+		print "ref_toks",ref_toks
+		print "driving_aliases_over_time",driving_aliases_over_time
+		print "all_ref_toks",all_ref_toks
 
 	
 	# Find the first alias (IN REVERSE ORDER) that elminates some branches
@@ -2930,6 +2955,15 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	i = len(driving_aliases_over_time)-1
 	first_driving_alias = None
 	while len(remaining_ref_toks) == len(all_ref_toks):
+		if i < 0:
+			print "Ran out of aliases?"
+			print "inst name",parser_state.existing_logic.inst_name
+			print "ref_toks",ref_toks
+			print "driving_aliases_over_time",driving_aliases_over_time
+			print "all_ref_toks",all_ref_toks
+			sys.exit(0)
+		
+		
 		alias = driving_aliases_over_time[i]
 		alias_c_type = parser_state.existing_logic.wire_to_c_type[alias]
 		remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_ref, parser_state)
@@ -4770,9 +4804,9 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
 	text = ""
 	while not(start is None):
 		if wires_driven_so_far is None:
-			text += start + " <= "
+			text += start.replace(logic.inst_name + SUBMODULE_MARKER,"") + " <= "
 		else:
-			text += start + "(driven? " +  str(start in wires_driven_so_far) + ") <= "
+			text += start.replace(logic.inst_name + SUBMODULE_MARKER,"") + "(driven? " +  str(start in wires_driven_so_far) + ") <= "
 			
 		if start in logic.wire_driven_by:
 			start = logic.wire_driven_by[start]
@@ -4942,8 +4976,10 @@ def PARSE_FILE(top_level_func_name, c_file):
 		
 		
 		return parser_state
-		
+
 	except c_parser.ParseError as pe:
+		print "Top level:",top_level_func_name
+		print 
 		print "pycparser says you messed up here:",pe
 		sys.exit(0)
 		
@@ -5319,18 +5355,27 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
 	# Use C parser to do some lifting
 	# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
-	parser = c_parser.CParser()
-	# Use preprocessor function
-	c_text = preprocess_text(text)
-	#print "========="
-	#print "fake_filename",fake_filename
-	#print "preprocessed text",c_text
+	try:
+		parser = c_parser.CParser()
+		# Use preprocessor function
+		c_text = preprocess_text(text)
+		#print "========="
+		#print "fake_filename",fake_filename
+		#print "preprocessed text",c_text
+		
+		# Hacky because somehow parser.parse() getting filename from cpp output?
+		c_text = c_text.replace("<stdin>",fake_filename)
+		
+		ast = parser.parse(c_text,filename=fake_filename)
+		#ast.show()
+	except c_parser.ParseError as pe:
+		print "Parsed fake file name:",fake_filename
+		print "Parsed text:"
+		print c_text
+		print "pycparser says you messed up here:",pe
+		sys.exit(0)
 	
-	# Hacky because somehow parser.parse() getting filename from cpp output?
-	c_text = c_text.replace("<stdin>",fake_filename)
 	
-	ast = parser.parse(c_text,filename=fake_filename)
-	#ast.show()
 	
 	func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, ast.ext)
 	#if len(func_defs) > 0:
@@ -5430,14 +5475,26 @@ def GET_TYPE_FROM_LIST(py_type, l):
 	
 	
 def GET_C_FILE_AST(c_filename):
-	# Use C parser to do some lifting
-	# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
-	parser = c_parser.CParser()
-	# Use preprocessor function
-	c_text = preprocess_file(c_filename)
-	#print "PREPROCESSED:"
-	#print c_text
-	ast = parser.parse(c_text,filename=c_filename)
+	try:
+		# Use C parser to do A WHOLE LOT OF lifting
+		# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
+		parser = c_parser.CParser()
+		# Use preprocessor function
+		c_text = preprocess_file(c_filename)
+		
+		# Hacky because somehow parser.parse() getting filename from cpp output?
+		c_text = c_text.replace("<stdin>",c_filename)
+		
+		#print "PREPROCESSED:"
+		#print c_text
+		# Catch pycparser exceptions
+		ast = parser.parse(c_text,filename=c_filename)
+	except c_parser.ParseError as pe:
+		print "Parsed file:",c_filename
+		print "Parsed text:"
+		print c_text
+		print "pycparser says you messed up here:",pe
+		sys.exit(0)
 	#ast.show()
 	return ast
 

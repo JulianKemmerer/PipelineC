@@ -1,14 +1,13 @@
 #include "uintN_t.h"
 
 #define elem_t uint8_t
-#define DEPTH 256
-#define addr_t uint8_t
+#define DEPTH 8
+#define addr_t uint3_t
 
 //#include "ram.h"
-typedef elem_t elem_t_RAM_SP_RF;
+//typedef elem_t elem_t_RAM_SP_RF;
 
-
-elem_t_RAM_SP_RF ram[DEPTH];
+elem_t ram[DEPTH];
 
 elem_t ram_RAM(addr_t addr, elem_t wd, uint1_t we)
 {
@@ -40,6 +39,7 @@ elem_t main(addr_t addr, elem_t wd, uint1_t we)
 {
 	return ram_RAM(addr, wd, we);
 }
+
 
 /*
 Single-Port RAM in Read-First Mode

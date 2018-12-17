@@ -314,7 +314,10 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		
 		# Print stuff and set debug if obviously wrong
 		if (stage_num >= max_possible_latency_with_extra):
-			print "'",logic.outputs[0],"'NOT in wires_driven_so_far"
+			print "wires_driven_so_far"
+			for wire_i in wires_driven_so_far:
+				print wire_i.replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,"")
+			print "'",logic.outputs[0].replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,""),"'NOT in wires_driven_so_far"
 			C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(logic.outputs[0], logic)	
 			print "Something is wrong here, infinite loop probably..."
 			print "logic.inst_name", logic.inst_name
@@ -810,15 +813,22 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	return hash_ext
 	
 # Returns updated TimingParamsLookupTable
-# None if sliced through globals
+# Index of bad slice if sliced through globals
 def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state, TimingParamsLookupTable, write_files=True):	
-	print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
+	#print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
+
 	# Get timing params for this logic
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	# Add slice
 	timing_params.ADD_SLICE(new_slice_pos)
 	slice_index = timing_params.slices.index(new_slice_pos)
 	slice_ends_stage = slice_index
+	
+	# Check for globals
+	if logic.uses_globals:
+		# Can't slice globals, return index of bad slice
+		return slice_index
+
 	# Write into timing params dict
 	TimingParamsLookupTable[logic.inst_name] = timing_params
 	
@@ -850,11 +860,11 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				timing_params.SET_LAST_SUBMODULE_LEVEL(slice_ends_stage, ending_submodule_level)
 				#print "stage_per_ll_submodule_level_map",zero_clk_pipeline_map.stage_per_ll_submodule_level_map
 				#print "logic.inst_name",logic.inst_name
-				print "submodule levels:",submodule_level_markers
-				print "slice:",new_slice_pos
-				print "ends stage:",slice_ends_stage
-				print "at submodule level:",ending_submodule_level
-				print "=="
+				#print "submodule levels:",submodule_level_markers
+				#print "slice:",new_slice_pos
+				#print "ends stage:",slice_ends_stage
+				#print "at submodule level:",ending_submodule_level
+				#print "=="
 				
 		# Write into timing params dict
 		TimingParamsLookupTable[logic.inst_name] = timing_params
@@ -877,7 +887,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 			
 			# Get submodules at this offset
 			submodule_insts = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][lls_offset]
-			print "submodule_insts @ ",lls_offset, submodule_insts
+			#print "submodule_insts @ ",lls_offset, submodule_insts
 			# Given the known start offset what is the local offset for each submodule?
 			# Slice each submodule at that offset
 			for submodule_inst in submodule_insts:
@@ -899,8 +909,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Convert to percent to add slice
 				submodule_total_lls = submodule_logic.total_logic_levels
 				slice_pos = float(local_offset_w_decimal) / float(submodule_total_lls)			
-				print "	Slicing:", submodule_inst
-				print "		@", slice_pos
+				#print "	Slicing:", submodule_inst
+				#print "		@", slice_pos
 
 
 				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
