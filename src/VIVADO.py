@@ -553,6 +553,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	rv += "set_msg_config -id {Synth 8-3332} -limit 10000" + "\n"
 	# [Synth 8-3331] design has unconnected port
 	rv += "set_msg_config -id {Synth 8-3331} -limit 10000" + "\n"
+	# [Synth 8-5546] ROM won't be mapped to RAM because it is too sparse
+	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 
 	rv += "synth_design -top " + VHDL.GET_INST_NAME(Logic,use_leaf_name=True) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	

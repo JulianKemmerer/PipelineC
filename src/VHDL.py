@@ -144,9 +144,11 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	
 	if not os.path.exists(output_directory):
 		os.mkdirs(output_directory)
-	f = open(output_directory+ "/" + filename,"w")
-	f.write(rv)
-	f.close()
+	
+	print "NOT WRIT TOP"
+	#f = open(output_directory+ "/" + filename,"w")
+	#f.write(rv)
+	#f.close()
 	
 def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
 	if not (C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str)):
@@ -801,9 +803,10 @@ end function;\n
 	
 	#print "Writing package:",package_file_name
 	
-	f=open(package_file_name,"w")
-	f.write(package_file_text)
-	f.close()
+	print "~~~~~~~~NOT WRITING PACKE"
+	#f=open(package_file_name,"w")
+	#f.write(package_file_text)
+	#f.close()
 	
 	#print package_file_name
 	#print ""

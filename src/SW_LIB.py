@@ -13,6 +13,7 @@ import VHDL
 
 BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
+MEM0_HEADER_FILE = "mem0.h"
 
 ### HACKY
 # Add bit manip pre VHDL insert for NON C?????????????????
@@ -76,6 +77,11 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	
 	#print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
 	
+	# MEMORY
+	mem0_func_name_logic_lookup = GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+	lookups.append(mem0_func_name_logic_lookup)
+	
+	
 	# Combine lookups
 	rv = dict()
 	for func_name_logic_lookup in lookups:
@@ -101,7 +107,116 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 					sys.exit(0)
 	
 	return rv
+
+
+# Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
+# IN ZERO CLOCK cycles
+# So many different ways to implement multi cycle - ...looking at you future Julian
+# Ex. Start with RAM and per device resources fifo, memory controllers, etc
+def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
+	text = ""
+	header_text = '''
+#include "uintN_t.h"
+#include "intN_t.h"
+	'''	
 	
+	# Regex search c_text
+	
+	
+	
+	# _RAM_SP_RF
+	# Parse to toks
+	ram_sp_rf_func_names = []
+	# elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
+	for type_regex in ["\w+_RAM_SP_RF\("]: 
+		p = re.compile(type_regex)
+		ram_sp_rf_func_names = p.findall(c_text)
+		ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
+		for ram_sp_rf_func_name in ram_sp_rf_func_names:
+			ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
+			var_name = ram_sp_rf_func_name.replace("_RAM_SP_RF","")
+			#print "var_name",var_name
+			# Lookup type, should be global, and array
+			c_type = parser_state.global_info[var_name].type_name
+			if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+				print "Ram function on non array?",ram_sp_rf_func_name
+				sys.exit(0)
+			elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+			# For now only one dim
+			if len(dims) > 1:
+				print "Ram function on var with too many dims",ram_sp_rf_func_name
+				sys.exit(0) 
+			dim = dims[0]
+			addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+				
+			func_name = var_name + "_RAM_SP_RF"
+			text += '''
+// ram_sp_rf
+''' + elem_t + ''' ''' + var_name + "[" + str(dim) + "];" + '''
+''' + elem_t+ " " + func_name + "(" + addr_t + " addr, " + elem_t + " wd, uint1_t we)" + '''
+{
+	// Dont have a construct for simultaneous read and write??
+	// Uhh hows this?
+	// Write is available next cycle?
+	
+	// DO read
+	''' + elem_t + ''' read;
+	read = ''' + var_name + '''[addr];
+	
+	// D write
+	''' + elem_t + ''' data;
+	// Default write current data
+	data = read;
+	if(we)
+	{
+		// Otherwise write new data
+		data = wd;
+	}
+	// Write
+	''' + var_name + '''[addr] = data;
+	
+	
+	return read;
+}
+'''
+
+
+	#print "MEM0_HEADER_FILE"
+	#print text		
+	#sys.exit(0)
+			
+	if text != "":
+		# Ok had some code, include headers
+		text = header_text + text
+		
+		
+		outfile = MEM0_HEADER_FILE
+		parser_state_copy = copy.copy(parser_state)
+		# Keep everything except logic stuff
+		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
+		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+		
+		parse_body = True # MEM0 has SW IMPLEMENTATION
+		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		
+		for func_name in func_name_2_logic:
+			func_logic = func_name_2_logic[func_name]
+			if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(MEM0_HEADER_FILE):
+				print "MEM0_HEADER_FILE"
+				print text
+				print "Bad parsing of MEM0",func_name
+				sys.exit(0)
+		
+		return func_name_2_logic
+		
+	else:
+		# No code, no funcs
+		return dict()
+
+
+
+
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	text = ""
 	header_text = '''

@@ -4884,15 +4884,15 @@ def PARSE_FILE(top_level_func_name, c_file):
 		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(c_file)
 		#for struct_type in parser_state.struct_to_field_type_dict :
 		#	print struct_type,parser_state.struct_to_field_type_dict[struct_type]
-		# Get SW existing logic for this c file
-		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)
-		# Get the parsed enum info
-		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(c_file)
-		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict
 		# Get global variable info
 		parser_state = GET_GLOBAL_INFO(parser_state, c_file)
 		# Get volatile globals
 		parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state, c_file)
+		# Get the parsed enum info
+		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(c_file)
+		# Get SW existing logic for this c file
+		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)
+		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict
 		# Get the function definitions
 		parser_state.FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE([c_file], parser_state)
 		# Fuck me add struct info for array wrapper
