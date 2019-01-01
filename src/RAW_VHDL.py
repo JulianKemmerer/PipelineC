@@ -16,33 +16,33 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
-		wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 		return wires_decl_text
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
-		wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
 	elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):	
-		wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
 	# Is this bit manip raw HDL?
 	elif SW_LIB.IS_BIT_MANIP(logic):
-		wires_decl_text, package_stages_text = GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
 	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	#	return wires_decl_text
 	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	#	return wires_decl_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
 	else:
 		print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
 		sys.exit(0)
 
 
-def GET_RAW_HDL_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
@@ -54,64 +54,64 @@ def GET_RAW_HDL_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params
 	
 	# Unary ops !
 	if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
-		wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 		return package_stages_text
 	# Binary ops + , ==, > etc
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
-		wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	# IF STATEMENTS
 	elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):	
-		wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text	
 	# Is this bit manip raw HDL?
 	elif SW_LIB.IS_BIT_MANIP(logic):
-		wires_decl_text, package_stages_text = GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	#	return package_stages_text
 	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	#	return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	else:
-		print "C_BUILT_IN_C_PROCEDURE_PACKAGE_STAGES_TEXT for", logic.func_name,"?"
+		print "GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.func_name,"?"
 		sys.exit(0)
 		
-def GET_UNARY_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	if str(logic.c_ast_node.op) == "!":
-		return GET_UNARY_OP_NOT_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		return GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 	else:
-		print "GET_UNARY_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for", str(logic.c_ast_node.op)
+		print "GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op)
 		sys.exit(0)
 
 
-def GET_BIN_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	if str(logic.c_ast_node.op) == ">" or str(logic.c_ast_node.op) == ">=":
-		return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
+		return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
 	if str(logic.c_ast_node.op) == "<" or str(logic.c_ast_node.op) == "<=":
-		return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
+		return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
 	elif str(logic.c_ast_node.op) == "+":
-		return GET_BIN_OP_PLUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	elif str(logic.c_ast_node.op) == "-":
-		return GET_BIN_OP_MINUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	elif str(logic.c_ast_node.op) == "==":
-		return GET_BIN_OP_EQ_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		return GET_BIN_OP_EQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 	elif str(logic.c_ast_node.op) == "&":
-		return GET_BIN_OP_AND_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		return GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 	elif str(logic.c_ast_node.op) == "|":
-		return GET_BIN_OP_OR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params,parser_state)
+		return GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params,parser_state)
 	elif str(logic.c_ast_node.op) == "^":
-		return GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
-		print "GET_BIN_OP_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for", str(logic.c_ast_node.op)
+		print "GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op)
 		sys.exit(0)
 		
-def GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# ONLY INTS FOR NOW
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
@@ -163,8 +163,8 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	text = ""
 	text += '''
 		if STAGE = ''' + str(stage_for_1ll) + ''' then
-			write_pipe.left_resized := resize(left, ''' + str(output_width) + ''');
-			write_pipe.right_resized := resize(right, ''' + str(output_width) + ''');
+			write_pipe.left_resized := resize(write_pipe.left, ''' + str(output_width) + ''');
+			write_pipe.right_resized := resize(write_pipe.right, ''' + str(output_width) + ''');
 			write_pipe.return_output := write_pipe.left_resized xor write_pipe.right_resized;	
 		end if;			
 	'''
@@ -175,7 +175,7 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	
 
 	
-def GET_CONST_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	#print "======="
 	#print "logic.func_name",logic.func_name
 	
@@ -367,7 +367,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	
 	
 
-def GET_UNARY_OP_NOT_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	# ONLY INTS FOR NOW
 	input_type = logic.wire_to_c_type[logic.inputs[0]]
 	input_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_type, parser_state)
@@ -412,7 +412,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(l
 	text = ""
 	text += '''
 		if STAGE = ''' + str(stage_for_1ll) + ''' then
-			write_pipe.expr_resized := resize(expr, ''' + str(output_width) + ''');
+			write_pipe.expr_resized := resize(write_pipe.expr, ''' + str(output_width) + ''');
 			write_pipe.return_output := not write_pipe.expr_resized;
 		end if;			
 	'''
@@ -420,7 +420,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(l
 	return wires_decl_text, text
 
 
-def GET_BIN_OP_AND_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	# ONLY INTS FOR NOW
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
@@ -464,15 +464,14 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 		print "Cannot do a c built in AND operation in", latency,  "clocks!"
 		sys.exit(0)
 		
-		
 
 	# 1 LL VHDL	
 	# VHDL text is just the IF for the stage in question
 	text = ""
 	text += '''
 		if STAGE = ''' + str(stage_for_1ll) + ''' then
-			write_pipe.left_resized := resize(left, ''' + str(output_width) + ''');
-			write_pipe.right_resized := resize(right, ''' + str(output_width) + ''');
+			write_pipe.left_resized := resize(write_pipe.left, ''' + str(output_width) + ''');
+			write_pipe.right_resized := resize(write_pipe.right, ''' + str(output_width) + ''');
 			write_pipe.return_output := write_pipe.left_resized and write_pipe.right_resized;		
 		end if;			
 	'''
@@ -482,7 +481,7 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(log
 	return wires_decl_text, text
 	
 	
-def GET_BIN_OP_OR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	# ONLY INTS FOR NOW
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
@@ -533,8 +532,8 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logi
 	text = ""
 	text += '''
 		if STAGE = ''' + str(stage_for_1ll) + ''' then
-			write_pipe.left_resized := resize(left, ''' + str(output_width) + ''');
-			write_pipe.right_resized := resize(right, ''' + str(output_width) + ''');
+			write_pipe.left_resized := resize(write_pipe.left, ''' + str(output_width) + ''');
+			write_pipe.right_resized := resize(write_pipe.right, ''' + str(output_width) + ''');
 			write_pipe.return_output := write_pipe.left_resized or write_pipe.right_resized;		
 		end if;			
 	'''
@@ -543,7 +542,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logi
 
 	return wires_decl_text, text
 	
-def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# ONLY INTS FOR NOW
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
@@ -657,16 +656,16 @@ def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TE
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
 
-def GET_BIN_OP_EQ_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_BIN_OP_EQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
-		return GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
 		print "Binary op EQ for ", logic.wire_to_c_type, " as SLV?"
 		sys.exit(0)
 		
-def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
+def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
 	output_type = logic.wire_to_c_type[logic.outputs[0]]
@@ -789,7 +788,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_
 		elsif STAGE = ''' + str(stage) + ''' then '''
 
 
-def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
@@ -913,15 +912,15 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES
 		
 
 
-def GET_BIN_OP_MINUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
-		return GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	elif VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
-		return GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
 		print "Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type
 		sys.exit(0)
@@ -1009,7 +1008,7 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
 	return bits_per_stage_dict
 	
 
-def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
@@ -1144,7 +1143,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_
 		
 
 	
-def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Was confused abotu twos compliment ... I think you can just add and the sign takes care of self?
 	# Especially if dont care about overflow or carry?
@@ -1307,47 +1306,47 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	
 		
-def GET_BIN_OP_PLUS_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
-		return GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
-		return GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
 		print "Only u/int binary op plus for now!", logic.wire_to_c_types
 		sys.exit(0)
 		
-def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
 		print "BLAH CANT COMBINE INT LT/LTE IN SAME RAW VHDL TODO: take from float lt lte??"
 		sys.exit(0)
-		return #GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
+		return #GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
-		return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
+		return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
 		print "Binary op LT for type?"
 		sys.exit(0)
 		
-def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
 		print "BLAH CANT COMBINE INT GT/GTE IN SAME RAW VHDL TODO: take from float gt gte"
 		sys.exit(0)
-		return #GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
+		return #GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
-		return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
+		return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
 		print "Binary op GT for type?"
 		sys.exit(0)
 		
-def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
+def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
 	left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
@@ -1465,7 +1464,7 @@ def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 		elsif STAGE = ''' + str(stage) + ''' then '''	
 	
 	
-def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
@@ -1559,7 +1558,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGE
 
 # TODO: Combine GT+LT? Since using op_str?
 		
-def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
+def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
@@ -1666,7 +1665,7 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGE
 		elsif STAGE = ''' + str(stage) + ''' then '''
 		
 		
-def GET_MUX_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Cond input is [0] and bool, look at true and false ones only
@@ -1749,7 +1748,7 @@ def GET_MUX_C_BUILT_IN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 	
 
 
-def GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	toks = logic.func_name.split("_")
 	# Bit slice or concat?
@@ -1762,39 +1761,39 @@ def GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_st
 			print " Only known thing is float SEM constructor"
 			sys.exit(0)
 		else:
-			return GET_FLOAT_SEM_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+			return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	
 	elif len(toks) == 3:
 		# Eith BIT SLICE OR BIT ASSIGN
 		if toks[1].isdigit() and toks[2].isdigit():
 			high = int(toks[1])
 			low = int(toks[2])
-			return GET_BIT_SLICE_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
+			return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
 		else:
 			# Above will fail if is BIT assign
-			return GET_BIT_ASSIGN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
+			return GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
 			
 			
 	elif len(toks) == 2:
 		if toks[0] == "float":
-			return GET_FLOAT_UINT32_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+			return GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		elif toks[0] == "bswap":
 			# Byte swap
-			return GET_BYTE_SWAP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+			return GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		# Bit concat or bit duplicate?
 		elif toks[1].isdigit():
 			# Duplicate
-			return GET_BIT_DUP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
+			return GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
 		else:
 			# Concat
-			return GET_BIT_CONCAT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+			return GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
-		print "GET_BITMANIP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?"
+		print "GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?"
 		sys.exit(0)
 		
 		
 		
-def GET_FLOAT_UINT32_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# TODO check for ints only as constructing elements?
 	# ONLY INTS FOR NOW
@@ -1821,7 +1820,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(lo
 
 	return wires_decl_text, text
 	
-def GET_FLOAT_SEM_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# TODO check for ints only as constructing elements?
 	# ONLY INTS FOR NOW
@@ -1856,7 +1855,7 @@ def GET_FLOAT_SEM_CONSTRUCT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 
 	return wires_decl_text, text
 	
-def GET_BIT_CONCAT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# TODO check for ints only?
 	# ONLY INTS FOR NOW
@@ -1888,7 +1887,7 @@ def GET_BIT_CONCAT_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_
 	return wires_decl_text, text
 
 
-def GET_BYTE_SWAP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	toks = logic.func_name.split("_")
 	input_bit_width = int(toks[1])
@@ -1918,7 +1917,7 @@ def GET_BYTE_SWAP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_s
 
 	return wires_decl_text, text
 
-def GET_BIT_ASSIGN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
+def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	toks = logic.func_name.split("_")
 	input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
@@ -1962,7 +1961,7 @@ def GET_BIT_ASSIGN_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_
 
 	
 	
-def GET_BIT_SLICE_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low):
+def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# TODO check for ints only?
 	# ONLY INTS FOR NOW
@@ -2001,7 +2000,7 @@ def GET_BIT_SLICE_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_s
 
 	return wires_decl_text, text
 	
-def GET_BIT_DUP_C_PROCEDURE_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
+def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# TODO check for ints only?
 	# ONLY INTS FOR NOW

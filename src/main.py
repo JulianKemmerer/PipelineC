@@ -16,6 +16,7 @@ mhz=SYN.INF_MHZ # TEST 31.25
 print "OPTIMIZE AWAY CONSTANT IF and constant float mult by 1?"
 print "Be a real C compiler yo"
 print "Does const work in C? Use that for 'compile time' constant replacement?"
+print "TODO: Syn each pipeline stage (from top level main, so easy) individually and use delays instead of LLs?"
 print "~~~~~ REPLACE MANY INSTANCE VHDL FILES WITH JUST INSTANCES OF DIFFERENT SLICES ~~~~~ ?"
 
 

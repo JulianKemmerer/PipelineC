@@ -69,7 +69,8 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
 	
-	rv += "use work." + GET_PACKAGE_NAME(Logic,TimingParamsLookupTable, parser_state) + ".all;" + "\n"
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
 	
 	rv += "entity " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top is" + "\n"
 	rv += "port(" + "\n"
@@ -90,27 +91,49 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 
 	rv += "architecture arch of " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top is" + "\n"
 	
+	# Dont touch IO
+	rv += "attribute dont_touch : string;\n"
 	
-	# Main regs nulled out
-	rv += "signal " + GET_INST_NAME(Logic,use_leaf_name=True)+ "_registers_r : " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_t := " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_NULL;\n"
-	rv += "\n"
-
 	# The inputs of the logic
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
 		rv += "signal " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
+		# Dont touch
+		rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
 		
 	rv += "\n"
 	
-	# Output reg
+	# Output reg and signal
 	output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
+	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
 	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+	# Dont touch
+	rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + '''_output_reg : signal is "true";\n'''
+
+	
 
 	rv += "begin" + "\n"
+	
+	
+	# Instantiate main
+	rv += "-- Instantiate entity\n"
+	rv += GET_INST_NAME(Logic,use_leaf_name=True)+" : entity work." + GET_INST_NAME(Logic,use_leaf_name=True) +" port map (\n"
+	if needs_clk:
+		rv += "clk,\n"
+	# Inputs from regs
+	for in_wire in Logic.inputs:
+		rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
+	# Outputs to signal
+	for out_wire in Logic.outputs:
+		rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output" + ",\n"
+	# Remove last two chars
+	rv = rv[0:len(rv)-len(",\n")]
+	rv += ");\n"
+	rv += "\n"
+	
+	rv += "	" + "-- IO regs\n"
 	rv += "	" + "process(clk) is" + "\n"
-	rv += "	" + "	" + "variable " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output : " + output_vhdl_type_str + ";" + "\n"
-	rv += "	" + "	" + "variable " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers : " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_t;" + "\n"
 	rv += "	" + "begin" + "\n"
 	rv += "	" + "	" + "if rising_edge(clk) then" + "\n"
 	
@@ -121,20 +144,11 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 		#rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, Logic, parser_state) + ";" + "\n"
 		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + WIRE_TO_VHDL_NAME(input_name, Logic) + ";" + "\n"
 		
-	# Pipeline register read as variable		
-	rv += "	" + "	" + "	" + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers := " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_r;" + "\n"
 	
-	# Single procedure call with multiple inputs
-	rv += "	" + "	" + "	" + GET_INST_NAME(Logic,use_leaf_name=True) + "("
-	for input_name in Logic.inputs:
-		rv += WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg, " 
-	rv += GET_INST_NAME(Logic,use_leaf_name=True) + "_registers, " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output);" + "\n"
-	
-	# Pipeline register write to reg	
-	rv += "	" + "	" + "	" +  GET_INST_NAME(Logic,use_leaf_name=True) + "_registers_r <= " + GET_INST_NAME(Logic,use_leaf_name=True) + "_registers" + ";\n"
-	
-	# Output reg	
-	rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg <= " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output;" + "\n"
+	# Output regs	
+	#rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg <= " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output;" + "\n"
+	for out_wire in Logic.outputs:
+		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output;" + "\n"
 	
 	rv += "	" + "	" + "end if;" + "\n"		
 	rv += "	" + "end process;" + "\n"
@@ -145,10 +159,10 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	if not os.path.exists(output_directory):
 		os.mkdirs(output_directory)
 	
-	print "NOT WRIT TOP"
-	#f = open(output_directory+ "/" + filename,"w")
-	#f.write(rv)
-	#f.close()
+	#print "NOT WRIT TOP"
+	f = open(output_directory+ "/" + filename,"w")
+	f.write(rv)
+	f.close()
 	
 def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
 	if not (C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str)):
@@ -243,16 +257,16 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 		sys.exit(0)
 	
 	
-def GET_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	package_file_text = ""
 	# Raw hdl logic is static in the stages code here but coded as generic
 	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
-		package_file_text = RAW_VHDL.GET_RAW_HDL_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	else:
-		package_file_text = GET_C_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable)
+		package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable)
 	
 	return package_file_text
 
@@ -432,6 +446,402 @@ end c_structs_pkg;
 	f.write(text)
 	f.close()
 	
+def LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable):
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	i_need_clk = latency>0 or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
+	
+	needs_clk = i_need_clk
+	# Check submodules too
+	for instance_name in Logic.submodule_instances:
+		submodule_logic_name = Logic.submodule_instances[instance_name]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		needs_clk = needs_clk or LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
+	
+	return needs_clk
+	
+def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupTable):	
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+	
+	rv = ""
+	rv += "library IEEE;" + "\n"
+	rv += "use IEEE.STD_LOGIC_1164.ALL;" + "\n"
+	rv += "use ieee.numeric_std.all;" + "\n"
+	# Include C defined structs
+	rv += "use work.c_structs_pkg.all;\n"
+	
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
+	
+	rv += "entity " + GET_INST_NAME(Logic,use_leaf_name=True) + " is" + "\n"
+	rv += "port(" + "\n"
+	if latency > 0:
+		rv += "	clk : in std_logic;" + "\n"
+	# The inputs of the Logic
+	for input_name in Logic.inputs:
+		# Get type for input
+		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
+		
+		rv += "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
+	
+	# Output is type of return wire
+	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
+	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
+	
+	rv += ");" + "\n"
+	rv += "end " + GET_INST_NAME(Logic,use_leaf_name=True) + ";" + "\n"
+
+	rv += "architecture arch of " + GET_INST_NAME(Logic,use_leaf_name=True) + " is" + "\n"
+	
+	# Stuff originally in package
+	rv += "-- Types and such\n"
+	rv += "-- Declarations\n"
+	
+	# Declare total latency for Logic
+	rv += "constant LATENCY : integer := " + str(latency) + ";\n"
+	
+	
+
+	# Type for wires/variables
+	rv += "\n"
+	rv += "-- One struct to represent this modules variables\n"
+	rv += "type variables_t is record\n"
+	rv += "	-- All of the wires in function\n"
+	# Raw HDL functions are done differently
+	if len(Logic.submodule_instances) <= 0 and Logic.func_name != "main":
+		rv += RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(Logic, parser_state, timing_params)
+	else:
+		# Not c built in
+		# First get wires from declarations and assignments Logic itself
+		# sort wires so easy to find bugs?
+		text_additions = []
+		for wire_name in Logic.wire_to_c_type:
+			# Skip constants here
+			if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name,Logic.inst_name):
+				continue
+			'''
+			# Skip org var names that arent inputs or outputs for Logic with submodules (C code)
+			if len(Logic.submodule_instances) > 0:
+				if not(wire_name in Logic.inputs) and not(wire_name in Logic.outputs) and (wire_name in Logic.variable_names):
+					continue
+			'''
+			# Skip globals too
+			if wire_name in Logic.global_wires:
+				continue
+			# Dont skip volatile globals, they are like regular wires
+				
+			#print "wire_name", wire_name
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, Logic, parser_state)
+			#print "wire_name",wire_name
+			write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, Logic)
+			#print "write_pipe_wire_var_vhdl",write_pipe_wire_var_vhdl
+			text_additions.append("	" + write_pipe_wire_var_vhdl + " : " + vhdl_type_str + ";\n")
+		text_additions.sort()
+		for text_addition in text_additions:
+			rv += text_addition
+			
+	rv += "end record;\n"
+	
+	
+	
+	
+	rv += '''
+-- Type for this modules register pipeline
+type register_pipeline_t is array(0 to LATENCY) of variables_t;
+	'''
+	
+		
+	# GLOBALS
+	if len(Logic.global_wires) > 0:
+		rv += '''
+-- Type holding all global registers
+type global_registers_t is record'''
+		# Each func instance gets records
+		rv += '''
+	-- Global vars\n'''
+		#print "Logic.global_wires",Logic.global_wires
+		for global_wire in Logic.global_wires:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
+			vhdl_name = WIRE_TO_VHDL_NAME(global_wire, Logic)
+			rv += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
+		rv += "end record;\n"
+		
+	# VOLATILE GLOBALS
+	if len(Logic.volatile_global_wires) > 0:
+		rv += '''
+-- Type holding all volatile global registers
+type volatile_global_registers_t is record'''
+		# Each func instance gets records
+		rv += '''
+	-- Volatile global vars\n'''
+		for volatile_global_wire in Logic.volatile_global_wires:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(volatile_global_wire, Logic, parser_state)
+			vhdl_name = WIRE_TO_VHDL_NAME(volatile_global_wire, Logic)
+			rv += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
+		rv += "end record;\n"
+		
+		
+		
+	# ALL REGISTERS
+	rv += '''	
+-- Type holding all registers for this function
+type registers_t is record
+	self : register_pipeline_t;'''
+	
+	# Global regs
+	if len(Logic.global_wires) > 0:
+		rv += '''
+	global_regs : global_registers_t;'''
+	# Volatile global regs
+	if len(Logic.volatile_global_wires) > 0:
+		rv += '''
+	volatile_global_regs : volatile_global_registers_t;'''
+	
+	
+	
+	rv += '''	
+end record;
+'''	
+	
+	# Function to null out globals
+	rv += "\n-- Function to null out just global regs\n"
+	rv += "function registers_NULL return registers_t is\n"
+	rv += '''	variable rv : registers_t;
+begin
+'''
+	# Do each global var
+	for global_wire in Logic.global_wires:
+		rv += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state) + ";\n"
+	# Volatile globals too?
+	for volatile_global_wire in Logic.volatile_global_wires:
+		rv += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(volatile_global_wire, Logic, parser_state) + ";\n"
+	
+	rv += '''
+	return rv;
+end function;\n
+'''
+	
+	
+	
+	rv += '''-- Registers and signals for this function\n'''
+	# Comb signal of main regs
+	rv += "signal " + "registers : registers_t;\n"
+	# Main regs nulled out
+	rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
+	rv += "\n"
+
+	# Signals for submodule ports
+	rv += '''-- Each function instance gets signals\n'''
+	for instance_name in Logic.submodule_instances:
+		submodule_logic_name = Logic.submodule_instances[instance_name]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		# No signals for vhdl inserts
+		if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
+			continue
+		rv += "-- " + instance_name + "\n"
+		# Inputs
+		for in_wire in submodule_logic.inputs:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(in_wire,Logic,parser_state)
+			rv += "signal " + WIRE_TO_VHDL_NAME(in_wire, Logic)	 + " : " + vhdl_type_str + ";\n"
+		# Outputs
+		for out_wire in submodule_logic.outputs:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_wire,Logic,parser_state)
+			rv += "signal " + WIRE_TO_VHDL_NAME(out_wire, Logic) + " : " + vhdl_type_str + ";\n"
+		rv += "\n"
+
+	rv += "\n"
+	rv += "begin" + "\n"
+
+	rv += "\n"
+	# Connect submodules
+	rv += "-- SUBMODULE INSTANCES \n"
+	for instance_name in Logic.submodule_instances:
+		submodule_logic_name = Logic.submodule_instances[instance_name]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		# No signals for vhdl inserts
+		if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
+			continue	
+		submodule_timing_params = TimingParamsLookupTable[instance_name];
+		submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+		submodule_needs_clk = LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
+		
+		new_inst_name = WIRE_TO_VHDL_NAME(instance_name, Logic)
+		rv += "-- " + new_inst_name + "\n"
+		rv += new_inst_name+" : entity work." + GET_INST_NAME(submodule_logic,use_leaf_name=True) +" port map (\n"
+		if submodule_needs_clk:
+			rv += "clk,\n"
+		# Inputs
+		for in_wire in submodule_logic.inputs:
+			rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+		# Outputs
+		for out_wire in submodule_logic.outputs:
+			rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+		# Remove last two chars
+		rv = rv[0:len(rv)-2]
+		rv += ");\n"
+		rv += "\n"
+		
+	
+
+
+	# Comb Logic pipeline
+	rv += "\n"
+	rv += "	-- Combinatorial process for pipeline stages\n"
+	rv += "process (\n"
+	rv += "	-- Inputs\n"
+	for input_wire in Logic.inputs:
+		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
+		rv += "	" + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
+	rv += "	-- Registers\n"
+	rv += "	" + "registers_r,\n"
+	if len(Logic.submodule_instances) > 0:
+		rv += "	-- All submodule outputs\n"
+		# Connect submodules
+		for instance_name in Logic.submodule_instances:
+			submodule_logic_name = Logic.submodule_instances[instance_name]
+			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+			# No signals for vhdl inserts
+			if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
+				print "Is vhdl insert broken?"
+				sys.exit(0)
+				#continue
+			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
+			rv += "	-- " + new_inst_name + "\n"
+			# Outputs
+			if len(submodule_logic.outputs) <= 0:
+				print "Submodule has no outputs?", instance_name
+				sys.exit(0)
+			for out_wire in submodule_logic.outputs:
+				rv += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+	# Remove last two chars
+	rv = rv[0:len(rv)-2]
+	rv += ")\n"
+	rv += "is \n"
+	
+	# READ PIPE
+	rv += "	-- Read and write variables to do register transfers per clock\n"
+	rv += "	-- from the previous to next stage\n"
+	rv += "	" + "variable read_pipe : variables_t;\n"
+	rv += "	" + "variable write_pipe : variables_t;\n"
+	
+	
+	# Self regs
+	rv += '''
+	-- This modules self pipeline registers read once per clock
+	variable read_self_regs : register_pipeline_t;
+	variable write_self_regs : register_pipeline_t;
+'''	
+	
+	# Global regs
+	if len(Logic.global_wires) > 0:
+		rv += "	" + "-- Global registers read once per clock\n"
+		rv += "	" + "variable read_global_regs : global_registers_t;\n"
+		rv += "	" + "variable write_global_regs : global_registers_t;\n"
+	# Volatile global regs
+	if len(Logic.volatile_global_wires) > 0:
+		rv += "	" + "-- Volatile global registers read once per clock\n"
+		rv += "	" + "variable read_volatile_global_regs : volatile_global_registers_t;\n"
+		rv += "	" + "variable write_volatile_global_regs : volatile_global_registers_t;\n"
+	
+	
+	# BEGIN BEGIN BEGIN
+	rv += "begin\n"
+	
+	# Self regs
+	rv += '''
+	-- SELF REGS
+	-- Default read self regs once per clock
+	read_self_regs := registers_r.self;
+	-- Default write contents of self regs
+	write_self_regs := read_self_regs;'''
+	
+	
+	# Globals
+	if len(Logic.global_wires) > 0:
+		rv += '''
+	-- GLOBAL REGS
+	-- Default read global regs once per clock
+	read_global_regs := registers_r.global_regs;
+	-- Default write contents of global regs
+	write_global_regs := read_global_regs;
+'''
+	# Volatile globals
+	if len(Logic.volatile_global_wires) > 0:
+		rv += '''
+	-- VOLATILE GLOBAL REGS
+	-- Default read volatile global regs once per clock
+	read_volatile_global_regs := registers_r.volatile_global_regs;
+	-- Default write contents of volatile global regs
+	write_volatile_global_regs := read_volatile_global_regs;
+'''
+	
+	rv += "	-- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
+	rv += "	-- LATENCY=0 is combinational Logic\n"
+	rv += "	" + "for STAGE in 0 to LATENCY loop\n"
+	rv += "	" + "	" + "-- Input to first stage are inputs to function\n"
+	rv += "	" + "	" + "if STAGE=0 then\n"
+	rv += "	" + "	" + "	" + "-- Mux in inputs\n"
+	for input_wire in Logic.inputs:
+		rv += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
+	if len(Logic.volatile_global_wires) > 0:
+		# Also mux volatile global regs into wires
+		rv += "	" + "	" + "	" + "-- Mux in volatile globals\n"
+		for volatile_global_wire in Logic.volatile_global_wires:
+			rv += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
+			
+	rv += "	" + "	" + "else\n"
+	rv += "	" + "	" + "	" + "-- Default read from previous stage\n"
+	rv += "	" + "	" + "	" + "read_pipe := " + "read_self_regs(STAGE-1);\n"
+	#rv += "	" + "	" + "	" + "read_pipe := " + "write_self_regs(STAGE-1);\n"
+	rv += "	" + "	" + "end if;\n"
+	rv += "	" + "	" + "-- Default write contents of previous stage\n"
+	rv += "	" + "	" + "write_pipe := read_pipe;\n"
+	rv += "\n"
+	
+	# C built in Logic is static in the stages code here but coded as generic
+	rv += GET_ENTITY_PROCESS_STAGES_TEXT(Logic, parser_state, TimingParamsLookupTable)
+		
+	rv += "	" + "	" + "-- Write to stage reg\n"
+	rv += "	" + "	" + "write_self_regs(STAGE) := write_pipe;\n"
+	rv += "	" + "end loop;\n"
+	rv += "\n"
+	if len(Logic.volatile_global_wires) > 0:
+		rv += "	" + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
+		for volatile_global_wire in Logic.volatile_global_wires:
+			rv += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_self_regs(" + GET_INST_NAME(Logic,use_leaf_name=True) + "_LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
+	rv += "\n"	
+	rv += "	" + "-- Drive registers and outputs\n"
+	rv += "	" + "-- Last stage of pipeline return wire to entity return port\n"
+	rv += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " <= " + "write_self_regs(LATENCY)." + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
+	rv += "	" + "registers.self <= write_self_regs;\n"
+	# 	Globals
+	if len(Logic.global_wires) > 0:
+		rv += "	" + "registers.global_regs <= write_global_regs;\n"
+	# 	Volatile globals
+	if len(Logic.volatile_global_wires) > 0:
+		rv += "	" + "registers.volatile_global_regs <= write_volatile_global_regs;\n"
+		
+	rv += "end process;\n"
+	
+	# Register the combinatorial registers signal
+	if needs_clk:
+		rv += "registers_r <= registers when rising_edge(clk);\n"
+	
+	# Done with entity
+	rv += "end arch;" + "\n"
+	
+	
+	if not os.path.exists(output_directory):
+		os.mkdirs(output_directory)
+	
+	
+	f = open(output_directory+ "/" + filename,"w")
+	f.write(rv)
+	f.close()
+	
+	
+	
 # Return package file name
 def GENERATE_PACKAGE_FILE(logic, parser_state, TimingParamsLookupTable, timing_params, dest_dir):	
 	# If this is called for HDL inser then fail
@@ -457,6 +867,8 @@ use ieee.numeric_std.all;\n"""
 	# Need an include for each submodule type
 	included_package_names = []
 	package_file_text = package_file_text + "-- Includes\n"
+	
+	'''
 	package_file_text = package_file_text + "-- An include for each submodule\n"
 	#print "logic.inst_name",logic.inst_name
 	#print "logic.submodule_instances",logic.submodule_instances
@@ -480,6 +892,7 @@ use ieee.numeric_std.all;\n"""
 		else:
 			print "Package for", submodule_inst_name, "?"
 			sys.exit(0)
+	'''
 	
 	package_file_text += "\n"
 	package_file_text += "package " + package_name + " is\n"
@@ -538,26 +951,6 @@ use ieee.numeric_std.all;\n"""
 type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t is array(0 to ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_LATENCY) of ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_variables_t;
 	'''
 	
-	# If raw hdl then no submodules
-	if len(logic.submodule_instances) > 0:
-		# Submodule wire names are local wire name, type is global wire name
-		package_file_text += '''
--- Type holding all submodule registers
-type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_submodule_registers_t is record'''
-		# Each func instance gets records
-		package_file_text += '''
-	-- Each function instance gets registers\n'''
-		for instance_name in logic.submodule_instances:
-			submodule_logic_name = logic.submodule_instances[instance_name]
-			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-			# No regs for vhdl inserts
-			if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-				continue
-			# For now strip off hierarchy levels from instance name
-			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
-			package_file_text += "	" + GET_SUBMODULE_REGS_WRITE_PIPE_VAR(instance_name) + " : " + GET_INST_NAME(submodule_logic,True) + "_registers_t;\n"
-
-		package_file_text += "end record;\n"
 		
 	# GLOBALS
 	if len(logic.global_wires) > 0:
@@ -596,11 +989,6 @@ type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_volatile_global_registe
 type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_registers_t is record
 	self : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t;'''
 	
-	# Submodules if not raw hdl
-	if len(logic.submodule_instances) > 0:
-		package_file_text += '''
-	submodules : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_submodule_registers_t;'''
-	
 	# Global regs
 	if len(logic.global_wires) > 0:
 		package_file_text += '''
@@ -619,24 +1007,8 @@ end record;
 	# Function to null out globals
 	package_file_text += "\n-- Function to null out just global regs\n"
 	package_file_text += "function " + GET_INST_NAME(logic,use_leaf_name=True) + "_registers_NULL return " + GET_INST_NAME(logic,use_leaf_name=True)+ "_registers_t;\n"
-	
-
-	# Procedure decl
-	procedure_decl_text = "\n"
-	procedure_decl_text += "-- Function decl\n"
-	procedure_decl_text += "procedure " + GET_INST_NAME(logic,use_leaf_name=True) + "(\n"
-	procedure_decl_text += "	-- Inputs\n"
-	for input_wire in logic.inputs:
-		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, logic, parser_state)
-		#procedure_decl_text += "	" + C_TO_LOGIC.LEAF_NAME(input_wire, True) + " : in " + vhdl_type_str + ";\n"
-		procedure_decl_text += "	" + WIRE_TO_VHDL_NAME(input_wire, logic) + " : in " + vhdl_type_str + ";\n"
 		
-	procedure_decl_text += "	-- Function registers\n"
-	procedure_decl_text += "	" + "registers : inout " + GET_INST_NAME(logic,use_leaf_name=True) + "_registers_t;\n"
-	procedure_decl_text += "	-- Return wire\n"
-	procedure_decl_text += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " : out " + WIRE_TO_VHDL_TYPE_STR(logic.outputs[0], logic, parser_state) + "\n"  # ASSUME ONE OUTPUT FOR NOW... well established by now I think
-	procedure_decl_text += ");\n"
-	package_file_text += procedure_decl_text
+	
 	package_file_text += "end " + package_name + ";\n"
 	package_file_text += "\n"
 	package_file_text += "package body " + package_name + " is\n"
@@ -656,148 +1028,12 @@ begin
 	for volatile_global_wire in logic.volatile_global_wires:
 		package_file_text += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := " + WIRE_TO_VHDL_NULL_STR(volatile_global_wire, logic, parser_state) + ";\n"
 	
-	
-	
-	# Null out each submodule
-	for submodule_inst in logic.submodule_instances:
-		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst]
-		if len(submodule_logic.submodule_instances) > 0:
-			package_file_text += "	rv.submodules." + GET_SUBMODULE_REGS_WRITE_PIPE_VAR(submodule_inst) + " := " + GET_INST_NAME(submodule_logic,use_leaf_name=True) + "_registers_NULL;\n"
-		
 	package_file_text += '''
 	return rv;
 end function;\n
 '''
 	
-	# Package body has procedure decl as start
-	package_file_text += procedure_decl_text.strip(";\n")
-	package_file_text += "is \n"
 	
-	# READ PIPE
-	package_file_text += "	-- Read and write variables to do register transfers per clock\n"
-	package_file_text += "	-- from the previous to next stage\n"
-	package_file_text += "	" + "variable read_pipe : " + GET_INST_NAME(logic,use_leaf_name=True) + "_variables_t;\n"
-	package_file_text += "	" + "variable write_pipe : " + GET_INST_NAME(logic,use_leaf_name=True) + "_variables_t;\n"
-	
-	
-	# Self regs
-	package_file_text += '''
-	-- This modules self pipeline registers read once per clock
-	variable read_self_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t;
-	variable write_self_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t;
-'''	
-
-	# Submodules if not raw hdl
-	if len(logic.submodule_instances) > 0:
-		package_file_text += "	" + "-- Submodule registers read once per clock\n"
-		package_file_text += "	" + "variable read_submodule_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_submodule_registers_t;\n"
-		package_file_text += "	" + "variable write_submodule_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_submodule_registers_t;\n"
-	
-	# Global regs
-	if len(logic.global_wires) > 0:
-		package_file_text += "	" + "-- Global registers read once per clock\n"
-		package_file_text += "	" + "variable read_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_global_registers_t;\n"
-		package_file_text += "	" + "variable write_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_global_registers_t;\n"
-	# Volatile global regs
-	if len(logic.volatile_global_wires) > 0:
-		package_file_text += "	" + "-- Volatile global registers read once per clock\n"
-		package_file_text += "	" + "variable read_volatile_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_volatile_global_registers_t;\n"
-		package_file_text += "	" + "variable write_volatile_global_regs : " + GET_INST_NAME(logic,use_leaf_name=True) + "_volatile_global_registers_t;\n"
-	
-	
-	# BEGIN BEGIN BEGIN
-	package_file_text += "begin\n"
-	
-	# Self regs
-	package_file_text += '''
-	-- SELF REGS
-	-- Default read self regs once per clock
-	read_self_regs := registers.self;
-	-- Default write contents of self regs
-	write_self_regs := read_self_regs;'''
-	
-	# Submodules if not raw hdl
-	if len(logic.submodule_instances) > 0:
-		package_file_text += '''
-	-- SUBMODULE REGS
-	-- Default read submodule regs once per clock
-	read_submodule_regs := registers.submodules;
-	-- Default write contents of submodule regs
-	write_submodule_regs := read_submodule_regs;'''
-	
-	# Globals
-	if len(logic.global_wires) > 0:
-		package_file_text += '''
-	-- GLOBAL REGS
-	-- Default read global regs once per clock
-	read_global_regs := registers.global_regs;
-	-- Default write contents of global regs
-	write_global_regs := read_global_regs;
-'''
-	# Volatile globals
-	if len(logic.volatile_global_wires) > 0:
-		package_file_text += '''
-	-- VOLATILE GLOBAL REGS
-	-- Default read volatile global regs once per clock
-	read_volatile_global_regs := registers.volatile_global_regs;
-	-- Default write contents of volatile global regs
-	write_volatile_global_regs := read_volatile_global_regs;
-'''
-	
-	package_file_text += "	-- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
-	package_file_text += "	-- LATENCY=0 is combinational logic\n"
-	package_file_text += "	" + "for STAGE in 0 to " + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY loop\n"
-	package_file_text += "	" + "	" + "-- Input to first stage are inputs to function\n"
-	package_file_text += "	" + "	" + "if STAGE=0 then\n"
-	package_file_text += "	" + "	" + "	" + "-- Mux in inputs\n"
-	for input_wire in logic.inputs:
-		#package_file_text += "	" + "	" + "	" + "read_pipe." + C_TO_LOGIC.LEAF_NAME(input_wire,True) + " := " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,logic.inst_name, parser_state.LogicInstLookupTable) + ";\n"
-		#package_file_text += "	" + "	" + "	" + "read_pipe." + C_TO_LOGIC.LEAF_NAME(input_wire,True) + " := " + C_TO_LOGIC.LEAF_NAME(input_wire,True) + ";\n"
-		package_file_text += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, logic) + ";\n"
-	# Also mux volatile global regs into wires
-	package_file_text += "	" + "	" + "	" + "-- Mux in volatile globals\n"
-	for volatile_global_wire in logic.volatile_global_wires:
-		package_file_text += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + ";\n"
-		
-	package_file_text += "	" + "	" + "else\n"
-	package_file_text += "	" + "	" + "	" + "-- Default read from previous stage\n"
-	package_file_text += "	" + "	" + "	" + "read_pipe := " + "read_self_regs(STAGE-1);\n"
-	#package_file_text += "	" + "	" + "	" + "read_pipe := " + "write_self_regs(STAGE-1);\n"
-	package_file_text += "	" + "	" + "end if;\n"
-	package_file_text += "	" + "	" + "-- Default write contents of previous stage\n"
-	package_file_text += "	" + "	" + "write_pipe := read_pipe;\n"
-	package_file_text += "\n"
-	
-	# C built in logic is static in the stages code here but coded as generic
-	package_file_text += GET_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable)
-		
-	package_file_text += "	" + "	" + "-- Write to stage reg\n"
-	package_file_text += "	" + "	" + "write_self_regs(STAGE) := write_pipe;\n"
-	package_file_text += "	" + "end loop;\n"
-	package_file_text += "\n"
-	package_file_text += "	" + "-- Last stage of pipeline return wire to function return wire\n"
-	package_file_text += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " := " + "write_self_regs(" + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY)." + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
-	package_file_text += "	" + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
-	for volatile_global_wire in logic.volatile_global_wires:
-		package_file_text += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := write_self_regs(" + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + ";\n"
-	package_file_text += "\n"	
-	
-	# ~~~ REGISTERS
-	package_file_text += "	" + "-- Per clock write back registers\n"
-	package_file_text += "	" + "registers.self := write_self_regs;\n"
-	# 	Submodules if not raw hdl
-	if len(logic.submodule_instances) > 0:
-		package_file_text += "	" + "registers.submodules := write_submodule_regs;\n"
-	# 	Globals
-	if len(logic.global_wires) > 0:
-		package_file_text += "	" + "registers.global_regs := write_global_regs;\n"
-	# 	Volatile globals
-	if len(logic.volatile_global_wires) > 0:
-		package_file_text += "	" + "registers.volatile_global_regs := write_volatile_global_regs;\n"
-	# ~~~~~~~~~~~~~~~
-	
-		
-	package_file_text += "end procedure;\n"
 	package_file_text += "\n"
 	package_file_text += "end " + package_name + ";\n"
 	
@@ -819,10 +1055,10 @@ end function;\n
 
 			
 # Returns dict[stage_num]=stage_text
-def GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Get the per stage texts and combine
-	per_stage_texts = GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXTS(logic, parser_state, TimingParamsLookupTable)
+	per_stage_texts = GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(logic, parser_state, TimingParamsLookupTable)
 	
 	per_stage_text = dict()
 	for stage in per_stage_texts:
@@ -904,14 +1140,14 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 
 
 	
-def GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXTS(logic, parser_state, TimingParamsLookupTable):
+def GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(logic, parser_state, TimingParamsLookupTable):
 	#timing_params = TimingParamsLookupTable[logic.inst_name]
 	pipeline_map = SYN.GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable)
 	return pipeline_map.per_stage_texts 
 
-def GET_C_PROCEDURE_PACKAGE_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_C_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
 	# Get text per stage
-	per_stage_text = GET_C_PROCEDURE_PACKAGE_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable)
+	per_stage_text = GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable)
 	
 	package_file_text = ""
 	for stage_num in range(0, len(per_stage_text)):
@@ -1003,7 +1239,7 @@ def GET_RHS(driving_wire_to_handle, logic, parser_state, TimingParamsLookupTable
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	RHS = ""
 	# SUBMODULE PORT?
-	if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire_to_handle, logic):
+	if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire_to_handle, logic):		
 		# Get submodule name
 		#print "driving_wire_to_handle",driving_wire_to_handle
 		toks=driving_wire_to_handle.split(C_TO_LOGIC.SUBMODULE_MARKER)
@@ -1042,21 +1278,19 @@ def GET_RHS(driving_wire_to_handle, logic, parser_state, TimingParamsLookupTable
 			# Same stage / zero latency use regular write pipe
 			RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
 		else:
-			# Different, previous stage, use submodule regs approach if latency > 0 
+			# Different, previous stage, use signal from submodule instance if latency > 0 
 			if driving_submodule_latency > 0:
-				port_name = driving_wire_to_handle.replace(driving_submodule_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-				write_pipe_submodule_regs_var = GET_SUBMODULE_REGS_WRITE_PIPE_VAR(driving_submodule_name)
-				# Pretty sure we want write submodule regs?
-				#RHS = "read_submodule_regs." + write_pipe_submodule_regs_var + ".self(" + GET_INST_NAME(driving_submodule_logic, True) + "_LATENCY)." + port_name
-				RHS = "write_submodule_regs." + write_pipe_submodule_regs_var + ".self(" + GET_INST_NAME(driving_submodule_logic, True) + "_LATENCY)." + port_name
+				# Use signal from submodule entity
+				RHS = WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
 			else:
 				RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
-	
+		
+		
 		
 	# GLOBAL?
 	elif driving_wire_to_handle in logic.global_wires:
 		#print "DRIVING WIRE GLOBAL"						
-		# Globals come from input regs to this procedure
+		# Globals come from input regs to this process
 		RHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
 	# Volatile globals are like regular wires
 	else:
@@ -1074,7 +1308,7 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 	# GLOBAL?
 	elif driven_wire_to_handle in logic.global_wires:
 		#print "DRIVING WIRE GLOBAL"						
-		# Globals come from input regs to this procedure
+		# Globals come from input regs to this process
 		LHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
 	# Volatile globals are like regular wires
 	else:
@@ -1153,67 +1387,36 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 	#print rv
 	return rv
 
+	
 
-def GET_SUBMODULE_REGS_WRITE_PIPE_VAR(submodule_inst_name):
-	new_inst_name = C_TO_LOGIC.LEAF_NAME(submodule_inst_name, do_submodule_split=True)
-	new_inst_name = new_inst_name.replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
-	return new_inst_name + "_registers"
-
-
-		
-
-def GET_PROCEDURE_CALL_TEXT(submodule_logic, submodule_inst_name, logic, timing_params, parser_state):
+def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, timing_params, parser_state):
 	# Use logic to write vhdl
-	procedure_name = GET_INST_NAME(submodule_logic, use_leaf_name=True)
-	text = procedure_name + "("
-	for input_port_name in submodule_logic.inputs:
-		#print "submodule_logic.name",submodule_logic.name
-		#print "input: " ,input_wire
-		# Look up what drives this input
-		submodule_input_wire = input_port_name # submodule_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + input_port_name
-		#driving_wire = GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic,submodule_inst_name,input_wire)
-		# Regular pipe dot var 
-		write_pipe_dot_var = GET_WRITE_PIPE_WIRE_VHDL(submodule_input_wire, logic, parser_state)
-		text += write_pipe_dot_var+ ", "			
-		
-	# Then list registers for this instance
-	text += "write_submodule_regs." + GET_SUBMODULE_REGS_WRITE_PIPE_VAR(submodule_inst_name) + ", "
-	
+	entity_name = GET_INST_NAME(submodule_logic, use_leaf_name=True)
+	text = ""
+	# Drive input ports
+	#text += "			-- " + entity_name + "\n"
+	text += "-- Inputs" + "\n"
+	for input_port_wire in submodule_logic.inputs:
+		text += "			" + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
 
-	# list outputs
-	for output_wire in submodule_logic.outputs:
-		# Look up what is driven by this output
-		# Construct the name of this wire in the original logic
-		out_port_wire = output_wire # submodule_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + output_wire
-		#if not(out_port_wire in logic.wire_drives):
-		#	text += "open,"
-		#else:
-		#driven_wires = logic.wire_drives[out_port_wire]
-		text += GET_WRITE_PIPE_WIRE_VHDL(out_port_wire, logic, parser_state) + ","
-			
+
+	text += "			-- Outputs" + "\n"
+	for output_port_wire in submodule_logic.outputs:
+		text +=  "			" + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
 	
-	return text.strip(", ") + ");\n"
+	return text
 	
-def GET_PACKAGE_NAME(logic,TimingParamsLookupTable, parser_state):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[logic.inst_name]
-	package_name = GET_INST_NAME(logic, use_leaf_name=True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_pkg"
-	return package_name
-	
-# File name is less info since is in directory hierarchy
-def GET_PACKAGE_FILENAME(logic,TimingParamsLookupTable, parser_state):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[logic.inst_name]
-	short_inst_name = C_TO_LOGIC.LEAF_NAME(logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
-	#short_inst_name = leaf.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace("__","_") # rerrrreeaalllu hacky fo sho
-	package_filename = short_inst_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_pkg.pkg.vhd"
-	return package_filename
 	
 def GET_TOP_NAME(Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
 	
+def GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state):
+	LogicInstLookupTable = parser_state.LogicInstLookupTable
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+
 def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
 	# Just replace brackets with _
 	# And add array

@@ -44,27 +44,19 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
 		return 0
 		
 	else:
-		print "GET_SELF_OFFSET_FROM_REG_NAME no self, no global",reg_name
+		print "GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name
 		sys.exit(0)
 		
 
 def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, logic, parser_state, TimingParamsLookupTable):
 	LogicLookupTable = parser_state.LogicInstLookupTable
-	#print "reg_name",reg_name
-	# Abs reg index ignores possible submodule name matches after [self]
-	orig_reg_name = reg_name
-
-	# Get matching submoduel isnt, dont care about var names after self or globals
-	if "[self]" in reg_name:
-		reg_name = reg_name.split("[self]")[0]
-	if "[global_regs]" in reg_name:
-		print "DEBUG: Found global reg:", reg_name
-		reg_name = reg_name.split("[global_regs]")[0]
+	
+	# Get submodule inst
 	inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicLookupTable)
 	
 	# Get stage indices
 	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, logic, parser_state, TimingParamsLookupTable)
-	self_offset = GET_SELF_OFFSET_FROM_REG_NAME(orig_reg_name)
+	self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
 	abs_stage = when_used + self_offset
 	return inst, abs_stage
 	
@@ -78,6 +70,8 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 	
 	start_reg_name = parsed_timing_report.start_reg_name
 	end_reg_name = parsed_timing_report.end_reg_name
+	
+	print "PATH:", start_reg_name, "=>", end_reg_name
 	
 	# all possible reg paths considering renaming
 	# Start names
@@ -102,37 +96,46 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 		for end_name in end_names:
 			# Check this path
 			if REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
-				#print "	Comb path to and from register in top.vhd"
+				print "	Path to and from register IO regs in top..."
 				possible_stages_indices.append(0)
 			elif REG_NAME_IS_INPUT_REG(start_name) and not(REG_NAME_IS_OUTPUT_REG(end_name)):
-				#print "	Comb path from input register in top.vhd to pipeline logic"
+				print "	Path from input register to pipeline logic..."
 				#start_stage = 0
 				possible_stages_indices.append(0)
 			elif not(REG_NAME_IS_INPUT_REG(start_name)) and REG_NAME_IS_OUTPUT_REG(end_name):
-				#print "	Comb path from pipeline logic to output register in top.vhd"
+				print "	Path from pipeline logic to output register..."
 				possible_stages_indices.append(last_stage)
 			elif REG_NAME_IS_OUTPUT_REG(start_name):
+				print "	Path is loop from global register acting as output register from last stage?"
+				print "	Is this normal?"
+				sys.exit(0)
 				# Starting at output reg must be global combinatorial loop path in last stage
 				possible_stages_indices.append(last_stage)
 			elif REG_NAME_IS_INPUT_REG(end_name):
 				# Ending at input reg must be global combinatorial loop in first stage
+				print "	Path is loop from global register acting as input reg in first stage?"
+				print "	Is this normal?"
+				sys.exit(0)
 				possible_stages_indices.append(0)
 			else:
-				#print "start_name",start_name
-				#print "end_name",end_name
-				
 				# Start
 				start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(start_name, logic, parser_state, TimingParamsLookupTable)
 				# End
 				end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(end_name, logic, parser_state, TimingParamsLookupTable)
-				
+							
+				# Expect a one stage length path
 				if found_end_reg_abs_index - found_start_reg_abs_index != 1:
+					# Not normal path?
+					
 					# Globals can be same module same reg index?
 					if start_inst==end_inst and "[global_regs]" in start_name and "[global_regs]" in end_name and found_start_reg_abs_index==found_end_reg_abs_index:
 						possible_stages_indices = [found_start_reg_abs_index]
 					else:
 						print "	Unclear stages from register names..."
-						print found_end_reg_abs_index, found_start_reg_abs_index
+						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
+						print "	End?:",found_end_reg_abs_index, end_name, end_inst
+						print "CHECK THIS!!!!^"
+						sys.exit(0)
 						
 						#If same value then assume? idk wtf
 						if found_end_reg_abs_index == found_start_reg_abs_index:
@@ -160,13 +163,17 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 									rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index)
 								possible_stages_indices += rv						
 				else:
+					# Normal 1 stage path
 					possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
 	
 	
 	# Get real range from lsit
-	return sorted(list(set(possible_stages_indices)))
-		
-		
+	rv = sorted(list(set(possible_stages_indices)))
+	
+	
+	print "Stage range:",rv
+	
+	return rv
 		
 class ParsedTimingReport:
 	def __init__(self, syn_output):
@@ -216,13 +223,20 @@ class ParsedTimingReport:
 				period = per_and_trash.strip("ns})")
 				self.source_ns_per_clock = float(period)
 				# START REG
-				self.start_reg_name = prev_line.replace(tok1,"").strip().split("/")[0]
+				self.start_reg_name = prev_line.replace(tok1,"").strip()
+				# Remove everything after last "/"
+				toks = self.start_reg_name.split("/")
+				self.start_reg_name = "/".join(toks[0:len(toks)-1])
+				
 				
 			
 			# END REG
 			tok1="Destination:            "
 			if (tok1 in prev_line) and (tok2 in syn_output_line):
-				self.end_reg_name = prev_line.replace(tok1,"").strip().split("/")[0]
+				self.end_reg_name = prev_line.replace(tok1,"").strip()
+				# Remove everything after last "/"
+				toks = self.end_reg_name.split("/")
+				self.end_reg_name = "/".join(toks[0:len(toks)-1])
 				
 			# LOGIC LEVELS
 			tok1="Logic Levels:           "
@@ -324,7 +338,12 @@ class ParsedTimingReport:
 			
 			# Unconnected ports are maybe problem?
 			if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
-				print syn_output_line
+				if "unconnected port clk" in syn_output_line:
+					# Clock NOT OK to disconnect
+					print "Disconnected clock!?",syn_output_line
+					sys.exit(0)
+				#else:
+				#	print syn_output_line
 				
 				
 			# REG MERGING
@@ -513,14 +532,14 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	# C defined structs
 	rv += 'read_vhdl -library work {' + SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + '}' +  "\n"	
 	
-	# Package file
-	package_filename = VHDL.GET_PACKAGE_FILENAME(Logic, LogicInst2TimingParams,parser_state)
-	rv += 'read_vhdl -library work {' + output_directory + "/" + package_filename + '}' +  "\n"
+	# Entity file
+	entity_filename = VHDL.GET_ENTITY_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd"
+	rv += 'read_vhdl -library work {' + output_directory + "/" + entity_filename + '}' +  "\n"
 	
 	
 	# All submodule instances
 	all_submodules_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(Logic, LogicInstLookupTable)
-	# Package file each submodule instance in work library
+	# Eneity file for each submodule instance in work library
 	for submodule_inst_name in all_submodules_instances:
 		submodule_logic = LogicInstLookupTable[submodule_inst_name]
 		
@@ -533,8 +552,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 		container_logic_timing_params = LogicInst2TimingParams[container_logic.inst_name]
 		submodule_timing_params = LogicInst2TimingParams[submodule_inst_name]
 		submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic, implement)
-		submodule_package_filename = VHDL.GET_PACKAGE_FILENAME(submodule_logic, LogicInst2TimingParams,parser_state)
-		rv += 'read_vhdl -library work {' + submodule_syn_output_directory + "/" + submodule_package_filename + '}' + "\n"	
+		submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_logic,LogicInst2TimingParams, parser_state) + ".vhd"
+		rv += 'read_vhdl -library work {' + submodule_syn_output_directory + "/" + submodule_entity_filename + '}' + "\n"	
 	
 	# Top not shared
 	rv += 'read_vhdl -library work {' + output_directory + "/" +  VHDL.GET_TOP_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd" + '}' +  "\n"
@@ -546,6 +565,9 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	#
 	# ERROR WARNING: [Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call
 	rv += "set_msg_config -id {Synth 8-312} -new_severity ERROR" + "\n"
+	# ERROR WARNING: [Synth 8-614] signal is read in the process but is not in the sensitivity list
+	rv += "set_msg_config -id {Synth 8-614} -new_severity ERROR" + "\n"
+	
 	# Set high limit for these msgs
 	# [Synth 8-4471] merging register
 	rv += "set_msg_config -id {Synth 8-4471} -limit 10000" + "\n"
@@ -555,7 +577,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	rv += "set_msg_config -id {Synth 8-3331} -limit 10000" + "\n"
 	# [Synth 8-5546] ROM won't be mapped to RAM because it is too sparse
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
-
+	
+		
 	rv += "synth_design -top " + VHDL.GET_INST_NAME(Logic,use_leaf_name=True) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	
 	if implement:
@@ -669,7 +692,8 @@ def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, impl
 		# O@O@()(@)Q@$*@($_!@$(@_$(
 		# Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
 		# meaning "procedure is named the same as the entity"
-		VHDL.GENERATE_PACKAGE_FILE(Logic, parser_state, TimingParamsLookupTable, timing_params, output_directory)
+		#VHDL.GENERATE_PACKAGE_FILE(Logic, parser_state, TimingParamsLookupTable, timing_params, output_directory)
+		VHDL.WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupTable)
 		VHDL.WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable)
 			
 		# Write xdc describing clock rate
@@ -695,6 +719,7 @@ def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, impl
 	
 def REG_NAME_IS_INPUT_REG(reg_name):
 	if REG_NAME_IS_IO_REG(reg_name):
+		# Know there is no submodules simple <name>[index]
 		reg_name_no_index = reg_name.split("[")[0]
 		if reg_name_no_index.endswith("_input_reg_reg"):
 			return True
@@ -702,6 +727,7 @@ def REG_NAME_IS_INPUT_REG(reg_name):
 	
 def REG_NAME_IS_OUTPUT_REG(reg_name):
 	if REG_NAME_IS_IO_REG(reg_name):
+		# Know there is no submodules simple <name>[index]
 		reg_name_no_index = reg_name.split("[")[0]
 		if reg_name_no_index.endswith("_output_reg_reg"):
 			return True
@@ -709,8 +735,11 @@ def REG_NAME_IS_OUTPUT_REG(reg_name):
 	
 	
 def REG_NAME_IS_IO_REG(reg_name):
+	# IO wont have vivado submodule markers
+	return "/" not in reg_name
+	
 	#return not REG_NAME_IS_SUBMODULE(reg_name) and not REG_NAME_IS_SELF(reg_name)
-	return not("_registers_r_reg[submodules]" in reg_name) and not("_registers_r_reg[self]" in reg_name) and not("[global_regs]" in reg_name)
+	#return not("_registers_r_reg[submodules]" in reg_name) and not("_registers_r_reg[self]" in reg_name) and not("[global_regs]" in reg_name)
 
 
 
@@ -736,81 +765,23 @@ def GET_RAW_HDL_SUBMODULE_LATENCY_INDEX_FROM_REG_NAME(reg_name, logic):
 	latency_index = int(latency_index_tok.strip("[").strip("]"))
 	
 	return latency_index
-	
-	
-def GET_SELF_LATENCY_INDEX_FROM_REG_NAME(reg_name, logic):
-	# Break apart using brackets
-	toks = reg_name.split("[")
-	
-	#print toks 
-	# ['main_registers_r_reg', 'self]', '0]', 'BIN_OP_PLUS_main_c_59_right]', '1]']
-	
-	# Get latency index
-	latency_pos = 2
-	'''
-	last_tok = toks[len(toks)-1]
-	# If last thing is number then is bit index
-	if last_tok.strip("[").strip("]").isdigit():
-		# Bit index is last so 5th to last
-		latency_pos = len(toks)-3
-	else:
-		# Wire name is last
-		latency_pos = len(toks)-2
-	'''
-		
-	latency_index_tok = toks[latency_pos]
-	latency_index = int(latency_index_tok.strip("[").strip("]"))
-	
-	return latency_index
-
-
 
 	
-# Get deepest in hierarchy possible match , msot specfic match
-def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME_OLD(reg_name, logic, LogicInstLookupTable):
-	# Split all inst name on submodule marker and match toks
-	most_matches_per_tok = 0
-	most_matches = 0
-	most_matchign_inst = None
-	for inst_name in LogicInstLookupTable:
-		submodule_toks = inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
-		# Leaf name of each
-		leaf_submodule_toks = []
-		for submodule_tok in submodule_toks:
-			leaf_submodule_toks.append(C_TO_LOGIC.LEAF_NAME(submodule_tok))
-		# Count how many matches
-		matches = 0
-		matches_per_tok = 0
-		for leaf_submodule_tok in leaf_submodule_toks:
-			leaf_submodule_tok = leaf_submodule_tok.replace("[","_").replace("]","").replace(".","_")			
-			# Leaf tok needs to 
-			
-			if leaf_submodule_tok in reg_name:
-				matches += 1
-		matches_per_tok = float(matches)/ float(len(leaf_submodule_toks))
-		if matches > most_matches:
-			most_matchign_inst = inst_name
-			most_matches = matches
-			most_matches_per_tok = matches_per_tok
-		elif matches == most_matches:
-			# Same number of matches want better match with most matches per tok\
-			if matches_per_tok > most_matches_per_tok:
-				most_matchign_inst = inst_name
-				most_matches_per_tok = matches_per_tok
-		
-	#print "most_matchign_inst",most_matchign_inst
-	#print "most_matches_per_tok", most_matches_per_tok
-	if most_matchign_inst == "main":
-		print "most_matchign_inst == 'main'"
-		print "reg_name",reg_name
-		print "leaf_submodule_toks",leaf_submodule_toks
-		sys.exit(0)
-	
-	return most_matchign_inst
-	
+# Try to make vivado reg name match inst name
 def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	# Adjust reg name for best match
-	adj_reg_name = reg_name.replace("[submodules]","_").replace("[self]","_")
+	# Get matching submoduel isnt, dont care about var names after self or globals
+	if "[self]" in reg_name:
+		reg_name = reg_name.split("[self]")[0]
+	if "[global_regs]" in reg_name:
+		print "DEBUG: Found global reg:", reg_name
+		reg_name = reg_name.split("[global_regs]")[0]
+	if "[volatile_global_regs]" in reg_name:
+		print "DEBUG: Found volatile global reg:", reg_name
+		reg_name = reg_name.split("[volatile_global_regs]")[0]
+	
+	# Remove submodule marker
+	adj_reg_name = reg_name.replace("/","_")
 	
 	# Remove all indexes
 	index_toks = adj_reg_name.split("[")
@@ -830,37 +801,19 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	
 	
 	# Also remove reg then from main
-	new_reg_name = constructed_reg_name.replace("_registers_r_reg","_").replace("_registers","_")
+	new_reg_name = constructed_reg_name.replace("_registers_r_reg","_")
+	
+	# Remove double underscore
+	new_reg_name = new_reg_name.replace("__","_").strip("_")
 	
 	return new_reg_name
 	
 # Get deepest in hierarchy possible match , msot specfic match
 def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupTable):
-	#reg_name = "main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_8_registers][submodules][count0s_uint24_BIN_OP_PLUS_main_c_8_c_154_registers][self][0][MUX_rv_bit_math_h_236_cond][0]"
-	# UH OH
-	# START REG: main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_8_registers][submodules][count0s_uint24_BIN_OP_PLUS_main_c_8_c_154_registers][self][0][MUX_rv_bit_math_h_236_cond][0]
-	# WRONG INST: main____BIN_OP_PLUS[main.c_8]____int26_abs[BIN_OP_PLUS_main_c_8.c_123]____MUX_rv_bit_math.h_52
-	# END REG: main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_8_registers][submodules][BIN_OP_MINUS_BIN_OP_PLUS_main_c_8_c_157_registers][self][0][return_output][2]
-	# WRONG INST: main____BIN_OP_PLUS[main.c_8]____BIN_OP_MINUS[BIN_OP_PLUS_main_c_8.c_88]
 	
-	
-	#===
-	#new_reg_name
-	#new_wire main_BIN_OP_PLUS_main_c_8_MUX_BIN_OP_PLUS_main_c_8_c_130_false/MUX_BIN_OP_PLUS_main_c_8_c_137_false/count0s_uint24_BIN_OP_PLUS_main_c_8_c_154_MUX_rv_bit_math_h_236_cond
-	#match_amount 0.523947427044
-	#===
-	
-	# Both lev and seq match have problem
-	#reg_name main_registers_r_reg[submodules][BIN_OP_SL_main_c_7_registers][self][2][MUX_rv_BIN_OP_SL_main_c_7_c_898_cond][0]
-	#new_reg_name main_BIN_OP_SL_main_c_7_2_MUX_rv_BIN_OP_SL_main_c_7_c_898_cond_0
-	#matched % 0.837690318874
-	#(max_match_new_inst) main_BIN_OP_SLmain_c_7_MUX_rv_BIN_OP_SL_main_c_7_c_880
-	#max_match_inst main____BIN_OP_SL[main.c_7]____MUX_rv_BIN_OP_SL_main_c_7.c_880
-	# ISNTEAD OF
-	#               main____BIN_OP_SL[main.c_7]____MUX_rv_BIN_OP_SL_main_c_7.c_889   <<<< NIIIIIINNNNNEEE
-	
-	
+	#print "reg_name",reg_name
 	new_reg_name = GET_INST_NAME_ADJUSTED_REG_NAME(reg_name)
+	
 		
 	# Find minimum distance between strings
 	max_match = 0.0
@@ -931,7 +884,8 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 		sys.exit(0)
 	
 	
-	
+	#print "Adjusted reg name from syn: ",new_reg_name
+	#print "Matches inst:", max_match_inst
 	
 	return max_match_inst
 	
