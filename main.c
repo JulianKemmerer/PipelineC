@@ -1,4 +1,4 @@
-
+/*
 #include "uintN_t.h"
 
 
@@ -28,7 +28,7 @@ int_t main(uint1_t sel, int_t x, int_t y)
 	}
 	return rv;
 }
-
+*/
 
 /*
 float main(float x, float y)
@@ -36,3 +36,19 @@ float main(float x, float y)
 	return x + y;
 }
 */
+
+
+#include "uintN_t.h"
+
+#define elem_t uint8_t
+#define DEPTH 128
+#define addr_t uint7_t
+
+elem_t ram[DEPTH];
+elem_t main(addr_t addr, elem_t wd, uint1_t we)
+{
+	// One less place to change things if RAM specifier is in func name only?
+	// How hard would it be to change? Alot of code would be the same
+	// Justify justify 
+	return ram_RAM_SP_RF(addr, wd, we);
+}

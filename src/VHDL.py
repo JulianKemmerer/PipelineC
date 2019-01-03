@@ -1389,7 +1389,7 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 
 	
 
-def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, timing_params, parser_state):
+def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, timing_params, parser_state, submodule_latency_from_container_logic):
 	# Use logic to write vhdl
 	entity_name = GET_INST_NAME(submodule_logic, use_leaf_name=True)
 	text = ""
@@ -1399,11 +1399,12 @@ def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, timi
 	for input_port_wire in submodule_logic.inputs:
 		text += "			" + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
 
-
-	text += "			-- Outputs" + "\n"
-	for output_port_wire in submodule_logic.outputs:
-		text +=  "			" + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
-	
+	# Only do output connection if zero clk 
+	if submodule_latency_from_container_logic == 0:
+		text += "			-- Outputs" + "\n"
+		for output_port_wire in submodule_logic.outputs:
+			text +=  "			" + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
+		
 	return text
 	
 	
