@@ -187,7 +187,7 @@ class PipelineMap:
 		rv = "Pipeline Map:\n"
 		print self.logic.func_name, ":", self.logic.inst_name
 		for stage in self.stage_per_ll_submodules_map:
-			rv += "STAGE: " + str(stage)
+			rv += "STAGE: " + str(stage) + "\n"
 			for ll in self.stage_per_ll_submodules_map[stage]:
 				submodules_insts = self.stage_per_ll_submodules_map[stage][ll]
 				submodule_func_names = []
@@ -195,9 +195,9 @@ class PipelineMap:
 					inst_name = ""
 					if self.logic.inst_name is not None:
 						inst_name = self.logic.inst_name
-					submodule_func_names.append(submodules_inst.replace(inst_name,""))
+					submodule_func_names.append(submodules_inst.replace(inst_name+C_TO_LOGIC.SUBMODULE_MARKER,""))
 				submodule_level = self.stage_per_ll_submodule_level_map[stage][ll]
-				rv += "SUB:" + str(submodule_level) + " LL:" + str(ll) + "	" + str(submodule_func_names) + "\n"
+				rv += "SUB:" + str(submodule_level) + " LL:" + str(ll) + " " + str(submodule_func_names) + "\n"
 
 		return rv
 		
@@ -2507,7 +2507,12 @@ def IS_USER_CODE(logic, parser_state):
 		
 
 def GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic):
+	
 	key = logic.func_name
+	
+	# MEM0 has var name - weird yo
+	if SW_LIB.IS_MEM0(logic):
+		key = SW_LIB.GET_MEM_NAME(logic)
 	
 	# hacky check for N code generate 
 	#toks = logic.func_name.split("_")

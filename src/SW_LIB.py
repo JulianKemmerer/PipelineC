@@ -15,6 +15,8 @@ BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
 MEM0_HEADER_FILE = "mem0.h"
 
+RAM_SP_RF="RAM_SP_RF"
+
 ### HACKY
 # Add bit manip pre VHDL insert for NON C?????????????????
 
@@ -35,8 +37,9 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
 def IS_AUTO_GENERATED(logic):
 	#print "?? ",logic.func_name, "is built in:", logic.is_c_built_in
 	
-	rv = ( ( str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE) or
-	              str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE)     ) 
+	rv = ( (   IS_BIT_MANIP(logic)  or
+	           IS_MEM0(logic)       or
+	           IS_BIT_MATH(logic)         ) 
 	              and not logic.is_c_built_in )  # Built in functions used in bitmanip+math generated code are not auto generated
 	
 	
@@ -52,10 +55,21 @@ def IS_BIT_MANIP(logic):
 		  
 	return rv
 	
+def IS_MEM0(logic):
+	rv = str(logic.c_ast_node.coord).split(":")[0].endswith(MEM0_HEADER_FILE) and not logic.is_c_built_in	  
+	return rv
+	
+def IS_BIT_MATH(logic):
+	rv = str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE) and not logic.is_c_built_in	  
+	return rv
+	
 def FUNC_NAME_INCLUDES_TYPES(logic):
 	# Currently this is only needed for bitmanip and bit math
 	rv = IS_AUTO_GENERATED(logic) or logic.func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX)
-		  
+	
+	# Cant be MEM0 since MEM0 mem name doesnt include types
+	rv = rv and not IS_MEM0(logic)
+	
 	return rv
 	         
 	
@@ -128,13 +142,13 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# Parse to toks
 	ram_sp_rf_func_names = []
 	# elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
-	for type_regex in ["\w+_RAM_SP_RF\("]: 
+	for type_regex in ["\w+_" + RAM_SP_RF + "\("]: 
 		p = re.compile(type_regex)
 		ram_sp_rf_func_names = p.findall(c_text)
 		ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
 		for ram_sp_rf_func_name in ram_sp_rf_func_names:
 			ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
-			var_name = ram_sp_rf_func_name.replace("_RAM_SP_RF","")
+			var_name = ram_sp_rf_func_name.replace("_"+RAM_SP_RF,"")
 			#print "var_name",var_name
 			# Lookup type, should be global, and array
 			c_type = parser_state.global_info[var_name].type_name
@@ -149,12 +163,13 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			dim = dims[0]
 			addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
 				
-			func_name = var_name + "_RAM_SP_RF"
+			func_name = var_name + "_" + RAM_SP_RF
 			text += '''
 // ram_sp_rf
 ''' + elem_t + ''' ''' + var_name + "[" + str(dim) + "];" + '''
 ''' + elem_t+ " " + func_name + "(" + addr_t + " addr, " + elem_t + " wd, uint1_t we)" + '''
 {
+	/* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM0 SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
 	// Dont have a construct for simultaneous read and write??
 	// Uhh hows this?
 	// Write is available next cycle?
@@ -177,6 +192,7 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	
 	
 	return read;
+	*/
 }
 '''
 
@@ -197,22 +213,38 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		
-		parse_body = True # MEM0 has SW IMPLEMENTATION
+		parse_body = False # MEM0 DOES NOT HAVE SW IMPLEMENTATION
 		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
-		
+				
+		# Need to indicate that these MEM0 functions use globals/regs
+		# HACK YHACK CHAKC
 		for func_name in func_name_2_logic:
 			func_logic = func_name_2_logic[func_name]
-			if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(MEM0_HEADER_FILE):
-				print "MEM0_HEADER_FILE"
-				print text
-				print "Bad parsing of MEM0",func_name
+			if func_name.endswith("_" + RAM_SP_RF):
+				global_name = func_name.split("_" + RAM_SP_RF)[0]
+			else:
+				print "What mem0 func?", func_name
 				sys.exit(0)
-		
+			
+			# Add global for this logic
+			#print "RAM GLOBAL:",global_name
+			#print func_logic.inst_name
+			func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(func_logic, global_name, parser_state)
+			func_name_2_logic[func_name] = func_logic
+			#print func_name_2_logic[func_name].global_wires
+				
 		return func_name_2_logic
 		
 	else:
 		# No code, no funcs
 		return dict()
+		
+def GET_MEM_NAME(logic):
+	if logic.func_name.endswith("_" + RAM_SP_RF):
+		return RAM_SP_RF
+	else:
+		print "GET_MEM_NAME for func", logic.func_name, "?"
+		sys.exit(0)
 
 
 

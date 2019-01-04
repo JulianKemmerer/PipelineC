@@ -27,7 +27,10 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	# Is this bit manip raw HDL?
 	elif SW_LIB.IS_BIT_MANIP(logic):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
-		return wires_decl_text
+		return wires_decl_text	
+	# Mem0 uses no internal signals right now
+	elif SW_LIB.IS_MEM0(logic):
+		return ""	
 	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
 	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	#	return wires_decl_text
@@ -80,6 +83,54 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	else:
 		print "GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.func_name,"?"
 		sys.exit(0)
+		
+		
+def GET_MEM0_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF):
+		return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	else:
+		print "GET_MEM0_ARCH_DECL_TEXT for func", Logic.func_name, "?"
+		sys.exit(0)
+			
+def GET_MEM0_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF):
+		return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	else:
+		print "GET_MEM0_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?"
+		sys.exit(0)
+	
+def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	# Is a clocked process assigning to global reg
+	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
+	global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
+	
+	# Know func looks like (addr_t addr, elem_t wd, uint1_t we)
+	rv = '''
+	signal ''' + global_name + ''' : ''' + global_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(global_c_type,parser_state) + ''';
+'''
+	return rv
+	
+		
+def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	# Is a clocked process assigning to global reg
+	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+	# Know func looks like (addr_t addr, elem_t wd, uint1_t we)
+	rv = '''
+	process(clk) is
+	begin
+		if rising_edge(clk) then
+			if we(0) = '1' then
+				''' + global_name + '''(to_integer(addr)) <= wd; 
+			end if;
+		end if;
+	end process;
+	-- Read first
+	return_output <= '''  + global_name + '''(to_integer(addr));
+
+'''
+	
+	return rv
 		
 def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
 	if str(logic.c_ast_node.op) == "!":
@@ -1740,11 +1791,6 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
 	'''
 	
 	return wires_decl_text, text
-	
-	
-	
-	
-	
 	
 
 

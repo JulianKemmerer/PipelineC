@@ -1348,7 +1348,11 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 		#print "GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT", logic.func_name, logic.wire_drives
 		
 		func_name_2_logic[logic.func_name] = logic
-		func_name_2_logic[logic.func_name].inst_name = logic.func_name 
+		# WAAAAAIIITTT funcs dont have inst names unless main?
+		if logic.func_name == "main":
+			func_name_2_logic[logic.func_name].inst_name = logic.func_name
+		else:
+			func_name_2_logic[logic.func_name].inst_name = None
 	
 	#print "===================================================="
 	
@@ -1731,37 +1735,37 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 
-def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
+def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(Logic, maybe_global_var, parser_state):
 	# Regular globals
 	if maybe_global_var in parser_state.global_info:
 		# Oh fucklles account for inst logic?\
 		global_var_inst_name = maybe_global_var
-		if parser_state.existing_logic.inst_name is not None:
-			global_var_inst_name = parser_state.existing_logic.inst_name + SUBMODULE_MARKER + maybe_global_var
+		if Logic.inst_name is not None:
+			global_var_inst_name = Logic.inst_name + SUBMODULE_MARKER + maybe_global_var
 		
 		# Copy info into existing_logic
-		parser_state.existing_logic.wire_to_c_type[global_var_inst_name] = parser_state.global_info[maybe_global_var].type_name
+		Logic.wire_to_c_type[global_var_inst_name] = parser_state.global_info[maybe_global_var].type_name
 
 		# Add as global_wrie 
-		if global_var_inst_name not in parser_state.existing_logic.global_wires:
-			parser_state.existing_logic.global_wires.append(global_var_inst_name)
+		if global_var_inst_name not in Logic.global_wires:
+			Logic.global_wires.append(global_var_inst_name)
 			
 		# Record using globals
-		parser_state.existing_logic.uses_globals = True
+		Logic.uses_globals = True
 		#print "rv.func_name",rv.func_name, rv.uses_globals
 		
 	# Volatile globals
 	if maybe_global_var in parser_state.volatile_global_info:
 		print "TODO volatile adjsuit for inst blah blahj fuck"
 		# Copy info into existing_logic
-		parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.volatile_global_info[maybe_global_var].type_name
+		Logic.wire_to_c_type[maybe_global_var] = parser_state.volatile_global_info[maybe_global_var].type_name
 		
 		# Add as volatile global_wrie
-		if maybe_global_var not in parser_state.existing_logic.volatile_global_wires:
-			parser_state.existing_logic.volatile_global_wires.append(maybe_global_var)
+		if maybe_global_var not in Logic.volatile_global_wires:
+			Logic.volatile_global_wires.append(maybe_global_var)
 
 
-	return parser_state.existing_logic
+	return Logic
 
 
 # If this works great, if not ill be so sad
@@ -1785,7 +1789,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	
 	#### GLOBALS \/
 	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic, lhs_orig_var_name, parser_state)
 	
 	lhs_base_type = parser_state.existing_logic.wire_to_c_type[lhs_orig_var_name]
 	const_lhs = C_AST_REF_TOKS_ARE_CONST(lhs_ref_toks)
@@ -2789,7 +2793,7 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	#	print "C_AST_REF_TOKS_TO_C_TYPE ref_toks",ref_toks
 	
 	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state)
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic,var_name, parser_state)
 		
 	# Get the type of this base name
 	inst_adj_var_name = var_name
@@ -2914,7 +2918,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	c_type = C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state)
 
 	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(base_var_name, parser_state)
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic,base_var_name, parser_state)
 	
 	# Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
 	driving_aliases_over_time = []
@@ -4748,7 +4752,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		rv.MERGE_COMB_LOGIC(body_logic)
 				
 	# Sanity check for return
-	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv):
+	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv) and not SW_LIB.IS_MEM0(rv):
 		print "No return statement in function:", rv.func_name
 		sys.exit(0)
 	

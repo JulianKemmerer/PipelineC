@@ -41,8 +41,8 @@ float main(float x, float y)
 #include "uintN_t.h"
 
 #define elem_t uint8_t
-#define DEPTH 128
-#define addr_t uint7_t
+#define DEPTH 65536
+#define addr_t uint16_t
 
 elem_t ram[DEPTH];
 elem_t main(addr_t addr, elem_t wd, uint1_t we)
@@ -52,3 +52,6 @@ elem_t main(addr_t addr, elem_t wd, uint1_t we)
 	// Justify justify 
 	return ram_RAM_SP_RF(addr, wd, we);
 }
+
+
+
