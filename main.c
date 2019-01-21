@@ -1,57 +1,23 @@
-/*
 #include "uintN_t.h"
 
-
-#define int_t uint8_t
-
-int_t add(int_t x, int_t y)
+typedef enum an_enum_t 
 {
-		return x + y;
-}
+	ZERO,
+	ONE,
+	TWO,
+} an_enum_t;
 
-int_t mult(int_t x, int_t y)
+typedef struct a_struct_t
 {
-		return x * y;
-}
+	uint8_t data;
+	uint1_t valid;
+} a_struct_t;
 
+uint8_t a_global = 1;
 
-int_t main(uint1_t sel, int_t x, int_t y)
+uint8_t main(uint8_t x)
 {
-	int_t rv;
-	if(sel)
-	{
-		rv = add(x,y);
-	}
-	else
-	{
-		rv = mult(x,y);
-	}
-	return rv;
+	a_global = a_global + x;
+		
+	return a_global;
 }
-*/
-
-/*
-float main(float x, float y)
-{
-	return x + y;
-}
-*/
-
-
-#include "uintN_t.h"
-
-#define elem_t uint8_t
-#define DEPTH 65536
-#define addr_t uint16_t
-
-elem_t ram[DEPTH];
-elem_t main(addr_t addr, elem_t wd, uint1_t we)
-{
-	// One less place to change things if RAM specifier is in func name only?
-	// How hard would it be to change? Alot of code would be the same
-	// Justify justify 
-	return ram_RAM_SP_RF(addr, wd, we);
-}
-
-
-

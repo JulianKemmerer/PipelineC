@@ -11,6 +11,13 @@ typedef struct axis32_t
 	uint4_t keep;
 } axis32_t;
 
+// How useful is this?
+typedef struct axis32_sized16_t
+{
+	axis32_t axis;
+	uint16_t length;
+} axis32_sized16_t;
+
 typedef struct axis16_t
 {
 	uint16_t data;

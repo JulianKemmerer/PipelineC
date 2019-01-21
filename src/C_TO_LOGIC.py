@@ -1790,7 +1790,10 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	#### GLOBALS \/
 	# This is the first place we should see a global reference in terms of this function/logic
 	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic, lhs_orig_var_name, parser_state)
-	
+	# Sanity check
+	if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
+		print "It looks like variable",lhs_orig_var_name,"isn't declared?", c_ast_assignment.coord
+		sys.exit(0)
 	lhs_base_type = parser_state.existing_logic.wire_to_c_type[lhs_orig_var_name]
 	const_lhs = C_AST_REF_TOKS_ARE_CONST(lhs_ref_toks)
 
@@ -4991,6 +4994,7 @@ class GlobalInfo:
 	def __init__(self):
 		self.name = None
 		self.type_name = None
+		self.init = None
 		
 def GET_GLOBAL_INFO(parser_state, c_file):
 	# Read in file with C parser and get function def nodes
@@ -5011,6 +5015,18 @@ def GET_GLOBAL_INFO(parser_state, c_file):
 			if parser_state.global_info[global_info.name].type_name != global_info.type_name:
 				print "Global variable with multiple types?", global_info.name
 				sys.exit(0)
+				
+		# Handle initialization
+		if global_def.init is not None:
+			# Only handle simple one node constant init right now?
+			if type(global_def.init) == c_ast.Constant:
+				#print global_def.init
+				global_info.init = int(global_def.init.value)
+			else:
+				print global_def.init
+				print "Only simple integer constant initializations right now:",global_def.coord
+				sys.exit(0)
+			
 				
 		# Save info
 		parser_state.global_info[global_info.name] = global_info
@@ -5033,6 +5049,17 @@ def GET_VOLATILE_GLOBAL_INFO(parser_state, c_file):
 		if global_info.name in parser_state.volatile_global_info:
 			if parser_state.volatile_global_info[global_info.name].type_name != global_info.type_name:
 				print "Volatile global variable with multiple types?", global_info.name
+				sys.exit(0)
+				
+		# Handle initialization
+		if volatile_global_def.init is not None:
+			# Only handle simple one node constant init right now?
+			if type(volatile_global_def.init) == c_ast.Constant:
+				#print global_def.init
+				global_info.init = int(volatile_global_def.init.value)
+			else:
+				print volatile_global_def.init
+				print "Only simple integer constant initializations right now:",volatile_global_def.coord
 				sys.exit(0)
 				
 		# Save info

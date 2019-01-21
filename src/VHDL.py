@@ -25,6 +25,32 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
 	c_type_str = logic.wire_to_c_type[global_wire]
 	return C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state)
 
+# Could be volatile global too
+def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
+	# Does this wire have an init?
+	leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
+	c_type = logic.wire_to_c_type[wire]
+	init = None
+	if leaf in parser_state.global_info:
+		init = parser_state.global_info[leaf].init
+	elif leaf in parser_state.volatile_global_info:
+		init = parser_state.volatile_global_info[leaf].init
+		
+	if type(init) == int:
+		width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+		if WIRES_ARE_UINT_N([wire], logic) :
+			return "to_unsigned(" + str(init) + "," + str(width) + ")"
+		elif WIRES_ARE_INT_N([wire], logic):
+			return "to_signed(" + str(init) + "," + str(width) + ")"
+		else:
+			print "What type of int blah?"
+			sys.exit(0)
+
+		return 
+	# If not use null
+	else:
+		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+
 def GET_INST_NAME(Logic, use_leaf_name):
 	if use_leaf_name:
 		return C_TO_LOGIC.LEAF_NAME(Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_")).strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
@@ -600,10 +626,10 @@ begin
 '''
 	# Do each global var
 	for global_wire in Logic.global_wires:
-		rv += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state) + ";\n"
+		rv += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(global_wire, Logic, parser_state) + ";\n"
 	# Volatile globals too?
 	for volatile_global_wire in Logic.volatile_global_wires:
-		rv += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(volatile_global_wire, Logic, parser_state) + ";\n"
+		rv += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(volatile_global_wire, Logic, parser_state) + ";\n"
 	
 	rv += '''
 	return rv;
