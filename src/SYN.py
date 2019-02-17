@@ -185,10 +185,10 @@ class PipelineMap:
 		
 	def __str__(self):
 		rv = "Pipeline Map:\n"
-		print self.logic.func_name, ":", self.logic.inst_name
-		for stage in self.stage_per_ll_submodules_map:
+		#print self.logic.func_name, ":", self.logic.inst_name
+		for stage in sorted(self.stage_per_ll_submodules_map.keys()):
 			rv += "STAGE: " + str(stage) + "\n"
-			for ll in self.stage_per_ll_submodules_map[stage]:
+			for ll in sorted(self.stage_per_ll_submodules_map[stage].keys()):
 				submodules_insts = self.stage_per_ll_submodules_map[stage][ll]
 				submodule_func_names = []
 				for submodules_inst in submodules_insts:
@@ -198,7 +198,7 @@ class PipelineMap:
 					submodule_func_names.append(submodules_inst.replace(inst_name+C_TO_LOGIC.SUBMODULE_MARKER,""))
 				submodule_level = self.stage_per_ll_submodule_level_map[stage][ll]
 				rv += "SUB:" + str(submodule_level) + " LL:" + str(ll) + " " + str(submodule_func_names) + "\n"
-
+		rv = rv.strip("\n")
 		return rv
 		
 # This code is so dumb that I dont want to touch it
@@ -2611,14 +2611,14 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 
 			if SW_LIB.IS_BIT_MANIP(logic):
 				logic.total_logic_levels = 0
-				print "BIT MANIP:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "BIT MANIP TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			# Bitwise binary ops
 			elif IS_BITWISE_OP(logic):
 				logic.total_logic_levels = 1
-				print "BITWISE OP:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "BITWISE OP TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) and len(logic.inputs) == 3: # Cond input too
 				logic.total_logic_levels = 1
-				print "2 Input MUX:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "2 Input MUX TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			## STRUCT READ
 			#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
 			#	logic.total_logic_levels = 0
@@ -2630,16 +2630,16 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 				
 			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
 				logic.total_logic_levels = 0
-				print "CONST REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "CONST REF TOTAL LOGIC LEVELS:", logic.total_logic_levels
 				
 			# 0 LLs HDL insert lookup table
 			elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
 			      logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):
 				logic.total_logic_levels = 0
-				print "0LL HDL Insert:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels			
+				print "0LL HDL Insert TOTAL LOGIC LEVELS:", logic.total_logic_levels			
 			elif not(cached_total_logic_levels is None):
 				logic.total_logic_levels = cached_total_logic_levels
-				print "Cached:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				print "Cached: TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			else:
 				clock_mhz = INF_MHZ # Impossible goal for timing since jsut logic levels
 				implement = False
@@ -2653,7 +2653,13 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 					sys.exit(0)
 				mhz = 1000.0 / parsed_timing_report.data_path_delay
 				logic.total_logic_levels = parsed_timing_report.logic_levels
-				print "SYN:", C_TO_LOGIC.LEAF_NAME(logic.inst_name, True)," TOTAL LOGIC LEVELS:", logic.total_logic_levels, "MHz:",mhz
+				
+				# Print pipeline map before syn results
+				if len(logic.submodule_instances) > 0:
+					zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(logic, parser_state)
+					print zero_clk_pipeline_map
+				# Syn results are total logic levels and clock	
+				print "TOTAL LOGIC LEVELS:", logic.total_logic_levels, "MHz:",mhz
 				
 				# Record worst global
 				#if len(logic.global_wires) > 0:
