@@ -669,85 +669,111 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 	
 	
 	
-	# N SUM
+	# N Binary OP (sum, or, and, etc)
+	# Also can work with arrays
 	# Parse to list of width toks
-	nsum_func_names = []
+	n_bin_op_func_names = []
 	# uint24_sum24(left_resized);
 	for type_regex in ["uint[0-9]+","uint[0-9]+_array","float","float_array"]:
-		for regex in [type_regex+"_sum[0-9]+\s?\("]:
+		for op_regex in ["sum", "or", "and"]:
+			regex = type_regex + "_" + op_regex + "[0-9]+\s?\("
 			p = re.compile(regex)
-			nsum_func_names = p.findall(c_text)
-			nsum_func_names = list(set(nsum_func_names))
-			for nsum_func_name in nsum_func_names:
-				nsum_func_name = nsum_func_name.strip("(").strip()
-				toks = nsum_func_name.split("_")
-				# type_prefix=float_array
+			n_bin_op_func_names_w_paren = p.findall(c_text)
+			n_bin_op_func_names_w_paren = list(set(n_bin_op_func_names_w_paren))
+			for n_bin_op_func_name_w_paren in n_bin_op_func_names_w_paren:
+				n_bin_op_func_name = n_bin_op_func_name_w_paren.strip("(").strip()
+				# For now type strings dont include "_"
+				# Get toks by splitting on "_"				
+				toks = n_bin_op_func_name.split("_")
+				# Get type and array info
+				in_elem_t_str = toks[0]
+				is_array = False
 				if len(toks) == 2:
-					type_prefix = toks[0]
-					sum_name = toks[1]
+					# Not array
+					op_name = toks[1]
 				else:
-					type_prefix = toks[0] + "_" + toks[1]
-					sum_name = toks[2]
+					is_array = True
+					op_name = toks[2]
+					
+				# Get actual elem_t
+				# Special case uint, dumb
+				if in_elem_t_str == "float":
+					in_elem_t = "float"
+				else:
+					# Assume uint
+					in_elem_t = in_elem_t_str + "_t"
 				
-				# how many to sum?				
-				n_sum = int(sum_name.replace("sum",""))
+				# how many elements?				
+				n_elem = int(op_name.replace(op_regex,""))
 				#print "n_sum",n_sum
 				
 				# Result type?
-				if "float" in type_prefix:
+				if in_elem_t == "float":
 					result_t = "float"
 				else:
-					type_width = int(type_prefix.replace("uint",""))
-					# Sum 2 would be bit width increase of 1
-					max_in_val = (math.pow(2,type_width)-1)
-					max_sum = max_in_val * n_sum
-					result_width = int(math.ceil(math.log(max_sum+1,2)))
-					result_t = "uint" + str(result_width) + "_t"
-				# input type?
-				if "array" in type_prefix:
-					in_t = type_prefix.replace("_array","") # Need to construct with var name
-				else:
-					in_t = type_prefix + "_t"	
+					# Assume uint
+					# Depends on op
+					if op_regex == "sum":
+						type_width = int(in_elem_t_str.replace("uint",""))
+						# Sum 2 would be bit width increase of 1
+						max_in_val = (math.pow(2,type_width)-1)
+						max_sum = max_in_val * n_elem
+						result_width = int(math.ceil(math.log(max_sum+1,2)))
+						result_t = "uint" + str(result_width) + "_t"
+					elif op_regex == "or" or op_regex == "and":
+						# Result is same width as input
+						result_t = in_elem_t
+					else:
+						print "Whats32@#%?@#?"
+						sys.exit(0)
 				
-				func_name = type_prefix + "_" + sum_name
+				# Keep track of variable type so 
+				# result type can be determined if needed
 				var_2_type = dict()
+				
+				# Start the code
 				text += '''
 	#include "bit_manip.h"			
 				
-	// ''' + str(n_sum) + ''' sum
-	''' + result_t + " " + func_name+"("
-				if "array" in type_prefix:
-					var_2_type["x"]=in_t + "[" + str(n_sum) + "]"
-					text += in_t + " x" + "[" + str(n_sum) + "]"
+	// N binary op
+	''' + result_t + " " + n_bin_op_func_name+"("
+				# Input is either single array or many individual elements				
+				if is_array:
+					# Dont need to store array type in var_2_type
+					text += in_elem_t + " x" + "[" + str(n_elem) + "]"
 				else: 
-					# List each input
-					for i in range(0, n_sum):
-						text += in_t + " x" + str(i) + ","
-						var_2_type["x" + str(i)]=in_t
+					# List each input elements
+					for i in range(0, n_elem):
+						text += in_elem_t + " x" + str(i) + ","
+						var_2_type["x" + str(i)]=in_elem_t
 					# Remove last comma
 					text = text.strip(",")
 					
+				# Finish def
 				text += ''')
 	{'''
 
+				# Do layers of simultaneous operations
 				layer_nodes = []
-				if "array" in type_prefix:
-					for n in range(0,n_sum):
+				# Start with inputs
+				if is_array:
+					for n in range(0,n_elem):
+						# Can use const ref string as "variable name"
 						var = "x[" + str(n) + "]"
 						layer_nodes.append(var)
-						var_2_type[var] = in_t
+						var_2_type[var] = in_elem_t
 				else:
-					for n in range(0,n_sum):
+					for n in range(0,n_elem):
 						layer_nodes.append("x" + str(n))
-						
-				layer=0
-				node=0
 				
 				text += '''
-				// Binary summation of partial sums
+				// Binary tree
 			'''
-			 
-				
+						
+				# Done as while loop
+				layer=0
+				node=0
+
 				# DO
 				while True: 
 					text += '''
@@ -755,48 +781,69 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 			'''
 					node = 0
 					new_layer_nodes = []
-					# Write adds in pairs
-					# While 2 args to add
+					# Write ops in pairs
+					# While 2 args to do op to
 					while(len(layer_nodes) >= 2):
 						left_arg = layer_nodes.pop(0)
 						right_arg = layer_nodes.pop(0)
 						left_t = var_2_type[left_arg]
 						right_t = var_2_type[right_arg]
-						if "float" in type_prefix:
-							sum_t = "float"
+						# What is result of this op?
+						# Depends on type
+						if in_elem_t == "float":
+							op_result_t = "float"
 						else:
-							# Sum type is max width+1
-							left_width = int(left_t.replace("uint","").replace("int","").replace("_t",""))
-							right_width = int(right_t.replace("uint","").replace("int","").replace("_t",""))
-							max_width = max(left_width,right_width)
-							sum_width = max_width+1
-							sum_t = "uint" + str(sum_width) + "_t"
-							
+							# Assume uint
+							# Depends on op
+							if op_regex == "sum":
+								# Sum type is max width+1
+								left_width = int(left_t.replace("uint","").replace("int","").replace("_t",""))
+								right_width = int(right_t.replace("uint","").replace("int","").replace("_t",""))
+								max_width = max(left_width,right_width)
+								sum_width = max_width+1
+								op_result_t = "uint" + str(sum_width) + "_t"
+							elif op_regex == "or" or op_regex == "and":
+								# Result is same width as input
+								op_result_t = in_elem_t
+							else:
+								print "Whats32?"
+								sys.exit(0)						
 						
-						sum_var = "sum_layer" + str(layer) + "_node" + str(node)
-						var_2_type[sum_var] = sum_t
-						text += '''	''' + sum_t + ''' ''' + sum_var + ''';
-				''' + sum_var + ''' = ''' + left_arg + " + " + right_arg + ''';
+						op_var = "layer" + str(layer) + "_node" + str(node)
+						var_2_type[op_var] = op_result_t
+						# Determine C operator
+						op_char = None
+						if op_regex == "sum":
+							op_char = "+"
+						elif op_regex == "and":
+							op_char = "&"
+						elif op_regex == "or":
+							op_char = "|"
+						else:
+							print 0/0
+						
+						text += '''	''' + op_result_t + ''' ''' + op_var + ''';
+				''' + op_var + ''' = ''' + left_arg + " " + op_char + " " + right_arg + ''';
 			'''
-						# This sum node is on next layer
-						new_layer_nodes.append(sum_var)
+						# This op node is on next layer
+						new_layer_nodes.append(op_var)
 						node += 1
 					
 					# Out of while loop	
-					# < 2 nodes left to sum in this node
+					# < 2 nodes left to operate on in this node
 					if len(layer_nodes) == 1:
 						# One node left
 						the_arg = layer_nodes.pop(0)
 						the_t = var_2_type[the_arg]
-						sum_t = the_t			
-						sum_var = "sum_layer" + str(layer) + "_node" + str(node)
-						var_2_type[sum_var] = sum_t
+						op_result_t = the_t			
+						op_var = "layer" + str(layer) + "_node" + str(node)
+						var_2_type[op_var] = op_result_t
 						text += '''	// Odd node in layer
-				''' + sum_t + ''' ''' + sum_var + ''';
-				''' + sum_var + ''' = ''' + the_arg + ''';
+				''' + op_result_t + ''' ''' + op_var + ''';
+				''' + op_var + ''' = ''' + the_arg + ''';
 				'''
 						# This sum node is on next layer
-						new_layer_nodes.append(sum_var)
+						new_layer_nodes.append(op_var)
 						node += 1
 						
 					
@@ -812,7 +859,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 				# Done with outer layer while loop
 					
 				# Do return
-				return_var = "sum_layer" + str(layer) + "_node" + str(node-1)
+				return_var = "layer" + str(layer) + "_node" + str(node-1)
 				return_t = var_2_type[return_var]
 				text += '''
 				''' + "// Return" + '''

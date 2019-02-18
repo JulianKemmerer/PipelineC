@@ -1,9 +1,9 @@
 
-#include "examples/memcached/receive.c"
+#include "examples/memcached/hash.c"
 
-memcached_packet_s main(axis32_t mac_axis_rx)
-{
-	return receive(mac_axis_rx);
+hash_map_result_s main(hash_map_request_s incoming_request, uint1_t read_result)
+{	
+	return do_hash_map(incoming_request,read_result);
 }
 
 /*

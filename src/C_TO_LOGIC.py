@@ -47,6 +47,7 @@ BIN_OP_LT_NAME = "LT"
 BIN_OP_LTE_NAME = "LTE"
 BIN_OP_PLUS_NAME = "PLUS"
 BIN_OP_MINUS_NAME = "MINUS"
+BIN_OP_NEQ_NAME = "NEQ"
 BIN_OP_EQ_NAME = "EQ"
 BIN_OP_AND_NAME = "AND" # Ampersand?
 BIN_OP_OR_NAME="OR"
@@ -2731,7 +2732,7 @@ def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, parser_state):
 	elif type(c_ast_array_ref.subscript) == c_ast.ID:
 		return RESOLVE_CONST_ID(c_ast_array_ref.subscript,parser_state)
 	else:	
-		print "I don't know how to resolve the array ref at", c_ast_ref.subscript.coord
+		print "I don't know how to resolve the array ref at", c_ast_array_ref.subscript.coord
 		sys.exit(0)
 
 # ONLY USE THIS WITH REF C AST NODES
@@ -4494,6 +4495,8 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		c_ast_op_str = BIN_OP_DIV_NAME
 	elif c_ast_bin_op_str == "==":
 		c_ast_op_str = BIN_OP_EQ_NAME
+	elif c_ast_bin_op_str == "!=":
+		c_ast_op_str = BIN_OP_NEQ_NAME
 	elif c_ast_bin_op_str == "&":
 		c_ast_op_str = BIN_OP_AND_NAME
 	elif c_ast_bin_op_str == "|":
@@ -4610,6 +4613,8 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	elif c_ast_bin_op_str == "<=":
 		output_c_type = BOOL_C_TYPE
 	elif c_ast_bin_op_str == "==":
+		output_c_type = BOOL_C_TYPE
+	elif c_ast_bin_op_str == "!=":
 		output_c_type = BOOL_C_TYPE
 	else:
 		# Not bool operation
