@@ -150,8 +150,8 @@ def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, par
 		return GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 	elif str(logic.c_ast_node.op) == "-":
 		return GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
-	elif str(logic.c_ast_node.op) == "==":
-		return GET_BIN_OP_EQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+	elif str(logic.c_ast_node.op) == "==" or str(logic.c_ast_node.op) == "!=":
+		return GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state, str(logic.c_ast_node.op))
 	elif str(logic.c_ast_node.op) == "&":
 		return GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 	elif str(logic.c_ast_node.op) == "|":
@@ -593,7 +593,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
 
 	return wires_decl_text, text
 	
-def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# ONLY INTS FOR NOW
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
@@ -651,8 +651,7 @@ def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
 	num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
-	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
-	
+	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)	
 
 	# Write loops to do operation
 	text = ""
@@ -685,9 +684,13 @@ def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 		# More stages?
 		if stage == (num_stages - 1):
 			# Last stage so no else if
+			# optional negate
+			maybe_not = ""
+			if op_str == "!=":
+				maybe_not = "not"
+				
 			text += '''
-			
-			if write_pipe.return_output_bool then
+			if ''' + maybe_not + ''' write_pipe.return_output_bool then
 				write_pipe.return_output := (others => '1');
 			else
 				write_pipe.return_output := (others => '0');
@@ -707,11 +710,11 @@ def GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
 
-def GET_BIN_OP_EQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state, op_str):
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
-		return GET_BIN_OP_EQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		return GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
 		print "Binary op EQ for ", logic.wire_to_c_type, " as SLV?"
 		sys.exit(0)
@@ -1382,6 +1385,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
 		return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
+		print logic.c_ast_node
 		print "Binary op LT for type?"
 		sys.exit(0)
 		

@@ -384,8 +384,9 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		nmux_func_names = p.findall(c_text)
 		nmux_func_names = list(set(nmux_func_names))
 		for nmux_func_name in nmux_func_names:
-			#print "nmux_func_name",nmux_func_name
 			nmux_func_name = nmux_func_name.strip("(").strip()
+			#print "nmux_func_name",nmux_func_name
+			#print c_text
 			new_toks = nmux_func_name.split("_mux")
 			mux_name = "mux" + new_toks[1]
 			n = int(mux_name.replace("mux",""))
@@ -411,9 +412,9 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			
 			text += '''
 #include "bit_manip.h"			
-			
+// ''' + str(nmux_func_name) + '''
 // ''' + str(n) + ''' MUX\n'''
-			if C_TO_LOGIC.DUMB_STRUCT_THING in result_t:
+			if (C_TO_LOGIC.DUMB_STRUCT_THING in result_t) or C_TO_LOGIC.C_TYPE_IS_STRUCT(result_t, parser_state):
 				text += '''
 typedef uint8_t ''' + result_t + '''; // FUCK
 '''
@@ -1161,11 +1162,10 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
 
 def GENERATE_INT_N_HEADERS(max_bit_width=256):
-	text = ""
-	text += "#include <stdint.h>\n"
-	
 	# Do signed and unsigned
 	for u in ["","u"]: 
+		text = ""
+		text += "#include <stdint.h>\n"
 		min_width = 1
 		#if u=="":
 		#	min_width = 2

@@ -128,21 +128,32 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 					# Not normal path?
 					
 					# Globals can be same module same reg index?
-					if start_inst==end_inst and "[global_regs]" in start_name and "[global_regs]" in end_name and found_start_reg_abs_index==found_end_reg_abs_index:
+					if "[global_regs]" in start_name and "[global_regs]" in end_name and found_start_reg_abs_index==found_end_reg_abs_index:
 						possible_stages_indices = [found_start_reg_abs_index]
+					
+						# Dont need to handle volatiles separately since like regular regs in terms of path in pipeline?
+						'''
+					elif "[volatile_global_regs]" in start_name and "[volatile_global_regs]" in end_name and found_start_reg_abs_index<=found_end_reg_abs_index:
+						possible_stages_indices = range(found_start_reg_abs_index,found_end_reg_abs_index+1)
+						print "Double check volatile regs:"
+						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
+						print "	End?:",found_end_reg_abs_index, end_name, end_inst
+						'''
 					else:
 						print "	Unclear stages from register names..."
 						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
 						print "	End?:",found_end_reg_abs_index, end_name, end_inst
-						print "CHECK THIS!!!!^"
-						sys.exit(0)
+						#print "CHECK THIS!!!!^"
+						#raw_input("Press Enter to continue...")
+						#sys.exit(0)
 						
 						#If same value then assume? idk wtf
 						if found_end_reg_abs_index == found_start_reg_abs_index:
 							#### ??? possible_stages_indices.append(found_start_reg_abs_index+1) # comb->(stage0)->reg0->(stage1)->reg1 is a stage 1 path 
 							# Fuckit
-							possible_stages_indices.append(found_start_reg_abs_index+1)
 							possible_stages_indices.append(found_end_reg_abs_index)
+							if found_start_reg_abs_index+1 <= last_stage:
+								possible_stages_indices.append(found_start_reg_abs_index+1)
 						else:
 							# Sort them into new values
 							guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
@@ -161,7 +172,9 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 								# Remove last stage
 								if last_stage in rv:
 									rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index)
-								possible_stages_indices += rv						
+								possible_stages_indices += rv
+								
+						# Remove 					
 				else:
 					# Normal 1 stage path
 					possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
@@ -431,8 +444,8 @@ class ParsedTimingReport:
 					sys.exit(0)
 				
 				for i in range(0, len(left_names)):
-					if left_names[i] in self.reg_merged_into:
-						print "How to deal with ",left_names[i], "merged in to " ,right_names[i], "and ",  self.reg_merge_dict[left_names[i]]
+					if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
+						print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
 						sys.exit(0)
 					
 					#self.reg_merged_into = dict() # dict[orig_sig] = new_sig

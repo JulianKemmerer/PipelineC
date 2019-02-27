@@ -20,7 +20,7 @@ print "	Does const work in C? Use that for 'compile time' constant replacement?"
 print "	TODO: Syn each pipeline stage (from top level main, so easy) individually and use delays instead of LLs?"
 print "	~~~~~ REPLACE MANY INSTANCE VHDL FILES WITH JUST INSTANCES OF DIFFERENT SLICES ~~~~~ ?"
 print "	Switch over to delay ns instead of logic levels"
-print "	Maybe can implement variable time loops are PipelineC state machines?"
+print "	Maybe can implement variable time loops as PipelineC state machines? Thanks Andrew"
 print " Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?"
 
 print "================== Generating (u)intN_t.h Headers ================================"

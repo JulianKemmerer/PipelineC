@@ -28,7 +28,6 @@ axis16_t slice0;
 eth32_rx_state_t eth32_rx_state; // Parser eth32_rx_state
 eth32_frame_t eth32_rx_output; // Data to eth32_rx_output
 
-
 eth32_frame_t eth_32_rx(axis32_t mac_axis)
 {
 	// This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
@@ -80,7 +79,7 @@ eth32_frame_t eth_32_rx(axis32_t mac_axis)
 		{
 			eth32_rx_state = LEN_BUFF_INIT;
 		}
-	}
+	} 
 	else if(eth32_rx_state==LEN_BUFF_INIT)
 	{
 		// LENGTH
@@ -99,7 +98,7 @@ eth32_frame_t eth_32_rx(axis32_t mac_axis)
 	else if(eth32_rx_state==PAYLOAD)
 	{
 		// Break into three 16b slices
-		// Slice0 always validEndian
+		// Slice0 always valid
 		axis16_t slice1; // MSB of data
 		slice1.valid = mac_axis.valid;
 		slice1.data = uint32_31_16(mac_axis.data);

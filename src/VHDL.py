@@ -3,6 +3,8 @@ import sys
 import os
 import copy
 import math
+import math
+import hashlib
 
 import C_TO_LOGIC
 import SW_LIB
@@ -51,9 +53,22 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 	else:
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
 
-def GET_INST_NAME(Logic, use_leaf_name):
+def GET_INST_NAME(Logic, use_leaf_name=True):
 	if use_leaf_name:
-		return C_TO_LOGIC.LEAF_NAME(Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_")).strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
+		# Use leaf name to get submodule split too
+		do_submodule_split = True
+		leaf_inst_name = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split)
+		safe_leaf_inst_name = leaf_inst_name.replace(".","_").replace("[","_").replace("]","_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_").strip("_") # hacky fo sho
+		# Leaf inst name should be enough to identify - dont need upper levels of hierarchy
+		# The syntehsized hierarchy path using these name should look like full inst name for fuzzy dumb matching
+		return safe_leaf_inst_name
+		'''
+		# mAKE HASH OUT OF FULL inst name
+		inst_name_hash_ext = "_" + ((hashlib.md5(Logic.inst_name).hexdigest())[0:4]) #4 chars enough?
+		# Actual isnt name is func name plus hash
+		safe_func_name = Logic.func_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
+		return safe_func_name + inst_name_hash_ext + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(Logic.c_ast_node)
+		'''
 	else:
 		# Need to use leaf name
 		print "Need to use leaf name"
@@ -256,6 +271,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_EQ_NAME)  ) or #and C_TYPES_ARE_INTEGERS(input_c_types)
+		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_NEQ_NAME)  ) or #and C_TYPES_ARE_INTEGERS(input_c_types)
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_AND_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_OR_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_XOR_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -888,7 +904,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 	if len(Logic.volatile_global_wires) > 0:
 		rv += "	" + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
 		for volatile_global_wire in Logic.volatile_global_wires:
-			rv += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_self_regs(" + GET_INST_NAME(Logic,use_leaf_name=True) + "_LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
+			rv += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
 	rv += "\n"	
 	rv += "	" + "-- Drive registers and outputs\n"
 	rv += "	" + "-- Last stage of pipeline return wire to entity return port\n"
@@ -1392,7 +1408,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 	# If a constant 
 	if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name, inst_name):
-		ami_digit = C_TO_LOGIC.GET_MAYBE_DIGIT_FROM_CONST_WIRE(wire_name, Logic, parser_state)
+		ami_digit = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
 		ami_digit_no_neg = ami_digit.strip("-")
 		if ami_digit.isdigit():
 			# Check for unsigned digit constant

@@ -311,6 +311,14 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	# Keep a list of wires that are have been driven so far
 	# Search this list to filter which submodules are in each level
 	wires_driven_so_far = []
+	
+		
+	@222
+	@
+	@  BLEGH need to trethink wires driven sof ar and how globals works
+	@ Keep list o pairs driving_wire, driven wire?
+	
+	
 	# Some wires are driven to start with
 	wires_driven_so_far += logic.inputs 
 	wires_driven_so_far += logic.global_wires
@@ -352,9 +360,32 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	
 	
 	stage_num = 0
+	
+	# Pipeline is done when
+	def PIPELINE_DONE():
+		# ALl outputs driven
+		for output in logic.outputs:
+			if output not in wires_driven_so_far:
+				if print_debug:
+					print "Pipeline not done.",output
+				return False
+		# ALl globals driven
+		for global_wire in logic.global_wires:
+			if global_wire not in wires_driven_so_far:
+				if print_debug:
+					print "Pipeline not done.",global_wire
+				return False
+		# ALl volatile globals driven
+		for volatile_global_wire in logic.volatile_global_wires:
+			if volatile_global_wire not in wires_driven_so_far:
+				if print_debug:
+					print "Pipeline not done.",volatile_global_wire
+				return False
+				
+		return True
+	
 	# WHILE LOOP FOR MULTI STAGE/CLK
-	while not(logic.outputs[0] in wires_driven_so_far) :
-			
+	while not PIPELINE_DONE():			
 		# Print stuff and set debug if obviously wrong
 		if (stage_num >= max_possible_latency_with_extra):
 			print "wires_driven_so_far"
@@ -778,15 +809,22 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			#if wire_to_remaining_clks_before_driven[wire] >= 0:
 			wire_to_remaining_clks_before_driven[wire]=wire_to_remaining_clks_before_driven[wire]-1
 			
-		# Sanity check that output is driven in last stage
-		if (logic.outputs[0] in wires_driven_so_far) and ((stage_num-1) != est_total_latency):
-			print "Seems like output is driven before last stage?"
-			my_total_latency = stage_num - 1
-			print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-			print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
-			print "timing_params.slices",timing_params.slices
-			sys.exit(0)
-			print_debug = True
+		# Output might be driven
+		
+		# For 0 clk global funcs, and no global funcs 
+		# the output is always driven in the last stage / stage zero
+		# But for volatile globals the return value might be driven before
+		# all of the other logic driving the volatiles is done
+		if len(logic.volatile_global_wires) <= 0:
+			# Sanity check that output is driven in last stage
+			if (logic.outputs[0] in wires_driven_so_far) and ((stage_num-1) != est_total_latency):
+				print "Seems like output is driven before last stage?"
+				my_total_latency = stage_num - 1
+				print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
+				print "timing_params.slices",timing_params.slices
+				sys.exit(0)
+				print_debug = True
 	
 	#*************************** End of while loops *****************************************************#
 	
@@ -847,7 +885,7 @@ def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 		submodules_at_ll = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][ll_i]
 		if curr_sl == last_sl:
 			# Same submodule level, save submodules
-			C_TO_LOGIC.LIST_UNION(submodules_in_last_sl,submodules_at_ll)
+			submodules_in_last_sl = C_TO_LOGIC.LIST_UNION(submodules_in_last_sl,submodules_at_ll)
 		
 		if curr_sl != last_sl:
 			# Found diff, assume is at x.0? as opposed to x.99999
@@ -978,8 +1016,16 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 			ending_submodules = ending_submodules_list[i]
 			if SLICE_POS_EQ(new_slice_pos, submodule_level_marker, epsilon):
 				# Double check not slicing twice on this level
-				if str(ending_submodules) in str(timing_params.stage_to_end_submodules.values()):
-					return None
+				# Dummy tried a string compare
+				#if str(ending_submodules) in str(timing_params.stage_to_end_submodules.values()):
+				if slice_through_submodule_level_marker:
+					print zero_clk_pipeline_map
+					print "submodule_level_markers",submodule_level_markers
+					print "ending_submodules",ending_submodules
+					print "timing_params.stage_to_end_submodules[slice_ends_stage]",timing_params.stage_to_end_submodules[slice_ends_stage]
+					print 0/0
+					# Is a bad slice index then???
+					#return slice_index
 				
 				# Indicate this submodule level ends a stage
 				slice_through_submodule_level_marker = True
@@ -1382,9 +1428,11 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parse
 			# Done too much?
 			# If and slice index has been adjusted twice something is wrong and give up
 			for slice_index in range(0,len(current_slices)):
-				if seen_bad_slices.count(slice_index) >= 2:
+				if seen_bad_slices.count(slice_index) >= 10:  # Was 2?
+					print "Wtf? Can't round away from globals?"
 					return None
 			seen_bad_slices.append(bad_slice)
+			
 			
 			# Get initial slice value
 			to_left_val = working_slices[bad_slice]
@@ -2446,6 +2494,8 @@ def IS_BITWISE_OP(logic):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_EQ_NAME):
 		return False
+	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_NEQ_NAME):
+		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SL_NAME):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SR_NAME):
@@ -2544,8 +2594,10 @@ def GET_CACHED_TOTAL_LOGIC_LEVELS(logic):
 		
 	return None	
 	
-	
+_non_built_in_lls_cache = dict()	
 def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
+	# TODO parallelize this
+	
 	# initial params are 0 clk latency for all submodules
 	TimingParamsLookupTable = dict()
 	for logic_inst_name in parser_state.LogicInstLookupTable: 
@@ -2640,6 +2692,9 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			elif not(cached_total_logic_levels is None):
 				logic.total_logic_levels = cached_total_logic_levels
 				print "Cached: TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			elif logic.func_name in _non_built_in_lls_cache:
+				logic.total_logic_levels = _non_built_in_lls_cache[logic.func_name]
+				print "Already synthesized: TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			else:
 				clock_mhz = INF_MHZ # Impossible goal for timing since jsut logic levels
 				implement = False
@@ -2676,6 +2731,10 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 					f=open(filepath,"w")
 					f.write(str(logic.total_logic_levels))
 					f.close()
+					
+				# Do runtime cache if not built in
+				if (logic.func_name in parser_state.FuncName2Logic) and not logic.is_c_built_in:
+					_non_built_in_lls_cache[logic.func_name] = logic.total_logic_levels
 				
 			
 			# Save logic with total_logic_levels into lookup
@@ -2909,7 +2968,7 @@ def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, 
 	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	#filename = Logic.inst_name.replace("/","_") + "_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
-	filename = VHDL.WIRE_TO_VHDL_NAME(Logic.inst_name, Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_INST_NAME(Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	# Write dir first if needed
 	if not os.path.exists(output_directory):
