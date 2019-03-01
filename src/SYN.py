@@ -310,19 +310,20 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	# To keep track of 'execution order' do this stupid thing:
 	# Keep a list of wires that are have been driven so far
 	# Search this list to filter which submodules are in each level
-	wires_driven_so_far = []
-	
-		
-	@222
-	@
-	@  BLEGH need to trethink wires driven sof ar and how globals works
-	@ Keep list o pairs driving_wire, driven wire?
-	
+	# Replaced wires_driven_so_far
+	wires_driven_by_so_far = dict() # driven wire -> driving wire
+	def RECORD_DRIVEN_BY(driving_wire, driven_wire_or_wires):
+		if type(driven_wire_or_wires) == list:
+			driven_wires = driven_wire_or_wires
+		else:
+			driven_wires = [driven_wire_or_wires]
+		for driven_wire in driven_wires:
+			wires_driven_by_so_far[driven_wire] = driving_wire
 	
 	# Some wires are driven to start with
-	wires_driven_so_far += logic.inputs 
-	wires_driven_so_far += logic.global_wires
-	wires_driven_so_far += logic.volatile_global_wires
+	RECORD_DRIVEN_BY(None, logic.inputs)
+	RECORD_DRIVEN_BY(None, logic.global_wires)
+	RECORD_DRIVEN_BY(None, logic.volatile_global_wires)
 	# Keep track of submodules whos inputs are fully driven
 	fully_driven_submodule_inst_name_2_logic = dict() 
 	
@@ -331,19 +332,18 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		#print "wire=",wire
 		if C_TO_LOGIC.WIRE_IS_CONSTANT(wire, logic.inst_name):
 			#print "CONST->",wire
-			#print wires_driven_so_far
-			wires_driven_so_far.append(wire)
+			RECORD_DRIVEN_BY(None, wire)
 			wire_to_remaining_clks_before_driven[wire] = 0
 	
 	# Keep track of LLs offset when wire is driven
 	# ONLY MAKES SENSE FOR 0 CLK DIRHGT NOW
 	lls_offset_when_driven = dict()
-	for wire_driven_so_far in wires_driven_so_far:
+	for wire_driven_so_far in wires_driven_by_so_far.keys():
 		lls_offset_when_driven[wire_driven_so_far] = 0 # Is per stage value but we know is start of stage 0 
 	
 	# Start with wires that have drivers
 	last_wires_starting_level = None
-	wires_starting_level=wires_driven_so_far[:] 
+	wires_starting_level=wires_driven_by_so_far.keys()[:] 
 	next_wires_to_follow=[]
 
 	# Bound on latency is sum of all submodule latencies
@@ -365,22 +365,27 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	def PIPELINE_DONE():
 		# ALl outputs driven
 		for output in logic.outputs:
-			if output not in wires_driven_so_far:
+			if (output not in wires_driven_by_so_far) or (wires_driven_by_so_far[output]==None):
 				if print_debug:
 					print "Pipeline not done.",output
 				return False
 		# ALl globals driven
 		for global_wire in logic.global_wires:
-			if global_wire not in wires_driven_so_far:
+			if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
 				if print_debug:
 					print "Pipeline not done.",global_wire
 				return False
 		# ALl volatile globals driven
+		# Some volatiles are read only - ex. valid indicator bit
+		# And thus are never driven
+		# Allow a volatile global wire not to be driven if logic says it is undriven 
 		for volatile_global_wire in logic.volatile_global_wires:
-			if volatile_global_wire not in wires_driven_so_far:
-				if print_debug:
-					print "Pipeline not done.",volatile_global_wire
-				return False
+			if volatile_global_wire in logic.wire_driven_by:
+				# Has a driving wire so must be driven for func to be done
+				if (volatile_global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[volatile_global_wire]==None):
+					if print_debug:
+						print "Pipeline not done.",volatile_global_wire
+					return False
 				
 		return True
 	
@@ -388,11 +393,12 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	while not PIPELINE_DONE():			
 		# Print stuff and set debug if obviously wrong
 		if (stage_num >= max_possible_latency_with_extra):
-			print "wires_driven_so_far"
-			for wire_i in wires_driven_so_far:
-				print wire_i.replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,"")
-			print "'",logic.outputs[0].replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,""),"'NOT in wires_driven_so_far"
-			C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(logic.outputs[0], logic)	
+			#print "wires_driven_by_so_far"
+			#for wire_i in wires_driven_by_so_far:
+			#	print wire_i.replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,""), wires_driven_by_so_far[wire_i]
+			
+			#print "'",logic.outputs[0].replace(logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER,""),"'NOT in wires_driven_by_so_far"
+			#C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(logic.outputs[0], logic)	
 			print "Something is wrong here, infinite loop probably..."
 			print "logic.inst_name", logic.inst_name
 			print 0/0
@@ -417,7 +423,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			# THIS WHILE LOOP FOLLOWS WIRES TO SUBMODULES
 			# (BEWARE!: NO SUBMODULES MAY BE FULLY DRIVEN DUE TO MULTI CLK LATENCY)
 			# First follow wires to submodules
-			#print "wires_driven_so_far",wires_driven_so_far
+			#print "wires_driven_by_so_far",wires_driven_by_so_far
 			#print "wires_starting_level",wires_starting_level
 			wires_to_follow=wires_starting_level[:]						
 			while len(wires_to_follow)>0:
@@ -427,9 +433,15 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 					if bad_inf_loop:
 						print "driving_wire",driving_wire
 					
-					if not(driving_wire in wires_driven_so_far):
-						wires_driven_so_far.append(driving_wire)
-					
+					# Record driving wire as being driven?
+					if driving_wire not in wires_driven_by_so_far:
+						# What drives the driving wire?
+						# Dont know driving wire?
+						driver_of_driver = None
+						if driving_wire in logic.wire_driven_by:
+							driver_of_driver = logic.wire_driven_by[driving_wire]
+						RECORD_DRIVEN_BY(driver_of_driver, driving_wire)
+
 					# Loop over what this wire drives
 					if driving_wire in logic.wire_drives:
 						driven_wires = logic.wire_drives[driving_wire]
@@ -454,10 +466,10 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 														
 							# Add driven wire to wires driven so far
 							# Record driving this wire, at this logic level offset
-							if driven_wire in wires_driven_so_far and (driven_wire not in logic.global_wires) and (driven_wire not in logic.volatile_global_wires):
+							if (driven_wire in wires_driven_by_so_far) and (wires_driven_by_so_far[driven_wire] is not None):#  (driven_wire not in logic.global_wires) and (driven_wire not in logic.volatile_global_wires):
 								# Already handled this wire
 								continue
-							wires_driven_so_far.append(driven_wire)
+							RECORD_DRIVEN_BY(driving_wire, driven_wire)
 								
 							# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 							if has_lls and is_zero_clk:
@@ -522,14 +534,14 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 					for input_port_name in submodule_logic.inputs:
 						driving_wire = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst_name,input_port_name)
 						submodule_input_port_driving_wires.append(driving_wire)
-						if not(driving_wire in wires_driven_so_far):
+						if driving_wire not in wires_driven_by_so_far:
 							submodule_has_all_inputs_driven = False
 							if bad_inf_loop:
 								print "!! " + submodule_inst_name + " input wire " + input_port_name
 								print " is driven by", driving_wire
 								print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
 								print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
-								C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_so_far)
+								C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_by_so_far)
 							break
 					
 					
@@ -552,7 +564,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							max_input_port_ll_offset = max(input_port_ll_offsets)
 							
 							# All submodules should be driven at some ll offset right?
-							#print "wires_driven_so_far",wires_driven_so_far
+							#print "wires_driven_by_so_far",wires_driven_by_so_far
 							#print "lls_offset_when_driven",lls_offset_when_driven
 							
 							if not(submodule_inst_name in rv.submodule_start_offset):
@@ -631,7 +643,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							print "submodule",submodule_inst_name, "does not have all inputs driven yet"
 						
 
-			#print "got input driven submodules, wires_driven_so_far",wires_driven_so_far
+			#print "got input driven submodules, wires_driven_by_so_far",wires_driven_by_so_far
 			if bad_inf_loop:
 				print "fully_driven_submodule_inst_name_this_level_2_logic",fully_driven_submodule_inst_name_this_level_2_logic
 			#/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\
@@ -739,10 +751,14 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			wires_starting_level=[]
 			for wire in wire_to_remaining_clks_before_driven:
 				if wire_to_remaining_clks_before_driven[wire]==0:
-					if not(wire in wires_driven_so_far):
+					if wire not in wires_driven_by_so_far:
 						if bad_inf_loop:
 							print "wire remaining clks done, is driven now",wire
-						wires_driven_so_far.append(wire)
+						
+						driving_wire = None
+						if wire in logic.wire_driven_by:
+							driving_wire = logic.wire_driven_by[wire]
+						RECORD_DRIVEN_BY(driving_wire, wire)
 						wires_starting_level.append(wire)
 			
 			# Has this stage reached the point where it 
@@ -754,7 +770,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 				for end_submodule in end_submodules:
 					end_submodule_logic = LogicInstLookupTable[end_submodule]
 					for output_wire in end_submodule_logic.outputs:
-						if output_wire not in wires_driven_so_far:
+						if output_wire not in wires_driven_by_so_far:
 							if print_debug:
 								print "SUBMODULE NOT DRIVEN FOR SLICE:", end_submodule
 							all_end_submodules_driven = False
@@ -817,7 +833,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		# all of the other logic driving the volatiles is done
 		if len(logic.volatile_global_wires) <= 0:
 			# Sanity check that output is driven in last stage
-			if (logic.outputs[0] in wires_driven_so_far) and ((stage_num-1) != est_total_latency):
+			if (logic.outputs[0] in wires_driven_by_so_far) and ((stage_num-1) != est_total_latency):
 				print "Seems like output is driven before last stage?"
 				my_total_latency = stage_num - 1
 				print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
@@ -1119,9 +1135,11 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	
 	# Check latency here too	
-	# FUCKBUGZ - check for calc errror
+	
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	'''
+	# FUCKBUGZ - check for calc errror
 	force_recalc = True
 	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
 	if total_latency_maybe_recalc != total_latency_recalc:
@@ -1131,6 +1149,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 		print "total_latency_recalc2 ",total_latency_recalc
 		sys.exit(0)
 	total_latency = total_latency_recalc
+	'''
+	total_latency = total_latency_maybe_recalc
 	
 	# Check latency calculation
 	if est_total_latency != total_latency:
@@ -1170,9 +1190,9 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	
 	est_total_latency = len(current_slices)
 	timing_params = TimingParamsLookupTable[logic.inst_name]
-	
-	# FUCKBUGZ - check for calc errror
 	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	'''
+	# FUCKBUGZ - check for calc errror
 	force_recalc = True
 	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
 	if total_latency_maybe_recalc != total_latency_recalc:
@@ -1181,6 +1201,9 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 		print "total_latency_recalc",total_latency_recalc
 		sys.exit(0)
 	total_latency = total_latency_recalc	
+	'''
+	total_latency = total_latency_maybe_recalc
+	
 	if est_total_latency != total_latency:
 		print "Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency
 		print "current slices:",current_slices
@@ -2050,7 +2073,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			print "HACKY ALREADY KNOW BEST SO FAR STOPPING"
 			state.current_slices = best_ever_adj[:]
 		
-		# IF LOOPED BACK TO BEST THEN # Make slice step large to get away from looping back //////CONTINUE REPEATING ADJUSTMENT UNTIL ONE IS NOT SEEN YET
+		# IF LOOPED BACK TO BEST THEN 
 		elif SLICES_EQ(state.current_slices , state.latency_2_best_slices[state.total_latency], slice_ep) and state.total_latency > 1: # 0 or 1 slice will always loop back to best
 			print "Looped back to best result, decreasing LLs step to narrow in on best..."
 			print "Reducing slice_step..."
@@ -2191,11 +2214,14 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 				while len(open("i_am_sad.cfg",'r').readline())==1 and (int(open("i_am_sad.cfg",'r').readline()) > 0):
 					pass
 			
-				
 			# Do something with missing stage or backup		
 			stages_off_balance = ((max(state.stages_adjusted_this_latency.values()) - min(state.stages_adjusted_this_latency.values())) >= len(state.current_slices)) or (actual_min_adj == 0)
 			
-			if (len(missing_stages) > 0) and stages_off_balance and not AM_SAD:
+			# Magical maximum to keep runs out of the weeds?
+			if actual_min_adj >= 20:
+				print "Hit limit of 20 for adjusting all stages... moving on..."
+				
+			elif (len(missing_stages) > 0) and stages_off_balance and not AM_SAD:
 				print "These stages have not been adjusted much: <<<<<<<<<<< ", missing_stages
 				state.working_stage_range = missing_stages
 				print "New working stage range:",state.working_stage_range
@@ -2283,10 +2309,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 						print "<<<<<<<<<<< Couldnt shrink other stages anymore? No adjustment made..."
 					
 			else:
-				print "Cannot find missing stage adjustment?"
+				print "Cannot find missing stage adjustment?"				
 				
-				
-					
 		
 		# Result of either unclear or clear state.stage 
 		print "Didn't make any changes?",state.current_slices
@@ -2952,13 +2976,11 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state):
 			try:
 				pipe_line_map = pickle.load(input)
 			except:
-				#print "WTF? cant load pipeline map file",filepath
+				print "WTF? cant load pipeline map file",filepath
 				#print sys.exc_info()[0]                                                                
 				#sys.exit(0)
 				return None
-			#if Logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
-			#	print "timing_params.slices:",timing_params.slices 
-			#	print "Using pipeline map file:", filename
+
 			return pipe_line_map
 	return None	
 	

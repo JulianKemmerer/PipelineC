@@ -787,10 +787,10 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	if "[self]" in reg_name:
 		reg_name = reg_name.split("[self]")[0]
 	if "[global_regs]" in reg_name:
-		print "DEBUG: Found global reg:", reg_name
+		#print "DEBUG: Found global reg:", reg_name
 		reg_name = reg_name.split("[global_regs]")[0]
 	if "[volatile_global_regs]" in reg_name:
-		print "DEBUG: Found volatile global reg:", reg_name
+		#print "DEBUG: Found volatile global reg:", reg_name
 		reg_name = reg_name.split("[volatile_global_regs]")[0]
 	
 	# Remove submodule marker
