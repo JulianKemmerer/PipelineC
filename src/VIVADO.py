@@ -71,7 +71,7 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 	start_reg_name = parsed_timing_report.start_reg_name
 	end_reg_name = parsed_timing_report.end_reg_name
 	
-	print "PATH:", start_reg_name, "=>", end_reg_name
+	#print "PATH:", start_reg_name, "=>", end_reg_name
 	
 	# all possible reg paths considering renaming
 	# Start names
@@ -783,15 +783,7 @@ def GET_RAW_HDL_SUBMODULE_LATENCY_INDEX_FROM_REG_NAME(reg_name, logic):
 # Try to make vivado reg name match inst name
 def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	# Adjust reg name for best match
-	# Get matching submoduel isnt, dont care about var names after self or globals
-	if "[self]" in reg_name:
-		reg_name = reg_name.split("[self]")[0]
-	if "[global_regs]" in reg_name:
-		#print "DEBUG: Found global reg:", reg_name
-		reg_name = reg_name.split("[global_regs]")[0]
-	if "[volatile_global_regs]" in reg_name:
-		#print "DEBUG: Found volatile global reg:", reg_name
-		reg_name = reg_name.split("[volatile_global_regs]")[0]
+	
 	
 	# Remove submodule marker
 	adj_reg_name = reg_name.replace("/","_")
@@ -812,17 +804,79 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	# Recontruct with underscores
 	constructed_reg_name = "_".join(no_indices_toks)
 	
-	
-	# Also remove reg then from main
-	new_reg_name = constructed_reg_name.replace("_registers_r_reg","_")
-	
 	# Remove double underscore
-	new_reg_name = new_reg_name.replace("__","_").strip("_")
+	new_reg_name = constructed_reg_name.replace("__","_").strip("_")
 	
 	return new_reg_name
 	
 # Get deepest in hierarchy possible match , msot specfic match
 def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupTable):
+	#print "DEBUG: REG:", reg_name
+	
+	# Get matching submoduel isnt, dont care about var names after self or globals
+	if "[self]" in reg_name:
+		reg_name = reg_name.split("[self]")[0]
+	if "[global_regs]" in reg_name:
+		#print "DEBUG: Found global reg:", reg_name
+		reg_name = reg_name.split("[global_regs]")[0]
+	if "[volatile_global_regs]" in reg_name:
+		#print "DEBUG: Found volatile global reg:", reg_name
+		reg_name = reg_name.split("[volatile_global_regs]")[0]
+	# Also remove reg 
+	reg_name = reg_name.replace("/registers_r_reg","")
+	
+	# Easier now since submodules are actual modules and show up with "/" in reg name
+	reg_toks = reg_name.split("/")
+	if len(reg_toks) == 1:
+		#print "Is this real?"
+		#print reg_name
+		#sys.exit(0)
+		return logic.inst_name
+		
+	# Assume starts with main
+	# Loop constructing more and more specific match
+	curr_logic = logic # Assumed to be main
+	curr_end_tok_index = 2 # First two toks joined
+	while curr_end_tok_index <= len(reg_toks):
+		curr_reg_str = "/".join(reg_toks[0:curr_end_tok_index])
+		# Sanitze
+		new_reg_name = GET_INST_NAME_ADJUSTED_REG_NAME(curr_reg_str)	
+		#print "new_reg_name",new_reg_name
+		# Find most matching submodule inst if possible
+		if len(curr_logic.submodule_instances) > 0:
+			max_match = 0.0
+			max_match_submodule_inst = None
+			for submodule_inst in curr_logic.submodule_instances:
+				#Sanitize
+				new_inst = submodule_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("[","_").replace("]","").replace(".","_")
+				#print "new_inst",new_inst
+				# Compare
+				lib_match_amount = difflib.SequenceMatcher(None, new_reg_name, new_inst).ratio()
+				lev_match_amount = Levenshtein.ratio(new_reg_name, new_inst)
+				match_amount = lib_match_amount * lev_match_amount
+				#print "match_amount",match_amount
+				if match_amount > max_match:
+					max_match = match_amount
+					max_match_submodule_inst = submodule_inst
+			
+			if max_match_submodule_inst is None:
+				print "Wtf?", curr_reg_str
+				print "curr_logic.inst_name",curr_logic.inst_name
+				sys.exit(0)
+			
+			# Use this submodule as next logic
+			curr_logic = LogicInstLookupTable[max_match_submodule_inst]
+			
+		# Include next reg tok
+		curr_end_tok_index = curr_end_tok_index + 1
+		
+	# Must have most matching inst now
+	
+	#print "DEBUG: INST:", max_match_submodule_inst
+	
+	return max_match_submodule_inst
+	
+	'''
 	
 	#print "reg_name",reg_name
 	new_reg_name = GET_INST_NAME_ADJUSTED_REG_NAME(reg_name)
@@ -901,21 +955,4 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 	#print "Matches inst:", max_match_inst
 	
 	return max_match_inst
-	
-	
-'''
-# Searches pipeline for raw hdl submodule that will split the stage with most LLs stage
-def GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_SYN_REG_NAMES(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report):
-	LogicLookupTable = parser_state.LogicInstLookupTable
-	
-	print "START:",start_reg_name
-	print "=>"
-	print "END:",end_reg_name
-	
-	start_stage, end_stage = GET_START_STAGE_END_STAGE_FROM_REGS(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report)
-	
-	print "	Start stage =",start_stage
-	print "	End stage =",end_stage
-
-	return  GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_STAGE_END_STAGES(logic, start_stage, end_stage, parser_state, TimingParamsLookupTable, parsed_timing_report)
-'''
+	'''

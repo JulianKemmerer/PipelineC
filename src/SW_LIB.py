@@ -208,7 +208,7 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 		
 		
 		outfile = MEM0_HEADER_FILE
-		parser_state_copy = parser_state.DEEPCOPY() #copy.copy(parser_state)
+		parser_state_copy = copy.copy(parser_state) # was DEEPCOPY
 		# Keep everything except logic stuff
 		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
@@ -890,7 +890,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 		
 		
 		outfile = BIT_MATH_HEADER_FILE
-		parser_state_copy = parser_state.DEEPCOPY() #copy.copy(parser_state)
+		parser_state_copy = copy.copy(parser_state) # was DEEPCOPY()
 		# Keep everything except logic stuff
 		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
@@ -1148,7 +1148,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		# "GET_SW_FUNC_NAME_LOGIC_LOOKUP outfile",outfile
 		
 		# Parse the c doe to logic lookup
-		parser_state_copy = parser_state.DEEPCOPY() #copy.copy(parser_state)
+		parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
 		# Keep everything except logic stuff
 		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full

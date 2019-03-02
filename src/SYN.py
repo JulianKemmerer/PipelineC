@@ -61,6 +61,14 @@ class TimingParams:
 	# I was dumb and used get latency all over
 	# mAKE CACHED VERSION
 	def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None, force_recalc=False):
+		if force_recalc:
+			print "Dont force_recalc!"
+			print 0/0
+		
+		# C built in has multiple shared latencies based on where used
+		if len(self.logic.submodule_instances) <= 0:
+			return len(self.slices)		
+		
 		if self.calcd_total_latency is None or force_recalc:
 			#if self.logic.inst_name == "main____foo[main_c_l224_c20]____BIN_OP_PLUS[main_c_l210_c15]":
 			#	print "RECALC LATENCY!", self.logic.inst_name
@@ -83,7 +91,7 @@ class TimingParams:
 			print 0/0
 			sys.exit(0)
 			
-		force_pipelinemap_recalc = True
+		force_pipelinemap_recalc = False
 		pipeline_map = GET_PIPELINE_MAP(self.logic, parser_state, TimingParamsLookupTable, force_pipelinemap_recalc)
 		latency = pipeline_map.num_stages - 1
 		return latency
@@ -140,8 +148,20 @@ class TimingParams:
 		return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 		
 		
-
-def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state):
+_GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
+def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state, write_files=True):
+	key = Logic.func_name
+	if Logic.inst_name is not None:
+		key = Logic.inst_name
+	# Try cache
+	try:
+		rv = _GET_ZERO_CLK_PIPELINE_MAP_cache[key]
+		#print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
+		return rv
+	except:
+		pass
+	
+	
 	# Populate table as all 0 clk
 	ZeroClockLogicInst2TimingParams = dict()
 	for logic_inst_name in parser_state.LogicInstLookupTable: 
@@ -156,6 +176,8 @@ def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state):
 
 	# Get pipeline map
 	zero_clk_pipeline_map = GET_PIPELINE_MAP(Logic, parser_state, ZeroClockLogicInst2TimingParams)
+	
+	_GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
 	
 	return zero_clk_pipeline_map
 
@@ -242,6 +264,10 @@ class PipelineMap:
 #    |_|
 # 
 def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=False):
+	if force_recalc:
+		print "Dont force_recalc pipelinemap"
+		print 0/0
+	
 	# RAW HDL doesnt need this
 	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
 		print "DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!"
@@ -1287,7 +1313,7 @@ class SweepState:
 		self.total_latency = 0 # Current total latency
 		self.latency_2_best_slices = dict() 
 		self.latency_2_best_delay = dict()
-		self.zero_clk_pipeline_map = copy.deepcopy(zero_clk_pipeline_map)
+		self.zero_clk_pipeline_map = zero_clk_pipeline_map # was deep copy
 		self.slice_step = 0.0
 		self.stages_adjusted_this_latency = {0 : 0} # stage -> num times adjusted
 		self.TimingParamsLookupTable = None # Current timing params with current slices
@@ -1709,7 +1735,7 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 	if all_same_delays:
 		# Cant pick best
 		print "All adjustments yield same result..."
-		return copy.deepcopy(state)
+		return state # was deep copy
 	else:
 		# Pick the best result
 		best_slices = None
@@ -1748,7 +1774,7 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 					break
 		
 		# Update state with return value from best
-		rv_state = copy.deepcopy(state)
+		rv_state = state # Was deep copy
 		# Did not do stage range above, get now
 		rv_state.timing_report = best_syn_tup[1]
 		rv_state.TimingParamsLookupTable = best_syn_tup[3]
@@ -2374,7 +2400,7 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, stat
 	# to account for every missing stage getting slice step removed
 	expansion = slice_step / len(missing_stages)
 	total_expansion = 0.0
-	stages_adjusted_this_latency = copy.deepcopy(state.stages_adjusted_this_latency)
+	stages_adjusted_this_latency = dict(state.stages_adjusted_this_latency) # was deep copy
 	for missing_stage in missing_stages:
 		slice_per_stage[missing_stage] = slice_per_stage[missing_stage] + expansion
 		total_expansion = total_expansion + expansion
@@ -2966,8 +2992,7 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state):
 	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	
-	#filename = Logic.inst_name.replace("/","_") + "_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
-	filename = VHDL.WIRE_TO_VHDL_NAME(Logic.inst_name, Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_INST_NAME(Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	if os.path.exists(filepath):
 		_WRITE_PIPELINE_MAP_CACHE_FILE_lock.acquire()
@@ -2989,7 +3014,6 @@ _WRITE_PIPELINE_MAP_CACHE_FILE_lock = Lock()
 def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, parser_state):
 	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	#filename = Logic.inst_name.replace("/","_") + "_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filename = VHDL.GET_INST_NAME(Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	# Write dir first if needed
@@ -3083,97 +3107,6 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(logic, start_reg_name, end_reg_name, par
 		end_stage += 1
 		
 	return start_stage, end_stage
-
-
-
-
-def GET_RAW_HDL_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state):
-	LogicLookupTable = parser_state.LogicLookupTable
-	# Get lls per stage est
-	submodule_lls_per_stage = GET_SUBMODULE_EST_LLS_PER_STAGE_DICT(TimingParamsLookupTable, LogicLookupTable)
-	
-	# Try to use cached pipeline map
-	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state)
-	raw_hdl_lls_pipeline_map = None
-	if not(cached_pipeline_map is None):
-		print "Using cached raw VHDL pipeline stages and submodule levels lookup (pipeline map)..."
-		raw_hdl_lls_pipeline_map = cached_pipeline_map
-	else:
-		print "Building raw VHDL pipeline stages and submodule levels lookup (pipeline map)..."
-		# Looks LLs per stage
-		raw_hdl_lls_pipeline_map = VHDL.RECURSIVE_GET_RAW_HDL_LOGIC_LEVELS_PIPELINE_MAP(logic, LogicLookupTable, TimingParamsLookupTable, submodule_lls_per_stage)
-		
-	# Write raw hdl cache
-	WRITE_PIPELINE_MAP_CACHE_FILE(logic, raw_hdl_lls_pipeline_map, TimingParamsLookupTable, parser_state)
-	
-	return raw_hdl_lls_pipeline_map
-
-# Searches pipeline for raw hdl submodule that will split the stage with most LLs stage
-def GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_STAGE_END_STAGES(logic, start_stage, end_stage, parser_state, TimingParamsLookupTable, parsed_timing_report):
-	LogicLookupTable = parser_state.LogicInstLookupTable
-	
-	# Get the pipeline map
-	raw_hdl_lls_pipeline_map = GET_RAW_HDL_PIPELINE_MAP(logic, TimingParamsLookupTable, LogicLookupTable)
-	
-	#for stage in raw_hdl_lls_pipeline_map:
-	#	print "STAGE", stage,"==========================="
-	#	for ll in raw_hdl_lls_pipeline_map[stage]:
-	#		print "LL",ll, raw_hdl_lls_pipeline_map[stage][ll]	
-	
-	# Find stage with max sequential logic levels in search range
-	max_lls_offset_per_stage = 0
-	max_lls_stage = None
-	for stage in raw_hdl_lls_pipeline_map:
-		if (stage >= start_stage) and (stage <= end_stage):
-			lls_dict = raw_hdl_lls_pipeline_map[stage]
-			max_lls_offset_this_stage = 0
-			for ll_offset in lls_dict:
-				if ll_offset >= max_lls_offset_this_stage:
-					max_lls_offset_this_stage = ll_offset
-			print "	Stage",stage,"LLs:", max_lls_offset_this_stage
-
-			# Is this max the overall max?				
-			if max_lls_offset_this_stage >= max_lls_offset_per_stage:
-				max_lls_offset_per_stage = max_lls_offset_this_stage
-				max_lls_stage = stage
-					
-	print "Stage", max_lls_stage,"has max estimated lls @", max_lls_offset_per_stage, "LLs"
-	
-	
-	# Split stage in half 
-	max_lls_stage_lls_dict = raw_hdl_lls_pipeline_map[max_lls_stage]
-	mid_stage_lls_offset = int(float(max_lls_offset_per_stage)/ 2.0)
-	#print "mid_stage_lls_offset pre round", mid_stage_lls_offset
-	# Round to nearest lls offset in dictionary
-	dist = 0
-	while not(mid_stage_lls_offset in max_lls_stage_lls_dict):
-		left_offset = mid_stage_lls_offset - dist
-		right_offset = mid_stage_lls_offset + dist
-		
-		if left_offset in max_lls_stage_lls_dict:
-			mid_stage_lls_offset = left_offset
-			break
-		if right_offset in max_lls_stage_lls_dict:
-			mid_stage_lls_offset = right_offset
-			break
-	print "	Logic level offset", mid_stage_lls_offset,"is mid stage"
-	
-	# Loop over mid stage and find module with max lls per stage
-	max_lls_per_stage = 0
-	max_lls_per_stage_inst = None
-	parallel_mid_stage_sub_insts = max_lls_stage_lls_dict[mid_stage_lls_offset]
-	submodule_lls_per_stage = GET_SUBMODULE_EST_LLS_PER_STAGE_DICT(TimingParamsLookupTable, LogicLookupTable)
-	for parallel_mid_stage_sub_inst in parallel_mid_stage_sub_insts:
-		slice_per_stage = submodule_lls_per_stage[parallel_mid_stage_sub_inst]
-		if slice_per_stage >= max_lls_per_stage:
-			max_lls_per_stage = slice_per_stage
-			max_lls_per_stage_inst = parallel_mid_stage_sub_inst
-			
-	print "	Most LLs per stage in at that logic level offset:"
-	print "		", max_lls_per_stage_inst
-	
-	return max_lls_per_stage_inst	
-	
 	
 
 	
