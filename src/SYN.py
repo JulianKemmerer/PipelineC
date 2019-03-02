@@ -1016,11 +1016,9 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 # Index of bad slice if sliced through globals
 def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state, TimingParamsLookupTable, write_files=True):	
 	
-	print_debug = False #logic.inst_name.startswith("main____mult[main_c_l27_c8]____BIN_OP_MULT[main_c_l14_c10]")
+	print_debug = False
 	
-	if print_debug:
-		print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
-
+	
 	# Get timing params for this logic
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	# Add slice
@@ -1028,17 +1026,23 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	slice_index = timing_params.slices.index(new_slice_pos)
 	slice_ends_stage = slice_index
 	
+	# Write into timing params dict
+	TimingParamsLookupTable[logic.inst_name] = timing_params
+	
 	# Check for globals
 	if logic.uses_globals:
 		# Can't slice globals, return index of bad slice
+		if print_debug:
+			print "Can't slice, uses globals"
 		return slice_index
-
-	# Write into timing params dict
-	TimingParamsLookupTable[logic.inst_name] = timing_params
 	
 	# Double check slice
 	est_total_latency = len(timing_params.slices)
 	
+	if print_debug:
+		print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", logic.inst_name, new_slice_pos, "write_files",write_files
+	
+
 	# Shouldnt need debug for zero clock?
 	print_debug = print_debug and (est_total_latency>0)
 	
@@ -1114,7 +1118,19 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				# Only slice when >= 1 LL and not in a global function
 				submodule_logic = parser_state.LogicInstLookupTable[submodule_inst]
 				containing_logic = parser_state.LogicInstLookupTable[submodule_logic.containing_inst]
+				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
+				
+				# Shouldn't need this
+				#if containing_logic.uses_globals:
+				#	# Can't slice globals, return index of bad slice
+				#	if print_debug:
+				#		print "Can't slice, container uses globals"
+				#	return slice_index
+				
+				# Cant slice 0 LLs
 				if submodule_logic.total_logic_levels <= 0:
+					if print_debug:
+						print submodule_inst,"Zero LLS...cant slice"
 					continue
 
 				submodule_timing_params = TimingParamsLookupTable[submodule_logic.inst_name]
@@ -1132,19 +1148,22 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 				if print_debug:
 					print "	Slicing:", submodule_inst
 					print "		@", slice_pos
-
-
-				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
-				if containing_logic.uses_globals:
-					# Can't slice globals, return index of bad slice
-					return slice_index
 						
 				# Slice into that submodule
 				TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(submodule_logic, slice_pos, parser_state, TimingParamsLookupTable, write_files)	
 				
 				# Might be bad slice
-				if type(TimingParamsLookupTable) is not dict:
-					return TimingParamsLookupTable
+				if type(TimingParamsLookupTable) is int:
+					# Slice into submodule was bad
+					if print_debug:
+						print "Adding slice",slice_pos
+						print "To", submodule_inst
+						print "Submodule Slice index", TimingParamsLookupTable
+						print "Container slice index", slice_index
+						print "Was bad"
+					# Return the slice in the container that was bad
+					return slice_index
+				
 	
 	if write_files:	
 		# Final write package
@@ -1211,7 +1230,7 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 		#print "	current_slice_i:",current_slice_i
 		TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, current_slice_i, parser_state, TimingParamsLookupTable, write_files)
 		# Might be bad slice
-		if type(TimingParamsLookupTable) is not dict:
+		if type(TimingParamsLookupTable) is int:
 			return TimingParamsLookupTable
 	
 	est_total_latency = len(current_slices)
@@ -1266,7 +1285,7 @@ def DO_SYN_WITH_SLICES(current_slices, Logic, zero_clk_pipeline_map, parser_stat
 	# Check if log file exists
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)		
-	log_path = output_directory + "/vivado" + "_" +  str(total_latency) + "CLK_" + str(clock_mhz) + "MHz" + hash_ext + ".log"
+	log_path = output_directory + "/vivado" + "_" +  str(total_latency) + "CLK" + hash_ext + ".log"
 	log_file_exists = os.path.exists(log_path)
 	if not log_file_exists:
 		#print "Slicing the RAW HDL submodules..."
@@ -1462,9 +1481,22 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parse
 	working_params_dict = None
 	seen_bad_slices = []
 	min_dist = SLICE_DISTANCE_MIN(total_lls)
+	bad_slice_or_params = None
 	while working_params_dict is None:
+		# Debug?
+		print_debug = False
+		
+		if print_debug:
+			print "Trying slices:", working_slices
+		
 		# Try to find next bad slice
+		bad_slice_or_params_OLD = bad_slice_or_params
 		bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, working_slices, parser_state, write_files=False)
+	
+		if bad_slice_or_params == bad_slice_or_params_OLD:
+			print "Looped working on bad_slice_or_params_OLD",bad_slice_or_params_OLD
+			print "And didn't change?"
+			sys.exit(0)
 	
 		if type(bad_slice_or_params) is dict:
 			# Got timing params dict so good
@@ -1474,10 +1506,14 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parse
 			# Got bad slice
 			bad_slice = bad_slice_or_params
 			
+			if print_debug:
+				print "Bad slice index:", bad_slice
+			
 			# Done too much?
 			# If and slice index has been adjusted twice something is wrong and give up
 			for slice_index in range(0,len(current_slices)):
-				if seen_bad_slices.count(slice_index) >= 10:  # Was 2?
+				if seen_bad_slices.count(slice_index) >= 2:
+					print "current_slices",current_slices
 					print "Wtf? Can't round away from globals?"
 					return None
 			seen_bad_slices.append(bad_slice)
@@ -1505,29 +1541,30 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parse
 				pushed_left_slices = sorted(pushed_left_slices)
 				pushed_right_slices = sorted(pushed_right_slices)
 				
-				#print "working_slices",working_slices
-				#print "total_lls",total_lls
-				#print "epsilon",epsilon
-				#print "min_dist",min_dist
-				#print "pushed_left_slices",pushed_left_slices
-				#print "pushed_right_slices",pushed_right_slices
-				
-				
+				if print_debug:
+					print "working_slices",working_slices
+					print "total_lls",total_lls
+					print "epsilon",epsilon
+					print "min_dist",min_dist
+					print "pushed_left_slices",pushed_left_slices
+					print "pushed_right_slices",pushed_right_slices
+					
+					
 				# Try left and right
 				left_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, pushed_left_slices, parser_state, write_files=False)
 				right_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, pushed_right_slices, parser_state, write_files=False)
 			
 				if (type(left_bad_slice_or_params) is type(0)) and (left_bad_slice_or_params != bad_slice):
-				#if (type(left_bad_slice_or_params) is type(0)) and (str(pushed_left_slices) not in seen_slices):
 					# Got different bad slice, use pushed slices as working
-					#print "bad left slice", left_bad_slice_or_params
+					if print_debug:
+						print "bad left slice", left_bad_slice_or_params
 					bad_slice = left_bad_slice_or_params
 					working_slices = pushed_left_slices[:]
 					break
 				elif (type(right_bad_slice_or_params) is type(0)) and (right_bad_slice_or_params != bad_slice):
-				#elif (type(right_bad_slice_or_params) is type(0)) and (str(pushed_right_slices) not in seen_slices):
 					# Got different bad slice, use pushed slices as working
-					#print "bad right slice", right_bad_slice_or_params
+					if print_debug:
+						print "bad right slice", right_bad_slice_or_params
 					bad_slice = right_bad_slice_or_params
 					working_slices = pushed_right_slices[:]
 					break
@@ -1535,16 +1572,33 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parse
 					# Worked
 					working_params_dict = left_bad_slice_or_params
 					working_slices = pushed_left_slices[:]
+					if print_debug:
+						print "Shift to left worked!"
 					break
 				elif type(right_bad_slice_or_params) is dict:
 					# Worked
 					working_params_dict = right_bad_slice_or_params
 					working_slices = pushed_right_slices[:]
+					if print_debug:
+						print "Shift to right worked!"
 					break
-				else:
+				elif (type(left_bad_slice_or_params) is type(0)) and (type(right_bad_slice_or_params) is type(0)):
+					# Slices are still bad, keep pushing
+					if print_debug:
+						print "Slices are still bad, keep pushing"
+						print "left_bad_slice_or_params",left_bad_slice_or_params
+						print "right_bad_slice_or_params",right_bad_slice_or_params
+												
 					#print "WHAT"
 					#print left_bad_slice_or_params, right_bad_slice_or_params
 					pass
+				else:
+					print "pushed_left_slices",pushed_left_slices
+					print "pushed_right_slices",pushed_right_slices
+					print "left_bad_slice_or_params",left_bad_slice_or_params
+					print "right_bad_slice_or_params",right_bad_slice_or_params
+					print "WTF?"
+					sys.exit(0)
 			
 			
 	return working_slices
@@ -1786,7 +1840,7 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 	return rv_state
 	
 	
-def LOG_SWEEP_STATE(state, Logic):
+def LOG_SWEEP_STATE(state, Logic): #, write_files = False):
 	# Record the new delay
 	print "CURRENT SLICES:", state.current_slices
 	print "Slice Step:", state.slice_step	
@@ -1839,6 +1893,7 @@ def LOG_SWEEP_STATE(state, Logic):
 		else:
 			state.mhz_to_latency[mhz] = state.total_latency
 			state.mhz_to_slices[mhz] = state.current_slices[:]		
+			
 	# IF GOT BEST RESULT SO FAR
 	if mhz >= max(state.mhz_to_slices) and not SEEN_CURRENT_SLICES(state):
 		# Reset stages adjusted since want full exploration
@@ -1847,20 +1902,23 @@ def LOG_SWEEP_STATE(state, Logic):
 		for stage in range(0, len(state.current_slices) + 1):
 			state.stages_adjusted_this_latency[stage] = 0
 		
-	# wRITE TO LOG
-	text = ""
-	text += "MHZ	LATENCY	SLICES\n"
-	for mhz_i in sorted(state.mhz_to_latency):
-		latency = state.mhz_to_latency[mhz_i]
-		slices = state.mhz_to_slices[mhz_i]
-		text += str(mhz_i) + "	" + str(latency) + "	" + str(slices) + "\n"
-	#print text
-	f=open(SYN_OUTPUT_DIRECTORY + "/" + "mhz_to_latency_and_slices.log","w")
-	f.write(text)
-	f.close()
-	
-	# Write state
-	WRITE_SWEEP_STATE_CACHE_FILE(state, Logic)
+		# Got best, write log files if requested
+		#if write_files:
+		# wRITE TO LOG
+		text = ""
+		text += "MHZ	LATENCY	SLICES\n"
+		for mhz_i in sorted(state.mhz_to_latency):
+			latency = state.mhz_to_latency[mhz_i]
+			slices = state.mhz_to_slices[mhz_i]
+			text += str(mhz_i) + "	" + str(latency) + "	" + str(slices) + "\n"
+		#print text
+		f=open(SYN_OUTPUT_DIRECTORY + "/" + "mhz_to_latency_and_slices.log","w")
+		f.write(text)
+		f.close()
+		
+		# Write state
+		WRITE_SWEEP_STATE_CACHE_FILE(state, Logic)
+			
 
 def SLICE_DISTANCE_MIN(lls):
 	return 1.0 / float(lls)
@@ -2036,7 +2094,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 		#       _\/\\\\\\\\\\\\\\\____\///\\\\\/_____\//\\\\\\\\\\\\/__ 
 		#        _\///////////////_______\/////________\////////////____
 		print "Best result out of possible adjustments:"
-		LOG_SWEEP_STATE(state, Logic)
+		write_files = True
+		LOG_SWEEP_STATE(state, Logic) #, write_files)
 		
 		# Are we done now?
 		curr_mhz = 1000.0 / state.latency_2_best_delay[state.total_latency]
@@ -2127,23 +2186,24 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 				# Find min adjusted count 
 				min_adj = 99999999
 				for i in range(0, state.total_latency+1):
-						adj = state.stages_adjusted_this_latency[i]
-						print "Stage",i,"adjusted:",adj
-						if adj < min_adj:
-							min_adj = adj
+					adj = state.stages_adjusted_this_latency[i]
+					print "Stage",i,"adjusted:",adj
+					if adj < min_adj:
+						min_adj = adj
 				
 				# Get stages matching same minimum 
 				for i in range(0, state.total_latency+1):
-						adj = state.stages_adjusted_this_latency[i]
-						if adj == min_adj:
-							missing_stages.append(i)
+					adj = state.stages_adjusted_this_latency[i]
+					if adj == min_adj:
+						missing_stages.append(i)
 			
 			# Only do multiplied adjustments if adjusted all stages at least once
 			# Otherwise get caught making stupid adjustments right after init
 			actual_min_adj = min(state.stages_adjusted_this_latency.values())
-			if (actual_min_adj != 0):
-				MAGICAL_LIMIT=3
-				print "Multiplying suggested change with limit:",MAGICAL_LIMIT
+			MAGICAL_ADJ_LIMIT = 20
+			if (actual_min_adj != 0) and (actual_min_adj < MAGICAL_ADJ_LIMIT):
+				MAGICAL_MULT_LIMIT=3
+				print "Multiplying suggested change with limit:",MAGICAL_MULT_LIMIT
 				orig_slice_step = state.slice_step
 				n = 1
 				# Dont want to increase slice offset and miss fine grain adjustments
@@ -2153,7 +2213,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 				# Want to increase slice step if all adjustments yield same result
 				# That should be the case when we iterate this while loop after running syn
 				num_par_syns = 0
-				while SLICES_EQ(orig_slices, state.current_slices, slice_ep) and (n <= MAGICAL_LIMIT):
+				while SLICES_EQ(orig_slices, state.current_slices, slice_ep) and (n <= MAGICAL_MULT_LIMIT):
 					# Start with no possible adjustments
 					print "Working slice step:",working_slice_step
 					print "Multiplier:", n
@@ -2244,8 +2304,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			stages_off_balance = ((max(state.stages_adjusted_this_latency.values()) - min(state.stages_adjusted_this_latency.values())) >= len(state.current_slices)) or (actual_min_adj == 0)
 			
 			# Magical maximum to keep runs out of the weeds?
-			if actual_min_adj >= 20:
-				print "Hit limit of 20 for adjusting all stages... moving on..."
+			if actual_min_adj >= MAGICAL_ADJ_LIMIT:
+				print "Hit limit of",MAGICAL_ADJ_LIMIT, "for adjusting all stages... moving on..."
 				
 			elif (len(missing_stages) > 0) and stages_off_balance and not AM_SAD:
 				print "These stages have not been adjusted much: <<<<<<<<<<< ", missing_stages
@@ -2353,7 +2413,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			#print "Slice Step:",state.slice_step
 			state.stage_range, state.timing_report, state.total_latency, state.TimingParamsLookupTable = DO_SYN_WITH_SLICES(state.current_slices, Logic, zero_clk_pipeline_map, parser_state)
 			mhz = (1.0 / (state.timing_report.data_path_delay / 1000.0)) 
-			LOG_SWEEP_STATE(state, Logic)
+			write_files = True
+			LOG_SWEEP_STATE(state, Logic) #, write_files)
 		else:
 			print "What didnt make change and got new slices?", state.current_slices
 			sys.exit(0)

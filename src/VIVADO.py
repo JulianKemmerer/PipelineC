@@ -141,8 +141,10 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 						'''
 					else:
 						print "	Unclear stages from register names..."
-						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
-						print "	End?:",found_end_reg_abs_index, end_name, end_inst
+						print "	Start?:",found_start_reg_abs_index, start_name
+						print "		", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+						print "	End?:",found_end_reg_abs_index, end_name
+						print "		", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
 						#print "CHECK THIS!!!!^"
 						#raw_input("Press Enter to continue...")
 						#sys.exit(0)
