@@ -11,7 +11,7 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz=SYN.INF_MHZ # TEST 31.25
+mhz=57.83 #SYN.INF_MHZ # TEST 31.25
 
 print "Notes:"
 print "	OPTIMIZE AWAY CONSTANT IF and constant float mult by 1?"

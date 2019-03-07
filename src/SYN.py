@@ -305,7 +305,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		print "These stages were sliced on a submodule level marker:", timing_params.stage_to_end_submodules.keys()
 	
 	# Try to use cached pipeline map
-	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state)
+	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state, est_total_latency)
 	# Sanity check latency against cache if force recalc
 	cached_total_latency = None
 	if not(cached_pipeline_map is None):
@@ -859,8 +859,8 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		# all of the other logic driving the volatiles is done
 		if len(logic.volatile_global_wires) <= 0:
 			# Sanity check that output is driven in last stage
-			if (logic.outputs[0] in wires_driven_by_so_far) and ((stage_num-1) != est_total_latency):
-				print "Seems like output is driven before last stage?"
+			if PIPELINE_DONE() and ((stage_num-1) != est_total_latency):
+				print "Seems like pipeline is done before last stage?"
 				my_total_latency = stage_num - 1
 				print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
@@ -878,7 +878,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		
 	# Write cache if we had logic levels otherwise was not worth caching?
 	if has_lls:
-		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state)
+		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state, est_total_latency)
 		
 		
 	# Sanity check against cache
@@ -1203,10 +1203,10 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 		print "Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency
 		print "Adding new slice:2", new_slice_pos
 		print "timing_params.slices2",timing_params.slices
-		for logic_inst_name in parser_state.LogicInstLookupTable: 
-			logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-			timing_params_i = TimingParams(logic_i)
-			print "logic_i.inst_name2",logic_i.inst_name, timing_params_i.slices
+		#for logic_inst_name in parser_state.LogicInstLookupTable: 
+		#	logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
+		#	timing_params_i = TimingParams(logic_i)
+		#	#print "logic_i.inst_name2",logic_i.inst_name, timing_params_i.slices
 		
 		sys.exit(0)
 	
@@ -3047,13 +3047,13 @@ def GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME(wire_write_pipe_var_name, logic):
 	print "wire_write_pipe_var_name",wire_write_pipe_var_name
 	sys.exit(0)
 		
-def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state):	
+def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state, est_total_latency):	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	
-	filename = VHDL.GET_INST_NAME(Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_INST_NAME(Logic) + "_" + str(est_total_latency) + "CLK_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	if os.path.exists(filepath):
 		_WRITE_PIPELINE_MAP_CACHE_FILE_lock.acquire()
@@ -3072,10 +3072,10 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state):
 	
 	
 _WRITE_PIPELINE_MAP_CACHE_FILE_lock = Lock()
-def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, parser_state):
+def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, parser_state, est_total_latency):
 	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	filename = VHDL.GET_INST_NAME(Logic) + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_INST_NAME(Logic) + "_" + str(est_total_latency) + "CLK_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	# Write dir first if needed
 	if not os.path.exists(output_directory):

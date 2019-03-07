@@ -210,7 +210,7 @@ class ParsedTimingReport:
 		self.data_path_delay = None
 		self.logic_delay = None
 		self.orig_text=single_timing_report
-		self.reg_merged_into = dict() # dict[orig_sig] = new_sig
+		#self.reg_merged_into = dict() # dict[orig_sig] = new_sig
 		self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
 		self.has_loops = True
 		self.has_latch_loops = True
@@ -446,13 +446,13 @@ class ParsedTimingReport:
 					sys.exit(0)
 				
 				for i in range(0, len(left_names)):
-					if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
-						print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
-						sys.exit(0)
+					#if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
+					#	print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
+					#	sys.exit(0)
 					
 					#self.reg_merged_into = dict() # dict[orig_sig] = new_sig
 					#self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
-					self.reg_merged_into[left_names[i]] = right_names[i]
+					#self.reg_merged_into[left_names[i]] = right_names[i]
 					if not(right_names[i] in self.reg_merged_with):
 						self.reg_merged_with[right_names[i]] = []
 					self.reg_merged_with[right_names[i]].append(left_names[i])
