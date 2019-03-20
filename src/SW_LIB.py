@@ -26,7 +26,6 @@ RAM_SP_RF="RAM_SP_RF"
 
 
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
-	print "TODO: Use C AST for AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT"
 	# Use preprocessor to get text
 	c_text = C_TO_LOGIC.preprocess_file(c_file)
 	#print c_text
@@ -1197,9 +1196,10 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
 
 def GENERATE_INT_N_HEADERS(max_bit_width=2048):
-	# Do signed and unsigned
-	text = "#pragma once\n"
+	# Do signed and unsigned two files
 	for u in ["","u"]:
+		text = "#pragma once\n"
+		text += "#include <stdint.h>\n"
 		min_width = 1
 		#if u=="":
 		#	min_width = 2

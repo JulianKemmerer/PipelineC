@@ -5647,15 +5647,16 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename):
 		parser = c_parser.CParser()
 		# Use preprocessor function
 		c_text = preprocess_text(text)
-		print "========="
-		print "fake_filename",fake_filename
-		print "preprocessed text",c_text
+		#print "========="
+		#print "fake_filename",fake_filename
+		#print "preprocessed text",c_text
 		
 		# Hacky because somehow parser.parse() getting filename from cpp output?
 		c_text = c_text.replace("<stdin>",fake_filename)
 		
 		ast = parser.parse(c_text,filename=fake_filename)
 		#ast.show()
+		return ast
 	except c_parser.ParseError as pe:
 		print "Parsed fake file name:",fake_filename
 		print "Parsed text:"
@@ -5663,9 +5664,6 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename):
 		print "pycparser says you messed up here:",pe
 		casthelp(pe)
 		sys.exit(0)
-	
-	
-	
 	
 
 def GET_C_AST_FUNC_DEFS(c_file_ast):
@@ -5752,6 +5750,6 @@ def GET_TYPE_FROM_LIST(py_type, l):
 def GET_C_FILE_AST(c_filename):
 	# Read text
 	f = open(c_filename)
-	text = r.read()
+	text = f.read()
 	return GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename)		
 	
