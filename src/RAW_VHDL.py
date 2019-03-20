@@ -251,15 +251,10 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	container_logic = LogicInstLookupTable[logic.containing_inst]
 	
-	
-	# Bleh... normally expanding ref toks while parsing... not while writing VHDL
-	# Containing FUNC logic is expected to be in parser_state.existing_logic
-	# FUCK hope this works
-	#print "container_logic.func_name",container_logic.func_name
-	#print "logic.inst_name",logic.inst_name
-	#if 
-	#container_func_logic = parser_state.FuncName2Logic[container_logic.func_name]
-	parser_state.existing_logic = container_logic
+		
+	# Copy parser state since not intending to change existing logic in this func
+	parser_state_copy = copy.copy(parser_state)
+	parser_state_copy.existing_logic = container_logic	
 	
 	ref_toks = container_logic.ref_submodule_instance_to_ref_toks[logic.inst_name]
 	orig_var_name = ref_toks[0]
@@ -279,7 +274,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 		#print container_logic.wire_to_c_type
 	'''	
 	base_c_type = container_logic.wire_to_c_type[orig_var_name_inst_name]
-	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state) # Structs handled and have same name as C types
+	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state_copy) # Structs handled and have same name as C types
 	
 	wires_decl_text = ""
 	wires_decl_text +=  '''	
@@ -293,7 +288,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	for input_port_inst_name in logic.inputs:
 		input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
 		input_port_type_c_type = logic.wire_to_c_type[input_port_inst_name]
-		input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state)
+		input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state_copy)
 		vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) #.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").re
 		
 		wires_decl_text +=  '''	
@@ -301,7 +296,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	
 	# Then output
 	output_c_type = logic.wire_to_c_type[logic.outputs[0]]
-	output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_c_type,parser_state)
+	output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_c_type,parser_state_copy)
 	wires_decl_text +=  '''	
 	return_output : ''' + output_vhdl_type + ''';'''
 	
@@ -338,14 +333,14 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 		# Expand to constant refs
 		#if driven_ref_toks[0] == "bs":
 		#	print "logic.inst_name",logic.inst_name
-		#	print "parser_state.existing_logic.inst_name",parser_state.existing_logic.inst_name
+		#	print "parser_state_copy.existing_logic.inst_name",parser_state_copy.existing_logic.inst_name
 		#	print "CONST ref rd:"
 		#	print "input",input_port_inst_name
 		#	print "driven_ref_toks",driven_ref_toks
 		
 		
 		
-		expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(driven_ref_toks, logic.c_ast_node, parser_state)
+		expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(driven_ref_toks, logic.c_ast_node, parser_state_copy)
 		for expanded_ref_toks in expanded_ref_tok_list:			
 			# Build vhdl str doing the reference assignment to base
 			vhdl_ref_str = ""
@@ -1816,11 +1811,15 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
 			return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 	
 	elif len(toks) == 3:
-		# Eith BIT SLICE OR BIT ASSIGN
-		if toks[1].isdigit() and toks[2].isdigit():
+		# Array to unsigned # uint8_array250_le
+		if "array" in toks[1]:
+			return GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+		# Eith BIT SLICE #uint64_39_39(
+		elif toks[1].isdigit() and toks[2].isdigit():
 			high = int(toks[1])
 			low = int(toks[2])
 			return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
+		# OR BIT ASSIGN # uint64_uint15_2(
 		else:
 			# Above will fail if is BIT assign
 			return GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
@@ -2051,6 +2050,43 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 		'''
 
 	return wires_decl_text, text
+
+def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+	parser_state.LogicInstLookupTable
+	# TODO check for ints only?
+	# ONLY INTS FOR NOW
+	x_type = logic.wire_to_c_type[logic.inputs[0]]
+	x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
+	# SHould be array
+	elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(x_type)
+	dim = dims[0]
+	out_c_type = logic.wire_to_c_type[logic.outputs[0]]
+	out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_c_type, parser_state)
+	
+	wires_decl_text = '''
+	x : ''' + x_vhdl_type + ''';
+	return_output : ''' + out_vhdl_type + ''';
+'''
+
+	# Bit slice must always be zero clock
+	if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+		print "Cannot do array to unsigned in multiple clocks!?"
+		sys.exit(0)
+	
+	# Big bit concat
+	text = "write_pipe.return_output := "
+	be_range = range(0, dim)
+	le_range = range(dim-1, -1, -1)
+	r = be_range
+	if logic.func_name.endswith("_le"):
+		r = le_range
+	for i in r:
+		text += "x(" + str(i) + ")&"
+	text = text.strip("&")
+	text += ";"
+
+	return wires_decl_text, text
+
 	
 def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable

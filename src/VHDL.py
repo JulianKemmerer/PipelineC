@@ -59,16 +59,18 @@ def GET_INST_NAME(Logic, use_leaf_name=True):
 		do_submodule_split = True
 		leaf_inst_name = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split)
 		safe_leaf_inst_name = leaf_inst_name.replace(".","_").replace("[","_").replace("]","_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_").strip("_") # hacky fo sho
-		# Leaf inst name should be enough to identify - dont need upper levels of hierarchy
-		# The syntehsized hierarchy path using these name should look like full inst name for fuzzy dumb matching
-		return safe_leaf_inst_name
-		'''
+		# ----Leaf inst name should be enough to identify - dont need upper levels of hierarchy
+		# -----The syntehsized hierarchy path using these name should look like full inst name for fuzzy dumb matching
+		#@@@@@@@@@@@ NO LEAF inst name is not enough
+		# All in flat work library so need entity name to reflect full hierarchy
+		#return safe_leaf_inst_name
+		
 		# mAKE HASH OUT OF FULL inst name
 		inst_name_hash_ext = "_" + ((hashlib.md5(Logic.inst_name).hexdigest())[0:4]) #4 chars enough?
 		# Actual isnt name is func name plus hash
-		safe_func_name = Logic.func_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
-		return safe_func_name + inst_name_hash_ext + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(Logic.c_ast_node)
-		'''
+		#safe_func_name = Logic.func_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
+		return safe_leaf_inst_name + inst_name_hash_ext
+		
 	else:
 		# Need to use leaf name
 		print "Need to use leaf name"

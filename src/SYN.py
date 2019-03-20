@@ -3,6 +3,7 @@
 import sys
 import os
 import subprocess
+import signal
 import math
 import copy
 import pickle
@@ -944,7 +945,14 @@ def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 	return submodule_level_markers,ending_submodules_list
 
 def GET_SHELL_CMD_OUTPUT(cmd_str):
-	return subprocess.Popen(cmd_str, shell=True, stdout=subprocess.PIPE).stdout.read()
+	# Kill pid after 
+	process = subprocess.Popen(cmd_str, shell=True, stdout=subprocess.PIPE)
+	output_text = process.stdout.read()
+	# For some reason vivado likes to stay alive? Be sure to kill?
+	os.kill(process.pid, signal.SIGTERM)
+	#print "All vivado dead?"
+	#raw_input("")
+	return output_text
 	
 def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -1775,9 +1783,6 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 			do_get_stage_range=False
 			my_syn_tup = DO_SYN_WITH_SLICES(slices, Logic, state.zero_clk_pipeline_map, parser_state, do_latency_check, do_get_stage_range)
 			slices_to_syn_tup[str(slices)] = my_syn_tup
-		
-	# Kill all vivados once done
-	#GET_SHELL_CMD_OUTPUT("killall vivado")
 	
 	# Check that each result isnt the same (only makes sense if > 1 elements)
 	syn_tups = slices_to_syn_tup.values()

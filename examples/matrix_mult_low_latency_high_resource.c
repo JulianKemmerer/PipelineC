@@ -29,7 +29,7 @@ an_array_t main(float mat1[N][N], float mat2[N][N])
                 res_k[k] = mat1[i][k] * mat2[k][j]; 
 			}
 			res.a[i][j] =  float_array_sumN(res_k);
-        } 
+		} 
     }
     
     return res;

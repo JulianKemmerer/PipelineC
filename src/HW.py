@@ -132,7 +132,6 @@ def send_memcached_request(key, value, opcode):
 					vbucket,totalbodylen,opaque,cas)
 					
 	# Pack up extras key and value
-	
 	key_bytes = struct.pack("!" + str(len(key)) + "s", key)
 	value_bytes = struct.pack("!" + str(valuelen) + "s", value)
 	
@@ -146,11 +145,11 @@ def send_memcached_request(key, value, opcode):
 	send_udp(packet_bytes, dst_port, dst_ip, dst_mac)
 	
 	
-def memcached_get(key):
+def send_memcached_get(key):
 	opcode=MEMCACHED_GET
 	send_memcached_request(key, None, opcode)
 	
-def memcached_set(key, value):
+def send_memcached_set(key, value):
 	opcode=MEMCACHED_SET
 	send_memcached_request(key, value, opcode)
 	
@@ -161,5 +160,7 @@ if __name__ == "__main__":
 	#print "LONG_STR",LONG_STR
 	#send_udp(TWO_NUMS, 5678, "5.6.7.8", "\xFE\xED\xFA\xCE\xBE\xEF")
 	print "Sending from:", INTERFACE
-	memcached_set("hello", "world")
-	memcached_get("hello")
+	send_memcached_set("hello", "world")
+	import time
+	time.sleep(1)
+	send_memcached_get("hello")

@@ -1348,12 +1348,6 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 		casthelp(c_ast_node)
 		print "driven_wire_names=",driven_wire_names
 		sys.exit(0)
-		
-	
-	## Update parser state since merged in exsiting logic earlier
-	#parser_state.existing_logic = rv
-		
-	#return rv
 	
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 	# Check for double return
@@ -1545,18 +1539,13 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 		sys.exit(0)
 	
 	func_name_2_logic = parser_state.FuncName2Logic
-	existing_logic = parser_state.existing_logic
-	
-	rv = Logic()
-	if existing_logic is not None:
-		rv.MERGE_COMB_LOGIC(existing_logic)
+
 	# BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
 	# BUT LEFT SIDE MUST RESULT IN VARIABLE ADDRESS / wire?
 	#^^^^^^^^^^^^^^^^^
 	
 	# This could be first place we see global?
-	rv = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(rv, lhs_orig_var_name, parser_state)	
-	parser_state.existing_logic = rv
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
 	
 	# Assignments are ordered over time with existing logic
 	# Assigning to a variable creates an alias
@@ -1566,43 +1555,37 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 		
 	# /\
 	# SET LHS TYPE
-	parser_state.existing_logic = rv
 	lhs_c_type = C_AST_REF_TOKS_TO_C_TYPE(lhs_ref_toks, c_ast_node, parser_state)
-	if not(lhs_orig_var_name in rv.variable_names):
+	if not(lhs_orig_var_name in parser_state.existing_logic.variable_names):
 		#print "APPENDFAKE",lhs_orig_var_name
-		rv.variable_names.append(lhs_orig_var_name)
+		parser_state.existing_logic.variable_names.append(lhs_orig_var_name)
 	# Type of alias wire is same as original wire
-	rv.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
+	parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
 	
 
 	driven_wire_names=[lhs_next_wire_assignment_alias]
 	# Do constant number RHS as driver 
 	wire_name = CONST_PREFIX + str(rhs) + "_" + C_AST_NODE_COORD_STR(c_ast_node)
 	const_connect_logic = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
-	rv.MERGE_COMB_LOGIC(const_connect_logic)
-	rv.wire_to_c_type[wire_name]=lhs_c_type
+	parser_state.existing_logic.MERGE_COMB_LOGIC(const_connect_logic)
+	parser_state.existing_logic.wire_to_c_type[wire_name]=lhs_c_type
 
 
 	# Add alias to list in existing logic
 	existing_aliases = []
-	if lhs_orig_var_name in rv.wire_aliases_over_time:
-		existing_aliases = rv.wire_aliases_over_time[lhs_orig_var_name]
+	if lhs_orig_var_name in parser_state.existing_logic.wire_aliases_over_time:
+		existing_aliases = parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name]
 	new_aliases = existing_aliases
 	
     # Dont double add aliases
 	if not(lhs_next_wire_assignment_alias in new_aliases):
 		new_aliases = new_aliases + [lhs_next_wire_assignment_alias]
-	rv.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
-	rv.alias_to_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
-	rv.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
-	
+	parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
+	parser_state.existing_logic.alias_to_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
+	parser_state.existing_logic.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
 
 	
-	# Update parser state since merged in exsiting logic earlier
-	parser_state.existing_logic = rv
-	
-	
-	return rv
+	return parser_state.existing_logic
 
 def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_state):
 	#print "=="
@@ -1662,52 +1645,52 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 
-def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(Logic, maybe_global_var, parser_state):
+def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
 	# Oh fucklles account for inst logic?\
 	global_var_inst_name = maybe_global_var
-	if Logic.inst_name is not None:
-		global_var_inst_name = Logic.inst_name + SUBMODULE_MARKER + maybe_global_var
+	if parser_state.existing_logic.inst_name is not None:
+		global_var_inst_name = parser_state.existing_logic.inst_name + SUBMODULE_MARKER + maybe_global_var
 	
-	if (global_var_inst_name in Logic.variable_names) and (global_var_inst_name not in Logic.wire_to_c_type):
+	if (global_var_inst_name in parser_state.existing_logic.variable_names) and (global_var_inst_name not in parser_state.existing_logic.wire_to_c_type):
 		print "global_var_inst_name",global_var_inst_name
 		print "What's going on?"
 		print 0/0
 		
 	# Regular globals
 	# If has same name as global and hasnt been declared as (local) variable already
-	if (maybe_global_var in parser_state.global_info) and (global_var_inst_name not in Logic.variable_names):
+	if (maybe_global_var in parser_state.global_info) and (global_var_inst_name not in parser_state.existing_logic.variable_names):
 		# Copy info into existing_logic
-		Logic.wire_to_c_type[global_var_inst_name] = parser_state.global_info[maybe_global_var].type_name
+		parser_state.existing_logic.wire_to_c_type[global_var_inst_name] = parser_state.global_info[maybe_global_var].type_name
 
 		# Add as global_wire 
-		if global_var_inst_name not in Logic.global_wires:
-			Logic.global_wires.append(global_var_inst_name)
+		if global_var_inst_name not in parser_state.existing_logic.global_wires:
+			parser_state.existing_logic.global_wires.append(global_var_inst_name)
 			
 		# Add as variable name
-		#print "Logic", Logic
-		#print "Logic.inst_name",Logic.inst_name
-		#print "Logic.func_name",Logic.func_name
+		#print "parser_state.existing_logic", parser_state.existing_logic
+		#print "parser_state.existing_logic.inst_name",parser_state.existing_logic.inst_name
+		#print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
 		#print "Appendg",global_var_inst_name
-		Logic.variable_names.append(global_var_inst_name)
+		parser_state.existing_logic.variable_names.append(global_var_inst_name)
 			
 		# Record using globals
-		Logic.uses_globals = True
+		parser_state.existing_logic.uses_globals = True
 		#print "rv.func_name",rv.func_name, rv.uses_globals
 		
 	# Volatile globals
 	# If has same name as global and hasnt been declared as (local) variable already
-	if (maybe_global_var in parser_state.volatile_global_info) and (global_var_inst_name not in Logic.variable_names):
+	if (maybe_global_var in parser_state.volatile_global_info) and (global_var_inst_name not in parser_state.existing_logic.variable_names):
 		# Copy info into existing_logic
-		Logic.wire_to_c_type[global_var_inst_name] = parser_state.volatile_global_info[maybe_global_var].type_name
+		parser_state.existing_logic.wire_to_c_type[global_var_inst_name] = parser_state.volatile_global_info[maybe_global_var].type_name
 		
 		# Add as volatile global_wire
-		if global_var_inst_name not in Logic.volatile_global_wires:
-			Logic.volatile_global_wires.append(global_var_inst_name)
+		if global_var_inst_name not in parser_state.existing_logic.volatile_global_wires:
+			parser_state.existing_logic.volatile_global_wires.append(global_var_inst_name)
 		
 		# Add as variable name
-		Logic.variable_names.append(global_var_inst_name)
+		parser_state.existing_logic.variable_names.append(global_var_inst_name)
 
-	return Logic
+	return parser_state.existing_logic
 
 
 # If this works great, if not ill be so sad
@@ -1731,7 +1714,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	
 	#### GLOBALS \/
 	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic, lhs_orig_var_name, parser_state)
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
 	rv = parser_state.existing_logic
 	
 	# Sanity check
@@ -2736,30 +2719,35 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 		pass
 	
 	
+	# Copy parser state since not intending to change existing logic in this func
+	parser_state_copy = copy.copy(parser_state)
+	# SHOULDNT  NEED THIS
+	#parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
+	
 	# Get base variable name
 	var_name = ref_toks[0]
 
-	
+	# SHOULDNT  NEED THIS
 	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic,var_name, parser_state)
+	#parser_state_copy.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state_copy)
 		
 	# Get the type of this base name
 	inst_adj_var_name = var_name
-	if parser_state.existing_logic.inst_name is not None:
-		inst_adj_var_name = parser_state.existing_logic.inst_name + SUBMODULE_MARKER + var_name
-	if var_name in parser_state.existing_logic.wire_to_c_type:
-		base_type = parser_state.existing_logic.wire_to_c_type[var_name]
-	elif inst_adj_var_name in parser_state.existing_logic.wire_to_c_type:
-		base_type = parser_state.existing_logic.wire_to_c_type[inst_adj_var_name]
+	if parser_state_copy.existing_logic.inst_name is not None:
+		inst_adj_var_name = parser_state_copy.existing_logic.inst_name + SUBMODULE_MARKER + var_name
+	if var_name in parser_state_copy.existing_logic.wire_to_c_type:
+		base_type = parser_state_copy.existing_logic.wire_to_c_type[var_name]
+	elif inst_adj_var_name in parser_state_copy.existing_logic.wire_to_c_type:
+		base_type = parser_state_copy.existing_logic.wire_to_c_type[inst_adj_var_name]
 	else:
-		print "parser_state.existing_logic",parser_state.existing_logic
-		print "parser_state.existing_logic.inst_name",parser_state.existing_logic.inst_name
-		print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
-		print "known variables:",parser_state.existing_logic.variable_names
+		print "parser_state_copy.existing_logic",parser_state_copy.existing_logic
+		print "parser_state_copy.existing_logic.inst_name",parser_state_copy.existing_logic.inst_name
+		print "parser_state_copy.existing_logic.func_name",parser_state_copy.existing_logic.func_name
+		print "known variables:",parser_state_copy.existing_logic.variable_names
 		print "It looks like variable", var_name, "is not defined?",c_ast_ref.coord
-		for wire in sorted(parser_state.existing_logic.wire_to_c_type):
-			print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
-		#print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
+		for wire in sorted(parser_state_copy.existing_logic.wire_to_c_type):
+			print wire, ":", parser_state_copy.existing_logic.wire_to_c_type[wire]
+		#print "parser_state_copy.existing_logic.wire_to_c_type",parser_state_copy.existing_logic.wire_to_c_type
 		print 0/0
 		sys.exit(0)
 		
@@ -2796,10 +2784,10 @@ def C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state):
 		elif type(next_tok) == str:
 			# Struct
 			# Sanity check
-			if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
+			if not C_TYPE_IS_STRUCT(current_c_type, parser_state_copy):
 				print "Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord
 				sys.exit(0)
-			field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
+			field_type_dict = parser_state_copy.struct_to_field_type_dict[current_c_type]
 			if next_tok not in field_type_dict:
 				print next_tok, "is not a member field of",current_c_type, c_ast_ref.coord
 				print 0/0
@@ -2862,20 +2850,18 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
 	
 def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state):				
 	
-
-	
 	# FUCK
 	debug = False
 	#debug = (len(driven_wire_names)==1) and (driven_wire_names[0]==RETURN_WIRE_NAME) and (ref_toks[0] == "rv") and ("VAR_REF_ASSIGN_uint8_t_uint8_t_8_VAR_a1a4" in parser_state.existing_logic.func_name)
 	
-		
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]
+	
+	# This is the first place we could see a global reference in terms of this function/logic
+	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(base_var_name, parser_state)
+	
 	# What type is this reference?
 	c_type = C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_ref, parser_state)
-
-	# This is the first place we should see a global reference in terms of this function/logic
-	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(parser_state.existing_logic,base_var_name, parser_state)
 	
 	# Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
 	driving_aliases_over_time = []
@@ -2948,7 +2934,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			print "first_driving_alias",first_driving_alias
 			sys.exit(0)
 		'''			
-		return GET_SIMPLE_CONNECT_LOGIC(first_driving_alias, driven_wire_names, c_ast_ref, prepend_text, parser_state)		
+		return SIMPLE_CONNECT_TO_LOGIC(first_driving_alias, driven_wire_names, c_ast_ref, prepend_text, parser_state)		
 	else:
 		######
 		# TODO: Replace 1 input functions (not first alias or type match) with VHDL insert?
@@ -3252,7 +3238,7 @@ def GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type):
 	return output_type
 		
 
-def GET_SIMPLE_CONNECT_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
+def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
 	existing_logic = parser_state.existing_logic
 	
 	# Connect driving wire to driven wires	
@@ -3912,6 +3898,9 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	var_name_2_all_ref_toks_list = dict()
 	#print "==== IF",file_coord_str,"======="
 	for var_name in merge_var_names:		
+		# Might be first place to see globals... is this getting out of hand?
+		parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state)
+		
 		#print "var_name",var_name
 		# vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
 		declared_in_this_if = not(var_name in existing_logic.variable_names) and (var_name not in parser_state.global_info) and (var_name not in parser_state.volatile_global_info)
@@ -4007,8 +3996,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			mux_false_connection_wire_name = mux_inst_name + SUBMODULE_MARKER + mux_false_port_name
 			
 			# Type of true and false ports are the same
+			var_name = ref_toks[0]
+			# Might be first place to see globals... is this getting out of hand?
+			parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state)
 			c_type = C_AST_REF_TOKS_TO_C_TYPE(ref_toks, c_ast_node, parser_state)
-		
 			# Add C type for input ports based on connecting wire
 			true_logic.wire_to_c_type[mux_true_connection_wire_name]=c_type
 			false_logic.wire_to_c_type[mux_false_connection_wire_name]=c_type
@@ -4162,6 +4153,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 	func_name_2_logic = parser_state.FuncName2Logic
 	existing_logic = parser_state.existing_logic
 	rv = existing_logic
+	
+	# Sanity check this function drives something?
+	if len(output_wire_driven_wire_names) <= 0:
+		print func_name, func_c_ast_node.coord, "does not drive anything?"
+		sys.exit(0)
 	
 	# Check if all the inputs to func are constant 
 	# Non global functions might be replaced by constants
@@ -5076,6 +5072,7 @@ class ParserState:
 		self.global_info = dict()
 		self.volatile_global_info = dict()
 		self.global_mhz_limit = None
+		self.c_file_ast = None # Single C file tree
 		
 	def DEEPCOPY(self):
 		# Fuck me how many times will I get caught with objects getting copied incorrectly?
@@ -5137,26 +5134,28 @@ def getsize(obj_0):
     
 	
 # Returns ParserState
-def PARSE_FILE(top_level_func_name, c_file):
+def PARSE_FILE(top_level_func_name, c_filename):
 	# Catch pycparser exceptions
 	try:
 		parser_state = ParserState()
 		print "Parsing PipelinedC code..."
+		# Get the C AST
+		parser_state.c_file_ast = GET_C_FILE_AST(c_filename)
 		# Get the parsed struct def info
-		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(c_file)
+		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
 		#for struct_type in parser_state.struct_to_field_type_dict :
 		#	print struct_type,parser_state.struct_to_field_type_dict[struct_type]
 		# Get global variable info
-		parser_state = GET_GLOBAL_INFO(parser_state, c_file)
+		parser_state = GET_GLOBAL_INFO(parser_state)
 		# Get volatile globals
-		parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state, c_file)
+		parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state)
 		# Get the parsed enum info
-		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(c_file)
+		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
 		# Get SW existing logic for this c file
-		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state)
-		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict
+		parser_state.FuncName2Logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_filename, parser_state)
+		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict		
 		# Get the function definitions
-		parser_state.FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE([c_file], parser_state)
+		parser_state.FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
 		# Fuck me add struct info for array wrapper
 		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
 		# Sanity check no duplicate globals
@@ -5167,7 +5166,7 @@ def PARSE_FILE(top_level_func_name, c_file):
 		
 		# cHECK FOR EXPECTED FUNC NAME
 		if top_level_func_name not in parser_state.FuncName2Logic:
-			print "There doesnt seem to be as function called '", top_level_func_name,"' in the file '",c_file,"'"
+			print "There doesnt seem to be as function called '", top_level_func_name,"' in the file '",c_filename,"'"
 			sys.exit(0)
 			
 		# Check for double use of globals+volatiles the dumb way to print useful info
@@ -5183,6 +5182,9 @@ def PARSE_FILE(top_level_func_name, c_file):
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
 			
+		
+		print "TEST"
+		sys.exit(0)
 		
 		c_ast_node_when_used = parser_state.FuncName2Logic[top_level_func_name].c_ast_node
 		unadjusted_logic_lookup_table_so_far = None
@@ -5255,11 +5257,11 @@ class GlobalInfo:
 		self.type_name = None
 		self.init = None
 		
-def GET_GLOBAL_INFO(parser_state, c_file):
+def GET_GLOBAL_INFO(parser_state):
 	# Read in file with C parser and get function def nodes
 	parser_state.global_info = dict()
 	
-	global_defs = GET_C_AST_GLOBALS(c_file)
+	global_defs = GET_C_AST_GLOBALS(parser_state.c_file_ast)
 	
 	for global_def in global_defs:
 		#casthelp(global_def.type.type.names[0])
@@ -5292,11 +5294,11 @@ def GET_GLOBAL_INFO(parser_state, c_file):
 			
 	return parser_state
 	
-def GET_VOLATILE_GLOBAL_INFO(parser_state, c_file):
+def GET_VOLATILE_GLOBAL_INFO(parser_state):
 	# Read in file with C parser and get function def nodes
 	parser_state.volatile_global_info = dict()
 	
-	volatile_global_defs = GET_C_AST_VOLATILE_GLOBALS(c_file)
+	volatile_global_defs = GET_C_AST_VOLATILE_GLOBALS(parser_state.c_file_ast)
 	
 	for volatile_global_def in volatile_global_defs:
 		global_info = GlobalInfo()
@@ -5352,10 +5354,10 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
 				
 				
 
-def GET_ENUM_IDS_DICT(c_file):
+def GET_ENUM_IDS_DICT(c_file_ast):
 	# Read in file with C parser and get function def nodes
 	rv = dict()
-	enum_defs = GET_C_AST_ENUM_DEFS(c_file)
+	enum_defs = GET_C_AST_ENUM_DEFS(c_file_ast)
 	for enum_def in enum_defs:
 		#casthelp(enum_def)
 		#sys.exit(0)
@@ -5387,10 +5389,10 @@ def GET_ENUM_IDS_DICT(c_file):
 	return rv
 
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
-def GET_STRUCT_FIELD_TYPE_DICT(c_file):
+def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast):
 	# Read in file with C parser and get function def nodes
 	rv = dict()
-	struct_defs = GET_C_AST_STRUCT_DEFS(c_file)
+	struct_defs = GET_C_AST_STRUCT_DEFS(c_file_ast)
 	for struct_def in struct_defs:
 		if struct_def.name is None:
 			global _printed_GET_STRUCT_FIELD_TYPE_DICT
@@ -5424,27 +5426,25 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file):
 	
 
 # This will likely be called multiple times when loading multiple C files
-def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(c_files, parser_state, parse_body = True):
+def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
 	existing_func_name_2_logic = parser_state.FuncName2Logic
 	
 	# Build function name to logic from func defs from files
 	func_name_2_logic = dict(existing_func_name_2_logic) # Was deep copy # Needed?
 	
-	# Loop over C files in order and collect func logic (not instance) from func defs
 	# Each func def needs existing logic func name lookup
-	for c_filename in c_files:
-		# Read in file with C parser and get function def nodes
-		func_defs = GET_C_AST_FUNC_DEFS(c_filename)
-		for func_def in func_defs:
-			# Each func def produces a single logic item
-			parser_state.existing_logic=None
-			driven_wire_names=[]
-			prepend_text=""
-			logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
-			func_name_2_logic[logic.func_name] = logic
-			func_name_2_logic[logic.func_name].inst_name = logic.func_name 
-			
-			parser_state.FuncName2Logic = func_name_2_logic
+	# Read in file with C parser and get function def nodes
+	func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+	for func_def in func_defs:
+		# Each func def produces a single logic item
+		parser_state.existing_logic=None
+		driven_wire_names=[]
+		prepend_text=""
+		logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
+		func_name_2_logic[logic.func_name] = logic
+		func_name_2_logic[logic.func_name].inst_name = logic.func_name 
+		
+		parser_state.FuncName2Logic = func_name_2_logic
 			
 			
 	'''
@@ -5632,15 +5632,24 @@ def RECURSIVE_CREATE_LOGIC_INST_LOOKUP_TABLE(orig_logic_func_name, orig_logic_in
 
 
 def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
+	ast = GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename)
+	func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, ast.ext)
+	#if len(func_defs) > 0:
+	#	print "Coord of func def", func_defs[0].coord
+		
+	#print "========="
+	return func_defs
+
+def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename):
 	# Use C parser to do some lifting
 	# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
 	try:
 		parser = c_parser.CParser()
 		# Use preprocessor function
 		c_text = preprocess_text(text)
-		#print "========="
-		#print "fake_filename",fake_filename
-		#print "preprocessed text",c_text
+		print "========="
+		print "fake_filename",fake_filename
+		print "preprocessed text",c_text
 		
 		# Hacky because somehow parser.parse() getting filename from cpp output?
 		c_text = c_text.replace("<stdin>",fake_filename)
@@ -5657,24 +5666,16 @@ def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
 	
 	
 	
-	func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, ast.ext)
-	#if len(func_defs) > 0:
-	#	print "Coord of func def", func_defs[0].coord
-		
-	#print "========="
-	return func_defs
+	
 
-def GET_C_AST_FUNC_DEFS(c_filename):
-	c_file_ast = GET_C_FILE_AST(c_filename)
+def GET_C_AST_FUNC_DEFS(c_file_ast):
 	#c_file_ast.show()
 	# children are "external declarations",
 	# and are stored in a list called ext[]
 	func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, c_file_ast.ext)
 	return func_defs
 	
-def GET_C_AST_STRUCT_DEFS(c_filename):
-	c_file_ast = GET_C_FILE_AST(c_filename)
-
+def GET_C_AST_STRUCT_DEFS(c_file_ast):
 	# Get type defs
 	type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
 	struct_defs = []
@@ -5686,9 +5687,7 @@ def GET_C_AST_STRUCT_DEFS(c_filename):
 			
 	return struct_defs
 	
-def GET_C_AST_ENUM_DEFS(c_filename):
-	c_file_ast = GET_C_FILE_AST(c_filename)
-
+def GET_C_AST_ENUM_DEFS(c_file_ast):
 	# Get type defs
 	type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
 	enum_defs = []
@@ -5701,10 +5700,7 @@ def GET_C_AST_ENUM_DEFS(c_filename):
 	#sys.exit(0)		
 	return enum_defs
 	
-def GET_C_AST_GLOBALS(c_filename):
-	c_file_ast = GET_C_FILE_AST(c_filename)
-	#c_file_ast.show()
-	
+def GET_C_AST_GLOBALS(c_file_ast):	
 	# Get type defs
 	variable_defs = GET_TYPE_FROM_LIST(c_ast.Decl, c_file_ast.ext)
 	
@@ -5721,8 +5717,7 @@ def GET_C_AST_GLOBALS(c_filename):
 		
 	return non_volatile_global_defs
 	
-def GET_C_AST_VOLATILE_GLOBALS(c_filename):
-	c_file_ast = GET_C_FILE_AST(c_filename)
+def GET_C_AST_VOLATILE_GLOBALS(c_file_ast):
 	#c_file_ast.show()
 	#print c_file_ast.ext
 	#sys.exit(0)
@@ -5755,34 +5750,8 @@ def GET_TYPE_FROM_LIST(py_type, l):
 	
 	
 def GET_C_FILE_AST(c_filename):
-	try:
-		# Use C parser to do A WHOLE LOT OF lifting
-		# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
-		parser = c_parser.CParser()
-		# Use preprocessor function
-		c_text = preprocess_file(c_filename)
-		
-		# Hacky because somehow parser.parse() getting filename from cpp output?
-		c_text = c_text.replace("<stdin>",c_filename)
-		
-		#print "PREPROCESSED:"
-		#print c_text
-		# Catch pycparser exceptions
-		ast = parser.parse(c_text,filename=c_filename)
-	except c_parser.ParseError as pe:
-		#print pe.args
-		print "Parsed file:",c_filename
-		print "Parsed text:"
-		print c_text
-		print "GET_C_FILE_AST pycparser says you messed up here:",pe
-		#casthelp(pe)
-		sys.exit(0)
-	#ast.show()
-	#if c_filename=="main.c":
-	#	print c_text
-	return ast
-
-	
-	
-		
+	# Read text
+	f = open(c_filename)
+	text = r.read()
+	return GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename)		
 	

@@ -544,14 +544,16 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	timing_params = LogicInst2TimingParams[Logic.inst_name]
 	rv = ""
 	
+	# Read in vhdl files with a single (faster than multiple) read_vhdl
+	files_txt = ""
+	
 	# C defined structs
-	rv += 'read_vhdl -library work {' + SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + '}' +  "\n"	
+	files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
 	
 	# Entity file
 	entity_filename = VHDL.GET_ENTITY_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd"
-	rv += 'read_vhdl -library work {' + output_directory + "/" + entity_filename + '}' +  "\n"
-	
-	
+	files_txt += output_directory + "/" + entity_filename + " "
+		
 	# All submodule instances
 	all_submodules_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(Logic, LogicInstLookupTable)
 	# Eneity file for each submodule instance in work library
@@ -568,12 +570,16 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 		submodule_timing_params = LogicInst2TimingParams[submodule_inst_name]
 		submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic, implement)
 		submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_logic,LogicInst2TimingParams, parser_state) + ".vhd"
-		rv += 'read_vhdl -library work {' + submodule_syn_output_directory + "/" + submodule_entity_filename + '}' + "\n"	
+		files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
 	
 	# Top not shared
-	rv += 'read_vhdl -library work {' + output_directory + "/" +  VHDL.GET_TOP_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd" + '}' +  "\n"
-	rv += 'read_xdc {' + clk_xdc_filepath + '}\n'
+	files_txt += output_directory + "/" +  VHDL.GET_TOP_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd" + " "
 	
+	# Single read vhdl line
+	rv += "read_vhdl -library work {" + files_txt + "}\n"
+	
+	# Single xdc with single clock for now
+	rv += 'read_xdc {' + clk_xdc_filepath + '}\n'
 	
 	################
 	# MSG Config
@@ -582,6 +588,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	rv += "set_msg_config -id {Synth 8-312} -new_severity ERROR" + "\n"
 	# ERROR WARNING: [Synth 8-614] signal is read in the process but is not in the sensitivity list
 	rv += "set_msg_config -id {Synth 8-614} -new_severity ERROR" + "\n"
+	# ERROR WARNING: [Synth 8-2489] overwriting existing secondary unit arch
+	rv += "set_msg_config -id {Synth 8-2489} -new_severity ERROR" + "\n"
 	
 	# Set high limit for these msgs
 	# [Synth 8-4471] merging register
@@ -593,7 +601,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	# [Synth 8-5546] ROM won't be mapped to RAM because it is too sparse
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 	
-		
+	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
 	rv += "synth_design -top " + VHDL.GET_INST_NAME(Logic,use_leaf_name=True) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	
 	if implement:

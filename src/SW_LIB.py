@@ -26,6 +26,7 @@ RAM_SP_RF="RAM_SP_RF"
 
 
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
+	print "TODO: Use C AST for AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT"
 	# Use preprocessor to get text
 	c_text = C_TO_LOGIC.preprocess_file(c_file)
 	#print c_text
@@ -230,7 +231,8 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 			# Add global for this logic
 			#print "RAM GLOBAL:",global_name
 			#print func_logic.inst_name
-			func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(func_logic, global_name, parser_state)
+			parser_state_copy.existing_logic = func_logic
+			func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(global_name, parser_state_copy)
 			func_name_2_logic[func_name] = func_logic
 			#print func_name_2_logic[func_name].global_wires
 				
@@ -932,7 +934,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# Bit select
 	# Parse to list of width toks
 	bit_sel_func_names = []
-	# uint64_39_39(left_resized);
+	# uint64_39_39(input);
 	for type_regex in ["uint[0-9]+","int[0-9]+","float"]:
 		p = re.compile(type_regex + '_[0-9]+_[0-9]+\s?\(')
 		bit_sel_func_names = p.findall(c_text)
@@ -1136,6 +1138,39 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 '''
 
 
+	# Array to unsigned
+	#uint1024_t uint8_array128_be/le(uint8_t x[128])
+	# Need big and little endian
+	# Dont do casting since endianess makes everyone sad
+	# C doesnt support casting like that anyway
+	array_to_unsigned_func_names = []
+	p = re.compile('uint[0-9]+_array[0-9]+_(?:be|le)\s?\(')
+	array_to_unsigned_func_names = p.findall(c_text)
+	array_to_unsigned_func_names = list(set(array_to_unsigned_func_names))
+	#print "array_to_unsigned_func_names",array_to_unsigned_func_names
+	#if len(array_to_unsigned_func_names) > 0:
+	#	print "c_text"
+	for array_to_unsigned_func_name in array_to_unsigned_func_names:
+		array_to_unsigned_func_name = array_to_unsigned_func_name.strip("(").strip()
+		toks = array_to_unsigned_func_name.split("_")
+		elem_width = int(toks[0].replace("uint",""))
+		elem_t = toks[0] + "_t"
+		dim = int(toks[1].replace("array",""))
+		result_width = elem_width * dim		
+		result_t = "uint" + str(result_width) + "_t"
+		func_name = array_to_unsigned_func_name
+		text += '''
+// ARRAY TO UNSIGNED
+''' + result_t + " " + func_name + "("+ elem_t + ''' x[''' + str(dim) + '''])
+{
+	//TODO
+}
+'''		
+	
+	# unsigned to array
+	# Dont do for now since not needed yet and involves dumb return of array in struct
+	#uint8_t[128] be/le_uint8_array128(uint1024_t 
+
 	if text != "":
 		# Ok had some code, include headers
 		text = header_text + text
@@ -1161,11 +1196,10 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		return dict()
 
 
-def GENERATE_INT_N_HEADERS(max_bit_width=256):
+def GENERATE_INT_N_HEADERS(max_bit_width=2048):
 	# Do signed and unsigned
-	for u in ["","u"]: 
-		text = ""
-		text += "#include <stdint.h>\n"
+	text = "#pragma once\n"
+	for u in ["","u"]:
 		min_width = 1
 		#if u=="":
 		#	min_width = 2
@@ -1229,8 +1263,6 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state) # Structs handled and have same name as C types	
 	
 	
-	
-	
 	text = ""
 	
 	text += '''
@@ -1292,7 +1324,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	#print containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks
 	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic.inst_name]
 	for input_wire in partially_complete_logic.inputs: 
-		if "var_dim_" not in input_wire: # TODO make startswith here and in var assign
+		if "var_dim_" not in input_wire:
 			input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
 			# Assign to base			
 			# Remove base variable
@@ -1322,15 +1354,14 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	# Then make a bunch of constant references  
 	# one for each possible i,j,k variable dimension
 	# Get var dimension types
-	var_dim_types = []
+	## BBAAAH parser_state.existing_logic needs to be containing logic
+	parser_state_as_container = copy.copy(parser_state)
+	parser_state_as_container.existing_logic = containing_func_logic
+	var_dim_ref_tok_indices, var_dims, var_dim_types = C_TO_LOGIC.GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container)
 	var_dim_input_wires = []
 	for input_wire in partially_complete_logic.inputs: 
 		if "var_dim_" in input_wire:
-			c_type = partially_complete_logic.wire_to_c_type[input_wire]
-			var_dim_types.append(c_type)
 			var_dim_input_wires.append(input_wire)
-	
-		
 	
 	
 	# Make multiple constant references into base
@@ -1341,7 +1372,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	for var_dim_i in range(0, len(var_dim_input_wires)):
 		c_type = var_dim_types[var_dim_i]
 		var_dim_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-		var_dim_size = int(pow(2,var_dim_width))
+		var_dim_size = var_dims[var_dim_i]
 		#print "var_dim_width",var_dim_width
 		#print "var_dim_size",var_dim_size
 		new_const_refs = []
@@ -1448,12 +1479,24 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 			#print "sel_val",sel_val
 			#print "dim_val",dim_val
 			#
-		# ref var str
-		ref_sel = "ref"
-		#for var_dim_value in reversed(var_dim_values):
-		for var_dim_value in var_dim_values:
-			ref_sel += "_" + str(var_dim_value)
-	
+		
+		# Use ref variable if all var dims are within correct size, otherwise 0
+		valid_dims = True
+		for var_dim_i in range(0, len(var_dim_input_wires)):
+			var_dim_value = var_dim_values[var_dim_i]
+			actual_dim_size = var_dims[var_dim_i]
+			if var_dim_value >= actual_dim_size:
+				valid_dims = False
+		if valid_dims:
+			# Build ref var str
+			ref_sel = "ref"
+			#for var_dim_value in reversed(var_dim_values):
+			for var_dim_value in var_dim_values:
+				ref_sel += "_" + str(var_dim_value)
+		else:
+			ref_sel = "0"
+			
+		# Use this ref_sel in nmux
 		text += "			" + ref_sel + ",\n"
 		
 	# Remove last comma
@@ -1596,14 +1639,16 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	text += "	// Copy base into rv\n"
 	text += "	" + output_t + " rv;\n"
 	## BBAAAH parser_state.existing_logic needs to be containing logic
-	parser_state.existing_logic = containing_func_logic
+	# Copy parser state since not intending to change existing logic in this func
+	parser_state_as_container = copy.copy(parser_state)
+	parser_state_as_container.existing_logic = containing_func_logic
 	# Need to assign base into rv output
 	# Output type is just N dimension array of the element type 
 	# N dims are variable ref toks
 	# Loop over all the variable dimensions
 	# Do so with expanded ref toks
-	var_dim_ref_tok_indices, var_dims, var_dim_iter_types = C_TO_LOGIC.GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state)
-	expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state)
+	var_dim_ref_tok_indices, var_dims, var_dim_iter_types = C_TO_LOGIC.GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container)
+	expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container)
 	for expanded_ref_toks in expanded_ref_tok_list:
 		# LHS is just variable ref dims
 		lhs = "rv.data"
