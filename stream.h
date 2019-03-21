@@ -1,4 +1,4 @@
-
+#pragma once
 // Macro for one item stream buffer
 // Stream type = has .valid 
 #define SBUF(type, name) type name##_data;\

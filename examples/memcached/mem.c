@@ -1,3 +1,4 @@
+#pragma once
 // Access to memory (just an entry_set_t block RAM)
 
 #include "protocol.h"

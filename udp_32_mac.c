@@ -1,3 +1,4 @@
+#pragma once
 #include "eth_32.c"
 #include "ip_32.c"
 #include "udp_32.c"

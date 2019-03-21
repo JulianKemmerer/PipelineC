@@ -1,3 +1,4 @@
+#pragma once
 #include "uintN_t.h"
 
 // No generic sizes for now... :(

@@ -1,4 +1,4 @@
-
+#pragma once
 #include "../../stream.h" // SBUF macro
 
 #include "protocol.h"

@@ -1,3 +1,4 @@
+#pragma once
 #include "uintN_t.h"
 #include "bit_manip.h"
 #include "axis.h"

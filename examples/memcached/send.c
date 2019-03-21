@@ -1,3 +1,4 @@
+#pragma once
 #include "protocol.h"
 #include "do_requests.c"
 // Receive/send udp data from ethernet ports

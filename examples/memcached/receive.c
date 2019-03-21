@@ -1,3 +1,4 @@
+#pragma once
 #include "protocol.h"
 // Receive/send udp data from ethernet ports
 #include "../../udp_32_mac.c"

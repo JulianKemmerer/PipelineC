@@ -1270,7 +1270,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 	for func_def in func_defs:
 		#print "...func def"
 		# Each func def produces a single logic item
-		existing_logic=None
+		parser_state.existing_logic=None
 		driven_wire_names=[]
 		prepend_text=""
 		logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
@@ -1304,12 +1304,14 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 	# which may or may not recursively call this function.
 	
 	# C_AST nodes can represent pure structure logic
-	if type(c_ast_node) == c_ast.FuncDef:
-		if prepend_text!="":
-			print "prepend for func def what?"
-			sys.exit(0)
-		return C_AST_FUNC_DEF_TO_LOGIC(c_ast_node, parser_state)
-	elif type(c_ast_node) == c_ast.Compound:
+	
+	# Actually shouldnt hit func def here?
+	#if type(c_ast_node) == c_ast.FuncDef:
+	#	if prepend_text!="":
+	#		print "prepend for func def what?"
+	#		sys.exit(0)
+	#	return C_AST_FUNC_DEF_TO_LOGIC(c_ast_node, parser_state)
+	if type(c_ast_node) == c_ast.Compound:
 		return C_AST_COMPOUND_TO_LOGIC(c_ast_node, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.Decl:
 		return C_AST_DECL_TO_LOGIC(c_ast_node, prepend_text, parser_state)	
@@ -4236,6 +4238,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(func_name, c_ast_node_2_driven_input_wire_nam
 					sys.exit(0)
 				#if prepend_text == "":
 				#	print 0/0
+				#import traceback
+				#traceback.print_stack()
 				print "Replacing", prepend_text,func_name,func_c_ast_node.coord, "with constant", const_val_str			
 			else:
 				print "Warning: Not reducing constant function call:",func_name, func_c_ast_node.coord
@@ -4945,7 +4949,20 @@ def C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl):
 		#print "Non array decl", param_decl
 		return param_decl.type.type.names[0]
 	
+_C_AST_FUNC_DEF_TO_LOGIC_cache = dict()
 def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
+	# Reset state for this func def
+	parser_state.existing_logic = None
+
+	# Since no existing logic, can cache entire existing logic here
+	try:
+		parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name]
+		return parser_state.existing_logic
+	except:
+		pass
+		
+	#print "FUNC_DEF",c_ast_funcdef.decl.name
+	
 	rv = Logic()
 	# Save the c_ast node
 	rv.c_ast_node = c_ast_funcdef
@@ -4970,22 +4987,23 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
 		rv.wire_to_c_type[input_wire_name] = c_type
 	
+	
 	# Merge with logic from the body of the func def
-	existing_logic=rv
+	parser_state.existing_logic = rv
 	driven_wire_names=[]
 	prepend_text=""
 	if parse_body:
-		parser_state.existing_logic = rv
-		body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)
-		
-		#print "C_AST_FUNC_DEF_TO_LOGIC", rv.func_name, "body_logic.wire_drives",body_logic.wire_drives
-		
+		body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)		
 		rv.MERGE_COMB_LOGIC(body_logic)
+		parser_state.existing_logic = rv
 				
 	# Sanity check for return
 	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv) and not SW_LIB.IS_MEM0(rv):
 		print "No return statement in function:", rv.func_name
 		sys.exit(0)
+		
+	# Write cache
+	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = rv
 	
 	return rv
 
@@ -5157,7 +5175,8 @@ def PARSE_FILE(top_level_func_name, c_filename):
 		# Get the function definitions
 		parser_state.FuncName2Logic = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
 		# Fuck me add struct info for array wrapper
-		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
+		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)		
+		
 		# Sanity check no duplicate globals
 		for g in parser_state.global_info:
 			if g in parser_state.volatile_global_info:
@@ -5181,10 +5200,7 @@ def PARSE_FILE(top_level_func_name, c_filename):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
-			
 		
-		print "TEST"
-		sys.exit(0)
 		
 		c_ast_node_when_used = parser_state.FuncName2Logic[top_level_func_name].c_ast_node
 		unadjusted_logic_lookup_table_so_far = None

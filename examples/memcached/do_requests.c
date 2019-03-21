@@ -1,3 +1,4 @@
+#pragma once
 // Logic for doing a memcached request/command
 
 #include "protocol.h"
