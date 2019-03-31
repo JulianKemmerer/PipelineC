@@ -536,7 +536,7 @@ def GET_READ_VHDL_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, p
 
 
 def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
-	func_name_2_logic = parser_state.FuncName2Logic
+	FuncLogicLookupTable = parser_state.FuncLogicLookupTable
 	clk_xdc_filepath = WRITE_CLK_XDC(output_directory, clock_mhz)
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Bah tcl doesnt like brackets in file names

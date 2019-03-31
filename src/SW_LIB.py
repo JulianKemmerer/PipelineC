@@ -65,7 +65,14 @@ def IS_BIT_MATH(logic):
 	
 def FUNC_NAME_INCLUDES_TYPES(logic):
 	# Currently this is only needed for bitmanip and bit math
-	rv = IS_AUTO_GENERATED(logic) or logic.func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX)
+	rv = (
+			IS_AUTO_GENERATED(logic) or # Excludes mem0 below
+			logic.func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or 
+			logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX) or
+			logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) or
+			logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) or
+			logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
+		 )
 	
 	# Cant be MEM0 since MEM0 mem name doesnt include types
 	rv = rv and not IS_MEM0(logic)
@@ -210,17 +217,17 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 		outfile = MEM0_HEADER_FILE
 		parser_state_copy = copy.copy(parser_state) # was DEEPCOPY
 		# Keep everything except logic stuff
-		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		
 		parse_body = False # MEM0 DOES NOT HAVE SW IMPLEMENTATION
-		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
 				
 		# Need to indicate that these MEM0 functions use globals/regs
 		# HACK YHACK CHAKC
-		for func_name in func_name_2_logic:
-			func_logic = func_name_2_logic[func_name]
+		for func_name in FuncLogicLookupTable:
+			func_logic = FuncLogicLookupTable[func_name]
 			if func_name.endswith("_" + RAM_SP_RF):
 				global_name = func_name.split("_" + RAM_SP_RF)[0]
 			else:
@@ -232,10 +239,10 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 			#print func_logic.inst_name
 			parser_state_copy.existing_logic = func_logic
 			func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(global_name, parser_state_copy)
-			func_name_2_logic[func_name] = func_logic
-			#print func_name_2_logic[func_name].global_wires
+			FuncLogicLookupTable[func_name] = func_logic
+			#print FuncLogicLookupTable[func_name].global_wires
 				
-		return func_name_2_logic
+		return FuncLogicLookupTable
 		
 	else:
 		# No code, no funcs
@@ -893,26 +900,26 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 		outfile = BIT_MATH_HEADER_FILE
 		parser_state_copy = copy.copy(parser_state) # was DEEPCOPY()
 		# Keep everything except logic stuff
-		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		
 		# NEED MANIP in MATH
 		bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(text,parser_state)  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
-		parser_state_copy.FuncName2Logic = bit_manip_func_name_logic_lookup # dict() 
+		parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # dict() 
 		
 		parse_body = True # BIT MATH IS SW IMPLEMENTATION
-		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
 		
-		for func_name in func_name_2_logic:
-			func_logic = func_name_2_logic[func_name]
+		for func_name in FuncLogicLookupTable:
+			func_logic = FuncLogicLookupTable[func_name]
 			if len(func_logic.wire_drives) == 0 and str(func_logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE):
 				print "BIT_MATH_HEADER_FILE"
 				print text
 				print "Bad parsing of BIT MATH",func_name
 				sys.exit(0)
 		
-		return func_name_2_logic
+		return FuncLogicLookupTable
 		
 	else:
 		# No code, no funcs
@@ -1184,12 +1191,12 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		# Parse the c doe to logic lookup
 		parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
 		# Keep everything except logic stuff
-		parser_state_copy.FuncName2Logic=dict() #dict[func_name]=Logic() instance with just func info
+		parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		parse_body = False # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
-		func_name_2_logic = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
-		return func_name_2_logic
+		FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		return FuncLogicLookupTable
 	else:
 		# No code, no funcs
 		return dict()

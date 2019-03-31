@@ -24,6 +24,7 @@ print "	Switch over to delay ns instead of logic levels"
 print "	Maybe can implement variable time loops as PipelineC state machines? Thanks Andrew"
 print "	Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?"
 print "	Redo eq,and,or,..etc raw vhdl ops with pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work"
+print " Check for non global functions that call global functions when evaluating const"
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 

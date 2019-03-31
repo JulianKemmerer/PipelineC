@@ -2017,7 +2017,7 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, state):
 
 def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	FuncLogicLookupTable = parser_state.FuncName2Logic
+	FuncLogicLookupTable = parser_state.FuncLogicLookupTable
 	print "Instance:",Logic.inst_name
 	
 	zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state)
@@ -2616,7 +2616,7 @@ def IS_BITWISE_OP(logic):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SR_NAME):
 		return False
-	elif logic.func_name == C_TO_LOGIC.MUX_LOGIC_NAME:
+	elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
 		return False
 	elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
 		  logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):	
@@ -2673,24 +2673,12 @@ def IS_USER_CODE(logic, parser_state):
 		
 
 def GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic):
-	
 	key = logic.func_name
 	
 	# MEM0 has var name - weird yo
 	if SW_LIB.IS_MEM0(logic):
 		key = SW_LIB.GET_MEM_NAME(logic)
 	
-	# hacky check for N code generate 
-	#toks = logic.func_name.split("_")
-	#is_auto_gen = False
-	# Bit math doesnt need type names toks since type is in func name
-	#if SW_LIB.IS_AUTO_GENERATED(logic):
-	#	is_auto_gen = True
-	#is_auto_gen = SW_LIB.IS_AUTO_GENERATED(logic)
-	
-	#if len(toks) == 2:
-	#	is_nmux = (toks[0].startswith("uint") or toks[0].startswith("int")) and toks[1].startswith("mux")
-	#	# Wow so hacky
 	func_name_includes_types = SW_LIB.FUNC_NAME_INCLUDES_TYPES(logic)
 	if not func_name_includes_types:
 		for input_wire in logic.inputs:
@@ -2710,7 +2698,9 @@ def GET_CACHED_TOTAL_LOGIC_LEVELS(logic):
 		
 	return None	
 	
-_non_built_in_lls_cache = dict()	
+
+# should need this anymore 
+_non_built_in_lls_cache = dict()
 def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 	# TODO parallelize this
 	
@@ -2720,16 +2710,31 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 		logic = parser_state.LogicInstLookupTable[logic_inst_name]
 		timing_params = TimingParams(logic)
 		TimingParamsLookupTable[logic_inst_name] = timing_params	
-		
+	
+	
+	print "TODO: write vhdl per func name + timing params"
+	print "ALSO make LLs adding loop, per func name logic object? def logic object?"
+	'''	
+	print "Writing VHDL files for all functions (as combinatorial logic)..."
+	WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(parser_state)
+	
+	
+	@GAAAAAAAAHHHHH neeed to 
+	make all func names uniquely identify logic, like C does 
+	ex. BIN_OP_PLUS_[file.c] does not tell us what kind of bin op
+	# Make ALL func names include input types
+	@OR? loop over all instances still, but written file is still based on func name and types?
+	#^^ dumb just name sense with C standard
+	
+	'''
+	
 	print "Recursively Writing VHDL files for all instances starting at main..."
 	RECURSIVE_WRITE_ALL_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLookupTable)
 	
 	print "Writing the constant struct+enum definitions as defined from C code..."
 	VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
 	
-	
-	
-	print "Synthesizing at 0 latency to get total logic levels..."
+	print "Synthesizing as combinatorial logic to get total logic levels..."
 	print ""
 	
 	# Record stats on functions with globals
@@ -2814,7 +2819,7 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			else:
 				clock_mhz = INF_MHZ # Impossible goal for timing since jsut logic levels
 				implement = False
-				print "SYN (leaf name):", C_TO_LOGIC.LEAF_NAME(logic.inst_name, True)
+				print "SYN (function name):", logic.func_name
 				parsed_timing_report = VIVADO.SYN_IMP_AND_REPORT_TIMING(logic, parser_state, TimingParamsLookupTable, implement, clock_mhz, total_latency=0)
 				if parsed_timing_report.logic_levels is None:
 					print "Cannot synthesize for total logic levels ",logic.inst_name
@@ -2840,7 +2845,7 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 						min_mhz = mhz
 				
 				# Cache total logic levels syn result if not user code
-				if not IS_USER_CODE(logic, parser_state): #and not(logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX)):
+				if not IS_USER_CODE(logic, parser_state):
 					filepath = GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic)
 					if not os.path.exists(LLS_CACHE_DIR):
 						os.makedirs(LLS_CACHE_DIR)					
@@ -2849,7 +2854,7 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 					f.close()
 					
 				# Do runtime cache if not built in
-				if (logic.func_name in parser_state.FuncName2Logic) and not logic.is_c_built_in:
+				if (logic.func_name in parser_state.FuncLogicLookupTable) and not logic.is_c_built_in:
 					_non_built_in_lls_cache[logic.func_name] = logic.total_logic_levels
 				
 			
@@ -2921,8 +2926,11 @@ def REBUILD_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES_BOTTOM_UP(submodule_logic_inst
 		
 	
 	return TimingParamsLookupTable
-	
 
+'''	
+def WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(parser_state):
+	for logic in parser_state.FuncLogicLookupTable
+'''
 
 def RECURSIVE_WRITE_ALL_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLookupTable):	
 	for submodule_inst in main_logic.submodule_instances:
@@ -2938,24 +2946,6 @@ def RECURSIVE_WRITE_ALL_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLook
 			os.makedirs(syn_out_dir)			
 		#VHDL.GENERATE_PACKAGE_FILE(main_logic, parser_state, TimingParamsLookupTable, timing_params, syn_out_dir)
 		VHDL.WRITE_VHDL_ENTITY(main_logic, syn_out_dir, parser_state, TimingParamsLookupTable)
-		
-
-	'''
-def GET_WORST_PATH_RAW_HDL_SUBMODULE_INST(logic, parsed_timing_report, parser_state, TimingParamsLookupTable):
-	# Get the string names for the start and end regs
-	# Return none if start and ends are not clocked elements
-	start_reg_name = parsed_timing_report.start_reg_name
-	end_reg_name = parsed_timing_report.end_reg_name
-	if (start_reg_name is None) or (end_reg_name is None):
-		# Means either start or end point isnt clocked
-		print "What to do here? if (start_reg_name is None) or (end_reg_name is None):"
-		sys.exit(0)
-	else:
-		# Both are registers
-		# Decode to logic hierachy down to parsed C name based on VHDL writing code
-		worst_path_raw_hdl_submodule = VIVADO.GET_WORST_PATH_RAW_HDL_SUBMODULE_INST_FROM_SYN_REG_NAMES(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report)
-		return worst_path_raw_hdl_submodule
-'''
 
 	
 
