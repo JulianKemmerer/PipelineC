@@ -16,7 +16,6 @@ import VHDL
 import SW_LIB
 import MODELSIM
 import SYN
-import VHDL_INSERT
 
 #VIVADO_PATH = "/media/1TB/Programs/Linux/Xilinx/Vivado/2014.4/bin/vivado"
 VIVADO_PATH = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2/bin/vivado"
@@ -520,14 +519,12 @@ def GET_START_END_REGS(syn_output):
 	
 
 def GET_READ_VHDL_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
-	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement)
+	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state)
 	rv_lines = []
 	for line in tcl.split('\n'):
 		if "read_vhdl" in line:
 			rv_lines.append(line)
 	
-	# Drop last readl vhdl since is top module duplicate?
-	rv_lines = rv_lines[0:len(rv_lines)-1]
 	rv = ""
 	for line in rv_lines:
 		rv += line + "\n"
@@ -535,13 +532,13 @@ def GET_READ_VHDL_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, p
 	return rv
 
 
-def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
-	FuncLogicLookupTable = parser_state.FuncLogicLookupTable
+def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupTable,clock_mhz, parser_state):
 	clk_xdc_filepath = WRITE_CLK_XDC(output_directory, clock_mhz)
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
+
 	# Bah tcl doesnt like brackets in file names
+	# Becuase dumb
 	
-	timing_params = LogicInst2TimingParams[Logic.inst_name]
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	rv = ""
 	
 	# Read in vhdl files with a single (faster than multiple) read_vhdl
@@ -551,29 +548,25 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
 	
 	# Entity file
-	entity_filename = VHDL.GET_ENTITY_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd"
+	entity_filename = VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	files_txt += output_directory + "/" + entity_filename + " "
-		
-	# All submodule instances
-	all_submodules_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(Logic, LogicInstLookupTable)
-	# Eneity file for each submodule instance in work library
-	for submodule_inst_name in all_submodules_instances:
-		submodule_logic = LogicInstLookupTable[submodule_inst_name]
-		
-		# VHDL inserts dont have packages
-		if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-			continue
-		
-		# Find logic containing this submodule inst
-		container_logic = C_TO_LOGIC.GET_CONTAINER_LOGIC_FOR_SUBMODULE_INST(submodule_inst_name, LogicInstLookupTable)
-		container_logic_timing_params = LogicInst2TimingParams[container_logic.inst_name]
-		submodule_timing_params = LogicInst2TimingParams[submodule_inst_name]
-		submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic, implement)
-		submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_logic,LogicInst2TimingParams, parser_state) + ".vhd"
-		files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
+	
+	# Need to write files for all submodule instances
+	# Files are per func name + timing param so dont duplicate
+	submodule_funcs = []
+	submodule_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(Logic, parser_state)
+	for submodule_inst_name in submodule_instances:
+		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+		# ONly write non vhdl funcs
+		if not submodule_logic.is_vhdl_func:
+			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_logic,TimingParamsLookupTable, parser_state) + ".vhd"
+			if submodule_entity_filename not in submodule_funcs:			
+				submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
+				files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
+				submodule_funcs.append(submodule_entity_filename)
 	
 	# Top not shared
-	files_txt += output_directory + "/" +  VHDL.GET_TOP_NAME(Logic,LogicInst2TimingParams, parser_state) + ".vhd" + " "
+	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
 	
 	# Single read vhdl line
 	rv += "read_vhdl -library work {" + files_txt + "}\n"
@@ -602,34 +595,14 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingPar
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 	
 	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-	rv += "synth_design -top " + VHDL.GET_INST_NAME(Logic,use_leaf_name=True) + "_top -part xc7a35ticsg324-1L -l" + "\n"
+	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	
-	if implement:
-		rv += '''
-# Optimize the design with default settings
-opt_design
-# Place the design
-place_design
-# Route the design
-route_design
-'''
 
 	# Report clocks
 	#rv += "report_clocks" + "\n"
 	# Report timing
 	#rv += "report_timing" + "\n"
 	rv += "report_timing_summary -setup" + "\n"
-	
-	'''
-	# Want many top paths as to balance logic levels effectively
-	# Print something so we can split the output
-	rv += 'puts ' + '"' + TIMING_REPORT_DIVIDER + '"' + "\n"
-	
-	# Get lots of paths
-	max_paths = 1000
-	nworst = 1000
-	rv += "report_timing -max_paths " + str(max_paths) + " -nworst " + str(nworst)  + "\n"
-	'''
 	
 	return rv
 
@@ -650,15 +623,11 @@ def WRITE_CLK_XDC(output_directory, clock_mhz):
 	
 
 # return path to tcl file
-def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,LogicInst2TimingParams, clock_mhz, parser_state, implement):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = LogicInst2TimingParams[Logic.inst_name]
-	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams, clock_mhz,parser_state, implement)
-	hash_ext = timing_params.GET_HASH_EXT(LogicInst2TimingParams, parser_state)
-	if implement:
-		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".imp.tcl"
-	else:	
-		out_filename = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,LogicInst2TimingParams)) + "CLK"+ hash_ext + ".syn.tcl"
+def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state):
+	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
+	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)	
+	out_filename = Logic.func_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
 	out_filepath = output_directory+"/"+out_filename
 	f=open(out_filepath,"w")
 	f.write(syn_imp_and_report_timing_tcl)
@@ -667,7 +636,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,LogicInst2Ti
 	
 	
 # Returns parsed timing report
-def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, implement, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
 	
 	# Hard rule for now, functions with globals must be zero clk
 	if total_latency > 0 and len(Logic.global_wires) > 0:
@@ -680,20 +649,12 @@ def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, impl
 	
 	#print "SYN: FUNC_NAME:", C_TO_LOGIC.LEAF_NAME(Logic.func_name)
 	# First create syn/imp directory for this logic
-	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic, implement)	
+	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)	
 
-	'''
-	if implement:
-		print "IMP:", C_TO_LOGIC.LEAF_NAME(Logic.inst_name), "OUTPUT DIR:",output_directory
-	else:
-		# Syn
-		print "SYN:", C_TO_LOGIC.LEAF_NAME(Logic.inst_name), "OUTPUT DIR:",output_directory
-	'''	
 	
 	if not os.path.exists(output_directory):
 		os.makedirs(output_directory)
 		
-	
 	
 	# Set log path
 	if hash_ext is None:
@@ -722,7 +683,7 @@ def SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, impl
 		# Write xdc describing clock rate
 		
 		# Write a syn tcl into there
-		syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state,implement)
+		syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
 		
 		# Execute vivado sourcing the tcl
 		syn_imp_bash_cmd = (

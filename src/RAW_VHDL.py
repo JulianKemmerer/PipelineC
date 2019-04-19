@@ -30,13 +30,7 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 		return wires_decl_text	
 	# Mem0 uses no internal signals right now
 	elif SW_LIB.IS_MEM0(logic):
-		return ""	
-	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
-	#	return wires_decl_text
-	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
-	#	return wires_decl_text
+		return ""
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
@@ -46,15 +40,7 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 
 
 def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
-	
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	
-	'''
-	if STAGE = 0 then
-		--elsif STAGE =
-	end if;
-	'''
-	
+	LogicInstLookupTable = parser_state.LogicInstLookupTable	
 	# Unary ops !
 	if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
 		wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
@@ -71,12 +57,6 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 	elif SW_LIB.IS_BIT_MANIP(logic):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
-	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_STRUCT_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
-	#	return package_stages_text
-	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):	
-	#	wires_decl_text, package_stages_text = GET_ARRAY_REF_CONST_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
-	#	return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
@@ -278,27 +258,27 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	
 	wires_decl_text = ""
 	wires_decl_text +=  '''	
-	base : ''' + base_vhdl_type + ''';'''
+	variable base : ''' + base_vhdl_type + ''';'''
 	
 	
 
 	#print "logic.func_name",logic.func_name
-		
-	# Then wire for each input
-	for input_port_inst_name in logic.inputs:
-		input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-		input_port_type_c_type = logic.wire_to_c_type[input_port_inst_name]
-		input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state_copy)
-		vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) #.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").re
-		
-		wires_decl_text +=  '''	
-	''' + vhdl_input_port + ''' : ''' + input_port_type + ''';'''
+	
+	# # Then wire for each input
+	# for input_port_inst_name in logic.inputs:
+	# 	input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
+	# 	input_port_type_c_type = logic.wire_to_c_type[input_port_inst_name]
+	# 	input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state_copy)
+	# 	vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) #.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").re
+	# 	
+	# 	wires_decl_text +=  '''	
+	# variable ''' + vhdl_input_port + ''' : ''' + input_port_type + ''';'''
 	
 	# Then output
 	output_c_type = logic.wire_to_c_type[logic.outputs[0]]
 	output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_c_type,parser_state_copy)
 	wires_decl_text +=  '''	
-	return_output : ''' + output_vhdl_type + ''';'''
+	variable return_output : ''' + output_vhdl_type + ''';'''
 	
 	# The text is the writes in correct order
 	text = ""
@@ -354,7 +334,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 					sys.exit(0)
 		
 			# Var ref needs to read input port differently than const
-			expr = '''			write_pipe.base''' + vhdl_ref_str + ''' := write_pipe.''' + vhdl_input_port
+			expr = '''			base''' + vhdl_ref_str + ''' := ''' + vhdl_input_port
 			if var_ref_toks:
 				# Index into RHS
 				# Uses that DUMB_STRUCT_THING struct wrapper?
@@ -400,7 +380,8 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 			sys.exit(0)
 	
 	text += '''
-		write_pipe.return_output := write_pipe.base''' + vhdl_ref_str + ''';'''
+			return_output := base''' + vhdl_ref_str + ''';
+			return return_output; '''
 	   
 	#print "=="
 	#print "logic.inst_name",logic.inst_name
@@ -1855,8 +1836,8 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 	out_vhdl_type = "std_logic_vector(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	x : ''' + in_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable x : ''' + in_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Float constrcut must always be zero clock
@@ -1865,8 +1846,8 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.return_output := std_logic_vector(x);
-
+		return_output := std_logic_vector(x);
+		return return_output;
 '''
 
 	return wires_decl_text, text
@@ -1888,10 +1869,10 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, p
 	out_vhdl_type = "std_logic_vector(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	sign : ''' + s_vhdl_type + ''';
-	exponent : ''' + e_vhdl_type + ''';
-	mantissa : ''' + m_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable sign : ''' + s_vhdl_type + ''';
+	--variable exponent : ''' + e_vhdl_type + ''';
+	--variable mantissa : ''' + m_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Float constrcut must always be zero clock
@@ -1900,8 +1881,8 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, p
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.return_output := std_logic_vector(sign) & std_logic_vector(exponent) & std_logic_vector(mantissa);
-
+		return_output := std_logic_vector(sign) & std_logic_vector(exponent) & std_logic_vector(mantissa);
+		return return_output;
 '''
 
 	return wires_decl_text, text
@@ -1920,9 +1901,9 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_sta
 	out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	x : ''' + x_vhdl_type + ''';
-	y : ''' + y_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	--variable y : ''' + y_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Bit concat must always be zero clock
@@ -1931,8 +1912,8 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_sta
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.return_output := unsigned(std_logic_vector(x)) & unsigned(std_logic_vector(y));
-
+		return_output := unsigned(std_logic_vector(x)) & unsigned(std_logic_vector(y));
+		return return_output;
 '''
 
 	return wires_decl_text, text
@@ -1950,8 +1931,8 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 	x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
 	
 	wires_decl_text = '''
-	x : ''' + x_vhdl_type + ''';
-	return_output : ''' + x_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	variable return_output : ''' + x_vhdl_type + ''';
 '''
 
 	# Byte swap must be zero clocks
@@ -1960,10 +1941,12 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 		sys.exit(0)
 		
 	text = '''
-		for i in 0 to (write_pipe.x'length/8)-1 loop
-			-- j=((write_pipe.x'length/8)-1-i)
-			write_pipe.return_output( (((write_pipe.x'length/8)-i)*8)-1 downto (((write_pipe.x'length/8)-1-i)*8) ) := write_pipe.x( ((i+1)*8)-1 downto (i*8) );
+		for i in 0 to (x'length/8)-1 loop
+			-- j=((x'length/8)-1-i)
+			return_output( (((x'length/8)-i)*8)-1 downto (((x'length/8)-1-i)*8) ) := x( ((i+1)*8)-1 downto (i*8) );
 		end loop;
+		
+		return return_output;
 '''
 
 	return wires_decl_text, text
@@ -1990,10 +1973,10 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_par
 	intermediate_vhdl_type = "unsigned(" + str(intermediate_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	inp : ''' + in_vhdl_type + ''';
-	x : ''' + x_vhdl_type + ''';
-	intermediate : ''' + intermediate_vhdl_type + ''';
-	return_output : ''' + in_vhdl_type + ''';
+	--variable inp : ''' + in_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	variable intermediate : ''' + intermediate_vhdl_type + ''';
+	variable return_output : ''' + in_vhdl_type + ''';
 '''
 
 	# Bit assign must always be zero clock
@@ -2002,10 +1985,11 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_par
 		sys.exit(0)
 		
 	text = '''
-		write_pipe.intermediate := (others => '0');
-		write_pipe.intermediate(''' +str(in_width-1) + ''' downto 0) := write_pipe.inp;
-		write_pipe.intermediate(''' + str(high_index) + ''' downto ''' + str(low_index) + ''') := write_pipe.x;
-		write_pipe.return_output := write_pipe.intermediate(''' +str(result_width-1) + ''' downto 0) ;
+		intermediate := (others => '0');
+		intermediate(''' +str(in_width-1) + ''' downto 0) := inp;
+		intermediate(''' + str(high_index) + ''' downto ''' + str(low_index) + ''') := x;
+		return_output := intermediate(''' +str(result_width-1) + ''' downto 0) ;
+		return return_output;
 '''
 
 	return wires_decl_text, text
@@ -2028,8 +2012,8 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 	out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	x : ''' + x_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Bit slice must always be zero clock
@@ -2040,14 +2024,16 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 	if high > low:
 		# Regular slice
 		text = '''
-			write_pipe.return_output := unsigned(std_logic_vector(x(''' + str(high) + ''' downto ''' + str(low) + ''')));'''
+			return_output := unsigned(std_logic_vector(x(''' + str(high) + ''' downto ''' + str(low) + ''')));'''
 	else:
 		# Reverse slice
 		text = '''
-			for i in 0 to write_pipe.return_output'length-1 loop
-				write_pipe.return_output(i) := x(''' + str(low) + '''- i);
+			for i in 0 to return_output'length-1 loop
+				return_output(i) := x(''' + str(low) + '''- i);
 			end loop;
 		'''
+		
+	text += "return return_output;\n"
 
 	return wires_decl_text, text
 
@@ -2064,8 +2050,8 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 	out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_c_type, parser_state)
 	
 	wires_decl_text = '''
-	x : ''' + x_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Bit slice must always be zero clock
@@ -2074,7 +2060,7 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 		sys.exit(0)
 	
 	# Big bit concat
-	text = "write_pipe.return_output := "
+	text = "return_output := "
 	be_range = range(0, dim)
 	le_range = range(dim-1, -1, -1)
 	r = be_range
@@ -2083,7 +2069,8 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 	for i in r:
 		text += "x(" + str(i) + ")&"
 	text = text.strip("&")
-	text += ";"
+	text += ";\n"
+	text += "return return_output;"
 
 	return wires_decl_text, text
 
@@ -2101,8 +2088,8 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
 	out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
 	
 	wires_decl_text = '''
-	x : ''' + x_vhdl_type + ''';
-	return_output : ''' + out_vhdl_type + ''';
+	--variable x : ''' + x_vhdl_type + ''';
+	variable return_output : ''' + out_vhdl_type + ''';
 '''
 
 	# Bit slice must always be zero clock
@@ -2112,8 +2099,10 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
 		
 	text = '''
 		for i in 0 to ''' + str(multiplier-1) + ''' loop
-			write_pipe.return_output( (((i+1)*''' + str(x_width) + ''')-1) downto (i*''' + str(x_width) + ''')) := unsigned(std_logic_vector(x));
+			return_output( (((i+1)*''' + str(x_width) + ''')-1) downto (i*''' + str(x_width) + ''')) := unsigned(std_logic_vector(x));
 		end loop;
 '''
+
+	text += "return return_output;"
 
 	return wires_decl_text, text

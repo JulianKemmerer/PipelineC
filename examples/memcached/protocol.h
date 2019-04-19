@@ -4,19 +4,32 @@
 
 // Memcached related sizes, types, constants, etc
 
+// xc7a35ticsg324
+// 	key,val max len 250 , num sets 64 = 630% luts
+// 	key,val max len 128 , num sets 32 = 321% luts
+// 	key,val max len 64 , num sets 16 = 152% luts
+// 	key,val max len 32 , num sets 8 = 71% luts
+// Seems like logic, as opposed to memory scales badly
+// So decrease logic by decreasing size of key
+// 	key,val max len 8 (64b words?) , num sets 128 = 28% luts
+// 	key,val max len 8 (64b words?) , num sets 1024 = 67% luts
+// 	key,val max len 8 (64b words?) , num sets 2048 = 111% luts
+//  key,val max len 16, num sets 1024 = ?% luts (real hash too)
+
 // Generic functionality for extras, key, and value sizes
 #define EXTRAS_MAX_LEN 16
-#define KEY_MAX_LEN 250
-#define key_len_t uint8_t
-#define VALUE_MAX_LEN 250
-#define value_len_t uint8_t
+#define KEY_MAX_LEN 16 // HASH REQUIRES KEY OF AT LEAST 12 BYTES
+#define KEY_MAX_LEN_MINUS_12 4 // FOR HASH, just for for-loops for now
+#define key_len_t uint5_t
+#define VALUE_MAX_LEN 16
+#define value_len_t uint5_t
 // Iterator to use for any variable length data (extras, key, and value sizes)
-#define packet_iter_t uint8_t
-#define packet_len_t uint8_t
+#define packet_iter_t uint4_t
+#define packet_len_t uint5_t
 // Helper functions for key byte arrays
-#define key_to_uint uint8_array250_le
-#define key_uint_t uint2000_t
-#define sum_key uint8_array_sum250
+#define key_to_uint uint8_array16_le
+#define key_uint_t uint128_t
+#define sum_key uint8_array_sum16
 
 // Resolve hash collisions with 'associative set'
 #define SET_SIZE 4
@@ -47,8 +60,8 @@ typedef struct entry_set_t
 } entry_set_t;
 
 // How many of these sets to store?
-#define NUM_ENTRY_SETS 64
-#define addr_t uint6_t
+#define NUM_ENTRY_SETS 1024
+#define addr_t uint10_t
 
 // Packet stuff
 typedef struct memcached_header_t

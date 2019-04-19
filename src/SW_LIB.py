@@ -1110,7 +1110,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			result_t = type_regex
 			func_name = float_const_func_name
 			text += '''
-// BIT SELECT
+// FLOAT UINT32
 ''' + result_t + " " + func_name+"("+ in_t + ''' x)
 {
 	//TODO
@@ -1196,6 +1196,11 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		parse_body = False # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
 		FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
+		
+		# All of these funcs are vhdl funcs
+		for func_name in FuncLogicLookupTable:
+			FuncLogicLookupTable[func_name].is_vhdl_func = True		
+		
 		return FuncLogicLookupTable
 	else:
 		# No code, no funcs
@@ -1716,22 +1721,12 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	return text
 	
 	
-	
-	
-	
-		
-
-
-		
-		
-		
-		
 		
 def GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
 	
-	# THIS CODE ASSUMES NON CONST/ is dumb to use as non const
+	# THIS CODE ASSUMES NON CONST/ is dumb to use as const
 	left_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
 	right_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
 	left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
@@ -1743,14 +1738,14 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 	if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
 		return GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
 	else:
-		print "GET_BIN_OP_SR_C_CODE Only sr between uint for now!"
+		print "GET_BIN_OP_SR_C_CODE Only sr uint for now!"
 		sys.exit(0)
 		
 def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
 	
-	# THIS CODE ASSUMES NON CONST/ is dumb to use as non const
+	# THIS CODE ASSUMES NON CONST/ is dumb to use as const
 	left_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
 	right_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
 	left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
@@ -1762,7 +1757,7 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 	if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
 		return GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
 	else:
-		print "GET_BIN_OP_SL_C_CODE Only sl between uint for now!"
+		print "GET_BIN_OP_SL_C_CODE Only sl uint for now!"
 		sys.exit(0)	
 			
 def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):

@@ -10,7 +10,6 @@ import C_TO_LOGIC
 import SW_LIB
 import RAW_VHDL
 import SYN
-import VHDL_INSERT
 import VIVADO
 
 
@@ -52,29 +51,6 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 	# If not use null
 	else:
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
-
-def GET_INST_NAME(Logic, use_leaf_name=True):
-	if use_leaf_name:
-		# Use leaf name to get submodule split too
-		do_submodule_split = True
-		leaf_inst_name = C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split)
-		safe_leaf_inst_name = leaf_inst_name.replace(".","_").replace("[","_").replace("]","_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_").strip("_") # hacky fo sho
-		# ----Leaf inst name should be enough to identify - dont need upper levels of hierarchy
-		# -----The syntehsized hierarchy path using these name should look like full inst name for fuzzy dumb matching
-		#@@@@@@@@@@@ NO LEAF inst name is not enough
-		# All in flat work library so need entity name to reflect full hierarchy
-		#return safe_leaf_inst_name
-		
-		# mAKE HASH OUT OF FULL inst name
-		inst_name_hash_ext = "_" + ((hashlib.md5(Logic.inst_name).hexdigest())[0:4]) #4 chars enough?
-		# Actual isnt name is func name plus hash
-		#safe_func_name = Logic.func_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_").replace(".","_").replace("[","_").replace("]","_").strip("_").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").replace("__","_") # hacky fo sho
-		return safe_leaf_inst_name + inst_name_hash_ext
-		
-	else:
-		# Need to use leaf name
-		print "Need to use leaf name"
-		sys.exit(0)
 		
 # VHDL variable name or const expression
 def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, Logic, parser_state):
@@ -103,7 +79,7 @@ def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, Logic, pars
 
 def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable):	
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	filename = GET_TOP_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
 	
 	rv = ""
 	rv += "library IEEE;" + "\n"
@@ -115,7 +91,7 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top is" + "\n"
+	rv += "entity " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	rv += "port(" + "\n"
 	rv += "	clk : in std_logic;" + "\n"
 	# The inputs of the logic
@@ -130,9 +106,9 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top;" + "\n"
+	rv += "end " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
 
-	rv += "architecture arch of " + GET_INST_NAME(Logic,use_leaf_name=True) + "_top is" + "\n"
+	rv += "architecture arch of " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	
 	# Dont touch IO
 	rv += "attribute dont_touch : string;\n"
@@ -155,26 +131,40 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + '''_output_reg : signal is "true";\n'''
 
 	
-
+	# Write vhdl func if needed
+	if Logic.is_vhdl_func:
+		rv += GET_VHDL_FUNC_DECL(Logic, parser_state, timing_params)
+	
 	rv += "begin" + "\n"
 	
-	
 	# Instantiate main
-	rv += "-- Instantiate entity\n"
-	rv += GET_INST_NAME(Logic,use_leaf_name=True)+" : entity work." + GET_INST_NAME(Logic,use_leaf_name=True) +" port map (\n"
-	if needs_clk:
-		rv += "clk,\n"
-	# Inputs from regs
-	for in_wire in Logic.inputs:
-		rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
-	# Outputs to signal
-	for out_wire in Logic.outputs:
-		rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output" + ",\n"
-	# Remove last two chars
-	rv = rv[0:len(rv)-len(",\n")]
-	rv += ");\n"
-	rv += "\n"
+	# As entity or as function?
+	if Logic.is_vhdl_func:
+		# FUNCTION INSTANCE
+		rv += WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output <= " + Logic.func_name + "(\n"
+		# Inputs from regs
+		for in_wire in Logic.inputs:
+			rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
+		# Remove last two chars
+		rv = rv[0:len(rv)-len(",\n")]
+		rv += ");\n"
+	else:
+		# ENTITY
+		rv += "-- Instantiate entity\n"
+		rv += GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) +" : entity work." + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) +" port map (\n"
+		if needs_clk:
+			rv += "clk,\n"
+		# Inputs from regs
+		for in_wire in Logic.inputs:
+			rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
+		# Outputs to signal
+		for out_wire in Logic.outputs:
+			rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output" + ",\n"
+		# Remove last two chars
+		rv = rv[0:len(rv)-len(",\n")]
+		rv += ");\n"
 	
+	rv += "\n"	
 	rv += "	" + "-- IO regs\n"
 	rv += "	" + "process(clk) is" + "\n"
 	rv += "	" + "begin" + "\n"
@@ -266,7 +256,6 @@ def C_TYPES_ARE_TYPE(c_types, the_type):
 def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	# IS RAW VHDL
 	if  (
-		  logic_func_name.startswith(VHDL_INSERT.HDL_INSERT) or # HDl text insert, so yeah is raw hdl
 		  logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
 		( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -669,9 +658,6 @@ end function;\n
 	for instance_name in Logic.submodule_instances:
 		submodule_logic_name = Logic.submodule_instances[instance_name]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-		# No signals for vhdl inserts
-		if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-			continue
 		rv += "-- " + instance_name + "\n"
 		# Inputs
 		for in_wire in submodule_logic.inputs:
@@ -682,13 +668,74 @@ end function;\n
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_wire,Logic,parser_state)
 			rv += "signal " + WIRE_TO_VHDL_NAME(out_wire, Logic) + " : " + vhdl_type_str + ";\n"
 		rv += "\n"
+		
+		
+	# Certain submodules are always 0LLs "IS_VHDL_FUNC"
+	rv += GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable)
 
 	rv += "\n"
 	
 	return rv
 	
 	
+def GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable):
+	rv = ""
+	vhdl_funcs = []
+	for instance_name in Logic.submodule_instances:
+		submodule_logic_name = Logic.submodule_instances[instance_name]
+		timing_params = TimingParamsLookupTable[instance_name]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		if submodule_logic.is_vhdl_func and submodule_logic.func_name not in vhdl_funcs:
+			vhdl_funcs.append(submodule_logic.func_name)
+			rv += GET_VHDL_FUNC_DECL(submodule_logic, parser_state, timing_params)
+			rv += "\n"
+	return rv;
+	
+def GET_VHDL_FUNC_DECL(vhdl_func_logic, parser_state, timing_params):
+	rv = ""
+	
+	rv = '''
+function ''' + vhdl_func_logic.func_name + '''('''
+	# The inputs of the Logic
+	for input_name in vhdl_func_logic.inputs:
+		# Get type for input
+		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,vhdl_func_logic,parser_state)	
+		rv += "	" + WIRE_TO_VHDL_NAME(input_name, vhdl_func_logic) + " : " + vhdl_type_str + ";\n"
+	
+	# Remove last line and semi
+	rv = rv.strip("\n")
+	rv = rv.strip(";")
+	
+	# Output is type of return wire
+	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(vhdl_func_logic.outputs[0],vhdl_func_logic,parser_state)
+	
+	# Finish params
+	rv += ") return " + vhdl_type_str + " is\n"
+	
+	# Wires (abusing existing function)
+	rv += RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(vhdl_func_logic, parser_state, timing_params)
+	
+	# Func logic (abuse existing logic)
+	rv += "\n"
+	rv += "begin\n"
+	rv += RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(vhdl_func_logic, parser_state, timing_params)
+	rv += "\n"
+	# End func
+	rv += '''
+end function;
+	'''
+	
+	return rv
+	
+
+	
 def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupTable):	
+	# Sanity check until complete sanity has been 100% ensured with absolute certainty
+	if Logic.is_vhdl_func:
+		print "Why write vhdl func entity?"
+		print 0/0
+		sys.exit(0)
+	
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	
@@ -702,7 +749,7 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_INST_NAME(Logic,use_leaf_name=True) + " is" + "\n"
+	rv += "entity " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	rv += "port(" + "\n"
 	if needs_clk:
 		rv += "	clk : in std_logic;" + "\n"
@@ -718,9 +765,9 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_INST_NAME(Logic,use_leaf_name=True) + ";" + "\n"
+	rv += "end " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
 
-	rv += "architecture arch of " + GET_INST_NAME(Logic,use_leaf_name=True) + " is" + "\n"
+	rv += "architecture arch of " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	
 	# Get declarations for this arch
 	rv += GET_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
@@ -734,30 +781,38 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 		for instance_name in Logic.submodule_instances:
 			submodule_logic_name = Logic.submodule_instances[instance_name]
 			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-			# No signals for vhdl inserts
-			if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-				continue	
-			submodule_timing_params = TimingParamsLookupTable[instance_name];
-			submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-			submodule_needs_clk = LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
-			
 			new_inst_name = WIRE_TO_VHDL_NAME(instance_name, Logic)
 			rv += "-- " + new_inst_name + "\n"
-			rv += new_inst_name+" : entity work." + GET_INST_NAME(submodule_logic,use_leaf_name=True) +" port map (\n"
-			if submodule_needs_clk:
-				rv += "clk,\n"
-			# Inputs
-			for in_wire in submodule_logic.inputs:
-				rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
-			# Outputs
-			for out_wire in submodule_logic.outputs:
-				rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
-			# Remove last two chars
-			rv = rv[0:len(rv)-2]
-			rv += ");\n"
-			rv += "\n"
-		
+			
+			# AS ENTITY OR FUNC?
+			if submodule_logic.is_vhdl_func:
+				# FUNC INSTANCE
+				rv += WIRE_TO_VHDL_NAME(submodule_logic.outputs[0], Logic) + " <= " + submodule_logic.func_name + "(\n"
+				for in_wire in submodule_logic.inputs:
+					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+				# Remove last two chars
+				rv = rv[0:len(rv)-2]
+				rv += ");\n\n"
+			else:
+				# ENTITY
+				submodule_timing_params = TimingParamsLookupTable[instance_name];
+				submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+				submodule_needs_clk = LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
+				rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
+				if submodule_needs_clk:
+					rv += "clk,\n"
+				# Inputs
+				for in_wire in submodule_logic.inputs:
+					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+				# Outputs
+				for out_wire in submodule_logic.outputs:
+					rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+				# Remove last two chars
+				rv = rv[0:len(rv)-2]
+				rv += ");\n\n"
+				
 	# Get the text that is actually the pipeline logic in this entity
+	rv += "\n"
 	rv += GET_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
 	
 	# Done with entity
@@ -798,11 +853,6 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 		for instance_name in Logic.submodule_instances:
 			submodule_logic_name = Logic.submodule_instances[instance_name]
 			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-			# No signals for vhdl inserts
-			if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-				print "Is vhdl insert broken?"
-				sys.exit(0)
-				#continue
 			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
 			rv += "	-- " + new_inst_name + "\n"
 			# Outputs
@@ -927,217 +977,6 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 		
 	return rv
 	
-	
-# Return package file name
-def GENERATE_PACKAGE_FILE(logic, parser_state, TimingParamsLookupTable, timing_params, dest_dir):	
-	# If this is called for HDL inser then fail
-	if logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-		print "Dont try to generate package file for HDL INSERT func",logic.func_name
-		print 0/0
-		return None
-	
-	package_filename = GET_PACKAGE_FILENAME(logic,TimingParamsLookupTable, parser_state)
-	package_name = GET_PACKAGE_NAME(logic, TimingParamsLookupTable, parser_state)
-	package_file_name = dest_dir + "/" + package_filename
-	
-	
-	package_file_text = ""
-	package_file_text = package_file_text + """
-library IEEE;
-use IEEE.STD_LOGIC_1164.ALL;
-use ieee.numeric_std.all;\n"""
-
-	# Include C defined structs
-	package_file_text += "use work.c_structs_pkg.all;\n"
-	
-	# Need an include for each submodule type
-	included_package_names = []
-	package_file_text = package_file_text + "-- Includes\n"
-	
-	'''
-	package_file_text = package_file_text + "-- An include for each submodule\n"
-	#print "logic.inst_name",logic.inst_name
-	#print "logic.submodule_instances",logic.submodule_instances
-	#print "parser_state.LogicInstLookupTable",parser_state.LogicInstLookupTable
-	#print "^^^^^^^^^^^^^^^^^^^^^^^"
-	for submodule_inst_name in logic.submodule_instances:
-		if submodule_inst_name in parser_state.LogicInstLookupTable:
-			#print "submodule_inst_name in parser_state.LogicInstLookupTable",submodule_inst_name ,(submodule_inst_name in parser_state.LogicInstLookupTable)
-			submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-			
-			# Vhdl inserts dont get package
-			if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-				continue		
-			
-			submodule_timing_params = TimingParamsLookupTable[submodule_logic.inst_name]
-			submodule_package_name = GET_PACKAGE_NAME(submodule_logic,TimingParamsLookupTable,parser_state)
-			#print "submodule_package_name",submodule_package_name
-			if submodule_package_name not in included_package_names:
-				package_file_text += "use work." +submodule_package_name+".all;\n"
-				included_package_names.append(submodule_package_name)
-		else:
-			print "Package for", submodule_inst_name, "?"
-			sys.exit(0)
-	'''
-	
-	package_file_text += "\n"
-	package_file_text += "package " + package_name + " is\n"
-	package_file_text += "-- Declarations\n"
-	
-	# Declare total latency for logic
-	package_file_text += "constant " + GET_INST_NAME(logic,use_leaf_name=True) + "_LATENCY : integer := " + str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + ";\n"
-	
-	
-
-	# Type for wires/variables
-	package_file_text += "\n"
-	package_file_text += "-- One struct to represent this modules variables\n"
-	package_file_text += "type " + GET_INST_NAME(logic,use_leaf_name=True) + "_variables_t is record\n"
-	package_file_text += "	-- All of the wires in function\n"
-	# Raw HDL functions are done differently
-	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
-		package_file_text += RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params)
-	else:
-		# Not c built in
-		# First get wires from declarations and assignments logic itself
-		# sort wires so easy to find bugs?
-		text_additions = []
-		for wire_name in logic.wire_to_c_type:
-			# Skip constants here
-			if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name,logic.inst_name):
-				continue
-			'''
-			# Skip org var names that arent inputs or outputs for logic with submodules (C code)
-			if len(logic.submodule_instances) > 0:
-				if not(wire_name in logic.inputs) and not(wire_name in logic.outputs) and (wire_name in logic.variable_names):
-					continue
-			'''
-			# Skip globals too
-			if wire_name in logic.global_wires:
-				continue
-			# Dont skip volatile globals, they are like regular wires
-				
-			#print "wire_name", wire_name
-			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, logic, parser_state)
-			#print "wire_name",wire_name
-			write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, logic)
-			#print "write_pipe_wire_var_vhdl",write_pipe_wire_var_vhdl
-			text_additions.append("	" + write_pipe_wire_var_vhdl + " : " + vhdl_type_str + ";\n")
-		text_additions.sort()
-		for text_addition in text_additions:
-			package_file_text += text_addition
-			
-	package_file_text += "end record;\n"
-	
-	
-	
-	
-	package_file_text += '''
--- Type for this modules register pipeline
-type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t is array(0 to ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_LATENCY) of ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_variables_t;
-	'''
-	
-		
-	# GLOBALS
-	if len(logic.global_wires) > 0:
-		package_file_text += '''
--- Type holding all global registers
-type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_global_registers_t is record'''
-		# Each func instance gets records
-		package_file_text += '''
-	-- Global vars\n'''
-		#print "logic.global_wires",logic.global_wires
-		for global_wire in logic.global_wires:
-			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, logic, parser_state)
-			vhdl_name = WIRE_TO_VHDL_NAME(global_wire, logic)
-			package_file_text += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
-		package_file_text += "end record;\n"
-		
-	# VOLATILE GLOBALS
-	if len(logic.volatile_global_wires) > 0:
-		package_file_text += '''
--- Type holding all volatile global registers
-type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_volatile_global_registers_t is record'''
-		# Each func instance gets records
-		package_file_text += '''
-	-- Volatile global vars\n'''
-		for volatile_global_wire in logic.volatile_global_wires:
-			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(volatile_global_wire, logic, parser_state)
-			vhdl_name = WIRE_TO_VHDL_NAME(volatile_global_wire, logic)
-			package_file_text += "	" + vhdl_name + " : " + vhdl_type_str + ";\n"
-		package_file_text += "end record;\n"
-		
-		
-		
-	# ALL REGISTERS
-	package_file_text += '''	
--- Type holding all registers for this function
-type ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_registers_t is record
-	self : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_register_pipeline_t;'''
-	
-	# Global regs
-	if len(logic.global_wires) > 0:
-		package_file_text += '''
-	global_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_global_registers_t;'''
-	# Volatile global regs
-	if len(logic.volatile_global_wires) > 0:
-		package_file_text += '''
-	volatile_global_regs : ''' + GET_INST_NAME(logic,use_leaf_name=True) + '''_volatile_global_registers_t;'''
-	
-	
-	
-	package_file_text += '''	
-end record;
-'''
-
-	# Function to null out globals
-	package_file_text += "\n-- Function to null out just global regs\n"
-	package_file_text += "function " + GET_INST_NAME(logic,use_leaf_name=True) + "_registers_NULL return " + GET_INST_NAME(logic,use_leaf_name=True)+ "_registers_t;\n"
-		
-	
-	package_file_text += "end " + package_name + ";\n"
-	package_file_text += "\n"
-	package_file_text += "package body " + package_name + " is\n"
-	package_file_text += "\n"
-	
-	
-	# Function to null out globals
-	package_file_text += "\n-- Function to null out just global regs\n"
-	package_file_text += "function " + GET_INST_NAME(logic,use_leaf_name=True) + "_registers_NULL return " + GET_INST_NAME(logic,use_leaf_name=True)+ "_registers_t is\n"
-	package_file_text += "	variable rv : " + GET_INST_NAME(logic,use_leaf_name=True) + '''_registers_t;
-begin
-'''
-	# Do each global var
-	for global_wire in logic.global_wires:
-		package_file_text += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, logic) + " := " + WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state) + ";\n"
-	# Volatile globals too?
-	for volatile_global_wire in logic.volatile_global_wires:
-		package_file_text += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, logic) + " := " + WIRE_TO_VHDL_NULL_STR(volatile_global_wire, logic, parser_state) + ";\n"
-	
-	package_file_text += '''
-	return rv;
-end function;\n
-'''
-	
-	
-	package_file_text += "\n"
-	package_file_text += "end " + package_name + ";\n"
-	
-	#print "Writing package:",package_file_name
-	
-	print "~~~~~~~~NOT WRITING PACKE"
-	#f=open(package_file_name,"w")
-	#f.write(package_file_text)
-	#f.close()
-	
-	#print package_file_name
-	#print ""
-	#print package_file_text
-	#sys.exit(0)
-	
-	return package_file_name
-	
-
 
 			
 # Returns dict[stage_num]=stage_text
@@ -1475,12 +1314,11 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 
 	
 
-def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, timing_params, parser_state, submodule_latency_from_container_logic):
+def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
 	# Use logic to write vhdl
-	entity_name = GET_INST_NAME(submodule_logic, use_leaf_name=True)
+	timing_params = TimingParamsLookupTable[logic.inst_name]
 	text = ""
 	# Drive input ports
-	#text += "			-- " + entity_name + "\n"
 	text += "-- Inputs" + "\n"
 	for input_port_wire in submodule_logic.inputs:
 		text += "			" + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
@@ -1499,10 +1337,20 @@ def GET_TOP_NAME(Logic, TimingParamsLookupTable, parser_state):
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
 	
-def GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
+# FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
+def GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
+	# Sanity check?
+	if Logic.is_vhdl_func:
+		print "Why entity for vhdl func?"
+		print 0/0
+		sys.exit(0)		
+	
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+	latency = est_total_latency
+	if latency is None:
+		latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	return Logic.func_name + "_" +  str(latency) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+	#return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 
 def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
 	# Just replace brackets with _

@@ -18,23 +18,29 @@ uint1_t keys_match(uint8_t key1[KEY_MAX_LEN], key_len_t len1,
 	// Same length
 	if(len1 == len2)
 	{
+		// Use locals to avoid some bad vhdl generation for now :(
+		uint8_t key1_local[KEY_MAX_LEN];
+		key1_local = key1;
+		uint8_t key2_local[KEY_MAX_LEN];
+		key2_local = key2;
+		
 		// Zero out everything past len
 		packet_iter_t i;
 		for(i = 0; i < KEY_MAX_LEN; i = i + 1)
 		{
 			if(i >= len1)
 			{
-				key1[i] = 0;
-				key2[i] = 0;
+				key1_local[i] = 0;
+				key2_local[i] = 0;
 			}
 		}
 
 		// C doesnt support equal operator on structs or arrays
 		// Cast array of bytes to single uint value for compare then
 		key_uint_t key1_uint;
-		key1_uint = key_to_uint(key1);
+		key1_uint = key_to_uint(key1_local);
 		key_uint_t key2_uint;
-		key2_uint = key_to_uint(key2);
+		key2_uint = key_to_uint(key2_local);
 		match = key1_uint == key2_uint;
 	} 
 	else
@@ -309,6 +315,7 @@ hash_map_result_s do_hash_map(hash_map_request_s incoming_request, uint1_t read_
 
 
 // The hash function
+/*
 addr_t hash(uint8_t data[KEY_MAX_LEN], key_len_t len)
 {
 	// Uhhh not interested in deciding on hash function right now
@@ -329,4 +336,153 @@ addr_t hash(uint8_t data[KEY_MAX_LEN], key_len_t len)
 	sum = sum_key(data);
 	
 	return sum;
+}*/
+
+// Thanks Bob -Julian
+
+//typedef  unsigned long  int  ub4;   /* unsigned 4-byte quantities */
+//typedef  unsigned       char ub1;   /* unsigned 1-byte quantities */
+
+//#define hashsize(n) ((ub4)1<<(n))
+//#define hashmask(n) (hashsize(n)-1)
+
+/*
+--------------------------------------------------------------------
+mix -- mix 3 32-bit values reversibly.
+For every delta with one or two bits set, and the deltas of all three
+  high bits or all three low bits, whether the original value of a,b,c
+  is almost all zero or is uniformly distributed,
+* If mix() is run forward or backward, at least 32 bits in a,b,c
+  have at least 1/4 probability of changing.
+* If mix() is run forward, every bit of c will change between 1/3 and
+  2/3 of the time.  (Well, 22/100 and 78/100 for some 2-bit deltas.)
+mix() was built out of 36 single-cycle latency instructions in a 
+  structure that could supported 2x parallelism, like so:
+      a -= b; 
+      a -= c; x = (c>>13);
+      b -= c; a ^= x;
+      b -= a; x = (a<<8);
+      c -= a; b ^= x;
+      c -= b; x = (b>>13);
+      ...
+  Unfortunately, superscalar Pentiums and Sparcs can't take advantage 
+  of that parallelism.  They've also turned some of those single-cycle
+  latency instructions into multi-cycle latency instructions.  Still,
+  this is the fastest good hash I could find.  There were about 2^^68
+  to choose from.  I only looked at a billion or so.
+--------------------------------------------------------------------
+*/
+typedef struct mix_t
+{
+	uint32_t a;
+	uint32_t b;
+	uint32_t c;
+} mix_t;
+mix_t mix(uint32_t a, uint32_t b, uint32_t c)
+{  
+  a = a - b; a = a - c; a = a ^ (c>>13);
+  b = b - c; b = b - a; b = b ^ (a<<8);
+  c = c - a; c = c - b; c = c ^ (b>>13);
+  a = a - b; a = a - c; a = a ^ (c>>12); 
+  b = b - c; b = b - a; b = b ^ (a<<16);
+  c = c - a; c = c - b; c = c ^ (b>>5);
+  a = a - b; a = a - c; a = a ^ (c>>3);
+  b = b - c; b = b - a; b = b ^ (a<<10);
+  c = c - a; c = c - b; c = c ^ (b>>15);
+  
+  mix_t rv;
+  rv.a = a;
+  rv.b = b;
+  rv.c = c;
+  return rv;  
+}
+
+/*
+--------------------------------------------------------------------
+hash() -- hash a variable-length key into a 32-bit value
+  k       : the key (the unaligned variable-length array of bytes)
+  len     : the length of the key, counting by bytes
+  initval : can be any 4-byte value
+Returns a 32-bit value.  Every bit of the key affects every bit of
+the return value.  Every 1-bit and 2-bit delta achieves avalanche.
+About 6*len+35 instructions.
+
+The best hash table sizes are powers of 2.  There is no need to do
+mod a prime (mod is sooo slow!).  If you need less than 32 bits,
+use a bitmask.  For example, if you need only 10 bits, do
+  h = (h & hashmask(10));
+In which case, the hash table should have hashsize(10) elements.
+
+If you are hashing n strings (ub1 **)k, do it like this:
+  for (i=0, h=0; i<n; ++i) h = hash( k[i], len[i], h);
+
+By Bob Jenkins, 1996.  bob_jenkins@burtleburtle.net.  You may use this
+code any way you wish, private, educational, or commercial.  It's free.
+
+See http://burtleburtle.net/bob/hash/evahash.html
+Use for hash table lookup, or anything where one collision in 2^^32 is
+acceptable.  Do NOT use for cryptographic purposes.
+--------------------------------------------------------------------
+*/
+
+uint32_t hash(uint8_t k[KEY_MAX_LEN], key_len_t length) //, initval)
+//register ub1 *k;        /* the key */
+//register uint32_t  length;   /* the length of the key */
+//register uint32_t  initval;  /* the previous hash, or an arbitrary value */
+{
+	uint32_t a,b,c; //,len;
+	key_len_t len;
+	/* Set up the internal state */
+	len = length;
+	a = 2654435769; //0x9e3779b9;  /* the golden ratio; an arbitrary value */
+	b = 2654435769; //0x9e3779b9;  /* the golden ratio; an arbitrary value */
+	c = 2654435769; //initval;         /* the previous hash value */
+	packet_iter_t i;
+	mix_t mix;
+	mix.a = a;
+	mix.b = b;
+	mix.c = c;
+	
+	/*---------------------------------------- handle most of the key */
+	for(i=0; i < KEY_MAX_LEN_MINUS_12; i = i + 12)
+	{
+		if(len >= 12)
+		{
+			a = a + (k[i+0] +(k[i+1]<<8) +(k[i+2]<<16) +(k[i+3]<<24));
+			b = b + (k[i+4] +(k[i+5]<<8) +(k[i+6]<<16) +(k[i+7]<<24));
+			c = c + (k[i+8] +(k[i+9]<<8) +(k[i+10]<<16)+(k[i+11]<<24));
+			mix = mix(a,b,c);
+			a = mix.a;
+			b = mix.b;
+			c = mix.c;
+			len = len - 12;
+		}
+	}
+
+	/*------------------------------------- handle the last 11 bytes */
+	i = len - 1;
+	c = c + length;
+	//switch(len)              /* all the case statements fall through */
+	//{
+	if(len == 11) c = c + (k[i+10]<<24);
+	if(len >= 10) c = c + (k[i+9]<<16);
+	if(len >= 9 ) c = c + (k[i+8]<<8);
+	  /* the first byte of c is reserved for the length */
+	if(len >= 8 ) b = b + (k[i+7]<<24);
+	if(len >= 7 ) b = b + (k[i+6]<<16);
+	if(len >= 6 ) b = b + (k[i+5]<<8);
+	if(len >= 5 ) b = b + k[i+4];
+	if(len >= 4 ) a = a - (k[i+3]<<24);
+	if(len >= 3 ) a = a - (k[i+2]<<16);
+	if(len >= 2 ) a = a - (k[i+1]<<8);
+	if(len >= 1 ) a = a - k[i+0];
+	 /* case 0: nothing left to add */
+	//}
+	
+	mix = mix(a,b,c);
+	a = mix.a;
+	b = mix.b;
+	c = mix.c;
+	/*-------------------------------------------- report the result */
+	return c;
 }

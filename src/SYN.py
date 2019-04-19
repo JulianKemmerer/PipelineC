@@ -18,7 +18,6 @@ import VHDL
 import SW_LIB
 import MODELSIM
 import VIVADO
-import VHDL_INSERT
 
 
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
@@ -178,7 +177,9 @@ def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state, write_files=True):
 	# Get pipeline map
 	zero_clk_pipeline_map = GET_PIPELINE_MAP(Logic, parser_state, ZeroClockLogicInst2TimingParams)
 	
-	_GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
+	# Only cache if has lls
+	if Logic.total_logic_levels is not None:	
+		_GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
 	
 	return zero_clk_pipeline_map
 
@@ -695,16 +696,11 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 				submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
 				
 				# Use submodule logic to write vhdl
-				# VHDL TEXT insert?
-				if submodule_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-					hdl_insert_text = VHDL_INSERT.GET_HDL_INSERT_TEXT(submodule_logic,submodule_inst_name, logic, timing_params)			
-					submodule_level_text += "	" + "	" + "	" + hdl_insert_text + "\n"
-				else:
-					# REGULAR ENTITY CONNECITON
-					#print "submodule_inst_name",submodule_inst_name,submodule_latency_from_container_logic
-					submodule_level_text += "	" + "	" + "	-- " + C_TO_LOGIC.LEAF_NAME(submodule_inst_name, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
-					entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst_name, logic, timing_params, parser_state, submodule_latency_from_container_logic)			
-					submodule_level_text += "	" + "	" + "	" + entity_connection_text + "\n"
+				# REGULAR ENTITY CONNECITON
+				#print "submodule_inst_name",submodule_inst_name,submodule_latency_from_container_logic
+				submodule_level_text += "	" + "	" + "	-- " + C_TO_LOGIC.LEAF_NAME(submodule_inst_name, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
+				entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)			
+				submodule_level_text += "	" + "	" + "	" + entity_connection_text + "\n"
 
 				# Add output wires of this submodule to wires driven so far after latency
 				for output_wire in submodule_logic.outputs:
@@ -969,7 +965,7 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	'''
 	# All modules get sliced, not just raw hdl
 	# Might even be through submodule markers so would never slice all the way down to raw HDL
-	top_level_str = Logic.inst_name + "_"
+	top_level_str = "" # Should be ok to just use slices alone? # Logic.func_name + "_"
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	top_level_str += str(timing_params.slices)
 	# Top level slices ALONE should uniquely identify a pipeline configuration
@@ -1178,7 +1174,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 		# Write VHDL file for submodule
 		# Re write submodule package with updated timing params
 		timing_params = TimingParamsLookupTable[logic.inst_name]
-		syn_out_dir = GET_OUTPUT_DIRECTORY(logic, implement=False)
+		syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
 		if not os.path.exists(syn_out_dir):
 			os.makedirs(syn_out_dir)		
 		VHDL.WRITE_VHDL_ENTITY(logic, syn_out_dir, parser_state, TimingParamsLookupTable)
@@ -1274,13 +1270,12 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 
 def DO_SYN_WITH_SLICES(current_slices, Logic, zero_clk_pipeline_map, parser_state, do_latency_check=True, do_get_stage_range=True):
 	clock_mhz = INF_MHZ
-	implement = False
 	total_latency = len(current_slices)
 	
 	# Dont write files if log file exists
 	write_files = False
 	log_file_exists = False
-	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
+	output_directory = GET_OUTPUT_DIRECTORY(Logic)
 	TimingParamsLookupTable = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(Logic, current_slices, parser_state, write_files)
 	
 	# TimingParamsLookupTable == None 
@@ -1314,7 +1309,7 @@ def DO_SYN_WITH_SLICES(current_slices, Logic, zero_clk_pipeline_map, parser_stat
 			sys.exit(0)
 	
 	# Then run syn
-	timing_report = VIVADO.SYN_IMP_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, implement, clock_mhz, total_latency, hash_ext)
+	timing_report = VIVADO.SYN_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext)
 	if timing_report.start_reg_name is None:
 		print timing_report.orig_text
 		print "Using a bad syn log file?"
@@ -1361,7 +1356,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map):
 	return sweep_state
 	
 def GET_MOST_RECENT_CACHED_SWEEP_STATE(Logic):
-	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
+	output_directory = GET_OUTPUT_DIRECTORY(Logic)
 	# Search for most recently modified
 	sweep_files = [file for file in glob.glob(os.path.join(output_directory, '*.sweep'))]
 	
@@ -1381,7 +1376,7 @@ def GET_MOST_RECENT_CACHED_SWEEP_STATE(Logic):
 		
 def WRITE_SWEEP_STATE_CACHE_FILE(state, Logic):#, LogicInstLookupTable):
 	#TimingParamsLookupTable = state.TimingParamsLookupTable
-	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
+	output_directory = GET_OUTPUT_DIRECTORY(Logic)
 	# ONly write one sweep per clk for space sake?
 	filename = Logic.inst_name.replace("/","_") + "_" + str(state.total_latency) + "CLK.sweep"
 	filepath = output_directory + "/" + filename
@@ -1732,7 +1727,7 @@ def REMOVE_DUP_SLICES(slices_list, epsilon):
 			rv_slices_list.append(slices)
 	return rv_slices_list
 	
-# Each call to SYN_IMP_AND_REPORT_TIMING is a new thread
+# Each call to SYN_AND_REPORT_TIMING is a new thread
 def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adjusted_slices):
 	clock_mhz = INF_MHZ
 	implement = False
@@ -1764,7 +1759,6 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 	if NUM_PROCESSES > 1:
 		slices_to_thread = dict()
 		for slices in possible_adjusted_slices:
-			#my_async_result = my_thread.apply_async(VIVADO.SYN_IMP_AND_REPORT_TIMING, (Logic, parser_state, LogicInst2TimingParams, implement, clock_mhz))
 			do_latency_check=False
 			do_get_stage_range=False
 			my_async_result = my_thread_pool.apply_async(DO_SYN_WITH_SLICES, (slices, Logic, state.zero_clk_pipeline_map, parser_state, do_latency_check, do_get_stage_range))
@@ -1778,7 +1772,6 @@ def PARALLEL_SYN_WITH_SLICES_PICK_BEST(Logic, state, parser_state, possible_adju
 			slices_to_syn_tup[str(slices)] = my_syn_tup
 	else:
 		for slices in possible_adjusted_slices:
-			#my_async_result = my_thread.apply_async(VIVADO.SYN_IMP_AND_REPORT_TIMING, (Logic, parser_state, LogicInst2TimingParams, implement, clock_mhz))
 			do_latency_check=False
 			do_get_stage_range=False
 			my_syn_tup = DO_SYN_WITH_SLICES(slices, Logic, state.zero_clk_pipeline_map, parser_state, do_latency_check, do_get_stage_range)
@@ -2018,7 +2011,7 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, state):
 def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	FuncLogicLookupTable = parser_state.FuncLogicLookupTable
-	print "Instance:",Logic.inst_name
+	print "Function:",Logic.func_name
 	
 	zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state)
 	print zero_clk_pipeline_map
@@ -2560,15 +2553,14 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
 	f.close()
 
 
-def GET_OUTPUT_DIRECTORY(Logic, implement):
-	if implement:
-		print "No implement foo"
-		sys.exit(0)
-		#output_directory = IMP_OUTPUT_DIRECTORY + "/" + Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+def GET_OUTPUT_DIRECTORY(Logic):
+	if Logic.is_c_built_in:
+		output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
 	else:
-		# Syn
-		 output_directory = SYN_OUTPUT_DIRECTORY + "/" + Logic.inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
-		#output_directory = SYN_OUTPUT_DIRECTORY + "/" + VHDL.GET_INST_NAME(Logic, use_leaf_name=True)
+		# Use source file if not built in?
+		src_file = str(Logic.c_ast_node.coord.file)
+		output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
+		
 	return output_directory
 
 
@@ -2618,9 +2610,6 @@ def IS_BITWISE_OP(logic):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
 		return False
-	elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
-		  logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):	
-		return False
 	#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
 	#	return False
 	#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
@@ -2642,10 +2631,14 @@ def IS_USER_CODE(logic, parser_state):
 	user_code = (not logic.is_c_built_in and not SW_LIB.IS_AUTO_GENERATED(logic)) # ???? or (not VHDL.C_TYPES_ARE_INTEGERS(input_types) or (not C_TO_LOGIC.C_TYPES_ARE_BUILT_IN(input_types))
 	
 	# GAH NEED TO CHECK input and output TYPES
+	# AND ALL INNNER WIRES TOO!
 	all_types = []
 	for input_wire in logic.inputs:
 		all_types.append(logic.wire_to_c_type[input_wire])
+	for wire in logic.wires: 
+		all_types.append(logic.wire_to_c_type[wire])
 	all_types.append(logic.wire_to_c_type[logic.outputs[0]])
+	all_types = list(set(all_types))
 	
 	# Becomes user code if using struct or array of structs
 	# For now???? fuck me
@@ -2693,16 +2686,18 @@ def GET_CACHED_TOTAL_LOGIC_LEVELS(logic):
 	# Look in cache dir
 	file_path = GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic)
 	if os.path.exists(file_path):
-		print "Reading Cached LLs File:", file_path
+		#print "Reading Cached LLs File:", file_path
 		return int(open(file_path,"r").readlines()[0])
 		
 	return None	
 	
 
-# should need this anymore 
-_non_built_in_lls_cache = dict()
+
 def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 	# TODO parallelize this
+	
+	print "Writing VHDL files for all functions (as combinatorial logic)..."
+	WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(parser_state)
 	
 	# initial params are 0 clk latency for all submodules
 	TimingParamsLookupTable = dict()
@@ -2710,26 +2705,6 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 		logic = parser_state.LogicInstLookupTable[logic_inst_name]
 		timing_params = TimingParams(logic)
 		TimingParamsLookupTable[logic_inst_name] = timing_params	
-	
-	
-	print "TODO: write vhdl per func name + timing params"
-	print "ALSO make LLs adding loop, per func name logic object? def logic object?"
-	'''	
-	print "Writing VHDL files for all functions (as combinatorial logic)..."
-	WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(parser_state)
-	
-	
-	@GAAAAAAAAHHHHH neeed to 
-	make all func names uniquely identify logic, like C does 
-	ex. BIN_OP_PLUS_[file.c] does not tell us what kind of bin op
-	# Make ALL func names include input types
-	@OR? loop over all instances still, but written file is still based on func name and types?
-	#^^ dumb just name sense with C standard
-	
-	'''
-	
-	print "Recursively Writing VHDL files for all instances starting at main..."
-	RECURSIVE_WRITE_ALL_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLookupTable)
 	
 	print "Writing the constant struct+enum definitions as defined from C code..."
 	VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
@@ -2744,85 +2719,71 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 	#bAAAAAAAAAAAhhhhhhh need to recursively do this 
 	# Do depth first 
 	# haha no do it the dumb easy way
-	logic_inst_done_so_far = []
-	all_logic_inst_done = False
-	while not(all_logic_inst_done):
-		all_logic_inst_done = True
-		#print "parser_state.LogicInstLookupTable",parser_state.LogicInstLookupTable
-		
-		#print "Synthesizing logic..."
-		#raw_input("[ENTER]")
-		for logic_inst_name in parser_state.LogicInstLookupTable:
+	func_names_done_so_far = []
+	all_funcs_done = False
+	while not all_funcs_done:
+		all_funcs_done = True
+		for logic_func_name in parser_state.FuncLogicLookupTable:
 			# If already done then skip
-			if logic_inst_name in logic_inst_done_so_far:
+			if logic_func_name in func_names_done_so_far:
 				continue
 
 			# Get logic
-			logic = parser_state.LogicInstLookupTable[logic_inst_name]
+			logic = parser_state.FuncLogicLookupTable[logic_func_name]
+			# Do dumb thing finding an inst logic ... will all be zero clock so doesnt matter
+			# TODO: Allow TimingParamsLookupTable to by by func name? Why not? Just for most things not?
+			inst_logic = None
+			for logic_inst_name in parser_state.LogicInstLookupTable: 
+				maybe_inst_logic = parser_state.LogicInstLookupTable[logic_inst_name]
+				if maybe_inst_logic.func_name == logic.func_name:
+					inst_logic = maybe_inst_logic
+					break
+			if inst_logic is None:
+				#print "Warning?: No logic instance for function:", logic.func_name, "never used?"
+				continue
 			
 			# All dependencies met?
 			all_dep_met = True
 			for submodule_inst in logic.submodule_instances:
-				if not(submodule_inst in logic_inst_done_so_far):
-					#print "submodule_inst not in logic_inst_done_so_far", submodule_inst
-					#print "submodule_inst in parser_state.LogicInstLookupTable",submodule_inst in parser_state.LogicInstLookupTable
+				submodule_func_name = logic.submodule_instances[submodule_inst]
+				if submodule_func_name not in func_names_done_so_far:
+					#print "submodule_func_name not in func_names_done_so_far",submodule_func_name
 					all_dep_met = False
-					
+					break	
 			
 			# If not all dependencies met then dont do syn yet
-			if not(all_dep_met):
-				#print "not(all_dep_met) logic.inst_name", logic.inst_name
-				all_logic_inst_done = False
+			if not all_dep_met:
+				all_funcs_done = False
 				continue
 			
-			# Do syn for logic we can't already guess/is know
-			# Bit manip raw hdl
-			print "Instance:", GET_OUTPUT_DIRECTORY(logic,False).replace(SYN_OUTPUT_DIRECTORY,"")
+			# Do syn for logic 
+			#print "Function:", GET_OUTPUT_DIRECTORY(logic).replace(SYN_OUTPUT_DIRECTORY,"")
 			
 			# Try to get cached total logic levels
 			cached_total_logic_levels = GET_CACHED_TOTAL_LOGIC_LEVELS(logic)
 
 			if SW_LIB.IS_BIT_MANIP(logic):
 				logic.total_logic_levels = 0
-				print "BIT MANIP TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				#print "BIT MANIP TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+				logic.total_logic_levels = 0
+				#print "CONST REF TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			# Bitwise binary ops
 			elif IS_BITWISE_OP(logic):
 				logic.total_logic_levels = 1
-				print "BITWISE OP TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				#print "BITWISE OP TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) and len(logic.inputs) == 3: # Cond input too
 				logic.total_logic_levels = 1
-				print "2 Input MUX TOTAL LOGIC LEVELS:", logic.total_logic_levels
-			## STRUCT READ
-			#elif logic.func_name.startswith(C_TO_LOGIC.STRUCT_RD_FUNC_NAME_PREFIX):
-			#	logic.total_logic_levels = 0
-			#	print "STRUCT READ:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
-			## CONST ARRAY REF
-			#elif logic.func_name.startswith(C_TO_LOGIC.ARRAY_REF_CONST_FUNC_NAME_PREFIX):
-			#	logic.total_logic_levels = 0
-			#	print "CONST ARRAY REF:", C_TO_LOGIC.LEAF_NAME(logic.inst_name)," TOTAL LOGIC LEVELS:", logic.total_logic_levels
-				
-			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
-				logic.total_logic_levels = 0
-				print "CONST REF TOTAL LOGIC LEVELS:", logic.total_logic_levels
-				
-			# 0 LLs HDL insert lookup table
-			elif (logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_RD) or
-			      logic.func_name.startswith(VHDL_INSERT.HDL_INSERT + "_" + VHDL_INSERT.STRUCTREF_WR) ):
-				logic.total_logic_levels = 0
-				print "0LL HDL Insert TOTAL LOGIC LEVELS:", logic.total_logic_levels			
-			elif not(cached_total_logic_levels is None):
-				logic.total_logic_levels = cached_total_logic_levels
-				print "Cached: TOTAL LOGIC LEVELS:", logic.total_logic_levels
-			elif logic.func_name in _non_built_in_lls_cache:
-				logic.total_logic_levels = _non_built_in_lls_cache[logic.func_name]
-				print "Already synthesized: TOTAL LOGIC LEVELS:", logic.total_logic_levels
+				#print "2 Input MUX TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			elif cached_total_logic_levels is not None:
+				logic.total_logic_levels = cached_total_logic_levels 
+				print "Function:",logic.func_name, "Cached TOTAL LOGIC LEVELS:", logic.total_logic_levels
 			else:
 				clock_mhz = INF_MHZ # Impossible goal for timing since jsut logic levels
-				implement = False
-				print "SYN (function name):", logic.func_name
-				parsed_timing_report = VIVADO.SYN_IMP_AND_REPORT_TIMING(logic, parser_state, TimingParamsLookupTable, implement, clock_mhz, total_latency=0)
+				print "Function:",logic.func_name
+				parsed_timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency=0)
 				if parsed_timing_report.logic_levels is None:
-					print "Cannot synthesize for total logic levels ",logic.inst_name
+					print "Cannot synthesize for total logic levels ",logic.func_name
 					print parsed_timing_report.orig_text
 					if DO_SYN_FAIL_SIM:
 						MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
@@ -2832,11 +2793,11 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 				
 				# Print pipeline map before syn results
 				if len(logic.submodule_instances) > 0:
-					zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(logic, parser_state)
+					zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_logic, parser_state)
 					print zero_clk_pipeline_map
 				# Syn results are total logic levels and clock	
 				print "TOTAL LOGIC LEVELS:", logic.total_logic_levels, "MHz:",mhz
-				
+				print ""
 				# Record worst global
 				#if len(logic.global_wires) > 0:
 				if logic.uses_globals:
@@ -2851,20 +2812,15 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 						os.makedirs(LLS_CACHE_DIR)					
 					f=open(filepath,"w")
 					f.write(str(logic.total_logic_levels))
-					f.close()
-					
-				# Do runtime cache if not built in
-				if (logic.func_name in parser_state.FuncLogicLookupTable) and not logic.is_c_built_in:
-					_non_built_in_lls_cache[logic.func_name] = logic.total_logic_levels
-				
+					f.close()				
 			
 			# Save logic with total_logic_levels into lookup
-			parser_state.LogicInstLookupTable[logic_inst_name] = logic
+			parser_state.FuncLogicLookupTable[logic_func_name] = logic
 			
 			# Done
-			logic_inst_done_so_far.append(logic_inst_name)
+			func_names_done_so_far.append(logic_func_name)
 			
-			print ""
+			
 			
 
 	# Record worst global
@@ -2872,7 +2828,14 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 		print "Design limited to ~", min_mhz, "MHz due to function:", min_mhz_func_name
 		parser_state.global_mhz_limit = min_mhz
 		
-	return parser_state.LogicInstLookupTable
+	# Add to instances as well for ... love of ones self?
+	for logic_inst_name in parser_state.LogicInstLookupTable:
+		inst_logic = parser_state.LogicInstLookupTable[logic_inst_name]
+		func_logic = parser_state.FuncLogicLookupTable[inst_logic.func_name]
+		inst_logic.total_logic_levels = func_logic.total_logic_levels
+		parser_state.LogicInstLookupTable[logic_inst_name] = inst_logic # Consistently dumb 
+		
+	return parser_state
 
 	
 	
@@ -2880,74 +2843,21 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 # Abstracting is something more
 
 
-# Returns updated timing params dict
-def REBUILD_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES_BOTTOM_UP(submodule_logic_inst_name, parser_state, TimingParamsLookupTable, seen_submodule_logic_inst_names = [], write_files=True):	
-	# Get logic for submodule
-	submodule_logic = parser_state.LogicInstLookupTable[submodule_logic_inst_name]
-	# Get timing params for submodule
-	submodule_timing_params = TimingParamsLookupTable[submodule_logic_inst_name]
-	
-	if write_files:
-		# Write VHDL file for submodule
-		# Re write submodule package with updated timing params
-		syn_out_dir = GET_OUTPUT_DIRECTORY(submodule_logic, implement=False)
-		if not os.path.exists(syn_out_dir):
-			os.makedirs(syn_out_dir)		
-		#VHDL.GENERATE_PACKAGE_FILE(submodule_logic, parser_state, TimingParamsLookupTable, submodule_timing_params, syn_out_dir)
-		VHDL.WRITE_VHDL_ENTITY(submodule_logic, syn_out_dir, parser_state, TimingParamsLookupTable)
-
-	# Get the container for this submodule
-	container_logic = C_TO_LOGIC.GET_CONTAINER_LOGIC_FOR_SUBMODULE_INST(submodule_logic_inst_name,parser_state.LogicInstLookupTable)
-	if not(container_logic is None):
-		
-		#### DONT NEED container based propogation any more since get latency does the recursion as necessary?
-		'''
-		# Has a container
-		# Get latency of the submodule
-		new_submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-		# Set latency of submodule in container logic
-		timing_params = TimingParamsLookupTable[container_logic.inst_name]
-		# Set latency in containing submodule
-		timing_params.SET_SUBMODULE_LATENCY(submodule_logic_inst_name, new_submodule_latency)
-		# Final adjustment to lookup table
-		TimingParamsLookupTable[container_logic.inst_name]=timing_params
-		'''
-		
-		
-		# Move up hierarchy starting at the container
-		TimingParamsLookupTable = REBUILD_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES_BOTTOM_UP(container_logic.inst_name,parser_state, TimingParamsLookupTable, seen_submodule_logic_inst_names)
-		
-	else:
-		# This module has no container, done?
-		pass
-		
-	# Record seeing this submodule
-	seen_submodule_logic_inst_names.append(submodule_logic_inst_name)
-		
-	
-	return TimingParamsLookupTable
-
-'''	
 def WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(parser_state):
-	for logic in parser_state.FuncLogicLookupTable
-'''
-
-def RECURSIVE_WRITE_ALL_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLookupTable):	
-	for submodule_inst in main_logic.submodule_instances:
-		#print "...",submodule_inst
-		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst]
-		RECURSIVE_WRITE_ALL_VHDL_PACKAGES(submodule_logic, parser_state, TimingParamsLookupTable)	
+	# Make zero clk lookup table
+	TimingParamsLookupTable = dict()
+	for inst_name in parser_state.LogicInstLookupTable:
+		inst_logic = parser_state.LogicInstLookupTable[inst_name]
+		TimingParamsLookupTable[inst_name] = TimingParams(inst_logic)
 	
-	# Write package if is not HDL INSERT (aka no package file)
-	if not main_logic.func_name.startswith(VHDL_INSERT.HDL_INSERT):
-		timing_params = TimingParamsLookupTable[main_logic.inst_name]	
-		syn_out_dir = GET_OUTPUT_DIRECTORY(main_logic, implement=False)
-		if not os.path.exists(syn_out_dir):
-			os.makedirs(syn_out_dir)			
-		#VHDL.GENERATE_PACKAGE_FILE(main_logic, parser_state, TimingParamsLookupTable, timing_params, syn_out_dir)
-		VHDL.WRITE_VHDL_ENTITY(main_logic, syn_out_dir, parser_state, TimingParamsLookupTable)
-
-	
+	# For now repeatedly write the same func files?
+	for inst_name in parser_state.LogicInstLookupTable:		
+		logic = parser_state.LogicInstLookupTable[inst_name]
+		if not logic.is_vhdl_func:
+			syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
+			if not os.path.exists(syn_out_dir):
+				os.makedirs(syn_out_dir)
+			VHDL.WRITE_VHDL_ENTITY(logic, syn_out_dir, parser_state, TimingParamsLookupTable)	
 
 def GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, logic, parser_state, TimingParamsLookupTable):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -3045,10 +2955,10 @@ def GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME(wire_write_pipe_var_name, logic):
 def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state, est_total_latency):	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
-	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
+	output_directory = GET_OUTPUT_DIRECTORY(Logic)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	
-	filename = VHDL.GET_INST_NAME(Logic) + "_" + str(est_total_latency) + "CLK_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_ENTITY_NAME(Logic,  TimingParamsLookupTable, parser_state, est_total_latency) + "_" + str(est_total_latency) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	if os.path.exists(filepath):
 		_WRITE_PIPELINE_MAP_CACHE_FILE_lock.acquire()
@@ -3068,9 +2978,9 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state, est_to
 	
 _WRITE_PIPELINE_MAP_CACHE_FILE_lock = Lock()
 def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, parser_state, est_total_latency):
-	output_directory = GET_OUTPUT_DIRECTORY(Logic, implement=False)
+	output_directory = GET_OUTPUT_DIRECTORY(Logic)
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	filename = VHDL.GET_INST_NAME(Logic) + "_" + str(est_total_latency) + "CLK_" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
+	filename = VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state, est_total_latency) + "_" + str(est_total_latency) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + ".pipe"
 	filepath = output_directory + "/" + filename
 	# Write dir first if needed
 	if not os.path.exists(output_directory):
