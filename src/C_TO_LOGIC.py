@@ -896,6 +896,68 @@ class Logic:
 		
 		
 		return None
+	
+	# Intentionally return None
+	def REMOVE_SUBMODULE(self,submodule_inst_name):
+		def REMOVE_STARTS_WITH(start, thing, key=True, value=True):
+			if type(thing) == str:
+				if thing.startswith(start):
+					return None
+				return thing
+								
+			if type(thing) == list:
+				new_thing = []
+				for t in thing:
+					if not t.startswith(start):
+						new_thing.append(t)
+				return new_thing
+				
+			if type(thing) == dict:
+				new_thing = dict()
+				for k in thing:
+					v = thing[k]
+					if value:
+						v = REMOVE_STARTS_WITH(start, v)
+					if key:
+						k = REMOVE_STARTS_WITH(start, k)
+					if k is None:
+						''''
+						# Key is gone now, was there value?
+						if v is not None and v != []:
+							# Assume might be wire to remove
+							if v in self.wires:
+								self.wires.remove(v)						
+						'''
+						continue
+					if v is None:
+						continue
+					if v == []:
+						continue
+					new_thing[k]=v
+					
+				return new_thing
+
+			print "What? REMOVE_STARTS_WITH", thing
+			sys.exit(0)
+		
+		
+		
+		self.wires = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wires)
+		self.submodule_instances.pop(submodule_inst_name, None)
+		self.submodule_instance_to_c_ast_node.pop(submodule_inst_name, None)
+		self.submodule_instance_to_input_port_names.pop(submodule_inst_name, None)
+		self.ref_submodule_instance_to_input_port_driven_ref_toks.pop(submodule_inst_name, None)
+		self.ref_submodule_instance_to_ref_toks.pop(submodule_inst_name, None)
+		self.wire_drives = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wire_drives)
+		self.wire_driven_by = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wire_driven_by)
+		self.wire_aliases_over_time = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wire_aliases_over_time, False, True)
+		self.alias_to_orig_var_name = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.alias_to_orig_var_name, True, False)
+		self.alias_to_driven_ref_toks = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.alias_to_driven_ref_toks, True, False)
+		self.wire_to_c_type = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wire_to_c_type, True, False)
+
+		
+		return None
+		
 		
 		
 			
@@ -989,14 +1051,15 @@ def WIRE_IS_CONSTANT(wire, logic_inst_name):
 	toks = new_wire.split(SUBMODULE_MARKER)
 	last_tok = toks[len(toks)-1]
 	
-	rv = last_tok.startswith(CONST_PREFIX) and not last_tok.startswith(CONST_REF_RD_FUNC_NAME_PREFIX)
-	
-	if (CONST_PREFIX in wire) and not(rv) and not(CONST_REF_RD_FUNC_NAME_PREFIX in wire):
+	# Hey - this is dumb
+	rv = last_tok.startswith(CONST_PREFIX) and not last_tok.startswith(CONST_REF_RD_FUNC_NAME_PREFIX+"_") and not last_tok.startswith(CONST_PREFIX+BIN_OP_SL_NAME + "_") and not last_tok.startswith(CONST_PREFIX+BIN_OP_SR_NAME + "_")
+	if (CONST_PREFIX in wire) and not(rv) and not(CONST_REF_RD_FUNC_NAME_PREFIX+"_" in wire) and not(CONST_PREFIX+BIN_OP_SL_NAME+"_" in wire) and not(CONST_PREFIX+BIN_OP_SR_NAME+"_" in wire):
 		print "WHJAT!?"
 		print "logic_inst_name",logic_inst_name
 		print "wire",wire
 		print "new_wire", new_wire
 		print "WIRE_IS_CONSTANT   but is not?"
+		print 0/0
 		sys.exit(0)	
 	
 	return rv
@@ -2670,12 +2733,13 @@ def C_TYPE_IS_ARRAY(c_type):
 	return "[" in c_type and c_type.endswith("]")
 	
 # Returns None if not resolved
+# THIS RELYS ON optimizing away constant funcs to const wires in N ARG FUNC logic
 def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, prepend_text, parser_state):
 	# Do a fake C_AST_NODE to logic for subscript
 	# if can trace to constant wire then
 	dummy_wire = "DUMMY_RESOLVE_WIRE"
 	driven_wire_names = [dummy_wire]
-	
+
 	# Should be able to get away with only deep copying existing_logic
 	parser_state_copy = copy.copy(parser_state)
 	parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
@@ -2749,35 +2813,26 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	except:
 		pass
 	
-	# Copy parser state since not intending to change existing logic in this func
-	parser_state_copy = copy.copy(parser_state)
-	# SHOULDNT  NEED THIS
-	#parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
-	
 	# Get base variable name
 	var_name = ref_toks[0]
-
-	# SHOULDNT  NEED THIS
-	# This is the first place we should see a global reference in terms of this function/logic
-	#parser_state_copy.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state_copy)
 		
 	# Get the type of this base name
 	inst_adj_var_name = var_name
-	if parser_state_copy.existing_logic.inst_name is not None:
-		inst_adj_var_name = parser_state_copy.existing_logic.inst_name + SUBMODULE_MARKER + var_name
-	if var_name in parser_state_copy.existing_logic.wire_to_c_type:
-		base_type = parser_state_copy.existing_logic.wire_to_c_type[var_name]
-	elif inst_adj_var_name in parser_state_copy.existing_logic.wire_to_c_type:
-		base_type = parser_state_copy.existing_logic.wire_to_c_type[inst_adj_var_name]
+	if parser_state.existing_logic.inst_name is not None:
+		inst_adj_var_name = parser_state.existing_logic.inst_name + SUBMODULE_MARKER + var_name
+	if var_name in parser_state.existing_logic.wire_to_c_type:
+		base_type = parser_state.existing_logic.wire_to_c_type[var_name]
+	elif inst_adj_var_name in parser_state.existing_logic.wire_to_c_type:
+		base_type = parser_state.existing_logic.wire_to_c_type[inst_adj_var_name]
 	else:
-		print "parser_state_copy.existing_logic",parser_state_copy.existing_logic
-		print "parser_state_copy.existing_logic.inst_name",parser_state_copy.existing_logic.inst_name
-		print "parser_state_copy.existing_logic.func_name",parser_state_copy.existing_logic.func_name
-		print "known variables:",parser_state_copy.existing_logic.variable_names
+		print "parser_state.existing_logic",parser_state.existing_logic
+		print "parser_state.existing_logic.inst_name",parser_state.existing_logic.inst_name
+		print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
+		print "known variables:",parser_state.existing_logic.variable_names
 		print "It looks like variable", var_name, "is not defined?",c_ast_ref.coord
-		for wire in sorted(parser_state_copy.existing_logic.wire_to_c_type):
-			print wire, ":", parser_state_copy.existing_logic.wire_to_c_type[wire]
-		#print "parser_state_copy.existing_logic.wire_to_c_type",parser_state_copy.existing_logic.wire_to_c_type
+		for wire in sorted(parser_state.existing_logic.wire_to_c_type):
+			print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
+		#print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
 		print 0/0
 		sys.exit(0)
 		
@@ -2785,10 +2840,6 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	if len(ref_toks) == 1:
 		# Just an ID
 		return base_type
-	
-	#if var_name == "bs":	
-	#	print "var_name",var_name
-	#print "base_type",base_type
 		
 	# Is a struct ref and/or array ref
 	remaining_toks = ref_toks[1:]
@@ -2814,10 +2865,10 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 		elif type(next_tok) == str:
 			# Struct
 			# Sanity check
-			if not C_TYPE_IS_STRUCT(current_c_type, parser_state_copy):
+			if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
 				print "Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord
 				sys.exit(0)
-			field_type_dict = parser_state_copy.struct_to_field_type_dict[current_c_type]
+			field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
 			if next_tok not in field_type_dict:
 				print next_tok, "is not a member field of",current_c_type, c_ast_ref.coord
 				print 0/0
@@ -2933,6 +2984,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		print "driving_aliases_over_time",driving_aliases_over_time
 		print "all_ref_toks",all_ref_toks
 		print "No driving aliases?", prepend_text, c_ast_ref.coord
+		print 0/0
 		sys.exit(0)
 
 	
@@ -3731,7 +3783,6 @@ def EVAL_FOR_COND(i_value, loop_var, c_ast_for_cond, parser_state):
 		# bin op  must be add or sub
 		op_str = str(c_ast_for_cond.op)
 		if op_str == "<" or op_str == "<=" or op_str == ">" or op_str == ">=":
-			#print "here3"
 			# One of the sides of the bin op must be loop var, the other constant
 			if (type(c_ast_for_cond.right) == c_ast.ID) and (type(c_ast_for_cond.left) == c_ast.Constant):
 				# Left is constant
@@ -3741,8 +3792,32 @@ def EVAL_FOR_COND(i_value, loop_var, c_ast_for_cond, parser_state):
 				value = int(c_ast_for_cond.right.value)
 			else:		
 				# Is left or right node constant?
-				# Ahh fuck it for now				
-				return None
+				# Do dumb copy of parser state for this
+				parser_state_copy = copy.copy(parser_state)
+				parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
+				
+				# Only evaluate if not the ID (assumed to be loop var)
+				const_lhs_wire = None
+				if type(c_ast_for_cond.left) != c_ast.ID:
+					LHS_DUMMY = "FOR_LHS_DUMMY"+C_AST_NODE_COORD_STR(c_ast_for_cond.left)
+					parser_state_copy.existing_logic.wire_to_c_type[LHS_DUMMY] = parser_state_copy.existing_logic.wire_to_c_type[loop_var]
+					parser_state_copy.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_for_cond.left, [LHS_DUMMY],"", parser_state_copy) 
+					const_lhs_wire = FIND_CONST_DRIVING_WIRE(LHS_DUMMY, parser_state_copy.existing_logic)
+				const_rhs_wire = None
+				if type(c_ast_for_cond.right) != c_ast.ID:
+					RHS_DUMMY = "FOR_RHS_DUMMY"+C_AST_NODE_COORD_STR(c_ast_for_cond.right)
+					parser_state_copy.existing_logic.wire_to_c_type[RHS_DUMMY] = parser_state_copy.existing_logic.wire_to_c_type[loop_var]
+					parser_state_copy.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_for_cond.right, [RHS_DUMMY],"", parser_state_copy)
+					const_rhs_wire = FIND_CONST_DRIVING_WIRE(RHS_DUMMY, parser_state_copy.existing_logic)
+				
+				if (type(c_ast_for_cond.right) == c_ast.ID) and (const_lhs_wire is not None):
+					# Left is constant
+					value = int(GET_VAL_STR_FROM_CONST_WIRE(const_lhs_wire, parser_state_copy.existing_logic, parser_state_copy))
+				elif (const_rhs_wire is not None) and (type(c_ast_for_cond.left) == c_ast.ID):	
+					# Right is constant
+					value = int(GET_VAL_STR_FROM_CONST_WIRE(const_rhs_wire, parser_state_copy.existing_logic, parser_state_copy))
+				else:			
+					return None
 			
 			# DO op
 			if op_str == "<":
@@ -3888,12 +3963,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	prepend_text_false = prepend_text  #""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_false"+"/" # Line numbers should be enough?
 	driven_wire_names=[] 
 	#
-	#parser_state_for_true = parser_state .DEEPCOPY()
 	# Should be able to get away with only deep copying existing_logic
 	parser_state_for_true = copy.copy(parser_state)
 	parser_state_for_true.existing_logic = parser_state.existing_logic.DEEPCOPY()
 	#
-	#parser_state_for_false = parser_state. DEEPCOPY()
 	# Should be able to get away with only deep copying existing_logic
 	parser_state_for_false = copy.copy(parser_state)
 	parser_state_for_false.existing_logic = parser_state.existing_logic.DEEPCOPY()
@@ -4209,7 +4282,7 @@ def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parse
 	return rv
 
 
-def TRY_CONST_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		prepend_text,
 		func_c_ast_node,
 		func_base_name,
@@ -4219,26 +4292,14 @@ def TRY_CONST_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		input_port_names, # Port names on submodule
 		output_driven_wire_names,
 		parser_state):
-			
+		
+	
 	# Build instance name
 	func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
 	
-	# Check if all the inputs to func are constant 
-	# Non global functions might be replaced by constants
-	is_global_func = False
-	if func_base_name in parser_state.FuncLogicLookupTable:
-		func_logic = parser_state.FuncLogicLookupTable[func_base_name]
-		is_global_func = len(func_logic.global_wires) + len(func_logic.volatile_global_wires) > 0
-	if is_global_func:
-		return None
-
-	# Check if can be replaced by constant output wire
-	all_inputs_constant = True
-	# Need to process input nodes with separate parser state
-	#parser_state_copy = parser_state. DEEPCOPY()
-	# Should be able to get away with only deep copying existing_logic
-	parser_state_copy = copy.copy(parser_state)
-	parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
+	# Dont need to process input nodes with separate parser state since will remove old submodule if optimized away
+	
+	# Can't evaluate mixed wires and cast node inputs, func arg evaluation order is broken?
 	
 	# Input drivers can be c_ast nodes so evaluate those first
 	c_ast_node_2_driven_input_wire_names = OrderedDict()
@@ -4256,81 +4317,176 @@ def TRY_CONST_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		if type(input_driver) == str:
 			input_port_name = input_port_names[i]
 			driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
-			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, input_driver,[driven_input_port_wire])
+			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, input_driver,[driven_input_port_wire])		
+	
+	# Finally include types as passed in if able to
+	
+	
+	# NOw inputs have been connected it is useful
+	# Ex. FOR constant funcs x==1
+	# To assign the type of driving wire if not assigned yet
+	for i in range(0, len(input_drivers)):
+		input_port_name = input_port_names[i]
+		input_driver_type = input_driver_types[i]
+		driven_input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
+		if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
+			driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
+			if driving_wire not in parser_state.existing_logic.wire_to_c_type:
+				parser_state.existing_logic.wire_to_c_type[driving_wire] = input_driver_type
 			
-	# Check parser_state_copy.existing_logic for input ports driven by constants
+	# Check if all the inputs to func are constant 
+	# Non global functions might be replaced by constants
+	is_global_func = False
+	if func_base_name in parser_state.FuncLogicLookupTable:
+		func_logic = parser_state.FuncLogicLookupTable[func_base_name]
+		is_global_func = len(func_logic.global_wires) + len(func_logic.volatile_global_wires) > 0
+	if is_global_func:
+		return None
+			
+	# Check if can be replaced by constant output wire
+	all_inputs_constant = True
+	# Check parser_state.existing_logic for input ports driven by constants
 	const_input_wires = []
 	for i in range(0, len(input_drivers)):
 		input_port_name = input_port_names[i]
 		driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
-		const_driving_wire = FIND_CONST_DRIVING_WIRE(driven_input_port_wire, parser_state_copy.existing_logic)
+		const_driving_wire = FIND_CONST_DRIVING_WIRE(driven_input_port_wire, parser_state.existing_logic)
 		const_input_wires.append(const_driving_wire)
 		all_inputs_constant = all_inputs_constant and (const_driving_wire is not None)
-	
-	# If all inputs constant then replace func output with value
-	if not all_inputs_constant:
-		return None
-		
-	# Determine string constant for making wire
-	const_val_str = None
-	# Is this binary op?
-	# TODO other things
-	if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX):
-		lhs_wire = const_input_wires[0]
-		rhs_wire = const_input_wires[1]
-		# Assume integers
-		# Get values from constants
-		lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state_copy.existing_logic, parser_state_copy)
-		rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state_copy.existing_logic, parser_state_copy)
-		is_ints = True
-		try:
-			lhs_val = int(lhs_val_str)
-			rhs_val = int(rhs_val_str)
-		except:
-			is_ints = False
-		if not is_ints:
-			print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non integers?"
-			sys.exit(0)
-		# What type of binary op
-		if func_base_name.endswith(BIN_OP_PLUS_NAME):
-			const_val_str = str(lhs_val+rhs_val)
-		elif func_base_name.endswith(BIN_OP_MINUS_NAME):
-			const_val_str = str(lhs_val-rhs_val)
+
+
+	# Some inputs may be constant, this changes the behavior/funcname of some functions
+	# 	Ex. constant shift is no longer the same logic binary op logic  (func name determines logic)
+	#   Ex. Float mult by const -1 is just sign flip, TODO
+	# If all inputs are constant then should be able replace function with constant
+	#############################################################################################
+	#
+	# ALL INPUTS CONSTANT - REPLACE WITH CONSTANT
+	if all_inputs_constant:
+		const_val_str = None
+		# Is this binary op?
+		# TODO other things
+		if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX):
+			lhs_wire = const_input_wires[0]
+			rhs_wire = const_input_wires[1]
+			# Assume integers
+			# Get values from constants
+			lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state.existing_logic, parser_state)
+			rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+			is_ints = True
+			try:
+				lhs_val = int(lhs_val_str)
+				rhs_val = int(rhs_val_str)
+			except:
+				is_ints = False
+			if not is_ints:
+				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non integers?"
+				sys.exit(0)
+			# What type of binary op
+			if func_base_name.endswith(BIN_OP_PLUS_NAME):
+				const_val_str = str(lhs_val+rhs_val)
+			elif func_base_name.endswith(BIN_OP_MINUS_NAME):
+				const_val_str = str(lhs_val-rhs_val)
+			else:
+				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported."
+				sys.exit(0)
 		else:
-			print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported."
-			sys.exit(0)
-		#if prepend_text == "":
-		#	print 0/0
-		#if const_val_str == "11":
-		#	import traceback
-		#	traceback.print_stack()
-		#print "Replacing", prepend_text,func_base_name,func_c_ast_node.coord, "with constant", const_val_str			
-	else:
-		print "Warning: Not reducing constant function call:",func_base_name, func_c_ast_node.coord
-		return None
-		#print "Function", func_base_name, func_c_ast_node.coord, "is constant and I don't know how to evaluate it yet..."
-		#sys.exit(0)
+			print "Warning: Not reducing constant function call:",func_base_name, func_c_ast_node.coord
+			#print const_input_wires
+			return None
 		
-	# Connect const wire to output wire and return
-	# Do connection using real parser state and logic
-	const_driving_wire = BUILD_CONST_WIRE(const_val_str, func_c_ast_node)
-	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, const_driving_wire, output_driven_wire_names)
-	# Use type of driven wires if available
-	c_type_str = None
-	for driven_wire_name in output_driven_wire_names:
-		if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
-			type_str = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
-			if not(c_type_str is None):
-				if type_str != c_type_str:
-					print "Constant with multiple types666!?"
-					sys.exit(0)
-			c_type_str = type_str
-	if c_type_str is not None:
-		parser_state.existing_logic.wire_to_c_type[const_driving_wire]=c_type_str
+		# Going to replace with constant
+		# Remove old submodule instance
+		#print "Replacing:",func_inst_name, "with constant", const_val_str
+		parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name)
+				
+		# Connect const wire to output wire and return
+		# Do connection using real parser state and logic
+		const_driving_wire = BUILD_CONST_WIRE(const_val_str, func_c_ast_node)
+		parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, const_driving_wire, output_driven_wire_names)
+		# Use type of driven wires if available
+		c_type_str = None
+		for driven_wire_name in output_driven_wire_names:
+			if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
+				type_str = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+				if not(c_type_str is None):
+					if type_str != c_type_str:
+						print "Constant with multiple types666!?"
+						sys.exit(0)
+				c_type_str = type_str
+		if c_type_str is not None:
+			parser_state.existing_logic.wire_to_c_type[const_driving_wire]=c_type_str
+	
+		return parser_state.existing_logic
+	
+	
+	#############################################################################################
+	# 
+	# SOME INPUTS CONSTANT - REPLACE WITH ALTERNATE FUNCTION
+	#
+	new_func_base_name = None
+	new_base_name_is_name = False
+	new_input_drivers = [] # Wires or C ast nodes
+	new_input_driver_types = [] # Might be none if not known
+	new_input_port_names = [] # Port names on submodule
+	is_reducable = False
+	# TODO other things
+	# CONSTANT SHIFT LEFT
+	if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME) and const_input_wires[1] is not None:
+		# Replace with const
+		rhs_wire = const_input_wires[1]
+		rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+		new_func_base_name = CONST_PREFIX + BIN_OP_SL_NAME + "_" + rhs_val_str
+		new_base_name_is_name = False # needs types
+		new_input_drivers = [input_drivers[0]] # Dont need RHS, is const
+		new_input_driver_types = [input_driver_types[0]]
+		new_input_port_names = ["x"] # One input port, not LHS or RHS\
+		new_func_inst_name = BUILD_INST_NAME(prepend_text,new_func_base_name, func_c_ast_node)
+		new_output_wire = new_func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+		parser_state.existing_logic.wire_to_c_type[new_output_wire] = new_input_driver_types[0] # Shift outputs LHS type
+		is_reducable = True
+		
+	elif func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME) and const_input_wires[1] is not None:
+		# Replace with const
+		rhs_wire = const_input_wires[1]
+		rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+		new_func_base_name = CONST_PREFIX + BIN_OP_SR_NAME + "_" + rhs_val_str
+		new_base_name_is_name = False # needs types
+		new_input_drivers = [input_drivers[0]] # Dont need RHS, is const
+		new_input_driver_types = [input_driver_types[0]]
+		new_input_port_names = ["x"] # One input port, not LHS or RHS
+		new_func_inst_name = BUILD_INST_NAME(prepend_text,new_func_base_name, func_c_ast_node)
+		new_output_wire = new_func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+		parser_state.existing_logic.wire_to_c_type[new_output_wire] = new_input_driver_types[0] # Shift outputs LHS type
+		is_reducable = True
+
+	# Not a reducable function
+	if not is_reducable:
+		return None
+		
+	# Remove old submodule instance
+	#print "Replacing:",func_inst_name, "with reduced function", new_func_base_name
+	parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name)
+	
+	# And remove the constant wires that were optimized away ?
+	#@GAHMAKETHIS PART OF REMOVE SUBMODULE OR WHAT?????
+	
+	# Can reduce, do logic to for reduced funciton
+	parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+			prepend_text,
+			func_c_ast_node,
+			new_func_base_name,
+			new_base_name_is_name,
+			new_input_drivers, # Wires or C ast nodes
+			new_input_driver_types, # Might be none if not known
+			new_input_port_names, # Port names on submodule
+			output_driven_wire_names,
+			parser_state)		
+	
 	return parser_state.existing_logic
 
 
-# ORDER OF ARGS MATTERS
+# ORDER OF N ARGS MATTERS
 def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		prepend_text,
 		func_c_ast_node,
@@ -4364,7 +4520,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		# Set this type for the driven wires if not set already? # This seems really hacky
 		for output_driven_wire_name in output_driven_wire_names:
 			if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
-				parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type	
+				parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
 	
 	#Set mux type / 	
 	# Sanity check this function drives something? ... Mux OK?
@@ -4375,8 +4531,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		print func_base_name, func_c_ast_node.coord, "does not drive anything?"
 		sys.exit(0)
 	
-	# Is this a constant func call?
-	const_logic = TRY_CONST_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+	# Is this a constant or reduceable func call?
+	const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 						prepend_text,
 						func_c_ast_node,
 						func_base_name,
@@ -4386,8 +4542,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 						input_port_names, # Port names on submodule
 						output_driven_wire_names,
 						parser_state)
-	if const_logic is not None:
-		return const_logic		
+	if const_reduced_logic is not None:
+		return const_reduced_logic
 		
 	
 	# Build func name
@@ -4453,6 +4609,9 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		# SAVE TYPE
 		parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = input_driver_type
 		
+	# SHOULDNT NEED THIS SINCE DONE IN TRY FOR CONST REDUCE
+	'''
+	# Can't evaluate mixed wires and cast node inputs, func arg evaluation order is broken?
 		
 	# Input drivers can be c_ast nodes so evaluate those first
 	c_ast_node_2_driven_input_wire_names = OrderedDict()
@@ -4473,6 +4632,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, input_driver,[driven_input_port_wire])
 	
 	
+	
 	# NOw inputs have been connected it is useful
 	# Ex. FOR constant funcs x==1
 	# To assign the type of driving wire if not assigned yet
@@ -4484,11 +4644,9 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 			driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
 			if driving_wire not in parser_state.existing_logic.wire_to_c_type:
 				parser_state.existing_logic.wire_to_c_type[driving_wire] = parser_state.existing_logic.wire_to_c_type[driven_input_wire_name]
-		
+	'''	
 		
 	################################# INPUTS DONE ##########################################
-	
-	
 	
 	# Outputs
 	# Finally connect the output of this operation to each of the driven wires
@@ -4504,7 +4662,7 @@ def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_i
 		types_str = ""
 		# Output type
 		types_str += "_" + output_type.replace("[","_").replace("]","")
-		# Append input types to base nameC_AST_N_ARG_FUNC_INST_TO_LOGIC
+		# Append input types to base name
 		for input_driver_type in input_driver_types:
 			if input_driver_type is None:
 				print "oh no, now it is"
@@ -4631,7 +4789,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
 	input_port_names.append(unary_op_input_port_name)
 	unary_op_input = func_inst_name+SUBMODULE_MARKER+unary_op_input_port_name
 	unary_op_output=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
-	
+
 	# Inputs
 	# Decompose inputs to N ARG FUNCTION
 	# dict[c_ast_input_node] => [list of driven wire names]
@@ -4756,16 +4914,25 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	right_type = None
 	if bin_op_right_input in parser_state.existing_logic.wire_to_c_type:
 		right_type = parser_state.existing_logic.wire_to_c_type[bin_op_right_input]
+	# Is output type known?	
+	output_c_type = None
+	if len(driven_wire_names) > 0 and driven_wire_names[0] in parser_state.existing_logic.wire_to_c_type:
+		output_c_type = parser_state.existing_logic.wire_to_c_type[driven_wire_names[0]]
 		
 	# Resolve missing types
 	if (left_type is None) and (right_type is None):
-		print func_base_name, "doesn't have type information for either input? What's going on?"
-		print "parser_state.existing_logic.wire_to_c_type"
-		print "bin_op_left_input",bin_op_left_input
-		print "bin_op_right_input",bin_op_right_input
-		print "Know types:"
-		print parser_state.existing_logic.wire_to_c_type
-		sys.exit(0)
+		if output_c_type is not None:
+			print "Assuming type", output_c_type, "for",func_inst_name
+			left_type = output_c_type
+			right_type = output_c_type
+		else:
+			print func_base_name, "doesn't have type information for either input? What's going on?"
+			print "parser_state.existing_logic.wire_to_c_type"
+			print "bin_op_left_input",bin_op_left_input
+			print "bin_op_right_input",bin_op_right_input
+			print "Know types:"
+			print parser_state.existing_logic.wire_to_c_type
+			sys.exit(0)
 	elif not(left_type is None) and (right_type is None):
 		# Use left
 		right_type = left_type

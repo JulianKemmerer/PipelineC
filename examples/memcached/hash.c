@@ -430,13 +430,15 @@ uint32_t hash(uint8_t k[KEY_MAX_LEN], key_len_t length) //, initval)
 //register uint32_t  length;   /* the length of the key */
 //register uint32_t  initval;  /* the previous hash, or an arbitrary value */
 {
-	uint32_t a,b,c; //,len;
+	uint32_t a;
+	uint32_t b;
+	uint32_t c; //,len;
 	key_len_t len;
 	/* Set up the internal state */
 	len = length;
-	a = 2654435769; //0x9e3779b9;  /* the golden ratio; an arbitrary value */
-	b = 2654435769; //0x9e3779b9;  /* the golden ratio; an arbitrary value */
-	c = 2654435769; //initval;         /* the previous hash value */
+	a = 506952121; // 2654435769; // Dont support literals larger then int32_t so remove top bit //0x9e3779b9;  /* the golden ratio; an arbitrary value */
+	b = 506952121; // 2654435769; // Dont support literals larger then int32_t so remove top bit //0x9e3779b9;  /* the golden ratio; an arbitrary value */
+	c = 506952121; // 2654435769; // Dont support literals larger then int32_t so remove top bit //initval;         /* the previous hash value */
 	packet_iter_t i;
 	mix_t mix;
 	mix.a = a;
@@ -444,7 +446,7 @@ uint32_t hash(uint8_t k[KEY_MAX_LEN], key_len_t length) //, initval)
 	mix.c = c;
 	
 	/*---------------------------------------- handle most of the key */
-	for(i=0; i < KEY_MAX_LEN_MINUS_12; i = i + 12)
+	for(i=0; i < KEY_MAX_LEN-12; i = i + 12)
 	{
 		if(len >= 12)
 		{
@@ -460,7 +462,7 @@ uint32_t hash(uint8_t k[KEY_MAX_LEN], key_len_t length) //, initval)
 	}
 
 	/*------------------------------------- handle the last 11 bytes */
-	i = len - 1;
+	i = length - len;
 	c = c + length;
 	//switch(len)              /* all the case statements fall through */
 	//{

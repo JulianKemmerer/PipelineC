@@ -11,11 +11,14 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz=31.25  #57.83 #SYN.INF_MHZ # TEST 31.25
+mhz= 31.25  #57.83 #SYN.INF_MHZ # TEST 31.25
 
 print "TODO:"
-print "	Yo dummy dont make built in operations have resize() and whacky/unpredictable output types, thats implied outside of func by integer promotion"
+print "	Got rid of pipeline map cache... is slow now?"
+print "	Yo dummy dont make built in operations have resize() and whacky/unpredictable output types, thats implied outside of func / in containing func by integer promotion"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places..."
+print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."
+print "	Consider doing constant optimization as second pass? How to unroll const for-loop then?"
 print "	OPTIMIZE AWAY CONSTANT IF and constant float mult by 1?"
 print "	Be a real C compiler yo"
 print "	Const array refs need func names for each array index .... but are doing almost the same thing?... slow syn :( Dont need to use base var name in func name?"
@@ -27,7 +30,7 @@ print "	Redo eq,and,or,..etc raw vhdl ops with pipelined binary trees instead of
 print "	Check for non global functions that call global functions when evaluating const"
 print "	Does const work in C? Use that for 'compile time' constant wire replacement?"
 print "	Generate bit manip vhdl funcs in own package?"
-print "	Prune away logic from user C code as to not write generate vhdl?"
+print "	Prune away logic from user C code as to not write generate vhdl? Work backwards from outputs/globals?"
 print "================== Generating (u)intN_t.h Headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 

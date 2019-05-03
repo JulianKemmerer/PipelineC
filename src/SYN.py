@@ -19,14 +19,17 @@ import SW_LIB
 import MODELSIM
 import VIVADO
 
-
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
 LLS_CACHE_DIR="./logic_levels_cache"
 INF_MHZ = 1000 # Impossible timing goal
-
 DO_SYN_FAIL_SIM = False
 
-SLICE_STEPS_BETWEEN_REGS = 3 # Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
+# Welcome to the land of magic numbers
+# 	"But I think its much worse than you feared" Modest Mouse - I'm Still Here
+SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
+MAX_STAGE_ADJUSTMENT = 20 # Each stage of the pipeline will be adjusted at most this many times when searching for best timing
+SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
+SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 
 # These are the parameters that describe how a pipeline should be formed
 class TimingParams:
@@ -61,9 +64,9 @@ class TimingParams:
 	# I was dumb and used get latency all over
 	# mAKE CACHED VERSION
 	def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None, force_recalc=False):
-		if force_recalc:
-			print "Dont force_recalc!"
-			print 0/0
+		#if force_recalc:
+		#	print "Dont force_recalc!"
+		#	print 0/0
 		
 		# C built in has multiple shared latencies based on where used
 		if len(self.logic.submodule_instances) <= 0:
@@ -150,13 +153,24 @@ class TimingParams:
 		
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state, write_files=True):
-	key = Logic.func_name
-	if Logic.inst_name is not None:
-		key = Logic.inst_name
+	if Logic.inst_name is None:
+		print "Wtf none inst?"
+		sys.exit(0) # and Logic.total_logic_levels is not None: # Dont cache with LLs or...problems?
+	key = Logic.inst_name
+	if Logic.total_logic_levels is None:
+		print "Can't get zero clock pipeline map without logic levels?"
+		print 0/0 
+		sys.exit(0)
 	# Try cache
 	try:
 		rv = _GET_ZERO_CLK_PIPELINE_MAP_cache[key]
 		#print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
+		
+		# Sanity?
+		if rv.logic.inst_name != Logic.inst_name:
+			print "Zero clock cache no mactho"
+			sys.exit(0)
+		
 		return rv
 	except:
 		pass
@@ -178,7 +192,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state, write_files=True):
 	zero_clk_pipeline_map = GET_PIPELINE_MAP(Logic, parser_state, ZeroClockLogicInst2TimingParams)
 	
 	# Only cache if has lls
-	if Logic.total_logic_levels is not None:	
+	if zero_clk_pipeline_map.logic.total_logic_levels is not None:	
 		_GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
 	
 	return zero_clk_pipeline_map
@@ -210,6 +224,10 @@ class PipelineMap:
 	def __str__(self):
 		rv = "Pipeline Map:\n"
 		#print self.logic.func_name, ":", self.logic.inst_name
+		if len(self.stage_per_ll_submodules_map.keys()) <= 0:
+			print "Func:",self.logic.func_name
+			print "Can't print pipeline map without lls map?"
+			sys.exit(0)
 		for stage in sorted(self.stage_per_ll_submodules_map.keys()):
 			rv += "STAGE: " + str(stage) + "\n"
 			for ll in sorted(self.stage_per_ll_submodules_map[stage].keys()):
@@ -277,11 +295,8 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		sys.exit(0)
 		
 	# FORGIVE ME - never
-	print_debug = False #logic.inst_name == "main____mult[main_c_l27_c8]____BIN_OP_MULT[main_c_l14_c10]"
+	print_debug = False #logic.inst_name == "main____do_requests[main_c_l30_c11_7ef5]____hash[do_requests_c_l168_c34_b397]____mix[hash_c_l484_c8_e65d]"
 	bad_inf_loop = False
-	
-	
-	
 		
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[logic.inst_name]
@@ -301,23 +316,39 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	if print_debug:
 		print "has_lls",has_lls
 	
+	#if not has_lls and logic.inst_name is not None:
+	#	print "Has instance name without having logic levels?",logic.inst_name
+	#	print 0/0
+	#	sys.exit(0)
 	
 	if print_debug:
 		print "timing_params.slices",timing_params.slices
 		print "These stages were sliced on a submodule level marker:", timing_params.stage_to_end_submodules.keys()
 	
+	'''
 	# Try to use cached pipeline map
 	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state, est_total_latency)
 	# Sanity check latency against cache if force recalc
 	cached_total_latency = None
 	if not(cached_pipeline_map is None):
 		cached_total_latency = cached_pipeline_map.num_stages - 1
+		if est_total_latency != cached_total_latency:
+			print "BUG IN PIPELINE MAP!?"
+			print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+			print "est_total_latency",est_total_latency, "cached_total_latency",cached_total_latency
+			print "timing_params.slices AHHH",timing_params.slices
+			#for logic_inst_name in parser_state.LogicInstLookupTable: 
+			#	logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
+			#	timing_params_i = TimingParams(logic_i)
+			#	print "logic_i.inst_name5",logic_i.inst_name, timing_params_i.slices
+			sys.exit(0)
+		
 		if not force_recalc:
 			if print_debug:
 				print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
 			rv = cached_pipeline_map
 			return rv
-	
+	'''
 	
 	# Else do logic below
 	
@@ -397,12 +428,17 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 				if print_debug:
 					print "Pipeline not done.",output
 				return False
+			if print_debug:
+				print "Output driven ", output, "<=",wires_driven_by_so_far[output]
 		# ALl globals driven
 		for global_wire in logic.global_wires:
 			if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
 				if print_debug:
 					print "Pipeline not done.",global_wire
 				return False
+			if print_debug:
+				print "Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire]
+		# ALl globals driven
 		# ALl volatile globals driven
 		# Some volatiles are read only - ex. valid indicator bit
 		# And thus are never driven
@@ -414,6 +450,8 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 					if print_debug:
 						print "Pipeline not done.",volatile_global_wire
 					return False
+			if print_debug:
+				print "Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire]
 				
 		return True
 	
@@ -520,7 +558,8 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 								# Record reaching another wire
 								next_wires_to_follow.append(driven_wire)	
 							
-							
+							#print "logic.func_name",logic.func_name
+							#print "driving_wire, driven_wire",driving_wire, driven_wire
 							# Need VHDL conversions for this type assignment?
 							TYPE_RESOLVED_RHS = VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state)
 							submodule_level_text += "	" + "	" + "	" + LHS + " := " + TYPE_RESOLVED_RHS + ";" + " -- " + driven_wire + " <= " + driving_wire + "\n"
@@ -856,12 +895,13 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		# all of the other logic driving the volatiles is done
 		if len(logic.volatile_global_wires) <= 0:
 			# Sanity check that output is driven in last stage
-			if PIPELINE_DONE() and ((stage_num-1) != est_total_latency):
-				print "Seems like pipeline is done before last stage?"
-				my_total_latency = stage_num - 1
+			my_total_latency = stage_num - 1
+			if PIPELINE_DONE() and (my_total_latency!= est_total_latency):
+				print "Seems like pipeline is done before last stage?"	
 				print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 				print "timing_params.slices",timing_params.slices
+				print 0/0
 				sys.exit(0)
 				print_debug = True
 	
@@ -871,20 +911,20 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	
 	# Save number of stages using stage number counter
 	rv.num_stages = stage_num
+	my_total_latency = rv.num_stages - 1
 	
-		
+	'''	
 	# Write cache if we had logic levels otherwise was not worth caching?
 	if has_lls:
 		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state, est_total_latency)
 		
-		
 	# Sanity check against cache
-	my_total_latency = rv.num_stages - 1
 	if (cached_total_latency is not None) and (cached_total_latency != my_total_latency):
 		print "Wtf!? Cached pipeline map latency is not right?"
 		print "cached_total_latency",cached_total_latency
 		print "my_total_latency",my_total_latency
 		sys.exit(0)
+	'''
 		
 	# Sanity check against estimate
 	if est_total_latency != my_total_latency:
@@ -1022,6 +1062,10 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	print_debug = False
 	
+	# Sanity?
+	if logic.inst_name is None:
+		print "Wtf inst name?"
+		sys.exit(0)
 	
 	# Get timing params for this logic
 	timing_params = TimingParamsLookupTable[logic.inst_name]
@@ -1115,6 +1159,12 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 			
 			# Get submodules at this offset
 			submodule_insts = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][lls_offset]
+			# Sanity?
+			if logic.inst_name != zero_clk_pipeline_map.logic.inst_name:
+				print "logic.inst_name",logic.inst_name
+				print "Zero clk inst name:",zero_clk_pipeline_map.logic.inst_name
+				print "Wtf using pipeline map from other instance?"
+				sys.exit(0)
 			#print "submodule_insts @ ",lls_offset, submodule_insts
 			# Given the known start offset what is the local offset for each submodule?
 			# Slice each submodule at that offset
@@ -1187,8 +1237,10 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	
 	'''
 	# FUCKBUGZ - check for calc errror
+	print "Need chaeck here too?"
 	force_recalc = True
 	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
 	if total_latency_maybe_recalc != total_latency_recalc:
@@ -1240,8 +1292,10 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	est_total_latency = len(current_slices)
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	
 	'''
 	# FUCKBUGZ - check for calc errror
+	print "TODO: Need bugs check ?"
 	force_recalc = True
 	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
 	if total_latency_maybe_recalc != total_latency_recalc:
@@ -1252,7 +1306,7 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(logic, current_slices, parser_stat
 	total_latency = total_latency_recalc	
 	'''
 	total_latency = total_latency_maybe_recalc
-	
+		
 	if est_total_latency != total_latency:
 		print "Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency
 		print "current slices:",current_slices
@@ -1476,7 +1530,7 @@ def INCREASE_SLICE_STEP(slice_step, state):
 	
 def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parser_state, zero_clk_pipeline_map):
 	#print "Rounding:", current_slices
-	#zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(logic, parser_state)
+	
 	total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
 	epsilon = SLICE_EPSILON(total_lls)
 	slice_step = epsilon / 2.0
@@ -1921,6 +1975,8 @@ def LOG_SWEEP_STATE(state, Logic): #, write_files = False):
 def SLICE_DISTANCE_MIN(lls):
 	return 1.0 / float(lls)
 
+
+
 def SLICE_EPSILON(lls):	
 	# Saw 
 	# 220.945647371	1	[0.4]
@@ -1947,7 +2003,7 @@ def SLICE_EPSILON(lls):
 	# Want 4x logic levels worth of adjustment
 	num_div = 4 * lls
 	'''
-	num_div = 6.684491979 * lls
+	num_div = SLICE_EPSILON_MULTIPLIER * lls
 	
 	# Fp compare epsilon is this divider
 	EPSILON = 1.0 / float(num_div)
@@ -2033,7 +2089,14 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 	while True:
 		print "|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"
 		print "|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||"	
-				
+		# Are we done now?
+		if state.total_latency in state.latency_2_best_delay:
+			curr_mhz = 1000.0 / state.latency_2_best_delay[state.total_latency]
+			if curr_mhz >= target_mhz:
+				print "Reached target operating frequency of",target_mhz,"MHz"
+				write_files = False
+				return GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(Logic, state.latency_2_best_slices[state.total_latency], parser_state,  write_files)
+			
 		# We have a stage range to work with
 		print "Geting default adjustments for these slices:"
 		print "Current slices:", state.current_slices
@@ -2095,12 +2158,6 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 		write_files = True
 		LOG_SWEEP_STATE(state, Logic) #, write_files)
 		
-		# Are we done now?
-		curr_mhz = 1000.0 / state.latency_2_best_delay[state.total_latency]
-		if curr_mhz >= target_mhz:
-			print "Reached target operating frequency of",target_mhz,"MHz"
-			return state.TimingParamsLookupTable
-		
 		
 				
 		#__/\\\\\\\\\\\__/\\\\____________/\\\\__/\\\\\\\\\\\\\______/\\\\\\\\\___________/\\\\\_______/\\\________/\\\__/\\\\\\\\\\\\\\\_        
@@ -2123,41 +2180,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 		# HOW DO WE ADJUST SLICES??????	
 		print "Saw best result of possible adjustments... getting different stage range / slice step"
 			
-		# HACKY temp thing
-		best_ever_latency_to_mhz = dict()
-		'''
-		best_ever_latency_to_mhz[0] = 120 
-		best_ever_latency_to_mhz[1] = 222 
-		best_ever_latency_to_mhz[2] = 344
-		best_ever_latency_to_mhz[3] = 395
-		best_ever_latency_to_mhz[4] = 470
-		best_ever_latency_to_mhz[5] = 564
-		best_ever_latency_to_mhz[6] = 592
-		best_ever_latency_to_mhz[7] = 612 # Took forever and didnt reach 614 again so 612?
-		best_ever_latency_to_mhz[8] = 674 #649 # Guess beat Xil
-		#best_ever_latency_to_mhz[9] = 650 # Buess beat 8clk?
-		#best_ever_latency_to_mhz[10] = 651 # Buess beat 9clk?
-		#best_ever_latency_to_mhz[11] = 746 # Guess beat xil
-		'''
-		
-		best_ever_adj = None
-		if state.total_latency in best_ever_latency_to_mhz:
-			best_mhz = best_ever_latency_to_mhz[state.total_latency]
-			best_seen_mhz = 1000.0 /state.latency_2_best_delay[state.total_latency] 
-			# If currently at or better then ok to stop
-			if best_seen_mhz >= best_mhz: 
-				best_ever_adj = state.latency_2_best_slices[state.total_latency]
-				
-				
-		
-				
-
-		if (not best_ever_adj is None):
-			print "HACKY ALREADY KNOW BEST SO FAR STOPPING"
-			state.current_slices = best_ever_adj[:]
-		
 		# IF LOOPED BACK TO BEST THEN 
-		elif SLICES_EQ(state.current_slices , state.latency_2_best_slices[state.total_latency], slice_ep) and state.total_latency > 1: # 0 or 1 slice will always loop back to best
+		if SLICES_EQ(state.current_slices , state.latency_2_best_slices[state.total_latency], slice_ep) and state.total_latency > 1: # 0 or 1 slice will always loop back to best
 			print "Looped back to best result, decreasing LLs step to narrow in on best..."
 			print "Reducing slice_step..."
 			old_slice_step = state.slice_step
@@ -2198,10 +2222,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			# Only do multiplied adjustments if adjusted all stages at least once
 			# Otherwise get caught making stupid adjustments right after init
 			actual_min_adj = min(state.stages_adjusted_this_latency.values())
-			MAGICAL_ADJ_LIMIT = 20
-			if (actual_min_adj != 0) and (actual_min_adj < MAGICAL_ADJ_LIMIT):
-				MAGICAL_MULT_LIMIT=3
-				print "Multiplying suggested change with limit:",MAGICAL_MULT_LIMIT
+			if (actual_min_adj != 0) and (actual_min_adj < MAX_STAGE_ADJUSTMENT):
+				print "Multiplying suggested change with limit:",SLICE_MOVEMENT_MULT
 				orig_slice_step = state.slice_step
 				n = 1
 				# Dont want to increase slice offset and miss fine grain adjustments
@@ -2211,7 +2233,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 				# Want to increase slice step if all adjustments yield same result
 				# That should be the case when we iterate this while loop after running syn
 				num_par_syns = 0
-				while SLICES_EQ(orig_slices, state.current_slices, slice_ep) and (n <= MAGICAL_MULT_LIMIT):
+				while SLICES_EQ(orig_slices, state.current_slices, slice_ep) and (n <= SLICE_MOVEMENT_MULT):
 					# Start with no possible adjustments
 					print "Working slice step:",working_slice_step
 					print "Multiplier:", n
@@ -2302,8 +2324,8 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			stages_off_balance = ((max(state.stages_adjusted_this_latency.values()) - min(state.stages_adjusted_this_latency.values())) >= len(state.current_slices)) or (actual_min_adj == 0)
 			
 			# Magical maximum to keep runs out of the weeds?
-			if actual_min_adj >= MAGICAL_ADJ_LIMIT:
-				print "Hit limit of",MAGICAL_ADJ_LIMIT, "for adjusting all stages... moving on..."
+			if actual_min_adj >= MAX_STAGE_ADJUSTMENT:
+				print "Hit limit of",MAX_STAGE_ADJUSTMENT, "for adjusting all stages... moving on..."
 				
 			elif (len(missing_stages) > 0) and stages_off_balance and not AM_SAD:
 				print "These stages have not been adjusted much: <<<<<<<<<<< ", missing_stages
@@ -2620,6 +2642,10 @@ def IS_BITWISE_OP(logic):
 		return False
 	elif logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX):
 		return False
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_"):
+		return False
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_"):
+		return False
 	else:
 		print "Is logic.func_name", logic.func_name, "a bitwise operator?"
 		sys.exit(0)	
@@ -2768,6 +2794,8 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
 				logic.total_logic_levels = 0
 				#print "CONST REF TOTAL LOGIC LEVELS:", logic.total_logic_levels
+			elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
+				logic.total_logic_levels = 0
 			# Bitwise binary ops
 			elif IS_BITWISE_OP(logic):
 				logic.total_logic_levels = 1
@@ -2790,10 +2818,12 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 					sys.exit(0)
 				mhz = 1000.0 / parsed_timing_report.data_path_delay
 				logic.total_logic_levels = parsed_timing_report.logic_levels
+				# Also update instance
+				inst_logic.total_logic_levels = logic.total_logic_levels
 				
 				# Print pipeline map before syn results
 				if len(logic.submodule_instances) > 0:
-					zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_logic, parser_state)
+					zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_logic, parser_state) # use inst_logic since timing params are by inst
 					print zero_clk_pipeline_map
 				# Syn results are total logic levels and clock	
 				print "TOTAL LOGIC LEVELS:", logic.total_logic_levels, "MHz:",mhz
@@ -2816,24 +2846,20 @@ def ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(main_logic, parser_state):
 			
 			# Save logic with total_logic_levels into lookup
 			parser_state.FuncLogicLookupTable[logic_func_name] = logic
+			# Update all instances now too
+			for logic_inst_name_i in parser_state.LogicInstLookupTable:
+				inst_logic_i = parser_state.LogicInstLookupTable[logic_inst_name_i]
+				if inst_logic_i.func_name == logic.func_name:
+					inst_logic_i.total_logic_levels = logic.total_logic_levels
+					parser_state.LogicInstLookupTable[logic_inst_name_i] = inst_logic_i # Consistently dumb
 			
 			# Done
 			func_names_done_so_far.append(logic_func_name)
-			
-			
-			
-
+	
 	# Record worst global
 	if min_mhz_func_name is not None:
 		print "Design limited to ~", min_mhz, "MHz due to function:", min_mhz_func_name
 		parser_state.global_mhz_limit = min_mhz
-		
-	# Add to instances as well for ... love of ones self?
-	for logic_inst_name in parser_state.LogicInstLookupTable:
-		inst_logic = parser_state.LogicInstLookupTable[logic_inst_name]
-		func_logic = parser_state.FuncLogicLookupTable[inst_logic.func_name]
-		inst_logic.total_logic_levels = func_logic.total_logic_levels
-		parser_state.LogicInstLookupTable[logic_inst_name] = inst_logic # Consistently dumb 
 		
 	return parser_state
 
@@ -2951,7 +2977,8 @@ def GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME(wire_write_pipe_var_name, logic):
 	print "GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME Not a submodule port wire ?"
 	print "wire_write_pipe_var_name",wire_write_pipe_var_name
 	sys.exit(0)
-		
+	
+'''	
 def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state, est_total_latency):	
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
@@ -2974,8 +3001,9 @@ def GET_CACHED_PIPELINE_MAP(Logic, TimingParamsLookupTable, parser_state, est_to
 
 			return pipe_line_map
 	return None	
+'''
 	
-	
+'''
 _WRITE_PIPELINE_MAP_CACHE_FILE_lock = Lock()
 def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, parser_state, est_total_latency):
 	output_directory = GET_OUTPUT_DIRECTORY(Logic)
@@ -2991,6 +3019,7 @@ def WRITE_PIPELINE_MAP_CACHE_FILE(Logic, pipeline_map, TimingParamsLookupTable, 
 	with open(filepath, 'w') as output:
 		pickle.dump(pipeline_map, output, pickle.HIGHEST_PROTOCOL)
 	_WRITE_PIPELINE_MAP_CACHE_FILE_lock.release()
+'''
 	
 # Identify stage range of raw hdl registers in the pipeline
 def GET_START_STAGE_END_STAGE_FROM_REGS(logic, start_reg_name, end_reg_name, parser_state, TimingParamsLookupTable, parsed_timing_report):

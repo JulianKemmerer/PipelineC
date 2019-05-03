@@ -34,6 +34,9 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+		wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		return wires_decl_text
 	else:
 		print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
 		sys.exit(0)
@@ -59,6 +62,9 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 		return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+		return package_stages_text
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+		wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
 		return package_stages_text
 	else:
 		print "GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.func_name,"?"
@@ -391,7 +397,6 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	
 	return wires_decl_text, text	
 	 
-	
 	
 
 def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
@@ -1994,6 +1999,48 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_par
 
 	return wires_decl_text, text
 
+def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+	# TODO check for ints only?
+	# ONLY INTS FOR NOW
+	x_type = logic.wire_to_c_type[logic.inputs[0]]
+	x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
+	x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+	
+	shift_func = None
+	if logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME):
+		shift_func = "sll"
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+		shift_func = "srl"
+	else:
+		print "Blaag: I should start putting the song I am listening too for debug if I remember"
+		print '''Brother Sport
+				Animal Collective - Merriweather Post Pavilion
+				'''
+		sys.exit(0)
+		
+	shift_const = None
+	toks = logic.func_name.split("_")
+	shift_const = toks[2]
+	
+	out_vhdl_type = x_vhdl_type
+	
+	wires_decl_text = '''
+	x : ''' + x_vhdl_type + ''';
+	return_output : ''' + out_vhdl_type + ''';
+'''
+
+	# Const shift must always be zero clock
+	if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+		print "Cannot do a const shift in multiple clocks!?"
+		sys.exit(0)
+		
+
+	# Intentionally not doing arithmetic shift yet?
+	text = '''
+		write_pipe.return_output := unsigned(std_logic_vector(write_pipe.x)) ''' + shift_func + " " + shift_const + ''';'''
+
+	return wires_decl_text, text
+	
 	
 	
 def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low):

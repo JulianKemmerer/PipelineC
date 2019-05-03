@@ -42,3 +42,10 @@ uint128_t main(uint128_t x, uint128_t y)
 	return x * y;
 }
 */
+
+/*
+axis32_t main(ip32_frame_t ip, uint16_t checksum)
+{
+	return ip_32_tx_globals(ip, checksum);
+}
+*/

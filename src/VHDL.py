@@ -51,31 +51,7 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 	# If not use null
 	else:
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
-		
-# VHDL variable name or const expression
-def GET_CONST_MASKED_INPUT_WIRE_TEXT(input_wire,submodule_inst_name, Logic, parser_state):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	#print "GET_CONST_MASKED_INPUT_WIRE_TEXT input_wire",input_wire
-	container_logic = C_TO_LOGIC.GET_CONTAINER_LOGIC_FOR_SUBMODULE_INST(submodule_inst_name, LogicInstLookupTable)
-	if (container_logic is None):
-		if submodule_inst_name != "main":
-			print "(container_logic is None) and not(submodule_inst_name == main)"
-			sys.exit(0)		
-		else:
-			# Regular variable input required
-			return WIRE_TO_VHDL_NAME(input_wire, Logic)
-	else:
-		# Got container logic
-		const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(input_wire, container_logic)
-		#print "const_driving_wire",const_driving_wire
-		if not(const_driving_wire is None):
-			# Get vhdl const expr
-			const_id = GET_WRITE_PIPE_WIRE_VHDL(const_driving_wire, container_logic, parser_state)
-			type_resolved_const_id = TYPE_RESOLVE_ASSIGNMENT_RHS(const_id, container_logic, const_driving_wire, input_wire, parser_state)
-			return type_resolved_const_id
-		else:	
-			# Regular variable input
-			return WIRE_TO_VHDL_NAME(input_wire, Logic)
+
 
 def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable):	
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
@@ -174,12 +150,9 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		#rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + GET_CONST_MASKED_INPUT_WIRE_TEXT(input_name,Logic.inst_name, Logic, parser_state) + ";" + "\n"
 		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + WIRE_TO_VHDL_NAME(input_name, Logic) + ";" + "\n"
 		
-	
 	# Output regs	
-	#rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg <= " + C_TO_LOGIC.RETURN_WIRE_NAME + "_output;" + "\n"
 	for out_wire in Logic.outputs:
 		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output;" + "\n"
 	
@@ -257,6 +230,8 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 	# IS RAW VHDL
 	if  (
 		  logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
+		  logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_") or
+		  logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_") or
 		( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
 	    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
