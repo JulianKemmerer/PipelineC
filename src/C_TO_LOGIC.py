@@ -4922,7 +4922,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	# Resolve missing types
 	if (left_type is None) and (right_type is None):
 		if output_c_type is not None:
-			print "Assuming type", output_c_type, "for",func_inst_name
+			print "Assuming type", output_c_type, "for",c_ast_binary_op.coord
 			left_type = output_c_type
 			right_type = output_c_type
 		else:

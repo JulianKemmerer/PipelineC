@@ -27,7 +27,7 @@ DO_SYN_FAIL_SIM = False
 # Welcome to the land of magic numbers
 # 	"But I think its much worse than you feared" Modest Mouse - I'm Still Here
 SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
-MAX_STAGE_ADJUSTMENT = 20 # Each stage of the pipeline will be adjusted at most this many times when searching for best timing
+MAX_STAGE_ADJUSTMENT = 4 # 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
 SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 
@@ -142,9 +142,12 @@ class TimingParams:
 		self.slices = sorted(self.slices)
 		self.INVALIDATE_CACHE()
 	
-	def SET_END_SUBMODULES(self, stage, end_submodules):
-		self.stage_to_end_submodules[stage]=end_submodules
-		self.INVALIDATE_CACHE()
+	def ADD_END_SUBMODULE(self, stage, end_submodule):
+		if stage not in self.stage_to_end_submodules:
+			self.stage_to_end_submodules[stage] = []
+		if end_submodule not in self.stage_to_end_submodules[stage]:
+			self.stage_to_end_submodules[stage].append(end_submodule)
+			self.INVALIDATE_CACHE()
 		
 	def GET_SUBMODULE_LATENCY(self, submodule_inst_name, parser_state, TimingParamsLookupTable):
 		submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
@@ -197,6 +200,9 @@ def GET_ZERO_CLK_PIPELINE_MAP(Logic, parser_state, write_files=True):
 	
 	return zero_clk_pipeline_map
 
+# This started off as just code writing VHDL
+# Then the logic of how the VHDL was written was highjacked for latency calculation
+# Then latency calculations were highjacked for logic level calculations
 class PipelineMap:
 	def __init__(self, logic):
 		self.logic = logic
@@ -215,31 +221,24 @@ class PipelineMap:
 		# Also once you are doing fractional stuff you might as well be doing delay ns
 		# Doing slicing for multiple clocks shouldnt require multi clk pipeline maps anyway right?
 		# HELP ME
-		self.stage_per_ll_submodules_map = dict() # dict[stage] => dict[ll_offset] => [submodules,at,offset]
-		self.stage_per_ll_submodule_level_map = dict() # dict[stage] => dict[ll_offset] => submodule level
-		self.submodule_start_offset = dict() # dict[submodule_inst] => dict[stage] = start_offset  # In LLs
-		self.submodule_end_offset = dict() # dict[submodule_inst] => dict[stage] = end_offset # In LLs
-		self.max_lls_per_stage = dict()
+		self.zero_clk_per_ll_submodules_map = dict() # dict[ll_offset] => [submodules,at,offset]
+		#self.zero_clk_per_ll_submodule_levels_map = dict() # dict[ll_offset] => [submodule, levels]
+		self.zero_clk_submodule_start_offset = dict() # dict[submodule_inst] = start_offset  # In LLs
+		self.zero_clk_submodule_end_offset = dict() # dict[submodule_inst] => end_offset # In LLs
+		self.zero_clk_max_lls = None
 		
 	def __str__(self):
 		rv = "Pipeline Map:\n"
-		#print self.logic.func_name, ":", self.logic.inst_name
-		if len(self.stage_per_ll_submodules_map.keys()) <= 0:
-			print "Func:",self.logic.func_name
-			print "Can't print pipeline map without lls map?"
-			sys.exit(0)
-		for stage in sorted(self.stage_per_ll_submodules_map.keys()):
-			rv += "STAGE: " + str(stage) + "\n"
-			for ll in sorted(self.stage_per_ll_submodules_map[stage].keys()):
-				submodules_insts = self.stage_per_ll_submodules_map[stage][ll]
-				submodule_func_names = []
-				for submodules_inst in submodules_insts:
-					inst_name = ""
-					if self.logic.inst_name is not None:
-						inst_name = self.logic.inst_name
-					submodule_func_names.append(submodules_inst.replace(inst_name+C_TO_LOGIC.SUBMODULE_MARKER,""))
-				submodule_level = self.stage_per_ll_submodule_level_map[stage][ll]
-				rv += "SUB:" + str(submodule_level) + " LL:" + str(ll) + " " + str(submodule_func_names) + "\n"
+		for ll in sorted(self.zero_clk_per_ll_submodules_map.keys()):
+			submodules_insts = self.zero_clk_per_ll_submodules_map[ll]
+			submodule_func_names = []
+			for submodules_inst in submodules_insts:
+				inst_name = ""
+				if self.logic.inst_name is not None:
+					inst_name = self.logic.inst_name
+				submodule_func_names.append(submodules_inst.replace(inst_name+C_TO_LOGIC.SUBMODULE_MARKER,""))
+			#submodule_levels = self.zero_clk_per_ll_submodule_levels_map[ll]
+			rv += "LL" + str(ll) + ": " + str(sorted(submodule_func_names)) + "\n"
 		rv = rv.strip("\n")
 		return rv
 		
@@ -295,13 +294,12 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		sys.exit(0)
 		
 	# FORGIVE ME - never
-	print_debug = False #logic.inst_name == "main____do_requests[main_c_l30_c11_7ef5]____hash[do_requests_c_l168_c34_b397]____mix[hash_c_l484_c8_e65d]"
+	print_debug = False #True #logic.inst_name == "main____do_requests[main_c_l30_c11_7ef5]____do_commands[do_requests_c_l173_c28_fd1d]"
 	bad_inf_loop = False
 		
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[logic.inst_name]
 	est_total_latency = len(timing_params.slices)
-	is_zero_clk = est_total_latency == 0
 	rv = PipelineMap(logic)
 	
 	# Shouldnt need debug for zero clock?
@@ -311,54 +309,22 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		print "GET_PIPELINE_MAP:"
 		print "logic.func_name",logic.func_name
 		print "logic.inst_name",logic.inst_name
+	
+	# Logic levels stuff was hacked into here and only works for combinatorial logic
+	is_zero_clk = est_total_latency == 0
 	has_lls = logic.total_logic_levels is not None
-	
-	if print_debug:
-		print "has_lls",has_lls
-	
-	#if not has_lls and logic.inst_name is not None:
-	#	print "Has instance name without having logic levels?",logic.inst_name
-	#	print 0/0
-	#	sys.exit(0)
-	
+	is_zero_clk_has_lls = is_zero_clk and has_lls
+
 	if print_debug:
 		print "timing_params.slices",timing_params.slices
-		print "These stages were sliced on a submodule level marker:", timing_params.stage_to_end_submodules.keys()
-	
-	'''
-	# Try to use cached pipeline map
-	cached_pipeline_map = GET_CACHED_PIPELINE_MAP(logic, TimingParamsLookupTable, parser_state, est_total_latency)
-	# Sanity check latency against cache if force recalc
-	cached_total_latency = None
-	if not(cached_pipeline_map is None):
-		cached_total_latency = cached_pipeline_map.num_stages - 1
-		if est_total_latency != cached_total_latency:
-			print "BUG IN PIPELINE MAP!?"
-			print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-			print "est_total_latency",est_total_latency, "cached_total_latency",cached_total_latency
-			print "timing_params.slices AHHH",timing_params.slices
-			#for logic_inst_name in parser_state.LogicInstLookupTable: 
-			#	logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-			#	timing_params_i = TimingParams(logic_i)
-			#	print "logic_i.inst_name5",logic_i.inst_name, timing_params_i.slices
-			sys.exit(0)
 		
-		if not force_recalc:
-			if print_debug:
-				print "Using cached pipeline map and submodule levels lookup (pipeline map)..."
-			rv = cached_pipeline_map
-			return rv
-	'''
-	
-	# Else do logic below
-	
 	
 	
 	if print_debug:
 		print "==============================Getting pipline map======================================="
 
 
-	# Apon writing a submoudle do not 
+	# Upon writing a submodule do not 
 	# add output wire (and driven by output wires) to wires_driven_so_far
 	# Intead delay them for N clocks as counted by the clock loop
 	wire_to_remaining_clks_before_driven = dict()
@@ -405,19 +371,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	wires_starting_level=wires_driven_by_so_far.keys()[:] 
 	next_wires_to_follow=[]
 
-	# Bound on latency is sum of all submodule latencies
-	# Prevent infintie loop
-	'''
-	max_possible_latency = 0
-	for submodule_inst in logic.submodule_instances:
-		latency = timing_params.GET_SUBMODULE_LATENCY(submodule_inst, parser_state, TimingParamsLookupTable)
-		max_possible_latency += latency
-	max_possible_latency_with_extra = max_possible_latency + 5
-	'''
+	# Bound on latency for sanity
 	max_possible_latency = len(timing_params.slices)
 	max_possible_latency_with_extra = len(timing_params.slices) + 2
-	
-	
 	stage_num = 0
 	
 	# Pipeline is done when
@@ -439,7 +395,6 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			if print_debug:
 				print "Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire]
 		# ALl globals driven
-		# ALl volatile globals driven
 		# Some volatiles are read only - ex. valid indicator bit
 		# And thus are never driven
 		# Allow a volatile global wire not to be driven if logic says it is undriven 
@@ -538,7 +493,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							RECORD_DRIVEN_BY(driving_wire, driven_wire)
 								
 							# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-							if has_lls and is_zero_clk:
+							if is_zero_clk_has_lls:
 								lls_offset_when_driven[driven_wire] = lls_offset_when_driven[driving_wire]
 							#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~		
 							
@@ -621,9 +576,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 
 
 						# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-						if has_lls and is_zero_clk:
+						if is_zero_clk_has_lls:
 							# Record LLs offset as max of driving wires
-							# Do submodule_start_offset INPUT OFFSET as max of input wires
+							# Do zero_clk_submodule_start_offset INPUT OFFSET as max of input wires
 							input_port_ll_offsets = []
 							for submodule_input_port_driving_wire in submodule_input_port_driving_wires:
 								ll_offset = lls_offset_when_driven[submodule_input_port_driving_wire]
@@ -633,11 +588,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							# All submodules should be driven at some ll offset right?
 							#print "wires_driven_by_so_far",wires_driven_by_so_far
 							#print "lls_offset_when_driven",lls_offset_when_driven
-							
-							if not(submodule_inst_name in rv.submodule_start_offset):
-								rv.submodule_start_offset[submodule_inst_name] = dict()
-							#rv.submodule_start_offset[submodule_inst_name][stage_num] = lls_offset_when_driven[submodule_logic.inputs[0]]
-							rv.submodule_start_offset[submodule_inst_name][stage_num] = max_input_port_ll_offset
+							rv.zero_clk_submodule_start_offset[submodule_inst_name] = max_input_port_ll_offset
 							
 							#DO PER STAGE (includes OUTPUT)
 							# Do per stage LLs starting at the input offset
@@ -666,26 +617,16 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							# Ex. 1 LLs in LL offset 0 
 							# ALSO STARTS AND ENDS IN STAGE 0
 							if submodule_total_lls > 0:
-								abs_lls_end_offset = submodule_total_lls + rv.submodule_start_offset[submodule_inst_name][stage_num] - 1
+								abs_lls_end_offset = submodule_total_lls + rv.zero_clk_submodule_start_offset[submodule_inst_name] - 1
 							else:
-								abs_lls_end_offset = rv.submodule_start_offset[submodule_inst_name][stage_num]
-								
-							if not(submodule_inst_name in rv.submodule_end_offset):
-								rv.submodule_end_offset[submodule_inst_name] = dict()				
-							rv.submodule_end_offset[submodule_inst_name][stage_num] = abs_lls_end_offset
+								abs_lls_end_offset = rv.zero_clk_submodule_start_offset[submodule_inst_name]	
+							rv.zero_clk_submodule_end_offset[submodule_inst_name] = abs_lls_end_offset
 								
 							# Do PARALLEL submodules map with start and end offsets from each stage
 							# Dont do for 0 LL submodules, ok fine
 							if submodule_total_lls > 0:
-								# Submodule insts
-								if not(stage_num in rv.stage_per_ll_submodules_map):
-									rv.stage_per_ll_submodules_map[stage_num] = dict()
-								# Submodule level
-								if not(stage_num in rv.stage_per_ll_submodule_level_map):
-									rv.stage_per_ll_submodule_level_map[stage_num] = dict()
-									
-								start_offset = rv.submodule_start_offset[submodule_inst_name][stage_num]
-								end_offset = rv.submodule_end_offset[submodule_inst_name][stage_num]
+								start_offset = rv.zero_clk_submodule_start_offset[submodule_inst_name]
+								end_offset = rv.zero_clk_submodule_end_offset[submodule_inst_name]
 								for abs_ll in range(start_offset,end_offset+1):
 									if abs_ll < 0:
 										print "<0 LL offset?"
@@ -693,14 +634,19 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 										print lls_offset_when_driven
 										sys.exit(0)
 									# Submodule isnts
-									if not(abs_ll in rv.stage_per_ll_submodules_map[stage_num]):
-										rv.stage_per_ll_submodules_map[stage_num][abs_ll] = []
-									if not(submodule_inst_name in rv.stage_per_ll_submodules_map[stage_num][abs_ll]):
-										rv.stage_per_ll_submodules_map[stage_num][abs_ll].append(submodule_inst_name)
+									if not(abs_ll in rv.zero_clk_per_ll_submodules_map):
+										rv.zero_clk_per_ll_submodules_map[abs_ll] = []
+									if not(submodule_inst_name in rv.zero_clk_per_ll_submodules_map[abs_ll]):
+										rv.zero_clk_per_ll_submodules_map[abs_ll].append(submodule_inst_name)
+									'''
 									# Submodule level
-									if not(abs_ll in rv.stage_per_ll_submodule_level_map[stage_num]):
-										rv.stage_per_ll_submodule_level_map[stage_num][abs_ll] = []
-									rv.stage_per_ll_submodule_level_map[stage_num][abs_ll] = submodule_level
+									if abs_ll not in rv.zero_clk_per_ll_submodule_levels_map:
+										rv.zero_clk_per_ll_submodule_levels_map[abs_ll] = []
+									if submodule_level not in rv.zero_clk_per_ll_submodule_levels_map[abs_ll]:
+										rv.zero_clk_per_ll_submodule_levels_map[abs_ll].append(submodule_level)
+										rv.zero_clk_per_ll_submodule_levels_map[abs_ll] = sorted(rv.zero_clk_per_ll_submodule_levels_map[abs_ll])
+									'''
+										
 						# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 						
 						
@@ -752,7 +698,6 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 					if bad_inf_loop:
 						print "submodule_output_wire",submodule_output_wire
 					wire_to_remaining_clks_before_driven[submodule_output_wire] = submodule_latency_from_container_logic
-					#print "wire_to_remaining_clks_before_driven[",submodule_output_wire, "]==", wire_to_remaining_clks_before_driven[submodule_output_wire]
 			
 					# Set lls_offset_when_driven for this output wire
 					# Get lls per stage from timing params
@@ -763,14 +708,14 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 						sys.exit(0)
 						
 					# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-					if has_lls and is_zero_clk:	
+					if is_zero_clk_has_lls:
 						# Assume zero latency fix me
 						if submodule_latency != 0:
 							print "non zero submodule latency? fix me"
 							sys.exit(0)
 						# Set LLs offset for this wire
 						submodule_total_lls = LogicInstLookupTable[submodule_inst_name].total_logic_levels
-						abs_lls_offset = rv.submodule_end_offset[submodule_inst_name][stage_num]
+						abs_lls_offset = rv.zero_clk_submodule_end_offset[submodule_inst_name]
 						lls_offset_when_driven[output_wire] = abs_lls_offset
 						# ONly +1 if lls > 0
 						if submodule_total_lls > 0:
@@ -806,6 +751,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			if submodule_level_iteration_has_submodules:				
 				# Update counters
 				submodule_level = submodule_level + 1
+			else:
+				print "NOT submodule_level_iteration_has_submodules, and that is weird?"
+				sys.exit(0)
 			
 			# Wires starting next level include wires whose latency has elapsed just now
 			# Also are added to wires driven so far
@@ -824,8 +772,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 						wires_starting_level.append(wire)
 			
 			# Has this stage reached the point where it 
-			# artificially ends on submodule level boundary slice?
-			stage_ends_from_sl_slice = False
+			# artificially ends after certain submodules
+			stage_ends_from_end_submodules = False
+			missing_submodule = None
 			if stage_num in timing_params.stage_to_end_submodules:
 				end_submodules = timing_params.stage_to_end_submodules[stage_num]
 				all_end_submodules_driven = True
@@ -836,23 +785,32 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 							if print_debug:
 								print "SUBMODULE NOT DRIVEN FOR SLICE:", end_submodule
 							all_end_submodules_driven = False
+							missing_submodule = end_submodule
 							break
 					if not all_end_submodules_driven:
 						break
 				if all_end_submodules_driven:
 					# Yes end now
-					stage_ends_from_sl_slice = True
+					stage_ends_from_end_submodules = True
 					if print_debug:
-						print "stage_ends_from_sl_slice!"
+						print stage_num, "stage_ends_from_end_submodules!"
+						print end_submodules
+					#if logic.inst_name == "main":
+					#	print timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+					#	print stage_num, "stage_ends_from_end_submodules!"
+					#	print end_submodules
+					#	#sys.exit(0)
 			
 			# WHILE CHECK for when to stop try for submodule levels in this stage
-			if not( len(wires_starting_level)>0 ) or stage_ends_from_sl_slice:
+			if not( len(wires_starting_level)>0 ) or stage_ends_from_end_submodules:
 				# Sanity check:
 				#  About to go to next stage, if current stage is 
 				# in stage_to_end_submodules then stage_ends_from_sl_slice should be true
-				if (stage_num in timing_params.stage_to_end_submodules) and not(stage_ends_from_sl_slice):
-					print "Stage", stage_num, "is supposed to end with a submodule level slice but it did not?"
+				if (stage_num in timing_params.stage_to_end_submodules) and not stage_ends_from_end_submodules:
+					print "Stage", stage_num, "is supposed to end after submodules but it did not?"
 					print timing_params.stage_to_end_submodules[stage_num]
+					print "Missing?:",missing_submodule, "in?", missing_submodule in timing_params.stage_to_end_submodules[stage_num]
+					C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(LogicInstLookupTable[missing_submodule].outputs[0], logic, wires_driven_by_so_far)
 					sys.exit(0)				
 				
 				# Break out of this loop trying to do submodule level iterations for this stage
@@ -872,12 +830,9 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			
 		# PER CLOCK
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LLS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-		if has_lls and is_zero_clk:
-			# GEt max lls this stage
-			if stage_num not in rv.stage_per_ll_submodules_map:
-				print "It looks like you are describing zero levels of logic?"
-				sys.exit(0)
-			rv.max_lls_per_stage[stage_num] = max(rv.stage_per_ll_submodules_map[stage_num].keys()) +1 # +1 since 0 indexed
+		if is_zero_clk_has_lls:
+			# GEt max lls
+			rv.zero_clk_max_lls = max(rv.zero_clk_per_ll_submodules_map.keys()) +1 # +1 since 0 indexed
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 		# TODO? reset ll offsets?
 
@@ -897,7 +852,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 			# Sanity check that output is driven in last stage
 			my_total_latency = stage_num - 1
 			if PIPELINE_DONE() and (my_total_latency!= est_total_latency):
-				print "Seems like pipeline is done before last stage?"	
+				print "Seems like pipeline is done before or after last stage?"	
 				print "logic.inst_name",logic.inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 				print "timing_params.slices",timing_params.slices
@@ -912,19 +867,6 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 	# Save number of stages using stage number counter
 	rv.num_stages = stage_num
 	my_total_latency = rv.num_stages - 1
-	
-	'''	
-	# Write cache if we had logic levels otherwise was not worth caching?
-	if has_lls:
-		WRITE_PIPELINE_MAP_CACHE_FILE(logic, rv, TimingParamsLookupTable, parser_state, est_total_latency)
-		
-	# Sanity check against cache
-	if (cached_total_latency is not None) and (cached_total_latency != my_total_latency):
-		print "Wtf!? Cached pipeline map latency is not right?"
-		print "cached_total_latency",cached_total_latency
-		print "my_total_latency",my_total_latency
-		sys.exit(0)
-	'''
 		
 	# Sanity check against estimate
 	if est_total_latency != my_total_latency:
@@ -942,6 +884,7 @@ def GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable, force_recalc=
 		
 	return rv
 
+'''
 def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 #return submodule_level_markers, ending_submodules_list
 	
@@ -950,7 +893,10 @@ def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 	#print zero_clk_pipeline_map
 	#print ""
 	
-	total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
+	@TODO how ot do slicing correctly?
+	
+	
+	total_lls = zero_clk_pipeline_map.zero_clk_max_lls
 	
 	submodule_level_markers = []
 	ending_submodules_list = []
@@ -961,10 +907,17 @@ def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 	submodules_in_last_sl = []
 	for ll_i in range(0, max(zero_clk_pipeline_map.stage_per_ll_submodule_level_map[0].keys()) +1):
 		curr_sl = zero_clk_pipeline_map.stage_per_ll_submodule_level_map[0][ll_i]		
-		submodules_at_ll = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][ll_i]
+		submodules_at_ll = zero_clk_pipeline_map.zero_clk_per_ll_submodules_map[ll_i]
 		if curr_sl == last_sl:
 			# Same submodule level, save submodules
 			submodules_in_last_sl = C_TO_LOGIC.LIST_UNION(submodules_in_last_sl,submodules_at_ll)
+		
+		# Sanity check submodule levels?
+		if curr_sl < last_sl:
+			print "Wtf pipeline map with bad submodule levels?", curr_sl, last_sl
+			print logic.inst_name
+			print zero_clk_pipeline_map
+			sys.exit(0)
 		
 		if curr_sl != last_sl:
 			# Found diff, assume is at x.0? as opposed to x.99999
@@ -979,6 +932,7 @@ def GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic):
 		last_sl = curr_sl
 			
 	return submodule_level_markers,ending_submodules_list
+'''
 
 def GET_SHELL_CMD_OUTPUT(cmd_str):
 	# Kill pid after 
@@ -1057,10 +1011,10 @@ def BUILD_HASH_EXT(Logic, TimingParamsLookupTable, parser_state):
 	return hash_ext
 	
 # Returns updated TimingParamsLookupTable
-# Index of bad slice if sliced through globals
+# Index of bad slice if sliced through globals, scoo # Passing Afternoon - Iron & Wine
 def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state, TimingParamsLookupTable, write_files=True):	
 	
-	print_debug = False
+	print_debug = False #logic.inst_name == "main____do_requests[main_c_l30_c11_7ef5]____do_commands[do_requests_c_l173_c28_fd1d]" #False
 	
 	# Sanity?
 	if logic.inst_name is None:
@@ -1074,7 +1028,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	slice_index = timing_params.slices.index(new_slice_pos)
 	slice_ends_stage = slice_index
 	
-	# Write into timing params dict
+	# Write into timing params dict, almost certainly unecessary
 	TimingParamsLookupTable[logic.inst_name] = timing_params
 	
 	# Check for globals
@@ -1099,96 +1053,95 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 		#print "logic.submodule_instances",logic.submodule_instances
 		# Get the zero clock pipeline map for this logic
 		zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(logic, parser_state)
-		total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
+		total_lls = zero_clk_pipeline_map.zero_clk_max_lls
 		epsilon = SLICE_EPSILON(total_lls)
 		
-		# Check if slice is through submodule marker
-		slice_through_submodule_level_marker = False
-		submodule_level_markers, ending_submodules_list = GET_SUBMODULE_LEVEL_MARKERS(zero_clk_pipeline_map, logic)
-		for i in range(0, len(submodule_level_markers)):
-			submodule_level_marker = submodule_level_markers[i]
-			ending_submodules = ending_submodules_list[i]
-			if SLICE_POS_EQ(new_slice_pos, submodule_level_marker, epsilon):
-				# Double check not slicing twice on this level
-				# Dummy tried a string compare
-				#if str(ending_submodules) in str(timing_params.stage_to_end_submodules.values()):
-				if slice_through_submodule_level_marker:
-					print zero_clk_pipeline_map
-					print "submodule_level_markers",submodule_level_markers
-					print "ending_submodules",ending_submodules
-					print "timing_params.stage_to_end_submodules[slice_ends_stage]",timing_params.stage_to_end_submodules[slice_ends_stage]
-					print 0/0
-					# Is a bad slice index then???
-					#return slice_index
-				
-				# Indicate this submodule level ends a stage
-				slice_through_submodule_level_marker = True
-				timing_params.SET_END_SUBMODULES(slice_ends_stage, ending_submodules)
-				#print "stage_per_ll_submodule_level_map",zero_clk_pipeline_map.stage_per_ll_submodule_level_map
-				
-				if print_debug:
-					print new_slice_pos, "slice_through_submodule_level_marker", slice_through_submodule_level_marker
-					print "logic.inst_name",logic.inst_name
-					print "submodule levels:",submodule_level_markers
-					print "slice:",new_slice_pos
-					print "ends stage:",slice_ends_stage
-					print "after these submodules outputs are driven:"
-					for ending_submodule in ending_submodules:
-						print "	",ending_submodule
-					print "=="
-				
-				
-		# Write into timing params dict
-		TimingParamsLookupTable[logic.inst_name] = timing_params
-
+		# Sanity?
+		if logic.inst_name != zero_clk_pipeline_map.logic.inst_name:
+			print "logic.inst_name",logic.inst_name
+			print "Zero clk inst name:",zero_clk_pipeline_map.logic.inst_name
+			print "Wtf using pipeline map from other instance?"
+			sys.exit(0)
 		
-		#IF SLICE WAS THROUGH SUBMODULE LEVEL MARKER THEN CAN'T BE THROUGH SUBMODULE
-		if not slice_through_submodule_level_marker:
-			# Handle submodules now
-			# DOESNT MATTER raw hdl or now just apply local slices using SLICE_DOWN_HIERARCHY
-			# Slice submodule levels and down hierarchy into submodules
-				
-			# Get the LL offset as float
-			lls_offset_float = new_slice_pos * total_lls
-			#print "LLs Offset (float):", lls_offset_float
-			lls_offset = math.floor(lls_offset_float)
-			#print "LLs Offset (int):", lls_offset
-			lls_offset_decimal = lls_offset_float - lls_offset
-			#print "LLs Offset Decimal Part:", lls_offset_decimal
+		# Get the LL offset as float
+		lls_offset_float = new_slice_pos * total_lls
+		#print "LLs Offset (float):", lls_offset_float
+		lls_offset = math.floor(lls_offset_float)
+		#print "LLs Offset (int):", lls_offset
+		lls_offset_decimal = lls_offset_float - lls_offset
+		#print "LLs Offset Decimal Part:", lls_offset_decimal
+		
+		# Slice can be through modules or on the boundary between modules
+		# The boundary between modules is important for moving slices right up against global logic?
+		# I forget exxxxactly why 
+		
+		# Prefer not slicing through if submodule starts or ends in this LL
+		# Get submodules at this offset
+		submodule_insts = zero_clk_pipeline_map.zero_clk_per_ll_submodules_map[lls_offset]
+		# Get submodules in previous and next 
+		prev_submodule_insts = []
+		if lls_offset - 1 in zero_clk_pipeline_map.zero_clk_per_ll_submodules_map:
+			prev_submodule_insts = zero_clk_pipeline_map.zero_clk_per_ll_submodules_map[lls_offset - 1]
+		next_submodule_insts = []
+		if lls_offset + 1 in zero_clk_pipeline_map.zero_clk_per_ll_submodules_map:
+			next_submodule_insts = zero_clk_pipeline_map.zero_clk_per_ll_submodules_map[lls_offset + 1]
+		
+		# Slice each submodule at offset
+		# Add to list of submodules to end stage/not follow outputs even if zero clk
+		for submodule_inst in submodule_insts:
+			# Check for start or end in this LL
+			starts_this_ll = submodule_inst not in prev_submodule_insts
+			ends_this_ll = submodule_inst not in next_submodule_insts
 			
+			# If starts and ends then round to start or end
+			if starts_this_ll and ends_this_ll:
+				if lls_offset_decimal < 0.5:
+					# Put reg before
+					starts_this_ll = True
+					ends_this_ll = False
+				else:
+					# Put reg after
+					starts_this_ll = False
+					ends_this_ll = True
 			
-			# Get submodules at this offset
-			submodule_insts = zero_clk_pipeline_map.stage_per_ll_submodules_map[0][lls_offset]
-			# Sanity?
-			if logic.inst_name != zero_clk_pipeline_map.logic.inst_name:
-				print "logic.inst_name",logic.inst_name
-				print "Zero clk inst name:",zero_clk_pipeline_map.logic.inst_name
-				print "Wtf using pipeline map from other instance?"
-				sys.exit(0)
-			#print "submodule_insts @ ",lls_offset, submodule_insts
-			# Given the known start offset what is the local offset for each submodule?
-			# Slice each submodule at that offset
-			for submodule_inst in submodule_insts:
-				# Only slice when >= 1 LL and not in a global function
+			# Slice via ending stage?
+			if starts_this_ll or ends_this_ll:
+				# If starts then actually need to end submodules from stage before
+				if starts_this_ll:
+					# Find which submodules are in last LL but not in this one (end cond)
+					# Those submodule actually end this stage
+					for prev_submodule_inst in prev_submodule_insts:
+						if prev_submodule_inst not in submodule_insts:
+							if print_debug:
+								print prev_submodule_inst, "ends stage", slice_ends_stage
+							timing_params.ADD_END_SUBMODULE(slice_ends_stage, prev_submodule_inst)		
+					# Sanity 
+					if len(timing_params.stage_to_end_submodules[slice_ends_stage]) <= 0:
+						print "Shit. No ending subs but need to end?"
+						sys.exit(0)
+				else:
+					# This submodule ENDS this stage at this ll
+					if print_debug:
+						print submodule_inst, "ends stage", slice_ends_stage
+					timing_params.ADD_END_SUBMODULE(slice_ends_stage, submodule_inst)					
+
+				# Write into timing params dict, almost certainly unecessary
+				TimingParamsLookupTable[logic.inst_name] = timing_params
+			else:
+				# Slice through submodule
+				# Only slice when >= 1 LL
 				submodule_logic = parser_state.LogicInstLookupTable[submodule_inst]
 				containing_logic = parser_state.LogicInstLookupTable[submodule_logic.containing_inst]
 				#print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
-				
-				# Shouldn't need this
-				#if containing_logic.uses_globals:
-				#	# Can't slice globals, return index of bad slice
-				#	if print_debug:
-				#		print "Can't slice, container uses globals"
-				#	return slice_index
 				
 				# Cant slice 0 LLs
 				if submodule_logic.total_logic_levels <= 0:
 					if print_debug:
 						print submodule_inst,"Zero LLS...cant slice"
 					continue
-
+					
 				submodule_timing_params = TimingParamsLookupTable[submodule_logic.inst_name]
-				start_offset = zero_clk_pipeline_map.submodule_start_offset[submodule_inst][0]	
+				start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[submodule_inst]
 				local_offset = lls_offset - start_offset
 				local_offset_w_decimal = local_offset + lls_offset_decimal
 				
@@ -1234,25 +1187,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(logic, new_slice_pos, parser_state,
 	
 	
 	# Check latency here too	
-	
 	timing_params = TimingParamsLookupTable[logic.inst_name]
-	total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	
-	'''
-	# FUCKBUGZ - check for calc errror
-	print "Need chaeck here too?"
-	force_recalc = True
-	total_latency_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable, force_recalc)
-	if total_latency_maybe_recalc != total_latency_recalc:
-		print "logic.inst_name",logic.inst_name
-		print "Wtf the cached latency is wrong!?2"
-		print "total_latency_maybe_recalc 2",total_latency_maybe_recalc
-		print "total_latency_recalc2 ",total_latency_recalc
-		sys.exit(0)
-	total_latency = total_latency_recalc
-	'''
-	total_latency = total_latency_maybe_recalc
-	
+	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	# Check latency calculation
 	if est_total_latency != total_latency:
 		print "logic.inst_name",logic.inst_name
@@ -1531,7 +1467,7 @@ def INCREASE_SLICE_STEP(slice_step, state):
 def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(logic, current_slices, slice_step, parser_state, zero_clk_pipeline_map):
 	#print "Rounding:", current_slices
 	
-	total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
+	total_lls = zero_clk_pipeline_map.zero_clk_max_lls
 	epsilon = SLICE_EPSILON(total_lls)
 	slice_step = epsilon / 2.0
 	working_slices = current_slices[:]
@@ -2039,7 +1975,7 @@ def GET_EQ_SEEN_SLICES(slices, state):
 	
 	# Check for matching slices in seen slices:
 	for slices_i in state.seen_slices:
-		if SLICES_EQ(slices_i, slices, SLICE_EPSILON(state.zero_clk_pipeline_map.max_lls_per_stage[0])):
+		if SLICES_EQ(slices_i, slices, SLICE_EPSILON(state.zero_clk_pipeline_map.zero_clk_max_lls)):
 			return slices_i
 			
 	return None
@@ -2073,9 +2009,9 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 	print zero_clk_pipeline_map
 	
 	print ""
-	orig_total_lls = zero_clk_pipeline_map.max_lls_per_stage[0]
+	orig_total_lls = zero_clk_pipeline_map.zero_clk_max_lls
 	print "Total LLs In Pipeline Map:",orig_total_lls
-	slice_ep = SLICE_EPSILON(zero_clk_pipeline_map.max_lls_per_stage[0])
+	slice_ep = SLICE_EPSILON(zero_clk_pipeline_map.zero_clk_max_lls)
 	print "SLICE EPSILON:", slice_ep
 	# START WITH NO SLICES
 	
@@ -2120,7 +2056,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 
 		# Sometimes all possible changes are the same result and best slices will be none
 		# Get default set of possible adjustments
-		possible_adjusted_slices = GET_DEFAULT_SLICE_ADJUSTMENTS(Logic, state.current_slices,state.working_stage_range, parser_state, state.zero_clk_pipeline_map, state.slice_step, slice_ep, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.max_lls_per_stage[0]))
+		possible_adjusted_slices = GET_DEFAULT_SLICE_ADJUSTMENTS(Logic, state.current_slices,state.working_stage_range, parser_state, state.zero_clk_pipeline_map, state.slice_step, slice_ep, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.zero_clk_max_lls))
 		print "Possible adjustments:"
 		for possible_slices in possible_adjusted_slices:
 			print "	", possible_slices
@@ -2197,9 +2133,6 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			
 		# BACKUP PLAN TO AVOID LOOPS
 		elif state.total_latency > 0:
-			print "Reducing slice_step..."
-			state.slice_step = REDUCE_SLICE_STEP(state.slice_step, state.total_latency, slice_ep)
-			print "New slice_step:",state.slice_step
 			# Check for unadjsuted stages
 			# Need difference or just guessing which can go forever
 			missing_stages = []
@@ -2238,7 +2171,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 					print "Working slice step:",working_slice_step
 					print "Multiplier:", n
 					# Keep increasing slice step until get non zero length of possible adjustments
-					possible_adjusted_slices = GET_DEFAULT_SLICE_ADJUSTMENTS(Logic, state.current_slices,state.stage_range, parser_state, state.zero_clk_pipeline_map, working_slice_step, slice_ep, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.max_lls_per_stage[0]), multiplier=1, include_bad_changes=False)
+					possible_adjusted_slices = GET_DEFAULT_SLICE_ADJUSTMENTS(Logic, state.current_slices,state.stage_range, parser_state, state.zero_clk_pipeline_map, working_slice_step, slice_ep, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.zero_clk_max_lls), multiplier=1, include_bad_changes=False)
 					# Filter out ones seen already
 					possible_adjusted_slices = FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, state)			
 							
@@ -2323,6 +2256,11 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 			# Do something with missing stage or backup		
 			stages_off_balance = ((max(state.stages_adjusted_this_latency.values()) - min(state.stages_adjusted_this_latency.values())) >= len(state.current_slices)) or (actual_min_adj == 0)
 			
+			# Moved this here from start of # BACKUP PLAN TO AVOID LOOPS
+			print "Reducing slice_step..."
+			state.slice_step = REDUCE_SLICE_STEP(state.slice_step, state.total_latency, slice_ep)
+			print "New slice_step:",state.slice_step
+			
 			# Magical maximum to keep runs out of the weeds?
 			if actual_min_adj >= MAX_STAGE_ADJUSTMENT:
 				print "Hit limit of",MAX_STAGE_ADJUSTMENT, "for adjusting all stages... moving on..."
@@ -2349,7 +2287,7 @@ def DO_THROUGHPUT_SWEEP(Logic, parser_state, target_mhz):
 						try_num += 1
 						# Do adjustment
 						pre_expand_slices = new_slices[:]
-						new_slices,new_stages_adjusted_this_latency = EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, new_slices, state.slice_step, state, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.max_lls_per_stage[0]))
+						new_slices,new_stages_adjusted_this_latency = EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, new_slices, state.slice_step, state, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.zero_clk_max_lls))
 						state.stages_adjusted_this_latency = new_stages_adjusted_this_latency
 						
 						# If expansion is same as current slices then stop
