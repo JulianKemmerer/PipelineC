@@ -5342,7 +5342,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		parser_state.existing_logic = rv
 				
 	# Sanity check for return
-	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv) and not SW_LIB.IS_MEM0(rv):
+	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv) and not SW_LIB.IS_MEM(rv):
 		print "No return statement in function:", rv.func_name
 		sys.exit(0)
 		

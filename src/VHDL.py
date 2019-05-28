@@ -470,8 +470,8 @@ def LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable):
 	return needs_clk
 	
 def GET_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
-	if SW_LIB.IS_MEM0(Logic):
-		return RAW_VHDL.GET_MEM0_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	if SW_LIB.IS_MEM(Logic):
+		return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
 	else:
 		return GET_PIPELINE_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
 		
@@ -803,8 +803,8 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	
 def GET_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
 	# Special case logic that does not do usage pipeline
-	if SW_LIB.IS_MEM0(Logic):
-		return RAW_VHDL.GET_MEM0_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	if SW_LIB.IS_MEM(Logic):
+		return RAW_VHDL.GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
 	else:
 		# Regular comb logic pipeline
 		return GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookupTable)

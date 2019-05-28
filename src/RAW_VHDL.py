@@ -28,8 +28,8 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	elif SW_LIB.IS_BIT_MANIP(logic):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return wires_decl_text	
-	# Mem0 uses no internal signals right now
-	elif SW_LIB.IS_MEM0(logic):
+	# Mem uses no internal signals right now
+	elif SW_LIB.IS_MEM(logic):
 		return ""
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
 		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
@@ -71,21 +71,25 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 		sys.exit(0)
 		
 		
-def GET_MEM0_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
-	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF):
-		return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
+def GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
+		return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
+	elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
+		return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
 	else:
-		print "GET_MEM0_ARCH_DECL_TEXT for func", Logic.func_name, "?"
+		print "GET_MEM_ARCH_DECL_TEXT for func", Logic.func_name, "?"
 		sys.exit(0)
 			
-def GET_MEM0_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
-	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF):
-		return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
+def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
+	if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
+		return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
+	elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
+		return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
 	else:
-		print "GET_MEM0_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?"
+		print "GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?"
 		sys.exit(0)
 	
-def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
+def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
 	# Is a clocked process assigning to global reg
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
 	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
@@ -95,26 +99,74 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
 	rv = '''
 	signal ''' + global_name + ''' : ''' + global_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(global_c_type,parser_state) + ''';
 '''
+	
+	# Include IO regs if needed
+	if clocks == 0:
+		pass
+	elif clocks == 2:
+		addr_t = Logic.wire_to_c_type[Logic.inputs[0]]
+		addr_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(addr_t,parser_state)
+		elem_t = Logic.wire_to_c_type[Logic.inputs[1]]
+		elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_t,parser_state)
+		we_t = Logic.wire_to_c_type[Logic.inputs[2]]
+		we_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(we_t,parser_state)
+		out_t = Logic.wire_to_c_type[Logic.outputs[0]]
+		out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_t,parser_state)
+		rv += '''
+		signal addr_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
+		signal wd_r : ''' + elem_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(elem_t,parser_state) + ''';
+		signal we_r : ''' + we_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(we_t,parser_state) + ''';
+		signal return_output_r : ''' + out_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(out_t,parser_state) + ''';
+'''
+	else:
+		print "Do other clocks for RAMSPRF"
+		sys.exit(0)
+
 	return rv
 	
 		
-def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
+def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
 	# Is a clocked process assigning to global reg
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
 	# Know func looks like (addr_t addr, elem_t wd, uint1_t we)
-	rv = '''
-	process(clk) is
-	begin
-		if rising_edge(clk) then
-			if we(0) = '1' then
-				''' + global_name + '''(to_integer(addr)) <= wd; 
+	if clocks == 0:
+		rv = '''
+		process(clk) is
+		begin
+			if rising_edge(clk) then
+				if we(0) = '1' then
+					''' + global_name + '''(to_integer(addr)) <= wd; 
+				end if;
 			end if;
-		end if;
-	end process;
-	-- Read first
-	return_output <= '''  + global_name + '''(to_integer(addr));
-
+		end process;
+		-- Read first
+		return_output <= '''  + global_name + '''(to_integer(addr));
 '''
+	elif clocks == 2:
+		# In and out regs
+		rv = '''
+		process(clk) is
+		begin
+			if rising_edge(clk) then
+				-- Register inputs
+				addr_r <= addr;
+				wd_r <= wd;
+				we_r <= we;
+				
+				-- Read first
+				return_output_r <= '''  + global_name + '''(to_integer(addr_r));
+				-- RAM logic		
+				if we_r(0) = '1' then
+					''' + global_name + '''(to_integer(addr_r)) <= wd_r; 
+				end if;
+			end if;
+		end process;
+		-- Tie output ref to output
+		return_output <= return_output_r;
+'''
+	else:
+		print "Do other clocks for RAMSPRF fool"
+		sys.exit(0)
 	
 	return rv
 		

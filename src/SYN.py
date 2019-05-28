@@ -2615,8 +2615,8 @@ def IS_USER_CODE(logic, parser_state):
 def GET_CACHED_TOTAL_LOGIC_LEVELS_FILE_PATH(logic):
 	key = logic.func_name
 	
-	# MEM0 has var name - weird yo
-	if SW_LIB.IS_MEM0(logic):
+	# MEM has var name - weird yo
+	if SW_LIB.IS_MEM(logic):
 		key = SW_LIB.GET_MEM_NAME(logic)
 	
 	func_name_includes_types = SW_LIB.FUNC_NAME_INCLUDES_TYPES(logic)

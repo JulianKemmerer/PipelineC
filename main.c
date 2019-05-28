@@ -15,7 +15,7 @@ Very similar to Xilinx pdf:
  new_p = format(v);
  send(new_p);
 */
-
+/*
 // Input is ethernet data from the Xilinx TEMAC
 // Output is ethernet data back to the Xilinx TEMAC
 axis32_t main(axis32_t mac_axis_rx)
@@ -32,7 +32,7 @@ axis32_t main(axis32_t mac_axis_rx)
 	// Send a response packet
 	return send(result);
 }
-
+*/
 /*
 #include "uintN_t.h"
 
@@ -61,9 +61,9 @@ uint16_t main(uint16_t x, uint16_t y)
 }
 */
 
-/*
-uint32_t main(uint8_t k[KEY_MAX_LEN], key_len_t length)
+
+entry_set_t main(addr_t addr, entry_set_t wd, uint1_t we)
 {
-	return hash(k, length);
+	return entry_sets_RAM_SP_RF_2(addr, wd, we);
 }
-*/
+

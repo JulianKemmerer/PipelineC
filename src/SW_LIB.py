@@ -13,7 +13,7 @@ import VHDL
 
 BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
-MEM0_HEADER_FILE = "mem0.h"
+MEM_HEADER_FILE = "mem.h"
 
 RAM_SP_RF="RAM_SP_RF"
 
@@ -38,7 +38,7 @@ def IS_AUTO_GENERATED(logic):
 	#print "?? ",logic.func_name, "is built in:", logic.is_c_built_in
 	
 	rv = ( (   IS_BIT_MANIP(logic)  or
-	           IS_MEM0(logic)       or
+	           IS_MEM(logic)       or
 	           IS_BIT_MATH(logic)         ) 
 	              and not logic.is_c_built_in )  # Built in functions used in bitmanip+math generated code are not auto generated
 	
@@ -55,8 +55,8 @@ def IS_BIT_MANIP(logic):
 		  
 	return rv
 	
-def IS_MEM0(logic):
-	rv = str(logic.c_ast_node.coord).split(":")[0].endswith(MEM0_HEADER_FILE) and not logic.is_c_built_in	  
+def IS_MEM(logic):
+	rv = str(logic.c_ast_node.coord).split(":")[0].endswith(MEM_HEADER_FILE) and not logic.is_c_built_in	  
 	return rv
 	
 def IS_BIT_MATH(logic):
@@ -66,7 +66,7 @@ def IS_BIT_MATH(logic):
 def FUNC_NAME_INCLUDES_TYPES(logic):
 	# Currently this is only needed for bitmanip and bit math
 	rv = (
-			IS_AUTO_GENERATED(logic) or # Excludes mem0 below
+			IS_AUTO_GENERATED(logic) or # Excludes mem below
 			logic.func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or 
 			logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX) or
 			logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) or
@@ -74,8 +74,8 @@ def FUNC_NAME_INCLUDES_TYPES(logic):
 			logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
 		 )
 	
-	# Cant be MEM0 since MEM0 mem name doesnt include types
-	rv = rv and not IS_MEM0(logic)
+	# Cant be MEM since MEM mem name doesnt include types
+	rv = rv and not IS_MEM(logic)
 	
 	return rv
 	         
@@ -99,8 +99,8 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	#print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
 	
 	# MEMORY
-	mem0_func_name_logic_lookup = GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
-	lookups.append(mem0_func_name_logic_lookup)
+	mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+	lookups.append(mem_func_name_logic_lookup)
 	
 	
 	# Combine lookups
@@ -131,10 +131,13 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 
 
 # Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
-# IN ZERO CLOCK cycles
-# So many different ways to implement multi cycle - ...looking at you future Julian
-# Ex. Start with RAM and per device resources fifo, memory controllers, etc
-def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
+# Zero clock cycles just infers RAM primitives implemented in LUTS
+# 1 clock means either input or output registers - should infer bram?
+# 2 clocks means in and out regs - def BRAMable
+# Build more complex multi cycle memory out of these basics - FutureJulian
+# Ex. Start with RAM and per device resources fifo primitives, etc ....memory controllers? Next universe up Julian task
+#		The Flaming Lips - Fight Test
+def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	text = ""
 	header_text = '''
 #include "uintN_t.h"
@@ -146,16 +149,16 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	
 	
 	# _RAM_SP_RF
-	# Parse to toks
-	ram_sp_rf_func_names = []
-	# elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
-	for type_regex in ["\w+_" + RAM_SP_RF + "\("]: 
+	single_port_ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2"] # TODO 1 in and out
+	for ram_type in single_port_ram_types:
+		# elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
+		type_regex = "\w+_" + ram_type + "\(" 
 		p = re.compile(type_regex)
 		ram_sp_rf_func_names = p.findall(c_text)
 		ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
 		for ram_sp_rf_func_name in ram_sp_rf_func_names:
 			ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
-			var_name = ram_sp_rf_func_name.replace("_"+RAM_SP_RF,"")
+			var_name = ram_sp_rf_func_name.replace("_"+ram_type,"")
 			#print "var_name",var_name
 			# Lookup type, should be global, and array
 			c_type = parser_state.global_info[var_name].type_name
@@ -170,14 +173,14 @@ def GET_MEM0_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			dim = dims[0]
 			addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
 				
-			func_name = var_name + "_" + RAM_SP_RF
+			func_name = var_name + "_" + ram_type
 			text += '''
 // ram_sp_rf
 typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hacky
 ''' + elem_t + ''' ''' + var_name + "[" + str(dim) + "];" + '''
 ''' + elem_t+ " " + func_name + "(" + addr_t + " addr, " + elem_t + " wd, uint1_t we)" + '''
 {
-	/* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM0 SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
+	/* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
 	// Dont have a construct for simultaneous read and write??
 	// Uhh hows this?
 	// Write is available next cycle?
@@ -205,7 +208,7 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 '''
 
 
-	#print "MEM0_HEADER_FILE"
+	#print "MEM_HEADER_FILE"
 	#print text		
 	#sys.exit(0)
 			
@@ -214,24 +217,26 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 		text = header_text + text
 		
 		
-		outfile = MEM0_HEADER_FILE
+		outfile = MEM_HEADER_FILE
 		parser_state_copy = copy.copy(parser_state) # was DEEPCOPY
 		# Keep everything except logic stuff
 		parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
 		parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
 		parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
 		
-		parse_body = False # MEM0 DOES NOT HAVE SW IMPLEMENTATION
+		parse_body = False # MEM DOES NOT HAVE SW IMPLEMENTATION
 		FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
 				
-		# Need to indicate that these MEM0 functions use globals/regs
+		# Need to indicate that these MEM functions use globals/regs
 		# HACK YHACK CHAKC
 		for func_name in FuncLogicLookupTable:
 			func_logic = FuncLogicLookupTable[func_name]
-			if func_name.endswith("_" + RAM_SP_RF):
-				global_name = func_name.split("_" + RAM_SP_RF)[0]
+			if func_name.endswith("_" + RAM_SP_RF+"_0"):
+				global_name = func_name.split("_" + RAM_SP_RF+"_0")[0]
+			elif func_name.endswith("_" + RAM_SP_RF+"_2"):
+				global_name = func_name.split("_" + RAM_SP_RF+"_2")[0]
 			else:
-				print "What mem0 func?", func_name
+				print "What mem func?", func_name
 				sys.exit(0)
 			
 			# Add global for this logic
@@ -249,14 +254,13 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 		return dict()
 		
 def GET_MEM_NAME(logic):
-	if logic.func_name.endswith("_" + RAM_SP_RF):
-		return RAM_SP_RF
+	if logic.func_name.endswith("_" + RAM_SP_RF+"_0"):
+		return RAM_SP_RF+"_0"
+	elif logic.func_name.endswith("_" + RAM_SP_RF+"_2"):
+		return RAM_SP_RF+"_2"
 	else:
 		print "GET_MEM_NAME for func", logic.func_name, "?"
 		sys.exit(0)
-
-
-
 
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	text = ""
@@ -266,8 +270,6 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	'''	
 	
 	# Regex search c_text
-	
-	
 	
 	# Negate
 	# Parse to list of width toks
@@ -385,7 +387,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# N MUX
 	# Parse to list of width toks
 	nmux_func_names = []
-	# uint24_mux24(left_resized);
+	# uint24_mux24(sel, in0, in1,...);
 	#print "DO any type NMUX"
 	for type_regex in ["\w+_mux[0-9]+\s?\("]:
 		p = re.compile(type_regex)
@@ -1122,7 +1124,6 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# Byte swap, with same name as real C func
 	# Parse to list of width toks
 	bswap_func_names = []
-	# uint64_5
 	p = re.compile('bswap_[0-9]+\s?\(')
 	bswap_func_names = p.findall(c_text)
 	bswap_func_names = list(set(bswap_func_names))
