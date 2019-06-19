@@ -645,7 +645,7 @@ end function;\n
 		rv += "\n"
 		
 		
-	# Certain submodules are always 0LLs "IS_VHDL_FUNC"
+	# Certain submodules are always 0 delay "IS_VHDL_FUNC"
 	rv += GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable)
 
 	rv += "\n"
@@ -1231,12 +1231,20 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 			# unsigned 0 downto 0 needs special cast?
 			c_type =  Logic.wire_to_c_type[wire_name]
 			width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-			return "to_unsigned(" + ami_digit + ", " + str(width) + ")"
+			is_signed = C_TYPE_IS_INT_N(c_type)
+			if is_signed:
+				return "to_signed(" + ami_digit + ", " + str(width) + ")"
+			else:
+				return "to_unsigned(" + ami_digit + ", " + str(width) + ")"
 		elif ami_digit_no_neg.isdigit():
 			# Check for neg signed constant
 			c_type =  Logic.wire_to_c_type[wire_name]
 			width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-			return "to_signed(" + ami_digit + ", " + str(width) + ")"
+			is_signed = C_TYPE_IS_INT_N(c_type)
+			if is_signed:
+				return "to_signed(" + ami_digit + ", " + str(width) + ")"
+			else:
+				return "to_unsigned(" + ami_digit + ", " + str(width) + ")"
 		#elif Logic.wire_to_c_type[wire_name] in 
 		#else:
 		#	print "What to do with this const wire const?",wire_name,

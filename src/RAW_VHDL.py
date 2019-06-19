@@ -752,7 +752,7 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
 		print "Binary op EQ for ", logic.wire_to_c_type, " as SLV?"
 		sys.exit(0)
 		
-def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
+def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
 	output_type = logic.wire_to_c_type[logic.outputs[0]]
@@ -767,6 +767,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 	right_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
 	left_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
 	right_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
+	full_width_return_output : signed(''' + str(max_input_width-1) + ''' downto 0);
 	return_output : signed(''' + str(output_width-1) + ''' downto 0);
 	right : signed(''' + str(right_width-1) + ''' downto 0);
 	left : signed(''' + str(left_width-1) + ''' downto 0);
@@ -819,6 +820,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			write_pipe.left_resized := unsigned(resize(write_pipe.left, ''' + str(width) + '''));
 			write_pipe.right_resized := unsigned(resize(write_pipe.right, ''' + str(width) + '''));
 			write_pipe.return_output := (others => '0');
+			write_pipe.full_width_return_output := (others => '0');
 			'''		
 		
 		
@@ -846,8 +848,9 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			text +=	'''
 				-- New carry is sign (negative carry)
 				write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
-				-- Assign output bits
-				write_pipe.return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+				-- Assign output bits into full width
+				write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+				--write_pipe.return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
 			'''
 			
 		# More stages?
@@ -856,7 +859,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			# sign is in last stage
 			# depends on carry
 			text +=	'''
-			write_pipe.return_output := resize(write_pipe.return_output(''' + str(max_input_width-1) + ''' downto 0), ''' + str(output_width) + ''');			
+			write_pipe.return_output := resize(write_pipe.full_width_return_output(''' + str(max_input_width-1) + ''' downto 0), ''' + str(output_width) + ''');			
 '''
 			# Last stage so no else if
 			text += '''
@@ -2057,12 +2060,16 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 	x_type = logic.wire_to_c_type[logic.inputs[0]]
 	x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
 	x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+	x_is_signed = VHDL.C_TYPE_IS_INT_N(x_type)
 	
 	shift_func = None
+	# Shift right might shift in sign bits if signed/arithmetic shfit
 	if logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME):
 		shift_func = "sll"
-	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME) and not x_is_signed:
 		shift_func = "srl"
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME) and x_is_signed:
+		shift_func = "sra"
 	else:
 		print "Blaag: I should start putting the song I am listening too for debug if I remember"
 		print '''Brother Sport
@@ -2085,11 +2092,9 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 	if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
 		print "Cannot do a const shift in multiple clocks!?"
 		sys.exit(0)
-		
-
-	# Intentionally not doing arithmetic shift yet?
+			
 	text = '''
-		write_pipe.return_output := unsigned(std_logic_vector(write_pipe.x)) ''' + shift_func + " " + shift_const + ''';'''
+		write_pipe.return_output := write_pipe.x ''' + shift_func + " " + shift_const + ''';'''
 
 	return wires_decl_text, text
 	

@@ -90,8 +90,6 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	
 	#print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
 	
-	# Some (small?) math operations on bit specific types, ex. abs() which is not 0LLs - takes logic since twos complement
-	# But also shouldnt implement as *-1 since more LLs
 	###### THESE DEPEND ON BIT MANIP #TODO: Depedencies what?
 	bit_math_func_name_logic_lookup = GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
 	lookups.append(bit_math_func_name_logic_lookup)
@@ -109,12 +107,10 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 		for func_name in func_name_logic_lookup:
 			if not(func_name in rv):
 				rv[func_name] = func_name_logic_lookup[func_name]
-				
 				#print "func_name (func_name_logic_lookup)",func_name
 				#if len(func_name_logic_lookup[func_name].wire_drives) == 0:
 				#	print "BAD!"
 				#	sys.exit(0)
-				
 			else:
 				# For now allow if from bit manip
 				#print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
@@ -1739,7 +1735,7 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 	if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
 		return GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
 	else:
-		print "GET_BIN_OP_SR_C_CODE Only sr uint for now!"
+		print "GET_BIN_OP_SR_C_CODE Only sr uint for now! DO ARITHMETIC SHIFT for INT"
 		sys.exit(0)
 		
 def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
@@ -1758,7 +1754,7 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 	if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
 		return GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
 	else:
-		print "GET_BIN_OP_SL_C_CODE Only sl uint for now!"
+		print "GET_BIN_OP_SL_C_CODE Only sl uint for now! DO ARITHMETIC SHIFT for INT"
 		sys.exit(0)	
 			
 def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
@@ -2357,7 +2353,8 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
 	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
-		print '''"left_t != "float" or  right_t != "float" output_t too'''
+		print left_t, right_t, output_t
+		print '''"left_t != "float" or  right_t != "float" output_t too div'''
 		sys.exit(0)
 	
 	left_width = 32
@@ -2545,6 +2542,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
 	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+		print left_t, right_t, output_t
 		print '''"left_t != "float" or  right_t != "float" output_t too'''
 		sys.exit(0)
 	

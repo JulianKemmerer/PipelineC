@@ -320,9 +320,9 @@ class Logic:
 		# wire_to_c_type[wire_name] -> c_type_str
 		self.wire_to_c_type = dict()
 		
-		# For timing, levels of logic
+		# For timing, delay units (tenths of nanosec probably)
 		# this is populated by vendor tool
-		self.total_logic_levels = None
+		self.delay = None
 		
 		# Save C code text for later
 		self.c_code_text = None
@@ -355,7 +355,7 @@ class Logic:
 		rv.alias_to_orig_var_name = dict(self.alias_to_orig_var_name) #IMMUTABLE
 		rv.alias_to_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.alias_to_driven_ref_toks) # alias -> [ref,toks]
 		rv.wire_to_c_type = dict(self.wire_to_c_type) #IMMUTABLE
-		rv.total_logic_levels = self.total_logic_levels
+		rv.delay = self.delay
 		rv.c_code_text = self.c_code_text
 		rv.containing_inst = self.containing_inst
 		rv.ref_submodule_instance_to_input_port_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_input_port_driven_ref_toks)
@@ -888,12 +888,7 @@ class Logic:
 		self.alias_to_driven_ref_toks = STR_DICT_KEY_PREPREND(self.alias_to_driven_ref_toks, prepend_text) 
 		
 		# Need to look up types by wire name
-		self.wire_to_c_type = STR_DICT_KEY_PREPREND(self.wire_to_c_type, prepend_text) #  = dict() # wire_to_c_type[wire_name] -> c_type_str
-		
-		# For timing, levels of self
-		# this is populated by vendor tool
-		#self.total_logic_levels=None
-		
+		self.wire_to_c_type = STR_DICT_KEY_PREPREND(self.wire_to_c_type, prepend_text) #  = dict() # wire_to_c_type[wire_name] -> c_type_str		
 		
 		return None
 	
@@ -1185,10 +1180,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_LOGIC_INST(containing_func_logic, submodule_inst_
 	# NOT RAW VHDL (assumed to be built from C code then)
 	else:
 		submodule_logic = BUILD_LOGIC_AS_C_CODE(submodule_logic, parser_state, containing_func_logic)
-	
-	
-	# Do here for early debug
-	SYN.IS_BITWISE_OP(submodule_logic)
 			
 	return submodule_logic
 	
@@ -3533,7 +3524,15 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_s
 	
 	# Since constants are constants... dont add prepend text or line location info
 	# Create wire for this constant
-	value = int(c_ast_node.value)
+	value_str = c_ast_node.value
+	if value_str.startswith("0x"):
+		hex_str = value_str.replace("0x","") 
+		value = int(hex_str, 16)
+	elif "." in value_str:
+		value = float(value_str)
+	else:
+		value = int(value_str)
+	
 	if is_negated:
 		value = value * -1
 	#casthelp(c_ast_node)
@@ -4387,6 +4386,33 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 				const_val_str = str(lhs_val+rhs_val)
 			elif func_base_name.endswith(BIN_OP_MINUS_NAME):
 				const_val_str = str(lhs_val-rhs_val)
+			elif func_base_name.endswith(BIN_OP_SR_NAME):
+				# lhs_val >> rhs_val
+				
+				# Output type is type of LHS
+				c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
+				width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+				# Thanks stackoverflow for twos comp BullSHEEIITITT FUCK ECE 200
+				def int2bin(integer, digits):
+					if integer >= 0:
+						return bin(integer)[2:].zfill(digits)
+					else:
+						return bin(2**digits + integer)[2:]
+				lhs_bin_str = int2bin(lhs_val, width)
+				fill_bit = "0"
+				if VHDL.C_TYPE_IS_INT_N(c_type):
+					fill_bit = lhs_bin_str[0] # Sign bit
+				
+				fill_bits = fill_bit * rhs_val
+				output_bin_str = (fill_bits + lhs_bin_str)[0:width]
+				# STACKOVERFLOW MY MAN
+				def to_int(bin):
+					x = int(bin, 2)
+					if bin[0] == '1': # "sign bit", big-endian
+					   x -= 2**len(bin)
+					return x
+				output_int = to_int(output_bin_str)
+				const_val_str = str(output_int)
 			else:
 				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported."
 				sys.exit(0)
@@ -5812,14 +5838,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
 	return FuncLogicLookupTable
 	
 			
-def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(orig_logic_func_name, orig_logic_inst_name, parser_state, adjusted_containing_logic_inst_name="", c_ast_node_when_used=None):	
-	#if recursion_level==0:
-	#print "=="
-	#print "...Recursing from instance: '",orig_logic_inst_name,"'"
-	#print "...orig_logic_func_name:",orig_logic_func_name
-	#print "...adjusted_containing_logic_inst_name:",adjusted_containing_logic_inst_name
-	#print "Recursing from:", adjusted_containing_logic_inst_name + SUBMODULE_MARKER + orig_logic_inst_name
-	
+def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(orig_logic_func_name, orig_logic_inst_name, parser_state, adjusted_containing_logic_inst_name="", c_ast_node_when_used=None):
 	# Use prepend text to contruct full instance names
 	new_inst_name_prepend_text = adjusted_containing_logic_inst_name + SUBMODULE_MARKER
 	if orig_logic_func_name == "main":

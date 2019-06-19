@@ -21,7 +21,6 @@ print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."
 print "	Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?"
 print "	OPTIMIZE AWAY CONSTANT IF and constant float mult by 1?"
-print "	Switch over to delay ns instead of logic levels"
 print "	Be a real C compiler yo"
 print "	Const array refs need func names for each array index .... but are doing almost the same thing?... slow syn :( Dont need to use base var name in func name?"
 print "	Syn each pipeline stage ... this is hard... like slicing zero clock logic "
@@ -38,8 +37,8 @@ SW_LIB.GENERATE_INT_N_HEADERS()
 print "================== Parsing C Code to Logical Hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
 
-print "================== Adding Logic Level Information To Lookup Table ================================"
-parser_state = SYN.ADD_TOTAL_LOGIC_LEVELS_TO_LOOKUP(parser_state.LogicInstLookupTable[top_level_func_name], parser_state)
+print "================== Adding Logic Delay Information To Lookup Table ================================"
+parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state.LogicInstLookupTable[top_level_func_name], parser_state)
 logic = parser_state.LogicInstLookupTable[top_level_func_name]
 
 print "================== Doing Optional Modelsim Debug ================================"

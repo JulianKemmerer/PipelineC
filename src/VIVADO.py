@@ -55,7 +55,13 @@ def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, logic, parser_state
 	
 	# Get stage indices
 	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, logic, parser_state, TimingParamsLookupTable)
-	self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
+	
+	# Global funcs are always 0 clock and thus offset 0
+	if LogicLookupTable[inst].uses_globals:
+		self_offset = 0
+	else:
+		# Do normal check
+		self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
 	abs_stage = when_used + self_offset
 	return inst, abs_stage
 	
@@ -166,9 +172,6 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_
 							else:
 								# Got a range of stages?
 								#print "		Found range of reg stage indices:", guessed_start_reg_abs_index,"to", guessed_end_reg_abs_index
-								# Pick best guess at highest lls per stage
-								max_lls = -1
-								max_lls_stage = None
 								rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index+1)
 								# Remove last stage
 								if last_stage in rv:
@@ -205,10 +208,9 @@ class ParsedTimingReport:
 		self.source_ns_per_clock = 0.0
 		self.start_reg_name = None
 		self.end_reg_name = None
-		self.logic_levels = None
-		self.data_path_delay = None
+		self.path_delay = None
 		self.logic_delay = None
-		self.orig_text=single_timing_report
+		self.orig_text = single_timing_report
 		#self.reg_merged_into = dict() # dict[orig_sig] = new_sig
 		self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
 		self.has_loops = True
@@ -250,27 +252,12 @@ class ParsedTimingReport:
 				self.end_reg_name = prev_line.replace(tok1,"").strip()
 				# Remove everything after last "/"
 				toks = self.end_reg_name.split("/")
-				self.end_reg_name = "/".join(toks[0:len(toks)-1])
-				
-			# LOGIC LEVELS
-			tok1="Logic Levels:           "
-			if tok1 in syn_output_line:
-				self.logic_levels = int(syn_output_line.replace(tok1,"").split("(")[0].strip())
-				if self.logic_levels == 0:
-					print "Synthesizing 1 LL of logic? If not then this zero LLs is damn weird..."
-					#print single_timing_report
-					print syn_output_line
-					#latency=0
-					#do_debug=True
-					#print "ASSUMING LATENCY=",latency
-					#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-					#sys.exit(0)
-					
+				self.end_reg_name = "/".join(toks[0:len(toks)-1])				
 				
 			
 				
 			#####################################################################################################
-			# Data path delay is not the total delay in the path
+			# Data path delay in report is not the total delay in the path
 			# OMG slack is not jsut a funciton of slack=goal-delay
 			# Wow so dumb of me
 			# VIVADO prints out for 1ns clock
@@ -301,8 +288,7 @@ class ParsedTimingReport:
 			# 1.0 - (-0.738) = 1.738ns
 			tok1="Data Path Delay:        "
 			if tok1 in syn_output_line:
-				self.data_path_delay = self.source_ns_per_clock - self.slack_ns
-				#	self.data_path_delay = float(syn_output_line.replace(tok1,"").split("ns")[0].strip())
+				self.path_delay = self.source_ns_per_clock - self.slack_ns
 			#####################################################################################################
 			
 			
@@ -484,7 +470,7 @@ class ParsedTimingReport:
 		
 		
 		# Multiple timign report stuff
-		self.worst_paths = None # List of tuples[ (start,end,lls), ...,.,.,.]
+		self.worst_paths = None # List of tuples[ (start,end,path_delay), ...,.,.,.]
 		# Also duh just another list of timing reports
 		self.worst_path_reports = None
 		
@@ -498,7 +484,7 @@ class ParsedTimingReport:
 		for worst_path_timing_report in worst_path_timing_reports:
 			parsed_report = ParsedTimingReport(worst_path_timing_report)
 			# Add to list of tuples
-			self.worst_paths.append( (parsed_report.start_reg_name, parsed_report.end_reg_name, parsed_report.logic_levels) )
+			self.worst_paths.append( (parsed_report.start_reg_name, parsed_report.end_reg_name, parsed_report.path_delay) )
 			# And add report 
 			self.worst_path_reports.append(parsed_report)
 			
@@ -569,7 +555,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupT
 	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
 	
 	# Single read vhdl line
-	rv += "read_vhdl -library work {" + files_txt + "}\n"
+	rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n"
 	
 	# Single xdc with single clock for now
 	rv += 'read_xdc {' + clk_xdc_filepath + '}\n'

@@ -16,11 +16,15 @@
 // 	key,val max len 8 (64b words?) , num sets 2048 = 111% luts
 //  key,val max len 16, num sets 1024 = 132% luts (real hash too)
 //  key,val max len 16, num sets 512 = 86% luts (real hash too)
+// Switched to using 2 clk SP RF BRAMS for mem (real hash too)
+//  key,val max len 16, num sets 512 = 94% BRAMS, 58% luts (mem not all as BRAMS since using all of them, overflow to luts?)
+//  key,val max len 16, num sets 1024 = 94% BRAMS, 79% luts  <<< BEST?
+//  key,val max len 16, num sets 2048 = 94% BRAMS, 110% luts
+//  key,val max len 32, num sets 1024 = 94% BRAMS, 183% luts
 
 // Generic functionality for extras, key, and value sizes
 #define EXTRAS_MAX_LEN 16
 #define KEY_MAX_LEN 16 // HASH REQUIRES KEY OF AT LEAST 12 BYTES
-//#define KEY_MAX_LEN_MINUS_12 4 // FOR HASH, just for for-loops for now
 #define key_len_t uint5_t
 #define VALUE_MAX_LEN 16
 #define value_len_t uint5_t
@@ -61,8 +65,8 @@ typedef struct entry_set_t
 } entry_set_t;
 
 // How many of these sets to store?
-#define NUM_ENTRY_SETS 512
-#define addr_t uint9_t
+#define NUM_ENTRY_SETS 1024
+#define addr_t uint10_t
 
 // Packet stuff
 typedef struct memcached_header_t
@@ -95,4 +99,3 @@ typedef struct memcached_packet_s
 	memcached_packet_t data;
 	uint1_t valid;
 } memcached_packet_s;
-

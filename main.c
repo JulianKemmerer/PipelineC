@@ -1,9 +1,9 @@
-
+/*
 #include "axis.h"
 #include "examples/memcached/receive.c"
 #include "examples/memcached/do_requests.c"
 #include "examples/memcached/send.c"
-
+*/
 
 // Memcached in PipelineC
 /*
@@ -33,37 +33,24 @@ axis32_t main(axis32_t mac_axis_rx)
 	return send(result);
 }
 */
-/*
+
 #include "uintN_t.h"
+#include "math.h"
 
-
-uint16_t main(uint16_t x, uint16_t y)
+int32_t main(float theta)
 {	
-	uint16_t z;
-	z = x * y; //Long branch
-	
-	// Short branch
-	uint16_t a;
-	a = x + y;
-	uint16_t b;
-	b = x - y;
-	uint16_t c;
-	c = a + b;
-	uint16_t d;
-	d = a - b;
-	
-	// join up
-	uint16_t e;
-	e = z | d;
-	
-	return e;
-	
+	return theta * CORDIC_MUL;
+}
+
+/*
+cordic32_n32_t main(int32_t theta)
+{	
+	return cordic32_n32(theta);
 }
 */
-
-
+/*
 entry_set_t main(addr_t addr, entry_set_t wd, uint1_t we)
 {
 	return entry_sets_RAM_SP_RF_2(addr, wd, we);
 }
-
+*/
