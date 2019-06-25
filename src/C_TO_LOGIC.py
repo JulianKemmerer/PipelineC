@@ -28,6 +28,7 @@ BIN_OP_LOGIC_NAME_PREFIX="BIN_OP"
 CONST_REF_RD_FUNC_NAME_PREFIX = "CONST_REF_RD"
 VAR_REF_ASSIGN_FUNC_NAME_PREFIX="VAR_REF_ASSIGN"
 VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
+CAST_FUNC_NAME_PREFIX = "CAST"
 RAW_HDL_PREFIX = "RAW_HDL"
 BOOL_C_TYPE = "uint1_t"
 
@@ -1204,13 +1205,12 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_fun
 		#print "containing_func_logic.inst_name",containing_func_logic.inst_name
 		#print "=================================================================="
 		if partially_complete_logic.func_name.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"):
-			# Get the c code
 			c_code_text = SW_LIB.GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
 		elif partially_complete_logic.func_name.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
-			# Get the c code
-			c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
+			c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)	
+		elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
+			c_code_text = SW_LIB.GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)	
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
-			# Get the c code
 			c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
 			c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
@@ -1244,7 +1244,7 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_fun
 			
 		# Parse and return the only func def
 		func_name = partially_complete_logic.func_name
-		print "...",cache_tok.replace(partially_complete_logic.func_name+"_", partially_complete_logic.func_name + " : ")
+		print "...",partially_complete_logic.func_name
 		sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_code_text, parser_state)
 		# Merge into existing
 		for sw_func_name in sw_func_name_2_logic:
@@ -1623,10 +1623,8 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 	driven_wire_names=[lhs_next_wire_assignment_alias]
 	# Do constant number RHS as driver 
 	wire_name = CONST_PREFIX + str(rhs) + "_" + C_AST_NODE_COORD_STR(c_ast_node)
-	const_connect_logic = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
-	parser_state.existing_logic.MERGE_COMB_LOGIC(const_connect_logic)
+	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
 	parser_state.existing_logic.wire_to_c_type[wire_name]=lhs_c_type
-
 
 	# Add alias to list in existing logic
 	existing_aliases = []
@@ -2821,10 +2819,10 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 		print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
 		print "known variables:",parser_state.existing_logic.variable_names
 		print "It looks like variable", var_name, "is not defined?",c_ast_ref.coord
-		for wire in sorted(parser_state.existing_logic.wire_to_c_type):
-			print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
+		#for wire in sorted(parser_state.existing_logic.wire_to_c_type):
+		#	print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
 		#print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
-		print 0/0
+		#print 0/0
 		sys.exit(0)
 		
 	# Is this base type an ID, array or struct ref?
@@ -3018,7 +3016,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			print "first_driving_alias",first_driving_alias
 			sys.exit(0)
 		'''			
-		return SIMPLE_CONNECT_TO_LOGIC(first_driving_alias, driven_wire_names, c_ast_ref, prepend_text, parser_state)		
+		return APPLY_CONNECT_WIRES_LOGIC(parser_state, first_driving_alias, driven_wire_names, prepend_text, c_ast_ref)
+		#return SIMPLE_CONNECT_TO_LOGIC(first_driving_alias, driven_wire_names, c_ast_ref, prepend_text, parser_state)		
 	else:		
 		'''
 		print "ref_toks",ref_toks		
@@ -3312,67 +3311,6 @@ def GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type):
 		output_type = output_type + "[" + str(output_dim) + "]"
 		
 	return output_type
-		
-
-def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
-	existing_logic = parser_state.existing_logic
-	
-	# Connect driving wire to driven wires	
-	connect_logic = CONNECT_WIRES_LOGIC(driving_wire, driven_wire_names)
-	
-	
-	# Technically the existing logic is before this SEQ merge
-	if not(existing_logic is None):
-		first_logic = existing_logic
-		second_logic = connect_logic
-		first_logic.MERGE_SEQ_LOGIC(second_logic)
-		seq_merged_logic = first_logic
-
-		# Look up that type and make sure if the driven wire names have types that they match	
-		#print c_ast_id.coord
-		if not(driving_wire in seq_merged_logic.wire_to_c_type):
-			print "Looks like wire'",driving_wire,"'isn't declared?"
-			print C_AST_NODE_COORD_STR(c_ast_node)
-			sys.exit(0)
-		rhs_type = seq_merged_logic.wire_to_c_type[driving_wire]
-		
-		
-		for driven_wire_name in driven_wire_names:
-			if driven_wire_name in seq_merged_logic.wire_to_c_type:
-				driven_wire_type = seq_merged_logic.wire_to_c_type[driven_wire_name]
-				if driven_wire_type != rhs_type:
-					
-					# Integer promotion / slash supported truncation in C lets this be OK
-					if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],seq_merged_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],seq_merged_logic))
-						and 
-						 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
-							 continue
-					# Enum driving UINT is fine
-					elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],seq_merged_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
-						continue
-					
-					# Otherwise bah!
-					#print "VHDL.WIRES_ARE_UINT_N([driven_wire_name],seq_merged_logic)",VHDL.WIRES_ARE_UINT_N([driven_wire_name],seq_merged_logic)
-					#print "WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state)",WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state)
-					print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
-					print driven_wire_type, "!=", rhs_type
-					sys.exit(0)
-			else:
-				# Driven wire type isnt set, set it
-				seq_merged_logic.wire_to_c_type[driven_wire_name] = rhs_type
-		
-				
-		#print "seq_merged_logic.wire_drives", seq_merged_logic.wire_drives 
-		#print "seq_merged_logic.wire_driven_by", seq_merged_logic.wire_driven_by 
-				
-		# Update parser state since merged in exsiting logic earlier
-		parser_state.existing_logic = seq_merged_logic
-				
-		return seq_merged_logic
-	else:
-		# No existing logic just return connect logic
-		return connect_logic	
-
 
 	
 def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):	
@@ -3449,10 +3387,7 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):
 	
 # ENUM is like constant
 def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
-	existing_logic = parser_state.existing_logic
-	
 	# Create wire for this constant
-	
 	#wire_name =  CONST_PREFIX + str(c_ast_node.type)+ "_"+ str(c_ast_node.value)
 	value = str(c_ast_node.name)
 	#casthelp(c_ast_node)
@@ -3460,34 +3395,10 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
 	#print "==="
 	# Hacky use $ for enum only oh sad
 	wire_name =  CONST_PREFIX + str(value) + "$" + C_AST_NODE_COORD_STR(c_ast_node)
-	rv = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
-	
-	rv.MERGE_COMB_LOGIC(existing_logic)
-	
+	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
 
 	### FUCK CAN'T DO ENUM TYPE CHECKING SINCE OPERATORS IMPLEMENTED AS unsigned compare (not num type compare, for pipelining...)
 	# Hey yeah this sucks
-	'''
-	# Use type of driven wire if available
-	c_type_str = None
-	for driven_wire_name in driven_wire_names:
-		if driven_wire_name in existing_logic.wire_to_c_type:
-			print "driven_wire_name",driven_wire_name
-			type_str = existing_logic.wire_to_c_type[driven_wire_name]
-			if not(c_type_str is None):
-				if type_str != c_type_str:
-					print "Constant driving a wire with multiple types!?"
-					sys.exit(0)
-			c_type_str = type_str
-	if not(c_type_str is None):
-		# Check that this enum const exists for this type
-		ids = parser_state.enum_to_ids_dict[c_type_str]
-		if not(value in ids):
-			print "Enum:",value, "is not part of the enum type:", c_type_str,C_AST_NODE_COORD_STR(c_ast_node)
-			sys.exit(0)	
-	'''
-	
-	parser_state.existing_logic = rv
 		 
 	return rv
 	
@@ -3519,46 +3430,55 @@ def BUILD_CONST_WIRE(value_str, c_ast_node):
 	return CONST_PREFIX + value_str + "_" + C_AST_NODE_COORD_STR(c_ast_node)
 
 # Const jsut makes wire with CONST name
-def C_AST_CONSTANT_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state, is_negated=False):
-	existing_logic = parser_state.existing_logic
-	
+def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):	
 	# Since constants are constants... dont add prepend text or line location info
 	# Create wire for this constant
+	c_type_str = None
 	value_str = c_ast_node.value
 	if value_str.startswith("0x"):
 		hex_str = value_str.replace("0x","") 
 		value = int(hex_str, 16)
+		bits = int(math.ceil(math.log(abs(value)+1,2)))
+		if is_negated:
+			c_type_str = "int" + str(bits+1) + "_t"
+		else:
+			c_type_str = "uint" + str(bits) + "_t"
 	elif "." in value_str:
 		value = float(value_str)
+		c_type_str = "float"
 	else:
 		value = int(value_str)
+		bits = int(math.ceil(math.log(abs(value)+1,2)))
+		if is_negated:
+			c_type_str = "int" + str(bits+1) + "_t"
+		else:
+			c_type_str = "uint" + str(bits) + "_t"
+	
 	
 	if is_negated:
 		value = value * -1
-	#casthelp(c_ast_node)
-	#print "value",value
-	#print "==="
 	wire_name = BUILD_CONST_WIRE(str(value), c_ast_node)
-	rv = CONNECT_WIRES_LOGIC(wire_name, driven_wire_names)
 	
-	rv.MERGE_COMB_LOGIC(existing_logic)
-	
+	# Shouldnt need this now?
+	'''
 	# Use type of driven wire if available
-	c_type_str = None
 	for driven_wire_name in driven_wire_names:
-		if driven_wire_name in existing_logic.wire_to_c_type:
-			type_str = existing_logic.wire_to_c_type[driven_wire_name]
+		if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
+			type_str = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
 			if not(c_type_str is None):
 				if type_str != c_type_str:
 					print "Constant with multiple types!?"
 					sys.exit(0)
 			c_type_str = type_str
+	'''
 	if not(c_type_str is None):
-		rv.wire_to_c_type[wire_name]=c_type_str		
+		parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
 		
-	parser_state.existing_logic = rv
-		 
-	return rv
+		
+	# Connect the constant to the wire it drives
+	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
+			 
+	return parser_state.existing_logic
 	
 def C_AST_ARRAYDECL_TO_LOGIC(c_ast_array_decl, prepend_text, parser_state):
 	existing_logic = parser_state.existing_logic
@@ -4316,7 +4236,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		if type(input_driver) == str:
 			input_port_name = input_port_names[i]
 			driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
-			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, input_driver,[driven_input_port_wire])		
+			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, input_driver,[driven_input_port_wire], prepend_text, func_c_ast_node)		
 	
 	# Finally include types as passed in if able to
 	
@@ -4429,7 +4349,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		# Connect const wire to output wire and return
 		# Do connection using real parser state and logic
 		const_driving_wire = BUILD_CONST_WIRE(const_val_str, func_c_ast_node)
-		parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, const_driving_wire, output_driven_wire_names)
+		parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, const_driving_wire, output_driven_wire_names, prepend_text, func_c_ast_node)
 		# Use type of driven wires if available
 		c_type_str = None
 		for driven_wire_name in output_driven_wire_names:
@@ -4556,6 +4476,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	elif len(output_driven_wire_names) <= 0 and func_base_name!=MUX_LOGIC_NAME:
 		print func_base_name, func_c_ast_node.coord, "does not drive anything?"
 		sys.exit(0)
+		
+	#print "func_base_name",func_base_name,"out",parser_state.existing_logic.wire_to_c_type[output_wire_name]
 	
 	# Is this a constant or reduceable func call?
 	const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
@@ -4635,48 +4557,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		# SAVE TYPE
 		parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = input_driver_type
 		
-	# SHOULDNT NEED THIS SINCE DONE IN TRY FOR CONST REDUCE
-	'''
-	# Can't evaluate mixed wires and cast node inputs, func arg evaluation order is broken?
-		
-	# Input drivers can be c_ast nodes so evaluate those first
-	c_ast_node_2_driven_input_wire_names = OrderedDict()
-	for i in range(0, len(input_drivers)):
-		input_driver = input_drivers[i]
-		if isinstance(input_driver,c_ast.Node):
-			input_port_name = input_port_names[i]
-			input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
-			c_ast_node_2_driven_input_wire_names[input_driver] = [input_wire_name]
-	parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_input_wire_names, prepend_text, parser_state)
-	
-	# Other input drivers are just wires so connect those
-	for i in range(0, len(input_drivers)):
-		input_driver = input_drivers[i]
-		if type(input_driver) == str:
-			input_port_name = input_port_names[i]
-			driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
-			parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, input_driver,[driven_input_port_wire])
-	
-	
-	
-	# NOw inputs have been connected it is useful
-	# Ex. FOR constant funcs x==1
-	# To assign the type of driving wire if not assigned yet
-	for i in range(0, len(input_drivers)):
-		input_port_name = input_port_names[i]
-		input_driver_type = input_driver_types[i]
-		driven_input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
-		if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
-			driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
-			if driving_wire not in parser_state.existing_logic.wire_to_c_type:
-				parser_state.existing_logic.wire_to_c_type[driving_wire] = parser_state.existing_logic.wire_to_c_type[driven_input_wire_name]
-	'''	
-		
 	################################# INPUTS DONE ##########################################
 	
 	# Outputs
 	# Finally connect the output of this operation to each of the driven wires
-	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state.existing_logic, output_wire_name, output_driven_wire_names)
+	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
 	
 	return parser_state.existing_logic
 		
@@ -4940,11 +4825,15 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	right_type = None
 	if bin_op_right_input in parser_state.existing_logic.wire_to_c_type:
 		right_type = parser_state.existing_logic.wire_to_c_type[bin_op_right_input]
-	# Is output type known?	
+	
+	# Can't do this since output is determined by funcitonality - NOT WHAT the functionality drives
 	output_c_type = None
+	'''
+	# Is output type known?
 	if len(driven_wire_names) > 0 and driven_wire_names[0] in parser_state.existing_logic.wire_to_c_type:
 		output_c_type = parser_state.existing_logic.wire_to_c_type[driven_wire_names[0]]
-		
+	'''	
+	
 	# Resolve missing types
 	if (left_type is None) and (right_type is None):
 		if output_c_type is not None:
@@ -5031,151 +4920,150 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		output_c_type = BOOL_C_TYPE
 	else:
 		# Not bool operation
+		# OUTPUT TYPE MUST BE DERIVED FROM FUNCITONALITY
+		'''
+		@BAAHHH<<<<<<<<<<<<<<<<<<<<<<<
 		# Try to get output type from type of driven wire
 		allow_fail = True
 		driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail)
 		if driven_c_type_str is None:
-			# Which ones to use?
-			if (left_type is None) and (right_type is None):
-				print func_inst_name, "doesn't have type information for either inputs OR OUTPUT? What's going on?"
-				print "parser_state.existing_logic.wire_to_c_type"
-				print "bin_op_left_input",bin_op_left_input
-				print "bin_op_right_input",bin_op_right_input
-				print "driven_wire_names",driven_wire_names
-				print "Know types:"
-				print parser_state.existing_logic.wire_to_c_type
-				sys.exit(0)
-			elif not(left_type is None) and (right_type is None):
-				# Left type alone known
-				print func_inst_name, "Binary op with only left input type known?"
-				sys.exit(0)
-				#parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-				#parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = left_type
-			elif (left_type is None) and not(right_type is None):
-				# Right type alone known
-				print func_inst_name, "Binary op with only right input type known?"
-				sys.exit(0)
-				#parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = right_type
-				#parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+		'''
+		# Which ones to use?
+		if (left_type is None) and (right_type is None):
+			print func_inst_name, "doesn't have type information for either inputs OR OUTPUT? What's going on?"
+			print "parser_state.existing_logic.wire_to_c_type"
+			print "bin_op_left_input",bin_op_left_input
+			print "bin_op_right_input",bin_op_right_input
+			print "driven_wire_names",driven_wire_names
+			print "Know types:"
+			print parser_state.existing_logic.wire_to_c_type
+			sys.exit(0)
+		elif not(left_type is None) and (right_type is None):
+			# Left type alone known
+			print func_inst_name, "Binary op with only left input type known?"
+			sys.exit(0)
+			#parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+			#parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = left_type
+		elif (left_type is None) and not(right_type is None):
+			# Right type alone known
+			print func_inst_name, "Binary op with only right input type known?"
+			sys.exit(0)
+			#parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = right_type
+			#parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+		else:
+			# Types for both left and right are known
+			# Derive output
+			# Floats yield floats
+			if left_type == "float" and right_type == "float":
+				output_c_type = "float"
 			else:
-				# Types for both left and right are known
-				# Derive output
-				# Floats yield floats
-				if left_type == "float" and right_type == "float":
-					output_c_type = "float"
-				else:
-					# Ints only
-					if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
-						# Signed?
-						signed = False
-						# Left 
-						left_unsigned_width = None
-						if VHDL.C_TYPE_IS_INT_N(left_type):
-							left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type) - 1
-							signed = True
-						else:
-							left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
-						# Right
-						right_unsigned_width = None
-						if VHDL. C_TYPE_IS_INT_N(right_type):
-							right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type) - 1
-							signed = True
-						else:
-							right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
-						# Max?
-						max_unsigned_width = max(left_unsigned_width, right_unsigned_width)	
+				# Ints only
+				if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
+					# Signed?
+					signed = False
+					# Left 
+					left_unsigned_width = None
+					if VHDL.C_TYPE_IS_INT_N(left_type):
+						left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type) - 1
+						signed = True
 					else:
-						print "Adding non numbers?"
-						sys.exit(0)
-				
-					# Operator determines output type
-					# ADD
-					if c_ast_bin_op_str == "+":
-						# Result width is roughly max width + 1
-						# Ex. int32 + uint32 , result need to hold uint33 and int33, thus int34 it is
+						left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+					# Right
+					right_unsigned_width = None
+					if VHDL. C_TYPE_IS_INT_N(right_type):
+						right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type) - 1
+						signed = True
+					else:
+						right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+					# Max?
+					max_unsigned_width = max(left_unsigned_width, right_unsigned_width)	
+				else:
+					print "Adding non numbers?"
+					sys.exit(0)
+			
+				# Operator determines output type
+				# ADD
+				if c_ast_bin_op_str == "+":
+					# Result width is roughly max width + 1
+					# Ex. int32 + uint32 , result need to hold uint33 and int33, thus int34 it is
+					output_unsigned_width = max_unsigned_width + 1
+					output_width = output_unsigned_width
+					if signed:
+						output_width = output_unsigned_width + 1
+					output_c_type = "int"+str(output_width) + "_t"
+					if not signed:
+						output_c_type = "u" + output_c_type			
+				# SUB
+				elif c_ast_bin_op_str == "-":
+					# uint - uint
+					if VHDL.C_TYPE_IS_UINT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(right_type):
+						# Width doesnt increase - is equal to LHS size
+						output_c_type = "uint"+str(left_unsigned_width) + "_t"
+					# int - uint
+					elif VHDL.C_TYPE_IS_INT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(right_type):
+						# Width doesnt increase - is equal to LHS signed size
+						output_c_type = "int"+str(left_unsigned_width+1) + "_t"
+					# uint - int
+					# int - int
+					else:
+						# RHS is signed
+						# Subtracting an int is like adding a uint
+						# So width can increase
+						# Do like + operation
 						output_unsigned_width = max_unsigned_width + 1
 						output_width = output_unsigned_width
 						if signed:
 							output_width = output_unsigned_width + 1
 						output_c_type = "int"+str(output_width) + "_t"
 						if not signed:
-							output_c_type = "u" + output_c_type			
-					# SUB
-					elif c_ast_bin_op_str == "-":
-						# uint - uint
-						if VHDL.C_TYPE_IS_UINT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(right_type):
-							# Width doesnt increase - is equal to LHS size
-							output_c_type = "uint"+str(left_unsigned_width) + "_t"
-						# int - uint
-						elif VHDL.C_TYPE_IS_INT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(right_type):
-							# Width doesnt increase - is equal to LHS signed size
-							output_c_type = "int"+str(left_unsigned_width+1) + "_t"
-						# uint - int
-						# int - int
-						else:
-							# RHS is signed
-							# Subtracting an int is like adding a uint
-							# So width can increase
-							# Do like + operation
-							output_unsigned_width = max_unsigned_width + 1
-							output_width = output_unsigned_width
-							if signed:
-								output_width = output_unsigned_width + 1
-							output_c_type = "int"+str(output_width) + "_t"
-							if not signed:
-								output_c_type = "u" + output_c_type
-					# MULT
-					elif c_ast_bin_op_str == "*":
-						# Similar to + but bit growth is more
-						# Ex. int32 * uint32 , result need to hold int3 and int33, thus int34 it is
-						output_unsigned_width = left_unsigned_width + right_unsigned_width
-						output_width = output_unsigned_width
-						if signed:
-							output_width = output_unsigned_width + 1
-						output_c_type = "int"+str(output_width) + "_t"
-						if not signed:
-							output_c_type = "u" + output_c_type			
-					# DIV
-					elif c_ast_bin_op_str == "/":
-						# Signed or not, output width does not increase
-						# Is based on LHS type
-						output_unsigned_width = left_unsigned_width
-						if signed:
-							output_width = output_unsigned_width + 1
-						output_c_type = "int"+str(output_width) + "_t"
-						if not signed:
 							output_c_type = "u" + output_c_type
-						
-						output_c_type = driven_c_type_str
-					# BITWISE OPS
-					elif ( 
-					       (c_ast_bin_op_str == "&") or
-					       (c_ast_bin_op_str == "|") or
-					       (c_ast_bin_op_str == "^")
-					     ):
-						# Is sized to max
-						output_unsigned_width = max_unsigned_width
-						output_width = output_unsigned_width
-						if signed:
-							output_width = output_unsigned_width + 1
-						output_c_type = "int"+str(output_width) + "_t"
-						if not signed:
-							output_c_type = "u" + output_c_type
-					# Shifts
-					elif c_ast_bin_op_str == "<<":
-						# Shifting left returns type of left operand
-						output_c_type = left_type
-					elif c_ast_bin_op_str == ">>":
-						# Shifting right returns type of left operand
-						output_c_type = left_type
-					else:
-						print "Output C type for '" + c_ast_bin_op_str + "'?"
-						sys.exit(0)
-	
-		else:
-			# Output type of this binary op is already known, use it
-			output_c_type = driven_c_type_str
-
+				# MULT
+				elif c_ast_bin_op_str == "*":
+					# Similar to + but bit growth is more
+					# Ex. int32 * uint32 , result need to hold int3 and int33, thus int34 it is
+					output_unsigned_width = left_unsigned_width + right_unsigned_width
+					output_width = output_unsigned_width
+					if signed:
+						output_width = output_unsigned_width + 1
+					output_c_type = "int"+str(output_width) + "_t"
+					if not signed:
+						output_c_type = "u" + output_c_type			
+				# DIV
+				elif c_ast_bin_op_str == "/":
+					# Signed or not, output width does not increase
+					# Is based on LHS type
+					output_unsigned_width = left_unsigned_width
+					if signed:
+						output_width = output_unsigned_width + 1
+					output_c_type = "int"+str(output_width) + "_t"
+					if not signed:
+						output_c_type = "u" + output_c_type
+					
+					output_c_type = driven_c_type_str
+				# BITWISE OPS
+				elif ( 
+					   (c_ast_bin_op_str == "&") or
+					   (c_ast_bin_op_str == "|") or
+					   (c_ast_bin_op_str == "^")
+					 ):
+					# Is sized to max
+					output_unsigned_width = max_unsigned_width
+					output_width = output_unsigned_width
+					if signed:
+						output_width = output_unsigned_width + 1
+					output_c_type = "int"+str(output_width) + "_t"
+					if not signed:
+						output_c_type = "u" + output_c_type
+				# Shifts
+				elif c_ast_bin_op_str == "<<":
+					# Shifting left returns type of left operand
+					output_c_type = left_type
+				elif c_ast_bin_op_str == ">>":
+					# Shifting right returns type of left operand
+					output_c_type = left_type
+				else:
+					print "Output C type for '" + c_ast_bin_op_str + "'?"
+					sys.exit(0)
 	
 	# Set type for output wire
 	bin_op_output=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
@@ -5235,34 +5123,105 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 			return FIND_CONST_DRIVING_WIRE(driving_wire, logic)
 		else:
 			return None		
-			
-def CONNECT_WIRES_LOGIC(driving_wire, driven_wire_names):	
-	return APPLY_CONNECT_WIRES_LOGIC(Logic(), driving_wire, driven_wire_names)
-	
-def APPLY_CONNECT_WIRES_LOGIC(logic, driving_wire, driven_wire_names):
+
+#def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
+def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node):
 	# Add wires if not there
-	if driving_wire not in logic.wires:
-		logic.wires.append(driving_wire)	
+	if driving_wire not in parser_state.existing_logic.wires:
+		parser_state.existing_logic.wires.append(driving_wire)	
 	for driven_wire_name in driven_wire_names:
-		if driven_wire_name not in logic.wires:
-			logic.wires.append(driven_wire_name)
+		if driven_wire_name not in parser_state.existing_logic.wires:
+			parser_state.existing_logic.wires.append(driven_wire_name)
+	
+	
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~	
+	# Look up that type and make sure if the driven wire names have types that they match
+	# INSERT CAST FUNCTION if needed
+	#print c_ast_id.coord
+	if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
+		print "Looks like wire'",driving_wire,"'isn't declared?"
+		print C_AST_NODE_COORD_STR(c_ast_node)
+		print 0/0
+		sys.exit(0)
+	rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
+	for driven_wire_name in driven_wire_names:
+		if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
+			driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+			if driven_wire_type != rhs_type:
+				
+				#######
+				# Some C casts are handled in VHDL with resize or enum conversions
+				# 
+				# Integer promotion / slash supported truncation in C lets this be OK
+				if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
+					and 
+					 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
+						 continue
+				# Enum driving UINT is fine
+				elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
+					continue
+				
+				#######
+				# At this point we have incompatible types that need special casting parser_state.existing_logic
+				# 		Build cast function to connect driving wire to driven wire
+				# int = float
+				if rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type):
+					# Return n arg func
+					func_base_name = CAST_FUNC_NAME_PREFIX
+					base_name_is_name = False # append types in name too
+					input_drivers = [driving_wire]
+					input_driver_types = [rhs_type]
+					input_port_names = ["rhs"]
+					output_driven_wire_names = driven_wire_names
+					# Build instance name
+					func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
+					# Record output port type
+					output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+					parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
+					
+					return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+						prepend_text,
+						c_ast_node,
+						func_base_name,
+						base_name_is_name,
+						input_drivers, 
+						input_driver_types,
+						input_port_names,
+						output_driven_wire_names,
+						parser_state)
+
+				else:
+					# Unhandled
+					print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
+					print driven_wire_type, "!=", rhs_type
+					sys.exit(0)
 		
+		# This is supicious?
+		else:
+			# Driven wire type isnt set, set it
+			parser_state.existing_logic.wire_to_c_type[driven_wire_name] = rhs_type
+	# ^^^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
+			
+	
+	#########   Record connnnnections in the parser_state.existing_logic graph ######	 
 	# Record wire_drives
 	all_driven_wire_names = []
 	# Start with existing driven wires
-	if driving_wire in logic.wire_drives:
-		all_driven_wire_names = logic.wire_drives[driving_wire]
+	if driving_wire in parser_state.existing_logic.wire_drives:
+		all_driven_wire_names = parser_state.existing_logic.wire_drives[driving_wire]
 	# Append the new wires
 	for driven_wire_name in driven_wire_names:
 		if driven_wire_name not in all_driven_wire_names:
 			all_driven_wire_names.append(driven_wire_name)
 	# Save
-	logic.wire_drives[driving_wire] = all_driven_wire_names
+	parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wire_names
 	# Record wire_driven_by
 	for driven_wire_name in driven_wire_names:
-		logic.wire_driven_by[driven_wire_name] = driving_wire
+		parser_state.existing_logic.wire_driven_by[driven_wire_name] = driving_wire		
+	#print "parser_state.existing_logic.wire_drives", parser_state.existing_logic.wire_drives 
+	#print "parser_state.existing_logic.wire_driven_by", parser_state.existing_logic.wire_driven_by 
 		
-	return logic
+	return parser_state.existing_logic
 	
 # int x[2]     returns "x", "int", 2
 # int x[2][2]  returns "x", "int[2]", 2

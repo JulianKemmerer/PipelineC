@@ -249,8 +249,9 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 		return True
 	
 	# IS NOT RAW VHDL
-	if (  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")                                                                    or  
+	elif (  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")                                                                    or  
 		  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")                                                                or
+		  logic_func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX + "_")                                                                          or
 		  logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME)                                          or
 		  logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MULT_NAME)                                         or
 		( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SL_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or # ASSUME FOR NOW
@@ -715,9 +716,10 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	
 	rv = ""
-	rv += "library IEEE;" + "\n"
-	rv += "use IEEE.STD_LOGIC_1164.ALL;" + "\n"
+	rv += "library iee;" + "\n"
+	rv += "use iee.std_logic_1164.all;" + "\n"
 	rv += "use ieee.numeric_std.all;" + "\n"
+	rv += "use ieee.float_pkg.all;" + "\n"
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
 	
@@ -1224,32 +1226,18 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 	# If a constant 
 	if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name, inst_name):
-		ami_digit = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
-		ami_digit_no_neg = ami_digit.strip("-")
-		if ami_digit.isdigit():
-			# Check for unsigned digit constant
-			# unsigned 0 downto 0 needs special cast?
-			c_type =  Logic.wire_to_c_type[wire_name]
+		# Use type to cast value string to type
+		c_type =  Logic.wire_to_c_type[wire_name]
+		val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
+		
+		if C_TYPE_IS_UINT_N(c_type):
 			width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-			is_signed = C_TYPE_IS_INT_N(c_type)
-			if is_signed:
-				return "to_signed(" + ami_digit + ", " + str(width) + ")"
-			else:
-				return "to_unsigned(" + ami_digit + ", " + str(width) + ")"
-		elif ami_digit_no_neg.isdigit():
-			# Check for neg signed constant
-			c_type =  Logic.wire_to_c_type[wire_name]
+			return "to_unsigned(" + val_str + ", " + str(width) + ")"
+		elif C_TYPE_IS_INT_N(c_type):
 			width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-			is_signed = C_TYPE_IS_INT_N(c_type)
-			if is_signed:
-				return "to_signed(" + ami_digit + ", " + str(width) + ")"
-			else:
-				return "to_unsigned(" + ami_digit + ", " + str(width) + ")"
-		#elif Logic.wire_to_c_type[wire_name] in 
-		#else:
-		#	print "What to do with this const wire const?",wire_name,
-		#	print toks
-		#	sys.exit(0)
+			return "to_signed(" + val_str + ", " + str(width) + ")"
+		elif c_type == "float":
+			return "to_float(" + val_str + ", 8, -23)"
 		else:
 			# ASSUMING ENUM AAUAUGHGHGHG????
 			#print "wire_name",wire_name

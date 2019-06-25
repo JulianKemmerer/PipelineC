@@ -1415,14 +1415,14 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
-		print "BLAH CANT COMBINE INT LT/LTE IN SAME RAW VHDL TODO: take from float lt lte??"
+		print "DO INT LT/LTE like INT GT/GTE"
 		sys.exit(0)
 		return #GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
 		return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
 		print logic.c_ast_node
-		print "Binary op LT for type?"
+		print "Binary op LT for type?", logic.c_ast_node.coord
 		sys.exit(0)
 		
 def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, op_str):
@@ -1430,16 +1430,14 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
-		print "BLAH CANT COMBINE INT GT/GTE IN SAME RAW VHDL TODO: take from float gt gte"
-		sys.exit(0)
-		return #GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
+		return GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
 		return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
-		print "Binary op GT for type?"
+		print "Binary op GT/GTE for type?", logic.c_ast_node.coord
 		sys.exit(0)
 		
-def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params):
+def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str):
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
 	left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
@@ -1535,8 +1533,14 @@ def GET_BIN_OP_GT_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(l
 		# More stages?
 		if stage == (num_stages - 1):
 			# Last stage so no else if
-			text += '''
+			# Maybe include or equal in this last stage -  sad. Chaos Arpeggiating - of Montreal 
+			if op_str.endswith("="):
+				text += '''
+			-- OR EQUAL
+			write_pipe.return_output_bool := write_pipe.return_output_bool or (not write_pipe.inequality_found and write_pipe.same_sign);'''
 			
+			# Convert bool to unsigned
+			text += '''
 			if write_pipe.return_output_bool then
 				write_pipe.return_output := (others => '1');
 			else
@@ -1609,7 +1613,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	# Write bound of loop per stage 
 	stage = 0
-	up_bound = width - 1 # Skip sign (which should be 0 for abs values)
+	up_bound = width - 1
 	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0, num_stages):
 		# Do stage logic / bit pos increment if > 0 bits this stage
@@ -1620,15 +1624,21 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 				if write_pipe.inequality_found = false then
 					write_pipe.inequality_found := ( write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') /= write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') ) ;
 					-- Compare magnitude
-					write_pipe.return_output_bool := ( write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') ''' + op_str + ''' write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') );
+					write_pipe.return_output_bool := ( write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') < write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') );
 				end if;'''
 		
 		
 		# More stages?
 		if stage == (num_stages - 1):
 			# Last stage so no else if
-			text += '''
+			# Maybe include or equal in this last stage -  sad. How I Left the Ministry - The Mountain Goats
+			if op_str.endswith("="):
+				text += '''
+			-- OR EQUAL
+			write_pipe.return_output_bool := write_pipe.return_output_bool or not write_pipe.inequality_found'''
 			
+			# Convert bool to unsigned
+			text += '''
 			if write_pipe.return_output_bool then
 				write_pipe.return_output := (others => '1');
 			else

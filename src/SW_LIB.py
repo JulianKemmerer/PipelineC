@@ -14,15 +14,7 @@ import VHDL
 BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
 MEM_HEADER_FILE = "mem.h"
-
 RAM_SP_RF="RAM_SP_RF"
-
-### HACKY
-# Add bit manip pre VHDL insert for NON C?????????????????
-
-# C supports 'integer promotion' = supports assignment to larger bit widths
-# Sw will simulate with type defs
-# Hacky special parsing of bit widths to be variable width descriptions?
 
 
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
@@ -1237,6 +1229,125 @@ def GENERATE_INT_N_HEADERS(max_bit_width=2048):
 		f.write(text)
 		f.close()
 		
+def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+	func_name = partially_complete_logic.func_name
+	
+	# For now assuming is float to int
+	input_wire = partially_complete_logic.inputs[0]
+	in_t = partially_complete_logic.wire_to_c_type[input_wire]
+	output_wire = partially_complete_logic.outputs[0]
+	out_t = partially_complete_logic.wire_to_c_type[output_wire]
+	if not(in_t == "float" and VHDL.C_TYPE_IS_INT_N(out_t)):
+		print "Implement more casting: Easy/Lucky/Free Bright Eyes"
+		print in_t, out_t
+		sys.exit(0)
+		
+	# I HATE TWOS COMPLEMENT   # A Day In The Life - The Beatles
+	
+	######## COPIED FLOAT STUFF FROM THE FUTURE
+	mantissa_range = [22,0]
+	mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+	mantissa_t_prefix = "uint" + str(mantissa_width)
+	mantissa_t = mantissa_t_prefix + "_t"
+	exponent_range = [30,23]
+	exponent_width = exponent_range[0] - exponent_range[1] + 1
+	exponent_t_prefix = "uint" + str(exponent_width)
+	exponent_t = exponent_t_prefix + "_t"
+	exponent_width_plus1 = exponent_width + 1
+	exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+	exponent_wide_t = exponent_wide_t_prefix + "_t"
+	exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+	exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+	sign_index = 31
+	sign_width = 1
+	sign_t_prefix = "uint" + str(sign_width)
+	sign_t = sign_t_prefix + "_t"
+	
+	text = ""
+	text += '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "''' + BIT_MATH_HEADER_FILE + '''"
+
+// CAST
+''' + out_t + " " + func_name+"("+ in_t + ''' rhs)
+{
+	// Break into SEM
+	''' + mantissa_t + ''' mantissa;
+	mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(rhs);
+	''' + exponent_t + ''' biased_exponent;
+	biased_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(rhs);
+	''' + sign_t + ''' sign;
+	sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(rhs);'''
+	
+	# Get real unbiased exponent
+	signed_exponent_t = "int" + str(exponent_width_plus1) + "_t"
+	unbiased_exponent_t = "int" + str(exponent_width) + "_t"
+	text += '''
+	''' + signed_exponent_t + ''' signed_biased_exponent;
+	signed_biased_exponent = biased_exponent;
+	''' + unbiased_exponent_t + ''' unbiased_exponent;
+	unbiased_exponent = signed_biased_exponent - ''' + str(exponent_bias_to_add) + ''';'''
+	
+	# Append the 1 in front of the manitissa
+	mantissa_width_plus_1 = mantissa_width+1
+	mantissa_normalized_t = "uint" + str(mantissa_width_plus_1) + "_t"
+	text += '''
+	''' + mantissa_normalized_t + ''' mantissa_normalized;
+	mantissa_normalized = uint1_''' + mantissa_t_prefix + '''(1, mantissa);'''
+	
+	# 24th bit is 1 so need to include that when shifting
+	# Output width of cast limits how far we should bother shifting before overflowing into undefined output
+	# Casting to int so actual unsigned width is less
+	out_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(out_t)
+	unsigned_width = out_width - 1
+	total_shift_max = unsigned_width
+	shift_bit_size = int(math.ceil(math.log(total_shift_max+1,2.0)))
+	shift_t = "uint" + str(shift_bit_size) + "_t"
+	interm_size = mantissa_width_plus_1 + unsigned_width
+	interm_prefix = "uint" + str(interm_size)
+	interm_t = interm_prefix + "_t"
+	# Extend mantissa with zeros
+	text += '''
+	''' + interm_t + ''' interm;
+	interm = mantissa_normalized;'''
+	# Shift mantissa with hidden bit if greater or equal to 0 and up a limit
+	text += '''
+	if( (unbiased_exponent >= 0) & (unbiased_exponent <= ''' + str(total_shift_max) + ''') )
+	{
+		''' + shift_t + ''' shift;
+		shift = unbiased_exponent;
+		interm = interm << shift;
+	}else if(unbiased_exponent < 0) // Round to zero?
+	{
+		interm = 0;
+	}'''
+	
+	# Take result from top of shifted interm mantissa
+	top_index = interm_size - 1
+	bottom_index = top_index - unsigned_width + 1
+	unsigned_result_prefix = "uint" + str(unsigned_width)
+	unsigned_result_t = unsigned_result_prefix  + "_t"
+	text += '''
+	''' + unsigned_result_t + ''' unsigned_result;
+	unsigned_result = ''' + interm_prefix + "_" + str(top_index) + "_" + str(bottom_index) + '''(interm);'''
+	
+	# Negate if necessary
+	text += '''
+	''' + out_t + ''' rv;
+	rv = unsigned_result;
+	if(sign)
+	{
+		rv = ''' + unsigned_result_prefix + '''_negate(unsigned_result);
+	}
+	return rv;
+}
+'''
+
+	return text
+	
+	
+		
 ### Ahh fuck taking the easy way 
 # Copying implemetnation from 		GET_VAR_REF_ASSIGN_C_CODE
 # Might actually be worth it
@@ -1754,7 +1865,8 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 	if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
 		return GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
 	else:
-		print "GET_BIN_OP_SL_C_CODE Only sl uint for now! DO ARITHMETIC SHIFT for INT"
+		# DO ARITHMETIC SHIFT for INT LHS
+		print "GET_BIN_OP_SL_C_CODE Only sl uint for now!"
 		sys.exit(0)	
 			
 def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):

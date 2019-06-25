@@ -35,7 +35,7 @@ axis32_t main(axis32_t mac_axis_rx)
 */
 
 #include "uintN_t.h"
-#include "math.h"
+#define CORDIC_MUL 1073741824.000000
 
 int32_t main(float theta)
 {	
