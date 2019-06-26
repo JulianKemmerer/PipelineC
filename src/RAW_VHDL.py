@@ -1430,14 +1430,14 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
 	# Binary operation between what two types?
 	# Only ints for now, check all inputs
 	if VHDL.WIRES_ARE_INT_N(logic.inputs,logic):
-		return GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str)
+		return GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
 		return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
 	else:
 		print "Binary op GT/GTE for type?", logic.c_ast_node.coord
 		sys.exit(0)
 		
-def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, op_str):
+def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
 	left_type = logic.wire_to_c_type[logic.inputs[0]]
 	right_type = logic.wire_to_c_type[logic.inputs[1]]
 	left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)

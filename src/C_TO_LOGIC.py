@@ -4857,6 +4857,24 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	else:
 		# Different types set for each input
 		pass
+		
+	# If types are integers then check signed/unsigned matches
+	# 	Change type from unsigned to sign by adding bit to type
+	#		Never change signed to unsigned dumb
+	if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
+		left_signed = VHDL.C_TYPE_IS_INT_N(left_type)
+		right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
+		left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+		right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+		if left_signed != right_signed:
+			if left_signed:
+				# Update right
+				right_type = "int" + str(right_width+1) + "_t"
+				parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type	
+			if right_signed:
+				# Update left
+				left_type = "int" + str(left_width+1) + "_t"
+				parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 	
 	# Replace ENUM with INT type of input wire so cast happens? :/?
 	# Left
