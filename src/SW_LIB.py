@@ -1325,7 +1325,7 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
 	
 	# Take result from top of shifted interm mantissa
 	top_index = interm_size - 1
-	bottom_index = top_index - unsigned_width + 1
+	bottom_index = mantissa_width
 	unsigned_result_prefix = "uint" + str(unsigned_width)
 	unsigned_result_t = unsigned_result_prefix  + "_t"
 	text += '''

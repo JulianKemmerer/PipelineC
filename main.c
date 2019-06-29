@@ -35,11 +35,11 @@ axis32_t main(axis32_t mac_axis_rx)
 */
 
 #include "uintN_t.h"
-#define CORDIC_MUL 1073741824.000000
+//#define CORDIC_MUL 1073741824.000000
 
-int32_t main(float theta)
+int32_t main(float x)
 {	
-	return theta * CORDIC_MUL;
+	return x; //CASTYNASTY
 }
 
 /*

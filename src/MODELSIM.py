@@ -11,6 +11,7 @@ import C_TO_LOGIC
 import VHDL
 import SW_LIB
 import SYN
+import VIVADO
 
 #MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim"
 MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
@@ -40,12 +41,7 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 						vhd_files.append(abs_path)
 				else:
 					vhd_files.append(abs_path)
-			
-		
-			
-	# Create modelsim script (do?)
-	# /media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim
-	#top_entity_name = top_dir.strip("/").strip("]").replace("]","_").replace("[","_").replace("/","_").replace(".","_") # .main_BIN_OP_SL_main_c_7_top"
+	# DO FILE to execute:
 	
 	proj_name = "debug_proj"
 	proj_dir = SYN.SYN_OUTPUT_DIRECTORY + "/"
@@ -53,13 +49,20 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 	text += '''
 	project new {''' + proj_dir + '''} ''' + proj_name + '''
 	'''
+	
+	# Compile ieee_proposed in fixed/float support?
+	#text += '''project addfile {''' + VIVADO.VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd" + '''}\n'''
+	#text += '''project addfile {''' + VIVADO.VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd" + '''}\n'''
+	text += '''vcom -work ieee_proposed -2002 -explicit -stats=none ''' + VIVADO.VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd" + "\n"
+	text += '''vcom -work ieee_proposed -2002 -explicit -stats=none ''' + VIVADO.VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd" + "\n"	
+	
 	# Add all files
 	for vhd_file in vhd_files:
 		text += '''
 	project addfile {''' + vhd_file + '''}
-'''
+	'''
 	
-	# Compile
+	# Compile to work library?
 	text += '''
 	project calculateorder
 	project compileall

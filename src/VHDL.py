@@ -668,6 +668,18 @@ def GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable):
 	return rv;
 	
 def GET_VHDL_FUNC_DECL(vhdl_func_logic, parser_state, timing_params):
+	
+	# Modelsim doesnt like 'subtype' names in funcs?
+	# (vcom-1115) Subtype indication found where type mark is required.
+	def modeldumbsim(vhdl_type_str):
+		if vhdl_type_str.startswith("unsigned"):
+			vhdl_type_str = "unsigned"
+		if vhdl_type_str.startswith("signed"):
+			vhdl_type_str = "signed"
+		if vhdl_type_str.startswith("std_logic_vector"):
+			vhdl_type_str = "std_logic_vector"
+		return vhdl_type_str		
+	
 	rv = ""
 	
 	rv = '''
@@ -675,7 +687,8 @@ function ''' + vhdl_func_logic.func_name + '''('''
 	# The inputs of the Logic
 	for input_name in vhdl_func_logic.inputs:
 		# Get type for input
-		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,vhdl_func_logic,parser_state)	
+		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,vhdl_func_logic,parser_state)
+		vhdl_type_str = modeldumbsim(vhdl_type_str)		
 		rv += "	" + WIRE_TO_VHDL_NAME(input_name, vhdl_func_logic) + " : " + vhdl_type_str + ";\n"
 	
 	# Remove last line and semi
@@ -684,6 +697,7 @@ function ''' + vhdl_func_logic.func_name + '''('''
 	
 	# Output is type of return wire
 	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(vhdl_func_logic.outputs[0],vhdl_func_logic,parser_state)
+	vhdl_type_str = modeldumbsim(vhdl_type_str)
 	
 	# Finish params
 	rv += ") return " + vhdl_type_str + " is\n"
