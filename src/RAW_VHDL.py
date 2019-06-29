@@ -1481,7 +1481,7 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	
 	
 		
-	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(unsigned_width, timing_params)
 	
 	
 	
@@ -1590,7 +1590,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
 	num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1	
-	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+	bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(unsigned_width, timing_params)
 	
 	# Write loops to do operation
 	text = ""

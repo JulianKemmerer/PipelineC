@@ -15,7 +15,7 @@ mhz = SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
 
 print "TODO:"
 print "	Got rid of pipeline map cache... is slow now?"
-print "	Yo dummy dont make built in operations have resize() and whacky/unpredictable output types, thats implied outside of func / in containing func by integer promotion"
+print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places..."
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."

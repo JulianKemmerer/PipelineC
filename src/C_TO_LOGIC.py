@@ -3439,6 +3439,8 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
 		hex_str = value_str.replace("0x","") 
 		value = int(hex_str, 16)
 		bits = int(math.ceil(math.log(abs(value)+1,2)))
+		if bits == 0:
+			bits = 1
 		if is_negated:
 			c_type_str = "int" + str(bits+1) + "_t"
 		else:
@@ -3449,6 +3451,8 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
 	else:
 		value = int(value_str)
 		bits = int(math.ceil(math.log(abs(value)+1,2)))
+		if bits == 0:
+			bits = 1
 		if is_negated:
 			c_type_str = "int" + str(bits+1) + "_t"
 		else:

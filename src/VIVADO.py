@@ -18,7 +18,8 @@ import MODELSIM
 import SYN
 
 #VIVADO_PATH = "/media/1TB/Programs/Linux/Xilinx/Vivado/2014.4/bin/vivado"
-VIVADO_PATH = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2/bin/vivado"
+VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
+VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch"
 TIMING_REPORT_DIVIDER="......................THIS IS THAT STUPID DIVIDER THING................"
 
@@ -527,6 +528,12 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupT
 	timing_params = TimingParamsLookupTable[Logic.inst_name]
 	rv = ""
 	
+	# Add in VHDL 2008 fixed/float support?
+	rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd\n"
+	rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd]\n"
+	rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd\n"
+	rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd]\n"
+	
 	# Read in vhdl files with a single (faster than multiple) read_vhdl
 	files_txt = ""
 	
@@ -555,7 +562,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupT
 	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
 	
 	# Single read vhdl line
-	rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n"
+	rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
 	
 	# Single xdc with single clock for now
 	rv += 'read_xdc {' + clk_xdc_filepath + '}\n'

@@ -58,8 +58,8 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
 	
 	rv = ""
-	rv += "library IEEE;" + "\n"
-	rv += "use IEEE.STD_LOGIC_1164.ALL;" + "\n"
+	rv += "library ieee;" + "\n"
+	rv += "use ieee.std_logic_1164.all;" + "\n"
 	rv += "use ieee.numeric_std.all;" + "\n"
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
@@ -716,10 +716,11 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	
 	rv = ""
-	rv += "library iee;" + "\n"
-	rv += "use iee.std_logic_1164.all;" + "\n"
+	rv += "library ieee;" + "\n"
+	rv += "use ieee.std_logic_1164.all;" + "\n"
 	rv += "use ieee.numeric_std.all;" + "\n"
-	rv += "use ieee.float_pkg.all;" + "\n"
+	rv += "library ieee_proposed;" + "\n"
+	rv += "use ieee_proposed.float_pkg.all;" + "\n" #
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
 	
@@ -1237,7 +1238,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 			width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
 			return "to_signed(" + val_str + ", " + str(width) + ")"
 		elif c_type == "float":
-			return "to_float(" + val_str + ", 8, -23)"
+			return "to_slv(to_float(" + val_str + ", 8, 23))"
 		else:
 			# ASSUMING ENUM AAUAUGHGHGHG????
 			#print "wire_name",wire_name
