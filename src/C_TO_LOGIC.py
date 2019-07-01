@@ -1588,6 +1588,7 @@ def GET_MOST_RECENT_ALIAS(logic,orig_var_name):
 # Bleh this is useful for for loop
 # Maybe if I keep it near the regular assignment I will remember to fix bugs here too
 # Maybe
+# or maybe bugs will find you in your sleep
 def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_names, prepend_text, parser_state):	
 	lhs_ref_toks = [lhs_orig_var_name]
 	# For now only do constant on RHS
@@ -1619,12 +1620,14 @@ def FAKE_ASSIGNMENT_TO_LOGIC(lhs_orig_var_name, rhs, c_ast_node, driven_wire_nam
 	# Type of alias wire is same as original wire
 	parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
 	
-
-	driven_wire_names=[lhs_next_wire_assignment_alias]
 	# Do constant number RHS as driver 
-	wire_name = CONST_PREFIX + str(rhs) + "_" + C_AST_NODE_COORD_STR(c_ast_node)
-	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
-	parser_state.existing_logic.wire_to_c_type[wire_name]=lhs_c_type
+	driven_wire_names=[lhs_next_wire_assignment_alias]
+	value_str=str(rhs)
+	is_negated = False
+	if value_str.startswith("-"):
+		value_str = value_str.lstrip("-")
+		is_negated = True
+	parser_state.existing_logic = CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
 	# Add alias to list in existing logic
 	existing_aliases = []
@@ -3435,6 +3438,9 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
 	# Create wire for this constant
 	c_type_str = None
 	value_str = c_ast_node.value
+	return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
+
+def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
 	if value_str.startswith("0x"):
 		hex_str = value_str.replace("0x","") 
 		value = int(hex_str, 16)
@@ -3463,18 +3469,6 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
 		value = value * -1
 	wire_name = BUILD_CONST_WIRE(str(value), c_ast_node)
 	
-	# Shouldnt need this now?
-	'''
-	# Use type of driven wire if available
-	for driven_wire_name in driven_wire_names:
-		if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
-			type_str = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
-			if not(c_type_str is None):
-				if type_str != c_type_str:
-					print "Constant with multiple types!?"
-					sys.exit(0)
-			c_type_str = type_str
-	'''
 	if not(c_type_str is None):
 		parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
 		
@@ -4352,21 +4346,13 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 				
 		# Connect const wire to output wire and return
 		# Do connection using real parser state and logic
-		const_driving_wire = BUILD_CONST_WIRE(const_val_str, func_c_ast_node)
-		parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, const_driving_wire, output_driven_wire_names, prepend_text, func_c_ast_node)
-		# Use type of driven wires if available
-		c_type_str = None
-		for driven_wire_name in output_driven_wire_names:
-			if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
-				type_str = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
-				if not(c_type_str is None):
-					if type_str != c_type_str:
-						print "Constant with multiple types666!?"
-						sys.exit(0)
-				c_type_str = type_str
-		if c_type_str is not None:
-			parser_state.existing_logic.wire_to_c_type[const_driving_wire]=c_type_str
-	
+		is_negated = False
+		if const_val_str.startswith("-"):
+			const_val_str = const_val_str.lstrip("-")
+			is_negated = True
+		parser_state.existing_logic = CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated)
+		
+		
 		return parser_state.existing_logic
 	
 	
@@ -4880,6 +4866,14 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 				left_type = "int" + str(left_width+1) + "_t"
 				parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 	
+	# If one side is a float then convert both sides ot float
+	if left_type == "float":
+		right_type = "float"
+		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type	
+	if right_type == "float":
+		left_type = "float"
+		parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+	
 	# Replace ENUM with INT type of input wire so cast happens? :/?
 	# Left
 	if left_type in parser_state.enum_to_ids_dict:
@@ -5187,7 +5181,10 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 				# At this point we have incompatible types that need special casting parser_state.existing_logic
 				# 		Build cast function to connect driving wire to driven wire
 				# int = float
-				if rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type):
+				# float = int
+				if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
+				      (rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type))
+				    ):
 					# Return n arg func
 					func_base_name = CAST_FUNC_NAME_PREFIX
 					base_name_is_name = False # append types in name too
@@ -5216,6 +5213,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 					# Unhandled
 					print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
 					print driven_wire_type, "!=", rhs_type
+					print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
 					sys.exit(0)
 		
 		# This is supicious?

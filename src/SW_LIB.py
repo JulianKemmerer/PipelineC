@@ -307,7 +307,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	# abs
 	# Parse to list of width toks
 	abs_func_names = []
-	# uint24_abs(left_resized);
+	# int24_abs(left_resized);
 	for type_regex in ["int[0-9]+_abs\s?\("]: #DO float abs?
 		p = re.compile(type_regex)
 		abs_func_names = p.findall(c_text)
@@ -320,7 +320,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 			sign_index = in_width-1
 			result_t = "uint" + str(in_width) + "_t"
 			if type_regex == "float":
-				print " #DO int,float abs?"
+				print " #DO float abs?"
 				sys.exit(0)
 			else:
 				in_t = in_prefix + "_t"
@@ -1230,17 +1230,143 @@ def GENERATE_INT_N_HEADERS(max_bit_width=2048):
 		f.close()
 		
 def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
-	func_name = partially_complete_logic.func_name
-	
-	# For now assuming is float to int
 	input_wire = partially_complete_logic.inputs[0]
 	in_t = partially_complete_logic.wire_to_c_type[input_wire]
 	output_wire = partially_complete_logic.outputs[0]
 	out_t = partially_complete_logic.wire_to_c_type[output_wire]
-	if not(in_t == "float" and VHDL.C_TYPE_IS_INT_N(out_t)):
+	if in_t == "float" and VHDL.C_TYPE_IS_INT_N(out_t):
+		return GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
+	if VHDL.C_TYPE_IS_INT_N(in_t) and out_t == "float":
+		return GET_CAST_INT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
+	else:
 		print "Implement more casting: Easy/Lucky/Free Bright Eyes"
 		print in_t, out_t
 		sys.exit(0)
+		
+def GET_CAST_INT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+	# Int to float
+	input_wire = partially_complete_logic.inputs[0]
+	in_t = partially_complete_logic.wire_to_c_type[input_wire]
+	input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+	output_wire = partially_complete_logic.outputs[0]
+	out_t = partially_complete_logic.wire_to_c_type[output_wire]
+	
+	######## COPIED FLOAT STUFF FROM THE FUTURE
+	mantissa_range = [22,0]
+	mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+	mantissa_t_prefix = "uint" + str(mantissa_width)
+	mantissa_t = mantissa_t_prefix + "_t"
+	exponent_range = [30,23]
+	exponent_width = exponent_range[0] - exponent_range[1] + 1
+	exponent_t_prefix = "uint" + str(exponent_width)
+	exponent_t = exponent_t_prefix + "_t"
+	exponent_width_plus1 = exponent_width + 1
+	exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+	exponent_wide_t = exponent_wide_t_prefix + "_t"
+	exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+	exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+	sign_index = 31
+	sign_width = 1
+	sign_t_prefix = "uint" + str(sign_width)
+	sign_t = sign_t_prefix + "_t"
+	
+	text = ""
+	text += '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "''' + BIT_MATH_HEADER_FILE + '''"
+
+// CAST
+''' + out_t + " " + partially_complete_logic.func_name+"("+ in_t + ''' rhs)
+{
+	// Building SEM to return
+	''' + mantissa_t + ''' mantissa;
+	''' + exponent_t + ''' biased_exponent;
+	''' + sign_t + ''' sign;
+	
+	// Record sign
+	sign = int''' + str(input_width) + "_" + str(input_width-1) + "_" + str(input_width-1) + '''(rhs);
+	'''
+	
+	unsigned_t = "uint" + str(input_width) + "_t"
+	text += '''
+	// Take abs value
+	''' + unsigned_t + ''' unsigned_rhs;
+	unsigned_rhs = int''' + str(input_width) + '''_abs(rhs);\n'''
+	
+	# Count leading zeros
+	num_zeros_bits = int(math.ceil(math.log(input_width+1,2)))
+	num_zeros_t = "uint" + str(num_zeros_bits) + "_t"
+	text += '''
+	// Count leading zeros
+	''' + num_zeros_t + ''' num_zeros;
+	num_zeros = count0s''' + "_uint" + str(input_width) + '''(unsigned_rhs);'''
+	
+	
+	# Shift all the way left plus 1 to drop upper most bit
+	shift_t = "uint" + str(num_zeros_bits+1) + "_t"
+	text += '''
+	// Shift all the way left plus 1 to drop upper most bit
+	''' + shift_t + ''' shift;
+	shift = num_zeros + 1;
+	''' + unsigned_t + ''' shifted_unsigned_rhs;
+	shifted_unsigned_rhs = unsigned_rhs << shift;'''
+	
+	
+	# Might need to append zeros to right if rhs is smaller than mantissa
+	if input_width < mantissa_width:
+		# Increase width
+		maybe_resized_width = mantissa_width
+		maybe_resized_rhs_t = "uint" + str(maybe_resized_width) + "_t"
+		# Pad right with zeros
+		pad_size = mantissa_width - input_width
+		text += '''
+		// Pad right with zeros
+		''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
+		maybe_resized_rhs = uint''' + str(input_width) + "_uint" + str(pad_size) + '''(shifted_unsigned_rhs, 0);'''
+	else:
+		# No resize
+		maybe_resized_width = input_width
+		maybe_resized_rhs_t = "uint" + str(maybe_resized_width) + "_t"
+		text += '''
+		// No resize
+		''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
+		maybe_resized_rhs = shifted_unsigned_rhs;'''
+		
+	# Take mantissa from upper bits
+	top_index = maybe_resized_width - 1
+	bottom_index = top_index - mantissa_width + 1
+	text += '''
+	// Take mantissa from upper bits
+	mantissa = uint''' + str(maybe_resized_width) + "_" + str(top_index) + "_" + str(bottom_index) + '''(maybe_resized_rhs);'''
+	
+	# Exponent depends on position of leading zero in original number
+	# Use that to calculate bit width needed
+	text += '''
+	// Exponent depends on shift
+	''' + exponent_t + ''' exponent;
+	exponent = ''' + str(input_width) + ''' - shift;
+	// Add bias
+	biased_exponent = exponent + ''' + str(exponent_bias_to_add) + ''';'''
+	
+	# Construct float to return
+	text += '''
+	return float_''' + sign_t_prefix + "_" + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
+}'''
+
+	return text
+	
+	
+	
+	
+def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+	func_name = partially_complete_logic.func_name
+	
+	# Float to int
+	input_wire = partially_complete_logic.inputs[0]
+	in_t = partially_complete_logic.wire_to_c_type[input_wire]
+	output_wire = partially_complete_logic.outputs[0]
+	out_t = partially_complete_logic.wire_to_c_type[output_wire]		
 		
 	# I HATE TWOS COMPLEMENT   # A Day In The Life - The Beatles
 	
