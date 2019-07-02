@@ -2735,6 +2735,10 @@ def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, prepend_text, parser_state):
 	# Should be able to get away with only deep copying existing_logic
 	parser_state_copy = copy.copy(parser_state)
 	parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
+	# Dummy wire will need to be array index
+	# This is just dummy on copied state so as long as its some kind of uint it should be fine?
+	# Scooooooo
+	parser_state_copy.existing_logic.wire_to_c_type[dummy_wire] = "uint32_t"
 	
 	subscript_logic = C_AST_NODE_TO_LOGIC(c_ast_array_ref.subscript, driven_wire_names, prepend_text, parser_state_copy)
 	# Is dummy wire driven by constant?
@@ -3009,18 +3013,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 
 	
-	if len(remaining_ref_toks) == 0 and first_driving_alias_type_match:
-		'''
-		if not first_driving_alias_type_match:
-			print "A simple connect with mismatching types?"
-			print "c_type",c_type
-			print "first_driving_alias_c_type",first_driving_alias_c_type
-			print "all_ref_toks",all_ref_toks
-			print "first_driving_alias",first_driving_alias
-			sys.exit(0)
-		'''			
+	if len(remaining_ref_toks) == 0 and first_driving_alias_type_match:	
 		return APPLY_CONNECT_WIRES_LOGIC(parser_state, first_driving_alias, driven_wire_names, prepend_text, c_ast_ref)
-		#return SIMPLE_CONNECT_TO_LOGIC(first_driving_alias, driven_wire_names, c_ast_ref, prepend_text, parser_state)		
 	else:		
 		'''
 		print "ref_toks",ref_toks		
@@ -3249,18 +3243,6 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			input_drivers.append(driving_wire)
 			input_driver_types.append(var_dim_iter_type)
 			input_port_names.append(input_port_name)
-		
-				
-		# Shouldnt need?
-		'''
-		# Before evaluating input nodes make sure type of port is there so constants can be evaluated
-		# Get type from driving aliases (since doing use_input_nodes_fuck_it = False)
-		for driving_alias in input_drivers:
-			input_port_wires = c_ast_node_2_driven_input_wire_names[driving_alias]
-			for input_port_wire in input_port_wires:
-				if input_port_wire not in parser_state.existing_logic.wire_to_c_type:
-					parser_state.existing_logic.wire_to_c_type[input_port_wire] = parser_state.existing_logic.wire_to_c_type[driving_alias]
-		'''
 		
 			
 		# Can't.shouldnt rely on uint resizing to occur in the raw vhdl (for const ref)
@@ -5142,6 +5124,8 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 
 #def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
 def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node):
+	#print "driving_wire",driving_wire,"=>",driven_wire_names
+	
 	# Add wires if not there
 	if driving_wire not in parser_state.existing_logic.wires:
 		parser_state.existing_logic.wires.append(driving_wire)	
@@ -5161,65 +5145,68 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 		sys.exit(0)
 	rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
 	for driven_wire_name in driven_wire_names:
-		if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
-			driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
-			if driven_wire_type != rhs_type:
-				
-				#######
-				# Some C casts are handled in VHDL with resize or enum conversions
-				# 
-				# Integer promotion / slash supported truncation in C lets this be OK
-				if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
-					and 
-					 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
-						 continue
-				# Enum driving UINT is fine
-				elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
-					continue
-				
-				#######
-				# At this point we have incompatible types that need special casting parser_state.existing_logic
-				# 		Build cast function to connect driving wire to driven wire
-				# int = float
-				# float = int
-				if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
-				      (rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type))
-				    ):
-					# Return n arg func
-					func_base_name = CAST_FUNC_NAME_PREFIX
-					base_name_is_name = False # append types in name too
-					input_drivers = [driving_wire]
-					input_driver_types = [rhs_type]
-					input_port_names = ["rhs"]
-					output_driven_wire_names = driven_wire_names
-					# Build instance name
-					func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
-					# Record output port type
-					output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
-					parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
-					
-					return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
-						prepend_text,
-						c_ast_node,
-						func_base_name,
-						base_name_is_name,
-						input_drivers, 
-						input_driver_types,
-						input_port_names,
-						output_driven_wire_names,
-						parser_state)
-
-				else:
-					# Unhandled
-					print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
-					print driven_wire_type, "!=", rhs_type
-					print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
-					sys.exit(0)
-		
-		# This is supicious?
-		else:
+		# This feel suspicious? Yairms - Real Time
+		if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
 			# Driven wire type isnt set, set it
+			# THIS IS BAD? SKIPS CASTS WHEN NEEDED?
 			parser_state.existing_logic.wire_to_c_type[driven_wire_name] = rhs_type
+
+		# CHECK TYPE, APPLY CASTY IF NEEDED
+		driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+		if driven_wire_type != rhs_type:
+			
+			#######
+			# Some C casts are handled in VHDL with resize or enum conversions
+			# 
+			# Integer promotion / slash supported truncation in C lets this be OK
+			if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
+				and 
+				 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
+					 continue
+			# Enum driving UINT is fine
+			elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
+				continue
+			
+			#######
+			# At this point we have incompatible types that need special casting parser_state.existing_logic
+			# 		Build cast function to connect driving wire to driven wire
+			# int = float
+			# float = int
+			if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
+				  (rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type))
+				):
+				# Return n arg func
+				func_base_name = CAST_FUNC_NAME_PREFIX
+				base_name_is_name = False # append types in name too
+				input_drivers = [driving_wire]
+				input_driver_types = [rhs_type]
+				input_port_names = ["rhs"]
+				output_driven_wire_names = driven_wire_names
+				# Build instance name
+				func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
+				# Record output port type
+				output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+				parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
+				
+				return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+					prepend_text,
+					c_ast_node,
+					func_base_name,
+					base_name_is_name,
+					input_drivers, 
+					input_driver_types,
+					input_port_names,
+					output_driven_wire_names,
+					parser_state)
+
+			else:
+				# Unhandled
+				print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
+				print driven_wire_type, "!=", rhs_type
+				print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
+				sys.exit(0)
+	
+			
 	# ^^^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
 			
 	

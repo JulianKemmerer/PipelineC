@@ -33,21 +33,21 @@ axis32_t main(axis32_t mac_axis_rx)
 	return send(result);
 }
 */
-
+/*
 #include "uintN_t.h"
 #define CORDIC_MUL 1073741824.000000
 float main(int32_t x)
 {	
 	return x;
 }
+*/
 
-/*
 #include "math.h"
 cordic_float_t main(float theta)
 {	
 	return cordic_float_n32(theta);
 }
-*/
+
 /*
 entry_set_t main(addr_t addr, entry_set_t wd, uint1_t we)
 {
