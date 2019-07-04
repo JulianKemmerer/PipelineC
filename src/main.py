@@ -40,7 +40,7 @@ parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state.LogicInstLookupTable[to
 logic = parser_state.LogicInstLookupTable[top_level_func_name]
 
 print "================== Doing Optional Modelsim Debug ================================"
-MODELSIM.DO_OPTIONAL_DEBUG(True)
+MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(logic, parser_state, mhz)
