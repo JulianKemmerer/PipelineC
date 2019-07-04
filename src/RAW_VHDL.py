@@ -2172,14 +2172,16 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 	x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
 	x_is_signed = VHDL.C_TYPE_IS_INT_N(x_type)
 	
+	# Shift functions are found in numeric_std package file
+	# Shift functions can perform both logical (zero-fill) and arithmetic (keep sign) shifts
+    # Type of shift depends on input to function. Unsigned=Logical, Signed=Arithmetic
+	
 	shift_func = None
 	# Shift right might shift in sign bits if signed/arithmetic shfit
 	if logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME):
-		shift_func = "sll"
-	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME) and not x_is_signed:
-		shift_func = "srl"
-	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME) and x_is_signed:
-		shift_func = "sra"
+		shift_func = "shift_left"
+	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+		shift_func = "shift_right"
 	else:
 		print "Blaag: I should start putting the song I am listening too for debug if I remember"
 		print '''Brother Sport
@@ -2204,7 +2206,7 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 		sys.exit(0)
 			
 	text = '''
-		write_pipe.return_output := write_pipe.x ''' + shift_func + " " + shift_const + ''';'''
+		write_pipe.return_output := ''' + shift_func + '''(write_pipe.x, ''' + shift_const + ''');'''
 
 	return wires_decl_text, text
 	

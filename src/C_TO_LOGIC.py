@@ -1360,12 +1360,6 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 	
 	# C_AST nodes can represent pure structure logic
 	
-	# Actually shouldnt hit func def here?
-	#if type(c_ast_node) == c_ast.FuncDef:
-	#	if prepend_text!="":
-	#		print "prepend for func def what?"
-	#		sys.exit(0)
-	#	return C_AST_FUNC_DEF_TO_LOGIC(c_ast_node, parser_state)
 	if type(c_ast_node) == c_ast.Compound:
 		return C_AST_COMPOUND_TO_LOGIC(c_ast_node, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.Decl:
@@ -1384,26 +1378,21 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 		return C_AST_CONSTANT_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.ID:
 		return C_AST_ID_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
-		'''
-	elif type(c_ast_node) == c_ast.StructRef:
-		ret = C_AST_STRUCTREF_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
-		return ret
-		'''
-	#elif type(c_ast_node) == c_ast.ID or type(c_ast_node) == c_ast.StructRef :
-	#	return C_AST_ID_OR_STRUCTREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.StructRef or type(c_ast_node) == c_ast.ArrayRef:
 		return C_AST_REF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
-	#elif type(c_ast_node) == c_ast.ArrayRef:
-	#	return C_AST_ARRAYREF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.Assignment:
 		return C_AST_ASSIGNMENT_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
 	elif type(c_ast_node) == c_ast.For:
 		return C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
+	elif type(c_ast_node) == c_ast.Cast:
+		return C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
 	else:
 		#start here
-		print "Cannot parse c ast node to logic: ",c_ast_node
-		casthelp(c_ast_node)
-		print "driven_wire_names=",driven_wire_names
+		print "Animal Collective - The Purple Bottle"
+		print "Cannot parse c ast node to logic:", c_ast_node.coord
+		print c_ast_node
+		#casthelp(c_ast_node)
+		#print "driven_wire_names=",driven_wire_names
 		sys.exit(0)
 	
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
@@ -4415,6 +4404,20 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		input_port_names, # Port names on submodule
 		output_driven_wire_names,
 		parser_state):
+			
+	#@@@@@@@@@ Maybe just require casting operation instead?  don't allow float + int  (bin op still changes to float+float  and errors connecting int to float	???
+	#  Maybe?^ SEEMS RIGHT
+	'''
+	# OTherwise? \/
+	@TODO if defined in C code use parsed C def for types
+	@OTHERwise  need to infer types with LOOKAHEAD "precast" wires  (TODO remove if extra?)
+	@##@ Once types of inputs are looked ahead you need to let each func change the types
+	@# Ex. bin op  float + int  is actually  float + (float)int
+	@# Then do APPLY_/ SEQ_C		
+	'''
+	
+	
+	
 	
 	# Build instance name
 	func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
@@ -4641,6 +4644,39 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
 	
 	return func_logic
 	
+def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+	# Need to evaluate input node/type first
+	func_base_name = CAST_FUNC_NAME_PREFIX
+	func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_node)
+	input_port_name = "rhs"
+	input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+	parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.expr, [input_port_wire], prepend_text, parser_state)
+	rhs_type = parser_state.existing_logic.wire_to_c_type[input_port_wire]
+	
+	# Return n arg func
+	base_name_is_name = False # append types in name too
+	input_drivers = [c_ast_node.expr]
+	input_driver_types = [rhs_type]
+	input_port_names = [input_port_name]
+	output_driven_wire_names = driven_wire_names
+	# Record output port type as the to_type
+	output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+	#casthelp(c_ast_node.to_type.type.type.names[0])
+	#sys.exit(0)
+	output_t = str(c_ast_node.to_type.type.type.names[0])
+	parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
+	
+	return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+		prepend_text,
+		c_ast_node,
+		func_base_name,
+		base_name_is_name,
+		input_drivers,
+		input_driver_types,
+		input_port_names,
+		output_driven_wire_names,
+		parser_state)
+	
 def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, parser_state):
 	existing_logic = parser_state.existing_logic
 	# Decompose to N arg func
@@ -4798,20 +4834,23 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	if bin_op_right_input in parser_state.existing_logic.wire_to_c_type:
 		right_type = parser_state.existing_logic.wire_to_c_type[bin_op_right_input]
 	
-	# Can't do this since output is determined by funcitonality - NOT WHAT the functionality drives
+	# Output is determined by funcitonality - NOT WHAT the functionality drives
 	output_c_type = None
-	'''
-	# Is output type known?
-	if len(driven_wire_names) > 0 and driven_wire_names[0] in parser_state.existing_logic.wire_to_c_type:
-		output_c_type = parser_state.existing_logic.wire_to_c_type[driven_wire_names[0]]
-	'''	
 	
+	# By now the input wires have been connected - CAST inserted as needed
+	# From here on we can only adjust input wires in ways that can be resolved with
+	#		VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, etc
+	
+	#@@@@ CANT DO THIS SINCE other type could be anything - might not be resolvable in VHDL 0CLK
+	'''
 	# Resolve missing types
 	if (left_type is None) and (right_type is None):
 		if output_c_type is not None:
 			print "Assuming type", output_c_type, "for",c_ast_binary_op.coord
 			left_type = output_c_type
+			parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 			right_type = output_c_type
+			parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
 		else:
 			print func_base_name, "doesn't have type information for either input? What's going on?"
 			print "parser_state.existing_logic.wire_to_c_type"
@@ -4823,13 +4862,17 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	elif not(left_type is None) and (right_type is None):
 		# Use left
 		right_type = left_type
+		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
 	elif (left_type is None) and not(right_type is None):
 		# Use Right
 		left_type = right_type
+		parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 	else:
 		# Different types set for each input
 		pass
-		
+	'''
+	
+	# THIS IS OK SINCE CAN BE RESOLVED IN VHDL 0 CLK CAST
 	# If types are integers then check signed/unsigned matches
 	# 	Change type from unsigned to sign by adding bit to type
 	#		Never change signed to unsigned dumb
@@ -4848,14 +4891,20 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 				left_type = "int" + str(left_width+1) + "_t"
 				parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 	
-	# If one side is a float then convert both sides ot float
+	# CANT BE DONE IN 0 CLK VHDL CAST
+	# CANT DO THIS RIGHT NOW - dumb
+	'''
+	# If one side is a float then convert both sides to float
 	if left_type == "float":
 		right_type = "float"
 		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type	
 	if right_type == "float":
 		left_type = "float"
 		parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+	'''
 	
+	
+	# THIS IS OK SINCE CAN BE RESOLVED IN 0 CLK VHDL CAST
 	# Replace ENUM with INT type of input wire so cast happens? :/?
 	# Left
 	if left_type in parser_state.enum_to_ids_dict:
@@ -4871,8 +4920,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		# works fine for non constant wires too though
 		driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
 		parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
-		#print "driving_wire",driving_wire,enum_type
-		
+		#print "driving_wire",driving_wire,enum_type	
 	# Right
 	if right_type in parser_state.enum_to_ids_dict:
 		# Set BIN OP input wire as UINT
@@ -4899,7 +4947,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	input_driver_types = []
 	input_driver_types.append(left_type)
 	input_driver_types.append(right_type)
-		
 	
 		
 	# Determine output type based on operator or driving wire type
@@ -4976,7 +5023,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 					# Max?
 					max_unsigned_width = max(left_unsigned_width, right_unsigned_width)	
 				else:
-					print "Adding non numbers?"
+					print "Cannot do binary operation between two different types (cast required for now):", left_type,right_type,c_ast_binary_op.coord
 					sys.exit(0)
 			
 				# Operator determines output type
@@ -5145,16 +5192,17 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 		sys.exit(0)
 	rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
 	for driven_wire_name in driven_wire_names:
-		# This feel suspicious? Yairms - Real Time
+		# TODO implement look ahead for built in operators. Yairms - Real Time
+		# Assume driven wire is same type as rhs -SHOULDNT NEED THIS FOR ANYTHING OTHER THAN BUILT IN OPERATION BUT NOT CHECK THAT NOW SINCE LIKE WHY WHAT IS LIFE ALL ABOUT?
 		if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
-			# Driven wire type isnt set, set it
-			# THIS IS BAD? SKIPS CASTS WHEN NEEDED?
+			#print "Need to know type of wire",driven_wire_name," before connecting to it?"
+			#print 0/0
+			#sys.exit(0)
 			parser_state.existing_logic.wire_to_c_type[driven_wire_name] = rhs_type
 
 		# CHECK TYPE, APPLY CASTY IF NEEDED
 		driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
 		if driven_wire_type != rhs_type:
-			
 			#######
 			# Some C casts are handled in VHDL with resize or enum conversions
 			# 
