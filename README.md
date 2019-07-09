@@ -21,7 +21,7 @@ Con: Poor results (compared to hand written hardware description language)
     to
 B)
 Pro: Excellent results
-Con: So low level you might as well be writing in a hardware description language
+Con: So low level you might as well be writing in a hardware description language (but does often come with great test bench functionality)
 ```
 On the A) side you make little to no modifications to the original code. Any software developer off the street can be up and running quickly. 
 
