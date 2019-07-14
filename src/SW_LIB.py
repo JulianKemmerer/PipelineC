@@ -2015,6 +2015,17 @@ def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
 		print "GET_BIN_OP_MINUS_C_CODE Only plus between float for now!"
 		sys.exit(0)
 
+def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
+	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
+	#if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+	#	return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir)
+	#el
+	if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+		return GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
+	else:
+		print "GET_BIN_OP_MOD_C_CODE Only mod between float for now!"
+		sys.exit(0)
 	
 def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2024,7 +2035,7 @@ def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir):
 	elif VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
 		return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
 	else:
-		print "GET_BIN_OP_DIV_C_CODE Only div between uint for now!"
+		print "GET_BIN_OP_DIV_C_CODE Only div between uint and float for now!"
 		sys.exit(0)
 		
 		
@@ -2243,6 +2254,134 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 
 	return text
 	
+def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
+	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
+	if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+		return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
+	else:
+		print "GET_BIN_OP_LT_LTE_C_CODE Only between float for now!"
+		sys.exit(0)
+		
+def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
+	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
+	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+	
+	# Inputs must be float
+	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
+		print '''"left_t != "float" or  right_t != "float" for <= '''
+		sys.exit(0)
+		
+	# Output must be bool
+	if output_t != "uint1_t":
+		print "GET_BIN_OP_LT_LTE_FLOAT_C_CODE output_t != uint1_t"
+		sys.exit(0)
+	
+	left_width = 32
+	right_width = 32	
+	
+	######## COPIED FLOAT STUFF FROM THE FUTURE
+	mantissa_range = [22,0]
+	mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+	mantissa_t_prefix = "uint" + str(mantissa_width)
+	mantissa_t = mantissa_t_prefix + "_t"
+	exponent_range = [30,23]
+	exponent_width = exponent_range[0] - exponent_range[1] + 1
+	exponent_t_prefix = "uint" + str(exponent_width)
+	exponent_t = exponent_t_prefix + "_t"
+	exponent_width_plus1 = exponent_width + 1
+	exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+	exponent_wide_t = exponent_wide_t_prefix + "_t"
+	exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+	exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+	sign_index = 31
+	sign_width = 1
+	sign_t_prefix = "uint" + str(sign_width)
+	sign_t = sign_t_prefix + "_t"
+	
+	abs_val_width = exponent_width + mantissa_width
+	abs_val_prefix = "uint" + str(abs_val_width)
+	abs_val_t = abs_val_prefix + "_t"
+	
+
+	text = ''''''
+	text += '''
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+
+// Float LT/LTE std_logic_vector in C silly
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+{
+	// LEFT
+	uint''' + str(mantissa_width) + '''_t left_mantissa;	
+	left_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+	uint''' + str(exponent_width) + '''_t left_exponent;
+	left_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+	uint1_t left_sign;
+	left_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+	// RIGHT
+	uint''' + str(mantissa_width) + '''_t right_mantissa;
+	right_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
+	uint''' + str(exponent_width) + '''_t right_exponent;
+	right_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+	uint1_t right_sign;
+	right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+	
+	// Do abs value compare by using exponent as msbs
+	// 	(-1)^s    * m  *   2^(e - 127)
+	''' + abs_val_t + ''' left_abs;
+	left_abs = uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(left_exponent, left_mantissa);
+	''' + abs_val_t + ''' right_abs;
+	right_abs = uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(right_exponent, right_mantissa);'''
+	
+	# Prepare the reversed operation for if both operands are negative
+	# ~~~ because youre a lazy bitch, I think
+	# if both neg then 
+	# Switches LT->GT(=flip args LTE), LTE->GTE(flipped args GT)
+	if op_str == "<":
+		flipped_op_str = "<="
+	else:
+		# op str <=
+		flipped_op_str = "<"
+	
+	text += '''
+	// Adjust for sign
+	uint1_t rv;
+	uint1_t same_sign;
+	same_sign = left_sign == right_sign;
+	uint1_t pos_signs;
+	uint1_t neg_signs;
+	neg_signs = left_sign; // Only used if same sign
+	pos_signs = !left_sign; // Only used if same sign
+	if(same_sign & pos_signs)
+	{
+		rv = left_abs ''' + op_str + ''' right_abs;
+	}
+	else if(same_sign & neg_signs)
+	{
+		// Switches LT->GT(=flip args LTE), LTE->GTE(flipped args LT)
+		rv = right_abs ''' + flipped_op_str + ''' left_abs;
+	}
+	else
+	{
+		// NOT SAME SIGN so can never equal ( but op is LT or LTE so LT is important part)
+		// left must be neg to be LT (neg) right 
+		rv = left_sign; // left_sign=1, right_sign=0, left is neg, can never LT left so true
+	}
+
+	return rv;
+}'''
+
+	#print "C CODE"
+	#print text
+
+	return text
+	
+	
+	
+	
 def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
@@ -2259,6 +2398,8 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
 	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
 		print '''"left_t != "float" or  right_t != "float" for >= '''
+		sys.exit(0)
+		
 	# Output must be bool
 	if output_t != "uint1_t":
 		print "GET_BIN_OP_GT_GTE_FLOAT_C_CODE output_t != uint1_t"
@@ -2284,7 +2425,7 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 #include "intN_t.h"
 #include "bit_manip.h"
 
-// Float GT/GTE std_logic_vector in VHDL
+// Float GT/GTE std_logic_vector in C silly
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
 	// LEFT
@@ -2339,7 +2480,7 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 	{
 		// NOT SAME SIGN so can never equal ( but op is GT or GTE so GT is important part)
 		// left must be pos to be GT (neg)right 
-		rv = right_sign; // right_sign=1, left_sign=0 right is neg, can never GT left so true
+		rv = right_sign; // left_sign=0, right_sign=1, right is neg, can never GT left so true
 	}
 
 	return rv;
@@ -2577,7 +2718,55 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 
 	return text	
 	
+def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
+	# So there was this guy here trying to figure out the floating point implementation for modulo
+	# Then the internet (of all people) chimes in and says modulo for floating point isn't actually part of standard C?
+	# And that there are various fmod implementations for math.h
+	# So me embracing the piece of shit (that I am) will implement mod in C too
 	
+	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
+	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+		print left_t, right_t, output_t
+		print '''"left_t != "float" or  right_t != "float" output_t mod'''
+		sys.exit(0)
+
+	text = ""
+	
+	text += '''
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "''' + BIT_MANIP_HEADER_FILE + '''"
+
+// Float div std_logic_vector in VHDL
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+{
+	// Quotient
+	float q;
+	q = left / right;
+	
+	// Convert to int (floor?)
+	// float max value = 3.402823466*10^38
+	// log2(3.402823466*10^38) ~ 128 , int129
+	int129_t q_int;
+	q_int = q;
+	
+	// Partial quotient
+	float partial;
+	partial = (float)q_int * right;
+	
+	float remainder;
+	remainder = left - partial;
+	
+	return remainder;
+}
+'''
+
+	return text
+
+
+
 def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	# Taking this directly from the 1 clock version VHDL from
 	'''
@@ -2592,13 +2781,14 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
 	if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
 		print left_t, right_t, output_t
-		print '''"left_t != "float" or  right_t != "float" output_t too div'''
+		print '''"left_t != "float" or  right_t != "float" output_t too div/mod'''
 		sys.exit(0)
 	
 	left_width = 32
 	right_width = 32
 	output_width = 32
 	
+	######## COPIED FLOAT STUFF FROM THE FUTURE
 	mantissa_range = [22,0]
 	mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
 	mantissa_t_prefix = "uint" + str(mantissa_width)
@@ -2735,14 +2925,13 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	a = ''' + a_prefix + '''_uint1_'''+str(i)+'''(a,a_i);
 	'''
 	
-	
+	###### DIV
 	text += '''	
 	/////////////////////
-	// END OF DIV LOOP
+	// END OF DIV LOOP FOR DIV
 	//////////////////////
 	
 	// NO ROUND
-	
 	if(''' + a_prefix + '''_''' + str(a_width-1) + '''_''' + str(a_width-1) + '''(a)) //== 1)
 	{
 		z_mantissa = ''' + a_prefix + '''_''' + str(a_width-2) + '''_2(a);
@@ -2752,8 +2941,10 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 	{
 		z_mantissa = ''' + a_prefix + '''_''' + str(a_width-3) + '''_1(a);
 		exponent_aux = exponent_aux - 1;
-	}
+	}'''
 	
+	
+	text += '''	
 	z_exponent = ''' + exponent_aux_t_prefix + '''_''' + str(exponent_width-1) + '''_0(exponent_aux);	
 	
 	// Assemble output

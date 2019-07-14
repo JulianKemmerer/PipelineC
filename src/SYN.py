@@ -22,7 +22,7 @@ import VIVADO
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
 PATH_DELAY_CACHE_DIR="./path_delay_cache"
 INF_MHZ = 1000 # Impossible timing goal
-DO_SYN_FAIL_SIM = False
+DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
 # 	"But I think its much worse than you feared" Modest Mouse - I'm Still Here

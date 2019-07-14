@@ -49,6 +49,7 @@ BIN_OP_OR_NAME="OR"
 BIN_OP_XOR_NAME = "XOR"
 BIN_OP_SL_NAME = "SL"
 BIN_OP_SR_NAME = "SR"
+BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
 BIN_OP_DIV_NAME = "DIV"
 
@@ -894,7 +895,8 @@ class Logic:
 		return None
 	
 	# Intentionally return None
-	def REMOVE_SUBMODULE(self,submodule_inst_name):
+	def REMOVE_SUBMODULE(self,submodule_inst_name, input_port_names):
+		# MODIFIES THING AND RETURNS THING
 		def REMOVE_STARTS_WITH(start, thing, key=True, value=True):
 			if type(thing) == str:
 				if thing.startswith(start):
@@ -902,42 +904,37 @@ class Logic:
 				return thing
 								
 			if type(thing) == list:
-				new_thing = []
 				for t in thing:
-					if not t.startswith(start):
-						new_thing.append(t)
-				return new_thing
+					if t.startswith(start):
+						thing.remove(t)
+				return thing
 				
 			if type(thing) == dict:
-				new_thing = dict()
-				for k in thing:
+				for k in thing.keys():
+					k_old = k
 					v = thing[k]
 					if value:
 						v = REMOVE_STARTS_WITH(start, v)
 					if key:
 						k = REMOVE_STARTS_WITH(start, k)
 					if k is None:
-						''''
-						# Key is gone now, was there value?
-						if v is not None and v != []:
-							# Assume might be wire to remove
-							if v in self.wires:
-								self.wires.remove(v)						
-						'''
-						continue
+						# Key is gone, remove
+						thing.pop(k_old)
 					if v is None:
-						continue
+						# Value is gone, remove kv pair
+						thing.pop(k_old)
 					if v == []:
-						continue
-					new_thing[k]=v
-					
-				return new_thing
+						# Value is gone, remove kv pair
+						thing.pop(k_old)
+											
+				return thing
 
 			print "What? REMOVE_STARTS_WITH", thing
 			sys.exit(0)
 		
-		
-		
+		# Make list of wires that look like
+		#		submodule_inst_name + SUBMODULE_MARKER
+		# SHOULD ONLY BE INPUT AND OUTPUT WIRES?		
 		self.wires = REMOVE_STARTS_WITH(submodule_inst_name + SUBMODULE_MARKER, self.wires)
 		self.submodule_instances.pop(submodule_inst_name, None)
 		self.submodule_instance_to_c_ast_node.pop(submodule_inst_name, None)
@@ -1214,10 +1211,16 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic, parser_state, containing_fun
 			c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
 			c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
+		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir)
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
 			c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">")
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
 			c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">=")
+		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<")
+		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
+			c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<=")
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
 			c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir)
 		elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
@@ -4257,25 +4260,49 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX):
 			lhs_wire = const_input_wires[0]
 			rhs_wire = const_input_wires[1]
-			# Assume integers
 			# Get values from constants
 			lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state.existing_logic, parser_state)
 			rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+			
+			# First check for integer arguments
 			is_ints = True
 			try:
 				lhs_val = int(lhs_val_str)
 				rhs_val = int(rhs_val_str)
 			except:
 				is_ints = False
+			
+			# Then allow for floats
+			is_floats = False
 			if not is_ints:
-				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non integers?"
+				is_floats = True
+				try:
+					lhs_val = float(lhs_val_str)
+					rhs_val = float(rhs_val_str)
+				except:
+					is_floats = False
+			
+			# Number who?
+			if not is_ints and not is_floats:
+				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non numbers?"
 				sys.exit(0)
+				
 			# What type of binary op
 			if func_base_name.endswith(BIN_OP_PLUS_NAME):
 				const_val_str = str(lhs_val+rhs_val)
 			elif func_base_name.endswith(BIN_OP_MINUS_NAME):
 				const_val_str = str(lhs_val-rhs_val)
+			elif func_base_name.endswith(BIN_OP_MULT_NAME):
+				const_val_str = str(lhs_val*rhs_val)
+			elif func_base_name.endswith(BIN_OP_DIV_NAME):
+				const_val_str = str(lhs_val/rhs_val)
+			elif func_base_name.endswith(BIN_OP_EQ_NAME):
+				const_val_str = str(lhs_val==rhs_val) 
 			elif func_base_name.endswith(BIN_OP_SR_NAME):
+				# SHIFT INT ONLY FOR NOW?
+				if not is_ints:
+					print "Constant shift function", func_base_name, func_c_ast_node.coord, "for ints only right now..."
+					sys.exit(0)
 				# lhs_val >> rhs_val
 				
 				# Output type is type of LHS
@@ -4303,10 +4330,23 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 				output_int = to_int(output_bin_str)
 				const_val_str = str(output_int)
 			else:
-				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported."
+				print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name
 				sys.exit(0)
+		
+		
+		# CASTING
+		elif func_base_name == CAST_FUNC_NAME_PREFIX:
+			in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
+			out_t = parser_state.existing_logic.wire_to_c_type[output_driven_wire_names[0]]
+			in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
+			if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
+				const_val_str = str(float(in_val_str))
+			else:
+				print "How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text
+				sys.exit(0)	
 		else:
 			print "Warning: Not reducing constant function call:",func_base_name, func_c_ast_node.coord
+			sys.exit(0)
 			#print const_input_wires
 			return None
 		
@@ -4803,6 +4843,8 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		c_ast_op_str = BIN_OP_SL_NAME
 	elif c_ast_bin_op_str == ">>":
 		c_ast_op_str = BIN_OP_SR_NAME
+	elif c_ast_bin_op_str == "%":
+		c_ast_op_str = BIN_OP_MOD_NAME
 	else:
 		print "BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?"
 		sys.exit(0)
@@ -5023,7 +5065,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 					# Max?
 					max_unsigned_width = max(left_unsigned_width, right_unsigned_width)	
 				else:
-					print "Cannot do binary operation between two different types (cast required for now):", left_type,right_type,c_ast_binary_op.coord
+					print "Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord
 					sys.exit(0)
 			
 				# Operator determines output type
@@ -5612,7 +5654,9 @@ def PARSE_FILE(top_level_func_name, c_filename):
 				print first_sub
 				sys.exit(0)
 			
-			print "Elaborating hierarchy down to raw HDL logic..."	
+			print "Elaborating hierarchy down to raw HDL logic..."
+			print "TEMP STOP"
+			sys.exit(0)
 			parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(top_level_func_name, top_level_func_name, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
 		

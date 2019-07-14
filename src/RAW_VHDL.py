@@ -1735,7 +1735,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 			if op_str.endswith("="):
 				text += '''
 			-- OR EQUAL
-			write_pipe.return_output_bool := write_pipe.return_output_bool or not write_pipe.inequality_found'''
+			write_pipe.return_output_bool := write_pipe.return_output_bool or not write_pipe.inequality_found;'''
 			
 			# Convert bool to unsigned
 			text += '''
