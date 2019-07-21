@@ -210,26 +210,25 @@ float sin(float theta)
 	return cordic_result.s;
 }
 
+// Placeholder
+float sqrt(float x)
+{
+	return 0.0;
+}
 
 // 8x8 DCT
 // https://www.geeksforgeeks.org/discrete-cosine-transform-algorithm-program/
-#define DCT_PI 3.14159265359 // Scoo
-#define DCT_M 8
-#define DCT_N 8
+#define DCT_PI 3.14159265359 // Scoo for now
+#define DCT_M 5
+#define DCT_N 5
 #define dct_iter_t uint3_t // 0-7
-#define DCT_ONE_DIV_SQRT_M 0.353553391
-#define DCT_ONE_DIV_SQRT_N 353553391
-#define DCT_SQRT2_DIV_SQRTM 0.5
-#define DCT_SQRT2_DIV_SQRTN 0.5
 #define dct_pixel_t uint8_t // 0-255
-//#define dct_int_t uint7_t // To hold (2 * k + 1) * i = 105
-
 typedef struct dct_t
 {
 	float matrix[DCT_M][DCT_N];
 } dct_t;
   
-// Function to find discrete cosine transform and print it 
+// Function to find discrete cosine transform and return it 
 dct_t dctTransform(dct_pixel_t matrix[DCT_M][DCT_N]) 
 { 
     dct_iter_t i;
@@ -251,13 +250,13 @@ dct_t dctTransform(dct_pixel_t matrix[DCT_M][DCT_N])
             // ci and cj depends on frequency as well as 
             // number of row and columns of specified matrix 
             if (i == 0) 
-                ci = DCT_ONE_DIV_SQRT_M; 
+                ci = 1.0 / sqrt(DCT_M); 
             else
-                ci = DCT_SQRT2_DIV_SQRTM; 
+                ci = sqrt(2) / sqrt(DCT_M);
             if (j == 0) 
-                cj = DCT_ONE_DIV_SQRT_N; 
+                cj = 1.0 / sqrt(DCT_N);
             else
-                cj = DCT_SQRT2_DIV_SQRTN; 
+                cj = sqrt(2) / sqrt(DCT_N); 
   
             // sum will temporarily store the sum of  
             // cosine signals 
@@ -270,7 +269,7 @@ dct_t dctTransform(dct_pixel_t matrix[DCT_M][DCT_N])
                     sum = sum + dct1; 
                 }
             } 
-            dct.matrix[i][j] = ci * cj * sum; 
+            dct.matrix[i][j] = ci * cj * sum;
         } 
     }
     

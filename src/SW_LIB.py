@@ -1236,18 +1236,19 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
 	out_t = partially_complete_logic.wire_to_c_type[output_wire]
 	if in_t == "float" and VHDL.C_TYPE_IS_INT_N(out_t):
 		return GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
-	if VHDL.C_TYPE_IS_INT_N(in_t) and out_t == "float":
-		return GET_CAST_INT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
+	if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
+		return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
 	else:
 		print "Implement more casting: Easy/Lucky/Free Bright Eyes"
 		print in_t, out_t
 		sys.exit(0)
 		
-def GET_CAST_INT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
 	# Int to float
 	input_wire = partially_complete_logic.inputs[0]
 	in_t = partially_complete_logic.wire_to_c_type[input_wire]
 	input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+	is_int = VHDL.C_TYPE_IS_INT_N(in_t)	
 	output_wire = partially_complete_logic.outputs[0]
 	out_t = partially_complete_logic.wire_to_c_type[output_wire]
 	
@@ -1282,17 +1283,26 @@ def GET_CAST_INT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic
 	// Building SEM to return
 	''' + mantissa_t + ''' mantissa;
 	''' + exponent_t + ''' biased_exponent;
-	''' + sign_t + ''' sign;
-	
-	// Record sign
-	sign = int''' + str(input_width) + "_" + str(input_width-1) + "_" + str(input_width-1) + '''(rhs);
-	'''
+	''' + sign_t + ''' sign;'''
 	
 	unsigned_t = "uint" + str(input_width) + "_t"
-	text += '''
+	if is_int:
+		# Integer
+		text += '''	
+	// Record sign
+	sign = int''' + str(input_width) + "_" + str(input_width-1) + "_" + str(input_width-1) + '''(rhs);
 	// Take abs value
 	''' + unsigned_t + ''' unsigned_rhs;
 	unsigned_rhs = int''' + str(input_width) + '''_abs(rhs);\n'''
+	else:
+		# Unsigned
+		text += '''	
+	// Record sign
+	sign = 0;
+	// Abs value is just rhs
+	''' + unsigned_t + ''' unsigned_rhs;
+	unsigned_rhs = rhs;\n'''
+	
 	
 	# Count leading zeros
 	num_zeros_bits = int(math.ceil(math.log(input_width+1,2)))
