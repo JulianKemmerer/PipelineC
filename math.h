@@ -218,9 +218,9 @@ float sqrt(float x)
 
 // 8x8 DCT
 // https://www.geeksforgeeks.org/discrete-cosine-transform-algorithm-program/
-#define DCT_PI 3.14159265359 // Scoo for now
-#define DCT_M 5
-#define DCT_N 5
+#define DCT_PI 3.14159265359
+#define DCT_M 6
+#define DCT_N 6
 #define dct_iter_t uint3_t // 0-7
 #define dct_pixel_t uint8_t // 0-255
 typedef struct dct_t
@@ -263,13 +263,14 @@ dct_t dctTransform(dct_pixel_t matrix[DCT_M][DCT_N])
             sum = 0.0; 
             for (k = 0; k < DCT_M; k=k+1) { 
                 for (l = 0; l < DCT_N; l=l+1) { 
-                    dct1 = (float)matrix[k][l] *         
-                           cos((float)((2 * k + 1) * i) * DCT_PI / (float)(2 * DCT_M)) *  
-                           cos((float)((2 * l + 1) * j) * DCT_PI / (float)(2 * DCT_N)); 
-                    sum = sum + dct1; 
+                    dct1 = (float)matrix[k][l] *  // Float * constant       
+                             ( cos((float)((2 * k + 1) * i) * DCT_PI / (float)(2 * DCT_M)) *  
+                               cos((float)((2 * l + 1) * j) * DCT_PI / (float)(2 * DCT_N))
+                             );
+                    sum = sum + dct1;
                 }
             } 
-            dct.matrix[i][j] = ci * cj * sum;
+            dct.matrix[i][j] = (ci * cj) * sum;
         } 
     }
     

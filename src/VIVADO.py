@@ -68,9 +68,9 @@ def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, logic, parser_state
 	
 
 # [possible,stage,indices]
-def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, logic, parser_state, TimingParamsLookupTable):	
+def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, logic, parser_state, TimingParamsLookupTable):	
 	LogicLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	last_stage = total_latency
 	
@@ -519,13 +519,13 @@ def GET_READ_VHDL_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, p
 	return rv
 
 
-def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupTable,clock_mhz, parser_state):
+def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable,clock_mhz, parser_state):
 	clk_xdc_filepath = WRITE_CLK_XDC(output_directory, clock_mhz)
 
 	# Bah tcl doesnt like brackets in file names
 	# Becuase dumb
 	
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	rv = ""
 	
 	# Add in VHDL 2008 fixed/float support?
@@ -541,25 +541,25 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupT
 	files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
 	
 	# Entity file
-	entity_filename = VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+	entity_filename = VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	files_txt += output_directory + "/" + entity_filename + " "
 	
 	# Need to write files for all submodule instances
 	# Files are per func name + timing param so dont duplicate
 	submodule_funcs = []
-	submodule_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(Logic, parser_state)
+	submodule_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(inst_name, Logic, parser_state)
 	for submodule_inst_name in submodule_instances:
 		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
 		# ONly write non vhdl funcs
 		if not submodule_logic.is_vhdl_func:
-			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_logic,TimingParamsLookupTable, parser_state) + ".vhd"
+			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic,TimingParamsLookupTable, parser_state) + ".vhd"
 			if submodule_entity_filename not in submodule_funcs:			
 				submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
 				files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
 				submodule_funcs.append(submodule_entity_filename)
 	
 	# Top not shared
-	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
+	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
 	
 	# Single read vhdl line
 	rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
@@ -588,7 +588,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupT
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 	
 	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top -part xc7a35ticsg324-1L -l" + "\n"
+	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part xc7a35ticsg324-1L -l" + "\n"
 	
 
 	# Report clocks
@@ -616,9 +616,9 @@ def WRITE_CLK_XDC(output_directory, clock_mhz):
 	
 
 # return path to tcl file
-def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state):
-	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state):
+	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name,Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
+	timing_params = TimingParamsLookupTable[inst_name]
 	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)	
 	out_filename = Logic.func_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
 	out_filepath = output_directory+"/"+out_filename
@@ -629,16 +629,16 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParams
 	
 	
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
 	
 	# Hard rule for now, functions with globals must be zero clk
 	if total_latency > 0 and len(Logic.global_wires) > 0:
-		print "Can't synthesize atomic global function '", Logic.inst_name, "' with latency = ", total_latency
+		print "Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency
 		sys.exit(0)
 		
 	
 	# Timing params for this logic
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	
 	#print "SYN: FUNC_NAME:", C_TO_LOGIC.LEAF_NAME(Logic.func_name)
 	# First create syn/imp directory for this logic
@@ -670,13 +670,13 @@ def SYN_AND_REPORT_TIMING(Logic, parser_state, TimingParamsLookupTable, clock_mh
 		# Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
 		# meaning "procedure is named the same as the entity"
 		#VHDL.GENERATE_PACKAGE_FILE(Logic, parser_state, TimingParamsLookupTable, timing_params, output_directory)
-		VHDL.WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupTable)
-		VHDL.WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable)
+		VHDL.WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
+		VHDL.WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
 			
 		# Write xdc describing clock rate
 		
 		# Write a syn tcl into there
-		syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
+		syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
 		
 		# Execute vivado sourcing the tcl
 		syn_imp_bash_cmd = (
@@ -774,7 +774,7 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	return new_reg_name
 	
 # Get deepest in hierarchy possible match , msot specfic match
-def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupTable):
+def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, LogicInstLookupTable):
 	#print "DEBUG: REG:", reg_name
 	
 	# Get matching submoduel isnt, dont care about var names after self or globals
@@ -795,11 +795,12 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 		#print "Is this real?"
 		#print reg_name
 		#sys.exit(0)
-		return logic.inst_name
+		return inst_name
 		
 	# Assume starts with main
 	# Loop constructing more and more specific match
 	curr_logic = logic # Assumed to be main
+	curr_inst_name = inst_name
 	curr_end_tok_index = 2 # First two toks joined
 	while curr_end_tok_index <= len(reg_toks):
 		curr_reg_str = "/".join(reg_toks[0:curr_end_tok_index])
@@ -811,8 +812,9 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 			max_match = 0.0
 			max_match_submodule_inst = None
 			for submodule_inst in curr_logic.submodule_instances:
+				submodule_inst_name = curr_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
 				#Sanitize
-				new_inst = submodule_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("[","_").replace("]","").replace(".","_")
+				new_inst = submodule_inst_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("[","_").replace("]","").replace(".","_")
 				#print "new_inst",new_inst
 				# Compare
 				lib_match_amount = difflib.SequenceMatcher(None, new_reg_name, new_inst).ratio()
@@ -821,15 +823,16 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 				#print "match_amount",match_amount
 				if match_amount > max_match:
 					max_match = match_amount
-					max_match_submodule_inst = submodule_inst
+					max_match_submodule_inst = submodule_inst_name
 			
 			if max_match_submodule_inst is None:
 				print "Wtf?", curr_reg_str
-				print "curr_logic.inst_name",curr_logic.inst_name
+				print "curr_inst_name",curr_inst_name
 				sys.exit(0)
 			
 			# Use this submodule as next logic
 			curr_logic = LogicInstLookupTable[max_match_submodule_inst]
+			curr_inst_name = max_match_submodule_inst_global
 			
 		# Include next reg tok
 		curr_end_tok_index = curr_end_tok_index + 1
@@ -839,84 +842,3 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicInstLookupT
 	#print "DEBUG: INST:", max_match_submodule_inst
 	
 	return max_match_submodule_inst
-	
-	'''
-	
-	#print "reg_name",reg_name
-	new_reg_name = GET_INST_NAME_ADJUSTED_REG_NAME(reg_name)
-	
-		
-	# Find minimum distance between strings
-	max_match = 0.0
-	max_match_inst = None
-	for inst in LogicInstLookupTable:
-		new_inst = inst.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("[","_").replace("]","").replace(".","_")
-		lib_match_amount = difflib.SequenceMatcher(None, new_reg_name, new_inst).ratio()
-		lev_match_amount = Levenshtein.ratio(new_reg_name, new_inst)
-		match_amount = lib_match_amount * lev_match_amount
-		if match_amount > max_match:
-			max_match = match_amount
-			max_match_inst = inst
-			
-			
-		# DO WIRES TOO AHH SO SLOW????
-		max_wire_match = 0.0
-		max_match_wire = None
-		max_match_wire_inst = None
-		logic_inst = LogicInstLookupTable[inst]
-		for wire in logic_inst.wires:
-			toks = wire.split(C_TO_LOGIC.SUBMODULE_MARKER)
-			# Get leaf of each tok
-			leaf_toks = []
-			for tok in toks:
-				leaf_tok = C_TO_LOGIC.LEAF_NAME(tok)
-				leaf_toks.append(leaf_tok)
-			
-			no_leaf_markers_wire_name = C_TO_LOGIC.SUBMODULE_MARKER.join(leaf_toks[0:len(leaf_toks)])
-			
-			new_wire = no_leaf_markers_wire_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("[","_").replace("]","").replace(".","_")
-			#print "new_reg_name", new_reg_name
-			#print "new_wire",new_wire
-			lib_match_amount = difflib.SequenceMatcher(None, new_reg_name, new_wire).ratio()
-			lev_match_amount = Levenshtein.ratio(new_reg_name, new_wire)
-			match_amount = lib_match_amount * lev_match_amount
-			#print "match_amount",match_amount
-			#print "==="
-			if match_amount > max_wire_match:
-				max_wire_match = match_amount
-				max_match_wire = wire
-				# Is this a submodule port?
-				if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire, logic_inst):
-					toks = wire.split(C_TO_LOGIC.SUBMODULE_MARKER)
-					submodule_inst = C_TO_LOGIC.SUBMODULE_MARKER.join(toks[0:len(toks)-1])
-					max_match_wire_inst = submodule_inst
-				else:
-					# Regular wire in the inst
-					max_match_wire_inst = inst
-					
-		
-		# Then compare best wire match to best inst lookup
-		if max_wire_match > max_match:
-			max_match = max_wire_match
-			max_match_inst = max_match_wire_inst
-
-			
-			
-			
-	
-	if not(max_match_inst in LogicInstLookupTable):
-		print ""
-		print "GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME"
-		print "reg_name",reg_name
-		print "new_reg_name",new_reg_name
-		print "matched %",max_match
-		print "max_match_inst",max_match_inst
-		print ""
-		sys.exit(0)
-	
-	
-	#print "Adjusted reg name from syn: ",new_reg_name
-	#print "Matches inst:", max_match_inst
-	
-	return max_match_inst
-	'''

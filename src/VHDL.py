@@ -53,9 +53,9 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
 
 
-def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTable):	
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
+def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable):	
+	timing_params = TimingParamsLookupTable[inst_name]
+	filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
 	
 	rv = ""
 	rv += "library ieee;" + "\n"
@@ -65,9 +65,9 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	rv += "use work.c_structs_pkg.all;\n"
 	
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	rv += "port(" + "\n"
 	rv += "	clk : in std_logic;" + "\n"
 	# The inputs of the logic
@@ -82,9 +82,9 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
+	rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
 
-	rv += "architecture arch of " + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	
 	# Dont touch IO
 	rv += "attribute dont_touch : string;\n"
@@ -109,7 +109,7 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 	
 	# Write vhdl func if needed
 	if Logic.is_vhdl_func:
-		rv += GET_VHDL_FUNC_DECL(Logic, parser_state, timing_params)
+		rv += GET_VHDL_FUNC_DECL(inst_name, Logic, parser_state, timing_params)
 	
 	rv += "begin" + "\n"
 	
@@ -119,23 +119,23 @@ def WRITE_VHDL_TOP(Logic, output_directory, parser_state, TimingParamsLookupTabl
 		# FUNCTION INSTANCE
 		rv += WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output <= " + Logic.func_name + "(\n"
 		# Inputs from regs
-		for in_wire in Logic.inputs:
-			rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
+		for in_port in Logic.inputs:
+			rv += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
 		# Remove last two chars
 		rv = rv[0:len(rv)-len(",\n")]
 		rv += ");\n"
 	else:
 		# ENTITY
 		rv += "-- Instantiate entity\n"
-		rv += GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) +" : entity work." + GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state) +" port map (\n"
+		rv += GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" : entity work." + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" port map (\n"
 		if needs_clk:
 			rv += "clk,\n"
 		# Inputs from regs
-		for in_wire in Logic.inputs:
-			rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + "_input_reg"  + ",\n"
+		for in_port in Logic.inputs:
+			rv += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
 		# Outputs to signal
-		for out_wire in Logic.outputs:
-			rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output" + ",\n"
+		for out_port in Logic.outputs:
+			rv += WIRE_TO_VHDL_NAME(out_port, Logic) + "_output" + ",\n"
 		# Remove last two chars
 		rv = rv[0:len(rv)-len(",\n")]
 		rv += ");\n"
@@ -270,16 +270,16 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
 		sys.exit(0)
 	
 	
-def GET_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
-	timing_params = TimingParamsLookupTable[logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	package_file_text = ""
 	# Raw hdl logic is static in the stages code here but coded as generic
 	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
-		package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+		package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
 	else:
-		package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable)
+		package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable)
 	
 	return package_file_text
 
@@ -341,8 +341,8 @@ package c_structs_pkg is
 		# Find all array types - need to do this since array types are not (right now) 
 		# declared/typedef individually like structs
 		array_types = []
-		for inst_name in parser_state.LogicInstLookupTable:
-			logic = parser_state.LogicInstLookupTable[inst_name]
+		for func_name in parser_state.FuncLogicLookupTable:
+			logic = parser_state.FuncLogicLookupTable[func_name]
 			for wire in logic.wire_to_c_type:
 				c_type = logic.wire_to_c_type[wire]
 				if (c_type not in types_written) and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type) and (c_type not in array_types):
@@ -459,28 +459,29 @@ end c_structs_pkg;
 	f.write(text)
 	f.close()
 	
-def LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable):
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
+	timing_params = TimingParamsLookupTable[inst_name]
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	i_need_clk = latency>0 or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
 	
 	needs_clk = i_need_clk
 	# Check submodules too
-	for instance_name in Logic.submodule_instances:
-		submodule_logic_name = Logic.submodule_instances[instance_name]
+	for inst in Logic.submodule_instances:
+		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+		submodule_logic_name = Logic.submodule_instances[inst]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-		needs_clk = needs_clk or LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
+		needs_clk = needs_clk or LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
 	
 	return needs_clk
 	
-def GET_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
+def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	if SW_LIB.IS_MEM(Logic):
 		return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
 	else:
-		return GET_PIPELINE_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
+		return GET_PIPELINE_ARCH_DECL_TEXT(inst_name,Logic, parser_state, TimingParamsLookupTable)
 		
-def GET_PIPELINE_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+	timing_params = TimingParamsLookupTable[inst_name]
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	
 	rv = ""
@@ -502,7 +503,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
 	wrote_variables_t = False
 	# Raw HDL functions are done differently
 	if len(Logic.submodule_instances) <= 0 and Logic.func_name != "main":
-		text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(Logic, parser_state, timing_params)
+		text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, Logic, parser_state, timing_params)
 		if text != "":
 			rv += varables_t_pre
 			rv += text
@@ -517,14 +518,9 @@ def GET_PIPELINE_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
 		text_additions = []
 		for wire_name in Logic.wire_to_c_type:
 			# Skip constants here
-			if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name,Logic.inst_name):
+			if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
 				continue
-			'''
-			# Skip org var names that arent inputs or outputs for Logic with submodules (C code)
-			if len(Logic.submodule_instances) > 0:
-				if not(wire_name in Logic.inputs) and not(wire_name in Logic.outputs) and (wire_name in Logic.variable_names):
-					continue
-			'''
+
 			# Skip globals too
 			if wire_name in Logic.global_wires:
 				continue
@@ -634,43 +630,47 @@ end function;\n
 
 	# Signals for submodule ports
 	rv += '''-- Each function instance gets signals\n'''
-	for instance_name in Logic.submodule_instances:
-		submodule_logic_name = Logic.submodule_instances[instance_name]
+	for inst in Logic.submodule_instances:
+		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+		submodule_logic_name = Logic.submodule_instances[inst]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
 		rv += "-- " + instance_name + "\n"
 		# Inputs
-		for in_wire in submodule_logic.inputs:
+		for in_port in submodule_logic.inputs:
+			in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(in_wire,Logic,parser_state)
 			rv += "signal " + WIRE_TO_VHDL_NAME(in_wire, Logic)	 + " : " + vhdl_type_str + ";\n"
 		# Outputs
-		for out_wire in submodule_logic.outputs:
+		for out_port in submodule_logic.outputs:
+			out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_wire,Logic,parser_state)
 			rv += "signal " + WIRE_TO_VHDL_NAME(out_wire, Logic) + " : " + vhdl_type_str + ";\n"
 		rv += "\n"
 		
 		
 	# Certain submodules are always 0 delay "IS_VHDL_FUNC"
-	rv += GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable)
+	rv += GET_VHDL_FUNC_SUBMODULE_DECLS(inst_name, Logic, parser_state, TimingParamsLookupTable)
 
 	rv += "\n"
 	
 	return rv
 	
 	
-def GET_VHDL_FUNC_SUBMODULE_DECLS(Logic, parser_state, TimingParamsLookupTable):
+def GET_VHDL_FUNC_SUBMODULE_DECLS(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	rv = ""
 	vhdl_funcs = []
-	for instance_name in Logic.submodule_instances:
-		submodule_logic_name = Logic.submodule_instances[instance_name]
+	for inst in Logic.submodule_instances:
+		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+		submodule_logic_name = Logic.submodule_instances[inst]
 		timing_params = TimingParamsLookupTable[instance_name]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
 		if submodule_logic.is_vhdl_func and submodule_logic.func_name not in vhdl_funcs:
 			vhdl_funcs.append(submodule_logic.func_name)
-			rv += GET_VHDL_FUNC_DECL(submodule_logic, parser_state, timing_params)
+			rv += GET_VHDL_FUNC_DECL(instance_name, submodule_logic, parser_state, timing_params)
 			rv += "\n"
 	return rv;
 	
-def GET_VHDL_FUNC_DECL(vhdl_func_logic, parser_state, timing_params):
+def GET_VHDL_FUNC_DECL(inst_name, vhdl_func_logic, parser_state, timing_params):
 	
 	# Modelsim doesnt like 'subtype' names in funcs?
 	# (vcom-1115) Subtype indication found where type mark is required.
@@ -706,12 +706,12 @@ function ''' + vhdl_func_logic.func_name + '''('''
 	rv += ") return " + vhdl_type_str + " is\n"
 	
 	# Wires (abusing existing function)
-	rv += RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(vhdl_func_logic, parser_state, timing_params)
+	rv += RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, vhdl_func_logic, parser_state, timing_params)
 	
 	# Func logic (abuse existing logic)
 	rv += "\n"
 	rv += "begin\n"
-	rv += RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(vhdl_func_logic, parser_state, timing_params)
+	rv += RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, vhdl_func_logic, parser_state, timing_params)
 	rv += "\n"
 	# End func
 	rv += '''
@@ -722,15 +722,15 @@ end function;
 	
 
 	
-def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupTable):	
+def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable):	
 	# Sanity check until complete sanity has been 100% ensured with absolute certainty
 	if Logic.is_vhdl_func:
 		print "Why write vhdl func entity?"
 		print 0/0
 		sys.exit(0)
 	
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	filename = GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+	timing_params = TimingParamsLookupTable[inst_name]
+	filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	
 	rv = ""
 	rv += "library ieee;" + "\n"
@@ -742,9 +742,9 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	rv += "use work.c_structs_pkg.all;\n"
 	
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	rv += "port(" + "\n"
 	if needs_clk:
 		rv += "	clk : in std_logic;" + "\n"
@@ -760,12 +760,12 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
+	rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
 
-	rv += "architecture arch of " + GET_ENTITY_NAME(Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	
 	# Get declarations for this arch
-	rv += GET_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
 	rv += "begin" + "\n"
 
@@ -773,17 +773,20 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	# Connect submodules
 	if len(Logic.submodule_instances) > 0:
 		rv += "-- SUBMODULE INSTANCES \n"
-		for instance_name in Logic.submodule_instances:
-			submodule_logic_name = Logic.submodule_instances[instance_name]
-			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-			new_inst_name = WIRE_TO_VHDL_NAME(instance_name, Logic)
+		for inst in Logic.submodule_instances:
+			instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+			submodule_logic_name = Logic.submodule_instances[inst]
+			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+			new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
 			rv += "-- " + new_inst_name + "\n"
 			
 			# AS ENTITY OR FUNC?
 			if submodule_logic.is_vhdl_func:
 				# FUNC INSTANCE
-				rv += WIRE_TO_VHDL_NAME(submodule_logic.outputs[0], Logic) + " <= " + submodule_logic.func_name + "(\n"
-				for in_wire in submodule_logic.inputs:
+				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
+				rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + " <= " + submodule_logic.func_name + "(\n"
+				for in_port in submodule_logic.inputs:
+					in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
 					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
 				# Remove last two chars
 				rv = rv[0:len(rv)-2]
@@ -792,15 +795,17 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 				# ENTITY
 				submodule_timing_params = TimingParamsLookupTable[instance_name];
 				submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-				submodule_needs_clk = LOGIC_NEEDS_CLOCK(submodule_logic, parser_state, TimingParamsLookupTable)
-				rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
+				submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+				rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
 				if submodule_needs_clk:
 					rv += "clk,\n"
 				# Inputs
-				for in_wire in submodule_logic.inputs:
+				for in_port in submodule_logic.inputs:
+					in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
 					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
 				# Outputs
-				for out_wire in submodule_logic.outputs:
+				for out_port in submodule_logic.outputs:
+					out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
 					rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
 				# Remove last two chars
 				rv = rv[0:len(rv)-2]
@@ -808,7 +813,7 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 				
 	# Get the text that is actually the pipeline logic in this entity
 	rv += "\n"
-	rv += GET_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	rv += GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
 	# Done with entity
 	rv += "end arch;" + "\n"
@@ -821,17 +826,17 @@ def WRITE_VHDL_ENTITY(Logic, output_directory, parser_state, TimingParamsLookupT
 	f.write(rv)
 	f.close()
 	
-def GET_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
+def GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	# Special case logic that does not do usage pipeline
 	if SW_LIB.IS_MEM(Logic):
 		return RAW_VHDL.GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
 	else:
 		# Regular comb logic pipeline
-		return GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookupTable)
+		return GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
 
-def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookupTable):
+def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	# Comb Logic pipeline
-	needs_clk = LOGIC_NEEDS_CLOCK(Logic, parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	rv = ""
 	rv += "\n"
 	rv += "	-- Combinatorial process for pipeline stages\n"
@@ -845,16 +850,18 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 	if len(Logic.submodule_instances) > 0:
 		rv += "	-- All submodule outputs\n"
 		# Connect submodules
-		for instance_name in Logic.submodule_instances:
-			submodule_logic_name = Logic.submodule_instances[instance_name]
-			submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		for inst in Logic.submodule_instances:
+			instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+			submodule_logic_name = Logic.submodule_instances[inst]
+			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
 			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
 			rv += "	-- " + new_inst_name + "\n"
 			# Outputs
 			if len(submodule_logic.outputs) <= 0:
 				print "Submodule has no outputs?", instance_name
 				sys.exit(0)
-			for out_wire in submodule_logic.outputs:
+			for out_port in submodule_logic.outputs:
+				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
 				rv += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
 	# Remove last two chars
 	rv = rv[0:len(rv)-2]
@@ -942,7 +949,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 	rv += "\n"
 	
 	# C built in Logic is static in the stages code here but coded as generic
-	rv += GET_ENTITY_PROCESS_STAGES_TEXT(Logic, parser_state, TimingParamsLookupTable)
+	rv += GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
 		
 	rv += "	" + "	" + "-- Write to stage reg\n"
 	rv += "	" + "	" + "write_self_regs(STAGE) := write_pipe;\n"
@@ -975,10 +982,10 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(Logic, parser_state, TimingParamsLookup
 
 			
 # Returns dict[stage_num]=stage_text
-def GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	# Get the per stage texts and combine
-	per_stage_texts = GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(logic, parser_state, TimingParamsLookupTable)
+	per_stage_texts = GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(inst_name, logic, parser_state, TimingParamsLookupTable)
 	
 	per_stage_text = dict()
 	for stage in per_stage_texts:
@@ -1060,14 +1067,13 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 
 
 	
-def GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(logic, parser_state, TimingParamsLookupTable):
-	#timing_params = TimingParamsLookupTable[logic.inst_name]
-	pipeline_map = SYN.GET_PIPELINE_MAP(logic, parser_state, TimingParamsLookupTable)
+def GET_C_ENTITY_PROCESS_PER_STAGE_SUDMODULE_LEVEL_TEXTS(inst_name, logic, parser_state, TimingParamsLookupTable):
+	pipeline_map = SYN.GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable)
 	return pipeline_map.per_stage_texts 
 
-def GET_C_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, TimingParamsLookupTable):
+def GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable):
 	# Get text per stage
-	per_stage_text = GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(logic, parser_state, TimingParamsLookupTable)
+	per_stage_text = GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable)
 	
 	package_file_text = ""
 	for stage_num in range(0, len(per_stage_text)):
@@ -1130,47 +1136,22 @@ def WIRES_TO_C_INT_BIT_WIDTH(wires,logic):
 			rv_width = width
 		else:
 			if rv_width != width:
-				print "Inputs not all same width for C int?", logic.inst_name
+				print "Inputs not all same width for C int?", logic.func_name
 				print logic.wire_to_c_type
 				print "rv_width, width", rv_width, width
 				print 0/0
 				sys.exit(0)
 	return rv_width
 	
-def GET_OUTPUT_C_INT_BIT_WIDTH(logic):
-	rv_width = None
-	for out in logic.outputs:
-		c_type = logic.wire_to_c_type[out]
-		width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-		if rv_width is None:
-			rv_width = width
-		else:
-			if rv_width != width:
-				print "Outputs not all same width for C int?", logic.inst_name
-				print logic.wire_to_c_type
-				print "rv_width, width", rv_width, width
-				sys.exit(0)
-	return rv_width
-
-
-
-	
-def GET_RHS(driving_wire_to_handle, logic, parser_state, TimingParamsLookupTable, timing_params, stage_ordered_submodule_list, stage):
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
+def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParamsLookupTable, timing_params, stage_ordered_submodule_list, stage):
 	RHS = ""
 	# SUBMODULE PORT?
 	if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire_to_handle, logic):		
 		# Get submodule name
-		#print "driving_wire_to_handle",driving_wire_to_handle
 		toks=driving_wire_to_handle.split(C_TO_LOGIC.SUBMODULE_MARKER)
-		#driving_submodule_name = C_TO_LOGIC.SUBMODULE_MARKER.join(toks[0:len(toks)-2])
 		driving_submodule_name = C_TO_LOGIC.SUBMODULE_MARKER.join(toks[0:len(toks)-1])
-		driving_submodule_logic = LogicInstLookupTable[driving_submodule_name]
-		#print "driving_submodule_name",driving_submodule_name
-		#print "vhdl_tLogicInstLookupTableiming_params._submodule_latencies",timing_params._submodule_latencies
-		
-		driving_submodule_latency = timing_params.GET_SUBMODULE_LATENCY(driving_submodule_name, parser_state, TimingParamsLookupTable)
-		
+		driving_submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + driving_submodule_name
+		driving_submodule_latency = timing_params.GET_SUBMODULE_LATENCY(driving_submodule_inst_name, parser_state, TimingParamsLookupTable)
 		
 		# Which stage was the driving submodule inst
 		driving_submodule_stage = None
@@ -1237,13 +1218,9 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 		
 	return LHS
 
-def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
-	inst_name = ""
-	if Logic.inst_name is not None:
-		inst_name = Logic.inst_name
-	
+def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):	
 	# If a constant 
-	if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name, inst_name):
+	if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
 		# Use type to cast value string to type
 		c_type =  Logic.wire_to_c_type[wire_name]
 		val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
@@ -1290,11 +1267,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 	
 def WIRE_TO_VHDL_NAME(wire_name, Logic):
-	if C_TO_LOGIC.SUBMODULE_MARKER in wire_name:
-		just_local_wire_name = wire_name.replace(Logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-		leaf_name = C_TO_LOGIC.LEAF_NAME(just_local_wire_name)	
-	else:
-		leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
+	leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
 	
 	#print "leaf_name",leaf_name
 	rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
@@ -1303,43 +1276,44 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 
 	
 
-def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
+def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
 	# Use logic to write vhdl
-	timing_params = TimingParamsLookupTable[logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	text = ""
 	# Drive input ports
-	text += "-- Inputs" + "\n"
-	for input_port_wire in submodule_logic.inputs:
+	text += "			-- Inputs" + "\n"
+	for input_port in submodule_logic.inputs:
+		input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
 		text += "			" + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
 
 	# Only do output connection if zero clk 
 	if submodule_latency_from_container_logic == 0:
 		text += "			-- Outputs" + "\n"
-		for output_port_wire in submodule_logic.outputs:
+		for output_port in submodule_logic.outputs:
+			output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
 			text +=  "			" + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
 		
 	return text
 	
 	
-def GET_TOP_NAME(Logic, TimingParamsLookupTable, parser_state):
+def GET_TOP_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
-	return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
+	timing_params = TimingParamsLookupTable[inst_name]
+	return C_TO_LOGIC.LEAF_NAME(inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
 	
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
-def GET_ENTITY_NAME(Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
+def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
 	# Sanity check?
 	if Logic.is_vhdl_func:
 		print "Why entity for vhdl func?"
 		print 0/0
 		sys.exit(0)		
 	
-	timing_params = TimingParamsLookupTable[Logic.inst_name]
+	timing_params = TimingParamsLookupTable[inst_name]
 	latency = est_total_latency
 	if latency is None:
 		latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	return Logic.func_name + "_" +  str(latency) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-	#return C_TO_LOGIC.LEAF_NAME(Logic.inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 
 def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
 	# Just replace brackets with _

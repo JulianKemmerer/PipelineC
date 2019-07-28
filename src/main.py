@@ -40,21 +40,21 @@ print "	Redo old code to use for loops instead of generated code (ex. float div)
 print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
 
-print "================== Generating (u)intN_t.h Headers ================================"
+print "================== Generating (u)intN_t.h headers ================================"
 SW_LIB.GENERATE_INT_N_HEADERS()
 
-print "================== Parsing C Code to Logical Hierarchy ================================"
+print "================== Parsing C Code to logical hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
 
-print "================== Adding Logic Delay Information To Lookup Table ================================"
+print "================== Adding logic delay information from synthesis tool (Vivado) ================================"
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state.LogicInstLookupTable[top_level_func_name], parser_state)
-logic = parser_state.LogicInstLookupTable[top_level_func_name]
+logic = parser_state.FuncLogicLookupTable[top_level_func_name]
 
 print "================== Doing Optional Modelsim Debug ================================"
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
-TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(logic, parser_state, mhz)
+TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz)
 
 print "================== Writing Results of Throughput Sweep ================================"
 timing_params = TimingParamsLookupTable[top_level_func_name]

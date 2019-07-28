@@ -12,7 +12,7 @@ import VHDL
 
 
 # Declare variables used internally to c built in C logic
-def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
+def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	
 	if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
@@ -32,17 +32,17 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(logic, parser_state, timing_params):
 	elif SW_LIB.IS_MEM(logic):
 		return ""
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
 		return wires_decl_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
-		wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+		wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, LogicInstLookupTable, timing_params, parser_state)
 		return wires_decl_text
 	else:
 		print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
 		sys.exit(0)
 
 
-def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable	
 	# Unary ops !
 	if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
@@ -61,7 +61,7 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
 		wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
 		return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):	
-		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+		wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
 		return package_stages_text
 	elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
 		wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
@@ -264,37 +264,19 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	
 
 	
-def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
+def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params):
 	#print "======="
 	#print "logic.func_name",logic.func_name
 	
-	
-	'''
-	ref_str = logic.func_name.replace(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_","")
-	# Try to recover ref toks
-	# Get ref toks as best we can
-	ref_tok_strs = ref_str.split(C_TO_LOGIC.REF_TOK_DELIM)
-	ref_toks = []
-	for ref_tok_str in ref_tok_strs:
-		if ref_tok_str.isdigit():
-			# Array ref
-			ref_toks.append(int(ref_tok_str))
-		else:
-			ref_toks.append(ref_tok_str)
-			
-	orig_var_name = ref_toks[0]
-	#print "orig_var_name",orig_var_name
-	'''
-	
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	container_logic = LogicInstLookupTable[logic.containing_inst]
+	containing_inst = C_TO_LOGIC.GET_CONTAINER_INST(inst_name)
+	local_inst_name = C_TO_LOGIC.LEAF_NAME(inst_name, True)
+	container_logic = parser_state.LogicInstLookupTable[containing_inst]
 	
 		
 	# Copy parser state since not intending to change existing logic in this func
 	parser_state_copy = copy.copy(parser_state)
 	parser_state_copy.existing_logic = container_logic	
-	
-	ref_toks = container_logic.ref_submodule_instance_to_ref_toks[logic.inst_name]
+	ref_toks = container_logic.ref_submodule_instance_to_ref_toks[local_inst_name]
 	orig_var_name = ref_toks[0]
 	#print orig_var_name
 	#sys.exit(0)
@@ -303,15 +285,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	
 	#print "container_logic.wire_to_c_type",container_logic.wire_to_c_type
 	#BAH fuck is this normal? ha yes, doing for var ref rd too
-	orig_var_name_inst_name = logic.containing_inst + C_TO_LOGIC.SUBMODULE_MARKER + orig_var_name
-	'''
-	# Sanity check
-	if orig_var_name_inst_name not in container_logic.wire_to_c_type:
-		for wire in container_logic.wire_to_c_type:
-			print wire, container_logic.wire_to_c_type[wire]
-		#print container_logic.wire_to_c_type
-	'''	
-	base_c_type = container_logic.wire_to_c_type[orig_var_name_inst_name]
+	base_c_type = container_logic.wire_to_c_type[orig_var_name]
 	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state_copy) # Structs handled and have same name as C types
 	
 	wires_decl_text = ""
@@ -322,15 +296,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 
 	#print "logic.func_name",logic.func_name
 	
-	# # Then wire for each input
-	# for input_port_inst_name in logic.inputs:
-	# 	input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-	# 	input_port_type_c_type = logic.wire_to_c_type[input_port_inst_name]
-	# 	input_port_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_port_type_c_type,parser_state_copy)
-	# 	vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) #.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_").re
-	# 	
-	# 	wires_decl_text +=  '''	
-	# variable ''' + vhdl_input_port + ''' : ''' + input_port_type + ''';'''
+	
 	
 	# Then output
 	output_c_type = logic.wire_to_c_type[logic.outputs[0]]
@@ -342,10 +308,10 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	text = ""
 	# Inputs drive base, any undriven wires here should have syn error right?
 	
-	driven_ref_toks_list = container_logic.ref_submodule_instance_to_input_port_driven_ref_toks[logic.inst_name]
+	driven_ref_toks_list = container_logic.ref_submodule_instance_to_input_port_driven_ref_toks[local_inst_name]
 	driven_ref_toks_i = 0
-	for input_port_inst_name in logic.inputs:
-		input_port = input_port_inst_name.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
+	for input_port in logic.inputs:
+		#input_port = input_port_inst_name.replace(local_inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
 		vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) # input_port.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
 		#print "input_port",input_port
 		
@@ -370,8 +336,8 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 		
 		# Expand to constant refs
 		#if driven_ref_toks[0] == "bs":
-		#	print "logic.inst_name",logic.inst_name
-		#	print "parser_state_copy.existing_logic.inst_name",parser_state_copy.existing_logic.inst_name
+		#	print "local_inst_name",local_inst_name
+		#	print "parser_state_copy.existing_logic.func_name",parser_state_copy.existing_logic.func_name
 		#	print "CONST ref rd:"
 		#	print "input",input_port_inst_name
 		#	print "driven_ref_toks",driven_ref_toks
@@ -411,22 +377,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 	# Need to parse func name
 	# Build vhdl str doing the output reference
 	vhdl_ref_str = ""
-	# THIS IS A CONSTANT REF READ SO NO VAR TOKS
-	'''
-	output_ref_toks_str = logic.func_name.replace(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX+"_","")
-	#.replace(logic.inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-	ref_tok_strs = output_ref_toks_str.split(C_TO_LOGIC.REF_TOK_DELIM)
-	# Output doesnt need base variable name, is already named 'base'
-	ref_tok_strs = ref_tok_strs[1:]
-	ref_toks = []
-	for ref_tok_str in ref_tok_strs:
-		if ref_tok_str.isdigit():
-			# Array ref
-			ref_toks.append(int(ref_tok_str))
-		else:
-			ref_toks.append(ref_tok_str)
-	'''
-	
+	# THIS IS A CONSTANT REF READ SO NO VAR TOKS	
 	
 	for ref_tok in ref_toks[1:]: # Skip base var name
 		if type(ref_tok) == int:
@@ -442,7 +393,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 			return return_output; '''
 	   
 	#print "=="
-	#print "logic.inst_name",logic.inst_name
+	#print "logic.func_name",logic.func_name
 	#print wires_decl_text
 	#print  text
 	#sys.exit(0)
@@ -780,14 +731,6 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	'''
-	output_width = GET_OUTPUT_C_INT_BIT_WIDTH(logic)
-	if output_width != (width*2):
-		print logic.inst_name,"Output width must be sum of two widths"
-		print "output_width",output_width
-		print "input width",width
-		sys.exit(0)
-	'''
 	
 	max_clocks = width
 	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
@@ -908,14 +851,6 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	'''
-	output_width = GET_OUTPUT_C_INT_BIT_WIDTH(logic)
-	if output_width != (width*2):
-		print logic.inst_name,"Output width must be sum of two widths"
-		print "output_width",output_width
-		print "input width",width
-		sys.exit(0)
-	'''
 	
 	max_clocks = width
 	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
@@ -1129,14 +1064,6 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	'''
-	output_width = GET_OUTPUT_C_INT_BIT_WIDTH(logic)
-	if output_width != (width*2):
-		print logic.inst_name,"Output width must be sum of two widths"
-		print "output_width",output_width
-		print "input width",width
-		sys.exit(0)
-	'''
 	
 	max_clocks = width
 	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
@@ -1275,14 +1202,6 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
 	
 	# Output width must be 1 greater than max of input widths
 	# Is vhdl allowing equal or larger assignments?
-	'''
-	output_width = GET_OUTPUT_C_INT_BIT_WIDTH(logic)
-	if output_width != (width*2):
-		print logic.inst_name,"Output width must be sum of two widths"
-		print "output_width",output_width
-		print "input width",width
-		sys.exit(0)
-	'''
 	
 	max_clocks = width
 	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
@@ -1885,18 +1804,6 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
 	in_wire = tf_inputs[0]
 	c_type = logic.wire_to_c_type[in_wire]
 	input_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
-	
-	#FUCKFUCKFUCK
-	if "uint24_mux24" in logic.inst_name and "layer0_node0_" in in_wire:
-		if input_vhdl_type != "unsigned(23 downto 0)":
-			for wire in logic.wire_to_c_type:
-				print wire, logic.wire_to_c_type[wire]
-			print "INST",logic.inst_name
-			print "in_wire",in_wire
-			#print "MUX input_vhdl_type",input_vhdl_type
-			print "c_type",c_type
-			print "WHAT THE FUCK"
-			sys.exit(0)
 		
 		
 	wires_decl_text =  '''	

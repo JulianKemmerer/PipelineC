@@ -229,7 +229,7 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 			
 			# Add global for this logic
 			#print "RAM GLOBAL:",global_name
-			#print func_logic.inst_name
+			#print func_logic.func_name
 			parser_state_copy.existing_logic = func_logic
 			func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(global_name, parser_state_copy)
 			FuncLogicLookupTable[func_name] = func_logic
@@ -1487,13 +1487,13 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
 ### Ahh fuck taking the easy way 
 # Copying implemetnation from 		GET_VAR_REF_ASSIGN_C_CODE
 # Might actually be worth it
-def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state):
 	#@@@@ Need to solve can't reutnr arry and any type NMUX name problem (struct_t_muxN name?)
 	## Fuck need to put array in struct
 	# Then need to allow cast from struct wray to array type in VHDL?
 
 
-	ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic.inst_name]
+	ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic_local_inst_name]
 	orig_var_name = ref_toks[0]
 	
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
@@ -1503,17 +1503,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	
 	# First need to assign ref tokens into type matching BASE
 	# Get base var name + type from any of the inputs	
-	'''
-	LogicInstLookupTable = parser_state.LogicInstLookupTable
-	container_logic = LogicInstLookupTable[partially_complete_logic.containing_inst]
-	#print "container_logic.wire_to_c_type",container_logic.wire_to_c_type
-	#BAH fuck is this normal? ha yes, doing for var assign rd too
-	orig_var_name_inst_name = logic.containing_inst + C_TO_LOGIC.SUBMODULE_MARKER + orig_var_name
-	# Sanity check
-	if orig_var_name_inst_name not in container_logic.wire_to_c_type:
-		for wire in container_logic.wire_to_c_type:
-			print wire, container_logic.wire_to_c_type[wire]
-	'''
+
 	#base_c_type = containing_func_logic.wire_to_c_type[orig_var_name_inst_name]
 	base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
 	base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(base_c_type,parser_state) # Structs handled and have same name as C types	
@@ -1578,7 +1568,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	ref_toks_i = 0
 	#print "containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks"
 	#print containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks
-	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic.inst_name]
+	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic_local_inst_name]
 	for input_wire in partially_complete_logic.inputs: 
 		if "var_dim_" not in input_wire:
 			input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
@@ -1773,12 +1763,12 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic, containing_func_logic, out_d
 	return text
 	
 	
-def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state):
 	# Each element gets a single mux comapring == sel
 	# Old code was bloated in muxing multiple copies of huge array
 
 	# Input ref toks can be base value so need to start with base type
-	lhs_ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic.inst_name]
+	lhs_ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[partially_complete_logic_local_inst_name]
 	orig_var_name = lhs_ref_toks[0]
 	base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
 	
@@ -1854,7 +1844,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	
 	text += "	// Assign ref toks to base\n"
 	# Do ref toks
-	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic.inst_name]
+	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic_local_inst_name]
 	ref_toks_i = 0
 	for input_wire in partially_complete_logic.inputs[1:]: 
 		if "var_dim_" not in input_wire:
@@ -1966,13 +1956,13 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic, containing_func_logic, o
 	
 	
 		
-def GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+def GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
 	
 	# THIS CODE ASSUMES NON CONST/ is dumb to use as const
-	left_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
-	right_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
+	left_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
+	right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
 	left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
 	right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
 	if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
@@ -1985,13 +1975,13 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic, out_dir, containing_func_logi
 		print "GET_BIN_OP_SR_C_CODE Only sr uint for now! DO ARITHMETIC SHIFT for INT"
 		sys.exit(0)
 		
-def GET_BIN_OP_SL_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state):
 	left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
 	right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]	
 	
 	# THIS CODE ASSUMES NON CONST/ is dumb to use as const
-	left_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
-	right_input_wire = partially_complete_logic.inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
+	left_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[0]
+	right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
 	left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
 	right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
 	if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
