@@ -56,9 +56,9 @@ float main(float theta)
 
 
 #include "math.h"
-dct_t main(dct_pixel_t matrix[DCT_M][DCT_N])
-{ 
-	return dctTransform(matrix);
+dct_done_t main(dct_pixel_t matrix[DCT_M][DCT_N], uint1_t start)
+{
+	return dctTransformUnrolled(matrix, start);
 }
 
 /*

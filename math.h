@@ -193,7 +193,7 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 }
 
 // Cosine implemented with 32bit fixed point
-// TODO: Verify this works
+// TODO: Verify this works (and all of cordic implementation)
 float cos(float theta)
 {
 	cordic_float_t cordic_result;
@@ -202,7 +202,7 @@ float cos(float theta)
 }
 
 // Sine implemented with 32bit fixed point
-// TODO: Verify this works
+// TODO: Verify this works (and all of cordic implementation)
 float sin(float theta)
 {
 	cordic_float_t cordic_result;
@@ -210,7 +210,7 @@ float sin(float theta)
 	return cordic_result.s;
 }
 
-// Placeholder
+// Placeholder for compile
 float sqrt(float x)
 {
 	return 0.0;
@@ -219,8 +219,8 @@ float sqrt(float x)
 // 8x8 DCT
 // https://www.geeksforgeeks.org/discrete-cosine-transform-algorithm-program/
 #define DCT_PI 3.14159265359
-#define DCT_M 6
-#define DCT_N 6
+#define DCT_M 8
+#define DCT_N 8
 #define dct_iter_t uint3_t // 0-7
 #define dct_pixel_t uint8_t // 0-255
 typedef struct dct_t
@@ -275,6 +275,216 @@ dct_t dctTransform(dct_pixel_t matrix[DCT_M][DCT_N])
     }
     
     return dct; 
-} 
+}
 
+
+// Cosine multiplier lookup table for unrolled version of above algorithm 
+// (as opposed to actually doing cosine operation)
+float dctCosLookup(dct_iter_t i_in, dct_iter_t j_in, dct_iter_t k_in, dct_iter_t l_in)
+{
+	// table evaluates to a constant
+    float table[DCT_M][DCT_N][DCT_M][DCT_N];
+    dct_iter_t i;
+    dct_iter_t j;
+    dct_iter_t k;
+    dct_iter_t l;
+    for (i = 0; i < DCT_M; i=i+1) { 
+        for (j = 0; j < DCT_N; j=j+1) { 
+			 for (k = 0; k < DCT_M; k=k+1) { 
+                for (l = 0; l < DCT_N; l=l+1) { 
+                    table[i][j][k][l] = ( cos((float)((2 * k + 1) * i) * DCT_PI / (float)(2 * DCT_M)) *  
+										  cos((float)((2 * l + 1) * j) * DCT_PI / (float)(2 * DCT_N))
+										);
+                }
+            } 
+        } 
+    }
+    
+    // Lookup into that table
+    return table[i_in][j_in][k_in][l_in]; 
+}
+
+// (ci * cj) lookup table for unrolled version of above algorithm 
+float dctConstLookup(dct_iter_t i_in, dct_iter_t j_in)
+{
+	// table evaluates to a constant
+    float table[DCT_M][DCT_N];
+    dct_iter_t i;
+    dct_iter_t j;
+    for (i = 0; i < DCT_M; i=i+1) { 
+        for (j = 0; j < DCT_N; j=j+1) { 
+			float ci;
+			float cj;
+			if (i == 0) 
+                ci = 1.0 / sqrt(DCT_M); 
+            else
+                ci = sqrt(2) / sqrt(DCT_M);
+            if (j == 0) 
+                cj = 1.0 / sqrt(DCT_N);
+            else
+                cj = sqrt(2) / sqrt(DCT_N);
+			table[i][j] = (ci*cj);
+        } 
+    }
+    
+    // Lookup into that table
+    return table[i_in][j_in];
+}
+
+
+// This is the unrolled version of the above algorithm
+// Each PipelineC iteration of dctTransformUnrolled 
+// increments i,j,k,l to do the same O(n^4) serially over time
+typedef struct dct_done_t
+{
+	float matrix[DCT_M][DCT_N];
+	uint1_t done;
+} dct_done_t;
+// Lookup table in BRAM takes N clocks
+//		(deterministic N always =2 in this case)
+// So keep track of doing lookup v.s. doing calculation
+typedef enum dct_state_t {
+	IDLE,
+	LOOKUP,
+	CALC
+} dct_state_t;
+// Instead of local variables holding the iterators and result
+// they are now volatile global variables
+// Volatiles can only read+write when valid,
+volatile uint1_t dct_volatiles_valid;
+volatile dct_state_t dct_state;
+volatile dct_iter_t dct_i;
+volatile dct_iter_t dct_j;
+volatile dct_iter_t dct_k;
+volatile dct_iter_t dct_l;
+// sum will temporarily store the sum of cosine signals 
+volatile float dct_sum;
+// dct_result will store the discrete cosine transform 
+volatile dct_done_t dct_result;
+// dctTransformUnrolled gets new inputs each clock cycle / "is called repeatedly"
+// Supply a matrix and start=1 to get going
+// Assume that we keep getting the same 'matrix' between start and done
+dct_done_t dctTransformUnrolled(dct_pixel_t matrix[DCT_M][DCT_N], uint1_t start)
+{
+	// Start bit validates the volatiles 
+	// and gets the calculation started
+	if(start)
+	{
+		dct_volatiles_valid = 1;
+		// Reset iters
+		dct_i = 0;
+		dct_j = 0;
+		dct_k = 0;
+		dct_l = 0;
+		// Lookup constants before calculating
+		dct_state = LOOKUP;
+	}
+	
+	// This part repeats as i,j,k,l iterate
+	
+	// Do lookup
+	if((dct_state == LOOKUP) & dct_volatiles_valid)
+	{
+		// Input i,j,k,l
+		// N clocks later get back constants
+		
+		
+		
+		
+	}
+	
+	
+	// Assume not yet
+	dct_result.done = 0;
+	
+	// N clock delayed memory
+	dct_lookup_t dct_lookup;
+	dct_lookup = dctLookupTable(
+	
+	// Do the calculation using these delayed iterator values
+	scoo
+	
+	
+	// Do calculation
+	if(dct_volatiles_valid)
+	{		
+		// Which iterators should increment/reset this iteration?
+		// l
+		uint1_t increment_l;
+		increment_l = 1; // Inner most loop - always
+		uint1_t reset_l;
+		reset_l = (dct_l==(DCT_N-1)) & increment_l;
+		// k
+		uint1_t increment_k;
+		increment_k = reset_l;
+		uint1_t reset_k;
+		reset_k = (dct_k==(DCT_M-1)) & increment_k;
+		// j
+		uint1_t increment_j;
+		increment_j = reset_k;
+		uint1_t reset_j;
+		reset_j = (dct_j==(DCT_N-1)) & increment_j;
+		// i
+		uint1_t increment_i;
+		increment_i = reset_j;
+		uint1_t reset_i;
+		reset_i = (dct_i==(DCT_M-1)) & increment_i;
+				
+		// ~~~ The primary calculation ~~~:
+		// 1) Float * constant from lookup table  
+		float dct1;
+		dct1 = (float)matrix[dct_k][dct_l] * dctCosLookup(dct_i, dct_j, dct_k, dct_l);
+		dct_sum = dct_sum + dct1;
+		// 2) constant * Float and assign into the matrix
+		dct_result.matrix[dct_i][dct_j] = dctConstLookup(dct_i, dct_j) * dct_sum;
+		
+		// Sum accumulates during the k and l loops
+		// So reset when they are rolling over
+		if(reset_k & reset_l)
+		{
+			dct_sum = 0.0;
+		}
+		
+		// Increment iterators as needed
+		if(increment_i)
+		{
+			dct_i = dct_i + 1;
+		}
+		if(increment_j)
+		{
+			dct_j = dct_j + 1;
+		}
+		if(increment_k)
+		{
+			dct_k = dct_k + 1;
+		}
+		if(increment_l)
+		{
+			dct_l = dct_l + 1;
+		}		
+		
+		// Reset iterators as needed
+		if(reset_i)
+		{
+			dct_i = 0;
+		}
+		if(reset_j)
+		{
+			dct_j = 0;
+		}
+		if(reset_k)
+		{
+			dct_k = 0;
+		}
+		if(reset_l)
+		{
+			dct_l = 0;
+		}	
+		
+		// Signal done as all iterators roll over
+		dct_result.done = reset_i & reset_j & reset_k & reset_l;
+	}
+	
+	return dct_result;
+}
 

@@ -11,9 +11,11 @@ C for hardware architectures based on pipelines.
 
 Get started by reading the wiki. https://github.com/JulianKemmerer/PipelineC/wiki
 
-PipelineC code generates synthesizable VHDL describing a hardware pipeline. This is the most basic feature of most industry High Level Synthesis (HLS) tools.
+PipelineC code generates synthesizable VHDL describing a hardware pipeline. This is the most basic feature of most industry High Level Synthesis (HLS) tools. 
 
-The spectrum of HLS tools tends to look like so:
+However, PipelineC is not HLS. It is not meant as some abstracted virtual machine with a memory model. Instead hardware pipelines are presented as C functions.
+
+The spectrum of HLS-like tools tends to look like so:
 ```
 A)
 Pro: Highly abstracted and easy to use 

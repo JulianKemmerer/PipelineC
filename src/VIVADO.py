@@ -48,14 +48,14 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
 		sys.exit(0)
 		
 
-def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, logic, parser_state, TimingParamsLookupTable):
+def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, inst_name, logic, parser_state, TimingParamsLookupTable):
 	LogicLookupTable = parser_state.LogicInstLookupTable
 	
 	# Get submodule inst
-	inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, logic, LogicLookupTable)
+	inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, LogicLookupTable)
 	
 	# Get stage indices
-	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, logic, parser_state, TimingParamsLookupTable)
+	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, inst_name, logic, parser_state, TimingParamsLookupTable)
 	
 	# Global funcs are always 0 clock and thus offset 0
 	if LogicLookupTable[inst].uses_globals:
@@ -125,9 +125,9 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 				possible_stages_indices.append(0)
 			else:
 				# Start
-				start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(start_name, logic, parser_state, TimingParamsLookupTable)
+				start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(start_name, inst_name, logic, parser_state, TimingParamsLookupTable)
 				# End
-				end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(end_name, logic, parser_state, TimingParamsLookupTable)
+				end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(end_name, inst_name, logic, parser_state, TimingParamsLookupTable)
 							
 				# Expect a one stage length path
 				if found_end_reg_abs_index - found_start_reg_abs_index != 1:
@@ -544,22 +544,50 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	entity_filename = VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	files_txt += output_directory + "/" + entity_filename + " "
 	
-	# Need to write files for all submodule instances
+	# Top not shared
+	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
+	
+	# ~~~~ NON ZERO CLOCK
+	# Maybe timing params should only be for non-zero clock?
+	# For now try to filter?
+	NonZeroClkTimingParamsLookupTable = dict()
+	ZeroClkTimingParamsLookupTable = dict()
+	for inst_i in TimingParamsLookupTable:
+		timing_params_i = TimingParamsLookupTable[inst_i]
+		if timing_params_i.slices != []:
+			NonZeroClkTimingParamsLookupTable[inst_i] = timing_params_i
+			ZeroClkTimingParamsLookupTable[inst_i] = SYN.TimingParams(inst_i, parser_state.LogicInstLookupTable[inst_i])
+		else:
+			# Is already zero clock
+			ZeroClkTimingParamsLookupTable[inst_i] = timing_params_i
+		
 	# Files are per func name + timing param so dont duplicate
 	submodule_funcs = []
-	submodule_instances = C_TO_LOGIC.RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(inst_name, Logic, parser_state)
-	for submodule_inst_name in submodule_instances:
+	for submodule_inst_name in NonZeroClkTimingParamsLookupTable:
 		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
 		# ONly write non vhdl funcs
 		if not submodule_logic.is_vhdl_func:
-			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic,TimingParamsLookupTable, parser_state) + ".vhd"
+			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic, NonZeroClkTimingParamsLookupTable, parser_state) + ".vhd"
 			if submodule_entity_filename not in submodule_funcs:			
 				submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
 				files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
-				submodule_funcs.append(submodule_entity_filename)
+				submodule_funcs.append(submodule_entity_filename)		
 	
-	# Top not shared
-	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
+	
+	# ~~~~ ALL ZERO CLOCK
+	# Majority of funcs will have zero clock instance too (lower level funcs)
+	# All instances are from ZeroClkTimingParamsLookupTable so just pick any instance
+	for func_name in parser_state.FuncLogicLookupTable:
+		if func_name in parser_state.FuncToInstances:
+			submodule_inst_name = parser_state.FuncToInstances[func_name][0]
+			submodule_logic = parser_state.FuncLogicLookupTable[func_name]
+			# ONly write non vhdl funcs
+			if submodule_logic.is_vhdl_func:
+				continue
+			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic,ZeroClkTimingParamsLookupTable, parser_state) + ".vhd"	
+			submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
+			files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
+	
 	
 	# Single read vhdl line
 	rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
@@ -832,7 +860,7 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, Logic
 			
 			# Use this submodule as next logic
 			curr_logic = LogicInstLookupTable[max_match_submodule_inst]
-			curr_inst_name = max_match_submodule_inst_global
+			curr_inst_name = max_match_submodule_inst
 			
 		# Include next reg tok
 		curr_end_tok_index = curr_end_tok_index + 1

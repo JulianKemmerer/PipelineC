@@ -11,7 +11,7 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz = SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
+mhz = 250.0 #SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -23,7 +23,7 @@ print '''
 '''
 print "TODO:"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
-print "	OPTIMIZE AWAY CONSTANTs: IF, mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
+print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
 print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
 print "	Add look ahead for built in functions so cast can be inferred"
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."

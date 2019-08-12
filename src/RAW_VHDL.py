@@ -241,9 +241,23 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 		# INput reg and output reg logic in middle
 		# IN stage 1 :  0 | 1 | 2
 		stage_for_1ll = 1
+	# Shouldnt need this but can do it
+	elif latency % 2 == 0:
+		# Even
+		# Ex. 4 | | | |
+		#      0 1 2 3 4
+		# Jsut put in middle stage
+		stage_for_1ll = latency/2
 	else:
-		print "Cannot do a c built in XOR operation in", latency,  "clocks!"
-		sys.exit(0)
+		# Odd, ex 5:  | | | | |
+		#                 ^
+		# Depends on position of middle slice
+		middle_index = latency/2
+		middle_slice = timing_params.slices[middle_index]
+		# If slice is to left, logic is on right
+		stage_for_1ll = middle_index
+		if middle_slice < 0.5:
+			stage_for_1ll = middle_index + 1	
 		
 		
 
@@ -436,9 +450,23 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
 		# INput reg and output reg logic in middle
 		# IN stage 1 :  0 | 1 | 2
 		stage_for_1ll = 1
+	# Shouldnt need this but can do it
+	elif latency % 2 == 0:
+		# Even
+		# Ex. 4 | | | |
+		#      0 1 2 3 4
+		# Jsut put in middle stage
+		stage_for_1ll = latency/2
 	else:
-		print "Cannot do a c built in NOT operation in", latency,  "clocks!"
-		sys.exit(0)
+		# Odd, ex 5:  | | | | |
+		#                 ^
+		# Depends on position of middle slice
+		middle_index = latency/2
+		middle_slice = timing_params.slices[middle_index]
+		# If slice is to left, logic is on right
+		stage_for_1ll = middle_index
+		if middle_slice < 0.5:
+			stage_for_1ll = middle_index + 1
 		
 		
 
@@ -495,9 +523,23 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 		# INput reg and output reg logic in middle
 		# IN stage 1 :  0 | 1 | 2
 		stage_for_1ll = 1
+	# Shouldnt need this but can do it
+	elif latency % 2 == 0:
+		# Even
+		# Ex. 4 | | | |
+		#      0 1 2 3 4
+		# Jsut put in middle stage
+		stage_for_1ll = latency/2
 	else:
-		print "Cannot do a c built in AND operation in", latency,  "clocks!"
-		sys.exit(0)
+		# Odd, ex 5:  | | | | |
+		#                 ^
+		# Depends on position of middle slice
+		middle_index = latency/2
+		middle_slice = timing_params.slices[middle_index]
+		# If slice is to left, logic is on right
+		stage_for_1ll = middle_index
+		if middle_slice < 0.5:
+			stage_for_1ll = middle_index + 1
 		
 
 	# 1 LL VHDL	
@@ -556,9 +598,23 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
 		# INput reg and output reg logic in middle
 		# IN stage 1 :  0 | 1 | 2
 		stage_for_1ll = 1
+	# Shouldnt need this but can do it
+	elif latency % 2 == 0:
+		# Even
+		# Ex. 4 | | | |
+		#      0 1 2 3 4
+		# Jsut put in middle stage
+		stage_for_1ll = latency/2
 	else:
-		print "Cannot do a c built in OR operation in", latency,  "clocks!"
-		sys.exit(0)
+		# Odd, ex 5:  | | | | |
+		#                 ^
+		# Depends on position of middle slice
+		middle_index = latency/2
+		middle_slice = timing_params.slices[middle_index]
+		# If slice is to left, logic is on right
+		stage_for_1ll = middle_index
+		if middle_slice < 0.5:
+			stage_for_1ll = middle_index + 1
 		
 		
 
@@ -624,14 +680,7 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 
 	# Set width equal to max width
 	width = max_width
-
-	# Max clocks does one bit per clock 
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in EQ operation of",width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
-	
-		
+			
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
 	num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
@@ -652,9 +701,12 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	'''
 	# Write bound of loop per stage 
 	stage = 0
+	# Top start, only increment up_bound, low_bound is calculated each iteration
 	up_bound = width - 1
-	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0,num_stages): 
+		# Top start moving down
+		low_bound = up_bound - bits_per_stage_dict[stage] + 1
+		
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text += '''		
@@ -687,9 +739,8 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment
-			up_bound = up_bound - bits_per_stage_dict[stage-1]
-			low_bound = up_bound - bits_per_stage_dict[stage] + 1			
+			# Top start, moving down decrement up_bound only
+			up_bound = up_bound - bits_per_stage_dict[stage-1]		
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
@@ -731,12 +782,6 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary plus operation of",width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
-	
 		
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
@@ -770,9 +815,11 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			
 	# Write bound of loop per stage 
 	stage = 0
-	up_bound = bits_per_stage_dict[stage]-1 # Skip sign (which should be 0 for abs values)
+	# Bottom start only increment low_bound, up_bound is calculated each iteration
 	low_bound = 0
 	for stage in range(0, num_stages):
+		# Bottom start moving upward
+		up_bound = low_bound + bits_per_stage_dict[stage] - 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -814,7 +861,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			# Set next vals
 			stage = stage + 1
 			# Do stage logic / bit pos increment 
-			up_bound = up_bound + bits_per_stage_dict[stage]
+			# Bottom start moving upward, increment low_bound only
 			low_bound = low_bound + bits_per_stage_dict[stage-1]
 			# More stages to go
 			text += '''		
@@ -851,12 +898,6 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary plus operation of",width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
-	
 		
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
@@ -888,9 +929,11 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 			
 	# Write bound of loop per stage 
 	stage = 0
-	up_bound = bits_per_stage_dict[stage]-1 # Skip sign (which should be 0 for abs values)
+	# Bottom start only increment low_bound, up_bound is calculated each iteration
 	low_bound = 0
 	for stage in range(0, num_stages):
+		# Bottom start moving upward
+		up_bound = low_bound + bits_per_stage_dict[stage] - 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -930,8 +973,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
-			up_bound = up_bound + bits_per_stage_dict[stage]
+			# Bottom start moving upward, increment low_bound only
 			low_bound = low_bound + bits_per_stage_dict[stage-1]
 			# More stages to go
 			text += '''		
@@ -980,14 +1022,7 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
 		bits_per_stage_dict[stage] = int_bits_to_take
 		stage += 1
 		
-	# Allow for 0 bits per stage at start and end of pipeline otherwise doesnt make sense
-	# TODO ^
-	'''
-	# Do not allow 0 bits per stage, min 1 bit per stage
-	for stage in bits_per_stage_dict:
-		if bits_per_stage_dict[stage] <= 0:
-			bits_per_stage_dict[stage] = 1
-	'''
+	# Zero bits per stage is OK anywhere? # Expecting to Fly - Of Montreal
 			
 	# Might have used too many or too little bits?	
 	excess = sum(bits_per_stage_dict.values()) - num_bits
@@ -1064,13 +1099,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 	
 	# Output width must be ???
 	# Is vhdl allowing equal or larger assignments?
-	
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary plus operation of",width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
-	
-		
+			
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
 	num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
@@ -1104,9 +1133,11 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			
 	# Write bound of loop per stage 
 	stage = 0
-	up_bound = bits_per_stage_dict[stage]-1 # Skip sign (which should be 0 for abs values)
+	# Bottom start only increment low_bound, up_bound is calculated each iteration
 	low_bound = 0
 	for stage in range(0, num_stages):
+		# Bottom start moving upward
+		up_bound = low_bound + bits_per_stage_dict[stage] - 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1152,8 +1183,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
-			up_bound = up_bound + bits_per_stage_dict[stage]
+			# Bottom start moving upward, increment low_bound only
 			low_bound = low_bound + bits_per_stage_dict[stage-1]
 			# More stages to go
 			text += '''		
@@ -1202,12 +1232,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
 	
 	# Output width must be 1 greater than max of input widths
 	# Is vhdl allowing equal or larger assignments?
-	
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary plus operation of",width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
-	
+		
 		
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
@@ -1246,9 +1271,11 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
 			
 	# Write bound of loop per stage 
 	stage = 0
-	up_bound = bits_per_stage_dict[stage]-1 
+	# Bottom start only increment low_bound, up_bound is calculated each iteration
 	low_bound = 0
 	for stage in range(0, num_stages):
+		# Bottom start moving upward
+		up_bound = low_bound + bits_per_stage_dict[stage] - 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1307,8 +1334,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
-			up_bound = up_bound + bits_per_stage_dict[stage]
+			# Bottom start moving upward, increment low_bound only
 			low_bound = low_bound + bits_per_stage_dict[stage-1]
 			# More stages to go
 			text += '''		
@@ -1429,9 +1455,11 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	'''
 	# Write bound of loop per stage 
 	stage = 0
+	# Top start, only increment up_bound, low_bound is calculated each iteration
 	up_bound = unsigned_width - 1 # Skip sign (which should be 0 for abs values)
-	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0, num_stages):
+		# Top start moving down
+		low_bound = up_bound - bits_per_stage_dict[stage] + 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1470,9 +1498,8 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
+			# Top start, moving down decrement up_bound only
 			up_bound = up_bound - bits_per_stage_dict[stage-1]
-			low_bound = up_bound - bits_per_stage_dict[stage] + 1
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''	
@@ -1499,12 +1526,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	
 	# TEMP ASSUMER SIGN COMPARE IS DONE AS PART OF STAGE 0
 	width = max_width
-	unsigned_width = width-1 # sign bit 
-	max_clocks = unsigned_width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in int binary op LT/LTE operation of",compare_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix - you lie, never fix?
-	
+	unsigned_width = width-1 # sign bit 	
 		
 	# How many bits per stage?
 	# 0th stage is combinatorial logic
@@ -1531,9 +1553,11 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 	'''
 	# Write bound of loop per stage 
 	stage = 0
+	# Top start, only increment up_bound, low_bound is calculated each iteration
 	up_bound = unsigned_width - 1 # Skip sign (which should be 0 for abs values)
-	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0, num_stages):
+		# Top start moving down
+		low_bound = up_bound - bits_per_stage_dict[stage] + 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1572,9 +1596,8 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
+			# Top start, moving down decrement up_bound only
 			up_bound = up_bound - bits_per_stage_dict[stage-1]
-			low_bound = up_bound - bits_per_stage_dict[stage] + 1
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
@@ -1602,10 +1625,6 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	# Do each bit over a clock cycle 
 	width = max_width
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary LT operation of",max_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
 	
 		
 	# How many bits per stage?
@@ -1632,9 +1651,11 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	# Write bound of loop per stage 
 	stage = 0
+	# Top start, only increment up_bound, low_bound is calculated each iteration
 	up_bound = width - 1
-	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0, num_stages):
+		# Top start moving down
+		low_bound = up_bound - bits_per_stage_dict[stage] + 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1670,9 +1691,8 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
+			# Top start, moving down decrement up_bound only
 			up_bound = up_bound - bits_per_stage_dict[stage-1]
-			low_bound = up_bound - bits_per_stage_dict[stage] + 1
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
@@ -1711,10 +1731,6 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	# Do each bit over a clock cycle 
 	width = max_width
-	max_clocks = width
-	if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-		print "Cannot do a c built in uint binary GT operation of",max_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
-		sys.exit(0) # Eventually fix
 	
 		
 	# How many bits per stage?
@@ -1747,9 +1763,11 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 	
 	# Write bound of loop per stage 
 	stage = 0
+	# Top start, only increment up_bound, low_bound is calculated each iteration
 	up_bound = width - 1 # Skip sign (which should be 0 for abs values)
-	low_bound = up_bound - bits_per_stage_dict[stage] + 1
 	for stage in range(0, num_stages):
+		# Top start moving down
+		low_bound = up_bound - bits_per_stage_dict[stage] + 1
 		# Do stage logic / bit pos increment if > 0 bits this stage
 		if bits_per_stage_dict[stage] > 0:
 			text +=	'''
@@ -1779,9 +1797,8 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 			# Next stage
 			# Set next vals
 			stage = stage + 1
-			# Do stage logic / bit pos increment 
+			# Top start, moving down decrement up_bound only
 			up_bound = up_bound - bits_per_stage_dict[stage-1]
-			low_bound = up_bound - bits_per_stage_dict[stage] + 1
 			# More stages to go
 			text += '''		
 		elsif STAGE = ''' + str(stage) + ''' then '''
@@ -1831,9 +1848,23 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
 		# INput reg and output reg logic in middle
 		# IN stage 1 :  0 | 1 | 2
 		stage_for_1ll = 1
+	# Shouldnt need this but can do it
+	elif latency % 2 == 0:
+		# Even
+		# Ex. 4 | | | |
+		#      0 1 2 3 4
+		# Jsut put in middle stage
+		stage_for_1ll = latency/2
 	else:
-		print "Cannot do a c built in MUX operation in", latency,  "clocks!"
-		sys.exit(0)
+		# Odd, ex 5:  | | | | |
+		#                 ^
+		# Depends on position of middle slice
+		middle_index = latency/2
+		middle_slice = timing_params.slices[middle_index]
+		# If slice is to left, logic is on right
+		stage_for_1ll = middle_index
+		if middle_slice < 0.5:
+			stage_for_1ll = middle_index + 1
 		
 		
 	# VHDL text is just the IF for the stage in question

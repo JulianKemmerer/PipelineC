@@ -715,43 +715,64 @@ class Logic:
 		#		submodule_inst + SUBMODULE_MARKER
 		# SHOULD ONLY BE INPUT AND OUTPUT WIRES + submodule name
 		io_wires = []
+		in_wires = []
 		for input_port_name in input_port_names:
-			io_wires.append(submodule_inst + SUBMODULE_MARKER +input_port_name)
-		io_wires.append(submodule_inst + SUBMODULE_MARKER + RETURN_WIRE_NAME)
+			in_wire = submodule_inst + SUBMODULE_MARKER + input_port_name
+			io_wires.append(in_wire)
+			in_wires.append(in_wire)
+		out_wire = submodule_inst + SUBMODULE_MARKER + RETURN_WIRE_NAME
+		io_wires.append(out_wire)
+		
+		# TODO add check not double adding wires
+		#~@ SEEMS OK
+		#if len(self.wires) != len(set(self.wires)):
+		#	print "WHO BE DUPLICATIN!"
+		#	print self.wires
+		#	sys.exit(0)
+		
+		
 		
 		# Fast
-		self.submodule_instances.pop(submodule_inst, None)
-		self.submodule_instance_to_c_ast_node.pop(submodule_inst, None)
-		self.submodule_instance_to_input_port_names.pop(submodule_inst, None)
+		# NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instances.pop(submodule_inst)
+		# NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instance_to_c_ast_node.pop(submodule_inst)
+		# NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instance_to_input_port_names.pop(submodule_inst, None)
 		self.ref_submodule_instance_to_input_port_driven_ref_toks.pop(submodule_inst, None)
 		self.ref_submodule_instance_to_ref_toks.pop(submodule_inst, None)
 		# Slower?
 		self.wires = list(set(self.wires) - set(io_wires))
 		for io_wire in io_wires:
-			self.wire_to_c_type.pop(io_wire, None)
+			self.wire_to_c_type.pop(io_wire)
+		
 		# Super sloo?
-		for io_wire in io_wires:
-			if io_wire in self.wire_drives:
-				# IO wire drives stuff
-				driven_wires = self.wire_drives[io_wire]
-				# Remove opposite direction here
-				for driven_wire in driven_wires:
-					self.wire_driven_by.pop(driven_wire)
-				# Then remove original direction
-				self.wire_drives.pop(io_wire)			
-		for io_wire in io_wires:
-			if io_wire in self.wire_driven_by:
-				# IO wire is driven by thing
-				driving_wire = self.wire_driven_by[io_wire]
-				# Remove io wire from opposite direction
-				all_driven_wires = self.wire_drives[driving_wire]
-				all_driven_wires.remove(io_wire)
-				if len(all_driven_wires) > 0:
-					self.wire_drives[driving_wire] = all_driven_wires
-				else:
-					self.wire_drives.pop(driving_wire)
-				# Then remove original direction
-				self.wire_driven_by.pop(io_wire)
+		
+		# WIRE_DRIVES
+		# Only output port can drive something
+		# HOWEVER # NOT DONE UNTIL AFTER TRY GET LOGIC
+		'''
+		io_wire = out_wire
+		# Output wire drives stuff
+		driven_wires = self.wire_drives[io_wire]
+		# Remove opposite direction here
+		for driven_wire in driven_wires:
+			self.wire_driven_by.pop(driven_wire)
+		# Then remove original direction
+		self.wire_drives.pop(io_wire)
+		'''
+		
+		# WIRE DRIVEN BY
+		# Only inputs	
+		for in_wire in in_wires:
+			# IO wire is driven by thing
+			driving_wire = self.wire_driven_by[in_wire]
+			# Remove io wire from opposite direction
+			all_driven_wires = self.wire_drives[driving_wire]
+			all_driven_wires.remove(in_wire)
+			if len(all_driven_wires) > 0:
+				self.wire_drives[driving_wire] = all_driven_wires
+			else:
+				self.wire_drives.pop(driving_wire)
+			# Then remove original direction
+			self.wire_driven_by.pop(in_wire)
 		
 
 		# Shouldnt need these since submodule connnections dont make assignment aliases?
@@ -1100,7 +1121,17 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
 # BECAUSE YOU ARE A PIECE OF SHIT	
 
 # Node needs context for variable renaming over time, can give existing logic
+#_node_record = dict()
 def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
+	
+	'''
+	key = (str(c_ast_node), str(c_ast_node.coord), prepend_text)
+	if key not in _node_record:
+		_node_record[key] = 0
+	_node_record[key] += 1
+	if _node_record[key] > 1:
+		print prepend_text, c_ast_node.coord, "AGAIN?", _node_record[key]
+	'''	
 	
 	# Cover logic as far up in c ast tree as possible
 	# Each node will have function to deal with node type:
@@ -1479,7 +1510,7 @@ def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
 
 def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, parser_state):
 	# Assume lhs can be evaluated as ref?
-	lhs_ref_toks = C_AST_REF_TO_TOKENS(c_ast_assignment.lvalue, prepend_text, parser_state)
+	lhs_ref_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_assignment.lvalue, prepend_text, parser_state)
 	lhs_orig_var_name = lhs_ref_toks[0]	
 
 
@@ -2436,54 +2467,76 @@ def C_TYPE_IS_ARRAY(c_type):
 	
 # Returns None if not resolved
 # THIS RELYS ON optimizing away constant funcs to const wires in N ARG FUNC logic
-def RESOLVE_CONST_ARRAY_REF(c_ast_array_ref, prepend_text, parser_state):
+# returns  (const, logic)
+def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state):
+	# So this is like needed because constant resolving variable ref
+	# into a smaller var ref, or totally constant ref is hard to do
+	# ~hElP!~
+	
 	# Do a fake C_AST_NODE to logic for subscript
 	# if can trace to constant wire then
 	dummy_wire = "DUMMY_RESOLVE_WIRE"
 	driven_wire_names = [dummy_wire]
-
-	# Should be able to get away with only deep copying existing_logic
-	parser_state_copy = copy.copy(parser_state)
-	parser_state_copy.existing_logic = parser_state.existing_logic.DEEPCOPY()
-	# Dummy wire will need to be array index
-	# This is just dummy on copied state so as long as its some kind of uint it should be fine?
-	# Scooooooo
-	parser_state_copy.existing_logic.wire_to_c_type[dummy_wire] = "uint32_t"
-	
-	subscript_logic = C_AST_NODE_TO_LOGIC(c_ast_array_ref.subscript, driven_wire_names, prepend_text, parser_state_copy)
+	# This will be removed always?
+	# OK to pre evaluate the subscript because will be evaluated always the same
+	# Will just be driving var ref opr var assign submodules instead of dummy?
+	#parser_state.existing_logic.wire_to_c_type[dummy_wire] = "uint32_t"
+	parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_array_ref.subscript, driven_wire_names, prepend_text, parser_state)
 	# Is dummy wire driven by constant?
-	const_driving_wire = FIND_CONST_DRIVING_WIRE(dummy_wire, subscript_logic)
+	const_driving_wire = FIND_CONST_DRIVING_WIRE(dummy_wire, parser_state.existing_logic)
+	
+	# Remove the dummy wire
+	# Fast
+	parser_state.existing_logic.wires.remove(dummy_wire)
+	parser_state.existing_logic.wire_to_c_type.pop(dummy_wire, None)
+	# IO wire is driven by thing
+	driving_wire = parser_state.existing_logic.wire_driven_by[dummy_wire]
+	# Remove io wire from opposite direction
+	all_driven_wires = parser_state.existing_logic.wire_drives[driving_wire]
+	all_driven_wires.remove(dummy_wire)
+	if len(all_driven_wires) > 0:
+		parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wires
+	else:
+		parser_state.existing_logic.wire_drives.pop(driving_wire)
+	# Then remove original direction
+	parser_state.existing_logic.wire_driven_by.pop(dummy_wire)
+	
+	
+	# Return the constant or None
 	if const_driving_wire is not None:
 		# Get value from this constant
-		maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state_copy.existing_logic, parser_state_copy)
+		maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
 		if not maybe_digit.isdigit():
 			print "Constant array ref with non integer index?", const_driving_wire
 			sys.exit(0)
 		#print "CONST",maybe_digit
-		return int(maybe_digit)
+		return int(maybe_digit), parser_state.existing_logic
 	else:
-		return None
+		return None, parser_state.existing_logic
 
 
 # ONLY USE THIS WITH REF C AST NODES
-def C_AST_REF_TO_TOKENS(c_ast_ref, prepend_text, parser_state):
+# Returns toks, logic
+def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
 	toks = []
 	if type(c_ast_ref) == c_ast.ID:
 		toks += [str(c_ast_ref.name)]
 	elif type(c_ast_ref) == c_ast.ArrayRef:
 		new_tok = None
 		# Only constant array ref right now	
-		const = RESOLVE_CONST_ARRAY_REF(c_ast_ref, prepend_text, parser_state)
+		const, parser_state.existing_logic = RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_ref, prepend_text, parser_state)
 		if const is None:
 			new_tok = c_ast_ref.subscript
 		else:
 			new_tok = const
 		# Name is a ref node
-		toks += C_AST_REF_TO_TOKENS(c_ast_ref.name, prepend_text, parser_state)
+		new_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref.name, prepend_text, parser_state)
+		toks += new_toks
 		toks += [new_tok]
 	elif type(c_ast_ref) == c_ast.StructRef:
 		# Name is a ref node
-		toks += C_AST_REF_TO_TOKENS(c_ast_ref.name, prepend_text, parser_state)
+		new_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref.name, prepend_text, parser_state)
+		toks += new_toks
 		toks += [str(c_ast_ref.field.name)]
 	else:
 		print "Uh what node in C_AST_REF_TO_TOKENS?",c_ast_ref
@@ -2493,7 +2546,7 @@ def C_AST_REF_TO_TOKENS(c_ast_ref, prepend_text, parser_state):
 	# Reverse reverse
 	#toks = toks[::-1]
 		
-	return toks
+	return toks, parser_state.existing_logic
 	
 _C_AST_REF_TOKS_TO_C_TYPE_cache = dict()
 # "Const" here means variable refs are evaluated x[*] = type of x[0] 
@@ -2634,7 +2687,7 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
 		
 	# Get tokens to identify the reference
 	# x.y[5].z.q[i]   is [x,y,5,z,q,<c_ast_node>]
-	ref_toks = C_AST_REF_TO_TOKENS(c_ast_ref, prepend_text, parser_state)
+	ref_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state)
 	
 	return C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state)
 	
@@ -4406,6 +4459,7 @@ def BUILD_INST_NAME(prepend_text,func_base_name, c_ast_node):
 def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
 	FuncLogicLookupTable = parser_state.FuncLogicLookupTable
 	func_name = str(c_ast_func_call.name.name)
+	#print "FUNC CALL:",func_name,c_ast_func_call.coord
 	func_base_name = func_name
 	func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
 	if not(func_name in FuncLogicLookupTable):
@@ -4674,36 +4728,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	# From here on we can only adjust input wires in ways that can be resolved with
 	#		VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, etc
 	
-	#@@@@ CANT DO THIS SINCE other type could be anything - might not be resolvable in VHDL 0CLK
-	'''
-	# Resolve missing types
-	if (left_type is None) and (right_type is None):
-		if output_c_type is not None:
-			print "Assuming type", output_c_type, "for",c_ast_binary_op.coord
-			left_type = output_c_type
-			parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-			right_type = output_c_type
-			parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
-		else:
-			print func_base_name, "doesn't have type information for either input? What's going on?"
-			print "parser_state.existing_logic.wire_to_c_type"
-			print "bin_op_left_input",bin_op_left_input
-			print "bin_op_right_input",bin_op_right_input
-			print "Know types:"
-			print parser_state.existing_logic.wire_to_c_type
-			sys.exit(0)
-	elif not(left_type is None) and (right_type is None):
-		# Use left
-		right_type = left_type
-		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
-	elif (left_type is None) and not(right_type is None):
-		# Use Right
-		left_type = right_type
-		parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-	else:
-		# Different types set for each input
-		pass
-	'''
+	#@@@@ CANT Resolve missing types SINCE other type could be anything - might not be resolvable in VHDL 0CLK
 	
 	# THIS IS OK SINCE CAN BE RESOLVED IN VHDL 0 CLK CAST
 	# If types are integers then check signed/unsigned matches
@@ -5237,47 +5262,6 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	
 	return rv
 
-def RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(inst_name, main_logic, parser_state):
-	all_submodule_instances = []
-	for submodule_inst in main_logic.submodule_instances:
-		submodule_inst_name = inst_name + SUBMODULE_MARKER + submodule_inst
-		#for x in parser_state.LogicInstLookupTable:
-		#	print x,parser_state.LogicInstLookupTable[x]
-		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-		all_submodule_instances.append(submodule_inst_name)
-		#if submodule_inst_name in parser_state.LogicInstLookupTable:
-		all_sub_submodule_instances = RECURSIVE_GET_ALL_SUBMODULE_INSTANCES(submodule_inst_name, submodule_logic, parser_state)
-		all_submodule_instances = all_submodule_instances + all_sub_submodule_instances
-	
-	#print "all_submodule_instances",all_submodule_instances
-	return all_submodule_instances
-
-def GET_LOGIC_INST_LOOKUP_INFO_CACHE_FILEPATH(Logic):
-	key = Logic.func_name
-	#key = key.replace("/","_");
-	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
-	filepath = output_directory + "/" + key + ".logic"
-	return filepath
-
-def WRITE_LOGIC_INST_LOOKUP_INFO_CACHE(Logic, parser_state):
-	filepath = GET_LOGIC_INST_LOOKUP_INFO_CACHE_FILEPATH(Logic)
-	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
-	# Write dir first if needed
-	if not os.path.exists(output_directory):
-		os.makedirs(output_directory)
-		
-	# Write file
-	with open(filepath, 'w') as output:
-		tup = (parser_state.FuncLogicLookupTable, parser_state.LogicInstLookupTable)
-		pickle.dump(tup, output, pickle.HIGHEST_PROTOCOL)
-
-def GET_CACHED_LOGIC_INST_LOOKUP_INFO(Logic):
-	filepath = GET_LOGIC_INST_LOOKUP_INFO_CACHE_FILEPATH(Logic)
-	if os.path.exists(filepath):
-		with open(filepath, 'rb') as input:
-			(func_logic_lookup_table, logic_inst_lookup_table) = pickle.load(input)
-			return func_logic_lookup_table, logic_inst_lookup_table
-	return None, None
 
 def GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst, input_port_name):
 	#print "logic.func_name", logic.func_name
@@ -5306,8 +5290,9 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
 # This class hold all the state obtained by parsing a single C file
 class ParserState:
 	def __init__(self):
-		self.FuncLogicLookupTable=dict() #dict[func_name]=Logic()
-		self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()
+		self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
+		self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
+		self.FuncToInstances=dict() #dict[func_name]=[instance, name, usages, of , func]
 		self.existing_logic = None # Temp working copy of logic ? idk it should work
 		self.struct_to_field_type_dict = dict()
 		self.enum_to_ids_dict = dict()
@@ -5330,6 +5315,8 @@ class ParserState:
 			rv_func_logic = rv.FuncLogicLookupTable[func_name]
 			rv.LogicInstLookupTable[inst_name] = rv_func_logic
 		
+		rv.FuncToInstances=copy.deepcopy(self.FuncToInstances)
+		
 		rv.existing_logic = None
 		if self.existing_logic is not None:
 			rv.existing_logic = self.existing_logic.DEEPCOPY()
@@ -5342,9 +5329,42 @@ class ParserState:
 		
 		return rv
     
+
+def GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name):
+	key = top_level_func_name 
+	output_directory = SYN.SYN_OUTPUT_DIRECTORY
+	filepath = output_directory + "/" + key + ".parsed"
+	return filepath
+
+def WRITE_PARSER_STATE_CACHE(parser_state, top_level_func_name):
+	# Write dir first if needed
+	output_directory = SYN.SYN_OUTPUT_DIRECTORY
+	if not os.path.exists(output_directory):
+		os.makedirs(output_directory)
+		
+	# Write file
+	filepath = GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name)
+	with open(filepath, 'w') as output:
+		pickle.dump(parser_state, output, pickle.HIGHEST_PROTOCOL)
+
+def GET_PARSER_STATE_CACHE(top_level_func_name):
+	filepath = GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name)
+	if os.path.exists(filepath):
+		with open(filepath, 'rb') as input:
+			parser_state = pickle.load(input)
+			return parser_state
+	return None
 	
 # Returns ParserState
 def PARSE_FILE(top_level_func_name, c_filename):
+	# Do we have a cached parser state?
+	cached_parser_state = GET_PARSER_STATE_CACHE(top_level_func_name)
+	if cached_parser_state is not None:
+		print "Already parsed C code for",top_level_func_name,", using cache..."
+		return cached_parser_state
+	
+	# Otherwise do for real
+	
 	# Catch pycparser exceptions
 	try:
 		parser_state = ParserState()
@@ -5390,31 +5410,12 @@ def PARSE_FILE(top_level_func_name, c_filename):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
-		
-		
-		
-		
-		# First check if is cached
-		top_level_logic = parser_state.FuncLogicLookupTable[top_level_func_name]
-		FuncLogicLookupTable_cache, LogicInstLookupTable_cache = GET_CACHED_LOGIC_INST_LOOKUP_INFO(top_level_logic)
-		if LogicInstLookupTable_cache is not None:
-			print "Using cached hierarchy elaboration for '",top_level_func_name,"'"
-			parser_state.LogicInstLookupTable = LogicInstLookupTable_cache
-			parser_state.FuncLogicLookupTable = FuncLogicLookupTable_cache
-		else:
-			adjusted_containing_logic_inst_name=""
-			main_func_logic = parser_state.FuncLogicLookupTable["main"]
-			c_ast_node_when_used = parser_state.FuncLogicLookupTable[top_level_func_name].c_ast_node
-			print "TEMP STOP"
-			sys.exit(0)
-			print "Elaborating hierarchy down to raw HDL logic..."
-			parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(top_level_func_name, top_level_func_name, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
-		
-		
-		# Write cache?
-		# top_level_func_name = main = inst name
-		#WRITE_LOGIC_INST_LOOKUP_INFO_CACHE(top_level_logic, parser_state)
-		
+
+		print "Elaborating hierarchy down to raw HDL logic..."
+		adjusted_containing_logic_inst_name=""
+		main_func_logic = parser_state.FuncLogicLookupTable["main"]
+		c_ast_node_when_used = parser_state.FuncLogicLookupTable[top_level_func_name].c_ast_node
+		parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(top_level_func_name, top_level_func_name, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
 		# Write c code
 		print "Writing generated pipelined C code to output directories..."
@@ -5430,18 +5431,16 @@ def PARSE_FILE(top_level_func_name, c_filename):
 				f=open(outpath,"w")
 				f.write(func_logic.c_code_text)
 				f.close()
-			
-			
-		
-		
-				
-		
+
+		# Write cache
+		print "Writing cache of parsed information..."
+		WRITE_PARSER_STATE_CACHE(parser_state, top_level_func_name)
 		
 		return parser_state
 
 	except c_parser.ParseError as pe:
 		print "Top level:",top_level_func_name
-		print casthelp(pe)
+		#print casthelp(pe)
 		print "PARSE_FILE pycparser says you messed up here:",pe
 		sys.exit(0)
 		
@@ -5668,11 +5667,13 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
 		# Update FuncLogicLookupTable with this new func logic
 		parser_state.FuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
 		
-	
 		
 	# Record this instance of func logic
 	inst_name = new_inst_name_prepend_text + local_inst_name
 	parser_state.LogicInstLookupTable[inst_name] = orig_func_logic
+	if func_name not in parser_state.FuncToInstances:
+		parser_state.FuncToInstances[func_name] = []
+	parser_state.FuncToInstances[func_name].append(inst_name)
 	
 	# Then recursively do submodules
 	# USING local names from orig_func_logic
