@@ -34,36 +34,10 @@ axis32_t main(axis32_t mac_axis_rx)
 }
 */
 
-/*
-#include "uintN_t.h"
-//#define PI_DIV_2 1.57079632679
-float main(float theta)
-{	
-	uint8_t i;
-	i = 0;
-	float rv;
-	if(i==0)
-	{
-		rv = 1.57079632679;
-	}
-	else
-	{
-		rv = 0.0;
-	}
-	return rv;
-}
-*/
-
-
-#include "math.h"
+#include "examples/dct/dct_serial.c"
 dct_done_t main(dct_pixel_t matrix[DCT_M][DCT_N], uint1_t start)
 {
 	return dctTransformUnrolled(matrix, start);
 }
 
-/*
-entry_set_t main(addr_t addr, entry_set_t wd, uint1_t we)
-{
-	return entry_sets_RAM_SP_RF_2(addr, wd, we);
-}
-*/
+
