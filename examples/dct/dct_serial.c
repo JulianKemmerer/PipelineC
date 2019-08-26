@@ -16,7 +16,7 @@ typedef struct dct_iters_t
 // Since not always base-2, need special logic to do increment and rollover
 typedef struct dct_iter_increment_t
 {
-	// Pre increment flag if this is last iteration (all iters reset when increment)
+	// Pre increment flag if this is last iteration (all iters reset)
 	uint1_t done;
 	// Incremented iterators
 	dct_iters_t iters;
@@ -278,7 +278,13 @@ dct_lookup_increment_t dct_lookup_increment(uint1_t do_increment)
 volatile uint1_t dct_volatiles_valid;
 // sum will temporarily store the sum of cosine signals
 volatile float dct_sum;
-// dct_result will store the discrete cosine transform 
+// dct_result will store the discrete cosine transform
+// Signal that this is the iteration containing the 'done' result 
+typedef struct dct_done_t
+{
+	float matrix[DCT_M][DCT_N];
+	uint1_t done;
+} dct_done_t;
 volatile dct_done_t dct_result;
 dct_done_t dctTransformUnrolled(dct_pixel_t matrix[DCT_M][DCT_N], uint1_t start)
 {
