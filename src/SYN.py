@@ -2510,23 +2510,10 @@ def IS_USER_CODE(logic, parser_state):
 	# Becomes user code if using struct or array of structs
 	# For now???? fuck me
 	for c_type in all_types:
-		if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type,parser_state):
-			if C_TO_LOGIC.DUMB_STRUCT_THING in c_type:
-				# Gah dumb array struct types thing
-				# BReak apart
-				toks = c_type.split(C_TO_LOGIC.DUMB_STRUCT_THING+"_")
-				# uint8_t_ARRAY_STRUCT_2_2
-				elem_type = toks[0]
-				if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type,parser_state):
-					user_code = True
-			else:
-				# Not the dumb array thing, is regular struct
-				user_code = True
-		elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-			elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-			if C_TO_LOGIC.C_TYPE_IS_STRUCT(elem_type,parser_state):
-				user_code = True
-	
+		is_user = C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type,parser_state)
+		if is_user:
+			user_code = True
+			break
 	#print "?? USER? logic.func_name:",logic.func_name, user_code
 	
 	return user_code

@@ -2465,6 +2465,28 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
 def C_TYPE_IS_ARRAY(c_type):
 	return "[" in c_type and c_type.endswith("]")
 	
+def C_TYPE_IS_USER_TYPE(c_type,parser_state):
+	user_code = False
+	if C_TYPE_IS_STRUCT(c_type,parser_state):
+		if DUMB_STRUCT_THING in c_type:
+			# Gah dumb array struct types thing
+			# BReak apart
+			toks = c_type.split(DUMB_STRUCT_THING+"_")
+			# uint8_t_ARRAY_STRUCT_2_2
+			elem_type = toks[0]
+			if C_TYPE_IS_STRUCT(elem_type,parser_state):
+				user_code = True
+		else:
+			# Not the dumb array thing, is regular struct
+			user_code = True
+	elif C_TYPE_IS_ARRAY(c_type):
+		elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+		if C_TYPE_IS_STRUCT(elem_type,parser_state):
+			user_code = True
+			
+	return user_code
+	
+	
 # Returns None if not resolved
 # THIS RELYS ON optimizing away constant funcs to const wires in N ARG FUNC logic
 # returns  (const, logic)

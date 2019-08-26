@@ -95,20 +95,43 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
 	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
 	global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
 	
-	# Know func looks like (addr_t addr, elem_t wd, uint1_t we)
+	# Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
+	# Construct a single 'addr' signal to use when addressing ram
+	# Need to overide type to 'unroll' arrays into single address BRAM
+	# How many addresses
+	elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(global_c_type)
+	elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_type,parser_state)
+	dim_end_index = (len(dims)-1)
+	# How many address bits?
+	addr_bits = 0
+	for addr_i in range(0, len(dims)):
+		addr_i_t = Logic.wire_to_c_type[Logic.inputs[addr_i]]
+		width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(addr_i_t)
+		addr_bits += width
+	
+	# Combine addr signal
+	addr_t = "uint" + str(addr_bits) + "_t"
+	addr_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(addr_t,parser_state)
 	rv = '''
-	signal ''' + global_name + ''' : ''' + global_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(global_c_type,parser_state) + ''';
+	signal addr : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
 '''
 	
+	# Ram registers but renamed to be single dimension
+	num_entries = 2**addr_bits
+	unrolled_c_type = elem_type + "[" + str(num_entries) + "]"
+	unrolled_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(unrolled_c_type,parser_state)
+	rv += '''
+	type ''' + global_vhdl_type + '''_unrolled is array(natural range <>) of ''' + elem_vhdl_type + ''';
+	signal ''' + global_name + ''' : ''' + global_vhdl_type + '''_unrolled(0 to ''' + str(num_entries-1) + ''') := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(unrolled_c_type,parser_state) + ''';
+'''
+
 	# Include IO regs if needed
 	if clocks == 0:
 		pass
 	elif clocks == 2:
-		addr_t = Logic.wire_to_c_type[Logic.inputs[0]]
-		addr_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(addr_t,parser_state)
-		elem_t = Logic.wire_to_c_type[Logic.inputs[1]]
+		elem_t = Logic.wire_to_c_type[Logic.inputs[dim_end_index + 1]]
 		elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_t,parser_state)
-		we_t = Logic.wire_to_c_type[Logic.inputs[2]]
+		we_t = Logic.wire_to_c_type[Logic.inputs[dim_end_index + 2]]
 		we_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(we_t,parser_state)
 		out_t = Logic.wire_to_c_type[Logic.outputs[0]]
 		out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_t,parser_state)
@@ -128,9 +151,26 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
 def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
 	# Is a clocked process assigning to global reg
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
-	# Know func looks like (addr_t addr, elem_t wd, uint1_t we)
+	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
+	global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
+	
+	# Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
+	# Construct a single 'addr' signal to use when addressing ram
+	# Need to overide type to 'unroll' arrays into single address BRAM
+	# How many addresses
+	elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(global_c_type)
+	
+	# Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
+	# Combine addr signals
+	rv = "addr <= "
+	for dim_i in range(0, len(dims)):
+		rv += "addr" + str(dim_i) + " & "
+	rv = rv.strip(" ").strip("&")
+	rv += ";\n"
+	
 	if clocks == 0:
-		rv = '''
+		rv += '''
 		process(clk) is
 		begin
 			if rising_edge(clk) then
@@ -144,7 +184,7 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
 '''
 	elif clocks == 2:
 		# In and out regs
-		rv = '''
+		rv += '''
 		process(clk) is
 		begin
 			if rising_edge(clk) then

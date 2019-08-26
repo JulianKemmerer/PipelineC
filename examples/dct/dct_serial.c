@@ -4,13 +4,6 @@
 // PipelineC iterations of dctTransformUnrolled are used
 // to unroll the calculation serially in O(n^4) time
 
-// Signal that this is the iteration containing the 'done' result 
-typedef struct dct_done_t
-{
-	float matrix[DCT_M][DCT_N];
-	uint1_t done;
-} dct_done_t;
-
 // Iterators in a struct becomes handy
 typedef struct dct_iters_t
 {
@@ -23,7 +16,7 @@ typedef struct dct_iters_t
 // Since not always base-2, need special logic to do increment and rollover
 typedef struct dct_iter_increment_t
 {
-	// Pre increment flag if this is last iteration (all iters reset)
+	// Pre increment flag if this is last iteration (all iters reset when increment)
 	uint1_t done;
 	// Incremented iterators
 	dct_iters_t iters;
@@ -46,15 +39,15 @@ dct_iter_increment_t dct_iter_increment(dct_iters_t iters)
 	rv.reset_l = (iters.l==(DCT_N-1)) & increment_l;
 	// k
 	uint1_t increment_k;
-	increment_k = reset_l;
+	increment_k = rv.reset_l;
 	rv.reset_k = (iters.k==(DCT_M-1)) & increment_k;
 	// j
 	uint1_t increment_j;
-	increment_j = reset_k;
+	increment_j = rv.reset_k;
 	rv.reset_j = (iters.j==(DCT_N-1)) & increment_j;
 	// i
 	uint1_t increment_i;
-	increment_i = reset_j;
+	increment_i = rv.reset_j;
 	rv.reset_i = (iters.i==(DCT_M-1)) & increment_i;
 	
 	// Increment iterators as needed
@@ -134,14 +127,11 @@ dct_incrementer_t dct_incrementer(uint1_t do_increment)
 	// Calculate what an increment would do
 	rv.increment = dct_iter_increment(dct_curr_addr);
 	
-	// Are we currently done? (last iteration)
-	rv.done = rv.increment.done;
-	
 	// Current (pre increment iterators)
-	rv.iters = dct_curr_addr;
+	rv.curr_iters = dct_curr_addr;
 	
 	// Use incremented iterators as current when increment requested	
-	if(do_read_and_increment)
+	if(do_increment)
 	{
 		dct_curr_addr = rv.increment.iters;
 	}
@@ -219,14 +209,14 @@ dct_consts_t dct_lookup(uint1_t do_increment)
 	dct_lookup_valid_delay[1] = addr_valid;
 
 	// BRAMs for (ci * cj)
-	float const_rd_data_2delayed;
-	const_val_2delayed = dct_const_lookup_RAM_SP_RF_2(dct_lookup_addr.i, dct_lookup_addr.j, dct_fake_wr1, addr_valid); // Write port doesnt matter                 #982374189075239081573298472- SCOOOOOOOOO 
-	dct_fake_wr1 = const_val_2delayed; // Doesnt matter
-	
+	float const_val_2delayed;
+	const_val_2delayed = dct_const_lookup_RAM_SP_RF_2(dct_lookup_addr.i, dct_lookup_addr.j, dct_fake_wr1, addr_valid); // Write port doesnt matter
 	// BRAMs for cosine multiplier
-	float cos_rd_data_2delayed;
+	float cos_val_2delayed;
 	cos_val_2delayed = dct_cos_lookup_RAM_SP_RF_2(dct_lookup_addr.i, dct_lookup_addr.j, dct_lookup_addr.k, dct_lookup_addr.l, dct_fake_wr2, addr_valid); // Write port doesnt matter
-	dct_fake_wr2 = cos_val_2delayed; // Doesnt matter
+	// Doesnt matter
+	dct_fake_wr1 = cos_val_2delayed; 
+	dct_fake_wr2 = const_val_2delayed;	
 
 	// Put output from lookup at current write offset in buffer
 	//  then increment write pointer
@@ -249,7 +239,6 @@ dct_consts_t dct_lookup(uint1_t do_increment)
 		dct_lookup_addr = next_lookup_addr.iters;
 	}
 	
-	// Yay
 	return rv;
 }
 
@@ -272,7 +261,7 @@ dct_lookup_increment_t dct_lookup_increment(uint1_t do_increment)
 	rv.lookup = dct_lookup(do_increment);
 	
 	// Read/Increment iterators
-	rv.incrementer = dct_increment(do_increment);
+	rv.incrementer = dct_incrementer(do_increment);
 	
 	return rv;
 }

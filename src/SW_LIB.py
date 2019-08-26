@@ -117,6 +117,11 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 	
 	return rv
 
+# Not including user types and dumb struct thing everywhere we internally run C parsser
+# so just fake it # Pups To Dust - Modest Mouse
+def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
+	return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or (C_TO_LOGIC.DUMB_STRUCT_THING in c_type)	
+	
 
 # Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
 # Zero clock cycles just infers RAM primitives implemented in LUTS
@@ -133,8 +138,6 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 	'''	
 	
 	# Regex search c_text
-	
-	
 	
 	# _RAM_SP_RF
 	single_port_ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2"] # TODO 1 in and out
@@ -154,19 +157,27 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 				print "Ram function on non array?",ram_sp_rf_func_name
 				sys.exit(0)
 			elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-			# For now only one dim
-			if len(dims) > 1:
-				print "Ram function on var with too many dims",ram_sp_rf_func_name
-				sys.exit(0) 
-			dim = dims[0]
-			addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+			# Multiple addresses now folks # Starfucker - Girls Just Want To Have
+			#dim = dims[0]
+			#addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
 				
 			func_name = var_name + "_" + ram_type
 			text += '''
 // ram_sp_rf
-typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hacky
-''' + elem_t + ''' ''' + var_name + "[" + str(dim) + "];" + '''
-''' + elem_t+ " " + func_name + "(" + addr_t + " addr, " + elem_t + " wd, uint1_t we)" + '''
+'''
+			# In case type is actually user type - hacky
+			if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
+				text += '''typedef uint8_t ''' + elem_t + ";/n"
+			text += elem_t + ''' ''' + var_name
+			for dim in dims:
+				 text += "[" + str(dim) + "]"
+			text += ";\n"
+			text += elem_t+ " " + func_name + "("
+			for i in range(0,len(dims)):
+				dim = dims[i]
+				addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+				text += addr_t + " addr" + str(i) + ", "
+			text += elem_t + " wd, uint1_t we)" + '''
 {
 	/* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
 	// Dont have a construct for simultaneous read and write??
@@ -194,7 +205,6 @@ typedef uint8_t ''' + elem_t + '''; // In case type is actually user type - hack
 	*/
 }
 '''
-
 
 	#print "MEM_HEADER_FILE"
 	#print text		
@@ -412,7 +422,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 #include "bit_manip.h"			
 // ''' + str(nmux_func_name) + '''
 // ''' + str(n) + ''' MUX\n'''
-			if (C_TO_LOGIC.DUMB_STRUCT_THING in result_t) or C_TO_LOGIC.C_TYPE_IS_STRUCT(result_t, parser_state):
+			if C_TO_LOGIC.C_TYPE_IS_USER_TYPE(result_t, parser_state):
 				text += '''
 typedef uint8_t ''' + result_t + '''; // FUCK
 '''
@@ -1520,9 +1530,9 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	# Do type defs for input structs and output array (if output is array)
 	for input_wire in partially_complete_logic.inputs:
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
-		if C_TO_LOGIC.C_TYPE_IS_STRUCT(input_t, parser_state):
+		if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(input_t, parser_state):
 			text += '''typedef uint8_t ''' + input_t + "; // FUCK\n"
-	if C_TO_LOGIC.C_TYPE_IS_STRUCT(output_t, parser_state):
+	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(output_t, parser_state):
 		text += '''typedef uint8_t ''' + output_t + "; // FUCK\n"
 
 	text += output_t + ''' ''' + func_c_name + '''('''
@@ -1761,8 +1771,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	#sys.exit(0)
 	
 	return text
-	
-	
+
 def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state):
 	# Each element gets a single mux comapring == sel
 	# Old code was bloated in muxing multiple copies of huge array
@@ -1774,7 +1783,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 	
 	
 	#print lhs_ref_toks
-	#print "base_c_type",base_c_type
+	#print orig_var_name, "base_c_type",base_c_type
 	#sys.exit(0)
 	
 
@@ -1795,11 +1804,11 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 	# And base type too
 	for input_wire in partially_complete_logic.inputs:
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
-		if C_TO_LOGIC.C_TYPE_IS_STRUCT(input_t, parser_state):
+		if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(input_t, parser_state):
 			text += '''typedef uint8_t ''' + input_t + "; // FUCK\n"
-	if C_TO_LOGIC.C_TYPE_IS_STRUCT(output_t, parser_state):
+	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(output_t, parser_state):
 		text += '''typedef uint8_t ''' + output_t + "; // FUCK\n"
-	if C_TO_LOGIC.C_TYPE_IS_STRUCT(base_c_type, parser_state):
+	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(base_c_type, parser_state):
 		text += '''typedef uint8_t ''' + base_c_type + "; // FUCK\n"
 
 	# FUNC DEF
