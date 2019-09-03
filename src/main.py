@@ -29,6 +29,7 @@ print "	Implement multi dimensional arrays from BRAM, the dumb way"
 print "	Get serious about using C macros fool"
 print "	Add look ahead for built in functions so cast can be inferred"
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."
+print "	Do clock crossing with globals and 'false path' volatile globals"
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."
 print "	Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?"
 print "	Add checks for globals not being used conditionally"
@@ -56,7 +57,7 @@ print "================== Doing Optional Modelsim Debug ========================
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
-TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz)
+TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, True)
 
 print "================== Writing Results of Throughput Sweep ================================"
 timing_params = TimingParamsLookupTable[top_level_func_name]

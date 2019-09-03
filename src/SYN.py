@@ -798,6 +798,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 				print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 				print "timing_params.slices",timing_params.slices
+				print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage 
 				print 0/0
 				sys.exit(0)
 				print_debug = True
@@ -816,6 +817,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 		print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 		print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 		print "timing_params.slices5",timing_params.slices
+		print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage
 		sys.exit(0)
 		
 		
@@ -849,7 +851,7 @@ def BUILD_HASH_EXT(inst_name, Logic, TimingParamsLookupTable, parser_state):
 # Returns updated TimingParamsLookupTable
 # Index of bad slice if sliced through globals, scoo # Passing Afternoon - Iron & Wine
 # THIS MUST BE CALLED IN LOOP OF INCREASING SLICES FROM LEFT=>RIGHT
-def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files=True):	
+def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files=True, rounding_so_fuck_it=False):	
 	
 	print_debug = False
 	
@@ -957,24 +959,16 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 						
 						# If did not do boundary slice then prev slice must have already cut boundary
 						if not did_boundary_slice:
-							# Temp return bad slice?
-							return slice_index
-							'''
-							##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-							# Make current slice (more to the right) the boundary slice instead
-							# The 'new slice' - which goes through submodules instead of on boundary
-							# 	is PREV SLICE
-							new_slice_pos = prev_slice_pos
-							# This overwrites submodule start stage with for most to right slice
-							timing_params.submodule_to_start_stage[submodule_inst] = slice_starts_stage
-							#timing_params.submodule_to_start_stage[submodule_inst] = max(slice_starts_stage, timing_params.submodule_to_start_stage[submodule_inst])
-							timing_params.INVALIDATE_CACHE()	
-							TimingParamsLookupTable[inst_name] = timing_params
-							# Run with prev slice, skipping its known bad boundary slice
-							skip_boundary_slice = True
-							return SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files)
-							#~~~~~~~~~~~~~~~		
-							'''					
+							### Temp return bad slice?
+							##return slice_index
+							# Why doesnt this work?
+							#pass
+							# Cant continue onto non-boundary slice because boundary slice is techncially to the right of current slice and messes up timing?
+							# IDK MAN # I Only Wear Blue - Dr. Dog
+							if print_debug:
+								print "Could not do boundary slice index", slice_index
+							return slice_index			
+											
 					else:
 						# This submodule ends this delay
 						# Need to find which submodules start in the next delay 
@@ -984,8 +978,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 							if next_submodule_inst not in submodule_insts:
 								not_curr_in_next.append(next_submodule_inst)
 						
-						# Think its OK to not have any submodules to add, default true
-						added = True #~~~SCOOO???
+						# #~~~SCOOO??? ########Think its OK to not have any submodules to add, default true
+						# YOU MIGHT BE WRONG (about everything in life but hey)
+						added = False
 						# First check if can be done to all on copy
 						timing_params_copy = copy.copy(timing_params)
 						timing_params_copy.submodule_to_start_stage = dict(timing_params.submodule_to_start_stage)
@@ -993,6 +988,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 							if print_debug:
 								print next_submodule_inst, "starts stage", slice_starts_stage
 							added = timing_params_copy.ADD_SUBMODULE_START_STAGE(next_submodule_inst, slice_starts_stage)
+							# If did not add then prev slice must have already cut boundary
 							if not added:
 								break
 						if added:
@@ -1002,26 +998,22 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 						else:
 							# Not added 
 							did_boundary_slice = False
-							# Temp return bad slice?
-							return slice_index
-							'''
-							##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-							# Make current slice (more to the right) the boundary slice instead
-							# The 'new slice' - which goes through submodules instead of on boundary
-							# 	is PREV SLICE
-							# This overwrites submodule start stage with for current (more to right) slice
-							for next_submodule_inst in not_curr_in_next:
-								# This overwrites submodule start stage with for most to right slice
-								timing_params.submodule_to_start_stage[next_submodule_inst] = slice_starts_stage
-								#timing_params.submodule_to_start_stage[next_submodule_inst] = max(slice_starts_stage, timing_params.submodule_to_start_stage[next_submodule_inst])
-								timing_params.INVALIDATE_CACHE()
-							TimingParamsLookupTable[inst_name] = timing_params
-							# Run with prev slice, skipping its known bad boundary slice
-							new_slice_pos = prev_slice_pos
-							skip_boundary_slice = True
-							return SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files)
-							#~~~~~~~~~~~~~~~
-							'''
+							
+							# If there were submoduels to add then was a problem with slices
+							if len(not_curr_in_next) > 0:
+								#### Temp return bad slice?
+								####return slice_index
+								# Why doesnt this work?
+								#pass
+								# Cant continue onto non-boundary slice because boundary slice is techncially to the right of current slice and messes up timing?
+								# IDK MAN # I Only Wear Blue - Dr. Dog
+								if print_debug:
+									print "Could not do boundary slice index2", slice_index
+								return slice_index
+							else:
+								# Otherwise just not able to do slice since way of recording boundary slices (via start submoduels) is dumb
+								# Try for regular non boundary slice
+								pass
 							
 					# Write into timing params dict - might have been modified
 					TimingParamsLookupTable[inst_name] = timing_params
@@ -1088,11 +1080,20 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	# Check latency calculation
 	if est_total_latency != total_latency:
-		print "inst_name",inst_name
-		print "Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency
-		print "Adding new slice:2", new_slice_pos
-		print "timing_params.slices2",timing_params.slices
-		sys.exit(0)
+		# This seems to be catching slices that are too close together?
+		# WEEEEELLLLLLL
+		if rounding_so_fuck_it:
+			# Return bad slice
+			if print_debug:
+				print "Rounding so allowed to fail latency test with bad slice index", slice_index
+			return slice_index
+		else:
+			print "Not doing dumb global fuckery but still bad slicing?"
+			print "inst_name",inst_name
+			print "Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency
+			print "Adding new slice:2", new_slice_pos
+			print "timing_params.slices2",timing_params.slices
+			sys.exit(0)
 	
 	
 	
@@ -1100,7 +1101,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 	
 	
 # Returns index of bad slices
-def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, write_files=True):
+def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, write_files=True, rounding_so_fuck_it=False):
 	# Reset to initial timing params before adding slices
 	TimingParamsLookupTable = dict()
 	for logic_inst_name in parser_state.LogicInstLookupTable: 
@@ -1112,7 +1113,7 @@ def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, 
 	for current_slice_i in current_slices:
 		#print "	current_slice_i:",current_slice_i
 		skip_boundary_slice = False
-		TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, current_slice_i, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files)
+		TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, current_slice_i, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files,rounding_so_fuck_it)
 		# Might be bad slice
 		if type(TimingParamsLookupTable) is int:
 			return TimingParamsLookupTable
@@ -1339,7 +1340,10 @@ def INCREASE_SLICE_STEP(slice_step, state):
 	
 	
 def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, logic, current_slices, parser_state, zero_clk_pipeline_map, slice_step=None):
-	#print "Rounding:", current_slices
+	# Debug?
+	print_debug = False
+	if print_debug:
+		print "Rounding:", current_slices
 	
 	total_delay = zero_clk_pipeline_map.zero_clk_max_delay
 	epsilon = SLICE_EPSILON(total_delay)
@@ -1353,15 +1357,14 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, logic, current_slices, parser
 	seen_bad_slices = []
 	bad_slice_or_params = None
 	while working_params_dict is None:
-		# Debug?
-		print_debug = False
+		
 		
 		if print_debug:
 			print "Trying slices:", working_slices
 		
 		# Try to find next bad slice
 		bad_slice_or_params_OLD = bad_slice_or_params
-		bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, working_slices, parser_state, write_files=False)
+		bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, working_slices, parser_state, write_files=False, rounding_so_fuck_it=True)
 	
 		if bad_slice_or_params == bad_slice_or_params_OLD:
 			print "Looped working on bad_slice_or_params_OLD",bad_slice_or_params_OLD
@@ -1389,9 +1392,7 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, logic, current_slices, parser
 					sys.exit(0)
 					#return None
 					print_debug = True # WTF???
-
 			seen_bad_slices.append(bad_slice)
-			
 			
 			# Get initial slice value
 			to_left_val = working_slices[bad_slice]
@@ -1422,8 +1423,8 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, logic, current_slices, parser
 					
 					
 				# Try left and right
-				left_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, pushed_left_slices, parser_state, write_files=False)
-				right_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, pushed_right_slices, parser_state, write_files=False)
+				left_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, pushed_left_slices, parser_state, write_files=False, rounding_so_fuck_it=True)
+				right_bad_slice_or_params = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, pushed_right_slices, parser_state, write_files=False, rounding_so_fuck_it=True)
 			
 				if (type(left_bad_slice_or_params) is type(0)) and (left_bad_slice_or_params != bad_slice):
 					# Got different bad slice, use pushed slices as working
@@ -1798,8 +1799,8 @@ def LOG_SWEEP_STATE(state, Logic): #, write_files = False):
 		f.write(text)
 		f.close()
 		
-		# Write state
-		WRITE_SWEEP_STATE_CACHE_FILE(state, Logic)
+	# Write state
+	WRITE_SWEEP_STATE_CACHE_FILE(state, Logic)
 			
 
 def SLICE_DISTANCE_MIN(delay):
@@ -1867,8 +1868,9 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, state):
 	return unseen_possible_adjusted_slices
 
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz):
+def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz,skip_course_sweep=False):
 	print "Function:",Logic.func_name
+	print "Target MHz:",target_mhz
 	zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state)
 	print zero_clk_pipeline_map
 	
@@ -1883,7 +1885,7 @@ def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz):
 	# START WITH NO SLICES
 
 	# Maybe skip course grain
-	if not sweep_state.fine_grain_sweep:
+	if not sweep_state.fine_grain_sweep and not skip_course_sweep:
 		sweep_state = DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map)
 
 	# Then fine grain

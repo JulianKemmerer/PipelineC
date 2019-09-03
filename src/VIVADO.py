@@ -133,24 +133,55 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 				if found_end_reg_abs_index - found_start_reg_abs_index != 1:
 					# Not normal path?
 					
+					'''
 					# Globals can be same module same reg index?
 					if "[global_regs]" in start_name and "[global_regs]" in end_name and found_start_reg_abs_index==found_end_reg_abs_index:
-						possible_stages_indices = [found_start_reg_abs_index]
+						possible_stages_indices.append(found_start_reg_abs_index)
 					
 						# Dont need to handle volatiles separately since like regular regs in terms of path in pipeline?
-						'''
+						
 					elif "[volatile_global_regs]" in start_name and "[volatile_global_regs]" in end_name and found_start_reg_abs_index<=found_end_reg_abs_index:
 						possible_stages_indices = range(found_start_reg_abs_index,found_end_reg_abs_index+1)
 						print "Double check volatile regs:"
 						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
 						print "	End?:",found_end_reg_abs_index, end_name, end_inst
-						'''
+			
 					else:
-						print "	Unclear stages from register names..."
-						print "	Start?:",found_start_reg_abs_index, start_name
-						print "		", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
-						print "	End?:",found_end_reg_abs_index, end_name
-						print "		", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+					'''
+					print "	Unclear stages from register names..."
+					print "	Start?:",found_start_reg_abs_index, start_name
+					print "		", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+					print "	End?:",found_end_reg_abs_index, end_name
+					print "		", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+					
+					# Global regs do not have self offset so hard to know exact offset
+					# Prefer if one end of the path isnt a global
+					if "global_regs]" not in start_name and  "global_regs]" in end_name:
+						# Prefer start reg
+						possible_stages_indices.append(found_start_reg_abs_index+1) # Reg0 starts stage 1
+					elif "global_regs]" in start_name and  "global_regs]" not in end_name:
+						# Prefer end reg
+						possible_stages_indices.append(found_end_reg_abs_index) # Reg1 ends stage 1
+					else:
+						# Do dumb inclusive range plus +1 before and after if globals?
+						# Uh... totally guessing now?
+						print "Really unclear regs?"
+						guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
+						guessed_end_reg_abs_index = max(found_start_reg_abs_index+1,found_end_reg_abs_index) # +1 since corresponding end index from start index is plus 1
+						# Stage range bounds
+						min_bound = guessed_start_reg_abs_index+1
+						max_bound = guessed_end_reg_abs_index+1
+
+						# PLus 1 before and after if globals in the mix?
+						if "global_regs]" in start_name:
+							min_bound = max(0, min_bound-1)
+						if "global_regs]" in end_name:
+							max_bound = min(last_stage+1, max_bound+1)
+						stage_range = range(min_bound, max_bound)
+						for stage in stage_range:
+							possible_stages_indices.append(stage)				
+						
+					'''
 						#print "CHECK THIS!!!!^"
 						#raw_input("Press Enter to continue...")
 						#sys.exit(0)
@@ -179,13 +210,13 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 									rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index)
 								possible_stages_indices += rv
 								
-						# Remove 					
+					''' 					
 				else:
 					# Normal 1 stage path
 					possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
 	
 	
-	# Get real range from lsit
+	# Get real range accounting for duplcates from renamed/merged regs
 	rv = sorted(list(set(possible_stages_indices)))
 	
 	

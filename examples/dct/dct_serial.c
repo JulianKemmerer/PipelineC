@@ -272,7 +272,7 @@ dct_lookup_increment_t dct_lookup_increment(uint1_t do_increment)
 // Input 'matrix' and start=1 to begin calculation
 // Input 'matrix' must stay constant until return .done
 
-// 'sum' accumulates over time/iterations/clocks and should be pipelined
+// 'sum' accumulates over iterations/clocks and should be pipelined
 // So 'sum' must be a volatile global variable
 // Keep track of when sum is valid and be read+written
 volatile uint1_t dct_volatiles_valid;
@@ -338,7 +338,7 @@ dct_done_t dctTransformUnrolled(dct_pixel_t matrix[DCT_M][DCT_N], uint1_t start)
 		dct1 = (float)matrix[k][l] * cos_val;
 		// 2) Increment sum
 		dct_sum = dct_sum + dct1;
-		// 3) constant * Float and assign into the matrix
+		// 3) constant * Float and assign into the output matrix
 		dct_result.matrix[i][j] = const_val * dct_sum;
 		
 		// Sum accumulates during the k and l loops
