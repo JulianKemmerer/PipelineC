@@ -42,6 +42,7 @@ class TimingParams:
 		# Sometimes slices are between submodules,
 		# This can specify where a stage is artificially started by not allowing submodules to be instantiated even if driven in an early state
 		self.submodule_to_start_stage = dict()
+		self.submodule_to_end_stage = dict()
 		
 		# Cached stuff
 		self.calcd_total_latency = None
@@ -121,6 +122,21 @@ class TimingParams:
 		self.slices = sorted(self.slices)
 		self.INVALIDATE_CACHE()
 	
+	
+	# Returns if add was success
+	def ADD_SUBMODULE_END_STAGE(self, end_submodule, end_stage):
+		if end_submodule not in self.submodule_to_end_stage:
+			self.submodule_to_end_stage[end_submodule] = end_stage
+			self.INVALIDATE_CACHE()	
+		else:
+			if end_stage != self.submodule_to_end_stage[end_submodule]:
+				# not allowed like that?
+				return False
+				#print 0/0
+				#sys.exit(0)
+				
+		return True
+		
 	# Returns if add was success
 	def ADD_SUBMODULE_START_STAGE(self, start_submodule, start_stage):
 		if start_submodule not in self.submodule_to_start_stage:
@@ -128,16 +144,7 @@ class TimingParams:
 			self.INVALIDATE_CACHE()	
 		else:
 			if start_stage != self.submodule_to_start_stage[start_submodule]:
-				'''
-				# WTF IS THIS? - Good God Damn - Arcade Fire
-				if start_stage < self.submodule_to_start_stage[start_submodule]:
-					print "Does submodule", start_submodule, "start in stage",self.submodule_to_start_stage[start_submodule], "or",start_stage, "?"
-					print "Trying to move start stage back?"
-					print "Slices",self.slices
-					#print 0/0
-					#sys.exit(0)
-				'''
-				# Great stage, not allowed like that?
+				# not allowed like that?
 				return False
 				#print 0/0
 				#sys.exit(0)
@@ -527,9 +534,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 				already_fully_driven = submodule_inst in fully_driven_submodule_inst_2_logic
 				# Also skip if not the correct stage for this submodule 
 				incorrect_stage_for_submodule = False
+				'''
+				NOT DOING THIS FOR NOW
 				if submodule_inst in timing_params.submodule_to_start_stage:
 					incorrect_stage_for_submodule = stage_num != timing_params.submodule_to_start_stage[submodule_inst]
-	
+				'''
+				
 				#if print_debug:
 				#	print ""
 				#	print "########"
@@ -637,8 +647,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 						if not already_fully_driven:
 							print "submodule",submodule_inst
 							print "already_fully_driven",already_fully_driven
-							if submodule_inst in timing_params.submodule_to_start_stage:
-								print "incorrect_stage_for_submodule",incorrect_stage_for_submodule," = ",stage_num, "stage_num != ", timing_params.submodule_to_start_stage[submodule_inst]
+							#if submodule_inst in timing_params.submodule_to_start_stage:
+							#	print "incorrect_stage_for_submodule",incorrect_stage_for_submodule," = ",stage_num, "stage_num != ", timing_params.submodule_to_start_stage[submodule_inst]
 					
 			#print "got input driven submodules, wires_driven_by_so_far",wires_driven_by_so_far
 			if bad_inf_loop:
@@ -681,13 +691,32 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 					if bad_inf_loop:
 						print "submodule_output_wire",submodule_output_wire
 					wire_to_remaining_clks_before_driven[submodule_output_wire] = submodule_latency_from_container_logic
-			
+					
 					# Sanity?
 					submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
 					submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)
 					if submodule_latency != submodule_latency_from_container_logic:
 						print "submodule_latency != submodule_latency_from_container_logic"
 						sys.exit(0)
+					
+					'''
+					# THIS IS WRONG CANT OD LIKE THIS
+					NO 
+					NO
+					Delay by a clock if submodule ends in this stage
+					if submodule_inst in timing_params.submodule_to_end_stage:
+						end_stage = timing_params.submodule_to_end_stage[submodule_inst]
+						start_stage = end_stage - submodule_latency_from_container_logic
+						# Sanity
+						if start_stage != stage_num:
+							print submodule_inst, "ends stage", end_stage, "after latency of",submodule_latency_from_container_logic , "starting stage", start_stage, "but is currently starting in stage", stage_num , "?"
+							print "Hurly/Burly - Man Man"
+							sys.exit(0)
+						# Delay outputs by one clock
+						if print_debug:
+							print submodule_inst, "ends stage", end_stage
+						wire_to_remaining_clks_before_driven[submodule_output_wire] += 1
+					'''
 						
 					# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 					# Set delay_offset_when_driven for this output wire
@@ -738,10 +767,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 			#	print "NOT submodule_level_iteration_has_submodules, and that is weird?"
 			#	sys.exit(0)
 			
-			# Wires starting next level include wires whose latency has elapsed just now
+			# Wires starting next level IS wires whose latency has elapsed just now
+			wires_starting_level=[]
 			# Also are added to wires driven so far
 			# (done per submodule level iteration since ALSO DOES 0 CLK SUBMODULE OUTPUTS)
-			wires_starting_level=[]
 			for wire in wire_to_remaining_clks_before_driven:
 				if wire_to_remaining_clks_before_driven[wire]==0:
 					if wire not in wires_driven_by_so_far:
@@ -798,7 +827,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 				print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 				print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 				print "timing_params.slices",timing_params.slices
-				print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage 
+				#print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage 
 				print 0/0
 				sys.exit(0)
 				print_debug = True
@@ -817,7 +846,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 		print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 		print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
 		print "timing_params.slices5",timing_params.slices
-		print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage
+		#print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage
 		sys.exit(0)
 		
 		
@@ -932,6 +961,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 			# Prefer not slicing through if submodule starts or ends in this delay unit
 			# Unless already sliced there
 			did_boundary_slice = False
+			'''
 			if not skip_boundary_slice:
 				# Check for start or end in this delay unit
 				starts_this_delay = submodule_inst not in prev_submodule_insts
@@ -966,58 +996,34 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 							# Cant continue onto non-boundary slice because boundary slice is techncially to the right of current slice and messes up timing?
 							# IDK MAN # I Only Wear Blue - Dr. Dog
 							if print_debug:
-								print "Could not do boundary slice index", slice_index
+								print "Could not do starting boundary slice index", slice_index
 							return slice_index			
 											
 					else:
 						# This submodule ends this delay
-						# Need to find which submodules start in the next delay 
-						# Find which submodules are not in current delay but are in next submodule
-						not_curr_in_next = []
-						for next_submodule_inst in next_submodule_insts:
-							if next_submodule_inst not in submodule_insts:
-								not_curr_in_next.append(next_submodule_inst)
+						# Add to list
+						if print_debug:
+							print submodule_inst, "ends stage", slice_ends_stage
+							
+						# Might not be able to add if slices are too close...
+						did_boundary_slice = timing_params.ADD_SUBMODULE_END_STAGE(submodule_inst, slice_ends_stage)
 						
-						# #~~~SCOOO??? ########Think its OK to not have any submodules to add, default true
-						# YOU MIGHT BE WRONG (about everything in life but hey)
-						added = False
-						# First check if can be done to all on copy
-						timing_params_copy = copy.copy(timing_params)
-						timing_params_copy.submodule_to_start_stage = dict(timing_params.submodule_to_start_stage)
-						for next_submodule_inst in not_curr_in_next:
+						# If did not do boundary slice then prev slice must have already cut boundary
+						if not did_boundary_slice:
+							### Temp return bad slice?
+							##return slice_index
+							# Why doesnt this work?
+							#pass
+							# Cant continue onto non-boundary slice because boundary slice is techncially to the right of current slice and messes up timing?
+							# IDK MAN # I Only Wear Blue - Dr. Dog
 							if print_debug:
-								print next_submodule_inst, "starts stage", slice_starts_stage
-							added = timing_params_copy.ADD_SUBMODULE_START_STAGE(next_submodule_inst, slice_starts_stage)
-							# If did not add then prev slice must have already cut boundary
-							if not added:
-								break
-						if added:
-							# Boundary slicing on copy worked, use copy
-							did_boundary_slice = True
-							timing_params = timing_params_copy
-						else:
-							# Not added 
-							did_boundary_slice = False
-							
-							# If there were submoduels to add then was a problem with slices
-							if len(not_curr_in_next) > 0:
-								#### Temp return bad slice?
-								####return slice_index
-								# Why doesnt this work?
-								#pass
-								# Cant continue onto non-boundary slice because boundary slice is techncially to the right of current slice and messes up timing?
-								# IDK MAN # I Only Wear Blue - Dr. Dog
-								if print_debug:
-									print "Could not do boundary slice index2", slice_index
-								return slice_index
-							else:
-								# Otherwise just not able to do slice since way of recording boundary slices (via start submoduels) is dumb
-								# Try for regular non boundary slice
-								pass
-							
+								print "Could not do ending boundary slice index", slice_index
+							return slice_index	
+						
+															
 					# Write into timing params dict - might have been modified
 					TimingParamsLookupTable[inst_name] = timing_params
-			
+			'''
 			
 			# Not sliced on boundary then slice through submodule
 			if not did_boundary_slice:
@@ -2380,7 +2386,7 @@ def BUILD_SLICES(slice_per_stage):
 	rv = rv[0:len(rv)-1]
 	return rv
 	
-# Return slices and new copy of adjsuted stages dict
+# Return slices
 def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, state, min_dist):	
 	print "<<<<<<<<<<< EXPANDING", missing_stages, "VIA_ADJ_COUNT:",current_slices
 	slice_per_stage = GET_SLICE_PER_STAGE(current_slices)
