@@ -21,6 +21,7 @@ import SYN
 VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch"
+VIVADO_PART="xcvu9p-flgb2104-2-i"  # xcvu9p-flgb2104-2-i = AWS F1, xc7a35ticsg324-1L -l = Arty
 TIMING_REPORT_DIVIDER="......................THIS IS THAT STUPID DIVIDER THING................"
 
 
@@ -236,6 +237,7 @@ class ParsedTimingReport:
 		
 		
 		# SINGLE TIMING REPORT STUFF
+		self.logic_levels = 0
 		self.slack_ns = None
 		self.source_ns_per_clock = 0.0
 		self.start_reg_name = None
@@ -252,6 +254,11 @@ class ParsedTimingReport:
 		syn_output_lines = single_timing_report.split("\n")
 		prev_line=""
 		for syn_output_line in syn_output_lines:
+			# LOGIC LEVELS
+			tok1="Logic Levels:           "
+			if tok1 in syn_output_line:
+				self.logic_levels = int(syn_output_line.replace(tok1,"").split("(")[0].strip())
+				
 			# SLACK_NS
 			tok1="Slack ("
 			tok2="  (required time - arrival time)"
@@ -536,8 +543,8 @@ def GET_START_END_REGS(syn_output):
 	return parsed_timing_report.start_reg_name,parsed_timing_report.end_reg_name
 	
 
-def GET_READ_VHDL_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
-	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state)
+def GET_READ_VHDL_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
+	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state)
 	rv_lines = []
 	for line in tcl.split('\n'):
 		if "read_vhdl" in line:
@@ -647,7 +654,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 	
 	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part xc7a35ticsg324-1L -l" + "\n"
+	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part " + VIVADO_PART + " \n"
 	
 
 	# Report clocks

@@ -27,10 +27,10 @@ DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 # Welcome to the land of magic numbers
 # 	"But I think its much worse than you feared" Modest Mouse - I'm Still Here
 SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
-MAX_STAGE_ADJUSTMENT = 4 # 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
+MAX_STAGE_ADJUSTMENT = 2 # Uhh 2 should probably be fine? Maybe fixed bug 20 seems whack? 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
 SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
-DELAY_UNIT_MULT = 1.0 # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
+DELAY_UNIT_MULT = 10.0 # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 
 # These are the parameters that describe how a pipeline should be formed
 class TimingParams:
@@ -804,7 +804,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 		if is_zero_clk_has_delay:
 			# Get max delay
-			rv.zero_clk_max_delay = max(rv.zero_clk_per_delay_submodules_map.keys()) +1 # +1 since 0 indexed
+			if len(rv.zero_clk_per_delay_submodules_map.keys()) == 0:
+				rv.zero_clk_max_delay = 0
+			else:
+				rv.zero_clk_max_delay = max(rv.zero_clk_per_delay_submodules_map.keys()) +1 # +1 since 0 indexed
 		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 		# PER CLOCK decrement latencies
@@ -1874,7 +1877,7 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, state):
 	return unseen_possible_adjusted_slices
 
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz,skip_course_sweep=False):
+def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz,skip_course_sweep=False, skip_fine_sweep=False):
 	print "Function:",Logic.func_name
 	print "Target MHz:",target_mhz
 	zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state)
@@ -1892,13 +1895,17 @@ def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz,skip_course_s
 
 	# Maybe skip course grain
 	if not sweep_state.fine_grain_sweep and not skip_course_sweep:
-		sweep_state = DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map)
+		sweep_state = DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map, skip_fine_sweep)
 
-	# Then fine grain
-	return DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map)
+	# Maybe skip fine grain
+	if not skip_fine_sweep:
+		# Then fine grain
+		return DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map)
+	else:
+		return sweep_state.TimingParamsLookupTable
 
 # Return SWEEP STATE fo DO_FINE_THROUGHPUT_SWEEP
-def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map):
+def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep_state, zero_clk_pipeline_map, skip_fine_sweep=False):
 	
 	# What is the combinatorial logic delay?
 	# Populate table as all 0 clk
@@ -1923,35 +1930,62 @@ def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep
 	print "Starting guess is",clks,"clocks latency..."
 	sweep_state.total_latency = clks
 	
-	done = False
-	reached_max = False
-	''' TEMP ONLY DO FIRST ITERATION while not done:'''
+	last_loop = False
+	last_non_passing_latency = None
+	while True:
+		done = False
+		reached_max = False
+		''' TEMP ONLY DO FIRST ITERATION while not done:'''
+		
+		# Sanity check on resolution
+		# Sanity check cant more clocks than delay units
+		if sweep_state.total_latency >= sweep_state.zero_clk_pipeline_map.zero_clk_max_delay:
+			print "Not enough resolution to slice this logic into",sweep_state.total_latency,"clocks..."
+			print "Increase DELAY_UNIT_MULT?"
+			sys.exit(0)
+		
+		# Make even slices
+		sweep_state.current_slices = GET_BEST_GUESS_IDEAL_SLICES(sweep_state)
+		# Update slice step
+		sweep_state.slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(sweep_state.total_latency+1))	
+		print "Current slices:", sweep_state.current_slices
+		print "Rounding away from globals..."
+		sweep_state.current_slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, Logic, sweep_state.current_slices, parser_state, sweep_state.zero_clk_pipeline_map)
+		print "Rounded slices:", sweep_state.current_slices
+		
+		# Do slicing and writing VHDL
+		sweep_state.TimingParamsLookupTable = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, Logic, sweep_state.current_slices, parser_state)
+		timing_params = sweep_state.TimingParamsLookupTable[inst_name]
+		
+		# Run syn
+		sweep_state.timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, sweep_state.TimingParamsLookupTable, INF_MHZ, sweep_state.total_latency)
+		sweep_state.stage_range = timing_params.GET_ABS_STAGE_RANGE_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state, sweep_state.TimingParamsLookupTable)
+		curr_mhz = 1000.0 / sweep_state.timing_report.path_delay
+		print "MHz:", curr_mhz
+		
+		# Last loop?
+		if last_loop:
+			break
 	
-	# Sanity check on resolution
-	# Sanity check cant more clocks than delay units
-	if sweep_state.total_latency >= sweep_state.zero_clk_pipeline_map.zero_clk_max_delay:
-		print "Not enough resolution to slice this logic into",sweep_state.total_latency,"clocks..."
-		print "Increase DELAY_UNIT_MULT?"
-		sys.exit(0)
+		# Passed timing?
+		if curr_mhz >= target_mhz:
+			# Yes, ok run one more time at last non passing latency
+			print "Found maximum pipeline latency..."
+			# If skipping fine grain then return passing latency now
+			if skip_fine_sweep:
+				break 
+			# Prepare for fine sweep
+			print "Resetting state to last non passing run to begin fine grain sweep..."
+			last_loop = True
+			sweep_state.total_latency = last_non_passing_latency
+		else:
+			# No save non passing latency
+			last_non_passing_latency = sweep_state.total_latency
+			# And try for next clock
+			print "Increasing latency and trying again..."
+			sweep_state.total_latency = sweep_state.total_latency + 1
+		
 	
-	# Make even slices
-	sweep_state.current_slices = GET_BEST_GUESS_IDEAL_SLICES(sweep_state)
-	# Update slice step
-	sweep_state.slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(sweep_state.total_latency+1))	
-	print "Current slices:", sweep_state.current_slices
-	print "Rounding away from globals..."
-	sweep_state.current_slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(inst_name, Logic, sweep_state.current_slices, parser_state, sweep_state.zero_clk_pipeline_map)
-	print "Rounded slices:", sweep_state.current_slices
-	
-	# Do slicing and writing VHDL
-	TimingParamsLookupTable = GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, Logic, sweep_state.current_slices, parser_state)
-	timing_params = TimingParamsLookupTable[inst_name]
-	
-	# Run syn
-	sweep_state.timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, INF_MHZ, sweep_state.total_latency)
-	sweep_state.stage_range = timing_params.GET_ABS_STAGE_RANGE_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state, TimingParamsLookupTable)
-	curr_mhz = 1000.0 / sweep_state.timing_report.path_delay
-	print "MHz:", curr_mhz
 	
 	# Reset adjustments
 	for stage in range(0, len(sweep_state.current_slices) + 1):
@@ -2128,10 +2162,15 @@ def DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, state, 
 					if adj == min_adj:
 						missing_stages.append(i)
 			
-			# Only do multiplied adjustments if adjusted all stages at least once
-			# Otherwise get caught making stupid adjustments right after init
+			# Keep emphasizing suggested slicing changes if other stages have been adjusted too
 			actual_min_adj = min(state.stages_adjusted_this_latency.values())
-			if (actual_min_adj != 0) and (actual_min_adj < MAX_STAGE_ADJUSTMENT):
+			# Only continue to adjust this stage range if not currently over the adjustment limit
+			stage_range_adjusted_too_much = False
+			for stage in state.stage_range:
+				if state.stages_adjusted_this_latency[stage] >= MAX_STAGE_ADJUSTMENT:
+					stage_range_adjusted_too_much = True
+					break			
+			if (actual_min_adj != 0) and not stage_range_adjusted_too_much:
 				print "Multiplying suggested change with limit:",SLICE_MOVEMENT_MULT
 				orig_slice_step = state.slice_step
 				n = 1
@@ -2229,10 +2268,7 @@ def DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, state, 
 				while len(open("i_am_sad.cfg",'r').readline())==1 and (int(open("i_am_sad.cfg",'r').readline()) > 0):
 					pass
 			
-			# Do something with missing stage or backup		
-			stages_off_balance = ((max(state.stages_adjusted_this_latency.values()) - min(state.stages_adjusted_this_latency.values())) >= len(state.current_slices)) or (actual_min_adj == 0)
-			
-			# Moved this here from start of # BACKUP PLAN TO AVOID LOOPS ^
+			# Why do _I_ exist?
 			print "Reducing slice_step..."
 			state.slice_step = REDUCE_SLICE_STEP(state.slice_step, state.total_latency, state.slice_ep)
 			print "New slice_step:",state.slice_step
@@ -2241,7 +2277,7 @@ def DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, state, 
 			if actual_min_adj >= MAX_STAGE_ADJUSTMENT:
 				print "Hit limit of",MAX_STAGE_ADJUSTMENT, "for adjusting all stages... moving on..."
 				
-			elif (len(missing_stages) > 0) and stages_off_balance and not AM_SAD:
+			elif (len(missing_stages) > 0) and (actual_min_adj < MAX_STAGE_ADJUSTMENT) and not AM_SAD:
 				print "These stages have not been adjusted much: <<<<<<<<<<< ", missing_stages
 				state.working_stage_range = missing_stages
 				print "New working stage range:",state.working_stage_range
@@ -2263,8 +2299,7 @@ def DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, state, 
 						try_num += 1
 						# Do adjustment
 						pre_expand_slices = new_slices[:]
-						new_slices,new_stages_adjusted_this_latency = EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, new_slices, state.slice_step, state, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.zero_clk_max_delay))
-						state.stages_adjusted_this_latency = new_stages_adjusted_this_latency
+						new_slices = EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, new_slices, state.slice_step, state, SLICE_DISTANCE_MIN(state.zero_clk_pipeline_map.zero_clk_max_delay))
 						
 						# If expansion is same as current slices then stop
 						if SLICES_EQ(new_slices, pre_expand_slices, state.slice_ep):
@@ -2306,6 +2341,7 @@ def DO_FINE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, state, 
 							if new_stage in missing_stages:
 								found_missing_stages.append(new_stage)
 								print "<<<<<<<<<<< Has missing stage", new_stage
+								
 						# Record having seen these slices but keep it local yo
 						local_seen_slices.append(new_slices)
 						
@@ -2395,12 +2431,9 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, stat
 	# to account for every missing stage getting slice step removed
 	expansion = slice_step / len(missing_stages)
 	total_expansion = 0.0
-	stages_adjusted_this_latency = dict(state.stages_adjusted_this_latency) # was deep copy
 	for missing_stage in missing_stages:
 		slice_per_stage[missing_stage] = slice_per_stage[missing_stage] + expansion
 		total_expansion = total_expansion + expansion
-		# Record this expansion as adjustment
-		stages_adjusted_this_latency[missing_stage] += 1
 	
 	remaining_expansion = total_expansion
 	# Split remaining expansion among other stages
@@ -2413,9 +2446,7 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, stat
 		shrink_per_stage = total_expansion / float(len(stages_to_shrink))
 		for stage in stages_to_shrink:
 			print "Shrinking stage",stage, "curr size:", slice_per_stage[stage]
-			slice_per_stage[stage] -= shrink_per_stage
-			# Record adjustment
-			stages_adjusted_this_latency[stage] += 1		
+			slice_per_stage[stage] -= shrink_per_stage	
 		
 		# reconstruct new slcies
 		rv = BUILD_SLICES(slice_per_stage)
@@ -2423,10 +2454,10 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, stat
 		#print "RV",rv
 		#sys.exit(0)
 		
-		return rv, stages_adjusted_this_latency
+		return rv
 	else:
 		# Can't shrink anything more
-		return current_slices, state.stages_adjusted_this_latency
+		return current_slices
 
 	
 
@@ -2638,6 +2669,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 			elif cached_path_delay is not None:
 				logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
 				print "Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay
+				if cached_path_delay > 0.0 and logic.delay==0:
+					print "Have timing path of",cached_path_delay,"ns"
+					print "...but recorded zero delay. Increase delay multiplier!"
+					sys.exit(0)
 			else:
 				# Impossible goal for timing since just want path delay
 				clock_mhz = INF_MHZ 
@@ -2655,8 +2690,17 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 						MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
 					sys.exit(0)
 				mhz = 1000.0 / parsed_timing_report.path_delay
-				logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)
-				
+				# Make adjustment for 0 LLs to have 0 delay
+				if parsed_timing_report.logic_levels > 0:
+					logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)				
+					# Sanity check multiplier is working
+					if parsed_timing_report.path_delay > 0.0 and logic.delay==0:
+						print "Have timing path of",parsed_timing_report.path_delay,"ns"
+						print "...but recorded zero delay. Increase delay multiplier!"
+						sys.exit(0)
+				else:
+					logic.delay = 0
+					
 				# Syn results are delay and clock	
 				print "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
 				print ""

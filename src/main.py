@@ -11,7 +11,7 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz = 250.0 #SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
+mhz = 125.0 #SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -22,11 +22,11 @@ print '''
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 '''
 print "TODO:"
+print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
 print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
 print "	Implement multi dimensional arrays from BRAM, the dumb way"
-print "	Get serious about using C macros fool"
 print "	Add look ahead for built in functions so cast can be inferred"
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Do clock crossing with globals and 'false path' volatile globals"
@@ -57,13 +57,15 @@ print "================== Doing Optional Modelsim Debug ========================
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
-TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, True)
+skip_course_sweep=False
+skip_fine_sweep=True
+TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, skip_course_sweep, skip_fine_sweep)
 
 print "================== Writing Results of Throughput Sweep ================================"
 timing_params = TimingParamsLookupTable[top_level_func_name]
 hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 print "Use theses TCL commands from .tcl file with hash extension:", hash_ext
-tcl = VIVADO.GET_READ_VHDL_TCL(logic, SYN.GET_OUTPUT_DIRECTORY(logic), TimingParamsLookupTable, SYN.INF_MHZ, parser_state, implement=False)
+tcl = VIVADO.GET_READ_VHDL_TCL(top_level_func_name, logic, SYN.GET_OUTPUT_DIRECTORY(logic), TimingParamsLookupTable, SYN.INF_MHZ, parser_state, implement=False)
 print "remove_files {" + SYN.SYN_OUTPUT_DIRECTORY + "/*}"
 print tcl
 print "Use the above tcl in Vivado."

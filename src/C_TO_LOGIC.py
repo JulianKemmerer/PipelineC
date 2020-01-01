@@ -306,7 +306,7 @@ class Logic:
 		# wire_to_c_type[wire_name] -> c_type_str
 		self.wire_to_c_type = dict()
 		
-		# For timing, delay units (tenths of nanosec probably)
+		# For timing, delay integer units (tenths of nanosec probably)
 		# this is populated by vendor tool
 		self.delay = None
 		
