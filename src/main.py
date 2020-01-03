@@ -23,6 +23,7 @@ print '''
 '''
 print "TODO:"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
+print "	How to do module instatiation? Does that need to be macro based?"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
 print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
