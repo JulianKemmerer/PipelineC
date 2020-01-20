@@ -928,7 +928,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
-	# TODO: Do bit select and bit dup as "const int"
+	# TODO: Do bit select and bit dup as "const int"?
 	
 	text = ""
 	header_text = '''

@@ -20,7 +20,7 @@ import MODELSIM
 import VIVADO
 
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
-PATH_DELAY_CACHE_DIR="./path_delay_cache"
+PATH_DELAY_CACHE_DIR="./path_delay_cache_"+VIVADO.VIVADO_PART
 INF_MHZ = 1000 # Impossible timing goal
 DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
