@@ -15,7 +15,7 @@ typedef struct work_outputs_t
 } work_outputs_t;
 work_outputs_t work(work_inputs_t inputs)
 {
-	// Sum those values 'as parallel as possible' using a binary tree
+	// Sum 16 values 'as parallel as possible' using a binary tree
 	//    Level 0: 16 input values
 	// 		Level 1: 8 adders in parallel
 	//    Level 2: 4 adders in parallel

@@ -16,6 +16,8 @@
 #include "utils/lcd.h"
 // AWS DMA helpers
 #include "test_dram_dma_common.h"
+// PipelineC header
+#include "dma_msg.h"
 
 // Wrapper around DMA init
 int write_fd, read_fd;

@@ -3,7 +3,6 @@
 #include "dma_msg_sw.c"
 #include "work_sw.c"
 
-
 // Helper to init an input data
 float max_val = 100.0;
 work_inputs_t work_inputs_init(int i)
@@ -23,7 +22,7 @@ void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 	float ep = max_val / 10000.0; // 1/10000th of range;
 	if(abs(fpga.sum - cpu.sum) > ep)
 	{
-		prinf("Output %d does not match! FPGA: %f, CPU: %f'n", i, fpga.sum,cpu.sum);
+		prinf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
 	}
 }
 

@@ -1,7 +1,6 @@
 // This file desribes the software-side (big endian) conversion 
 // of the DMA message struct to/from work input/output types
 
-// PipelineC stuff
 #include "dma_msg.h"
 #include "work.h"
 

@@ -1,6 +1,5 @@
 // Code wrapping AXI4 (FPGA) hardware to a common 'DMA message' 
 
-#pragma once
 #include "../../axi.h"
 #include "dma_msg.h"
 

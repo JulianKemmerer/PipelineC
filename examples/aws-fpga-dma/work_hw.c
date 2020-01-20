@@ -1,7 +1,6 @@
 // This file desribes the hardware-side (little endian) conversion 
 // of the DMA message struct to/from work input/output types 
 
-#pragma once
 #include "dma_msg.h"
 #include "work.h"
 

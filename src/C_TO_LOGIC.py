@@ -3358,11 +3358,11 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 	#			next statement
 	i = 0
 	while True:
-		# Separate the duplicated logic with identifying preprend text
-		iter_prepend_text = prepend_text + "FOR_" + C_AST_NODE_COORD_STR(c_ast_node) +  "_ITER_" + str(i)
+		# Separate the duplicated logic with identifying prepend text
+		iter_prepend_text = prepend_text + "FOR_" + C_AST_NODE_COORD_STR(c_ast_node) +  "_ITER_" + str(i) + "_"
 		# Evaluate condition driving a dummy wire so we can recover the value?
 		cond_val = None
-		COND_DUMMY = iter_prepend_text + "_COND_DUMMY"
+		COND_DUMMY = iter_prepend_text + "COND_DUMMY"
 		parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = BOOL_C_TYPE
 		parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.cond, [COND_DUMMY], iter_prepend_text, parser_state) 
 		const_cond_wire = FIND_CONST_DRIVING_WIRE(COND_DUMMY, parser_state.existing_logic)

@@ -1,6 +1,5 @@
 // The top level 'main' function for the AWS FPGA DMA example
 
-#pragma once
 #include "../../axi.h"
 #include "dma_msg_hw.c"
 #include "work_hw.c"
