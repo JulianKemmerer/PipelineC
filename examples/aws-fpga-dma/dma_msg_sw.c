@@ -28,7 +28,11 @@ int init_dma()
 
 	/* initialize the fpga_plat library */
 	rc = fpga_mgmt_init();
-	fail_on(rc, out, "Unable to initialize the fpga_mgmt library");
+	if(rc)
+	{
+		printf("Unable to initialize the fpga_mgmt library");
+		exit(-1);
+	}
 	
 	// Open write and read file descriptors
 	write_fd = -1;
@@ -37,11 +41,20 @@ int init_dma()
 	// Read 
 	read_fd = fpga_dma_open_queue(FPGA_DMA_XDMA, slot_id,
 			/*channel*/ 0, /*is_read*/ true);
-	fail_on((rc = (read_fd < 0) ? -1 : 0), out, "unable to open read dma queue");
+	if((rc = (read_fd < 0) ? -1 : 0))
+	{
+		printf("unable to open read dma queue");
+		exit(-1);
+	}
+	
 	// Write
 	write_fd = fpga_dma_open_queue(FPGA_DMA_XDMA, slot_id,
 			/*channel*/ 0, /*is_read*/ false);
-	fail_on((rc = (write_fd < 0) ? -1 : 0), out, "unable to open write dma queue");
+	if((rc = (write_fd < 0) ? -1 : 0))
+	{
+		printf("unable to open write dma queue");
+		exit(-1);
+	}
 	
 	return rc;
 }
@@ -65,7 +78,11 @@ int dma_write(dma_msg_t msg)
 	size_t xfer_sz = DMA_MSG_SIZE;
 	size_t address = 0; // Write address ignored in hardware
 	int rc = fpga_dma_burst_write(write_fd, buffer, xfer_sz, address);
-  fail_on(rc, out, "DMA write failed");
+  if(rc)
+	{
+		printf("DMA write failed");
+		exit(-1);
+	}
   return rc;
 }
 
@@ -77,7 +94,11 @@ dma_msg_t dma_read()
 	size_t xfer_sz = DMA_MSG_SIZE;
 	size_t address = 0; // Read address ignored in hardware
 	int rc = fpga_dma_burst_read(read_fd, buffer, buffer_size, address);
-  fail_on(rc, out, "DMA read failed");
+  if(rc)
+	{
+		printf("DMA read failed");
+		exit(-1);
+	}
   return msg;
 }
 
