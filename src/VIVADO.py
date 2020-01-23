@@ -544,6 +544,15 @@ def GET_START_END_REGS(syn_output):
 	
 
 def GET_READ_VHDL_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
+	#TODO
+	timing_params = TimingParamsLookupTable[top_level_func_name]
+	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+	print "Use theses TCL commands from .tcl file with hash extension:", hash_ext
+	tcl = VIVADO.GET_READ_VHDL_TCL(top_level_func_name, logic, SYN.GET_OUTPUT_DIRECTORY(logic), TimingParamsLookupTable, SYN.INF_MHZ, parser_state, implement=False)
+	print "remove_files {" + SYN.SYN_OUTPUT_DIRECTORY + "/*}"
+	print tcl
+	print "Use the above tcl in Vivado."
+		
 	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state)
 	rv_lines = []
 	for line in tcl.split('\n'):

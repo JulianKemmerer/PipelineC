@@ -1,6 +1,7 @@
 // This is the main program for driving the work computation
 
 #include <math.h>
+#include <time.h>
 
 #include "dma_msg_sw.c"
 #include "work_sw.c"
@@ -57,7 +58,7 @@ int main(int argc, char **argv)
 	// which uses the FPGA to compute the 'work()' function
 	
 	// Prepare N work inputs, and 2 output pairs (cpu vs fpga)
-	int n = 1;
+	int n = 1000;
 	work_inputs_t* inputs = (work_inputs_t*)malloc(n*sizeof(work_inputs_t));
 	work_outputs_t* cpu_outputs = (work_outputs_t*)malloc(n*sizeof(work_outputs_t));
 	work_outputs_t* fpga_outputs = (work_outputs_t*)malloc(n*sizeof(work_outputs_t));
@@ -66,17 +67,38 @@ int main(int argc, char **argv)
 		inputs[i] = work_inputs_init(i);
 	}
 	
+	// Time things
+	clock_t t;
+	double time_taken;
+	
+	// Start time
+	t = clock(); 
 	// Do the work on the cpu
 	for(int i = 0; i < n; i++)
 	{
 		cpu_outputs[i] = work(inputs[i]);
 	}
-	
+	// End time
+	t = clock() - t; 
+  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  printf("CPU took %f seconds to execute \n", time_taken); 
+	double cpu_time = time_taken;
+
+	// Start time
+	t = clock(); 
 	// Do the work on the FPGA
 	for(int i = 0; i < n; i++)
 	{
 		fpga_outputs[i] = work_fpga(inputs[i]);
 	}
+	// End time
+	t = clock() - t; 
+  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  printf("FPGA took %f seconds to execute \n", time_taken);
+  double fpga_time = time_taken;
+  
+  // Speedy?
+  printf("Speedup: %f\n",time_taken/fpga_time);  
 	
 	// Compare the outputs
 	for(int i = 0; i < n; i++)

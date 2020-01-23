@@ -1,4 +1,4 @@
-// This file desribes the software-side (big endian) conversion 
+// This file desribes the software-side (big endian?) conversion 
 // of the DMA message struct to/from work input/output types
 
 #include "dma_msg.h"
@@ -16,7 +16,7 @@ dma_msg_t inputs_to_bytes(work_inputs_t inputs)
   {
 		uint8_t b[4];
 		memcpy(&b, &(inputs.values[byte_i/4]), sizeof(float));
-		// Convert from big endian float to little endian bytes
+		// Convert from big endian? float to little endian? bytes
 		msg.data[byte_i+0] = b[0];
 		msg.data[byte_i+1] = b[1];
 		msg.data[byte_i+2] = b[2];
@@ -29,7 +29,7 @@ work_outputs_t bytes_to_outputs(dma_msg_t msg)
 {
 	// Assemble single float output from first 4 bytes
 	work_outputs_t outputs;
-	// Convert from little endian bytes to big endian float
+	// Convert from little endian? bytes to big endian? float
 	uint8_t b[] = {msg.data[0], msg.data[1], msg.data[2], msg.data[3]};
 	memcpy(&(outputs.sum), &b, sizeof(float));
 	return outputs;

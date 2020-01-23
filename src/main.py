@@ -21,6 +21,7 @@ print '''
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 '''
+
 print "TODO:"
 print "	Cache 2-MUX somehow, dummy"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
@@ -40,14 +41,10 @@ print "	Syn each pipeline stage ... this is hard... like slicing zero clock logi
 print "	Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?"
 print "	Redo eq,and,or,..etc raw vhdl ops with pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work"
 print "	Check for non global functions that call global functions when evaluating const"
-print "	Prune away logic from user C code as to not write generate vhdl? Work backwards from outputs/globals?"
 print "	Got rid of pipeline map cache... is slow now?"
 print "	Redo old code to use for loops instead of generated code (ex. float div)"
 print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
-
-print "================== Generating (u)intN_t.h headers ================================"
-SW_LIB.GENERATE_INT_N_HEADERS()
 
 print "================== Parsing C Code to logical hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
@@ -65,13 +62,7 @@ skip_fine_sweep=True
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, skip_course_sweep, skip_fine_sweep)
 
 print "================== Writing Results of Throughput Sweep ================================"
-timing_params = TimingParamsLookupTable[top_level_func_name]
-hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-print "Use theses TCL commands from .tcl file with hash extension:", hash_ext
-tcl = VIVADO.GET_READ_VHDL_TCL(top_level_func_name, logic, SYN.GET_OUTPUT_DIRECTORY(logic), TimingParamsLookupTable, SYN.INF_MHZ, parser_state, implement=False)
-print "remove_files {" + SYN.SYN_OUTPUT_DIRECTORY + "/*}"
-print tcl
-print "Use the above tcl in Vivado."
+print "todo"
 
 
 
