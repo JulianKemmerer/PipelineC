@@ -25,6 +25,8 @@ void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 	if(fabs(fpga.sum - cpu.sum) > ep)
 	{
 		printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
+		printf("	FPGA: 0x%x\n",*(unsigned int*)&fpga.sum);
+		printf("	CPU:  0x%x\n",*(unsigned int*)&cpu.sum);
 	}
 }
 

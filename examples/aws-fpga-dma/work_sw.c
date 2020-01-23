@@ -17,10 +17,10 @@ dma_msg_t inputs_to_bytes(work_inputs_t inputs)
 		uint8_t b[4];
 		memcpy(&b, &(inputs.values[byte_i/4]), sizeof(float));
 		// Convert from big endian float to little endian bytes
-		msg.data[byte_i+0] = b[3];
-		msg.data[byte_i+1] = b[2];
-		msg.data[byte_i+2] = b[1];
-		msg.data[byte_i+3] = b[0];
+		msg.data[byte_i+0] = b[0];
+		msg.data[byte_i+1] = b[1];
+		msg.data[byte_i+2] = b[2];
+		msg.data[byte_i+3] = b[3];
 	}
 	return msg;
 }
@@ -30,7 +30,7 @@ work_outputs_t bytes_to_outputs(dma_msg_t msg)
 	// Assemble single float output from first 4 bytes
 	work_outputs_t outputs;
 	// Convert from little endian bytes to big endian float
-	uint8_t b[] = {msg.data[3], msg.data[2], msg.data[1], msg.data[0]}; 
+	uint8_t b[] = {msg.data[0], msg.data[1], msg.data[2], msg.data[3]};
 	memcpy(&(outputs.sum), &b, sizeof(float));
 	return outputs;
 }
