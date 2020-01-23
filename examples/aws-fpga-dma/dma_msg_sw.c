@@ -15,7 +15,7 @@
 #include "fpga_dma.h"
 #include "utils/lcd.h"
 // AWS DMA helpers
-#include "test_dram_dma_common.h"
+#include "/home/centos/src/project_data/aws-fpga/hdk/cl/examples/cl_dram_dma/software/runtime/test_dram_dma_common.h"
 // PipelineC header
 #include "dma_msg.h"
 
