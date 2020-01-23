@@ -98,7 +98,7 @@ int main(int argc, char **argv)
   double fpga_time = time_taken;
   
   // Speedy?
-  printf("Speedup: %f\n",time_taken/fpga_time);  
+  printf("Speedup: %f\n",cpu_time/fpga_time);  
 	
 	// Compare the outputs
 	for(int i = 0; i < n; i++)
