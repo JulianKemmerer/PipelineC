@@ -13,7 +13,7 @@ OBJ = $(SRC:.c=.o)
 all: test $(BIN)
 
 test: $(OBJ)
-	$(CC) $(CFLAGS) -o test test.o test_dram_dma_common.o  $(LDFLAGS) $(LDLIBS)
+	$(CC) $(CFLAGS) -o test test.o $(LDFLAGS) $(LDLIBS)
 
 clean:
 	rm -f *.o test

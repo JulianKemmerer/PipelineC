@@ -22,7 +22,7 @@ void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 	float ep = max_val / 10000.0; // 1/10000th of range;
 	if(abs(fpga.sum - cpu.sum) > ep)
 	{
-		prinf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
+		printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
 	}
 }
 
