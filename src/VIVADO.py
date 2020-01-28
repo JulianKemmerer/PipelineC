@@ -17,7 +17,6 @@ import SW_LIB
 import MODELSIM
 import SYN
 
-#VIVADO_PATH = "/media/1TB/Programs/Linux/Xilinx/Vivado/2014.4/bin/vivado"
 VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch"
