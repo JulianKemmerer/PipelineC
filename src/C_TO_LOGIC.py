@@ -19,7 +19,7 @@ import SYN
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 REF_TOK_DELIM = "__REF__" # This is dumb, so am I
-DUMB_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I
+DUMB_ARRAY_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I
 CONST_PREFIX="CONST_"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
@@ -226,12 +226,12 @@ def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
 	
 	return rv
 	
-def DICT_LIST_VALUE_MERGE(self_d1,d2):
+def DICT_SET_VALUE_MERGE(self_d1,d2):
 	rv = self_d1
 	for key in d2:
 		if key in self_d1:
-			# Result is union of two lists
-			rv[key] = LIST_UNION(self_d1[key],d2[key])
+			# Result is union of two sets
+			rv[key] = self_d1[key]|d2[key]
 		else:
 			rv[key] = d2[key]
 			
@@ -264,12 +264,12 @@ class Logic:
 		# My containing FUNC NAME
 		self.containing_func = None
 		
-		self.variable_names=[] # List of original variable names  
-		self.wires=[]  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
-		self.inputs=[] #["a","b"] 
-		self.outputs=[] #["return"]
-		self.global_wires=[]
-		self.volatile_global_wires=[]
+		self.variable_names=set() # Unordered set original variable names  
+		self.wires=set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
+		self.inputs=[] # Ordered list of inputs ["a","b"] 
+		self.outputs=[] # Ordered list of outputs ["return"]
+		self.global_wires=set() # Unordered set of wires
+		self.volatile_global_wires=set() # Unordered set of wires
 		self.uses_globals = False
 		self.submodule_instances = dict() # instance name -> logic func_name
 		self.c_ast_node = None
@@ -290,7 +290,7 @@ class Logic:
 		# Wire names with a dot means sub module connection
 		# func0.a  is a port on the func0 instance
 		# Connections are given as two lists "drives" and "driven by"
-		self.wire_drives = dict() # wire_name -> [driven,wire,names]
+		self.wire_drives = dict() # wire_name -> set([driven,wire,names])
 		self.wire_driven_by = dict() # wire_name -> driving wire
 		
 		# To keep track of C execution over time in logic graph,
@@ -317,12 +317,12 @@ class Logic:
 	def DEEPCOPY(self):
 		rv = Logic()
 		rv.func_name = self.func_name
-		rv.variable_names = self.variable_names[:] # List of original variable names
-		rv.wires = self.wires[:]  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
+		rv.variable_names = set(self.variable_names)
+		rv.wires = set(self.wires)  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
 		rv.inputs = self.inputs[:] #["a","b"]
 		rv.outputs = self.outputs[:] #["return"]
-		rv.global_wires = self.global_wires[:]
-		rv.volatile_global_wires = self.volatile_global_wires[:]
+		rv.global_wires = set(self.global_wires)
+		rv.volatile_global_wires = set(self.volatile_global_wires)
 		rv.uses_globals = self.uses_globals
 		rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
 		rv.c_ast_node = copy.copy(self.c_ast_node) # Uhhh seemed wrong ?
@@ -330,7 +330,7 @@ class Logic:
 		rv.is_vhdl_func = self.is_vhdl_func
 		rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
 		rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
-		rv.wire_drives = self.DEEPCOPY_DICT_LIST(self.wire_drives)
+		rv.wire_drives = self.DEEPCOPY_DICT_SET(self.wire_drives)
 		rv.wire_driven_by = dict(self.wire_driven_by) # wire_name -> driving wire #IMMUTABLE
 		rv.wire_aliases_over_time = self.DEEPCOPY_DICT_LIST(self.wire_aliases_over_time)
 		rv.alias_to_orig_var_name = dict(self.alias_to_orig_var_name) #IMMUTABLE
@@ -349,6 +349,12 @@ class Logic:
 		rv = dict()
 		for key in d:
 			rv[key] = d[key][:]
+		return rv
+		
+	def DEEPCOPY_DICT_SET(self, d):
+		rv = dict()
+		for key in d:
+			rv[key] = set(d[key])
 		return rv
 		
 	def DEEPCOPY_DICT_COPY(self, d):
@@ -412,11 +418,11 @@ class Logic:
 		# Absorb true values of using globals
 		self.uses_globals = self.uses_globals or logic_b.uses_globals
 		
-		# Merge lists
-		self.wires = LIST_UNION(self.wires,logic_b.wires)
-		self.global_wires = LIST_UNION(self.global_wires,logic_b.global_wires)
-		self.volatile_global_wires = LIST_UNION(self.volatile_global_wires,logic_b.volatile_global_wires)
-		self.variable_names = LIST_UNION(self.variable_names,logic_b.variable_names)
+		# Merge sets
+		self.wires = self.wires | logic_b.wires
+		self.global_wires = self.global_wires | logic_b.global_wires
+		self.volatile_global_wires = self.volatile_global_wires | logic_b.volatile_global_wires
+		self.variable_names = self.variable_names | logic_b.variable_names
 		
 		# I/O order matters - check that
 		# If one is empty then thats fine
@@ -459,7 +465,7 @@ class Logic:
 		
 		# WTF MERGE BUG?
 		lens = len(self.wire_drives)+ len(logic_b.wire_drives)
-		self.wire_drives = DICT_LIST_VALUE_MERGE(self.wire_drives,logic_b.wire_drives)
+		self.wire_drives = DICT_SET_VALUE_MERGE(self.wire_drives,logic_b.wire_drives)
 		if lens > 0 and len(self.wire_drives) == 0:
 			print "self.wire_drives",self.wire_drives
 			print "logic_b.wire_drives",logic_b.wire_drives
@@ -490,10 +496,10 @@ class Logic:
 		new_wire_drives = dict()
 		for driving_wire in self.wire_drives:
 			driven_wires = self.wire_drives[driving_wire]
-			new_driven_wires = []
+			new_driven_wires = set()
 			for driven_wire in driven_wires:
 				if driven_wire != driving_wire:
-					new_driven_wires.append(driven_wire)	
+					new_driven_wires.add(driven_wire)	
 			new_wire_drives[driving_wire] = new_driven_wires
 		self.wire_drives=new_wire_drives
 				
@@ -570,17 +576,17 @@ class Logic:
 
 		# Driving wires need to reflect over time
 		# Last alias from first logic replaces original wire name in second logic
-		# self.wire_drives = dict() # wire_name -> [driven,wire,names]
+		# self.wire_drives = dict() # wire_name -> set(driven,wire,names])
 		for orig_var in self.wire_aliases_over_time:
 			# And the var drives second_logic 
 			if orig_var in second_logic.wire_drives:
 				# First logic has aliases for orig var
 				# Second logic has record of the orig var driving things
 				# Both first and second logic should have same driven wies
-				first_driven_wires = []
+				first_driven_wires = set()
 				if orig_var in self.wire_drives:
 					first_driven_wires = self.wire_drives[orig_var]
-				second_driven_wires = []
+				second_driven_wires = set()
 				if orig_var in second_logic.wire_drives:
 					second_driven_wires = second_logic.wire_drives[orig_var]
 					
@@ -623,7 +629,7 @@ class Logic:
 						
 						# And replace that wire in the 
 						# second logic wire_drives key (not value)
-						temp_value = dict(second_logic.wire_drives[orig_var]) # was deep copy
+						temp_value = set(second_logic.wire_drives[orig_var])
 						# Delete orig var key
 						second_logic.wire_drives.pop(orig_var, None)
 						# Replace with last alias
@@ -709,26 +715,19 @@ class Logic:
 		return None
 		
 	# Intentionally return None
+	# TODO: REMOVE_WIRES
 	def REMOVE_SUBMODULE(self,submodule_inst, input_port_names):		
 		# Make list of wires that look like
 		#		submodule_inst + SUBMODULE_MARKER
 		# SHOULD ONLY BE INPUT AND OUTPUT WIRES + submodule name
-		io_wires = []
-		in_wires = []
+		io_wires = set()
+		in_wires = set()
 		for input_port_name in input_port_names:
 			in_wire = submodule_inst + SUBMODULE_MARKER + input_port_name
-			io_wires.append(in_wire)
-			in_wires.append(in_wire)
+			io_wires.add(in_wire)
+			in_wires.add(in_wire)
 		out_wire = submodule_inst + SUBMODULE_MARKER + RETURN_WIRE_NAME
-		io_wires.append(out_wire)
-		
-		# TODO add check not double adding wires
-		#~@ SEEMS OK
-		#if len(self.wires) != len(set(self.wires)):
-		#	print "WHO BE DUPLICATIN!"
-		#	print self.wires
-		#	sys.exit(0)
-		
+		io_wires.add(out_wire)
 		
 		
 		# Fast
@@ -737,8 +736,14 @@ class Logic:
 		# NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instance_to_input_port_names.pop(submodule_inst, None)
 		self.ref_submodule_instance_to_input_port_driven_ref_toks.pop(submodule_inst, None)
 		self.ref_submodule_instance_to_ref_toks.pop(submodule_inst, None)
-		# Slower?
-		self.wires = list(set(self.wires) - set(io_wires))
+		
+		# Discard a few, or intersect for many?
+		if len(io_wires) < self.wires:
+			for io_wire in io_wires:
+				self.wires.discard(io_wire)
+		else:
+			self.wires = self.wires - io_wires
+				
 		for io_wire in io_wires:
 			self.wire_to_c_type.pop(io_wire)
 		
@@ -786,7 +791,7 @@ class Logic:
 			
 	def SHOW(self):
 		# Make adjency matrix out of all wires and submodule isnts and own 'wire'/node in network
-		nodes = self.wires
+		nodes = list(self.wires)
 		for submodule_inst in self.submodule_instances:
 			nodes.append(submodule_inst)
 		sorted_nodes = sorted(nodes)
@@ -976,7 +981,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
 			if len(driven_wires)==0 :
 				print "Built in submodule not driving anthying?",submodule_inst
 				sys.exit(0)
-			c_type = containing_func_logic.wire_to_c_type[driven_wires[0]]
+			c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
 		else:
 			print "containing_func_logic.func_name",containing_func_logic.func_name
 			print "output_wire_name",output_wire_name
@@ -1196,17 +1201,15 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 	# Whooray
 	for global_wire in parser_state.existing_logic.global_wires:
 		# Read ref_toks takes care of it
-		ref_toks = [global_wire]
+		ref_toks = (global_wire,)
 		connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [global_wire], prepend_text, parser_state)
-		#connect_logic = READ_ORIG_WIRE_LOGIC(global_wire, [global_wire], c_ast_return, prepend_text, parser_state)
 		return_logic.MERGE_COMB_LOGIC(connect_logic)
 		
 	# Same for volatile globals
 	for volatile_global_wire in parser_state.existing_logic.volatile_global_wires:
 		# Read ref_toks takes care of it
-		ref_toks = [volatile_global_wire]
+		ref_toks = (volatile_global_wire,)
 		connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [volatile_global_wire], prepend_text, parser_state)
-		#connect_logic = READ_ORIG_WIRE_LOGIC(global_wire, [global_wire], c_ast_return, prepend_text, parser_state)
 		return_logic.MERGE_COMB_LOGIC(connect_logic)
 	
 	
@@ -1258,6 +1261,10 @@ def C_AST_REF_TOKS_ARE_CONST(ref_toks):
 		# Constant array ref
 		if type(ref_tok) == int:
 			pass
+		# Sanity check
+		elif (type(ref_tok) == str) and (ref_tok=="*"):
+			print "Using string variable ref tok when not aware, fix."
+			sys.exit(0)
 		# ID or struct ref
 		elif type(ref_tok) == str:
 			pass
@@ -1309,13 +1316,18 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_st
 	# Check existing logic for alias
 	# First one to try is "0"
 	i=0
-	alias = alias_base+str(i)
+	alias = alias_base + "_" + str(i)
 	if existing_logic is not None:
 		if orig_var_name in existing_logic.wire_aliases_over_time:
+			# Aliases exist, start i at last one
 			aliases = existing_logic.wire_aliases_over_time[orig_var_name]
+			last_alias = aliases[len(aliases)-1]
+			last_num = int(last_alias.replace(alias_base+"_",""))
+			i=last_num+1
+			alias = alias_base + "_" + str(i)
 			while alias in aliases:
 				i=i+1
-				alias = alias_base+"_" + str(i)
+				alias = alias_base + "_" + str(i)
 	
 	return alias
 	
@@ -1365,8 +1377,8 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 		last_tok = curr_ref_toks[last_index]
 		if isinstance(last_tok, c_ast.Node):
 			# is variable array dim
-			# Pop off this entry
-			curr_ref_toks.pop(last_index)
+			# Pop off this last entry
+			curr_ref_toks = curr_ref_toks[:last_index]
 			# Get the array type
 			c_array_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(curr_ref_toks, c_ast_node, parser_state)
 			# Sanity check
@@ -1394,7 +1406,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 			var_dim_iter_types.append("uint" + str(int(math.ceil(math.log(first_dim,2)))) + "_t")			
 		else:
 			# Pop off this entry
-			curr_ref_toks.pop(last_index)
+			curr_ref_toks = curr_ref_toks[:last_index]
 			# Thats it
 	
 	# Have been reversed
@@ -1415,12 +1427,11 @@ def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
 		# Copy info into existing_logic
 		parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.global_info[maybe_global_var].type_name
 
-		# Add as global_wire 
-		if maybe_global_var not in parser_state.existing_logic.global_wires:
-			parser_state.existing_logic.global_wires.append(maybe_global_var)
+		# Add as global_wire
+		parser_state.existing_logic.global_wires.add(maybe_global_var)
 			
 		# Add as variable name
-		parser_state.existing_logic.variable_names.append(maybe_global_var)
+		parser_state.existing_logic.variable_names.add(maybe_global_var)
 			
 		# Record using globals
 		parser_state.existing_logic.uses_globals = True
@@ -1433,11 +1444,10 @@ def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
 		parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.volatile_global_info[maybe_global_var].type_name
 		
 		# Add as volatile global_wire
-		if maybe_global_var not in parser_state.existing_logic.volatile_global_wires:
-			parser_state.existing_logic.volatile_global_wires.append(maybe_global_var)
+		parser_state.existing_logic.volatile_global_wires.add(maybe_global_var)
 		
 		# Add as variable name
-		parser_state.existing_logic.variable_names.append(maybe_global_var)
+		parser_state.existing_logic.variable_names.add(maybe_global_var)
 
 	return parser_state.existing_logic
 
@@ -1464,7 +1474,6 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 	#### GLOBALS \/
 	# This is the first place we should see a global reference in terms of this function/logic
 	parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
-	parser_state.existing_logic = parser_state.existing_logic
 	
 	# Sanity check
 	if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
@@ -1499,12 +1508,12 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		#print "var_dim_ref_tok_indices",var_dim_ref_tok_indices
 	
 		# Do the nest loops to create all possible ref toks
-		ref_toks_list = []
+		ref_toks_set = set()
 		
 		for orig_ref_tok_i in range(0, len(lhs_ref_toks)):
 			orig_ref_tok = lhs_ref_toks[orig_ref_tok_i]
-			# Start a new return list
-			new_ref_toks_list = []
+			# Start a new return set()
+			new_ref_toks_set = set()
 			# Is this orig ref tok variable?
 			if isinstance(orig_ref_tok, c_ast.Node):
 				# Variable
@@ -1517,27 +1526,27 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 				var_dim_i = var_dim_ref_tok_indices.index(orig_ref_tok_i)
 				var_dim = var_dims[var_dim_i]
 				# For each existing ref tok append that with all possible dim values
-				for ref_toks in ref_toks_list:
+				for ref_toks in ref_toks_set:
 					for dim_val in range(0, var_dim):
-						new_ref_toks = ref_toks + [dim_val]
-						new_ref_toks_list.append(new_ref_toks)
+						new_ref_toks = ref_toks + (dim_val,)
+						new_ref_toks_set.add(new_ref_toks)
 			else:
 				# Constant just append this constant value to all ref toks in list
-				for ref_toks in ref_toks_list:
-					new_ref_toks = ref_toks + [orig_ref_tok]
-					new_ref_toks_list.append(new_ref_toks)
+				for ref_toks in ref_toks_set:
+					new_ref_toks = ref_toks + (orig_ref_tok,)
+					new_ref_toks_set.add(new_ref_toks)
 				# Or add as base element
-				if len(ref_toks_list) == 0:
-					new_ref_toks_list.append([orig_ref_tok])
+				if len(ref_toks_set) == 0:
+					new_ref_toks_set.add((orig_ref_tok,))
 			
 			# Next iteration save new ref toks
-			ref_toks_list = new_ref_toks_list[:]
+			ref_toks_set = set(new_ref_toks_set)
 		
 		
-		#print "ref_toks_list",ref_toks_list
+
 		# Reduce that list of refs
-		reduced_ref_toks_list = REDUCE_REF_TOKS_OR_STRS(ref_toks_list, c_ast_assignment.lvalue, parser_state)
-		#print "reduced_ref_toks_list",reduced_ref_toks_list
+		reduced_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_assignment.lvalue, parser_state)
+		sorted_reduced_ref_toks_set = sorted(reduced_ref_toks_set) # To establish an order for name strings
 		
 		##########################################
 		# These refs are input to write funciton
@@ -1556,15 +1565,34 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		lhs_elem_c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
 		
 		# Build C array type using variable dimensions
-		lhs_array_type = lhs_elem_c_type
-		for var_dim in var_dims:
-			lhs_array_type += "[" + str(var_dim) + "]"
+		lhs_array_type = None
+		# Elem might be array so try to break apart
+		if C_TYPE_IS_ARRAY(lhs_elem_c_type):
+			# Innner element is constant sized array, has those dims, then variable ones
+			lhs_array_elem_c_type, lhs_array_elem_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(lhs_elem_c_type)
+			lhs_array_type = lhs_array_elem_c_type
+			for var_dim in var_dims:
+				lhs_array_type += "[" + str(var_dim) + "]"	
+			for lhs_array_elem_dim in lhs_array_elem_dims:
+				lhs_array_type += "[" + str(lhs_array_elem_dim) + "]"	
+		else:
+			# Innner element is not an array, just variable dims
+			lhs_array_type = lhs_elem_c_type
+			for var_dim in var_dims:
+				lhs_array_type += "[" + str(var_dim) + "]"
 			
+		#print "lhs_ref_toks",lhs_ref_toks
+		#print "var_dim_ref_tok_indices, var_dims, var_dim_iter_types",var_dim_ref_tok_indices, var_dims, var_dim_iter_types
+		#print "lhs_array_type",lhs_array_type
 			
 		# FUCK FUCK C cant return array blah blah 
-		lhs_struct_array_type = lhs_elem_c_type + DUMB_STRUCT_THING
+		#TODOD ????.replace("[","_").replace("]","_").replace("__","_")
+		#_ARRAY_STRUCT for multi dimensional?
+		lhs_dumb_struct_array_type = lhs_elem_c_type.replace("[","_").replace("]","_").replace("__","_").strip("_") + DUMB_ARRAY_STRUCT_THING
 		for var_dim in var_dims:
-			lhs_struct_array_type += "_" + str(var_dim)
+			lhs_dumb_struct_array_type += "_" + str(var_dim)
+		# Record being dumb
+		parser_state.dumb_array_struct_type_to_c_array_type[lhs_dumb_struct_array_type] = lhs_array_type
 		
 		#print "lhs_struct_array_type",lhs_struct_array_type
 		#sys.exit(0)
@@ -1576,9 +1604,9 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# Fuck it just make names that wont be wrong/overlap
 		# Are there built in structs?
 		# output/elem type
-		func_name += "_" + lhs_elem_c_type.replace("[","").replace("]","")
+		func_name += "_" + lhs_elem_c_type.replace("[","_").replace("]","_").replace("__","_").strip("_")
 		# Base type
-		lhs_base_var_type_c_name = lhs_base_type.replace("[","_").replace("]","")
+		lhs_base_var_type_c_name = lhs_base_type.replace("[","_").replace("]","_").replace("__","_").strip("_")
 		func_name += "_" +lhs_base_var_type_c_name
 		# output ref toks --dont include base var name
 		for ref_tok in lhs_ref_toks[1:]:
@@ -1592,7 +1620,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 				print "What is lhs ref tok?", ref_tok
 				sys.exit(0)
 		# input ref toks  --dont include base var name
-		for ref_toks in reduced_ref_toks_list:
+		for ref_toks in sorted_reduced_ref_toks_set:
 			for ref_tok in ref_toks[1:]:
 				if type(ref_tok) == int:
 					func_name += "_" + str(ref_tok)
@@ -1606,7 +1634,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		
 		# NEED HASH to account for reduced ref toks as name
 		input_ref_toks_str = ""
-		for ref_toks in ref_toks_list:
+		for ref_toks in sorted(ref_toks_set):
 			for ref_tok in ref_toks[1:]: # Skip base var name
 				if type(ref_tok) == int:
 					input_ref_toks_str += "_INT_" + str(ref_tok)
@@ -1634,7 +1662,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_assignment.lvalue)
 		output_wire_name = func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
 		# LHS type is output type too
-		parser_state.existing_logic.wire_to_c_type[output_wire_name] = lhs_struct_array_type
+		parser_state.existing_logic.wire_to_c_type[output_wire_name] = lhs_dumb_struct_array_type
 		# Save ref toks for this ref submodule
 		parser_state.existing_logic.ref_submodule_instance_to_ref_toks[func_inst_name] = lhs_ref_toks
 		
@@ -1667,7 +1695,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# Var assign is implemented in C, then must be C safe
 		ref_toks_i = 0
 		parser_state.existing_logic.ref_submodule_instance_to_input_port_driven_ref_toks[func_inst_name] = []
-		for ref_toks in reduced_ref_toks_list:
+		for ref_toks in sorted_reduced_ref_toks_set:
 			input_port_name = "ref_toks_" + str(ref_toks_i)
 			ref_toks_i += 1
 			
@@ -1749,14 +1777,12 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# SET LHS TYPE
 		# Type of alias wire is "larger" sized array type
 		#parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_array_type
-		parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_struct_array_type
+		parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_dumb_struct_array_type
 				
 		
 		# Save orig var name
 		parser_state.existing_logic = parser_state.existing_logic
-		if not(lhs_orig_var_name in parser_state.existing_logic.variable_names):
-			#print "APPEND",lhs_orig_var_name
-			parser_state.existing_logic.variable_names.append(lhs_orig_var_name)
+		parser_state.existing_logic.variable_names.add(lhs_orig_var_name)
 		
 		#print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
 		
@@ -1820,9 +1846,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		# SET LHS TYPE
 		parser_state.existing_logic = parser_state.existing_logic
 		lhs_c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
-		if not(lhs_orig_var_name in parser_state.existing_logic.variable_names):
-			print "Append const",lhs_orig_var_name
-			parser_state.existing_logic.variable_names.append(lhs_orig_var_name)
+		parser_state.existing_logic.variable_names.add(lhs_orig_var_name)
 		# Type of alias wire is same as original wire
 		parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
 		
@@ -1882,8 +1906,8 @@ def C_AST_NODE_TO_ORIG_VAR_NAME(c_ast_node):
 def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 	#print "EXPAND:",ref_toks_or_strs
 	
-	# Get list of variable dims
-	var_dim_ref_tok_indices = []
+	# Get list of variable dims TODO: Modify  GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES to accept strs?
+	var_dim_ref_tok_indices = [] 
 	var_dims = []
 	curr_ref_toks = ref_toks_or_strs[:]		
 	# need at last 2 ref toks, array cant be in pos 0
@@ -1892,8 +1916,8 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 		last_tok = curr_ref_toks[last_index]
 		if last_tok == "*" or isinstance(last_tok, c_ast.Node):
 			# is variable array dim
-			# Pop off this entry
-			curr_ref_toks.pop(last_index)
+			# Pop off this last entry
+			curr_ref_toks = curr_ref_toks[:last_index]
 			
 			# need to fake c_ast node for is this is strs
 			curr_ref_toks_faked = []
@@ -1919,17 +1943,17 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 			var_dim_ref_tok_indices.append(last_index)
 			var_dims.append(first_dim)				
 		else:
-			# Pop off this entry
-			curr_ref_toks.pop(last_index)
+			# Pop off this last entry
+			curr_ref_toks = curr_ref_toks[:last_index]
 			# Thats it
 	
 	# Do the nest loops to create all possible ref toks
-	ref_toks_list = []
+	ref_toks_set = set()
 	
 	for orig_ref_tok_i in range(0, len(ref_toks_or_strs)):
 		orig_ref_tok = ref_toks_or_strs[orig_ref_tok_i]
 		# Start a new return list
-		new_ref_toks_list = []
+		new_ref_toks_set = set()
 		# Is this orig ref tok variable?
 		if orig_ref_tok =="*" or isinstance(orig_ref_tok, c_ast.Node):
 			# Variable
@@ -1942,66 +1966,55 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 			var_dim_i = var_dim_ref_tok_indices.index(orig_ref_tok_i)
 			var_dim = var_dims[var_dim_i]
 			# For each existing ref tok append that with all possible dim values
-			for ref_toks in ref_toks_list:
+			for ref_toks in ref_toks_set:
 				for dim_val in range(0, var_dim):
-					new_ref_toks = ref_toks + [dim_val]
-					new_ref_toks_list.append(new_ref_toks)
+					new_ref_toks = ref_toks + (dim_val,)
+					new_ref_toks_set.add(new_ref_toks)
 		else:
-			# Fix string digits to be ints
-			if type(orig_ref_tok) == str and orig_ref_tok.isdigit():
-				orig_ref_tok = int(orig_ref_tok)
+			## Fix string digits to be ints
+			#if type(orig_ref_tok) == str and orig_ref_tok.isdigit():
+			#	orig_ref_tok = int(orig_ref_tok)
+			#???^^^ what?
+			
 			# Constant just append this constant value to all ref toks in list
-			for ref_toks in ref_toks_list:
-				new_ref_toks = ref_toks + [orig_ref_tok]
-				new_ref_toks_list.append(new_ref_toks)				
+			for ref_toks in ref_toks_set:
+				new_ref_toks = ref_toks + (orig_ref_tok,)
+				new_ref_toks_set.add(new_ref_toks)				
 			# Or add as base element
-			if len(ref_toks_list) == 0:
-				new_ref_toks_list.append([orig_ref_tok])
+			if len(ref_toks_set) == 0:
+				new_ref_toks_set.add((orig_ref_tok,))
 		
 		# Next iteration save new ref toks
-		ref_toks_list = new_ref_toks_list[:]
+		ref_toks_set = set(new_ref_toks_set)
 	
 	
-	#print "EXPANDED:", ref_toks_list
-	#if "*" in ref_toks_or_strs:
-	#	sys.exit(0)
-	
-	return ref_toks_list
+
+	return ref_toks_set
 		
-_REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache = dict()
-# For now stick with string wires instead of toks list
-def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
-	debug = False	
-	
-	#debug = ref_toks == ['mix']
-	
-	# Try to get cache
-	# Build key
-	ref_toks_str = parser_state.existing_logic.func_name[:]
-	for ref_tok in ref_toks:
-		if type(ref_tok) == int:
-			ref_toks_str += "_INT_" + str(ref_tok)
-		elif type(ref_tok) == str:
-			ref_toks_str += "_STR_" + ref_tok
-		elif isinstance(ref_tok, c_ast.Node):
-			ref_toks_str += "_" + "VAR"
-		else:
-			print "What is ref tok bleh?sdkhjgsd???", ref_tok
-			sys.exit(0)
+
+# Do one level of expansion to next branches
+# Expands variable ref toks, structs to fields, arrays to elements
+# Does not return self ref_toks in set, self is not a branch of self
+_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = dict()
+def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 	# Try for cache
+	if parser_state.existing_logic.func_name is None:
+		print "Wtf none??????"
+		sys.exit(0)
+	cache_key = (parser_state.existing_logic.func_name, ref_toks)
 	try:
-		return _REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache[ref_toks_str]
+		return set(_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
 	except:
 		pass
 	
+	debug = False
+	# Only return one level of extra branchs
 	# Current c type
+	# Get the C type as evaulated (a,*,b) is like a[0].b
 	c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state)
-
-	if debug:
-		print "Ref toks c type",ref_toks, c_type
 	
-	rv = []
-
+	# Use this type to do struct and array expansion
+	rv = set()
 	# Struct?
 	if C_TYPE_IS_STRUCT(c_type, parser_state):
 		# Child branches are struct field names
@@ -2010,15 +2023,9 @@ def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 			print "Struct:",field_type_dict		
 		for field in field_type_dict:
 			new_toks = ref_toks[:]
-			new_toks.append(field)
-			if new_toks not in rv:
-				rv.append(new_toks)
-			# Recurse on new toks
-			new_branches = REF_TOKS_TO_ALL_BRANCH_REF_TOKS(new_toks, c_ast_ref, parser_state)
-			for new_branch in new_branches:
-				if new_branch not in rv:
-					rv.append(new_branch)
-	
+			new_toks += (field,)
+			rv.add(new_toks)
+			
 	# Array?
 	elif C_TYPE_IS_ARRAY(c_type):
 		# One dimension at a time works?
@@ -2027,134 +2034,111 @@ def REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 		inner_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(c_type)
 		for i in range(0, current_dim):
 			new_toks = ref_toks[:]
-			new_toks.append(i)
-			if new_toks not in rv:
-				rv.append(new_toks)
-			# Recurse on new toks
-			new_branches = REF_TOKS_TO_ALL_BRANCH_REF_TOKS(new_toks, c_ast_ref, parser_state)
-			for new_branch in new_branches:
-				if new_branch not in rv:
-					rv.append(new_branch)
+			new_toks += (i,)
+			rv.add(new_toks)
 	else:
 		# Not composite type 
-		# Only branch is self?
-		rv = [ref_toks]
+		# Only branch is self, not included
+		rv = set()
 		
-	
-	
-	if debug:
-		print "rv Before var ref toks",rv
-
-	# Expand all varaible ref toks
-	# variable_ref_toks_exist
-	variable_ref_toks_exist = False
-	for ref_toks_i in rv:
-		for tok in ref_toks_i:
-			if isinstance(tok, c_ast.Node):
-				variable_ref_toks_exist = True
-				break
-		if variable_ref_toks_exist:
-			break
-			
-	while variable_ref_toks_exist:
-		# Find a variable ref tok
-		for i in range(0, len(rv)):
-			ref_toks_i = rv[i]
-			made_change = False
-			for j in range(0, len(ref_toks_i)):
-				tok = ref_toks_i[j]
-				if isinstance(tok, c_ast.Node):
-					# Remove this ref tok from list
-					rv.remove(ref_toks_i)
-					# Replace it with all the possible dimensions of this variable ref array
-					# What is the type of the array represented by this type
-					included_toks = ref_toks_i[0:j]
-					#print "included_toks",included_toks
-					c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(included_toks, c_ast_ref, parser_state)
-					# Sanity check
-					if not C_TYPE_IS_ARRAY(c_type):
-						print "Wtf not an array type?"
-						sys.exit(0)
-					# Get dims
-					elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-					#last_dim = dims[len(dims)-1]
-					# Want first dim?
-					first_dim = dims[0]
-					
-					# The last dim is our variable ref
-					for dim_val in range(0, first_dim):
-						net_ref_toks = ref_toks_i[:]
-						net_ref_toks[j] = dim_val
-						rv.append(net_ref_toks)
-					# Done
-					made_change = True
-					break
-			if made_change:
-				break
-		
-		# variable_ref_toks_exist
-		variable_ref_toks_exist = False
+	# Then expand all variable references
+	# rv is based on ref_toks so wont have variable ref toks if ref_toks wasnt
+	if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
+		# Expand know all variable ref toks inrv
+		expanded_ref_toks_set = set()
 		for ref_toks_i in rv:
-			for tok in ref_toks_i:
-				if isinstance(tok, c_ast.Node):
-					variable_ref_toks_exist = True
-					break
-			if variable_ref_toks_exist:
-				break
+			expanded_ref_toks_set |= EXPAND_REF_TOKS_OR_STRS(ref_toks_i, c_ast_ref, parser_state)
+		rv = expanded_ref_toks_set
+	
+	
+	# Update cache
+	_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key] = rv
+	return rv
+
 		
-		
+_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = dict()
+# Traverse compound types down to individual ref toks to collect all branches
+#  expanding variable refs along the way
+def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
+	debug = False	
+	
+	# Try for cache
+	if parser_state.existing_logic.func_name is None:
+		print "Wtf none??????"
+		sys.exit(0)
+	cache_key = (parser_state.existing_logic.func_name, ref_toks)
+	try:
+		return set(_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
+	except:
+		pass
+	
+	# Will I forget to trim elsewhere?
+	# 	Arcade Fire - Everything Now
+	rv = set([TRIM_VAR_REF_TOKS(ref_toks)])
+	# Get next level branches
+	next_branch_ref_toks_set = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state)
+	rv |= next_branch_ref_toks_set
+	# Recurse from there
+	for next_branch_ref_toks in next_branch_ref_toks_set:
+		rv |= REF_TOKS_TO_OWN_BRANCH_REF_TOKS(next_branch_ref_toks, c_ast_ref, parser_state)
+	
 	if debug:
 		print "All branches:", rv
-		sys.exit(0)
-			
+		sys.exit(0)			
 			
 	# Update cache
-	_REF_TOKS_TO_ALL_BRANCH_REF_TOKS_cache[ref_toks_str] = rv
+	_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key] = rv
 				
 	return rv
 	
 	
-
-def REDUCE_REF_TOKS_OR_STRS(ref_toks_list, c_ast_node, parser_state):
+_REDUCE_REF_TOKS_OR_STRS_cache=dict()
+def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
+	# Try for cache
+	if parser_state.existing_logic.func_name is None:
+		print "Wtf none??????"
+		sys.exit(0)	
+	cache_key = (parser_state.existing_logic.func_name, frozenset(ref_toks_set))
+	try:
+		return set(_REDUCE_REF_TOKS_OR_STRS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
+	except:
+		pass
+	
 	# Collpase ex. [ [struct,pointa,x] , [struct,pointa,y], [struct,pointb,x] ]
 	# collpases down to [ [struct,pointa], [struct,pointb,x] ] since sub elements of point are all driven
-	# What abotu if ref_toks ends in variable/array ref tok? Collapse down to array base name right?
+	# What about if ref_toks ends in variable/array ref tok? Collapse down to array base name right?
 	#   [struct,array,*/castnode, anotherarray, */castnode]
 	# First expand to get rid of variable ref toks
-	expanded_ref_toks_list = []
-	for ref_toks in ref_toks_list:
-		expanded_ref_toks_list_i = EXPAND_REF_TOKS_OR_STRS(ref_toks,c_ast_node, parser_state)
-		expanded_ref_toks_list += expanded_ref_toks_list_i
+	expanded_ref_toks_set = set()
+	for ref_toks in ref_toks_set:
+		expanded_ref_toks_set_i = EXPAND_REF_TOKS_OR_STRS(ref_toks,c_ast_node, parser_state)
+		expanded_ref_toks_set |= expanded_ref_toks_set_i
 	
 	# Then reduce that expanded list
-	rv_ref_toks_list = expanded_ref_toks_list[:]
+	rv_ref_toks_set = set(expanded_ref_toks_set)
 	still_removing_elements = True
 	while still_removing_elements:
 		# Assume stoping now
 		still_removing_elements = False
 		
-		#print "====="
-		#print "rv_ref_toks_list",rv_ref_toks_list
-		
 		# Loop over all ref toks
-		loop_copy_rv_ref_toks_list = rv_ref_toks_list[:]
-		for ref_toks in loop_copy_rv_ref_toks_list:
+		loop_copy_rv_ref_toks_set = set(rv_ref_toks_set)
+		for ref_toks in loop_copy_rv_ref_toks_set:
 			# IF removing elements then back to outermost loop
 			if still_removing_elements:
 				break
 			
 			# Remove children of this ref_tok
-			for maybe_child_ref_tok in loop_copy_rv_ref_toks_list:
+			for maybe_child_ref_tok in loop_copy_rv_ref_toks_set:
 				if maybe_child_ref_tok != ref_toks:
-					if REF_TOKS_STARTS_WITH(maybe_child_ref_tok, ref_toks, parser_state):
-						rv_ref_toks_list.remove(maybe_child_ref_tok)
+					if REF_TOKS_COVERED_BY(maybe_child_ref_tok, ref_toks, parser_state):
+						rv_ref_toks_set.remove(maybe_child_ref_tok)
 						
 			# Record if change was made and jump to next iteration
-			if rv_ref_toks_list != loop_copy_rv_ref_toks_list:
+			if rv_ref_toks_set != loop_copy_rv_ref_toks_set:
 				still_removing_elements = True
 				break
-						
-			
+							
 			# Check if these ref_toks are a leaf with all sibling leafs driven
 			if len(ref_toks) < 2:
 				continue
@@ -2167,18 +2151,18 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_list, c_ast_node, parser_state):
 			if C_TYPE_IS_STRUCT(root_c_type,parser_state):
 				field_types_dict = parser_state.struct_to_field_type_dict[root_c_type]
 				for field_name in field_types_dict:
-					possible_ref_toks = root_ref_toks + [field_name]
-					if not REF_TOKS_IN_REF_TOKS_LIST(possible_ref_toks, rv_ref_toks_list):
+					possible_ref_toks = root_ref_toks + (field_name,)
+					if possible_ref_toks not in rv_ref_toks_set:
 						all_fields_present = False
 							
 				# If all there then remove them all
 				if all_fields_present:
 					still_removing_elements = True
 					for field_name in field_types_dict:
-						possible_ref_toks = root_ref_toks + [field_name]
-						rv_ref_toks_list.remove(possible_ref_toks)
+						possible_ref_toks = root_ref_toks + (field_name,)
+						rv_ref_toks_set.remove(possible_ref_toks)
 					# And replace with root
-					rv_ref_toks_list.append(root_ref_toks)
+					rv_ref_toks_set.add(root_ref_toks)
 					# Next iteration
 					break
 						
@@ -2192,11 +2176,11 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_list, c_ast_node, parser_state):
 				first_dim = dims[0]
 				
 				for i in range(0, first_dim):
-					possible_ref_toks = root_ref_toks + [i]
+					possible_ref_toks = root_ref_toks + (i,)
 					#print "	possible_ref_toks",possible_ref_toks
 					#print "in"
-					#print rv_ref_toks_list
-					if not REF_TOKS_IN_REF_TOKS_LIST(possible_ref_toks, rv_ref_toks_list):
+
+					if possible_ref_toks not in rv_ref_toks_set:
 						#print "NO"
 						all_fields_present = False
 						
@@ -2206,42 +2190,106 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_list, c_ast_node, parser_state):
 					#print "all_fields_present", root_ref_toks
 					still_removing_elements = True
 					for i in range(0, first_dim):
-						possible_ref_toks = root_ref_toks + [i]
+						possible_ref_toks = root_ref_toks + (i,)
 						#print "	REMOVING possible_ref_toks",possible_ref_toks
-						rv_ref_toks_list.remove(possible_ref_toks)
+						rv_ref_toks_set.remove(possible_ref_toks)
 					# And replace with root
-					rv_ref_toks_list.append(root_ref_toks)
+					rv_ref_toks_set.add(root_ref_toks)
 					# Next iteration
 					break
 			else:
 				# Is not a composite type?
 				pass
 			 
-			
-	#print "rv_ref_toks_list",rv_ref_toks_list
+	
+	# Update cache
+	_REDUCE_REF_TOKS_OR_STRS_cache[cache_key] = rv_ref_toks_set
+	
 	#sys.exit(0)
-	return rv_ref_toks_list
+	return rv_ref_toks_set
 
-
-def REF_TOKS_STARTS_WITH(ref_toks, starting_ref_toks, parser_state):
-	for ref_tok_i in range(0, len(starting_ref_toks)):
-		if ref_tok_i > len(ref_toks) - 1:
-			return False
-		ref_tok = ref_toks[ref_tok_i]
-		# Variable c_ast node matches anything
-		if isinstance(ref_tok, c_ast.Node) or isinstance(starting_ref_toks[ref_tok_i], c_ast.Node):
-			pass
+# Please just be mostly used for silly len(ref_toks) compare stuff, not fundamentally required
+_TRIM_VAR_REF_TOKS_cache=dict()
+def TRIM_VAR_REF_TOKS(ref_toks):
+	# Try for cache
+	try:
+		return _TRIM_VAR_REF_TOKS_cache[ref_toks]
+	except:
+		pass	
+	
+	# Remove last variable tok since
+	# Ex. (a,1,c) covers same as (a,1,c,*)
+	last_ref_tok = ref_toks[len(ref_toks)-1]
+	while isinstance(last_ref_tok, c_ast.Node):
+		ref_toks = ref_toks[0:len(ref_toks)-1]
+		last_ref_tok = ref_toks[len(ref_toks)-1]
+		
+	# Update cache
+	_TRIM_VAR_REF_TOKS_cache[ref_toks] = ref_toks
+	return ref_toks
+	
+_REF_TOKS_COVERED_BY_cache=dict()
+def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
+	# Try for cache
+	if parser_state.existing_logic.func_name is None:
+		print "Wtf none??????"
+		sys.exit(0)	
+	cache_key = (parser_state.existing_logic.func_name, ref_toks, covering_ref_toks)
+	try:
+		return _REF_TOKS_COVERED_BY_cache[cache_key]
+	except:
+		pass
+	
+	# Remove last variable tok since
+	# Ex. (a,1,c) covers same as (a,1,c,*), and makes len check easier below
+	# For both input ref toks
+	covering_ref_toks = TRIM_VAR_REF_TOKS(covering_ref_toks)
+	ref_toks = TRIM_VAR_REF_TOKS(ref_toks)
+	
+	rv = True
+	# Immediate len check
+	# Large len means more specific/narrow/smaller covering
+	if len(covering_ref_toks) > len(ref_toks):
+		rv = False
+	else:
+		'''
+		# Simple compare of range -  not really faster?
+		if ref_toks[0:len(covering_ref_toks)] == covering_ref_toks:
+			rv = True
 		else:
-			# Do compare
-			#print ref_tok, "!=?",starting_ref_toks[ref_tok_i]
-			if ref_tok != starting_ref_toks[ref_tok_i]:
-				return False
-	return True
-
-	#return ref_toks[:len(starting_ref_toks)] == starting_ref_toks
-
-def REF_TOKS_IN_REF_TOKS_LIST(ref_toks, ref_toks_list):
-	return ref_toks in ref_toks_list
+		'''
+		# Individual tok checking 
+		# Likely mismatches are towards end? - Hell yeah for big arrays?
+		# Build Me Up Buttercup - The Foundatons
+		#for ref_tok_i in range(0, len(covering_ref_toks)):
+		for ref_tok_i in range(len(covering_ref_toks)-1, -1, -1):
+			ref_tok = ref_toks[ref_tok_i]
+			covering_ref_tok = covering_ref_toks[ref_tok_i]
+			# Look for mismatch
+			if ref_tok == covering_ref_tok:
+				pass
+			# Didnt match check type first, isinstance is slow?
+			elif (type(covering_ref_tok)==str and type(ref_tok)==str) and (covering_ref_tok != ref_tok):
+				rv = False
+				break
+			elif (type(covering_ref_tok)==int and type(ref_tok)==int) and (covering_ref_tok != ref_tok):
+				rv = False
+				break
+			# Variable c ast nodes only match one way
+			# * covers digit but digit doesnt cover *
+			elif isinstance(covering_ref_tok, c_ast.Node) and ref_tok.isdigit():
+				pass
+			# * covers others *
+			elif isinstance(covering_ref_tok, c_ast.Node) and isinstance(ref_tok, c_ast.Node):
+				pass			
+			else:
+				rv = False
+				break
+			
+	# Update cache
+	_REF_TOKS_COVERED_BY_cache[cache_key] = rv
+	
+	return rv
 
 
 def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
@@ -2251,16 +2299,16 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 	else:
 		# Must be orig variable name
 		if wire in parser_state.existing_logic.variable_names:
-			driven_ref_toks=[wire]
+			driven_ref_toks=(wire,)
 		# Or input
 		elif wire in parser_state.existing_logic.inputs:
-			driven_ref_toks=[wire]
+			driven_ref_toks=(wire,)
 		# Or global ~
 		elif wire in parser_state.global_info:
-			driven_ref_toks=[wire]
+			driven_ref_toks=(wire,)
 		# Or volatile global
 		elif wire in parser_state.volatile_global_info:
-			driven_ref_toks=[wire]
+			driven_ref_toks=(wire,)
 		else:
 			print "wire:",wire
 			print "var name?:",parser_state.existing_logic.variable_names
@@ -2271,74 +2319,95 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 	return driven_ref_toks
 
 # THIS IS DIFFERENT FROM REDUCE DONE ABOVE
-def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_node, parser_state):
+# (does modifies remaining_ref_toks, but use return value since can be cached)
+_REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
+def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_node, parser_state):	
+	debug = False
 	
-	#if "rv.structs[*].a[*][*]_main_c_l24_c2" in alias:
-	#print "~~~~"
-	#print "alias", alias
-	#print "remaining_ref_toks",remaining_ref_toks
-		
-	driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
-		
+	#debug = "serializer" in parser_state.existing_logic.func_name
 	
-	new_remaining_ref_toks = []
-	# First loop for obvious coverage 
-	# Given alias wire a.b.c , it covers any remaining wire a.b.c.x, a.b.c.y
-	for ref_toks in remaining_ref_toks:
-		if not REF_TOKS_STARTS_WITH(ref_toks, driven_ref_toks, parser_state):
-			# Save this ref toks
-			new_remaining_ref_toks.append(ref_toks)
-			
-	#if "rv.structs[*].a[*][*]_main_c_l24_c2" in alias:
-	#print "driven_ref_toks", driven_ref_toks
-	#print "new_remaining_ref_toks",new_remaining_ref_toks	
+	if debug:
+		orig_remaining_ref_toks = set(remaining_ref_toks) #debug
 	
-	
-	#print "===="
-	#print "alias",alias
-	#print "driven_ref_toks",driven_ref_toks
-	#print "remaining_ref_toks",remaining_ref_toks
-	#print "new_remaining_ref_toks",new_remaining_ref_toks
-	#print "===="
-	
-	# Then remove any ref toks with no remaining branches in list
-	removing_elems = True
-	rv = new_remaining_ref_toks[:]
-	while removing_elems:
-		removing_elems = False
-		new_remaining_ref_toks = rv[:]
-		rv = []
-		for ref_toks in new_remaining_ref_toks:
-			all_branch_ref_toks = REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_node, parser_state)	
-			
-			# Does this ref tok even have branches?
-			has_remaining_branch = True # default has self branch
-			if len(all_branch_ref_toks) > 1:
-				# Any of those branches (that arent self) left in list?
-				has_remaining_branch = False
-				for branch_ref_toks in all_branch_ref_toks:
-					# Dont look for self in list? Needed?
-					if (branch_ref_toks != ref_toks) and REF_TOKS_IN_REF_TOKS_LIST(branch_ref_toks, new_remaining_ref_toks):
-						#if "rv.structs[*].a[*][*]_main_c_l24_c2" in alias:
-						#	print "branch_ref_toks in branch_ref_toks",branch_ref_toks
-						has_remaining_branch = True
+	# Try for cache
+	if parser_state.existing_logic.func_name is None:
+		print "Wtf none??????"
+		sys.exit(0)	
+	cache_key = (parser_state.existing_logic.func_name, frozenset(remaining_ref_toks),frozenset(driven_ref_toks))
+	try:
+		remaining_ref_toks = set(_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]) # Copy since set is mutable + WILL be mutated
+		if debug:
+			print "orig_remaining_ref_toks",orig_remaining_ref_toks
+			print "orig driven_ref_toks",driven_ref_toks
+			print "remaining_ref_toks",remaining_ref_toks
+			print "2"
+		return remaining_ref_toks
+	except:
+		pass
+
+	# Removed covered branches
+	# Given alias wire (a,1,c) it covers any remaining wire (a,1,c) , (a,1,c,0) ,  (a,1,c,1)
+	for ref_toks in set(remaining_ref_toks): # Copy for iteration
+		if REF_TOKS_COVERED_BY(ref_toks, driven_ref_toks, parser_state):
+			# Remove this ref toks
+			if debug:
+				print ref_toks, "covered by", driven_ref_toks
+			remaining_ref_toks.remove(ref_toks)
+
+	if debug:
+		print "orig_remaining_ref_toks",orig_remaining_ref_toks
+		print "orig driven_ref_toks",driven_ref_toks
+		print "remaining_ref_toks after removing coverage",remaining_ref_toks
+
+	# The current driven_ref_toks would be removed from list 
+	# Removing the branches at/under driven_ref_toks might also 
+	# Might also be removing all the branches of the parent to driven_ref_toks
+	# Ex. (a,1,c) removed from a list of that could have had (a,1,a) , (a,1,b)
+	# 	BUT DIDNT	
+	# 	So (a,1,c) might be the last child of (a,1) remaining, check
+	# Do this repeatedly up the tree collapsing as far as possible
+	# Need at least 2 toks to get root tok
+	ref_toks_removed = TRIM_VAR_REF_TOKS(driven_ref_toks)
+	while len(ref_toks_removed) >= 2:
+		root_toks = ref_toks_removed[0:len(ref_toks_removed)-1]
+		keep_root = True # default keep root branch
+		# Is root even a compound type?
+		own_branch_ref_toks = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(root_toks, c_ast_node, parser_state)
+		if len(own_branch_ref_toks) > 0:
+			# Has branches, are they all removed now?
+			keep_root = False # Assume all branches are gone
+			for branch_ref_toks in own_branch_ref_toks:
+				if branch_ref_toks in remaining_ref_toks:
+						# Found a remaining branch, root stays
+						keep_root = True
 						break
-			if not has_remaining_branch:
-				# No remaining branches so elminate this wire
-				removing_elems = True
-				continue
-					
-			# Save this ref toks
-			rv.append(ref_toks)
+	
+		if not keep_root:
+			# Remove root, and loop again
+			'''
+			if root_toks not in remaining_ref_toks:
+				print "orig_remaining_ref_toks",orig_remaining_ref_toks
+				print "orig driven_ref_toks",driven_ref_toks
+				print "Missing ref tok?",root_toks
+				print "remaining_ref_toks",remaining_ref_toks
+				print "ref_toks_removed",ref_toks_removed
+				sys.exit(0)				
+			'''
+			remaining_ref_toks.discard(root_toks)
+			ref_toks_removed = root_toks
+		else:
+			# Keeping root, stop here
+			break;
 		
+	if debug:
+		print "remaining_ref_toks after collpasing refs too",remaining_ref_toks
+		print ""
 	
-	
-	
-	#if "rv.structs[*].a[*][*]_main_c_l24_c2" in alias:
-	#print "rv",rv
-	
-	
-	return rv
+			
+	# Update cache
+	_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = set(remaining_ref_toks) # Copy since set is mutable + WILL be mutated
+
+	return remaining_ref_toks
 	
 	
 
@@ -2390,13 +2459,9 @@ Structref and constant array look very similar
 #	s.y[1][1]
 
 def C_TYPE_IS_STRUCT(c_type_str, parser_state):
-	if parser_state is None:
-		print 0/0
-	return (c_type_str in parser_state.struct_to_field_type_dict) or (DUMB_STRUCT_THING in c_type_str)
+	return (c_type_str in parser_state.struct_to_field_type_dict) or (DUMB_ARRAY_STRUCT_THING in c_type_str)
 	
 def C_TYPE_IS_ENUM(c_type_str, parser_state):
-	if parser_state is None:
-		print 0/0
 	return c_type_str in parser_state.enum_to_ids_dict
 	
 def C_TYPE_IS_ARRAY(c_type):
@@ -2405,13 +2470,10 @@ def C_TYPE_IS_ARRAY(c_type):
 def C_TYPE_IS_USER_TYPE(c_type,parser_state):
 	user_code = False
 	if C_TYPE_IS_STRUCT(c_type,parser_state):
-		if DUMB_STRUCT_THING in c_type:
-			# Gah dumb array struct types thing
-			# BReak apart
-			toks = c_type.split(DUMB_STRUCT_THING+"_")
-			# uint8_t_ARRAY_STRUCT_2_2
-			elem_type = toks[0]
-			if C_TYPE_IS_STRUCT(elem_type,parser_state):
+		if DUMB_ARRAY_STRUCT_THING in c_type:
+			c_array_type = parser_state.dumb_array_struct_type_to_c_array_type[c_type]
+			elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+			if C_TYPE_IS_STRUCT(elem_t,parser_state):
 				user_code = True
 		else:
 			# Not the dumb array thing, is regular struct
@@ -2477,9 +2539,9 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
 # ONLY USE THIS WITH REF C AST NODES
 # Returns toks, logic
 def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
-	toks = []
+	toks = tuple()
 	if type(c_ast_ref) == c_ast.ID:
-		toks += [str(c_ast_ref.name)]
+		toks += (str(c_ast_ref.name),)
 	elif type(c_ast_ref) == c_ast.ArrayRef:
 		new_tok = None
 		# Only constant array ref right now	
@@ -2491,12 +2553,12 @@ def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
 		# Name is a ref node
 		new_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref.name, prepend_text, parser_state)
 		toks += new_toks
-		toks += [new_tok]
+		toks += (new_tok,)
 	elif type(c_ast_ref) == c_ast.StructRef:
 		# Name is a ref node
 		new_toks, parser_state.existing_logic = C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref.name, prepend_text, parser_state)
 		toks += new_toks
-		toks += [str(c_ast_ref.field.name)]
+		toks += (str(c_ast_ref.field.name),)
 	else:
 		print "Uh what node in C_AST_REF_TO_TOKENS?",c_ast_ref
 		print 0/0
@@ -2654,7 +2716,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 	# FUCK
 	debug = False
-	#debug = (len(driven_wire_names)==1) and (driven_wire_names[0]==RETURN_WIRE_NAME) and (ref_toks[0] == "rv") and ("VAR_REF_ASSIGN_uint8_t_uint8_t_8_VAR_a1a4" in parser_state.existing_logic.func_name)
+	#debug = "serializer" in parser_state.existing_logic.func_name
+	
 	
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]
@@ -2684,8 +2747,11 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	# Does most recent alias cover entire wire?
 	# Break orig wire name to all branches
 	#print "ref_toks",ref_toks
-	all_ref_toks = REF_TOKS_TO_ALL_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state)
-
+	all_ref_toks = REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state)
+	if debug:
+		print "ref_toks to logic",ref_toks
+		print "all_ref_toks",all_ref_toks
+	#print ""
 	
 	#sys.exit(0)
 	if len(driving_aliases_over_time)==0:
@@ -2698,10 +2764,9 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		print "No driving aliases?", prepend_text, c_ast_ref.coord
 		print 0/0
 		sys.exit(0)
-
 	
 	# Find the first alias (IN REVERSE ORDER) that elminates some branches
-	remaining_ref_toks = all_ref_toks[:]
+	remaining_ref_toks = set(all_ref_toks)
 	i = len(driving_aliases_over_time)-1
 	first_driving_alias = None
 	while len(remaining_ref_toks) == len(all_ref_toks):
@@ -2709,16 +2774,28 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			print "Ran out of aliases?"
 			print "func name",parser_state.existing_logic.func_name
 			print "ref_toks",ref_toks
-			print "driving_aliases_over_time",driving_aliases_over_time
 			print "all_ref_toks",all_ref_toks
+			print "driving_aliases_over_time",driving_aliases_over_time
+			print "remaining_ref_toks",remaining_ref_toks
 			sys.exit(0)
-		
-		
+
 		alias = driving_aliases_over_time[i]
 		alias_c_type = parser_state.existing_logic.wire_to_c_type[alias]
-		remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_ref, parser_state)
+		alias_driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
+		
+		if debug:
+			print "alias#",i,alias
+			print "alias_driven_ref_toks",alias_driven_ref_toks
+			print "orig ref_toks",ref_toks
+			print "pre remaining_ref_toks",remaining_ref_toks
+		
+		remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias_driven_ref_toks, c_ast_ref, parser_state)
 		# Next alias working backwards
 		i = i - 1
+		
+		if debug:
+			print "post remaining_ref_toks",remaining_ref_toks
+			print ""
 	
 	# At this point alias is first driver
 	first_driving_alias = alias
@@ -2751,12 +2828,36 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		# Work backwards in alias list starting with next wire
 		i = len(driving_aliases_over_time)-2
 		while len(remaining_ref_toks) > 0:
+			if i < 0:
+				print "Ran out of aliases?@@@@@@@"
+				print "func name",parser_state.existing_logic.func_name
+				print "starting ref_toks",ref_toks
+				print "c_type",c_type
+				print "expanded all_ref_toks",all_ref_toks
+				print "driving_aliases_over_time",driving_aliases_over_time
+				print "remaining_ref_toks",remaining_ref_toks
+				#print "="
+				#print "first_driving_alias",first_driving_alias
+				#print "first_driving_alias_c_type",first_driving_alias_c_type
+				print "="
+				sys.exit(0)
+				
 			alias = driving_aliases_over_time[i]
-
+			alias_driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
 			# Then remove all branch wires covered by this driver
 			len_pre_drive = len(remaining_ref_toks)
-			#if c_type == "big_struct_t":
-			remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias, c_ast_ref, parser_state)
+			
+			if debug:
+				print "alias#",i,alias
+				print "alias_driven_ref_toks",alias_driven_ref_toks
+				print "orig ref_toks",ref_toks
+				print "pre remaining_ref_toks",remaining_ref_toks
+			
+			remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias_driven_ref_toks, c_ast_ref, parser_state)
+			
+			if debug:
+				print "post remaining_ref_toks",remaining_ref_toks
+				print ""
 			
 			# Record this alias as driver if it drove wires
 			if len(remaining_ref_toks) < len_pre_drive:
@@ -2824,17 +2925,19 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		# Bleh? TODO later and solve for bigger reasons?
 		# Damnit cant postpone
 		# Build list of driven ref toks and reduce
-		driven_ref_toks_list = []
+		driven_ref_toks_set = set()
 		for driving_alias in driving_aliases:
 			driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(driving_alias, parser_state)
-			driven_ref_toks_list.append(driven_ref_toks)
+			driven_ref_toks_set.add(driven_ref_toks)
+		sorted_driven_ref_toks_set = sorted(driven_ref_toks_set)
 		# Reduce
-		#print "driven_ref_toks_list",driven_ref_toks_list
-		reduced_driven_ref_toks_list = REDUCE_REF_TOKS_OR_STRS(driven_ref_toks_list, c_ast_ref , parser_state)
-		#print "reduced_driven_ref_toks_list",reduced_driven_ref_toks_list
+		
+		reduced_driven_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(driven_ref_toks_set, c_ast_ref , parser_state)
+		
+		sorted_reduced_driven_ref_toks_set = sorted(reduced_driven_ref_toks_set)
 		
 		# Func name built with reduced list
-		for driven_ref_toks in reduced_driven_ref_toks_list:
+		for driven_ref_toks in sorted_reduced_driven_ref_toks_set:
 			for ref_tok in driven_ref_toks[1:]: # Skip base var name
 				if type(ref_tok) == int:
 					func_name += "_" + str(ref_tok)
@@ -2851,7 +2954,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		# BLAGH
 		# Ref toks driven by aliases
 		input_ref_toks_str = ""
-		for driven_ref_toks in driven_ref_toks_list:
+		for driven_ref_toks in sorted_driven_ref_toks_set:
 			for ref_tok in driven_ref_toks[1:]: # Skip base var name
 				if type(ref_tok) == int:
 					input_ref_toks_str += "_INT_" + str(ref_tok)
@@ -2968,6 +3071,18 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		
 		# Output wire is the type of the ref rd
 		output_c_type = c_type
+		# Variable ref reads are implemented in C
+		# and so cant have an output type of an array type
+		# Do dumb struct thing if needed
+		if not C_AST_REF_TOKS_ARE_CONST(ref_toks) and C_TYPE_IS_ARRAY(c_type):
+			elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)				
+			output_dumb_struct_array_type = elem_t.replace("[","_").replace("]","_").replace("__","_").strip("_") + DUMB_ARRAY_STRUCT_THING
+			for dim in dims:
+				output_dumb_struct_array_type += "_" + str(dim)
+			output_c_type = output_dumb_struct_array_type
+			# Record being dumb
+			parser_state.dumb_array_struct_type_to_c_array_type[output_dumb_struct_array_type] = c_type		
+		
 		output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
 		parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
 		# Don't set type of output wire - shouldnt need to?
@@ -3043,12 +3158,13 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
 def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):	
 	
 	# Get ref tokens 
-	ref_toks = [str(c_ast_id.name)]
+	base_name = str(c_ast_id.name)
+	ref_toks = (base_name,)
 	#C_ OLD_ AST_REF_TO_TOKENS(c_ast_id,prepend_text, parser_state)
 	#if len(ref_toks) > 1:
 	#	return False
 		
-	base_name = ref_toks[0]
+	
 		
 	# Will not be:
 	#	(this is dumb)
@@ -3195,12 +3311,12 @@ def C_AST_ARRAYDECL_TO_LOGIC(c_ast_array_decl, prepend_text, parser_state):
 	#casthelp(c_ast_decl)
 	#casthelp(c_ast_decl.init)
 	#sys.exit(0)
-	rv.wires.append(wire_name)
+	rv.wires.add(wire_name)
 	rv.wire_to_c_type[wire_name] = elem_type + "[" + str(dim) + "]"
 	## Orig wire var here too
 	
 	# This is a variable declaration
-	rv.variable_names.append(wire_name)
+	rv.variable_names.add(wire_name)
 	#print "Append array", wire_name
 	
 	# If has init value then is also assignment
@@ -3249,12 +3365,12 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
 	c_type = c_ast_typedecl.type.names[0]
 	#print "c_type",c_type
 	#sys.exit(0)
-	rv.wires.append(wire_name)
+	rv.wires.add(wire_name)
 	rv.wire_to_c_type[wire_name] = c_type
 	# Orig wire var here too
 	
 	# This is a variable declaration
-	rv.variable_names.append(wire_name)
+	rv.variable_names.add(wire_name)
 	#print "APPEND2",wire_name
 	
 	# Variable should have no assignments to it at time of declaration
@@ -3384,6 +3500,14 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 		i = i + 1
 		parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.next, [], iter_prepend_text, parser_state)
 		
+		# Debug
+		#print iter_prepend_text
+		#print i, c_ast_node.coord
+		if i > 10000:
+			print "Woah over 10000 iters?"
+			print c_ast_node.coord
+			sys.exit(0)
+		
 	return parser_state.existing_logic
 	
 def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
@@ -3427,7 +3551,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 	# Mux select is driven by intermediate shared wire without variable name
 	mux_cond_port_name = c_ast_node.children()[0][0]
 	mux_intermediate_cond_wire_wo_var_name = prepend_text + MUX_LOGIC_NAME + "_" + file_coord_str + "_interm_" + mux_cond_port_name
-	parser_state.existing_logic.wires.append(mux_intermediate_cond_wire_wo_var_name)
+	parser_state.existing_logic.wires.add(mux_intermediate_cond_wire_wo_var_name)
 	parser_state.existing_logic.wire_to_c_type[mux_intermediate_cond_wire_wo_var_name] = BOOL_C_TYPE		
 	# Get logic for this if condition with it driving the shared condition wire
 	cond_logic = C_AST_NODE_TO_LOGIC(c_ast_node.cond, [mux_intermediate_cond_wire_wo_var_name], prepend_text, parser_state)
@@ -3500,13 +3624,13 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 		
 	
 	# Var names cant be mixed type per C spec
-	merge_var_names = LIST_UNION(true_logic.variable_names[:],false_logic.variable_names[:])
+	merge_var_names = true_logic.variable_names | false_logic.variable_names
 		
 	# Find out which ref toks parser_state.existing_logic, p.x, p.y etc are driven inside this IF
 	# Driving is recorded with aliases over time
 	# True and false can share some existing drivings we dont want to consider
 	# Loop over each variable
-	var_name_2_all_ref_toks_list = dict()
+	var_name_2_all_ref_toks_set = dict()
 	ref_toks_id_str_to_output_wire = dict()
 	#print "==== IF",file_coord_str,"======="
 	for var_name in merge_var_names:		
@@ -3560,28 +3684,28 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			continue
 		
 		# Collect all the ref toks from aliases - whatever order
-		all_ref_toks_list = []
+		all_ref_toks_set = set()
 		for i in range(diff_start_i, max_aliases_len):
 			if (i < len(true_aliases)):
 				true_ref_toks = true_logic.alias_to_driven_ref_toks[true_aliases[i]]
-				if true_ref_toks not in all_ref_toks_list:
-					all_ref_toks_list.append(true_ref_toks)
+				if true_ref_toks not in all_ref_toks_set:
+					all_ref_toks_set.add(true_ref_toks)
 			if (i < len(false_aliases)):
 				false_ref_toks = false_logic.alias_to_driven_ref_toks[false_aliases[i]]
-				if false_ref_toks not in all_ref_toks_list:
-					all_ref_toks_list.append(false_ref_toks)
+				if false_ref_toks not in all_ref_toks_set:
+					all_ref_toks_set.add(false_ref_toks)
 		
 		# Collpase hierarchy to get top most orig wire name nodes	
-		#print var_name, "all_ref_toks_list",all_ref_toks_list
-		all_ref_toks_list = REDUCE_REF_TOKS_OR_STRS(all_ref_toks_list, c_ast_node, parser_state)
-		#print var_name, "reduced all_ref_toks_list",all_ref_toks_list
+		
+		all_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(all_ref_toks_set, c_ast_node, parser_state)
+		
 		#sys.exit(0)
 		# Ok now have collpased list of ref toks that needed MUXes for this IF
 		# Save this for later too
-		var_name_2_all_ref_toks_list[var_name] = all_ref_toks_list[:]
+		var_name_2_all_ref_toks_set[var_name] = set(all_ref_toks_set)
 
 		# Now do MUX inst logic
-		for ref_toks in all_ref_toks_list:
+		for ref_toks in all_ref_toks_set:
 			# Might be first place to see globals... is this getting out of hand?
 			var_name = ref_toks[0]			
 			parser_state.existing_logic = MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(var_name, parser_state)
@@ -3717,10 +3841,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			continue
 			
 		# If not driven then skip
-		if variable not in var_name_2_all_ref_toks_list:
+		if variable not in var_name_2_all_ref_toks_set:
 			continue
 		# Otherwise get drive orig wire names (already collapsed)
-		all_ref_toks_list = var_name_2_all_ref_toks_list[variable]
+		all_ref_toks_set = var_name_2_all_ref_toks_set[variable]
 		
 		# Add mux output as alias for this var
 		aliases = []
@@ -3730,7 +3854,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
 			true_false_merged.wire_aliases_over_time.pop(variable)
 		
 		# Ok to add to same alias list multiple times for each orig_wire
-		for ref_toks in all_ref_toks_list:
+		for ref_toks in all_ref_toks_set:
 			ref_tok_id_str = C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_node)
 			mux_connection_wire_name = ref_toks_id_str_to_output_wire[ref_tok_id_str]
 			true_false_merged.alias_to_orig_var_name[mux_connection_wire_name] = variable
@@ -3790,7 +3914,6 @@ def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parse
 	# Get logic for each connection and merge
 	for c_ast_node in c_ast_node_2_driven_wire_names:
 		driven_wire_names = c_ast_node_2_driven_wire_names[c_ast_node]
-		#rv.wires = rv.wires + driven_wire_names
 		parser_state.existing_logic = rv
 		l = C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
 		first = rv
@@ -3841,7 +3964,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	
 	# Finally include types as passed in if able to
 	
-	
 	# NOw inputs have been connected it is useful
 	# Ex. FOR constant funcs x==1
 	# To assign the type of driving wire if not assigned yet
@@ -3853,9 +3975,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 			driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
 			if driving_wire not in parser_state.existing_logic.wire_to_c_type:
 				parser_state.existing_logic.wire_to_c_type[driving_wire] = input_driver_type
-			
-	# Check if all the inputs to func are constant 
-	# Non global functions might be replaced by constants
+		
+	# Global functions cannot optimize away
 	is_global_func = False
 	if func_base_name in parser_state.FuncLogicLookupTable:
 		func_logic = parser_state.FuncLogicLookupTable[func_base_name]
@@ -3864,7 +3985,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		return None
 			
 	# Check if can be replaced by constant output wire
+	# Or reduced function due to partial constant inputs
 	all_inputs_constant = True
+	some_inputs_constant = False
 	# Check parser_state.existing_logic for input ports driven by constants
 	const_input_wires = []
 	for i in range(0, len(input_drivers)):
@@ -3873,7 +3996,13 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		const_driving_wire = FIND_CONST_DRIVING_WIRE(driven_input_port_wire, parser_state.existing_logic)
 		const_input_wires.append(const_driving_wire)
 		all_inputs_constant = all_inputs_constant and (const_driving_wire is not None)
+		some_inputs_constant = some_inputs_constant or (const_driving_wire is not None)
 
+	# If no constants then nothing to reduce
+	if not(all_inputs_constant or some_inputs_constant):
+		return None
+		
+	# For now, its an error if a totally constant function cannot be reduced
 
 	# Some inputs may be constant, this changes the behavior/funcname of some functions
 	# 	Ex. constant shift is no longer the same logic binary op logic  (func name determines logic)
@@ -3997,8 +4126,13 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 			in_val = float(in_val_str)
 			out_val = math.sin(in_val)
 			const_val_str = str(out_val)
+		# CONST REFs are ok not to reduce for now. I.e CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
+		elif func_base_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
+			return None
 		else:
-			print "Warning: Not reducing constant function call:",func_base_name, func_c_ast_node.coord
+			print "Warning: Not reducing constant function call:"
+			print func_inst_name,
+			print func_base_name, func_c_ast_node.coord
 			sys.exit(0)
 			#print const_input_wires
 			return None
@@ -4116,19 +4250,6 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	
 	# Build instance name
 	func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
-		
-	'''
-	# FUCK
-	import traceback
-	if _funcd.count(func_inst_name) >= 1:
-		print "Doing funciton inst more than twice? What?", func_inst_name,func_c_ast_node
-		traceback.print_stack()
-		sys.exit(0)
-	else:
-		_funcd.append(func_inst_name)
-		#print "FUNCD",func_inst_name
-		#traceback.print_stack()
-	'''
 	
 	# Should not be evaluating c ast node if driver is already known
 	for input_i in range(0, len(input_port_names)):
@@ -4862,12 +4983,10 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node):
 	#print "driving_wire",driving_wire,"=>",driven_wire_names
 	
-	# Add wires if not there
-	if driving_wire not in parser_state.existing_logic.wires:
-		parser_state.existing_logic.wires.append(driving_wire)	
+	# Add wire
+	parser_state.existing_logic.wires.add(driving_wire)	
 	for driven_wire_name in driven_wire_names:
-		if driven_wire_name not in parser_state.existing_logic.wires:
-			parser_state.existing_logic.wires.append(driven_wire_name)
+		parser_state.existing_logic.wires.add(driven_wire_name)
 	
 	
 	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~	
@@ -4903,6 +5022,14 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 			# Enum driving UINT is fine
 			elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
 				continue
+			# I'm dumb and C doesnt return arrays
+			elif (
+			       ( (DUMB_ARRAY_STRUCT_THING in driven_wire_type) and (parser_state.dumb_array_struct_type_to_c_array_type[driven_wire_type]==rhs_type) )
+			      or
+			       ( (DUMB_ARRAY_STRUCT_THING in rhs_type) and (driven_wire_type==parser_state.dumb_array_struct_type_to_c_array_type[rhs_type]) )
+			     ):
+				continue
+			
 			
 			#######
 			# At this point we have incompatible types that need special casting parser_state.existing_logic
@@ -4952,14 +5079,13 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 	
 	#########   Record connnnnections in the parser_state.existing_logic graph ######	 
 	# Record wire_drives
-	all_driven_wire_names = []
+	all_driven_wire_names = set()
 	# Start with existing driven wires
 	if driving_wire in parser_state.existing_logic.wire_drives:
 		all_driven_wire_names = parser_state.existing_logic.wire_drives[driving_wire]
 	# Append the new wires
 	for driven_wire_name in driven_wire_names:
-		if driven_wire_name not in all_driven_wire_names:
-			all_driven_wire_names.append(driven_wire_name)
+			all_driven_wire_names.add(driven_wire_name)
 	# Save
 	parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wire_names
 	# Record wire_driven_by
@@ -4981,7 +5107,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
 	children = array_decl.children()
 	dims = []
 	while len(children)>1 and children[1][0]=='dim':
-		# Get the dimension
+		# Get the dimension		
 		dim = int(children[1][1].value)
 		dims.append(dim)
 		array_decl = children[0][1]
@@ -5046,7 +5172,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	# All func def logic has an output wire called "return"
 	return_wire_name = RETURN_WIRE_NAME
 	rv.outputs.append(return_wire_name)
-	rv.wires.append(return_wire_name)
+	rv.wires.add(return_wire_name)
 	rv.wire_to_c_type[return_wire_name] = c_ast_funcdef.decl.type.type.type.names[0]
 
 	# First get name of function from the declaration
@@ -5057,8 +5183,8 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	for param_decl in c_ast_funcdef.decl.type.args.params:
 		input_wire_name = param_decl.name
 		rv.inputs.append(input_wire_name)
-		rv.wires.append(input_wire_name)
-		rv.variable_names.append(input_wire_name)
+		rv.wires.add(input_wire_name)
+		rv.variable_names.add(input_wire_name)
 		#print "Append input", input_wire_name
 		c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
 		rv.wire_to_c_type[input_wire_name] = c_type
@@ -5129,6 +5255,8 @@ class ParserState:
 		self.volatile_global_info = dict()
 		self.global_mhz_limit = None
 		self.c_file_ast = None # Single C file tree
+		# Oh fuck needing to internally fake returning arrays aw shit
+		self.dumb_array_struct_type_to_c_array_type = dict() #[DUMBSTRUCT type] = "elem[i][j][k]"
 		
 	def DEEPCOPY(self):
 		# Fuck me how many times will I get caught with objects getting copied incorrectly?
@@ -5155,7 +5283,7 @@ class ParserState:
 		rv.global_info = dict(self.global_info)
 		rv.volatile_global_info = dict(self.volatile_global_info)
 		rv.global_mhz_limit = self.global_mhz_limit
-		
+		rv.dumb_array_struct_type_to_c_array_type = dict(self.dumb_array_struct_type_to_c_array_type)
 		return rv
     
 
@@ -5234,12 +5362,15 @@ def PARSE_FILE(top_level_func_name, c_filename):
 				if func_name2 == func_name1:
 					continue
 				func2_logic = parser_state.FuncLogicLookupTable[func_name2]
-				for func1_global in (func1_logic.global_wires + func1_logic.volatile_global_wires):
-					if func1_global in (func2_logic.global_wires + func2_logic.volatile_global_wires):
+				for func1_global in (func1_logic.global_wires | func1_logic.volatile_global_wires):
+					if func1_global in (func2_logic.global_wires | func2_logic.volatile_global_wires):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
 
+		#print "TEMP STOP"
+		#sys.exit(0)
+		
 		print "Elaborating hierarchy down to raw HDL logic..."
 		adjusted_containing_logic_inst_name=""
 		main_func_logic = parser_state.FuncLogicLookupTable["main"]
@@ -5357,15 +5488,12 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
 		func_logic = parser_state.FuncLogicLookupTable[func_name]
 		for wire in func_logic.wire_to_c_type:
 			c_type  = func_logic.wire_to_c_type[wire]
-			if DUMB_STRUCT_THING in c_type:
-				# BReak apart
-				toks = c_type.split(DUMB_STRUCT_THING+"_")
-				# uint8_t_ARRAY_STRUCT_2_2
-				elem_type = toks[0]
-				dim_strs = toks[1].split("_")
-				data_array_type = elem_type
-				for dim_str in dim_strs:
-					data_array_type += "[" + dim_str + "]"
+			if DUMB_ARRAY_STRUCT_THING in c_type:
+				c_array_type = parser_state.dumb_array_struct_type_to_c_array_type[c_type]
+				elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+				data_array_type = elem_t
+				for dim in dims:
+					data_array_type += "[" + str(dim) + "]"
 				
 				# Append to dict
 				field_type_dict = dict()

@@ -2,6 +2,7 @@
 #include "uintN_t.h"
 
 // 512b AXI-4 bus is bidirectional
+// 	Inputs
 typedef struct axi512_i_t
 {
   // Write Channel
@@ -33,6 +34,7 @@ typedef struct axi512_i_t
   //  Ready to receive read data
   uint1_t rready;
 } axi512_i_t;
+//	Outputs
 typedef struct axi512_o_t
 {
   // Write Channel

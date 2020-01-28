@@ -342,6 +342,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 	def RECORD_DRIVEN_BY(driving_wire, driven_wire_or_wires):
 		if type(driven_wire_or_wires) == list:
 			driven_wires = driven_wire_or_wires
+		elif type(driven_wire_or_wires) == set:
+			driven_wires = list(driven_wire_or_wires)
 		else:
 			driven_wires = [driven_wire_or_wires]
 		for driven_wire in driven_wires:
@@ -2559,17 +2561,22 @@ def IS_USER_CODE(logic, parser_state):
 		
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic):
+	# Default sanity
 	key = logic.func_name
 	
-	# MEM has var name - weird yo
-	if SW_LIB.IS_MEM(logic):
-		key = SW_LIB.GET_MEM_NAME(logic)
-	
-	func_name_includes_types = SW_LIB.FUNC_NAME_INCLUDES_TYPES(logic)
-	if not func_name_includes_types:
-		for input_port in logic.inputs:
-			c_type = logic.wire_to_c_type[input_port]
-			key += "_" + c_type
+	# Mux is same delay no matter type
+	if logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+		key = "mux"
+	else:
+		# MEM has var name - weird yo
+		if SW_LIB.IS_MEM(logic):
+			key = SW_LIB.GET_MEM_NAME(logic)
+		
+		func_name_includes_types = SW_LIB.FUNC_NAME_INCLUDES_TYPES(logic)
+		if not func_name_includes_types:
+			for input_port in logic.inputs:
+				c_type = logic.wire_to_c_type[input_port]
+				key += "_" + c_type
 		
 	file_path = PATH_DELAY_CACHE_DIR + "/" + key + ".delay"
 	
@@ -2610,10 +2617,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 	
 	# Record stats on functions with globals
 	min_mhz = 999999999
-	min_mhz_func_name = None	
-	
-	# Some funcs dont need to be individually synthesized
-	MUX_DELAY = None
+	min_mhz_func_name = None
 	
 	#bAAAAAAAAAAAhhhhhhh need to recursively do this 
 	# Do depth first 
@@ -2663,9 +2667,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 			elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
 				logic.delay = 0
 			elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
-				logic.delay = 0
-			elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) and logic.is_c_built_in and MUX_DELAY is not None:
-				logic.delay = MUX_DELAY				 
+				logic.delay = 0			 
 			elif cached_path_delay is not None:
 				logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
 				print "Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay
@@ -2711,11 +2713,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 						min_mhz_func_name = logic.func_name
 						min_mhz = mhz
 						
-				# Local cache of funcs first
-				if logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) and logic.is_c_built_in:
-					MUX_DELAY = logic.delay
+
 				# Cache delay syn result if not user code
-				elif not IS_USER_CODE(logic, parser_state):
+				if not IS_USER_CODE(logic, parser_state):
 					filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic)
 					if not os.path.exists(PATH_DELAY_CACHE_DIR):
 						os.makedirs(PATH_DELAY_CACHE_DIR)					

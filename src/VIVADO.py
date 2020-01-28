@@ -543,17 +543,10 @@ def GET_START_END_REGS(syn_output):
 	return parsed_timing_report.start_reg_name,parsed_timing_report.end_reg_name
 	
 
-def GET_READ_VHDL_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state, implement):
-	#TODO
-	timing_params = TimingParamsLookupTable[top_level_func_name]
-	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-	print "Use theses TCL commands from .tcl file with hash extension:", hash_ext
-	tcl = VIVADO.GET_READ_VHDL_TCL(top_level_func_name, logic, SYN.GET_OUTPUT_DIRECTORY(logic), TimingParamsLookupTable, SYN.INF_MHZ, parser_state, implement=False)
-	print "remove_files {" + SYN.SYN_OUTPUT_DIRECTORY + "/*}"
-	print tcl
-	print "Use the above tcl in Vivado."
-		
-	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,clock_mhz, parser_state)
+def WRITE_READ_VHDL_TCL(inst_name, Logic,TimingParamsLookupTable, parser_state):
+	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+	clock_mhz = 1000.0 #doesnt matter read_vhdl only
+	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state)
 	rv_lines = []
 	for line in tcl.split('\n'):
 		if "read_vhdl" in line:
@@ -562,8 +555,14 @@ def GET_READ_VHDL_TCL(inst_name, Logic,output_directory,LogicInst2TimingParams,c
 	rv = ""
 	for line in rv_lines:
 		rv += line + "\n"
-
-	return rv
+		
+		
+	# Write file
+	out_filename = "read_vhdl.tcl"
+	out_filepath = output_directory+"/"+out_filename
+	f=open(out_filepath,"w")
+	f.write(rv)
+	f.close()
 
 
 def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable,clock_mhz, parser_state):

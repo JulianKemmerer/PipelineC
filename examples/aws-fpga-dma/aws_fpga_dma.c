@@ -17,7 +17,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
 {
   // Pull messages out of incoming DMA write data
   dma_msg_s msg_in;
-  msg_in = deserialize(i.pcis);
+  msg_in = deserializer(i.pcis);
   
   // Convert incoming DMA message bytes to 'work' inputs
   work_inputs_t work_inputs;

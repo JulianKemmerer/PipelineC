@@ -12,7 +12,7 @@ work_inputs_t work_inputs_init(int i)
 {
 	// Randomizeish float values to sum
 	work_inputs_t inputs;
-	for(int v=0;v<16;v++)
+	for(int v=0;v<N_SUM;v++)
 	{
 		inputs.values[v] = (float)rand()/(float)(RAND_MAX/max_val); // rand[0..100]
 	}

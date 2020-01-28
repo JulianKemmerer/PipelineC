@@ -120,7 +120,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_stat
 # Not including user types and dumb struct thing everywhere we internally run C parsser
 # so just fake it # Pups To Dust - Modest Mouse
 def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
-	return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or (C_TO_LOGIC.DUMB_STRUCT_THING in c_type)	
+	return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in c_type)	
 	
 
 # Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
@@ -422,7 +422,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 #include "bit_manip.h"			
 // ''' + str(nmux_func_name) + '''
 // ''' + str(n) + ''' MUX\n'''
-			if C_TO_LOGIC.C_TYPE_IS_USER_TYPE(result_t, parser_state):
+			if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(result_t, parser_state):
 				text += '''
 typedef uint8_t ''' + result_t + '''; // FUCK
 '''
@@ -1789,7 +1789,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 
 
 	output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-	
+	#output_t_c_name = output_t.replace("[","_").replace("]","_").replace("__","_")
 	func_c_name = partially_complete_logic.func_name #.replace("[","_").replace("]","_").replace("__","_")
 	
 	text = ""

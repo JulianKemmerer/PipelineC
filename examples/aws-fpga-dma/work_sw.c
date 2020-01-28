@@ -8,14 +8,14 @@
 
 dma_msg_t inputs_to_bytes(work_inputs_t inputs)
 {
-	// Put 16 floats into 64 bytes
+	// Convert floats into bytes 
 	dma_msg_t msg;
   // Loop over entire buffer 4 bytes at a time
-  uint4_t byte_i;
-  for(byte_i=0; byte_i < DMA_MSG_SIZE; byte_i = byte_i + 4)
+  dma_msg_size_t byte_i;
+  for(byte_i=0; byte_i < DMA_MSG_SIZE; byte_i = byte_i + FLOAT_SIZE)
   {
-		uint8_t b[4];
-		memcpy(&b, &(inputs.values[byte_i/4]), sizeof(float));
+		uint8_t b[FLOAT_SIZE];
+		memcpy(&b, &(inputs.values[byte_i/FLOAT_SIZE]), sizeof(float));
 		// Convert from big endian? float to little endian? bytes
 		msg.data[byte_i+0] = b[0];
 		msg.data[byte_i+1] = b[1];

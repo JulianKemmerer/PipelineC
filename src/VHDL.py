@@ -1051,6 +1051,15 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 				right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
 			max_width = max(left_width,right_width)
 			resize_toks = ["to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
+			
+		# Making yourself sad to work around issues you didnt forsee is ok
+		elif (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in left_type):
+			# Assigning to dumb , dumb = (data => value);  -- no others in struct
+			resize_toks = ["(data => ",")"]
+		elif (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in right_type):
+			# Assigning to arry from dumb
+			# array = dumb.data
+			resize_toks = ["",".data"]
 		else:
 			print "What cant support this assignment in vhdl?"
 			print driving_wire, right_type

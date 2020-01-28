@@ -23,8 +23,10 @@ print '''
 '''
 
 print "TODO:"
-print "	Cache 2-MUX somehow, dummy"
+print "	Remove dummy wires in for unrolling to hopefully make vivado elab faster"
+print "	Dont use funcs for simple const refs with one input ref tok, to make vivado elab faster"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
+print "	Fix bug where can't do const expression reduction in global array size decls since not in func yet, just use empty existing logic"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
@@ -32,6 +34,7 @@ print "	Do clock crossing with globals and 'false path' volatile globals"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
 print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
+print "	When doing const ref read with many ref toks, make new 'assignment' alias of new reduced wire so future reads of the same const ref can use the single wire"
 print "	Add look ahead for built in functions so cast can be inferred"
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."
@@ -45,6 +48,7 @@ print "	Got rid of pipeline map cache... is slow now?"
 print "	Redo old code to use for loops instead of generated code (ex. float div)"
 print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
+print "	CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)"
 
 print "================== Parsing C Code to logical hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
@@ -62,7 +66,11 @@ skip_fine_sweep=True
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, skip_course_sweep, skip_fine_sweep)
 
 print "================== Writing Results of Throughput Sweep ================================"
-print "todo"
+timing_params = TimingParamsLookupTable[top_level_func_name]
+latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+print "Use top level file: ", str(latency)+"CLK"+hash_ext
+VIVADO.WRITE_READ_VHDL_TCL(top_level_func_name, logic, TimingParamsLookupTable, parser_state)
 
 
 

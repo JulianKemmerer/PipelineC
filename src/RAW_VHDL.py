@@ -92,7 +92,7 @@ def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
 def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
 	# Is a clocked process assigning to global reg
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
-	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
+	global_c_type = Logic.wire_to_c_type[list(Logic.global_wires)[0]]
 	global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
 	
 	# Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
@@ -152,7 +152,7 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
 	# Is a clocked process assigning to global reg
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
 	global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
-	global_c_type = Logic.wire_to_c_type[Logic.global_wires[0]]
+	global_c_type = Logic.wire_to_c_type[list(Logic.global_wires)[0]]
 	global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
 	
 	# Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
@@ -415,7 +415,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
 			expr = '''			base''' + vhdl_ref_str + ''' := ''' + vhdl_input_port
 			if var_ref_toks:
 				# Index into RHS
-				# Uses that DUMB_STRUCT_THING struct wrapper?
+				# Uses that DUMB_ARRAY_STRUCT_THING struct wrapper?
 				# Need to have ".data"?
 				expr += ".data"
 				for var_ref_tok_index in var_ref_tok_indicies:
