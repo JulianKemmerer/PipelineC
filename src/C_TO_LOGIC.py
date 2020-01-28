@@ -738,7 +738,7 @@ class Logic:
 		self.ref_submodule_instance_to_ref_toks.pop(submodule_inst, None)
 		
 		# Discard a few, or intersect for many?
-		if len(io_wires) < self.wires:
+		if len(io_wires) < len(self.wires):
 			for io_wire in io_wires:
 				self.wires.discard(io_wire)
 		else:
