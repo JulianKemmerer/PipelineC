@@ -3486,7 +3486,6 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 			print "I dont know how to handle what you are doing in the for loop condition at", c_ast_node.cond.coord, "iteration", i
 			sys.exit(0)
 		cond_val = int(GET_VAL_STR_FROM_CONST_WIRE(const_cond_wire, parser_state.existing_logic, parser_state))
-		# TODO: Remove dummy wire after?
 		
 		# If the condition is true, do an iteration of the body statement
 		# Otherwise stop loop
@@ -3499,6 +3498,22 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 		# Do next statement
 		i = i + 1
 		parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.next, [], iter_prepend_text, parser_state)
+		
+		# Remove dummy COND wire and anything driving it?
+		parser_state.existing_logic.wires.remove(COND_DUMMY)				
+		parser_state.existing_logic.wire_to_c_type.pop(COND_DUMMY)
+		if COND_DUMMY in parser_state.existing_logic.wire_driven_by:
+			driving_wire = parser_state.existing_logic.wire_driven_by[COND_DUMMY]
+			all_driven_wires = parser_state.existing_logic.wire_drives[driving_wire]
+			all_driven_wires.remove(COND_DUMMY)
+			if len(all_driven_wires) > 0:
+				parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wires
+			else:
+				parser_state.existing_logic.wire_drives.pop(driving_wire)
+			# Then remove original direction
+			parser_state.existing_logic.wire_driven_by.pop(COND_DUMMY)	
+		parser_state.existing_logic.wire_drives.pop(COND_DUMMY, None)
+			
 		
 		# Debug
 		#print iter_prepend_text
