@@ -25,7 +25,6 @@ print '''
 '''
 
 print "TODO:"
-print "	Remove dummy wires in for unrolling to hopefully make vivado elab faster"
 print "	Dont use funcs for simple const refs with one input ref tok, to make vivado elab faster"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Fix bug where can't do const expression reduction in global array size decls since not in func yet, just use empty existing logic"

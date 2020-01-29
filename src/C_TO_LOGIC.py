@@ -714,6 +714,54 @@ class Logic:
 		
 		return None
 		
+	# Not to be removed?
+	def IS_SPECIAL_WIRE(self,wire):
+		if wire in self.variable_names:
+			return True
+		if wire in self.inputs:
+			return True
+		if wire in self.outputs:
+			return True
+		if wire in self.global_wires:
+			return True
+		if wire in self.volatile_global_wires:
+			return True
+		if SUBMODULE_MARKER in wire:
+			return True
+		return False
+	
+	def REMOVE_WIRE_RECURSIVE(self, wire):
+		#print self.func_name, "Removing", wire
+		self.wires.discard(wire)				
+		self.wire_to_c_type.pop(wire, None)
+		
+		# Remove record of driving-wire driving wire
+		# 	This might also remove the driving-wire
+		if wire in self.wire_driven_by:
+			driving_wire = self.wire_driven_by[wire]
+			all_driven_wires = []
+			if driving_wire in self.wire_drives:
+				all_driven_wires = self.wire_drives[driving_wire]
+				all_driven_wires.discard(wire)
+			if len(all_driven_wires) > 0:
+				self.wire_drives[driving_wire] = all_driven_wires
+			else:
+				# Driving wire no longer drives anything, recurse to delete it too
+				self.REMOVE_WIRE_RECURSIVE(driving_wire)
+				#self.wire_drives.pop(driving_wire)
+				
+			# Remove record of wire being driven by driving-wire
+			self.wire_driven_by.pop(wire, None)
+			
+		# Remove record of wire driving driven-wires
+		if wire in self.wire_drives:
+			driven_wires = self.wire_drives[wire]
+			self.wire_drives.pop(wire, None)
+			# And remove all the driven wires too
+			for driven_wire in driven_wires:
+				self.REMOVE_WIRE_RECURSIVE(driven_wire)		
+			
+		
 	# Intentionally return None
 	# TODO: REMOVE_WIRES
 	def REMOVE_SUBMODULE(self,submodule_inst, input_port_names):		
@@ -3487,6 +3535,10 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 			sys.exit(0)
 		cond_val = int(GET_VAL_STR_FROM_CONST_WIRE(const_cond_wire, parser_state.existing_logic, parser_state))
 		
+		# Now that constant condition evaluated
+		# Remove dummy COND wire and anything driving it / driven by it?
+		parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(COND_DUMMY)
+		
 		# If the condition is true, do an iteration of the body statement
 		# Otherwise stop loop
 		if not cond_val:
@@ -3498,22 +3550,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 		# Do next statement
 		i = i + 1
 		parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.next, [], iter_prepend_text, parser_state)
-		
-		# Remove dummy COND wire and anything driving it?
-		parser_state.existing_logic.wires.remove(COND_DUMMY)				
-		parser_state.existing_logic.wire_to_c_type.pop(COND_DUMMY)
-		if COND_DUMMY in parser_state.existing_logic.wire_driven_by:
-			driving_wire = parser_state.existing_logic.wire_driven_by[COND_DUMMY]
-			all_driven_wires = parser_state.existing_logic.wire_drives[driving_wire]
-			all_driven_wires.remove(COND_DUMMY)
-			if len(all_driven_wires) > 0:
-				parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wires
-			else:
-				parser_state.existing_logic.wire_drives.pop(driving_wire)
-			# Then remove original direction
-			parser_state.existing_logic.wire_driven_by.pop(COND_DUMMY)	
-		parser_state.existing_logic.wire_drives.pop(COND_DUMMY, None)
-			
+
 		
 		# Debug
 		#print iter_prepend_text
@@ -5180,57 +5217,60 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		
 	#print "FUNC_DEF",c_ast_funcdef.decl.name
 	
-	rv = Logic()
+	parser_state.existing_logic = Logic()
 	# Save the c_ast node
-	rv.c_ast_node = c_ast_funcdef
+	parser_state.existing_logic.c_ast_node = c_ast_funcdef
 	
 	# All func def logic has an output wire called "return"
 	return_wire_name = RETURN_WIRE_NAME
-	rv.outputs.append(return_wire_name)
-	rv.wires.add(return_wire_name)
-	rv.wire_to_c_type[return_wire_name] = c_ast_funcdef.decl.type.type.type.names[0]
+	parser_state.existing_logic.outputs.append(return_wire_name)
+	parser_state.existing_logic.wires.add(return_wire_name)
+	parser_state.existing_logic.wire_to_c_type[return_wire_name] = c_ast_funcdef.decl.type.type.type.names[0]
 
 	# First get name of function from the declaration
-	rv.func_name = c_ast_funcdef.decl.name
+	parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
 	
 	# Then get input wire names from the function def
 	#print "func def:",c_ast_funcdef
 	for param_decl in c_ast_funcdef.decl.type.args.params:
 		input_wire_name = param_decl.name
-		rv.inputs.append(input_wire_name)
-		rv.wires.add(input_wire_name)
-		rv.variable_names.add(input_wire_name)
+		parser_state.existing_logic.inputs.append(input_wire_name)
+		parser_state.existing_logic.wires.add(input_wire_name)
+		parser_state.existing_logic.variable_names.add(input_wire_name)
 		#print "Append input", input_wire_name
 		c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
-		rv.wire_to_c_type[input_wire_name] = c_type
+		parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
 	
 	
 	# Merge with logic from the body of the func def
-	parser_state.existing_logic = rv
 	driven_wire_names=[]
 	prepend_text=""
 	if parse_body:
 		body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)		
-		rv.MERGE_COMB_LOGIC(body_logic)
-		parser_state.existing_logic = rv
+		parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
 				
 	# Sanity check for return
-	if RETURN_WIRE_NAME not in rv.wire_driven_by and not SW_LIB.IS_BIT_MANIP(rv) and not SW_LIB.IS_MEM(rv):
-		print "No return statement in function:", rv.func_name
+	if RETURN_WIRE_NAME not in parser_state.existing_logic.wire_driven_by and not SW_LIB.IS_BIT_MANIP(parser_state.existing_logic) and not SW_LIB.IS_MEM(parser_state.existing_logic):
+		print "No return statement in function:", parser_state.existing_logic.func_name
 		sys.exit(0)
 		
 	# Some code creates logic that will optimize away
 	# But actually the amount of generated VHDL can be too much
 	# So manually prune logic
-	# Ex.
-	# TODO
-	
-	
+	# Look for wires that do not drive anything
+	#		Note: output ports and submodule input ports are 
+	#   the only wires that can stay and not drive anything internal to module
+	#   Inputs for some faked funcs with no func body need to be saved too
+	# 	Original variable wires dont drive things because alias will drive instead; int x; x=1;
+	for wire in set(parser_state.existing_logic.wires): # Copy for iter
+		if (wire not in parser_state.existing_logic.wire_drives) and (not parser_state.existing_logic.IS_SPECIAL_WIRE(wire)):
+			#print parser_state.existing_logic.func_name, "Removing", wire
+			parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)	
 		
 	# Write cache
-	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = rv
+	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
 	
-	return rv
+	return parser_state.existing_logic
 
 
 def GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst, input_port_name):
