@@ -542,8 +542,16 @@ def GET_START_END_REGS(syn_output):
 	return parsed_timing_report.start_reg_name,parsed_timing_report.end_reg_name
 	
 
-def WRITE_READ_VHDL_TCL(inst_name, Logic,TimingParamsLookupTable, parser_state):
+def WRITE_FINAL_FILES(inst_name, Logic,TimingParamsLookupTable, parser_state):
+	# This writes:
+	# 	The plain old main.vhd entity of the best timing result
+	# 	The read_vhdl.tcl containing most of the gnerated vhdl includes
 	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+	
+	# Write an entity without timing info so name stays the same
+	VHDL.WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, name_timing_info=False)
+		
+	# Write read_vhdl.tcl
 	clock_mhz = 1000.0 #doesnt matter read_vhdl only
 	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state)
 	rv_lines = []
@@ -554,7 +562,10 @@ def WRITE_READ_VHDL_TCL(inst_name, Logic,TimingParamsLookupTable, parser_state):
 	rv = ""
 	for line in rv_lines:
 		rv += line + "\n"
-		
+	
+	# One more read_vhdl line for the final entity	with constant name
+	top_file_path = output_directory + "/" + Logic.func_name + ".vhd"
+	rv += "read_vhdl -library work {" + top_file_path + "}\n"
 		
 	# Write file
 	out_filename = "read_vhdl.tcl"

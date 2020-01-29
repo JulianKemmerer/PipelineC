@@ -107,7 +107,7 @@ process(
 end process;
 	
 -- Instantiate PipelineC main entity
-main : entity work.main_3CLK_d51e port map
+main_i : entity work.main port map
 (	
 	clk,
 	i,

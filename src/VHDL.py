@@ -55,6 +55,7 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 
 def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable):	
 	timing_params = TimingParamsLookupTable[inst_name]
+	
 	filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
 	
 	rv = ""
@@ -68,6 +69,7 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
 	rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	
 	rv += "port(" + "\n"
 	rv += "	clk : in std_logic;" + "\n"
 	# The inputs of the logic
@@ -83,9 +85,11 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	
 	rv += ");" + "\n"
 	rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
+	
 
 	rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	
+		
 	# Dont touch IO
 	rv += "attribute dont_touch : string;\n"
 	
@@ -722,7 +726,7 @@ end function;
 	
 
 	
-def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable):	
+def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,name_timing_info=True):	
 	# Sanity check until complete sanity has been 100% ensured with absolute certainty
 	if Logic.is_vhdl_func:
 		print "Why write vhdl func entity?"
@@ -730,8 +734,12 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 		sys.exit(0)
 	
 	timing_params = TimingParamsLookupTable[inst_name]
-	filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	
+	if name_timing_info:
+		filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+	else:
+		filename = Logic.func_name + ".vhd"
+		
 	rv = ""
 	rv += "library ieee;" + "\n"
 	rv += "use ieee.std_logic_1164.all;" + "\n"
@@ -744,7 +752,10 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	if name_timing_info:
+		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	else:
+		rv += "entity " + Logic.func_name + " is" + "\n"
 	rv += "port(" + "\n"
 	if needs_clk:
 		rv += "	clk : in std_logic;" + "\n"
@@ -760,9 +771,16 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
-
-	rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	
+	if name_timing_info:
+		rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
+	else:
+		rv += "end " + Logic.func_name + ";" + "\n"
+			
+	if name_timing_info:
+		rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+	else:
+		rv += "architecture arch of " + Logic.func_name + " is" + "\n"
 	
 	# Get declarations for this arch
 	rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)

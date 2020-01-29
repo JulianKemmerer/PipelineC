@@ -68,12 +68,8 @@ skip_fine_sweep=True
 TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, skip_course_sweep, skip_fine_sweep)
 
 print "================== Writing Results of Throughput Sweep ================================"
-timing_params = TimingParamsLookupTable[top_level_func_name]
-latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-print "Use top level file: ", str(latency)+"CLK"+hash_ext
-VIVADO.WRITE_READ_VHDL_TCL(top_level_func_name, logic, TimingParamsLookupTable, parser_state)
-
+VIVADO.WRITE_FINAL_FILES(top_level_func_name, logic, TimingParamsLookupTable, parser_state)
+print "Done."
 
 
 
