@@ -242,23 +242,20 @@ def DICT_SET_VALUE_MERGE(self_d1,d2):
 class Logic:
 	def __init__(self):
 		
-		####### MODIFY DEEP COPY TOO
+		####### MODIFY DEEP COPY + MERGES TOO
 		#
 		#~
 		#			~~~~~
 		#~~~~~~~~~~~~~
-		#~~~~  sdiogshdfoigjfoig ^^^^^^
+		#~~~~  Zero plus zero is the lord's work ^^^^^^
 		#	``						`````````
+		# of Montreal - St. Sebastian
+
 		
 		# FOR LOGIC IMPLEMENTED IN C THE STRINGS MUST BE C SAFE
 		# (inst name adjust is after all the parsing so dont count SUBMODULE_MARKER)		
 		
-		self.func_name=None #function name  
-		
-		#print "TEST SCOCOCOCOO OOO INSTANCE LOGIC NEEDDS TO GO PROBABYLY DO TEST"
-		# CANT KEEP PER INSTANCE LOGIC OBJECTS?
-		# INSTANCE ONLY NEEDED FOR TIMING
-		# AND TIMING IS REFLECTED IN LOGIC OBJECT (assumed 0 clk essentially)
+		self.func_name = None # Function name
 		
 		
 		# My containing FUNC NAME
@@ -277,6 +274,8 @@ class Logic:
 		self.is_c_built_in = False
 		# Is this logic implemented as a VHDL function (non-pipelineable 0 clk logic, probably 0LLs)
 		self.is_vhdl_func = False
+		# Is this logic implemented as a VHDL expression (also 0 clk)
+		self.is_vhdl_expr = False
 		
 		# Mostly for c built in C functions
 		self.submodule_instance_to_c_ast_node = dict()
@@ -328,6 +327,7 @@ class Logic:
 		rv.c_ast_node = copy.copy(self.c_ast_node) # Uhhh seemed wrong ?
 		rv.is_c_built_in = self.is_c_built_in
 		rv.is_vhdl_func = self.is_vhdl_func
+		rv.is_vhdl_expr = self.is_vhdl_expr
 		rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
 		rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
 		rv.wire_drives = self.DEEPCOPY_DICT_SET(self.wire_drives)
@@ -414,6 +414,21 @@ class Logic:
 			self.is_vhdl_func = self.is_vhdl_func
 		else:
 			self.is_vhdl_func = logic_b.is_vhdl_func
+			
+		# VHDL expression status must match if set
+		if (self.is_vhdl_expr is not None) and (logic_b.is_vhdl_expr is not None):
+			if self.is_vhdl_expr != logic_b.is_vhdl_expr:
+				print "Cannot merge comb logic with mismatching is_vhdl_expr !"
+				print self.func_name, self.is_vhdl_expr
+				print logic_b.func_name, logic_b.is_vhdl_expr
+				sys.exit(0)
+			else:
+				self.is_vhdl_expr = self.is_vhdl_expr
+		# Otherwise use whichever is set
+		elif self.is_vhdl_expr is not None:
+			self.is_vhdl_expr = self.is_vhdl_expr
+		else:
+			self.is_vhdl_expr = logic_b.is_vhdl_expr
 			
 		# Absorb true values of using globals
 		self.uses_globals = self.uses_globals or logic_b.uses_globals
@@ -715,7 +730,7 @@ class Logic:
 		return None
 		
 	# Not to be removed?
-	def IS_SPECIAL_WIRE(self,wire):
+	def WIRE_IS_SPECIAL_WIRE(self,wire):
 		if wire in self.variable_names:
 			return True
 		if wire in self.inputs:
@@ -943,6 +958,16 @@ def WIRE_IS_SUBMODULE_PORT(wire, logic):
 	# Check port name too?
 	# No for now?
 	return possible_submodule_inst_name in logic.submodule_instances
+	
+def WIRE_IS_VHDL_EXPR_SUBMODULE(wire, Logic, parser_state):
+	if SUBMODULE_MARKER in wire:
+		toks = wire.split(SUBMODULE_MARKER)
+		submodule_inst_name = toks[0]
+		submodule_func_name = Logic.submodule_instances[submodule_inst_name]
+		submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+		if submodule_logic.is_vhdl_expr:
+			return True
+	return False
 
 def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst, parser_state):	
 	#print "containing_func_logic.func_name, submodule_inst"
@@ -962,6 +987,15 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
 	# CONST refs are vhdl funcs
 	if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
 		submodule_logic.is_vhdl_func = True
+		# But can also be VHDL expressions if the feeling is right
+		driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[submodule_inst]
+		# Just one input
+		if len(driven_ref_toks_list) == 1:
+			driven_ref_toks = driven_ref_toks_list[0]
+			# Driving the base variable
+			if len(driven_ref_toks) == 1:
+				submodule_logic.is_vhdl_func = False
+				submodule_logic.is_vhdl_expr = True
 	
 	# Ports and types are specific to the submodule instance
 	# Get data from c ast node
@@ -975,7 +1009,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
 	# 2) parse var decls to wire_to_c_type
 	# 3) Look up driver of submodule to determine type
 	
-	# Assume children list is is order of args if not HDL INSERT
+	# Assume children list is is order of args
 	input_names = []
 	if submodule_inst in containing_func_logic.submodule_instance_to_input_port_names:
 		input_names = containing_func_logic.submodule_instance_to_input_port_names[submodule_inst]
@@ -5263,7 +5297,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	#   Inputs for some faked funcs with no func body need to be saved too
 	# 	Original variable wires dont drive things because alias will drive instead; int x; x=1;
 	for wire in set(parser_state.existing_logic.wires): # Copy for iter
-		if (wire not in parser_state.existing_logic.wire_drives) and (not parser_state.existing_logic.IS_SPECIAL_WIRE(wire)):
+		if (wire not in parser_state.existing_logic.wire_drives) and (not parser_state.existing_logic.WIRE_IS_SPECIAL_WIRE(wire)):
 			#print parser_state.existing_logic.func_name, "Removing", wire
 			parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)	
 		

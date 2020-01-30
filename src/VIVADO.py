@@ -626,8 +626,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	submodule_funcs = []
 	for submodule_inst_name in NonZeroClkTimingParamsLookupTable:
 		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-		# ONly write non vhdl funcs
-		if not submodule_logic.is_vhdl_func:
+		# ONly write non vhdl
+		if not submodule_logic.is_vhdl_func and not submodule_logic.is_vhdl_expr:
 			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic, NonZeroClkTimingParamsLookupTable, parser_state) + ".vhd"
 			if submodule_entity_filename not in submodule_funcs:			
 				submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
@@ -642,8 +642,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 		if func_name in parser_state.FuncToInstances:
 			submodule_inst_name = parser_state.FuncToInstances[func_name][0]
 			submodule_logic = parser_state.FuncLogicLookupTable[func_name]
-			# ONly write non vhdl funcs
-			if submodule_logic.is_vhdl_func:
+			# ONly write non vhdl
+			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 				continue
 			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic,ZeroClkTimingParamsLookupTable, parser_state) + ".vhd"	
 			submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)

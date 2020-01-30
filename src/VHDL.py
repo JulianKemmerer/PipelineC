@@ -496,8 +496,6 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 	# Declare total latency for Logic
 	rv += "constant LATENCY : integer := " + str(latency) + ";\n"
 	
-	
-
 	# Type for wires/variables
 	varables_t_pre = ""
 	varables_t_pre += "\n"
@@ -529,6 +527,10 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 			if wire_name in Logic.global_wires:
 				continue
 			# Dont skip volatile globals, they are like regular wires
+				
+			# Skip VHDL expr submodule wires
+			if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(wire_name, Logic, parser_state):
+				continue				
 				
 			#print "wire_name", wire_name
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, Logic, parser_state)
@@ -638,6 +640,11 @@ end function;\n
 		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
 		submodule_logic_name = Logic.submodule_instances[inst]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		
+		# Skip VHDL exprs
+		if submodule_logic.is_vhdl_expr:
+			continue
+		
 		rv += "-- " + instance_name + "\n"
 		# Inputs
 		for in_port in submodule_logic.inputs:
@@ -724,12 +731,10 @@ end function;
 	
 	return rv
 	
-
-	
 def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,name_timing_info=True):	
-	# Sanity check until complete sanity has been 100% ensured with absolute certainty
-	if Logic.is_vhdl_func:
-		print "Why write vhdl func entity?"
+	# Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
+	if Logic.is_vhdl_func or Logic.is_vhdl_expr:
+		print "Why write vhdl func/expr entity?"
 		print 0/0
 		sys.exit(0)
 	
@@ -795,6 +800,11 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 			instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
 			submodule_logic_name = Logic.submodule_instances[inst]
 			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+			
+			# Skip VHDL exprs
+			if submodule_logic.is_vhdl_expr:
+				continue 
+			
 			new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
 			rv += "-- " + new_inst_name + "\n"
 			
@@ -872,6 +882,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 			instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
 			submodule_logic_name = Logic.submodule_instances[inst]
 			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+			
+			# Skip vhdl exprs
+			if submodule_logic.is_vhdl_expr:
+				continue
+							
 			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
 			rv += "	-- " + new_inst_name + "\n"
 			# Outputs
@@ -1170,7 +1185,8 @@ def WIRES_TO_C_INT_BIT_WIDTH(wires,logic):
 				sys.exit(0)
 	return rv_width
 	
-def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParamsLookupTable, timing_params, stage_ordered_submodule_list, stage):
+def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage):
+	timing_params = TimingParamsLookupTable[inst_name]
 	RHS = ""
 	# SUBMODULE PORT?
 	if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire_to_handle, logic):		
@@ -1180,7 +1196,7 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
 		driving_submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + driving_submodule_name
 		driving_submodule_latency = timing_params.GET_SUBMODULE_LATENCY(driving_submodule_inst_name, parser_state, TimingParamsLookupTable)
 		
-		# Which stage was the driving submodule inst
+		# Which stage was the driving submodule inst, cant just check latency because of sling in betwenes submodules?
 		driving_submodule_stage = None
 		for stage_i in stage_ordered_submodule_list:
 			submodules_in_stage = stage_ordered_submodule_list[stage_i]
@@ -1295,15 +1311,51 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 def WIRE_TO_VHDL_NAME(wire_name, Logic):
 	leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
-	
-	#print "leaf_name",leaf_name
 	rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
-	#print rv
 	return rv
 
-	
+def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
+	if submodule_logic.is_vhdl_expr:
+		return GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
+	else:
+		return GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
 
-def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
+def GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
+	if submodule_logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+		return GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
+	else:
+		print "VHDL EXPR connection text for",submodule_logic.func_name
+		sys.exit(0)
+
+def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
+	# Not using port name
+	# Connect driver of input port to wires driven by output port
+	input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.inputs[0] 
+	driver_of_input = logic.wire_driven_by[input_port_wire]
+	output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0] 
+	wires_driven_by_output = logic.wire_drives[output_port_wire]
+	
+	# What is the simple expression to append?
+	#local_inst_name = C_TO_LOGIC.LEAF_NAME(inst_name, True)
+	ref_toks = logic.ref_submodule_instance_to_ref_toks[submodule_inst]
+	vhdl_ref_str= ""
+	for ref_tok in ref_toks[1:]: # Skip base var name
+		if type(ref_tok) == int:
+			vhdl_ref_str += "(" + str(ref_tok) + ")"
+		elif type(ref_tok) == str:
+			vhdl_ref_str += "." + ref_tok
+		else:
+			print "Only constant references right now blbblbaaaghghhh2!", logic.c_ast_node.coord
+			sys.exit(0)
+	
+	text=""
+	for wire_driven_by_output in wires_driven_by_output:		
+		text +=  "			" + GET_LHS(wire_driven_by_output, logic, parser_state) + " := " + GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage) + vhdl_ref_str + ";\n"
+		
+	return text
+
+
+def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
 	# Use logic to write vhdl
 	timing_params = TimingParamsLookupTable[inst_name]
 	text = ""
@@ -1331,10 +1383,10 @@ def GET_TOP_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
 def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
 	# Sanity check?
-	if Logic.is_vhdl_func:
+	if Logic.is_vhdl_func or Logic.is_vhdl_expr:
 		print "Why entity for vhdl func?"
 		print 0/0
-		sys.exit(0)		
+		sys.exit(0)
 	
 	timing_params = TimingParamsLookupTable[inst_name]
 	latency = est_total_latency

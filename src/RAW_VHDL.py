@@ -385,17 +385,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
 		for ref_tok_i in range(0,len(driven_ref_toks)):
 			driven_ref_tok = driven_ref_toks[ref_tok_i]
 			if isinstance(driven_ref_tok, c_ast.Node):
-				var_ref_tok_indicies.append(ref_tok_i)	
-		
-		
-		# Expand to constant refs
-		#if driven_ref_toks[0] == "bs":
-		#	print "local_inst_name",local_inst_name
-		#	print "parser_state_copy.existing_logic.func_name",parser_state_copy.existing_logic.func_name
-		#	print "CONST ref rd:"
-		#	print "input",input_port_inst_name
-		#	print "driven_ref_toks",driven_ref_toks
-		
+				var_ref_tok_indicies.append(ref_tok_i)		
 		
 		
 		expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(driven_ref_toks, logic.c_ast_node, parser_state_copy)

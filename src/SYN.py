@@ -490,22 +490,22 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 								delay_offset_when_driven[driven_wire] = delay_offset_when_driven[driving_wire]
 							#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~		
 							
+							# Follow the driven wire unless its a submodule input port
+							# Submodules input ports is handled at hierarchy cross later - do nothing later
+							if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire, logic):
+								# Record reaching another wire
+								next_wires_to_follow.append(driven_wire)
+								
+							# Connections to of from VHDL expr submodules dont get connected normally
+							if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(driving_wire, logic, parser_state) or C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(driven_wire, logic, parser_state):
+								continue
+							
+							### WRITE VHDL TEXT
 							# If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
 							# as way to ensure correct multi clock behavior	
-							RHS = VHDL.GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable, timing_params, rv.stage_ordered_submodule_list, stage_num)												
-
+							RHS = VHDL.GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable, rv.stage_ordered_submodule_list, stage_num)
 							# Submodule or not LHS is write pipe wire
 							LHS = VHDL.GET_LHS(driven_wire, logic, parser_state)
-							#print "LHS:",LHS							
-							#print ""
-							
-							# Submodules input ports is handled at hierarchy cross later - do nothing here
-							if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire, logic):
-								pass
-							else:
-								# Record reaching another wire
-								next_wires_to_follow.append(driven_wire)	
-							
 							#print "logic.func_name",logic.func_name
 							#print "driving_wire, driven_wire",driving_wire, driven_wire
 							# Need VHDL conversions for this type assignment?
@@ -680,7 +680,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 				# Use submodule logic to write vhdl
 				# REGULAR ENTITY CONNECITON
 				submodule_level_text += "	" + "	" + "	-- " + C_TO_LOGIC.LEAF_NAME(submodule_inst, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
-				entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)			
+				entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, rv.stage_ordered_submodule_list, stage_num)			
 				submodule_level_text += entity_connection_text + "\n"
 
 				# Add output wires of this submodule to wires driven so far after latency
@@ -2748,8 +2748,8 @@ def WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLooku
 		if func_name in parser_state.FuncToInstances:
 			inst_name = parser_state.FuncToInstances[func_name][0]
 			logic = parser_state.FuncLogicLookupTable[func_name]
-			# ONly write non vhdl funcs
-			if logic.is_vhdl_func:
+			# ONly write non vhdl 
+			if logic.is_vhdl_func or logic.is_vhdl_expr:
 				continue
 			syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
 			if not os.path.exists(syn_out_dir):
