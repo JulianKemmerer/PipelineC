@@ -4,7 +4,7 @@
 #pragma once
 #include "../../uintN_t.h"
 
-#define DMA_MSG_SIZE 256 //32768
+#define DMA_MSG_SIZE 1024 //256 //32768
 // Current DMA example requires 64 byte aligned+continuous messages
 #define dma_msg_size_t uint16_t
 typedef struct dma_msg_t

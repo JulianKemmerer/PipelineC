@@ -350,14 +350,15 @@ class ParsedTimingReport:
 				#print single_timing_report
 				print syn_output_line
 				#print "FOUND TIMING LOOPS!"
-				#print 
-
+				#print
 				# Do debug?
 				#latency=0
 				#do_debug=True
 				#print "ASSUMING LATENCY=",latency
 				#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
 				#sys.exit(0)
+			if "inferred exception to break timing loop" in syn_output_line:
+				print syn_output_line
 			
 			# OK so apparently mult by self results in constants
 			# See scratch notes "wtf_multiply_by_self" dir
@@ -368,15 +369,15 @@ class ParsedTimingReport:
 				
 			# Constant outputs?	
 			if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
-				print single_timing_report
-				print "Unconnected or constant ports!? Wtf man"
+				#print single_timing_report
+				#print "Unconnected or constant ports!? Wtf man"
 				print syn_output_line
 				# Do debug?
 				#latency=1
 				#do_debug=True
 				#print "ASSUMING LATENCY=",latency
 				#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-				sys.exit(0)
+				#sys.exit(0)
 
 			
 			# Unconnected ports are maybe problem?
@@ -665,6 +666,9 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	rv += "set_msg_config -id {Synth 8-614} -new_severity ERROR" + "\n"
 	# ERROR WARNING: [Synth 8-2489] overwriting existing secondary unit arch
 	rv += "set_msg_config -id {Synth 8-2489} -new_severity ERROR" + "\n"
+	
+	# CRITICAL WARNING WARNING: [Synth 8-326] inferred exception to break timing loop:
+	rv += 'set_msg_config -id {Synth 8-326} -new_severity "CRITICAL WARNING"' + "\n"
 	
 	# Set high limit for these msgs
 	# [Synth 8-4471] merging register

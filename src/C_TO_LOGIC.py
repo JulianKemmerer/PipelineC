@@ -959,13 +959,23 @@ def WIRE_IS_SUBMODULE_PORT(wire, logic):
 	# No for now?
 	return possible_submodule_inst_name in logic.submodule_instances
 	
-def WIRE_IS_VHDL_EXPR_SUBMODULE(wire, Logic, parser_state):
+def WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(wire, Logic, parser_state):
 	if SUBMODULE_MARKER in wire:
 		toks = wire.split(SUBMODULE_MARKER)
 		submodule_inst_name = toks[0]
 		submodule_func_name = Logic.submodule_instances[submodule_inst_name]
 		submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
 		if submodule_logic.is_vhdl_expr:
+			return True
+	return False
+	
+def WIRE_IS_VHDL_FUNC_SUBMODULE_PORT(wire, Logic, parser_state):
+	if SUBMODULE_MARKER in wire:
+		toks = wire.split(SUBMODULE_MARKER)
+		submodule_inst_name = toks[0]
+		submodule_func_name = Logic.submodule_instances[submodule_inst_name]
+		submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+		if submodule_logic.is_vhdl_func:
 			return True
 	return False
 
@@ -3185,7 +3195,9 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			parser_state)
 
 		parser_state.existing_logic = func_logic
-					
+		
+		
+		# After a constant reference read insert new alias?					
 		
 		return func_logic
 	

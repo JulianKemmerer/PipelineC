@@ -497,7 +497,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 								next_wires_to_follow.append(driven_wire)
 								
 							# Connections to of from VHDL expr submodules dont get connected normally
-							if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(driving_wire, logic, parser_state) or C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(driven_wire, logic, parser_state):
+							if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(driving_wire, logic, parser_state) or C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(driven_wire, logic, parser_state):
 								continue
 							
 							### WRITE VHDL TEXT

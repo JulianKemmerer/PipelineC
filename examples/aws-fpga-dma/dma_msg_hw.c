@@ -15,7 +15,7 @@
 dma_msg_t deserializer_msg_buffer;
 // Keep track of pos in buffer
 #define DMA_WORD_SIZE 64
-#define DMA_MSG_WORDS 4 //512 // Temp bug (DMA_MSG_SIZE/DMA_WORD_SIZE)
+#define DMA_MSG_WORDS 16 //4 //512 // Temp bug (DMA_MSG_SIZE/DMA_WORD_SIZE)
 dma_msg_size_t deserializer_word_pos;
 dma_msg_s deserializer(axi512_i_t axi)
 {

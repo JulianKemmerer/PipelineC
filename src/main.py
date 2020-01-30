@@ -25,7 +25,6 @@ print '''
 '''
 
 print "TODO:"
-print "	Dont use funcs for simple const refs with one input ref tok, to make vivado elab faster"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Fix bug where can't do const expression reduction in global array size decls since not in func yet, just use empty existing logic"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
@@ -34,8 +33,8 @@ print "	How to do module instantiation? Does that need to be macro based? #defin
 print "	Do clock crossing with globals and 'false path' volatile globals"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
-print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
 print "	When doing const ref read with many ref toks, make new 'assignment' alias of new reduced wire so future reads of the same const ref can use the single wire"
+print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
 print "	Add look ahead for built in functions so cast can be inferred"
 print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."

@@ -529,7 +529,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 			# Dont skip volatile globals, they are like regular wires
 				
 			# Skip VHDL expr submodule wires
-			if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE(wire_name, Logic, parser_state):
+			if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(wire_name, Logic, parser_state):
 				continue				
 				
 			#print "wire_name", wire_name
@@ -641,8 +641,8 @@ end function;\n
 		submodule_logic_name = Logic.submodule_instances[inst]
 		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
 		
-		# Skip VHDL exprs
-		if submodule_logic.is_vhdl_expr:
+		# Skip VHDL
+		if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 			continue
 		
 		rv += "-- " + instance_name + "\n"
@@ -801,43 +801,31 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 			submodule_logic_name = Logic.submodule_instances[inst]
 			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
 			
-			# Skip VHDL exprs
-			if submodule_logic.is_vhdl_expr:
+			# Skip VHDL
+			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 				continue 
 			
 			new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
 			rv += "-- " + new_inst_name + "\n"
-			
-			# AS ENTITY OR FUNC?
-			if submodule_logic.is_vhdl_func:
-				# FUNC INSTANCE
-				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
-				rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + " <= " + submodule_logic.func_name + "(\n"
-				for in_port in submodule_logic.inputs:
-					in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
-					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
-				# Remove last two chars
-				rv = rv[0:len(rv)-2]
-				rv += ");\n\n"
-			else:
-				# ENTITY
-				submodule_timing_params = TimingParamsLookupTable[instance_name];
-				submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-				submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
-				rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
-				if submodule_needs_clk:
-					rv += "clk,\n"
-				# Inputs
-				for in_port in submodule_logic.inputs:
-					in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
-					rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
-				# Outputs
-				for out_port in submodule_logic.outputs:
-					out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-					rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
-				# Remove last two chars
-				rv = rv[0:len(rv)-2]
-				rv += ");\n\n"
+
+			# ENTITY
+			submodule_timing_params = TimingParamsLookupTable[instance_name];
+			submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+			submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+			rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
+			if submodule_needs_clk:
+				rv += "clk,\n"
+			# Inputs
+			for in_port in submodule_logic.inputs:
+				in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+				rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+			# Outputs
+			for out_port in submodule_logic.outputs:
+				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+				rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+			# Remove last two chars
+			rv = rv[0:len(rv)-2]
+			rv += ");\n\n"
 				
 	# Get the text that is actually the pipeline logic in this entity
 	rv += "\n"
@@ -875,27 +863,33 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 		rv += "	" + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
 	rv += "	-- Registers\n"
 	rv += "	" + "registers_r,\n"
+	submodule_text = ""
+	has_submodules_to_print = False
 	if len(Logic.submodule_instances) > 0:
-		rv += "	-- All submodule outputs\n"
+		submodule_text += "	-- All submodule outputs\n"
 		# Connect submodules
 		for inst in Logic.submodule_instances:
 			instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
 			submodule_logic_name = Logic.submodule_instances[inst]
 			submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
 			
-			# Skip vhdl exprs
-			if submodule_logic.is_vhdl_expr:
+			# Skip vhdl
+			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 				continue
-							
+			
+			has_submodules_to_print = True				
 			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
-			rv += "	-- " + new_inst_name + "\n"
+			submodule_text += "	-- " + new_inst_name + "\n"
 			# Outputs
 			if len(submodule_logic.outputs) <= 0:
 				print "Submodule has no outputs?", instance_name
 				sys.exit(0)
 			for out_port in submodule_logic.outputs:
 				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-				rv += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+				submodule_text += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+	if has_submodules_to_print:
+		rv += 	submodule_text	
+				
 	# Remove last two chars
 	rv = rv[0:len(rv)-2]
 	rv += ")\n"
@@ -1317,6 +1311,8 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic):
 def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
 	if submodule_logic.is_vhdl_expr:
 		return GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
+	elif submodule_logic.is_vhdl_func:
+		return GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, stage_ordered_submodule_list, stage)
 	else:
 		return GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
 
@@ -1353,6 +1349,20 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule
 		text +=  "			" + GET_LHS(wire_driven_by_output, logic, parser_state) + " := " + GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage) + vhdl_ref_str + ";\n"
 		
 	return text
+	
+def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, stage_ordered_submodule_list, stage):
+	rv = "			"
+	# FUNC INSTANCE
+	out_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
+	rv += GET_LHS(out_wire, logic, parser_state) + " := " + submodule_logic.func_name + "(\n"
+	for in_port in submodule_logic.inputs:
+		in_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+		rv += "				" + GET_RHS(in_wire, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage) + ",\n"
+	# Remove last two chars
+	rv = rv[0:len(rv)-2]
+	rv += ");\n"
+	
+	return rv
 
 
 def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):

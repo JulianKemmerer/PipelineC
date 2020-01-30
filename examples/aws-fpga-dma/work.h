@@ -6,8 +6,8 @@
 
 // Do work on inputs to form outputs
 #define FLOAT_SIZE 4
-#define N_SUM 64 //8192 // Temp bug (DMA_MSG_SIZE/FLOAT_SIZE)
-#define LOG2_NSUM_PLUS1 7 //14
+#define N_SUM 256 //64 //8192 // Temp bug (DMA_MSG_SIZE/FLOAT_SIZE)
+#define LOG2_NSUM_PLUS1 9 //7 //14
 typedef struct work_inputs_t
 {
   float values[N_SUM];
