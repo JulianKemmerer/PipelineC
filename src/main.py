@@ -13,7 +13,10 @@ import VIVADO
 
 c_file = "main.c"
 top_level_func_name = "main"
-mhz = 125.0 #SYN.INF_MHZ #57.83 #SYN.INF_MHZ # TEST 31.25
+
+# AWS example runs at 125
+# However, experiments show we need ~30% margin to meet timing at scale, ~162MHz
+mhz = 162.0
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
