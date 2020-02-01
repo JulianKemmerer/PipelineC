@@ -53,11 +53,15 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
 
 
-def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable):	
+def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, name_timing_info=True):	
 	timing_params = TimingParamsLookupTable[inst_name]
 	
-	filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
-	
+	if name_timing_info:
+		filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
+	else:
+		filename = Logic.func_name + ".vhd"
+		
+		
 	rv = ""
 	rv += "library ieee;" + "\n"
 	rv += "use ieee.std_logic_1164.all;" + "\n"
@@ -68,7 +72,10 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
-	rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	if name_timing_info:
+		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	else:
+		rv += "entity " + Logic.func_name + " is" + "\n"
 	
 	rv += "port(" + "\n"
 	rv += "	clk : in std_logic;" + "\n"
@@ -84,11 +91,16 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
 	
 	rv += ");" + "\n"
-	rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
 	
+	if name_timing_info:
+		rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
+	else:
+		rv += "end " + Logic.func_name + ";" + "\n"
 
-	rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
-	
+	if name_timing_info:
+		rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+	else:
+		rv += "architecture arch of " + Logic.func_name + " is" + "\n"
 		
 	# Dont touch IO
 	rv += "attribute dont_touch : string;\n"

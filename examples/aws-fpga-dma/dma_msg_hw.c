@@ -7,11 +7,7 @@
 //		THIS IMPLEMENTATION DOES NOT HAVE FLOW CONTROL LOGIC.
 //		ASSUMES ALWAYS READY FOR INPUT AND OUTPUT.
 
-// Simple example only looks at a single cycle of AXI data
-// Small DMA message (max 512b/64B)
-// Outputs/reads are limited to 64B so inputs/writes are hard coded to match
-
-// Parse input AXI-4 to a message stream
+// Parse input AXI-4 to a wide lower duty cycle message stream
 dma_msg_t deserializer_msg_buffer;
 // Keep track of pos in buffer
 #define DMA_WORD_SIZE 64
@@ -63,7 +59,7 @@ dma_msg_s deserializer(axi512_i_t axi)
   return msg;
 }
 
-// Global/0Clk implementation:
+// Serialize messages as AXI
 // 1. Accept incoming DMA messages ('write data')
 // 2. Issue a write response immediately
 // 3. Respond with message as 'read data' when requested later
