@@ -26,7 +26,6 @@ print '''
 
 print "TODO:"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
-print "	Fix bug where can't do const expression reduction in global array size decls since not in func yet, just use empty existing logic"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"

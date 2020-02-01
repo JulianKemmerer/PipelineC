@@ -5205,8 +5205,15 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
 	children = array_decl.children()
 	dims = []
 	while len(children)>1 and children[1][0]=='dim':
-		# Get the dimension		
-		dim = int(children[1][1].value)
+		# Get the dimension with dummies
+		dummy_parser_state = ParserState()
+		dummy_parser_state.existing_logic = Logic()
+		dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
+		dummy_wire = "ARRAY_DECL_DIM"
+		dummy_parser_state.existing_logic = C_AST_NODE_TO_LOGIC(children[1][1], [dummy_wire], "", dummy_parser_state)
+		driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
+		dim = int(GET_VAL_STR_FROM_CONST_WIRE(driving_wire,dummy_parser_state.existing_logic,dummy_parser_state))
+		#dim = int(children[1][1].value)
 		dims.append(dim)
 		array_decl = children[0][1]
 		children = array_decl.children()
