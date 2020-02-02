@@ -1738,7 +1738,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 					print "What is ref tok bleh????", ref_tok
 					sys.exit(0)
 		# Hash the string
-		hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) #4 chars enough?
+		hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) # 4 chars enough?
 		func_name += hash_ext
 		
 		
@@ -2144,7 +2144,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 	
 	
 	# Update cache
-	_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key] = rv
+	_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key] = frozenset(rv)
 	return rv
 
 		
@@ -2179,7 +2179,7 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 		sys.exit(0)			
 			
 	# Update cache
-	_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key] = rv
+	_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key] = frozenset(rv)
 				
 	return rv
 	
@@ -2295,7 +2295,7 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
 			 
 	
 	# Update cache
-	_REDUCE_REF_TOKS_OR_STRS_cache[cache_key] = rv_ref_toks_set
+	_REDUCE_REF_TOKS_OR_STRS_cache[cache_key] = frozenset(rv_ref_toks_set)
 	
 	#sys.exit(0)
 	return rv_ref_toks_set
@@ -2413,47 +2413,57 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 # THIS IS DIFFERENT FROM REDUCE DONE ABOVE
 # (does modifies remaining_ref_toks, but use return value since can be cached)
 _REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
-def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_node, parser_state):	
+def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_ast_node, parser_state):	
 	debug = False
-	#debug = parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538"
+	#debug = (parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538") and driven_ref_toks==('base', 0, 63)
 	
 	if debug:
-		orig_remaining_ref_toks = set(remaining_ref_toks) #debug
+		orig_remaining_ref_toks_set = set(remaining_ref_toks_set) #debug
 	
-	# Try for cache
 	if parser_state.existing_logic.func_name is None:
 		print "Wtf none??????"
-		sys.exit(0)	
-	cache_key = (parser_state.existing_logic.func_name, frozenset(remaining_ref_toks),frozenset(driven_ref_toks))
+		sys.exit(0)
+	
+	# Try for cache
+	cache_key = (parser_state.existing_logic.func_name, driven_ref_toks, frozenset(remaining_ref_toks_set))
+	remaining_ref_toks_set_cache = None
 	try:
-		remaining_ref_toks = set(_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]) # Copy since set is mutable + WILL be mutated
-		if debug:
-			print "orig_remaining_ref_toks",orig_remaining_ref_toks
-			print "orig driven_ref_toks",driven_ref_toks
-			print "remaining_ref_toks",remaining_ref_toks
-			print "2"
-			
-		if driven_ref_toks in remaining_ref_toks:
-			print "WTF? driven_ref_toks in remaining_ref_toks"
-			sys.exit(0)
-			
-		return remaining_ref_toks
+		remaining_ref_toks_set_cache = set(_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]) # Copy since set is mutable + WILL be mutated
 	except:
 		pass
+	if remaining_ref_toks_set_cache:
+		if debug:
+			print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
+			print "orig driven_ref_toks",driven_ref_toks
+			print "remaining_ref_toks_set",remaining_ref_toks_set_cache
+			print "2"	
+		if driven_ref_toks in remaining_ref_toks_set_cache:
+			print parser_state.existing_logic.func_name
+			print "orig driven_ref_toks",driven_ref_toks
+			print "remaining_ref_toks_set",remaining_ref_toks_set_cache
+			print "pre remaining_ref_toks_set==remaining_ref_toks_set_cache",remaining_ref_toks_set==remaining_ref_toks_set_cache
+			print "WTF? driven_ref_toks in remaining_ref_toks_set_cache"
+			sys.exit(0)
+			
+		remaining_ref_toks_set = remaining_ref_toks_set_cache
+		return remaining_ref_toks_set
 
 	# Removed covered branches
 	# Given alias wire (a,1,c) it covers any remaining wire (a,1,c) , (a,1,c,0) ,  (a,1,c,1)
-	for ref_toks in set(remaining_ref_toks): # Copy for iteration
+	for ref_toks in set(remaining_ref_toks_set): # Copy for iteration
 		if REF_TOKS_COVERED_BY(ref_toks, driven_ref_toks, parser_state):
 			# Remove this ref toks
 			if debug:
 				print ref_toks, "covered by", driven_ref_toks
-			remaining_ref_toks.remove(ref_toks)
+			remaining_ref_toks_set.remove(ref_toks)
+		else:
+			if debug:
+				print ref_toks, "not covered by", driven_ref_toks
 
 	if debug:
-		print "orig_remaining_ref_toks",orig_remaining_ref_toks
+		print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
 		print "orig driven_ref_toks",driven_ref_toks
-		print "remaining_ref_toks after removing coverage",remaining_ref_toks
+		print "remaining_ref_toks_set after removing coverage",remaining_ref_toks_set
 
 	# The current driven_ref_toks would be removed from list 
 	# Removing the branches at/under driven_ref_toks might also 
@@ -2473,7 +2483,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_n
 			# Has branches, are they all removed now?
 			keep_root = False # Assume all branches are gone
 			for branch_ref_toks in own_branch_ref_toks:
-				if branch_ref_toks in remaining_ref_toks:
+				if branch_ref_toks in remaining_ref_toks_set:
 						# Found a remaining branch, root stays
 						keep_root = True
 						break
@@ -2481,34 +2491,37 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_n
 		if not keep_root:
 			# Remove root, and loop again
 			'''
-			if root_toks not in remaining_ref_toks:
-				print "orig_remaining_ref_toks",orig_remaining_ref_toks
+			if root_toks not in remaining_ref_toks_set:
+				print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
 				print "orig driven_ref_toks",driven_ref_toks
 				print "Missing ref tok?",root_toks
-				print "remaining_ref_toks",remaining_ref_toks
+				print "remaining_ref_toks_set",remaining_ref_toks_set
 				print "ref_toks_removed",ref_toks_removed
 				sys.exit(0)				
 			'''
-			remaining_ref_toks.discard(root_toks)
+			remaining_ref_toks_set.discard(root_toks)
 			ref_toks_removed = root_toks
 		else:
 			# Keeping root, stop here
 			break;
 		
 	if debug:
-		print "remaining_ref_toks after collpasing refs too",remaining_ref_toks
+		print "remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set
 		print ""
 	
 			
-	# Update cache
-	_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = set(remaining_ref_toks) # Copy since set is mutable + WILL be mutated
+	# Update cache	
+	_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = frozenset(remaining_ref_toks_set) # Copy since set is mutable + WILL be mutated
+	if debug:
+		print "Updating cache", cache_key
+		print _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]
 
-
-	if driven_ref_toks in remaining_ref_toks:
-		print "WTF? driven_ref_toks in remaining_ref_toks2"
+	#WTF?
+	if (driven_ref_toks in remaining_ref_toks_set) or (driven_ref_toks in _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]):
+		print "WTF? driven_ref_toks in remaining_ref_toks_set2"
 		sys.exit(0)
 
-	return remaining_ref_toks
+	return remaining_ref_toks_set
 	
 	
 
@@ -2676,7 +2689,19 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	#print "ref_toks",ref_toks
 	# Try to get cache
 	# Build key
-	cache_key = (parser_state.existing_logic.func_name, ref_toks)
+	ref_toks_str = parser_state.existing_logic.func_name[:]
+	for ref_tok in ref_toks:
+		if type(ref_tok) == int:
+			ref_toks_str += "_INT_" + str(ref_tok)
+		elif type(ref_tok) == str:
+			ref_toks_str += "_STR_" + ref_tok
+		elif isinstance(ref_tok, c_ast.Node):
+			ref_toks_str += "_" + "VAR"
+		else:
+			print "What is ref tok bleh?sdsd???", ref_tok
+			sys.exit(0)
+	cache_key = ref_toks_str
+	#cache_key = (parser_state.existing_logic.func_name, ref_toks)
 		
 	# Try for cache
 	try:
@@ -2807,7 +2832,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 	# FUCK
 	debug = False
-	#debug = parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538"
+	#debug = (parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538")
 	
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]
@@ -2834,10 +2859,10 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	# Does most recent alias cover entire wire?
 	# Break orig wire name to all branches
 	#print "ref_toks",ref_toks
-	all_ref_toks = REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state)
+	entire_tree_ref_toks_set = REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state)
 	if debug:
 		print "ref_toks to logic",ref_toks
-		print "all_ref_toks",all_ref_toks
+		print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
 	#print ""
 	
 	#sys.exit(0)
@@ -2847,23 +2872,23 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		print "func name",parser_state.existing_logic.func_name
 		print "ref_toks",ref_toks
 		print "driving_aliases_over_time",driving_aliases_over_time
-		print "all_ref_toks",all_ref_toks
+		print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
 		print "No driving aliases?", prepend_text, c_ast_ref.coord
 		print 0/0
 		sys.exit(0)
 	
 	# Find the first alias (IN REVERSE ORDER) that elminates some branches
-	remaining_ref_toks = set(all_ref_toks)
+	remaining_ref_toks_set = set(entire_tree_ref_toks_set)
 	i = len(driving_aliases_over_time)-1
 	first_driving_alias = None
-	while len(remaining_ref_toks) == len(all_ref_toks):
+	while len(remaining_ref_toks_set) == len(entire_tree_ref_toks_set):
 		if i < 0:
 			print "Ran out of aliases?"
 			print "func name",parser_state.existing_logic.func_name
 			print "ref_toks",ref_toks
-			print "all_ref_toks",all_ref_toks
+			print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
 			print "driving_aliases_over_time",driving_aliases_over_time
-			print "remaining_ref_toks",remaining_ref_toks
+			print "remaining_ref_toks_set",remaining_ref_toks_set
 			sys.exit(0)
 
 		alias = driving_aliases_over_time[i]
@@ -2871,17 +2896,17 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		alias_driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
 		
 		if debug:
-			print "alias#",i,alias
+			print "maybe first alias#",i,alias
 			print "alias_driven_ref_toks",alias_driven_ref_toks
 			print "orig ref_toks",ref_toks
-			print "pre remaining_ref_toks",remaining_ref_toks
+			print "pre remaining_ref_toks_set",remaining_ref_toks_set
 		
-		remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias_driven_ref_toks, c_ast_ref, parser_state)
+		remaining_ref_toks_set = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, alias_driven_ref_toks, c_ast_ref, parser_state)
 		# Next alias working backwards
 		i = i - 1
 		
 		if debug:
-			print "post remaining_ref_toks",remaining_ref_toks
+			print "post remaining_ref_toks_set",remaining_ref_toks_set
 			print ""
 	
 	# At this point alias is first driver
@@ -2892,16 +2917,16 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 
 	
-	if len(remaining_ref_toks) == 0 and first_driving_alias_type_match:	
+	if len(remaining_ref_toks_set) == 0 and first_driving_alias_type_match:	
 		return APPLY_CONNECT_WIRES_LOGIC(parser_state, first_driving_alias, driven_wire_names, prepend_text, c_ast_ref)
 	else:		
 		'''
 		print "ref_toks",ref_toks		
 		print "c_type",c_type
 		print "first_driving_alias_c_type",first_driving_alias_c_type
-		print "all_ref_toks",all_ref_toks
+		print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
 		print "first_driving_alias",first_driving_alias
-		print "remaining_ref_toks",remaining_ref_toks
+		print "remaining_ref_toks_set",remaining_ref_toks_set
 		'''
 
 		# Create list of driving aliases
@@ -2914,15 +2939,15 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 
 		# Work backwards in alias list starting with next wire
 		i = len(driving_aliases_over_time)-2
-		while len(remaining_ref_toks) > 0:
+		while len(remaining_ref_toks_set) > 0:
 			if i < 0:
 				print "Ran out of aliases?@@@@@@@"
 				print "func name",parser_state.existing_logic.func_name
 				print "starting ref_toks",ref_toks
 				print "c_type",c_type
-				print "expanded all_ref_toks",all_ref_toks
+				print "expanded entire_tree_ref_toks_set",entire_tree_ref_toks_set
 				print "driving_aliases_over_time",driving_aliases_over_time
-				print "remaining_ref_toks",remaining_ref_toks
+				print "remaining_ref_toks_set",remaining_ref_toks_set
 				#print "="
 				#print "first_driving_alias",first_driving_alias
 				#print "first_driving_alias_c_type",first_driving_alias_c_type
@@ -2932,22 +2957,22 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			alias = driving_aliases_over_time[i]
 			alias_driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
 			# Then remove all branch wires covered by this driver
-			len_pre_drive = len(remaining_ref_toks)
+			len_pre_drive = len(remaining_ref_toks_set)
 			
 			if debug:
 				print "alias#",i,alias
 				print "alias_driven_ref_toks",alias_driven_ref_toks
 				print "orig ref_toks",ref_toks
-				print "pre remaining_ref_toks",remaining_ref_toks
+				print "pre remaining_ref_toks_set",remaining_ref_toks_set
 			
-			remaining_ref_toks = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, alias_driven_ref_toks, c_ast_ref, parser_state)
+			remaining_ref_toks_set = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, alias_driven_ref_toks, c_ast_ref, parser_state)
 			
 			if debug:
-				print "post remaining_ref_toks",remaining_ref_toks
+				print "post remaining_ref_toks_set",remaining_ref_toks_set
 				print ""
 			
 			# Record this alias as driver if it drove wires
-			if len(remaining_ref_toks) < len_pre_drive:
+			if len(remaining_ref_toks_set) < len_pre_drive:
 				driving_aliases += [alias]
 			
 			# Next alias working backwards
@@ -3012,16 +3037,21 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		# Bleh? TODO later and solve for bigger reasons?
 		# Damnit cant postpone
 		# Build list of driven ref toks and reduce
-		driven_ref_toks_set = set()
+		driven_ref_toks_list = []
 		for driving_alias in driving_aliases:
 			driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(driving_alias, parser_state)
-			driven_ref_toks_set.add(driven_ref_toks)
-		sorted_driven_ref_toks_set = sorted(driven_ref_toks_set)
+			driven_ref_toks_list.append(driven_ref_toks)
 		# Reduce
-		
-		reduced_driven_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(driven_ref_toks_set, c_ast_ref , parser_state)
-		
+		reduced_driven_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(driven_ref_toks_list, c_ast_ref , parser_state)
 		sorted_reduced_driven_ref_toks_set = sorted(reduced_driven_ref_toks_set)
+		
+		# Sanity
+		if len(sorted_reduced_driven_ref_toks_set) <= 0:
+			print "Wtf no sorted input ref toks for ref read @", c_ast_ref.coord
+			sys.exit(0)
+		if len(driven_ref_toks_list) <= 0:
+			print "Wtf no input ref toks for ref read @", c_ast_ref.coord
+			sys.exit(0)
 		
 		# Func name built with reduced list
 		for driven_ref_toks in sorted_reduced_driven_ref_toks_set:
@@ -3037,11 +3067,11 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 					sys.exit(0)
 					
 					
-		# STILL NEED TO APPEND HASH!
+		# APPEND HASH to account for differences when not reduced name
 		# BLAGH
 		# Ref toks driven by aliases
 		input_ref_toks_str = ""
-		for driven_ref_toks in sorted_driven_ref_toks_set:
+		for driven_ref_toks in driven_ref_toks_list:
 			for ref_tok in driven_ref_toks[1:]: # Skip base var name
 				if type(ref_tok) == int:
 					input_ref_toks_str += "_INT_" + str(ref_tok)
@@ -3053,7 +3083,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 					print "What is ref tok bleh????", ref_tok
 					sys.exit(0)
 		# Hash the string
-		hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) #4 chars enough?
+		hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) # 4 chars enough?
 		func_name += hash_ext
 		
 		
