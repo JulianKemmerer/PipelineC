@@ -28,12 +28,16 @@ print '''
 '''
 
 print "TODO:"
+print "	Delete caches after parsing"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	Do clock crossing with globals and 'false path' volatile globals"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
+print "	Use gcc array init instead of for loop many const ref tok assignments that are bulky?"
+print "	Built in raw vhdl funcs for array copy instead of many const rek tok loops"
+print "	Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?"
 print "	OPTIMIZE AWAY CONSTANTs: mult by 1 or neg 1, mult by 2 and div by 2, (floats and ints!)"
 print "	When doing const ref read with many ref toks, make new 'assignment' alias of new reduced wire so future reads of the same const ref can use the single wire"
 print "	Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only"
@@ -52,10 +56,10 @@ print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
 print "	CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)"
 
-print "================== Parsing C Code to logical hierarchy ================================"
+print "================== Parsing C Code to Logical Hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
 
-print "================== Adding logic delay information from synthesis tool (Vivado) ================================"
+print "================== Adding Timing Information from Synthesis Tool (Vivado) ================================"
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state.LogicInstLookupTable[top_level_func_name], parser_state)
 logic = parser_state.FuncLogicLookupTable[top_level_func_name]
 

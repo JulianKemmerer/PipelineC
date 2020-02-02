@@ -1642,7 +1642,10 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	for const_ref in const_refs:
 		# Declare and begin assignment
 		text += "	" + output_t + " " + const_ref + ";\n"
-		text += "	" + const_ref + " = base"
+		if C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in output_t:
+			text += "	" + const_ref + ".data = base"
+		else:
+			text += "	" + const_ref + " = base"
 		
 		# Write out full ref toks
 		toks = const_ref.split("_")

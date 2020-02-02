@@ -495,10 +495,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 							if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire, logic):
 								# Record reaching another wire
 								next_wires_to_follow.append(driven_wire)
-								
-							# Connections to of from VHDL expr submodules dont get connected normally
-							if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(driving_wire, logic, parser_state) or C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_PORT(driven_wire, logic, parser_state):
-								continue
 							
 							### WRITE VHDL TEXT
 							# If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
