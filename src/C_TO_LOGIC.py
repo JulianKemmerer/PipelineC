@@ -2012,12 +2012,12 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 			curr_ref_toks = curr_ref_toks[:last_index]
 			
 			# need to fake c_ast node for is this is strs
-			curr_ref_toks_faked = []
+			curr_ref_toks_faked = ()
 			for curr_ref_tok in curr_ref_toks:
 				if curr_ref_tok == "*":
-					curr_ref_toks_faked.append(c_ast.Node())
+					curr_ref_toks_faked += (c_ast.Node(),)
 				else:
-					curr_ref_toks_faked.append(curr_ref_tok)
+					curr_ref_toks_faked += (curr_ref_tok,)
 			
 			# Get the array type
 			c_array_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(curr_ref_toks_faked, c_ast_ref, parser_state)
@@ -2415,8 +2415,7 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 _REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
 def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_node, parser_state):	
 	debug = False
-	
-	#debug = "serializer" in parser_state.existing_logic.func_name
+	#debug = parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538"
 	
 	if debug:
 		orig_remaining_ref_toks = set(remaining_ref_toks) #debug
@@ -2433,6 +2432,11 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_n
 			print "orig driven_ref_toks",driven_ref_toks
 			print "remaining_ref_toks",remaining_ref_toks
 			print "2"
+			
+		if driven_ref_toks in remaining_ref_toks:
+			print "WTF? driven_ref_toks in remaining_ref_toks"
+			sys.exit(0)
+			
 		return remaining_ref_toks
 	except:
 		pass
@@ -2498,6 +2502,11 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks, driven_ref_toks, c_ast_n
 			
 	# Update cache
 	_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = set(remaining_ref_toks) # Copy since set is mutable + WILL be mutated
+
+
+	if driven_ref_toks in remaining_ref_toks:
+		print "WTF? driven_ref_toks in remaining_ref_toks2"
+		sys.exit(0)
 
 	return remaining_ref_toks
 	
@@ -2667,21 +2676,11 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	#print "ref_toks",ref_toks
 	# Try to get cache
 	# Build key
-	ref_toks_str = parser_state.existing_logic.func_name[:]
-	for ref_tok in ref_toks:
-		if type(ref_tok) == int:
-			ref_toks_str += "_INT_" + str(ref_tok)
-		elif type(ref_tok) == str:
-			ref_toks_str += "_STR_" + ref_tok
-		elif isinstance(ref_tok, c_ast.Node):
-			ref_toks_str += "_" + "VAR"
-		else:
-			print "What is ref tok bleh?sdsd???", ref_tok
-			sys.exit(0)
-	
+	cache_key = (parser_state.existing_logic.func_name, ref_toks)
+		
 	# Try for cache
 	try:
-		return _C_AST_REF_TOKS_TO_C_TYPE_cache[ref_toks_str]
+		return _C_AST_REF_TOKS_TO_C_TYPE_cache[cache_key]
 	except:
 		pass
 	
@@ -2705,57 +2704,57 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	# Is this base type an ID, array or struct ref?
 	if len(ref_toks) == 1:
 		# Just an ID
-		return base_type
+		current_c_type =  base_type
+	else:
+		# Is a struct ref and/or array ref
+		remaining_toks = ref_toks[1:]
 		
-	# Is a struct ref and/or array ref
-	remaining_toks = ref_toks[1:]
-	
-	# While we have a reminaing tok
-	current_c_type = base_type
-	while len(remaining_toks) > 0:
-		#if var_name == "bs":
-		#	print "current_c_type",current_c_type
-		#	print "remaining_toks",remaining_toks
-			
-		next_tok = remaining_toks[0]
-		if type(next_tok) == int:
-			# Constant array ref
-			# Sanity check
-			if not C_TYPE_IS_ARRAY(current_c_type):
-				print "Arrayref tok but not array type?", current_c_type, remaining_toks,c_ast_ref.coord
+		# While we have a reminaing tok
+		current_c_type = base_type
+		while len(remaining_toks) > 0:
+			#if var_name == "bs":
+			#	print "current_c_type",current_c_type
+			#	print "remaining_toks",remaining_toks
+				
+			next_tok = remaining_toks[0]
+			if type(next_tok) == int:
+				# Constant array ref
+				# Sanity check
+				if not C_TYPE_IS_ARRAY(current_c_type):
+					print "Arrayref tok but not array type?", current_c_type, remaining_toks,c_ast_ref.coord
+					sys.exit(0)
+				# Go to next tok			
+				remaining_toks = remaining_toks[1:]
+				# Remove inner subscript to form output type
+				current_c_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(current_c_type)
+			elif type(next_tok) == str:
+				# Struct
+				# Sanity check
+				if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
+					print "Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord
+					sys.exit(0)
+				field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
+				if next_tok not in field_type_dict:
+					print next_tok, "is not a member field of",current_c_type, c_ast_ref.coord
+					print 0/0
+					sys.exit(0)
+				# Go to next tok			
+				remaining_toks = remaining_toks[1:]
+				current_c_type = field_type_dict[next_tok]			
+			elif isinstance(next_tok, c_ast.Node):
+				# Variable array ref
+				# Sanity check
+				if not C_TYPE_IS_ARRAY(current_c_type):
+					print "Arrayref tok but not array type?2", current_c_type, remaining_toks,c_ast_ref.coord
+					sys.exit(0)
+				# Go to next tok			
+				remaining_toks = remaining_toks[1:]
+				# Remove inner subscript to form output type
+				current_c_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(current_c_type)		
+			else:
+				casthelp(next_tok)
+				print "What kind of reference is this?", c_ast_ref.coord
 				sys.exit(0)
-			# Go to next tok			
-			remaining_toks = remaining_toks[1:]
-			# Remove inner subscript to form output type
-			current_c_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(current_c_type)
-		elif type(next_tok) == str:
-			# Struct
-			# Sanity check
-			if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
-				print "Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord
-				sys.exit(0)
-			field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
-			if next_tok not in field_type_dict:
-				print next_tok, "is not a member field of",current_c_type, c_ast_ref.coord
-				print 0/0
-				sys.exit(0)
-			# Go to next tok			
-			remaining_toks = remaining_toks[1:]
-			current_c_type = field_type_dict[next_tok]			
-		elif isinstance(next_tok, c_ast.Node):
-			# Variable array ref
-			# Sanity check
-			if not C_TYPE_IS_ARRAY(current_c_type):
-				print "Arrayref tok but not array type?2", current_c_type, remaining_toks,c_ast_ref.coord
-				sys.exit(0)
-			# Go to next tok			
-			remaining_toks = remaining_toks[1:]
-			# Remove inner subscript to form output type
-			current_c_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(current_c_type)		
-		else:
-			casthelp(next_tok)
-			print "What kind of reference is this?", c_ast_ref.coord
-			sys.exit(0)
 			
 	# Sanity check on const ref must be array type
 	'''
@@ -2768,7 +2767,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
 	'''	
 	
 	# Write cache	
-	_C_AST_REF_TOKS_TO_C_TYPE_cache[ref_toks_str] = current_c_type
+	_C_AST_REF_TOKS_TO_C_TYPE_cache[cache_key] = current_c_type
 			
 	return current_c_type
 	
@@ -2808,8 +2807,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 	# FUCK
 	debug = False
-	#debug = "serializer" in parser_state.existing_logic.func_name
-	
+	#debug = parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538"
 	
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]
@@ -2832,10 +2830,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	if base_var_name in parser_state.existing_logic.wire_aliases_over_time:
 		aliases_over_time = parser_state.existing_logic.wire_aliases_over_time[base_var_name]
 	driving_aliases_over_time += aliases_over_time
-	
-	
-	#sys.exit(0)
-	
+
 	# Does most recent alias cover entire wire?
 	# Break orig wire name to all branches
 	#print "ref_toks",ref_toks
