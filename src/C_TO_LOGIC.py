@@ -2184,7 +2184,7 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 	return rv
 	
 	
-_REDUCE_REF_TOKS_OR_STRS_cache=dict()
+_REDUCE_REF_TOKS_OR_STRS_cache = dict()
 def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
 	# Try for cache
 	if parser_state.existing_logic.func_name is None:
@@ -2301,7 +2301,7 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
 	return rv_ref_toks_set
 
 # Please just be mostly used for silly len(ref_toks) compare stuff, not fundamentally required
-_TRIM_VAR_REF_TOKS_cache=dict()
+_TRIM_VAR_REF_TOKS_cache = dict()
 def TRIM_VAR_REF_TOKS(ref_toks):
 	# Try for cache
 	try:
@@ -2320,7 +2320,7 @@ def TRIM_VAR_REF_TOKS(ref_toks):
 	_TRIM_VAR_REF_TOKS_cache[ref_toks] = ref_toks
 	return ref_toks
 	
-_REF_TOKS_COVERED_BY_cache=dict()
+_REF_TOKS_COVERED_BY_cache = dict()
 def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
 	# Try for cache
 	if parser_state.existing_logic.func_name is None:
@@ -5373,7 +5373,35 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
 			text += "has no driver!!!!?"
 			start = None
 	print text
-	return start	
+	return start
+	
+
+def DEL_ALL_CACHES():
+	# Clear all caches after parsing is done
+	global _other_partial_logic_cache
+	global _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache
+	global _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache
+	global _REDUCE_REF_TOKS_OR_STRS_cache
+	global _TRIM_VAR_REF_TOKS_cache
+	global _REF_TOKS_COVERED_BY_cache
+	global _REMOVE_COVERED_REF_TOK_BRANCHES_cache
+	global _C_AST_REF_TOKS_TO_C_TYPE_cache
+	global _C_AST_NODE_COORD_STR_cache
+	global _C_AST_FUNC_DEF_TO_LOGIC_cache
+	global _GET_ZERO_CLK_PIPELINE_MAP_cache
+	
+	_other_partial_logic_cache                = dict()
+	_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache    = dict()
+	_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache   = dict()
+	_REDUCE_REF_TOKS_OR_STRS_cache            = dict()
+	_TRIM_VAR_REF_TOKS_cache                  = dict()
+	_REF_TOKS_COVERED_BY_cache                = dict()
+	_REMOVE_COVERED_REF_TOK_BRANCHES_cache    = dict()
+	_C_AST_REF_TOKS_TO_C_TYPE_cache           = dict()
+	_C_AST_NODE_COORD_STR_cache               = dict()
+	_C_AST_FUNC_DEF_TO_LOGIC_cache            = dict()
+	_GET_ZERO_CLK_PIPELINE_MAP_cache          = dict()
+
 	
 # This class hold all the state obtained by parsing a single C file
 class ParserState:
@@ -5526,8 +5554,11 @@ def PARSE_FILE(top_level_func_name, c_filename):
 				f.close()
 
 		# Write cache
-		print "Writing cache of parsed information..."
+		print "Writing cache of parsed information to file..."
 		WRITE_PARSER_STATE_CACHE(parser_state, top_level_func_name)
+		
+		# Clear in memory caches
+		DEL_ALL_CACHES()
 		
 		return parser_state
 
