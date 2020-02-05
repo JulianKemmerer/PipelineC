@@ -496,6 +496,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 								# Record reaching another wire
 								next_wires_to_follow.append(driven_wire)
 							
+							
+							# Dont write text connecting VHDL input ports
+							# (connected directly in func call params)
+							if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
+								continue
+							if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
+								continue
+							
 							### WRITE VHDL TEXT
 							# If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
 							# as way to ensure correct multi clock behavior	

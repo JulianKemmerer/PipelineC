@@ -539,6 +539,12 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 			if wire_name in Logic.global_wires:
 				continue
 			# Dont skip volatile globals, they are like regular wires		
+			
+			# Skip VHDL input wires 
+			if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(wire_name, Logic, parser_state):
+				continue
+			if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire_name, Logic, parser_state):
+				continue
 				
 			#print "wire_name", wire_name
 			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, Logic, parser_state)
@@ -1333,8 +1339,8 @@ def GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_n
 		sys.exit(0)
 
 def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
-
 	input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.inputs[0] 
+	driver_of_input = logic.wire_driven_by[input_port_wire]
 	output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
 	
 	# What is the simple expression to append?
@@ -1350,7 +1356,9 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule
 			sys.exit(0)
 	
 	text = ""
-	text +=  "			" + GET_LHS(output_port_wire, logic, parser_state) + " := " + GET_RHS(input_port_wire, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage) + vhdl_ref_str + ";\n"
+	RHS = GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage)
+	TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driver_of_input, input_port_wire, parser_state)
+	text +=  "			" + GET_LHS(output_port_wire, logic, parser_state) + " := " + TYPE_RESOLVED_RHS + vhdl_ref_str + ";\n"
 		
 	return text
 	
@@ -1361,7 +1369,10 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_n
 	rv += GET_LHS(out_wire, logic, parser_state) + " := " + submodule_logic.func_name + "(\n"
 	for in_port in submodule_logic.inputs:
 		in_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
-		rv += "				" + GET_RHS(in_wire, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage) + ",\n"
+		driver_of_input = logic.wire_driven_by[in_wire]
+		RHS = GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage)
+		TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driver_of_input, in_wire, parser_state)
+		rv += "				" + TYPE_RESOLVED_RHS + ",\n"
 	# Remove last two chars
 	rv = rv[0:len(rv)-2]
 	rv += ");\n"
