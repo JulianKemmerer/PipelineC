@@ -747,6 +747,9 @@ class Logic:
 	
 	def REMOVE_WIRE_RECURSIVE(self, wire):
 		#print self.func_name, "Removing", wire
+		#print "DEBUG: Not removing", wire
+		#return None
+				
 		self.wires.discard(wire)				
 		self.wire_to_c_type.pop(wire, None)
 		
@@ -1079,7 +1082,9 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
 		else:
 			print "containing_func_logic.func_name",containing_func_logic.func_name
 			print "output_wire_name",output_wire_name
-			print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
+			#print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
+			for wire in containing_func_logic.wire_drives:
+				print wire,"=>",containing_func_logic.wire_drives[wire]
 			print "Input type to output type mapping assumption for built in submodule output "
 			print submodule_logic.func_name
 			sys.exit(0)		
@@ -2147,6 +2152,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 	
 	# Update cache
 	_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key] = frozenset(rv)
+	#print cache_key
 	return rv
 
 		
@@ -2172,9 +2178,10 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 	# Get next level branches
 	next_branch_ref_toks_set = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state)
 	rv |= next_branch_ref_toks_set
+	#print "ref_toks",ref_toks,"next_branch_ref_toks_set",next_branch_ref_toks_set
 	# Recurse from there
 	for next_branch_ref_toks in next_branch_ref_toks_set:
-		rv |= REF_TOKS_TO_OWN_BRANCH_REF_TOKS(next_branch_ref_toks, c_ast_ref, parser_state)
+		rv |= REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(next_branch_ref_toks, c_ast_ref, parser_state)
 	
 	if debug:
 		print "All branches:", rv
@@ -2451,6 +2458,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
 		return remaining_ref_toks_set
 
 	# Removed covered branches
+	removed_something = False
 	# Given alias wire (a,1,c) it covers any remaining wire (a,1,c) , (a,1,c,0) ,  (a,1,c,1)
 	for ref_toks in set(remaining_ref_toks_set): # Copy for iteration
 		if REF_TOKS_COVERED_BY(ref_toks, driven_ref_toks, parser_state):
@@ -2458,6 +2466,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
 			if debug:
 				print ref_toks, "covered by", driven_ref_toks
 			remaining_ref_toks_set.remove(ref_toks)
+			removed_something = True
 		else:
 			if debug:
 				print ref_toks, "not covered by", driven_ref_toks
@@ -2467,49 +2476,50 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
 		print "orig driven_ref_toks",driven_ref_toks
 		print "remaining_ref_toks_set after removing coverage",remaining_ref_toks_set
 
-	# The current driven_ref_toks would be removed from list 
-	# Removing the branches at/under driven_ref_toks might also 
-	# Might also be removing all the branches of the parent to driven_ref_toks
-	# Ex. (a,1,c) removed from a list of that could have had (a,1,a) , (a,1,b)
-	# 	BUT DIDNT	
-	# 	So (a,1,c) might be the last child of (a,1) remaining, check
-	# Do this repeatedly up the tree collapsing as far as possible
-	# Need at least 2 toks to get root tok
-	ref_toks_removed = TRIM_VAR_REF_TOKS(driven_ref_toks)
-	while len(ref_toks_removed) >= 2:
-		root_toks = ref_toks_removed[0:len(ref_toks_removed)-1]
-		keep_root = True # default keep root branch
-		# Is root even a compound type?
-		own_branch_ref_toks = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(root_toks, c_ast_node, parser_state)
-		if len(own_branch_ref_toks) > 0:
-			# Has branches, are they all removed now?
-			keep_root = False # Assume all branches are gone
-			for branch_ref_toks in own_branch_ref_toks:
-				if branch_ref_toks in remaining_ref_toks_set:
-						# Found a remaining branch, root stays
-						keep_root = True
-						break
-	
-		if not keep_root:
-			# Remove root, and loop again
-			'''
-			if root_toks not in remaining_ref_toks_set:
-				print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
-				print "orig driven_ref_toks",driven_ref_toks
-				print "Missing ref tok?",root_toks
-				print "remaining_ref_toks_set",remaining_ref_toks_set
-				print "ref_toks_removed",ref_toks_removed
-				sys.exit(0)				
-			'''
-			remaining_ref_toks_set.discard(root_toks)
-			ref_toks_removed = root_toks
-		else:
-			# Keeping root, stop here
-			break;
+	if removed_something:
+		# The current driven_ref_toks would be removed from list 
+		# Removing the branches at/under driven_ref_toks might also 
+		# Might also be removing all the branches of the parent to driven_ref_toks
+		# Ex. (a,1,c) removed from a list of that could have had (a,1,a) , (a,1,b)
+		# 	BUT DIDNT	
+		# 	So (a,1,c) might be the last child of (a,1) remaining, check
+		# Do this repeatedly up the tree collapsing as far as possible
+		# Need at least 2 toks to get root tok
+		ref_toks_removed = TRIM_VAR_REF_TOKS(driven_ref_toks)
+		while len(ref_toks_removed) >= 2:
+			root_toks = ref_toks_removed[0:len(ref_toks_removed)-1]
+			keep_root = True # default keep root branch
+			# Is root even a compound type?
+			own_branch_ref_toks = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(root_toks, c_ast_node, parser_state)
+			if len(own_branch_ref_toks) > 0:
+				# Has branches, are they all removed now?
+				keep_root = False # Assume all branches are gone
+				for branch_ref_toks in own_branch_ref_toks:
+					if branch_ref_toks in remaining_ref_toks_set:
+							# Found a remaining branch, root stays
+							keep_root = True
+							break
 		
-	if debug:
-		print "remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set
-		print ""
+			if not keep_root:
+				# Remove root, and loop again
+				'''
+				if root_toks not in remaining_ref_toks_set:
+					print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
+					print "orig driven_ref_toks",driven_ref_toks
+					print "Missing ref tok?",root_toks
+					print "remaining_ref_toks_set",remaining_ref_toks_set
+					print "ref_toks_removed",ref_toks_removed
+					sys.exit(0)				
+				'''
+				remaining_ref_toks_set.discard(root_toks)
+				ref_toks_removed = root_toks
+			else:
+				# Keeping root, stop here
+				break;
+			
+		if debug:
+			print "remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set
+			print ""				
 	
 			
 	# Update cache	
@@ -2834,7 +2844,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 	
 	# FUCK
 	debug = False
-	#debug = (parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538")
+	#debug = (parser_state.existing_logic.func_name == "deserializer") and (ref_toks==("msg",))
 	
 	# The original variable name is the first tok
 	base_var_name = ref_toks[0]

@@ -1173,8 +1173,11 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 '''		
 	
 	# unsigned to array
+	# uint8_t[128] be/le_uint8_array128(uint1024_t 
 	# Dont do for now since not needed yet and involves dumb return of array in struct
-	#uint8_t[128] be/le_uint8_array128(uint1024_t 
+	# Want uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N]) but can be done with unsigned to/from array 
+	# ITS TIME TO BE SHITTY?
+	
 
 	if text != "":
 		# Ok had some code, include headers

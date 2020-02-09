@@ -8,54 +8,42 @@
 //		ASSUMES ALWAYS READY FOR INPUT AND OUTPUT.
 
 // Parse input AXI-4 to a wide lower duty cycle message stream
-dma_msg_t deserializer_msg_buffer;
 // Keep track of pos in buffer
 #define DMA_WORD_SIZE 64 
 #define DMA_MSG_WORDS (DMA_MSG_SIZE/DMA_WORD_SIZE)
 dma_msg_size_t deserializer_word_pos;
+uint8_t deserializer_msg_word_buffer[DMA_MSG_WORDS][DMA_WORD_SIZE];
 dma_msg_s deserializer(axi512_i_t axi)
 {
 	// Only paying attention to write request channel data (not address)
   // since we are only using one buffer in host memory address = 0
   // And a write is always followed by a read of the same size
 	
-	// Copy the existing buffer into shorter length array
-	// (as opposed to wasting resources writing into a byte-index)
-	uint8_t data_words[DMA_MSG_WORDS][DMA_WORD_SIZE];
+	// Write into location in buffer, resetting as needed
+	if(axi.wvalid)
+	{
+		deserializer_msg_word_buffer[deserializer_word_pos] = axi.wdata;
+		deserializer_word_pos = deserializer_word_pos + 1;
+		if(axi.wlast)
+		{
+			deserializer_word_pos = 0;
+		}
+	}
+	
+	// Unpack 2D byte array word buffer into long 1D output byte array
+	dma_msg_s msg;
 	uint32_t word_i;
 	uint32_t byte_i;
 	for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
 	{
 		for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
 		{
-			data_words[word_i][byte_i] = deserializer_msg_buffer.data[(word_i*DMA_WORD_SIZE)+byte_i];
+			msg.data.data[(word_i*DMA_WORD_SIZE)+byte_i] = deserializer_msg_word_buffer[word_i][byte_i];
 		}
 	}
 	
-	// Write into location in word buffer, resetting as needed
-	if(axi.wvalid)
-	{
-		data_words[deserializer_word_pos] = axi.wdata;
-		deserializer_word_pos = deserializer_word_pos + 1;
-		if(axi.wlast)
-		{
-				deserializer_word_pos = 0;
-		}
-	}
-	
-	// Copy back into byte buffer
-	for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-	{
-		for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-		{
-			deserializer_msg_buffer.data[(word_i*DMA_WORD_SIZE)+byte_i] = data_words[word_i][byte_i];
-		}
-	}
-	
-  // Msg is valid when we have the last word of data
-  dma_msg_s msg;
-  msg.data = deserializer_msg_buffer;
-  msg.valid = axi.wvalid & axi.wlast;
+	// Msg is valid when we have the last word of data
+	msg.valid = axi.wvalid & axi.wlast;
   return msg;
 }
 
@@ -63,7 +51,7 @@ dma_msg_s deserializer(axi512_i_t axi)
 // 1. Accept incoming DMA messages ('write data')
 // 2. Issue a write response immediately
 // 3. Respond with message as 'read data' when requested later
-dma_msg_s serializer_msg_buffer;
+uint8_t serializer_msg_word_buffer[DMA_MSG_WORDS][DMA_WORD_SIZE];
 dma_msg_size_t serializer_word_pos;
 uint1_t serializing;
 axi512_o_t serializer(dma_msg_s msg, uint1_t read_request)
@@ -83,15 +71,23 @@ axi512_o_t serializer(dma_msg_s msg, uint1_t read_request)
 		axi.rdata[i] = 0;
 	}
 	
-	// Message incoming is produced from DMA write
+	// Message incoming is produced by DMA write
 	if(msg.valid)
 	{
-		// Buffer messages as they come in
-		serializer_msg_buffer = msg;
-		// Doing so resets serialization
-		serializer_word_pos = 0;
 		// DMA write needs write response immediately
 		axi.bvalid = 1;
+		// Buffer messages as they come in, stored as words
+		uint32_t word_i;
+		uint32_t byte_i;
+		for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
+		{
+			for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
+			{
+				serializer_msg_word_buffer[word_i][byte_i] = msg.data.data[(word_i*DMA_WORD_SIZE)+byte_i];
+			}
+		}
+		// Doing so resets serialization
+		serializer_word_pos = 0;
 	}	
   
   // Only begin serializing response data once requested
@@ -103,22 +99,9 @@ axi512_o_t serializer(dma_msg_s msg, uint1_t read_request)
   // Do serializing
   if(serializing)
   {
-		// Copy the existing buffer into shorter array
-		// (as opposed to wasting resources reading from an byte-index)
-		uint8_t data_words[DMA_MSG_WORDS][DMA_WORD_SIZE];
-		uint32_t word_i;
-		uint32_t byte_i;
-		for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-		{
-			for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-			{
-				data_words[word_i][byte_i] = serializer_msg_buffer.data.data[(word_i*DMA_WORD_SIZE)+byte_i];
-			}
-		}
-		
 		// Select the word to go on the bus 
 		uint8_t word[DMA_WORD_SIZE];
-		word = data_words[serializer_word_pos];
+		word = serializer_msg_word_buffer[serializer_word_pos];
 		
 		// Put it on the bus
 		axi.rdata = word;
