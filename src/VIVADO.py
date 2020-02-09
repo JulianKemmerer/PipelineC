@@ -680,10 +680,19 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	# [Synth 8-5546] ROM won't be mapped to RAM because it is too sparse
 	rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
 	
-	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part " + VIVADO_PART + " \n"
+	retiming = ""
+	use_retiming = False
+	if use_retiming:
+		retiming = " -retiming"
 	
-
+	flatten_hierarchy_none = ""
+	use_flatten_hierarchy_none = False
+	if use_flatten_hierarchy_none:
+		flatten_hierarchy_none = " -flatten_hierarchy none"
+	
+	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
+	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part " + VIVADO_PART + flatten_hierarchy_none + retiming + "\n"
+	
 	# Report clocks
 	#rv += "report_clocks" + "\n"
 	# Report timing

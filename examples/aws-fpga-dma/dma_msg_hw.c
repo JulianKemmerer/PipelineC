@@ -76,7 +76,7 @@ axi512_o_t serializer(dma_msg_s msg, uint1_t read_request)
 	{
 		// DMA write needs write response immediately
 		axi.bvalid = 1;
-		// Buffer messages as they come in, stored as words
+		// Buffer messages as they come in, stored by word
 		uint32_t word_i;
 		uint32_t byte_i;
 		for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)

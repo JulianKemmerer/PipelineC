@@ -499,6 +499,7 @@ def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	timing_params = TimingParamsLookupTable[inst_name]
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
 	
 	rv = ""
 	# Stuff originally in package
@@ -644,9 +645,11 @@ end function;\n
 	rv += '''-- Registers and signals for this function\n'''
 	# Comb signal of main regs
 	rv += "signal " + "registers : registers_t;\n"
-	# Main regs nulled out
-	rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
-	rv += "\n"
+	
+	if needs_clk:
+		# Main regs nulled out
+		rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
+		rv += "\n"
 
 	# Signals for submodule ports
 	rv += '''-- Each function instance gets signals\n'''
@@ -875,8 +878,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	for input_wire in Logic.inputs:
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
 		rv += "	" + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
-	rv += "	-- Registers\n"
-	rv += "	" + "registers_r,\n"
+	if needs_clk:
+		rv += "	-- Registers\n"
+		rv += "	" + "registers_r,\n"
 	submodule_text = ""
 	has_submodules_to_print = False
 	if len(Logic.submodule_instances) > 0:
@@ -938,8 +942,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	# BEGIN BEGIN BEGIN
 	rv += "begin\n"
 	
-	# Self regs
-	rv += '''
+	if needs_clk:
+		# Self regs
+		rv += '''
 	-- SELF REGS
 	-- Default read self regs once per clock
 	read_self_regs := registers_r.self;
