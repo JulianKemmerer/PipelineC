@@ -478,7 +478,7 @@ end c_structs_pkg;
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	timing_params = TimingParamsLookupTable[inst_name]
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	i_need_clk = latency>0 or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
+	i_need_clk = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
 	needs_clk = i_need_clk
 	# Check submodules too
@@ -490,6 +490,20 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	
 	return needs_clk
 	
+def LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
+	# Only need self regs if latency >0 clocks
+	timing_params = TimingParamsLookupTable[inst_name]
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	i_need_self_regs = latency>0
+	
+	return i_need_self_regs
+	
+def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
+	# Types of regs: self, global, volatile global
+	needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	return needs_self_regs or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
+	
+	
 def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	if SW_LIB.IS_MEM(Logic):
 		return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
@@ -500,6 +514,8 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 	timing_params = TimingParamsLookupTable[inst_name]
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name,Logic, parser_state, TimingParamsLookupTable)
 	
 	rv = ""
 	# Stuff originally in package
@@ -600,53 +616,51 @@ type volatile_global_registers_t is record'''
 		
 		
 	# ALL REGISTERS
-	rv += '''	
--- Type holding all registers for this function
-type registers_t is record'''
-	if wrote_variables_t:
+	if needs_regs:
+		rv += '''	
+	-- Type holding all registers for this function
+	type registers_t is record'''
+		# Self regs
+		if wrote_variables_t and needs_self_regs:
+			rv += '''
+		self : register_pipeline_t;'''
+		# Global regs
+		if len(Logic.global_wires) > 0:
+			rv += '''
+		global_regs : global_registers_t;'''
+		# Volatile global regs
+		if len(Logic.volatile_global_wires) > 0:
+			rv += '''
+		volatile_global_regs : volatile_global_registers_t;'''
+		# End
+		rv += '''	
+	end record;
+	'''
+	
+	if needs_regs:
+		# Function to null out globals
+		rv += "\n-- Function to null out just global regs\n"
+		rv += "function registers_NULL return registers_t is\n"
+		rv += '''	variable rv : registers_t;
+	begin
+	'''
+		# Do each global var
+		for global_wire in Logic.global_wires:
+			rv += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(global_wire, Logic, parser_state) + ";\n"
+		# Volatile globals too?
+		for volatile_global_wire in Logic.volatile_global_wires:
+			rv += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(volatile_global_wire, Logic, parser_state) + ";\n"
+		
 		rv += '''
-	self : register_pipeline_t;'''
-	
-	# Global regs
-	if len(Logic.global_wires) > 0:
-		rv += '''
-	global_regs : global_registers_t;'''
-	# Volatile global regs
-	if len(Logic.volatile_global_wires) > 0:
-		rv += '''
-	volatile_global_regs : volatile_global_registers_t;'''
+		return rv;
+	end function;\n
+	'''
 	
 	
-	
-	rv += '''	
-end record;
-'''	
-	
-	# Function to null out globals
-	rv += "\n-- Function to null out just global regs\n"
-	rv += "function registers_NULL return registers_t is\n"
-	rv += '''	variable rv : registers_t;
-begin
-'''
-	# Do each global var
-	for global_wire in Logic.global_wires:
-		rv += "	rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(global_wire, Logic, parser_state) + ";\n"
-	# Volatile globals too?
-	for volatile_global_wire in Logic.volatile_global_wires:
-		rv += "	rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(volatile_global_wire, Logic, parser_state) + ";\n"
-	
-	rv += '''
-	return rv;
-end function;\n
-'''
-	
-	
-	
-	rv += '''-- Registers and signals for this function\n'''
-	# Comb signal of main regs
-	rv += "signal " + "registers : registers_t;\n"
-	
-	if needs_clk:
+	if needs_regs:
+		rv += '''-- Registers and signals for this function\n'''
+		# Comb signal of main regs
+		rv += "signal " + "registers : registers_t;\n"
 		# Main regs nulled out
 		rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
 		rv += "\n"
@@ -870,6 +884,9 @@ def GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTa
 def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	# Comb Logic pipeline
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	
 	rv = ""
 	rv += "\n"
 	rv += "	-- Combinatorial process for pipeline stages\n"
@@ -878,7 +895,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	for input_wire in Logic.inputs:
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
 		rv += "	" + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
-	if needs_clk:
+	if needs_regs:
 		rv += "	-- Registers\n"
 		rv += "	" + "registers_r,\n"
 	submodule_text = ""
@@ -942,7 +959,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	# BEGIN BEGIN BEGIN
 	rv += "begin\n"
 	
-	if needs_clk:
+	if needs_self_regs:
 		# Self regs
 		rv += '''
 	-- SELF REGS
@@ -1009,7 +1026,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	rv += "	" + "-- Drive registers and outputs\n"
 	rv += "	" + "-- Last stage of pipeline return wire to entity return port\n"
 	rv += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " <= " + "write_self_regs(LATENCY)." + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
-	rv += "	" + "registers.self <= write_self_regs;\n"
+	if needs_self_regs:
+		rv += "	" + "registers.self <= write_self_regs;\n"
 	# 	Globals
 	if len(Logic.global_wires) > 0:
 		rv += "	" + "registers.global_regs <= write_global_regs;\n"
@@ -1020,7 +1038,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	rv += "end process;\n"
 	
 	# Register the combinatorial registers signal
-	if needs_clk:
+	if needs_regs:
 		rv += "registers_r <= registers when rising_edge(clk);\n"
 		
 	return rv
