@@ -713,7 +713,6 @@ def GET_VHDL_FUNC_SUBMODULE_DECLS(inst_name, Logic, parser_state, TimingParamsLo
 	return rv;
 	
 def GET_VHDL_FUNC_DECL(inst_name, vhdl_func_logic, parser_state, timing_params):
-	
 	# Modelsim doesnt like 'subtype' names in funcs?
 	# (vcom-1115) Subtype indication found where type mark is required.
 	def modeldumbsim(vhdl_type_str):
@@ -787,6 +786,16 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	
+	
+	# Debug 
+	num_non_vhdl_expr_submodules = 0
+	for submodule_inst in Logic.submodule_instances:
+		submodule_func_name = Logic.submodule_instances[submodule_inst]
+		submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+		if not submodule_logic.is_vhdl_expr:
+			num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
+	rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
 	
 	if name_timing_info:
 		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"

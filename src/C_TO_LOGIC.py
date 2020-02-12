@@ -729,7 +729,7 @@ class Logic:
 		
 		return None
 		
-	# Not to be removed?
+	# Not to be removed? Ya know, special bitch
 	def WIRE_IS_SPECIAL_WIRE(self,wire):
 		if wire in self.variable_names:
 			return True
@@ -5356,6 +5356,29 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		if (wire not in parser_state.existing_logic.wire_drives) and (not parser_state.existing_logic.WIRE_IS_SPECIAL_WIRE(wire)):
 			#print parser_state.existing_logic.func_name, "Removing", wire
 			parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)	
+			
+	# Songs: Ohia - Farewell Transmission
+	# Not all wires are necessary
+	# In fact, any wire that is not a sub/module port is probably extra?
+	# Use 'SPECIAL_WIRE'
+	# bytes to inputs 58K before
+	making_changes = True
+	while making_changes:
+		making_changes = False
+		for wire in set(parser_state.existing_logic.wires): # Copy for iter
+			# Look for not special wires that have driving info
+			if not parser_state.existing_logic.WIRE_IS_SPECIAL_WIRE(wire) and (wire in parser_state.existing_logic.wire_driven_by) and (wire in parser_state.existing_logic.wire_drives):
+				making_changes = True
+				# Get driving info
+				driving_wire = parser_state.existing_logic.wire_driven_by[wire]				
+				driven_wires = parser_state.existing_logic.wire_drives[wire]
+				# Remove record of this wire driving anything so removal doesnt progate forward, only backwards
+				parser_state.existing_logic.wire_drives.pop(wire)
+				# Make new connection before ripping up old wire
+				parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
+				# Totally remove old wire
+				parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)
+				#break # Needed?	Wanted?
 		
 	# Write cache
 	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
