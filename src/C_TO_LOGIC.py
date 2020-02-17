@@ -3258,11 +3258,14 @@ def GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type):
 		
 	return output_type
 
-	
+# WTF enums
+# Bullshit.
+# 
 def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):	
 	# Will not be:
 	#	(this is dumb)
 	#   known to enum
+	#		Known not to be enum? wtf?
 	#	input
 	#	global
 	#   volatile global
@@ -3270,32 +3273,35 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
 	# 	output
 	#
 	# Then must be ENUM
+	
+	#ORIG_WIRE_NAME_TO_ORIG_VAR_NAME
+	
 	if (maybe_not_enum_wire in existing_logic.wire_to_c_type) and (existing_logic.wire_to_c_type[maybe_not_enum_wire] in parser_state.enum_to_ids_dict):
 		return True
-	elif ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in existing_logic.inputs:
+	elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and (existing_logic.wire_to_c_type[maybe_not_enum_wire] not in parser_state.enum_to_ids_dict):
 		return False
-	elif (maybe_not_enum_wire in existing_logic.global_wires) or (ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in parser_state.global_info):
+	elif maybe_not_enum_wire in existing_logic.inputs: 
 		return False
-	elif (maybe_not_enum_wire in existing_logic.volatile_global_wires) or (ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in parser_state.volatile_global_info):
+	elif (maybe_not_enum_wire in existing_logic.global_wires) or (maybe_not_enum_wire in parser_state.global_info):
 		return False
-	elif ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in existing_logic.variable_names:
+	elif (maybe_not_enum_wire in existing_logic.volatile_global_wires) or (maybe_not_enum_wire in parser_state.volatile_global_info):
 		return False
-	elif ORIG_WIRE_NAME_TO_ORIG_VAR_NAME(maybe_not_enum_wire) in existing_logic.outputs:
+	elif maybe_not_enum_wire in existing_logic.variable_names:
+		return False
+	elif maybe_not_enum_wire in existing_logic.outputs:
 		return False
 	else:
-		#print "ENUM:",maybe_not_enum_wire
+		print "ENUM:",maybe_not_enum_wire
 		return True
-		
+
+
 def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):	
-	
 	# Get ref tokens 
 	base_name = str(c_ast_id.name)
 	ref_toks = (base_name,)
 	#C_ OLD_ AST_REF_TO_TOKENS(c_ast_id,prepend_text, parser_state)
 	#if len(ref_toks) > 1:
 	#	return False
-		
-	
 		
 	# Will not be:
 	#	(this is dumb)
@@ -3338,12 +3344,16 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
 	#print "==="
 	# Hacky use $ for enum only oh sad
 	wire_name =  CONST_PREFIX + str(value) + "$" + C_AST_NODE_COORD_STR(c_ast_node)
-	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
+	
+	# flag to not check types /cast in APPLY_CONNNECT since dontknow exact enum type?
+	#is resolved immediately after? boo enums??
+	check_types_do_cast=False
+	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node, check_types_do_cast)
 
 	### FUCK CAN'T DO ENUM TYPE CHECKING SINCE OPERATORS IMPLEMENTED AS unsigned compare (not num type compare, for pipelining...)
 	# Hey yeah this sucks
 		 
-	return rv
+	return parser_state.existing_logic
 	
 def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
 	local_name = wire_name
@@ -4812,7 +4822,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 	
 	# By now the input wires have been connected - CAST inserted as needed
 	# From here on we can only adjust input wires in ways that can be resolved with
-	#		VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, etc
+	#		VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
 	
 	#@@@@ CANT Resolve missing types SINCE other type could be anything - might not be resolvable in VHDL 0CLK
 	
@@ -4835,19 +4845,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 				left_type = "int" + str(left_width+1) + "_t"
 				parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 	
-	# CANT BE DONE IN 0 CLK VHDL CAST
-	# CANT DO THIS RIGHT NOW - dumb
-	'''
-	# If one side is a float then convert both sides to float
-	if left_type == "float":
-		right_type = "float"
-		parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type	
-	if right_type == "float":
-		left_type = "float"
-		parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-	'''
-	
-	
 	# THIS IS OK SINCE CAN BE RESOLVED IN 0 CLK VHDL CAST
 	# Replace ENUM with INT type of input wire so cast happens? :/?
 	# Left
@@ -4865,6 +4862,12 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
 		parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
 		#print "driving_wire",driving_wire,enum_type	
+		# If right type is unknown assume it also? Only OK for ENUMS?
+		if right_type is None:
+			right_type = left_type
+			parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+			driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_right_input]
+			parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
 	# Right
 	if right_type in parser_state.enum_to_ids_dict:
 		# Set BIN OP input wire as UINT
@@ -4879,6 +4882,12 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
 		driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_right_input]
 		parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
 		#print "driving_wire",driving_wire,enum_type
+		# If left type is unknown assume it also? Only OK for ENUMS?
+		if left_type is None:
+			left_type = right_type
+			parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+			driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
+			parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
 	
 	
 	# Prepare for N arg inst
@@ -5115,7 +5124,7 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 			return None		
 
 #def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
-def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node):
+def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node, check_types_do_cast=True):
 	#print "driving_wire",driving_wire,"=>",driven_wire_names
 	
 	# Add wire
@@ -5124,92 +5133,93 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 		parser_state.existing_logic.wires.add(driven_wire_name)
 	
 	
-	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~	
-	# Look up that type and make sure if the driven wire names have types that they match
-	# INSERT CAST FUNCTION if needed
-	#print c_ast_id.coord
-	if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
-		print "Looks like wire'",driving_wire,"'isn't declared?"
-		print C_AST_NODE_COORD_STR(c_ast_node)
-		print 0/0
-		sys.exit(0)
-	rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
-	for driven_wire_name in driven_wire_names:
-		# TODO implement look ahead for built in operators. Yairms - Real Time
-		# Assume driven wire is same type as rhs -SHOULDNT NEED THIS FOR ANYTHING OTHER THAN BUILT IN OPERATION BUT NOT CHECK THAT NOW SINCE LIKE WHY WHAT IS LIFE ALL ABOUT?
-		if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
-			#print "Need to know type of wire",driven_wire_name," before connecting to it?"
-			#print 0/0
-			#sys.exit(0)
-			parser_state.existing_logic.wire_to_c_type[driven_wire_name] = rhs_type
+	if check_types_do_cast:
+		# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~	
+		# Look up that type and make sure if the driven wire names have types that they match
+		# INSERT CAST FUNCTION if needed
+		#print c_ast_id.coord
+		if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
+			print "Looks like wire'",driving_wire,"'isn't declared?"
+			print C_AST_NODE_COORD_STR(c_ast_node)
+			print 0/0
+			sys.exit(0)
+		rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
+		for driven_wire_name in driven_wire_names:
+			# TODO implement look ahead for built in operators. Yairms - Real Time
+			# Assume driven wire is same type as rhs -SHOULDNT NEED THIS FOR ANYTHING OTHER THAN BUILT IN OPERATION BUT NOT CHECK THAT NOW SINCE LIKE WHY WHAT IS LIFE ALL ABOUT?
+			if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+				#print "Need to know type of wire",driven_wire_name," before connecting to it?"
+				#print 0/0
+				#sys.exit(0)
+				parser_state.existing_logic.wire_to_c_type[driven_wire_name] = rhs_type
 
-		# CHECK TYPE, APPLY CASTY IF NEEDED
-		driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
-		if driven_wire_type != rhs_type:
-			#######
-			# Some C casts are handled in VHDL with resize or enum conversions
-			# 
-			# Integer promotion / slash supported truncation in C lets this be OK
-			if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
-				and 
-				 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
-					 continue
-			# Enum driving UINT is fine
-			elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
-				continue
-			# I'm dumb and C doesnt return arrays
-			elif (
-			       ( (DUMB_ARRAY_STRUCT_THING in driven_wire_type) and (parser_state.dumb_array_struct_type_to_c_array_type[driven_wire_type]==rhs_type) )
-			      or
-			       ( (DUMB_ARRAY_STRUCT_THING in rhs_type) and (driven_wire_type==parser_state.dumb_array_struct_type_to_c_array_type[rhs_type]) )
-			     ):
-				continue
-			
-			
-			#######
-			# At this point we have incompatible types that need special casting parser_state.existing_logic
-			# 		Build cast function to connect driving wire to driven wire
-			# int = float
-			# float = int
-			# float = uint
-			# DONT do uint = float since force int cast for now
-			if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
-				  (rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type)) or
-				  (VHDL.C_TYPE_IS_UINT_N(rhs_type) and driven_wire_type == "float")
-				):
-				# Return n arg func
-				func_base_name = CAST_FUNC_NAME_PREFIX
-				base_name_is_name = False # append types in name too
-				input_drivers = [driving_wire]
-				input_driver_types = [rhs_type]
-				input_port_names = ["rhs"]
-				output_driven_wire_names = driven_wire_names
-				# Build instance name
-				func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
-				# Record output port type
-				output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
-				parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
+			# CHECK TYPE, APPLY CASTY IF NEEDED
+			driven_wire_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+			if driven_wire_type != rhs_type:
+				#######
+				# Some C casts are handled in VHDL with resize or enum conversions
+				# 
+				# Integer promotion / slash supported truncation in C lets this be OK
+				if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
+					and 
+					 ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
+						 continue
+				# Enum driving UINT is fine
+				elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
+					continue
+				# I'm dumb and C doesnt return arrays
+				elif (
+							 ( (DUMB_ARRAY_STRUCT_THING in driven_wire_type) and (parser_state.dumb_array_struct_type_to_c_array_type[driven_wire_type]==rhs_type) )
+							or
+							 ( (DUMB_ARRAY_STRUCT_THING in rhs_type) and (driven_wire_type==parser_state.dumb_array_struct_type_to_c_array_type[rhs_type]) )
+						 ):
+					continue
 				
-				return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
-					prepend_text,
-					c_ast_node,
-					func_base_name,
-					base_name_is_name,
-					input_drivers, 
-					input_driver_types,
-					input_port_names,
-					output_driven_wire_names,
-					parser_state)
+				
+				#######
+				# At this point we have incompatible types that need special casting parser_state.existing_logic
+				# 		Build cast function to connect driving wire to driven wire
+				# int = float
+				# float = int
+				# float = uint
+				# DONT do uint = float since force int cast for now
+				if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
+						(rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type)) or
+						(VHDL.C_TYPE_IS_UINT_N(rhs_type) and driven_wire_type == "float")
+					):
+					# Return n arg func
+					func_base_name = CAST_FUNC_NAME_PREFIX
+					base_name_is_name = False # append types in name too
+					input_drivers = [driving_wire]
+					input_driver_types = [rhs_type]
+					input_port_names = ["rhs"]
+					output_driven_wire_names = driven_wire_names
+					# Build instance name
+					func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
+					# Record output port type
+					output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+					parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
+					
+					return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+						prepend_text,
+						c_ast_node,
+						func_base_name,
+						base_name_is_name,
+						input_drivers, 
+						input_driver_types,
+						input_port_names,
+						output_driven_wire_names,
+						parser_state)
 
-			else:
-				# Unhandled
-				print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
-				print driven_wire_type, "!=", rhs_type
-				print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
-				sys.exit(0)
-	
-			
-	# ^^^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
+				else:
+					# Unhandled
+					print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
+					print driven_wire_type, "!=", rhs_type
+					print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
+					sys.exit(0)
+		
+				
+		# ^^^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
 			
 	
 	#########   Record connnnnections in the parser_state.existing_logic graph ######	 

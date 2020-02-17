@@ -34,7 +34,55 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   
   // Put output message into outgoing DMA read data when requested
   aws_fpga_dma_outputs_t o;
-  o.pcis = serializer(msg_out, i.pcis.arvalid);
+  o.pcis = serializer(msg_out, i.pcis);
   
   return o;
 }
+
+/*
+// Writer of i reg
+// 0 clk func
+i_r
+in(i)
+{
+	i_r = i
+}
+
+read_i_r()
+{
+	return i_r
+}
+
+// Writer of out_r
+o_r
+write_o_r(o)
+{
+	o_r = 0;
+}
+
+// N clock pipeline function
+work()
+{
+	i = read_i_r() // 0 clk global func
+	
+	// Piplined logic
+	o = ..something with i ...
+	
+	write_o_r(o) // 0 clk global func
+
+}
+
+// Reader of out_r
+out()
+{
+	return o_r
+}
+
+
+main(i) // 0 clk
+{
+	in(i);
+	
+	return out();
+}
+*/

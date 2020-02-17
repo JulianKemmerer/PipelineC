@@ -15,8 +15,8 @@ c_file = "main.c"
 top_level_func_name = "main"
 
 # AWS example runs at 125
-# However, experiments show we need ~30% margin to meet timing at scale, ~162MHz
-mhz = 162.0
+# However, experiments show we need margin to meet timing at scalez
+mhz = 180.0
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -28,13 +28,13 @@ print '''
 '''
 
 print "TODO:"
+print "	Do clock crossing with globals, allow multiple reads of same global too will allow flow control and parallel pipelines!!  ....  ???'false path' volatile globals???"
 print "	Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? for faster elab"
 print "	Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
-print "	Do clock crossing with globals and 'false path' volatile globals"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	Use gcc array init instead of for loop many const ref tok assignments that are bulky?"
 print "	Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?"
