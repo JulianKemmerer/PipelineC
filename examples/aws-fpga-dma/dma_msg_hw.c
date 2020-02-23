@@ -15,7 +15,6 @@
 typedef struct deserializer_word_buffer_t
 {
    uint8_t words[DMA_MSG_WORDS][DMA_WORD_SIZE];
-   uint1_t valids[DMA_MSG_WORDS];
 } deserializer_word_buffer_t;
 
 // Unpack word array into byte array
@@ -37,24 +36,16 @@ dma_msg_t deserializer_unpack(deserializer_word_buffer_t word_buffer)
 
 // Parse input AXI-4 to a wide lower duty cycle message stream
 // Keep track of pos in buffer
-dma_msg_size_t deserializer_byte_pos;
+dma_msg_size_t deserializer_word_pos;
 deserializer_word_buffer_t deserializer_msg_buffer;
 dma_msg_s deserializer(axi512_i_t axi)
 {
-	// Update address if new one incoming
-	if(axi.awvalid)
-	{
-		deserializer_byte_pos = axi.awaddr;
-	}
-	dma_msg_size_t word_pos;
-	word_pos = deserializer_byte_pos >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
-	
-	// Read the current word at that address
-	uint8_t words[DMA_MSG_WORDS][DMA_WORD_SIZE];
-	words = deserializer_msg_buffer.words;
+	// Shift reg?
+	// Assume AXI bursts come in address order?
+	// Read word from front/top (upper addr bytes) of shift reg
 	uint8_t word[DMA_WORD_SIZE];
-	word = words[word_pos];
-	
+	word = deserializer_msg_buffer.words[DMA_MSG_WORDS-1];
+
 	// Write incoming data into upper/lower/both parts of word
 	// Experimentally determined that AXI write comes in 32byte or 64byte chunks
 	// Dont need byte specific write strobe, just certain bits of it
@@ -81,28 +72,23 @@ dma_msg_s deserializer(axi512_i_t axi)
 		}
 	}
 	
-	// If the write data was valid, write the modified word back into buffer
+	// If the write data was valid,
+	// 	 write the modified word back into front/top of shift buffer
+	//	 shift buffer if high bytes written
 	if(axi.wvalid)
 	{
-		// Write word
-		uint8_t words[DMA_MSG_WORDS][DMA_WORD_SIZE];
-		words = deserializer_msg_buffer.words;
-		words[word_pos] = word;
-		deserializer_msg_buffer.words = words;
-		// Write valid
-		// This entire word is valid if upper part was written (assume lower already was)
-		uint1_t valids[DMA_MSG_WORDS];
-		valids = deserializer_msg_buffer.valids;
-		valids[word_pos] = keep_upper;
-		deserializer_msg_buffer.valids = valids;
-		// Increment byte pos
-		if(keep_lower & keep_upper)
+		// Write word into buffer
+		deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word;
+		// Shift buffer and increment to clear for next word 
+		// if current word high bytes written and next bytes will be for next word
+		if(keep_upper)
 		{
-			deserializer_byte_pos = deserializer_byte_pos + 64;
-		}
-		else if(keep_lower | keep_upper)
-		{
-			deserializer_byte_pos = deserializer_byte_pos + 32;
+			uint32_t word_i;
+			for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
+			{
+				deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
+			}
+			deserializer_word_pos = deserializer_word_pos + 1;
 		}
 	}
 	
@@ -111,18 +97,13 @@ dma_msg_s deserializer(axi512_i_t axi)
 	msg.data = deserializer_unpack(deserializer_msg_buffer);
 	
 	// Message done/valid?
-	// If all the words are now valid then msg valid + do reset
-	uint1_t all_words_done;
-	all_words_done = uint1_array_and64(deserializer_msg_buffer.valids);
-	msg.valid = all_words_done;
-	if(all_words_done)
+	msg.valid = 0;
+	if(deserializer_word_pos == DMA_MSG_WORDS)
 	{
-		// Reset word valids
-		uint32_t word_i;
-		for(word_i=0; word_i<DMA_MSG_WORDS; word_i = word_i + 1)
-		{
-			deserializer_msg_buffer.valids[word_i] = 0;
-		}
+		// Validate output message
+		msg.valid = 1;
+		// Reset pos
+		deserializer_word_pos = 0;
 	}
 
   return msg;
@@ -157,7 +138,6 @@ serializer_word_buffer_t serializer_pack(dma_msg_t msg)
 //    Store/fifo these and respond to each correctly
 typedef struct serializer_read_request_t
 {
-   dma_msg_size_t byte_addr;
    dma_msg_size_t burst_words;
    uint1_t valid;
 } serializer_read_request_t;
@@ -171,6 +151,7 @@ serializer_word_buffer_t serializer_msg_buffer;
 uint1_t serializer_msg_buffer_valid;
 serializer_state_t serializer_state;
 serializer_read_request_t serializer_curr_read_request;
+dma_msg_size_t serializer_word_pos;
 axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 {	
 	// Start by outputing axi_out defaults
@@ -214,7 +195,6 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 	{
 		// Form new request
 		serializer_read_request_t new_read_request;
-		new_read_request.byte_addr = axi_in.araddr;
 		// The burst length for AXI4 is defined as,
 	  // Burst_Length = AxLEN[7:0] + 1,
 		new_read_request.burst_words = axi_in.arlen + 1;
@@ -223,7 +203,7 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 		serializer_read_request_buffer[SER_READ_REQ_BUFF_SIZE-1] = new_read_request;	
 	}
 	
-	// What entry is at the front of the buffer?
+	// What entry is at the front of the buffer? Maybe used
 	serializer_read_request_t next_read_request;
 	next_read_request = serializer_read_request_buffer[0];
 	
@@ -236,9 +216,12 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 	// And trying to read those buffers?
 	uint1_t trying_read_buffers;
 	trying_read_buffers = (serializer_state == GET_READ_REQ);
-	// Shift if empty or successfully pulling entry from front
+	// Then suceeded at reading front from front
+	uint1_t read_good;
+	read_good = have_buffers & trying_read_buffers;
+	// Shift if front empty or reading good entry from front
 	uint1_t do_shift;
-	do_shift = front_empty | (have_buffers & trying_read_buffers);
+	do_shift = front_empty | read_good;
 	if(do_shift)
 	{
 		uint32_t buff_i;
@@ -261,21 +244,22 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 	}
 	else if(serializer_state == SERIALIZE)
 	{
-		// Select the word to go on the bus
-		dma_msg_size_t serializer_word_pos;
-		serializer_word_pos = serializer_curr_read_request.byte_addr >> LOG2_DMA_WORD_SIZE; // /DMA_WORD_SIZE
-		uint8_t words[DMA_MSG_WORDS][DMA_WORD_SIZE];
-		words = serializer_msg_buffer.words;
+		// Select the word from front of buffer
 		uint8_t word[DMA_WORD_SIZE];
-		word = words[serializer_word_pos];
-		
+		word = serializer_msg_buffer.words[0];
+				
 		// Put it on the bus
 		axi_out.rdata = word;
 		axi_out.rvalid = 1;
 		
-		// Increment pos
-		serializer_curr_read_request.byte_addr = serializer_curr_read_request.byte_addr + 64;
+		// Increment pos and shift [0] out of buffer buffer
+		serializer_word_pos = serializer_word_pos + 1;
 		serializer_curr_read_request.burst_words = serializer_curr_read_request.burst_words - 1;
+		uint32_t word_i;
+		for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
+		{
+			serializer_msg_buffer.words[word_i] = serializer_msg_buffer.words[word_i+1];
+		}
 		
 		// End this serialization?
 		if(serializer_curr_read_request.burst_words==0)
@@ -286,10 +270,11 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 			serializer_state = GET_READ_REQ;
 		}
 		
-		// Done with the whole message message?
-		if(serializer_curr_read_request.byte_addr==DMA_MSG_SIZE)
+		// Done with the whole DMA message?
+		if(serializer_word_pos==DMA_MSG_SIZE)
 		{
 			serializer_msg_buffer_valid = 0;
+			serializer_word_pos = 0;
 		}
 	}  
   

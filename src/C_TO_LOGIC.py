@@ -622,7 +622,8 @@ class Logic:
 								#print 0/0
 								sys.exit(0)
 						# Got match, first is subset of second, update first to match second
-						self.wire_drives[orig_var] = second_driven_wires
+						if len(second_driven_wires) > 0:
+							self.wire_drives[orig_var] = second_driven_wires
 						for second_driven_wire in second_driven_wires:
 							self.wire_driven_by[second_driven_wire] = second_logic.wire_driven_by[second_driven_wire]
 						
@@ -729,8 +730,7 @@ class Logic:
 		
 		return None
 		
-	# Not to be removed? Ya know, special bitch
-	def WIRE_IS_SPECIAL_WIRE(self,wire):
+	def WIRE_ALLOW_NO_DRIVE(self,wire,FuncLogicLookupTable):
 		if wire in self.variable_names:
 			return True
 		if wire in self.inputs:
@@ -741,15 +741,46 @@ class Logic:
 			return True
 		if wire in self.volatile_global_wires:
 			return True
-		if SUBMODULE_MARKER in wire:
+		# Only input ports are allowed to not drive anything
+		if (SUBMODULE_MARKER in wire):
+			toks = wire.split(SUBMODULE_MARKER)
+			submodule_inst = toks[0]
+			submodule_func_name = self.submodule_instances[submodule_inst]
+			if submodule_func_name not in FuncLogicLookupTable:
+				print "self.func_name", self.func_name
+				print "wire",wire
+				print "No func def for sub", submodule_func_name
+				print FuncLogicLookupTable
+				sys.exit(0)
+				
+			submodule_logic = FuncLogicLookupTable[submodule_func_name]
+			port_name = toks[1]
+			if port_name in submodule_logic.inputs:
+				return True
+			return False
+		return False
+		
+	def WIRE_DO_NOT_COLLAPSE(self, wire):
+		if wire in self.variable_names:
 			return True
+		if wire in self.inputs:
+			return True
+		if wire in self.outputs:
+			return True
+		if wire in self.global_wires:
+			return True
+		if wire in self.volatile_global_wires:
+			return True
+		if (SUBMODULE_MARKER in wire):
+			return True			
+		
 		return False
 	
-	def REMOVE_WIRE_RECURSIVE(self, wire):
+	def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, FuncLogicLookupTable):
 		#print self.func_name, "Removing", wire
 		#print "DEBUG: Not removing", wire
 		#return None
-				
+
 		self.wires.discard(wire)				
 		self.wire_to_c_type.pop(wire, None)
 		
@@ -765,7 +796,7 @@ class Logic:
 				self.wire_drives[driving_wire] = all_driven_wires
 			else:
 				# Driving wire no longer drives anything, recurse to delete it too
-				self.REMOVE_WIRE_RECURSIVE(driving_wire)
+				self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driving_wire, FuncLogicLookupTable)
 				#self.wire_drives.pop(driving_wire)
 				
 			# Remove record of wire being driven by driving-wire
@@ -777,12 +808,41 @@ class Logic:
 			self.wire_drives.pop(wire, None)
 			# And remove all the driven wires too
 			for driven_wire in driven_wires:
-				self.REMOVE_WIRE_RECURSIVE(driven_wire)		
+				self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driven_wire, FuncLogicLookupTable)
+				
+		# Is this wire a submodule port?
+		if SUBMODULE_MARKER in wire:
+			toks = wire.split(SUBMODULE_MARKER)
+			if len(toks) > 2:
+				print "What berries? Goji Berries - Rubik"
+				sys.exit(0)
+			submodule_inst = toks[0]
+			submodule_func_name = self.submodule_instances[submodule_inst]
+			submodule_logic = FuncLogicLookupTable[submodule_func_name]
+			# Do the output ports drive anything now? 
+			# (know this output port wire doesnt)
+			all_outputs_disconnected = True
+			for output_port in submodule_logic.outputs:
+				submodule_output_wire = submodule_inst + SUBMODULE_MARKER + output_port
+				if submodule_output_wire in self.wire_drives:
+					# Still drives something
+					all_outputs_disconnected = False
 			
-		
+			# Rip up the submodule
+			if all_outputs_disconnected:
+				# Rip up wires starting at its inputs
+				for in_port in submodule_logic.inputs:
+					submodule_input_wire = submodule_inst + SUBMODULE_MARKER + in_port
+					if submodule_input_wire in self.wires:
+						self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(submodule_input_wire, FuncLogicLookupTable)
+				# Finally remove submodule itself
+				self.REMOVE_SUBMODULE(submodule_inst, submodule_logic.inputs)
+				
 	# Intentionally return None
-	# TODO: REMOVE_WIRES
 	def REMOVE_SUBMODULE(self,submodule_inst, input_port_names):		
+		# Remove from list of subs yo
+		self.submodule_instances.pop(submodule_inst,None)		
+		
 		# Make list of wires that look like
 		#		submodule_inst + SUBMODULE_MARKER
 		# SHOULD ONLY BE INPUT AND OUTPUT WIRES + submodule name
@@ -811,7 +871,7 @@ class Logic:
 			self.wires = self.wires - io_wires
 				
 		for io_wire in io_wires:
-			self.wire_to_c_type.pop(io_wire)
+			self.wire_to_c_type.pop(io_wire, None)
 		
 		# Super sloo?
 		
@@ -833,23 +893,21 @@ class Logic:
 		# Only inputs	
 		for in_wire in in_wires:
 			# IO wire is driven by thing
-			driving_wire = self.wire_driven_by[in_wire]
-			# Remove io wire from opposite direction
-			all_driven_wires = self.wire_drives[driving_wire]
-			all_driven_wires.remove(in_wire)
-			if len(all_driven_wires) > 0:
-				self.wire_drives[driving_wire] = all_driven_wires
-			else:
-				self.wire_drives.pop(driving_wire)
-			# Then remove original direction
-			self.wire_driven_by.pop(in_wire)
+			if in_wire in self.wire_driven_by:
+				driving_wire = self.wire_driven_by[in_wire]
+				# Remove io wire from opposite direction
+				all_driven_wires = self.wire_drives[driving_wire]
+				all_driven_wires.discard(in_wire)
+				if len(all_driven_wires) > 0:
+					self.wire_drives[driving_wire] = all_driven_wires
+				else:
+					self.wire_drives.pop(driving_wire,None)
+				# Then remove original direction
+				self.wire_driven_by.pop(in_wire, None)
 		
 
-		# Shouldnt need these since submodule connnections dont make assignment aliases?
-		#self.wire_aliases_over_time = REMOVE_WIRES(io_wires, self.wire_aliases_over_time, False, True)
-		#self.alias_to_orig_var_name = REMOVE_WIRES(io_wires, self.alias_to_orig_var_name, True, False)
-		#self.alias_to_driven_ref_toks = REMOVE_WIRES(io_wires, self.alias_to_driven_ref_toks, True, False)
-		
+		# Shouldnt need to remove wire aliases since submodule connnections dont make assignment aliases?
+
 		return None
 		
 		
@@ -2901,6 +2959,9 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 			print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
 			print "driving_aliases_over_time",driving_aliases_over_time
 			print "remaining_ref_toks_set",remaining_ref_toks_set
+			print "This is either my problem or your code doesnt drive all your local variables..."
+			print "Why you so angry at me?"
+			print " 	The Lemon Twigs - Baby, Baby"
 			sys.exit(0)
 
 		alias = driving_aliases_over_time[i]
@@ -2964,6 +3025,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 				#print "first_driving_alias",first_driving_alias
 				#print "first_driving_alias_c_type",first_driving_alias_c_type
 				print "="
+				print "This is either my problem or your code doesnt drive all your local variables..."
 				sys.exit(0)
 				
 			alias = driving_aliases_over_time[i]
@@ -3630,7 +3692,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
 		
 		# Now that constant condition evaluated
 		# Remove dummy COND wire and anything driving it / driven by it?
-		parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(COND_DUMMY)
+		parser_state.existing_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(COND_DUMMY, parser_state.FuncLogicLookupTable)
 		
 		# If the condition is true, do an iteration of the body statement
 		# Otherwise stop loop
@@ -5124,9 +5186,7 @@ def FIND_CONST_DRIVING_WIRE(wire, logic):
 			return None		
 
 #def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
-def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node, check_types_do_cast=True):
-	#print "driving_wire",driving_wire,"=>",driven_wire_names
-	
+def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node, check_types_do_cast=True):	#print "driving_wire",driving_wire,"=>",driven_wire_names
 	# Add wire
 	parser_state.existing_logic.wires.add(driving_wire)	
 	for driven_wire_name in driven_wire_names:
@@ -5232,7 +5292,8 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 	for driven_wire_name in driven_wire_names:
 			all_driven_wire_names.add(driven_wire_name)
 	# Save
-	parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wire_names
+	if len(all_driven_wire_names) > 0:
+		parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wire_names
 	# Record wire_driven_by
 	for driven_wire_name in driven_wire_names:
 		parser_state.existing_logic.wire_driven_by[driven_wire_name] = driving_wire		
@@ -5354,42 +5415,6 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 		print "No return statement in function:", parser_state.existing_logic.func_name
 		sys.exit(0)
 		
-	# Some code creates logic that will optimize away
-	# But actually the amount of generated VHDL can be too much
-	# So manually prune logic
-	# Look for wires that do not drive anything
-	#		Note: output ports and submodule input ports are 
-	#   the only wires that can stay and not drive anything internal to module
-	#   Inputs for some faked funcs with no func body need to be saved too
-	# 	Original variable wires dont drive things because alias will drive instead; int x; x=1;
-	for wire in set(parser_state.existing_logic.wires): # Copy for iter
-		if (wire not in parser_state.existing_logic.wire_drives) and (not parser_state.existing_logic.WIRE_IS_SPECIAL_WIRE(wire)):
-			#print parser_state.existing_logic.func_name, "Removing", wire
-			parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)	
-			
-	# Songs: Ohia - Farewell Transmission
-	# Not all wires are necessary
-	# In fact, any wire that is not a sub/module port is probably extra?
-	# Use 'SPECIAL_WIRE'
-	# bytes to inputs 58K before
-	making_changes = True
-	while making_changes:
-		making_changes = False
-		for wire in set(parser_state.existing_logic.wires): # Copy for iter
-			# Look for not special wires that have driving info
-			if not parser_state.existing_logic.WIRE_IS_SPECIAL_WIRE(wire) and (wire in parser_state.existing_logic.wire_driven_by) and (wire in parser_state.existing_logic.wire_drives):
-				making_changes = True
-				# Get driving info
-				driving_wire = parser_state.existing_logic.wire_driven_by[wire]				
-				driven_wires = parser_state.existing_logic.wire_drives[wire]
-				# Remove record of this wire driving anything so removal doesnt progate forward, only backwards
-				parser_state.existing_logic.wire_drives.pop(wire)
-				# Make new connection before ripping up old wire
-				parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
-				# Totally remove old wire
-				parser_state.existing_logic.REMOVE_WIRE_RECURSIVE(wire)
-				#break # Needed?	Wanted?
-		
 	# Write cache
 	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
 	
@@ -5419,6 +5444,61 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
 			start = None
 	print text
 	return start
+	
+def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
+	parser_state.existing_logic = func_logic
+	# Some code creates logic that will optimize away
+	# But actually the amount of generated VHDL can be too much
+	# So manually prune logic
+	# Look for wires that do not drive anything
+	#		Note: submodule input ports are 
+	#   the only wires that can stay and not drive anything to module
+	#   Inputs for some faked funcs with no func body need to be saved too
+	# 	Original variable wires dont drive things because alias will drive instead; int x; x=1;
+	for wire in set(func_logic.wires): # Copy for iter
+		drives_nothing = (wire not in func_logic.wire_drives)
+		must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVE(wire, parser_state.FuncLogicLookupTable)
+		if drives_nothing and must_drive_something:
+			#print func_logic.func_name, "Removing", wire
+			func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+		#else:
+		#	print func_logic.func_name, "NOT Removing", wire
+		#	print "drives_nothing",drives_nothing
+		#	if not drives_nothing:
+		#		print func_logic.wire_drives[wire]
+		#	print "must_drive_something",must_drive_something
+			
+			
+	# Songs: Ohia - Farewell Transmission
+	# Not all wires are necessary
+	# In fact, any wire that is not a sub/module port is probably extra?
+	# Use 'WIRE_DO_NOT_COLLAPSE' to collapse connections down to submodule port connections
+	making_changes = True
+	while making_changes:
+		making_changes = False
+		for wire in set(func_logic.wires): # Copy for iter
+			# Look for not special wires that have driving info
+			if not func_logic.WIRE_DO_NOT_COLLAPSE(wire) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
+				making_changes = True
+				# Get driving info
+				driving_wire = func_logic.wire_driven_by[wire]				
+				driven_wires = func_logic.wire_drives[wire]
+				# Remove record of this wire driving anything so removal doesnt progate forward, only backwards
+				func_logic.wire_drives.pop(wire)
+				# Make new connection before ripping up old wire
+				func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
+				# Totally remove old wire
+				func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+				#break # Needed?	Wanted?
+				
+				
+	# Do for each submodule too
+	for submodule_inst in func_logic.submodule_instances:
+		submodule_func_name = func_logic.submodule_instances[submodule_inst]
+		submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+		parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
+		
+	return parser_state
 	
 
 def DEL_ALL_CACHES():
@@ -5582,6 +5662,10 @@ def PARSE_FILE(top_level_func_name, c_filename):
 		main_func_logic = parser_state.FuncLogicLookupTable["main"]
 		c_ast_node_when_used = parser_state.FuncLogicLookupTable[top_level_func_name].c_ast_node
 		parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(top_level_func_name, top_level_func_name, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
+		
+		# Remove excess user code
+		print "Doing obvious logic trimming/collapsing..."
+		parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
 		
 		# Write c code
 		print "Writing generated pipelined C code to output directories..."

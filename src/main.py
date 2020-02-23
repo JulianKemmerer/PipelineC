@@ -55,6 +55,7 @@ print "	Redo old code to use for loops instead of generated code (ex. float div)
 print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
 print "	CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)"
+print "	Only parse to logic funcs if used, do recursive from main() isntead of all func defs in c text"
 
 print "================== Parsing C Code to Logical Hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
