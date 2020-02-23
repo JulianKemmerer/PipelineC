@@ -1922,10 +1922,10 @@ def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep
 	
 	# What is the combinatorial logic delay?
 	# Populate table as all 0 clk
-	ZeroClockTimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+	ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
 		
 	# Run syn (should be done already)
-	sweep_state.timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, ZeroClockTimingParams, INF_MHZ, 0)
+	sweep_state.timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, ZeroClockTimingParamsLookupTable, INF_MHZ, 0)
 	curr_mhz = 1000.0 / sweep_state.timing_report.path_delay
 	
 	# How many multiples are we away from the goal
