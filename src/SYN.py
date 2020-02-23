@@ -156,6 +156,18 @@ class TimingParams:
 		return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 		
 		
+		
+		
+		
+def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable):
+	ZeroClockTimingParamsLookupTable = dict()
+	for logic_inst_name in LogicInstLookupTable: 
+		logic_i = LogicInstLookupTable[logic_inst_name]
+		timing_params_i = TimingParams(logic_inst_name, logic_i)
+		ZeroClockTimingParamsLookupTable[logic_inst_name] = timing_params_i
+	return ZeroClockTimingParamsLookupTable
+			
+
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
 	key = Logic.func_name
@@ -189,11 +201,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
 	
 	
 	# Populate table as all 0 clk
-	ZeroClockLogicInst2TimingParams = dict()
-	for logic_inst_name in parser_state.LogicInstLookupTable: 
-		logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-		timing_params_i = TimingParams(logic_inst_name, logic_i)
-		ZeroClockLogicInst2TimingParams[logic_inst_name] = timing_params_i
+	ZeroClockLogicInst2TimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
 	
 	# Get params for this logic
 	#print "Logic.func_name",Logic.func_name
@@ -1118,11 +1126,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
 # Returns index of bad slices
 def GET_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, write_files=True, rounding_so_fuck_it=False):
 	# Reset to initial timing params before adding slices
-	TimingParamsLookupTable = dict()
-	for logic_inst_name in parser_state.LogicInstLookupTable: 
-		logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-		timing_params_i = TimingParams(logic_inst_name, logic_i)
-		TimingParamsLookupTable[logic_inst_name] = timing_params_i
+	TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
 	
 	# Do slice to main logic for each slice
 	for current_slice_i in current_slices:
@@ -1203,7 +1207,7 @@ def DO_SYN_WITH_SLICES(current_slices, inst_name, Logic, zero_clk_pipeline_map, 
 	
 
 class SweepState:
-	def __init__(self, zero_clk_pipeline_map):
+	def __init__(self, zero_clk_pipeline_map, zero_clk_timing_params_lookup):
 		# Slices by default is empty
 		self.current_slices = []
 		self.seen_slices=[] # list of above lists
@@ -1218,11 +1222,11 @@ class SweepState:
 		self.zero_clk_pipeline_map = zero_clk_pipeline_map # was deep copy
 		self.slice_step = 0.0
 		self.stages_adjusted_this_latency = {0 : 0} # stage -> num times adjusted
-		self.TimingParamsLookupTable = None # Current timing params with current slices
+		self.TimingParamsLookupTable = zero_clk_timing_params_lookup # Current timing params with current slices
 		self.fine_grain_sweep = False
 		
 		
-def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map):	
+def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map, zero_clk_timing_params_lookup):	
 	# Try to use cache
 	cached_sweep_state = GET_MOST_RECENT_CACHED_SWEEP_STATE(Logic)
 	sweep_state = None
@@ -1231,7 +1235,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map):
 		sweep_state = cached_sweep_state
 	else:
 		print "Starting with blank sweep state..."
-		sweep_state = SweepState(zero_clk_pipeline_map)
+		sweep_state = SweepState(zero_clk_pipeline_map, zero_clk_timing_params_lookup)
 	
 	return sweep_state
 	
@@ -1889,8 +1893,11 @@ def DO_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz,skip_course_s
 	zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state)
 	print zero_clk_pipeline_map
 	
+	# Populate timing lookup table as all 0 clk
+	ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+	
 	# Default sweep state is zero clocks ... this is cleaner
-	sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map)
+	sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(Logic, zero_clk_pipeline_map, ZeroClockTimingParamsLookupTable)
 	
 	print ""
 	orig_total_delay = zero_clk_pipeline_map.zero_clk_max_delay
@@ -1915,11 +1922,7 @@ def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep
 	
 	# What is the combinatorial logic delay?
 	# Populate table as all 0 clk
-	ZeroClockTimingParams = dict()
-	for logic_inst_name in parser_state.LogicInstLookupTable: 
-		logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-		timing_params_i = TimingParams(logic_inst_name, logic_i)
-		ZeroClockTimingParams[logic_inst_name] = timing_params_i
+	ZeroClockTimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
 		
 	# Run syn (should be done already)
 	sweep_state.timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, ZeroClockTimingParams, INF_MHZ, 0)
@@ -2636,11 +2639,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(main_logic, parser_state):
 	# TODO parallelize this
 	print "Starting with combinatorial logic..."	
 	# initial params are 0 clk latency for all submodules
-	TimingParamsLookupTable = dict()
-	for logic_inst_name in parser_state.LogicInstLookupTable: 
-		logic = parser_state.LogicInstLookupTable[logic_inst_name]
-		timing_params = TimingParams(logic_inst_name, logic)
-		TimingParamsLookupTable[logic_inst_name] = timing_params
+	TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
 	
 	print "Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?"
 	WRITE_ALL_ZERO_CLK_VHDL_PACKAGES(main_logic, parser_state, TimingParamsLookupTable)

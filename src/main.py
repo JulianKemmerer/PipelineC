@@ -15,8 +15,8 @@ c_file = "main.c"
 top_level_func_name = "main"
 
 # AWS example runs at 125
-# However, experiments show we need margin to meet timing at scalez
-mhz = 180.0
+# However, experiments show we might need margin to meet timing at scalez
+mhz = 125.0
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
