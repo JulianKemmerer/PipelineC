@@ -48,12 +48,84 @@ work_outputs_t work_fpga(work_inputs_t inputs)
 	return work_outputs;
 }
 
+// Thanks internet
+void DumpHex(const void* data, size_t size) {
+	char ascii[17];
+	size_t i, j;
+	ascii[16] = '\0';
+	for (i = 0; i < size; ++i) {
+		printf("%02X ", ((unsigned char*)data)[i]);
+		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+			ascii[i % 16] = ((unsigned char*)data)[i];
+		} else {
+			ascii[i % 16] = '.';
+		}
+		if ((i+1) % 8 == 0 || i+1 == size) {
+			printf(" ");
+			if ((i+1) % 16 == 0) {
+				printf("|  %s \n", ascii);
+			} else if (i+1 == size) {
+				ascii[(i+1) % 16] = '\0';
+				if ((i+1) % 16 <= 8) {
+					printf(" ");
+				}
+				for (j = (i+1) % 16; j < 16; ++j) {
+					printf("   ");
+				}
+				printf("|  %s \n", ascii);
+			}
+		}
+	}
+}
+
+
 // Init + do some work + close
 int main(int argc, char **argv) 
 {
 	// Init direct memory access to/from FPGA
 	init_dma();
-		
+	
+	// Create a test byte array
+	dma_msg_t msg_in;
+	for(int i = 0; i < DMA_MSG_SIZE; i++)
+	{
+		msg_in.data[i] = i;
+	}
+	
+	// Write it
+	dma_write(msg_in);
+	
+	// Read it back
+	dma_msg_t msg_out;
+	msg_out = dma_read();
+	
+	// Compare
+	bool match = true;
+	int bad_i = -1;
+	for(int i = 0; i < DMA_MSG_SIZE; i++)
+	{
+		if(msg_in.data[i] != msg_out.data[i])
+		{
+				match = false;
+				bad_i = i;
+		}
+	}
+	
+	if(match)
+	{
+		printf("Test pass.\n"); 
+	}
+	else
+	{
+		printf("Test fail.\n");
+		printf("IN:\n");
+		DumpHex(&(msg_in.data[0]), DMA_MSG_SIZE);
+		printf("OUT:\n");
+		DumpHex(&(msg_out.data[0]), DMA_MSG_SIZE);
+	}
+	
+	
+	/*
 	// Do something using the function 'work_fpga()'
 	// which uses the FPGA to compute the 'work()' function
 	
@@ -105,6 +177,7 @@ int main(int argc, char **argv)
 	{
 		compare(i,cpu_outputs[i],fpga_outputs[i]);
 	}
+	*/
 
 	// Close direct memory access to/from FPGA
 	close_dma();    
