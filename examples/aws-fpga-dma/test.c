@@ -118,6 +118,8 @@ int main(int argc, char **argv)
 	else
 	{
 		printf("Test fail. %d\n",bad_i);
+		printf("%d\n",msg_in.data[bad_i]);
+		printf("%d\n",msg_out.data[bad_i]);
 		printf("IN:\n");
 		DumpHex(&(msg_in.data[0]), DMA_MSG_SIZE);
 		printf("OUT:\n");
