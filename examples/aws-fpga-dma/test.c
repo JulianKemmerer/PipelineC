@@ -108,6 +108,7 @@ int main(int argc, char **argv)
 		{
 				match = false;
 				bad_i = i;
+				break;
 		}
 	}
 	
