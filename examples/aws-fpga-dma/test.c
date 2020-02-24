@@ -87,9 +87,15 @@ int main(int argc, char **argv)
 	
 	// Create a test byte array
 	dma_msg_t msg_in;
-	for(int i = 0; i < DMA_MSG_SIZE; i++)
+	int chunk = 32;
+	uint8_t val = 0;
+	for(int i = 0; i < DMA_MSG_SIZE; i+= chunk)
 	{
-		msg_in.data[i] = i;
+		for(int j = 0; j < chunk; j++)
+		{
+			msg_in.data[i+j] = val;
+		}
+		val++;
 	}
 	
 	// Write it
