@@ -101,36 +101,41 @@ int main(int argc, char **argv)
 	// Write it
 	dma_write(msg_in);
 	
-	// Read it back
-	dma_msg_t msg_out;
-	msg_out = dma_read();
-	
-	// Compare
-	bool match = true;
-	int bad_i = -1;
-	for(int i = 0; i < DMA_MSG_SIZE; i++)
+	// Do read twice
+	for(int read_i = 0; read_i<2;read_i++)
 	{
-		if(msg_in.data[i] != msg_out.data[i])
+	
+		// Read it back
+		dma_msg_t msg_out;
+		msg_out = dma_read();
+		
+		// Compare
+		bool match = true;
+		int bad_i = -1;
+		for(int i = 0; i < DMA_MSG_SIZE; i++)
 		{
-				match = false;
-				bad_i = i;
-				break;
+			if(msg_in.data[i] != msg_out.data[i])
+			{
+					match = false;
+					bad_i = i;
+					break;
+			}
 		}
-	}
-	
-	if(match)
-	{
-		printf("Test pass.\n"); 
-	}
-	else
-	{
-		printf("Test fail. %d\n",bad_i);
-		printf("%d\n",msg_in.data[bad_i]);
-		printf("%d\n",msg_out.data[bad_i]);
-		printf("IN:\n");
-		DumpHex(&(msg_in.data[0]), DMA_MSG_SIZE);
-		printf("OUT:\n");
-		DumpHex(&(msg_out.data[0]), DMA_MSG_SIZE);
+		
+		if(match)
+		{
+			printf("Test pass.\n"); 
+		}
+		else
+		{
+			printf("Test fail. %d\n",bad_i);
+			printf("%d\n",msg_in.data[bad_i]);
+			printf("%d\n",msg_out.data[bad_i]);
+			printf("IN:\n");
+			DumpHex(&(msg_in.data[0]), DMA_MSG_SIZE);
+			printf("OUT:\n");
+			DumpHex(&(msg_out.data[0]), DMA_MSG_SIZE);
+		}
 	}
 	
 	
