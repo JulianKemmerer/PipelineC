@@ -8,8 +8,7 @@
 //		ASSUMES ALWAYS READY FOR INPUT AND OUTPUT.
 
 // DMA data comes in chunks of 64B
-#define DMA_WORD_SIZE 64 
-#define LOG2_DMA_WORD_SIZE 6
+#define DMA_WORD_SIZE 64
 #define DMA_MSG_WORDS (DMA_MSG_SIZE/DMA_WORD_SIZE)
 typedef struct dma_word_buffer_t
 {
@@ -39,7 +38,7 @@ dma_word_buffer_t deserializer_msg_buffer;
 dma_msg_s deserializer(axi512_i_t axi)
 {
 	// Circular buffer
-	// Read word from front/top (upper addr bytes) of shift reg
+	// Read word from front/top (upper addr word) of circular buff
 	uint8_t word[DMA_WORD_SIZE];
 	word = deserializer_msg_buffer.words[DMA_MSG_WORDS-1];
 
@@ -54,26 +53,28 @@ dma_msg_s deserializer(axi512_i_t axi)
 		}
 	}
 	
-	// If the write data was valid,
-	// 	 write the modified word back into front/top of shift buffer
-	//	 shift buffer if high bytes written
+	// Handle the write data if valid
 	if(axi.wvalid)
 	{
-		// Write word into buffer
+		// Write modified word back into buffer
 		deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word;
 		// If current word high bytes written then next bytes will be for next word
-		// Do circular buffer and increment to clear for next word 
 		if(axi.wstrb[DMA_WORD_SIZE-1])
 		{
-			uint8_t word0[DMA_WORD_SIZE];
-			word0 = deserializer_msg_buffer.words[0];
-			uint32_t word_i;
-			for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
-			{
-				deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
-			}
-			deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
+			// Increment pos for next word
 			deserializer_word_pos = deserializer_word_pos + 1;
+			// Shift circular buffer to make room for next word if this is not the last word
+			if(deserializer_word_pos != DMA_MSG_WORDS)
+			{
+				uint8_t word0[DMA_WORD_SIZE];
+				word0 = deserializer_msg_buffer.words[0];
+				uint32_t word_i;
+				for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
+				{
+					deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
+				}
+				deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
+			}
 		}
 	}
 	
