@@ -101,12 +101,13 @@ int main(int argc, char **argv)
 	// Write it
 	dma_write(msg_in);
 	
-	// Do read twice
-	for(int read_i = 0; read_i<2;read_i++)
+	// Do read N times
+	dma_msg_t msg_out;
+	int n_times = 100;
+	for(int read_i = 0; read_i<n_times;read_i++)
 	{
 	
 		// Read it back
-		dma_msg_t msg_out;
 		msg_out = dma_read();
 		
 		// Compare
@@ -128,13 +129,14 @@ int main(int argc, char **argv)
 		}
 		else
 		{
-			printf("Test fail. %d\n",bad_i);
-			printf("%d\n",msg_in.data[bad_i]);
-			printf("%d\n",msg_out.data[bad_i]);
+			printf("Test %d fail. Index=%d\n",read_i, bad_i);
+			printf("IN 0x%x\n",msg_in.data[bad_i]);
+			printf("OUT 0x%x\n",msg_out.data[bad_i]);
 			printf("IN:\n");
 			DumpHex(&(msg_in.data[0]), DMA_MSG_SIZE);
 			printf("OUT:\n");
 			DumpHex(&(msg_out.data[0]), DMA_MSG_SIZE);
+			break;
 		}
 	}
 	

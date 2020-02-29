@@ -115,7 +115,7 @@ dma_word_buffer_t serializer_pack(dma_msg_t msg)
 // 1. Respond to writes immediately 
 // 2. Buffer incoming DMA messages to serialize
 // 3. Since no flow control 
-//		N reads can show up back to back repsenting 
+//		N reads can show up back to back representing 
 //    the software read of the enitre DMA_MSG_SIZE bytes
 //    Store/fifo these and respond to each correctly
 typedef struct serializer_read_request_t
