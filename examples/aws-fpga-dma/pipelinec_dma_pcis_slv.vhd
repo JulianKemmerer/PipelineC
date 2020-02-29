@@ -22,7 +22,7 @@ port
 	axi_arvalid : in unsigned(0 downto 0);
 	axi_arlen   : in unsigned(7 downto 0);
 	axi_awlen   : in unsigned(7 downto 0);
-	axi_wstrb   : in unsigned(0 to 63);
+	axi_wstrb   : in unsigned(63 downto 0);
 	axi_awid    : in unsigned(5 downto 0);
 	-- Outputs
 	axi_arready : out unsigned(0 downto 0);
