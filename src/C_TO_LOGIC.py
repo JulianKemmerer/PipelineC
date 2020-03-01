@@ -745,6 +745,14 @@ class Logic:
 		if (SUBMODULE_MARKER in wire):
 			toks = wire.split(SUBMODULE_MARKER)
 			submodule_inst = toks[0]
+			# Uh if inst doesnt exist then problem....
+			if submodule_inst not in self.submodule_instances:
+				print "self.func_name", self.func_name
+				print "wire",wire
+				print "No submodule instance called", submodule_inst
+				print 0/0
+				sys.exit(0)
+			# Otherwise proceed checking for inputs
 			submodule_func_name = self.submodule_instances[submodule_inst]
 			if submodule_func_name not in FuncLogicLookupTable:
 				print "self.func_name", self.func_name
@@ -752,7 +760,6 @@ class Logic:
 				print "No func def for sub", submodule_func_name
 				print FuncLogicLookupTable
 				sys.exit(0)
-				
 			submodule_logic = FuncLogicLookupTable[submodule_func_name]
 			port_name = toks[1]
 			if port_name in submodule_logic.inputs:
@@ -5456,11 +5463,12 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 	#   Inputs for some faked funcs with no func body need to be saved too
 	# 	Original variable wires dont drive things because alias will drive instead; int x; x=1;
 	for wire in set(func_logic.wires): # Copy for iter
-		drives_nothing = (wire not in func_logic.wire_drives)
-		must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVE(wire, parser_state.FuncLogicLookupTable)
-		if drives_nothing and must_drive_something:
-			#print func_logic.func_name, "Removing", wire
-			func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+		if wire in func_logic.wires: # Changes during iter
+			drives_nothing = (wire not in func_logic.wire_drives)
+			must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVE(wire, parser_state.FuncLogicLookupTable)
+			if drives_nothing and must_drive_something:
+				#print func_logic.func_name, "Removing", wire
+				func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
 		#else:
 		#	print func_logic.func_name, "NOT Removing", wire
 		#	print "drives_nothing",drives_nothing
@@ -5477,19 +5485,20 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 	while making_changes:
 		making_changes = False
 		for wire in set(func_logic.wires): # Copy for iter
-			# Look for not special wires that have driving info
-			if not func_logic.WIRE_DO_NOT_COLLAPSE(wire) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
-				making_changes = True
-				# Get driving info
-				driving_wire = func_logic.wire_driven_by[wire]				
-				driven_wires = func_logic.wire_drives[wire]
-				# Remove record of this wire driving anything so removal doesnt progate forward, only backwards
-				func_logic.wire_drives.pop(wire)
-				# Make new connection before ripping up old wire
-				func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
-				# Totally remove old wire
-				func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
-				#break # Needed?	Wanted?
+			if wire in func_logic.wires: # Changes during iter
+				# Look for not special wires that have driving info
+				if not func_logic.WIRE_DO_NOT_COLLAPSE(wire) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
+					making_changes = True
+					# Get driving info
+					driving_wire = func_logic.wire_driven_by[wire]				
+					driven_wires = func_logic.wire_drives[wire]
+					# Remove record of this wire driving anything so removal doesnt progate forward, only backwards
+					func_logic.wire_drives.pop(wire)
+					# Make new connection before ripping up old wire
+					func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
+					# Totally remove old wire
+					func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+					#break # Needed?	Wanted?
 				
 				
 	# Do for each submodule too
