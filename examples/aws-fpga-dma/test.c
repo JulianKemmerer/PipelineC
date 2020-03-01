@@ -85,29 +85,23 @@ int main(int argc, char **argv)
 	// Init direct memory access to/from FPGA
 	init_dma();
 	
-	// Create a test byte array
-	dma_msg_t msg_in;
-	int chunk = 32;
-	uint8_t val = 0;
-	for(int i = 0; i < DMA_MSG_SIZE; i+= chunk)
-	{
-		for(int j = 0; j < chunk; j++)
-		{
-			msg_in.data[i+j] = val;
-		}
-		val++;
-	}
-	
-	// Write it
-	dma_write(msg_in);
-	
-	// Do read N times
-	dma_msg_t msg_out;
+	// Do test N times
 	int n_times = 100;
-	for(int read_i = 0; read_i<n_times;read_i++)
+	for(int test_i = 0; test_i<n_times;test_i++)
 	{
+	
+		// Create a test byte array
+		dma_msg_t msg_in;
+		for(int i = 0; i < DMA_MSG_SIZE; i++)
+		{
+			msg_in.data[i] = rand();
+		}
+		
+		// Write it
+		dma_write(msg_in);
 	
 		// Read it back
+		dma_msg_t msg_out;
 		msg_out = dma_read();
 		
 		// Compare
@@ -125,11 +119,11 @@ int main(int argc, char **argv)
 		
 		if(match)
 		{
-			printf("Test pass.\n"); 
+			printf("Test %d pass.\n", test_i); 
 		}
 		else
 		{
-			printf("Test %d fail. Index=%d\n",read_i, bad_i);
+			printf("Test %d fail. Index=%d\n",test_i, bad_i);
 			printf("IN 0x%x\n",msg_in.data[bad_i]);
 			printf("OUT 0x%x\n",msg_out.data[bad_i]);
 			printf("IN:\n");
