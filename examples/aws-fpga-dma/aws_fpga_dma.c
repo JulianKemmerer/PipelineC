@@ -4,7 +4,7 @@
 #include "dma_msg_hw.c"
 #include "work_hw.c"
 
-// IO is mostly the PCIS AXI-4 bus
+// IO is the PCIS AXI-4 bus
 typedef struct aws_fpga_dma_inputs_t
 {
   axi512_i_t pcis;
@@ -19,7 +19,6 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   dma_msg_s msg_in;
   msg_in = deserializer(i.pcis);
   
-  /*
   // Convert incoming DMA message bytes to 'work' inputs
   work_inputs_t work_inputs;
   work_inputs = bytes_to_inputs(msg_in.data);
@@ -32,17 +31,17 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   dma_msg_s msg_out;
   msg_out.data = outputs_to_bytes(work_outputs);
   msg_out.valid = msg_in.valid;
-  */
   
   // Put output message into outgoing DMA read data when requested
   aws_fpga_dma_outputs_t o;
-  //o.pcis = serializer(msg_out, i.pcis);
-  o.pcis = serializer(msg_in, i.pcis);
+  o.pcis = serializer(msg_out, i.pcis);
   
   return o;
 }
 
-/*
+
+
+/* Multi read reg sketch?
 // Writer of i reg
 // 0 clk func
 i_r
