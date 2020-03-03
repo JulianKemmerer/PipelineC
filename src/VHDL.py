@@ -53,10 +53,10 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
 
 
-def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, name_timing_info=True):	
+def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=False):	
 	timing_params = TimingParamsLookupTable[inst_name]
 	
-	if name_timing_info:
+	if not is_final_top:
 		filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
 	else:
 		filename = Logic.func_name + ".vhd"
@@ -72,7 +72,7 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
-	if name_timing_info:
+	if not is_final_top:
 		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	else:
 		rv += "entity " + Logic.func_name + " is" + "\n"
@@ -92,26 +92,28 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	
 	rv += ");" + "\n"
 	
-	if name_timing_info:
+	if not is_final_top:
 		rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
 	else:
 		rv += "end " + Logic.func_name + ";" + "\n"
 
-	if name_timing_info:
+	if not is_final_top:
 		rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
 	else:
 		rv += "architecture arch of " + Logic.func_name + " is" + "\n"
 		
 	# Dont touch IO
-	rv += "attribute dont_touch : string;\n"
+	if not is_final_top:
+		rv += "attribute dont_touch : string;\n"
 	
 	# The inputs of the logic
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
 		rv += "signal " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
-		# Dont touch
-		rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+		if not is_final_top:
+			# Dont touch
+			rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
 		
 	rv += "\n"
 	
@@ -119,8 +121,9 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
 	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
 	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
-	# Dont touch
-	rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + '''_output_reg : signal is "true";\n'''
+	if not is_final_top:
+		# Dont touch
+		rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + '''_output_reg : signal is "true";\n'''
 
 	
 	# Write vhdl func if needed

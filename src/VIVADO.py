@@ -555,7 +555,7 @@ def WRITE_FINAL_FILES(inst_name, Logic,TimingParamsLookupTable, parser_state):
 	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
 	
 	# Write an entity without timing info so name stays the same
-	VHDL.WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, name_timing_info=False)
+	VHDL.WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=True)
 		
 	# Write read_vhdl.tcl
 	clock_mhz = 1000.0 #doesnt matter read_vhdl only
