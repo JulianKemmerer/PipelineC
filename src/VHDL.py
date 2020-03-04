@@ -764,7 +764,7 @@ end function;
 	
 	return rv
 	
-def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,name_timing_info=True):	
+def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_top=False):	
 	# Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
 	if Logic.is_vhdl_func or Logic.is_vhdl_expr:
 		print "Why write vhdl func/expr entity?"
@@ -773,7 +773,7 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	
 	timing_params = TimingParamsLookupTable[inst_name]
 	
-	if name_timing_info:
+	if not is_final_top:
 		filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
 	else:
 		filename = Logic.func_name + ".vhd"
@@ -800,7 +800,7 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 			num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
 	rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
 	
-	if name_timing_info:
+	if not is_final_top:
 		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	else:
 		rv += "entity " + Logic.func_name + " is" + "\n"
@@ -820,12 +820,12 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	
 	rv += ");" + "\n"
 	
-	if name_timing_info:
+	if not is_final_top:
 		rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
 	else:
 		rv += "end " + Logic.func_name + ";" + "\n"
 			
-	if name_timing_info:
+	if not is_final_top:
 		rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
 	else:
 		rv += "architecture arch of " + Logic.func_name + " is" + "\n"
