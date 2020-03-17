@@ -16,7 +16,7 @@ top_level_func_name = "main"
 
 # AWS example runs at 125
 # However, experiments show we might need margin to meet timing at scalez
-mhz = 125.0
+mhz = 156.25 #125.0 # 125 * 1.25 = 156.25
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
