@@ -1936,12 +1936,12 @@ def DO_COURSE_THROUGHPUT_SWEEP(inst_name, Logic, parser_state, target_mhz, sweep
 	
 	# Divide up into that many clocks as a starting guess
 	clks = int(mult) - 1
-	print "Starting guess is",clks,"clocks latency..."
 	sweep_state.total_latency = clks
 	
 	last_loop = False
 	last_non_passing_latency = None
 	while True:
+		print "Current guess is",sweep_state.total_latency,"clocks latency..."
 		done = False
 		reached_max = False
 		''' TEMP ONLY DO FIRST ITERATION while not done:'''

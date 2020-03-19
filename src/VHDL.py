@@ -1008,8 +1008,16 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	rv += "	" + "	" + "	" + "-- Mux in inputs\n"
 	for input_wire in Logic.inputs:
 		rv += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
+	
+	## mux global regs into wires
+	#if len(Logic.global_wires) > 0:
+	#	rv += "	" + "	" + "	" + "-- Mux in globals\n"
+	#	for global_wire in Logic.global_wires:
+	#		rv += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := write_global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + ";\n"
+			
+	
+	# Also mux volatile global regs into wires
 	if len(Logic.volatile_global_wires) > 0:
-		# Also mux volatile global regs into wires
 		rv += "	" + "	" + "	" + "-- Mux in volatile globals\n"
 		for volatile_global_wire in Logic.volatile_global_wires:
 			rv += "	" + "	" + "	" + "read_pipe." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
@@ -1030,6 +1038,10 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	rv += "	" + "	" + "write_self_regs(STAGE) := write_pipe;\n"
 	rv += "	" + "end loop;\n"
 	rv += "\n"
+	#if len(Logic.global_wires) > 0:
+	#	rv += "	" + "-- Last stage of pipeline global wires write to function global regs\n"
+	#	for global_wire in Logic.global_wires:
+	#		rv += "	" + "write_global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(global_wire, Logic) + ";\n"
 	if len(Logic.volatile_global_wires) > 0:
 		rv += "	" + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
 		for volatile_global_wire in Logic.volatile_global_wires:
@@ -1278,8 +1290,20 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
 	# GLOBAL?
 	elif driving_wire_to_handle in logic.global_wires:
 		#print "DRIVING WIRE GLOBAL"						
-		# Globals come from input regs to this process
-		RHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+		# Globals are special since can contain backwards logic, ex.
+		#
+		#     end of func driving wire -> global_reg -> start of func input wire
+		#       	*Logic connects the right side back to the left (assumes global state depends on current state)
+		#	Since both end+start wires have the same name it looks equivalent to
+		#    start of func input wire -> end of func driving wire -> global_reg
+		# Also could think about it sort of like of bidir port?
+		# BLAH hope this is right. Vote for Bernie Sanders.
+		# To clarify whats going on, force use of read_global_regs
+		# 	This is correct to do for other special
+		#	 	'only used as read' wires like inputs, but not required since those
+		# 	other wires dont have this same looping backwards behavior
+		RHS = "read_global_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+	
 	# Volatile globals are like regular wires
 	else:
 		# Otherwise use regular wire connection
@@ -1296,7 +1320,7 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 	# GLOBAL?
 	elif driven_wire_to_handle in logic.global_wires:
 		#print "DRIVING WIRE GLOBAL"						
-		# Globals come from input regs to this process
+		# Use write side as expected, RHS is special case using read side
 		LHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
 	# Volatile globals are like regular wires
 	else:

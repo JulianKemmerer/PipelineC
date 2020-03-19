@@ -787,7 +787,11 @@ class Logic:
 		#print self.func_name, "Removing", wire
 		#print "DEBUG: Not removing", wire
 		#return None
-
+		
+		# Stop recursion if reached special wire
+		if self.WIRE_DO_NOT_COLLAPSE(wire):
+			return
+		
 		self.wires.discard(wire)				
 		self.wire_to_c_type.pop(wire, None)
 		
