@@ -22,7 +22,7 @@ work_inputs_t work_inputs_init(int i)
 // Helper to compare two output datas
 void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 {
-	float ep = max_val / 10000.0; // 1/10000th of range;
+	float ep = max_val / 1000.0; // 1/1000th of range;
 	if(fabs(fpga.sum - cpu.sum) > ep)
 	{
 		printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
