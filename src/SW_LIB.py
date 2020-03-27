@@ -7,6 +7,7 @@ from pycparser import c_parser, c_ast, c_generator
 
 import C_TO_LOGIC
 import VHDL
+import SYN
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)
@@ -14,8 +15,55 @@ import VHDL
 BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
 MEM_HEADER_FILE = "mem.h"
+TYPE_ARRAY_HEADER_FILE = "type_array_t.h"
 RAM_SP_RF="RAM_SP_RF"
 
+
+
+def WRITE_PRE_PARSE_GEN_CODE(top_level_func_name, c_filename):
+	# Run a series of regular expressions on the exisiting code
+	# Auto generate code based on what is found
+	print "Generating code based on PipelineC supported text patterns..."
+	
+	# Read file
+	c_text = open(c_filename).read()
+	
+	## Use preprocessor function
+	#c_text = C_TO_LOGIC.preprocess_text(file_text)
+	
+	# type_array_t - Since C can return constant size arrays
+	GEN_TYPE_ARRAY_T_H(top_level_func_name, c_filename, c_text)
+
+
+def FIND_REGEX_MATCHES(regex, text):
+	p = re.compile(regex)
+	matches = p.findall(text)
+	matches = list(set(matches))
+	return matches
+
+def GEN_TYPE_ARRAY_T_H(top_level_func_name, c_filename, c_text):
+	text = "#pragma once\n"
+
+	# Regex search c_text for <type>_array_<num>_t
+	r="\w+_array_[0-9]+_t"
+	array_types = FIND_REGEX_MATCHES(r, c_text)
+	
+	# Typedef each one
+	for array_type in array_types:
+		#print "array_type",array_type
+		toks = array_type.split("_array_")
+		elem_t = toks[0]
+		size_str = toks[1].replace("_t","")		
+		text += '''
+typedef struct ''' + array_type + '''
+{
+	''' + elem_t + ''' data[''' + size_str + '''];
+} ''' + array_type + ''';'''
+
+	# Write file, even if empty
+	out_filename = TYPE_ARRAY_HEADER_FILE
+	out_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + out_filename
+	open(out_path,'w').write(text)
 
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_file, parser_state):
 	# Use preprocessor to get text
@@ -1523,20 +1571,27 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	
 	
 	text = ""
-	
+
 	text += '''
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
-
-// Var ref read
 '''
-	# Do type defs for input structs and output array (if output is array)
+	#	Do type defs for input structs and output array (if output is array)
+	# And base type too
 	for input_wire in partially_complete_logic.inputs:
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
 		if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(input_t, parser_state):
 			text += '''typedef uint8_t ''' + input_t + "; // FUCK\n"
 	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(output_t, parser_state):
 		text += '''typedef uint8_t ''' + output_t + "; // FUCK\n"
+	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(base_c_type, parser_state):
+		text += '''typedef uint8_t ''' + base_c_type + "; // FUCK\n"
+
+	text += '''
+#include "''' + TYPE_ARRAY_HEADER_FILE + '''"
+
+// Var ref read
+'''
 
 	text += output_t + ''' ''' + func_c_name + '''('''
 	
@@ -1803,10 +1858,8 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 	text += '''
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
-
-// Var ref assignment\n'''
-
-	# Do type defs for input structs and output array (if output is array)
+'''
+	#	Do type defs for input structs and output array (if output is array)
 	# And base type too
 	for input_wire in partially_complete_logic.inputs:
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
@@ -1816,6 +1869,11 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 		text += '''typedef uint8_t ''' + output_t + "; // FUCK\n"
 	if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(base_c_type, parser_state):
 		text += '''typedef uint8_t ''' + base_c_type + "; // FUCK\n"
+
+	text += '''
+#include "''' + TYPE_ARRAY_HEADER_FILE + '''"
+
+// Var ref assignment\n'''
 
 	# FUNC DEF
 	text += output_t + ''' ''' + func_c_name + '''('''

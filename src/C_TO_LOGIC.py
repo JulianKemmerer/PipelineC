@@ -19,7 +19,7 @@ import SYN
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 REF_TOK_DELIM = "__REF__" # This is dumb, so am I
-DUMB_ARRAY_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I
+DUMB_ARRAY_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I  
 CONST_PREFIX="CONST_"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
@@ -51,6 +51,8 @@ BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
 BIN_OP_DIV_NAME = "DIV"
 
+# CPP args, mostly for including generated code 
+CPP_ARG_SYN_DIR = "-I" + SYN.SYN_OUTPUT_DIRECTORY
 
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
 def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
@@ -68,7 +70,9 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
     if isinstance(cpp_args, list):
         path_list += cpp_args
     elif cpp_args != '':
-        path_list += [cpp_args]
+        path_list += [cpp_args]  
+    if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
+			path_list += [CPP_ARG_SYN_DIR]
     path_list += [filename]
 
     try:
@@ -84,9 +88,9 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
             'Make sure its path was passed correctly\n' +
             ('Original error: %s' % e))
     except Exception as e:
-		print "Something went wrong preprocessing:"
-		print "File:",filename
-		raise e
+			print "Something went wrong preprocessing:"
+			print "File:",filename
+			raise e
 
     return text
     
@@ -104,17 +108,22 @@ def preprocess_text(text, cpp_path='cpp'):
     """
     
 	path_list = [cpp_path]
+	if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
+			path_list += [CPP_ARG_SYN_DIR]
 	path_list += ["-"] # TO read from std in
 
 	try:
 		# Note the use of universal_newlines to treat all newlines
 		# as \n for Python's purpose
 		#
+		#print path_list
 		pipe = Popen(   path_list,
 						stdout=PIPE,
 						stdin=PIPE,
                         universal_newlines=True)
         # Send in C text and get output
+		#print "cpping..."
+		#print "TEXT:",text
 		text = pipe.communicate(input=text)[0]
 	except OSError as e:
 		raise RuntimeError("Unable to invoke 'cpp'.  " +
@@ -5625,6 +5634,7 @@ def PARSE_FILE(top_level_func_name, c_filename):
 	try:
 		parser_state = ParserState()
 		print "Parsing PipelinedC code..."
+		SW_LIB.WRITE_PRE_PARSE_GEN_CODE(top_level_func_name, c_filename)
 		# Get the C AST
 		parser_state.c_file_ast = GET_C_FILE_AST(c_filename)
 		# Get the parsed struct def info
@@ -5641,7 +5651,14 @@ def PARSE_FILE(top_level_func_name, c_filename):
 		# Get the function definitions
 		parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
 		# Fuck me add struct info for array wrapper
-		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)		
+		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
+		
+		
+		
+		print "BLAH BLAH DO _post_ GEN CODE - WRITE TO DIR"
+		
+		
+		
 		
 		# Sanity check no duplicate globals
 		for g in parser_state.global_info:
@@ -5654,6 +5671,7 @@ def PARSE_FILE(top_level_func_name, c_filename):
 			print "There doesnt seem to be as function called '", top_level_func_name,"' in the file '",c_filename,"'"
 			sys.exit(0)
 			
+		'''	
 		# Check for double use of globals+volatiles the dumb way to print useful info
 		for func_name1 in parser_state.FuncLogicLookupTable:
 			func1_logic = parser_state.FuncLogicLookupTable[func_name1]
@@ -5666,7 +5684,7 @@ def PARSE_FILE(top_level_func_name, c_filename):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
-
+		'''
 		#print "TEMP STOP"
 		#sys.exit(0)
 		

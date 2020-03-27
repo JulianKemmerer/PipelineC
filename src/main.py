@@ -28,9 +28,10 @@ print '''
 '''
 
 print "TODO:"
-print "	Do clock crossing with globals, allow multiple reads of same global too will allow flow control and parallel pipelines!!  ....  ???'false path' volatile globals???"
-print "	Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? for faster elab"
-print "	Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])"
+print "	REMOVE DUMB_ARRAY_STRUCT_THING since implementinged public facing code gen"
+print "	Do combinatorial feed back some how - mabye looks like clock crossing?"
+print "	Do clock crossing somehow??? with globals?? allow multiple reads of same global too will allow flow control and parallel pipelines!!  ....  ???'false path' volatile globals???"
+print "	Really try for allow return types of fixed size arrays will make clock crossing easier."
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
@@ -56,6 +57,9 @@ print "	Fix for vhdl restricted words. Append _restricted?"
 print "	Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew"
 print "	CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)"
 print "	Only parse to logic funcs if used, do recursive from main() isntead of all func defs in c text"
+print "	Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?"
+print "	Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])"
+print "	Multiple reads on globals from pipelined logic is fine, do at some point..."
 
 print "================== Parsing C Code to Logical Hierarchy ================================"
 parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
