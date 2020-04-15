@@ -29,6 +29,19 @@ VIVADO_DEFAULT_ARGS = "-mode batch"
 VIVADO_PART="xcvu9p-flgb2104-2-i"  # xcvu9p-flgb2104-2-i = AWS F1, xc7a35ticsg324-1l = Arty
 TIMING_REPORT_DIVIDER="......................THIS IS THAT STUPID DIVIDER THING................"
 
+def GET_MAIN_FUNCS_FROM_TIMING_REPORT(timing_report, parser_state):
+	main_funcs = set()
+	# Include start and end regs in search 
+	all_netlist_resources = set(timing_report.netlist_resources)
+	all_netlist_resources.add(timing_report.start_reg_name)
+	all_netlist_resources.add(timing_report.end_reg_name)
+	for netlist_resource in all_netlist_resources:
+		toks = netlist_resource.split("/")
+		if toks[0] in parser_state.main_mhz:
+			main_funcs.add(toks[0])
+			
+	return main_funcs
+
 def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
 	# Parse the self offset from the reg names
 	# main_registers_r_reg     [self]      [0][MUX_rv_main_c_46_iftrue][17]/D
@@ -53,31 +66,54 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
 		sys.exit(0)
 		
 
-def GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, inst_name, logic, parser_state, TimingParamsLookupTable):
-	LogicLookupTable = parser_state.LogicInstLookupTable
-	
+def GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, parser_state, multimain_timing_params):	
 	# Get submodule inst
-	inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, LogicLookupTable)
+	inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state)
+	
+	# Get main func for the inst
+	main_func = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]
+	main_func_logic = parser_state.LogicInstLookupTable[main_func]
 	
 	# Get stage indices
-	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, inst_name, logic, parser_state, TimingParamsLookupTable)
+	when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
 	
 	# Global funcs are always 0 clock and thus offset 0
-	if LogicLookupTable[inst].uses_globals:
+	if parser_state.LogicInstLookupTable[inst].uses_globals:
 		self_offset = 0
 	else:
 		# Do normal check
 		self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
 	abs_stage = when_used + self_offset
-	return inst, abs_stage
+	return main_func, inst, abs_stage
+	
+# Dont have submodule "/" marker to work with so need to be dumb
+def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
+	# Silly loop over all main funcs for now -dumb
+	# Know io regs start with func name
+	rv_main_func = ""
+	for main_func in parser_state.main_mhz:
+		if reg_name.startswith(main_func) and len(main_func) > len(rv_main_func):
+			rv_main_func = main_func
+	
+	if rv_main_func == "":
+		print "No matching main func for io reg",reg_name
+		sys.exit(0)
+		
+	return rv_main_func
 	
 
+# DO have submodule "/" marker to work with
+def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
+	main_func = reg_name.split("/")[0]
+	if main_func not in parser_state.main_mhz:
+		print "Bad main from reg?",reg_name
+		sys.exit(0)
+	
+	return main_func
+
 # [possible,stage,indices]
-def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, logic, parser_state, TimingParamsLookupTable):	
+def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, parser_state, multimain_timing_params):
 	LogicLookupTable = parser_state.LogicInstLookupTable
-	timing_params = TimingParamsLookupTable[inst_name]
-	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	last_stage = total_latency
 	
 	start_reg_name = parsed_timing_report.start_reg_name
 	end_reg_name = parsed_timing_report.end_reg_name
@@ -101,6 +137,14 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 	end_names += end_aliases
 	
 	
+	'''
+	timing_params = TimingParamsLookupTable[inst_name]
+	total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	last_stage = total_latency
+	'''
+	
+	
+	possible_main_funcs = set()
 	possible_stages_indices = []	
 	# Loop over all possible start end pairs
 	for start_name in start_names:
@@ -109,50 +153,49 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 			if REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
 				print "	Path to and from register IO regs in top..."
 				possible_stages_indices.append(0)
+				possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
+				possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state))
 			elif REG_NAME_IS_INPUT_REG(start_name) and not(REG_NAME_IS_OUTPUT_REG(end_name)):
 				print "	Path from input register to pipeline logic..."
 				#start_stage = 0
 				possible_stages_indices.append(0)
+				possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
 			elif not(REG_NAME_IS_INPUT_REG(start_name)) and REG_NAME_IS_OUTPUT_REG(end_name):
 				print "	Path from pipeline logic to output register..."
+				main_func = GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state)
+				timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
+				total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
+				last_stage = total_latency
+				possible_main_funcs.add(main_func)
 				possible_stages_indices.append(last_stage)
+				
 			elif REG_NAME_IS_OUTPUT_REG(start_name):
 				print "	Path is loop from global register acting as output register from last stage?"
 				print "	Is this normal?"
 				sys.exit(0)
-				# Starting at output reg must be global combinatorial loop path in last stage
-				possible_stages_indices.append(last_stage)
+				
 			elif REG_NAME_IS_INPUT_REG(end_name):
 				# Ending at input reg must be global combinatorial loop in first stage
 				print "	Path is loop from global register acting as input reg in first stage?"
 				print "	Is this normal?"
 				sys.exit(0)
-				possible_stages_indices.append(0)
 			else:
 				# Start
-				start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(start_name, inst_name, logic, parser_state, TimingParamsLookupTable)
+				start_main_func, start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(start_name, parser_state, multimain_timing_params)
 				# End
-				end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_LOGIC_INST_AND_ABS_REG_INDEX(end_name, inst_name, logic, parser_state, TimingParamsLookupTable)
+				end_main_func, end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(end_name, parser_state, multimain_timing_params)
+							
+							
+				# Clock cross
+				if start_main_func != end_main_func:
+					print "TODO: Improve clock crossing paths"
+					print "Cross from", start_main_func, "to", end_main_func
+					sys.exit(0)
+				possible_main_funcs.add(start_main_func)					
 							
 				# Expect a one stage length path
 				if found_end_reg_abs_index - found_start_reg_abs_index != 1:
 					# Not normal path?
-					
-					'''
-					# Globals can be same module same reg index?
-					if "[global_regs]" in start_name and "[global_regs]" in end_name and found_start_reg_abs_index==found_end_reg_abs_index:
-						possible_stages_indices.append(found_start_reg_abs_index)
-					
-						# Dont need to handle volatiles separately since like regular regs in terms of path in pipeline?
-						
-					elif "[volatile_global_regs]" in start_name and "[volatile_global_regs]" in end_name and found_start_reg_abs_index<=found_end_reg_abs_index:
-						possible_stages_indices = range(found_start_reg_abs_index,found_end_reg_abs_index+1)
-						print "Double check volatile regs:"
-						print "	Start?:",found_start_reg_abs_index, start_name, start_inst
-						print "	End?:",found_end_reg_abs_index, end_name, end_inst
-			
-					else:
-					'''
 					print "	Unclear stages from register names..."
 					print "	Start?:",found_start_reg_abs_index, start_name
 					print "		", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
@@ -184,50 +227,25 @@ def FIND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, inst_name, log
 							max_bound = min(last_stage+1, max_bound+1)
 						stage_range = range(min_bound, max_bound)
 						for stage in stage_range:
-							possible_stages_indices.append(stage)				
-						
-					'''
-						#print "CHECK THIS!!!!^"
-						#raw_input("Press Enter to continue...")
+							possible_stages_indices.append(stage)			
+							
+							
+						#print "possible_stages_indices",possible_stages_indices
+						#print "TEMP UNCLEAR STOP"
 						#sys.exit(0)
-						
-						#If same value then assume? idk wtf
-						if found_end_reg_abs_index == found_start_reg_abs_index:
-							#### ??? possible_stages_indices.append(found_start_reg_abs_index+1) # comb->(stage0)->reg0->(stage1)->reg1 is a stage 1 path 
-							# Fuckit
-							possible_stages_indices.append(found_end_reg_abs_index)
-							if found_start_reg_abs_index+1 <= last_stage:
-								possible_stages_indices.append(found_start_reg_abs_index+1)
-						else:
-							# Sort them into new values
-							guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
-							guessed_end_reg_abs_index = max(found_start_reg_abs_index+1,found_end_reg_abs_index) # +1 since corresponding end index from start index is plus 1 
-							if guessed_end_reg_abs_index - guessed_start_reg_abs_index == 1:
-								# This seems like we got the start stage right?
-								#print "		Swapped indices, start reg index =", guessed_start_reg_abs_index
-								possible_stages_indices.append(guessed_start_reg_abs_index+1) # comb->(stage0)->reg0->(stage1)->reg1 is a stage 1 path 
-							else:
-								# Got a range of stages?
-								#print "		Found range of reg stage indices:", guessed_start_reg_abs_index,"to", guessed_end_reg_abs_index
-								rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index+1)
-								# Remove last stage
-								if last_stage in rv:
-									rv = range(guessed_start_reg_abs_index+1, guessed_end_reg_abs_index)
-								possible_stages_indices += rv
-								
-					''' 					
 				else:
 					# Normal 1 stage path
 					possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
 	
 	
 	# Get real range accounting for duplcates from renamed/merged regs
-	rv = sorted(list(set(possible_stages_indices)))
+	stage_range = sorted(list(set(possible_stages_indices)))
 	
+	main_func = None
+	if len(possible_main_funcs) == 1:
+		main_func = list(possible_main_funcs)[0]
 	
-	print "Stage range:",rv
-	
-	return rv
+	return main_func, stage_range
 		
 class ParsedTimingReport:
 	def __init__(self, syn_output):
@@ -253,6 +271,10 @@ class ParsedTimingReport:
 		self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
 		self.has_loops = True
 		self.has_latch_loops = True
+		self.netlist_resources = set() # Set of strings
+		
+		# Parsing state
+		in_netlist_resources = False
 		
 		# Parsing:	
 		syn_output_lines = single_timing_report.split("\n")
@@ -338,9 +360,27 @@ class ParsedTimingReport:
 			# LOGIC DELAY
 			tok1="Data Path Delay:        "
 			if tok1 in syn_output_line:
-				self.logic_delay = float(syn_output_line.split("  (logic ")[1].split("ns (")[0])			
+				self.logic_delay = float(syn_output_line.split("  (logic ")[1].split("ns (")[0])
 				
-				
+			# Netlist resources
+			tok1 = "    Location             Delay type                Incr(ns)  Path(ns)    "
+			#		Set
+			if tok1 in prev_line:
+				in_netlist_resources = True
+			if in_netlist_resources:
+				# Parse resource
+				start_offset = len(tok1)
+				if len(syn_output_line) > start_offset:
+					resource_str = syn_output_line[start_offset:].strip()
+					if len(resource_str) > 0:
+						if "/" in resource_str:						
+							#print "Resource: '",resource_str,"'"
+							self.netlist_resources.add(resource_str)
+				# Reset
+				tok1 = "                         slack"
+				if tok1 in syn_output_line:
+					in_netlist_resources = False				
+			
 			# LOOPS!
 			if "There are 0 combinational loops in the design." in syn_output_line:
 				self.has_loops = False
@@ -356,9 +396,10 @@ class ParsedTimingReport:
 				#do_debug=True
 				#print "ASSUMING LATENCY=",latency
 				#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-				#sys.exit(0)
+				sys.exit(0)
 			if "inferred exception to break timing loop" in syn_output_line:
 				print syn_output_line
+				sys.exit(0)
 			
 			# OK so apparently mult by self results in constants
 			# See scratch notes "wtf_multiply_by_self" dir
@@ -382,7 +423,7 @@ class ParsedTimingReport:
 			
 			# Unconnected ports are maybe problem?
 			if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
-				if "unconnected port clk" in syn_output_line:
+				if syn_output_line.endswith("unconnected port clk"):
 					# Clock NOT OK to disconnect
 					print "Disconnected clock!?",syn_output_line
 					sys.exit(0)
@@ -510,7 +551,7 @@ class ParsedTimingReport:
 			#do_debug=True
 			#print "ASSUMING LATENCY=",latency
 			#MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-			#sys.exit(0)
+			sys.exit(0)
 		
 		
 		# Multiple timign report stuff
@@ -531,35 +572,14 @@ class ParsedTimingReport:
 			self.worst_paths.append( (parsed_report.start_reg_name, parsed_report.end_reg_name, parsed_report.path_delay) )
 			# And add report 
 			self.worst_path_reports.append(parsed_report)
-			
-			
-			
-
-def GET_SLACK_NS(syn_output):
-	parsed_timing_report = ParsedTimingReport(syn_output)
-	return parsed_timing_report.slack_ns
-	
-def GET_NS_PER_CLOCK(syn_output):
-	parsed_timing_report = ParsedTimingReport(syn_output)
-	return parsed_timing_report.source_ns_per_clock
-	
-def GET_START_END_REGS(syn_output):
-	parsed_timing_report = ParsedTimingReport(syn_output)
-	return parsed_timing_report.start_reg_name,parsed_timing_report.end_reg_name
 	
 
-def WRITE_FINAL_FILES(inst_name, Logic,TimingParamsLookupTable, parser_state):
-	# This writes:
-	# 	The plain old main.vhd entity of the best timing result
-	# 	The read_vhdl.tcl containing most of the gnerated vhdl includes
-	output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
+	is_final_top = True
+	VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 	
-	# Write an entity without timing info so name stays the same
-	VHDL.WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=True)
-		
 	# Write read_vhdl.tcl
-	clock_mhz = 1000.0 #doesnt matter read_vhdl only
-	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state)
+	tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
 	rv_lines = []
 	for line in tcl.split('\n'):
 		if "read_vhdl" in line:
@@ -570,24 +590,18 @@ def WRITE_FINAL_FILES(inst_name, Logic,TimingParamsLookupTable, parser_state):
 		rv += line + "\n"
 	
 	# One more read_vhdl line for the final entity	with constant name
-	top_file_path = output_directory + "/" + Logic.func_name + ".vhd"
+	top_file_path = SYN.SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
 	rv += "read_vhdl -library work {" + top_file_path + "}\n"
 		
 	# Write file
 	out_filename = "read_vhdl.tcl"
-	out_filepath = output_directory+"/"+out_filename
+	out_filepath = SYN.SYN_OUTPUT_DIRECTORY+"/"+out_filename
 	f=open(out_filepath,"w")
 	f.write(rv)
 	f.close()
 
-
-def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingParamsLookupTable,clock_mhz, parser_state):
-	clk_xdc_filepath = WRITE_CLK_XDC(output_directory, clock_mhz)
-
-	# Bah tcl doesnt like brackets in file names
-	# Becuase dumb
-	
-	timing_params = TimingParamsLookupTable[inst_name]
+# inst_name=None means multimain
+def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None):
 	rv = ""
 	
 	# Add in VHDL 2008 fixed/float support?
@@ -602,58 +616,86 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 	# C defined structs
 	files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
 	
-	# Entity file
-	entity_filename = VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
-	files_txt += output_directory + "/" + entity_filename + " "
+	# Clocking crossing if needed
+
+	if not inst_name:
+		# Multimain needs clk cross entities
+		# Clock crossing entities
+		files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " "	
+			
+	needs_clk_cross_t = not inst_name # is multimain
+	if inst_name:
+		# Does inst need clk cross?
+		Logic = parser_state.LogicInstLookupTable[inst_name]
+		needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+		needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+		needs_clk_cross_t = needs_clk_cross_read or needs_clk_cross_write
+	if needs_clk_cross_t:
+		# Clock crossing record
+		files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL.VHDL_PKG_EXT + " "
+		
 	
 	# Top not shared
-	files_txt += output_directory + "/" +  VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd" + " "
-	
-	# ~~~~ NON ZERO CLOCK
-	# Maybe timing params should only be for non-zero clock?
-	# For now try to filter?
-	NonZeroClkTimingParamsLookupTable = dict()
-	ZeroClkTimingParamsLookupTable = dict()
-	for inst_i in TimingParamsLookupTable:
-		timing_params_i = TimingParamsLookupTable[inst_i]
-		if timing_params_i.slices != []:
-			NonZeroClkTimingParamsLookupTable[inst_i] = timing_params_i
-			ZeroClkTimingParamsLookupTable[inst_i] = SYN.TimingParams(inst_i, parser_state.LogicInstLookupTable[inst_i])
-		else:
-			# Is already zero clock
-			ZeroClkTimingParamsLookupTable[inst_i] = timing_params_i
+	top_entity_name = None
+	if inst_name:
+		Logic = parser_state.LogicInstLookupTable[inst_name]
+		output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+		top_entity_name = VHDL.GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
+		files_txt += output_directory + "/" + top_entity_name + VHDL.VHDL_FILE_EXT + " "
+	else:
+		# Hash for multi main is just hash of main pipes
+		hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+		# Entity and file name
+		top_entity_name = "top" + hash_ext
+		filename = top_entity_name + VHDL.VHDL_FILE_EXT
+		files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/top/" +  filename + " "
 		
-	# Files are per func name + timing param so dont duplicate
-	submodule_funcs = []
-	for submodule_inst_name in NonZeroClkTimingParamsLookupTable:
-		submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-		# ONly write non vhdl
-		if not submodule_logic.is_vhdl_func and not submodule_logic.is_vhdl_expr:
-			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic, NonZeroClkTimingParamsLookupTable, parser_state) + ".vhd"
-			if submodule_entity_filename not in submodule_funcs:			
-				submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
-				files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
-				submodule_funcs.append(submodule_entity_filename)		
+		
+	# Write all entities starting at this inst/multi main
+	inst_names = set()
+	if inst_name:
+		inst_names = set([inst_name])
+	else:
+		inst_names = set(parser_state.main_mhz.keys())
 	
-	
-	# ~~~~ ALL ZERO CLOCK
-	# Majority of funcs will have zero clock instance too (lower level funcs)
-	# All instances are from ZeroClkTimingParamsLookupTable so just pick any instance
-	for func_name in parser_state.FuncLogicLookupTable:
-		if func_name in parser_state.FuncToInstances:
-			submodule_inst_name = parser_state.FuncToInstances[func_name][0]
-			submodule_logic = parser_state.FuncLogicLookupTable[func_name]
+	func_name_slices_so_far = set() # of (func_name,slices) tuples
+	while len(inst_names) > 0:
+		next_inst_names = set()
+		for inst_name_i in inst_names:
+			logic_i = parser_state.LogicInstLookupTable[inst_name_i]
+			# Write file text
 			# ONly write non vhdl
-			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
+			if logic_i.is_vhdl_func or logic_i.is_vhdl_expr:
 				continue
-			submodule_entity_filename = VHDL.GET_ENTITY_NAME(submodule_inst_name, submodule_logic,ZeroClkTimingParamsLookupTable, parser_state) + ".vhd"	
-			submodule_syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(submodule_logic)
-			files_txt += submodule_syn_output_directory + "/" + submodule_entity_filename + " "
+			# Dont write clock cross
+			if SW_LIB.IS_CLOCK_CROSSING(logic_i):
+				continue
+			timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
+			func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))
+			if func_name_slices not in func_name_slices_so_far:
+				func_name_slices_so_far.add(func_name_slices)
+				# Include entity file for this functions slice variant
+				entity_filename = VHDL.GET_ENTITY_NAME(inst_name_i, logic_i,multimain_timing_params.TimingParamsLookupTable, parser_state) + ".vhd"	
+				syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(logic_i)
+				files_txt += syn_output_directory + "/" + entity_filename + " "
+
+			# Add submodules as next inst_names
+			for submodule_inst in logic_i.submodule_instances:
+				full_submodule_inst_name = inst_name_i + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+				next_inst_names.add(full_submodule_inst_name)
+					
+		# Use next insts as current
+		inst_names = set(next_inst_names)
 	
+	
+	# Bah tcl doesnt like brackets in file names
+	# Becuase dumb
 	
 	# Single read vhdl line
 	rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
-	
+		
+	# Write clock xdc and include it
+	clk_xdc_filepath = WRITE_CLK_XDC(parser_state, inst_name)
 	# Single xdc with single clock for now
 	rv += 'read_xdc {' + clk_xdc_filepath + '}\n'
 	
@@ -695,7 +737,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 		flatten_hierarchy_none = " -flatten_hierarchy none"
 	
 	# SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-	rv += "synth_design -top " + VHDL.GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top -part " + VIVADO_PART + flatten_hierarchy_none + retiming + "\n"
+	rv += "synth_design -top " + top_entity_name + " -part " + VIVADO_PART + flatten_hierarchy_none + retiming + "\n"
 	
 	# Report clocks
 	#rv += "report_clocks" + "\n"
@@ -707,23 +749,61 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name, Logic,output_directory,TimingPa
 
 
 # return path 
-def WRITE_CLK_XDC(output_directory, clock_mhz):
-	#out_filename = str(clock_mhz) + "MHz.xdc"
-	out_filename = "clock.xdc"
-	out_filepath = output_directory+"/"+out_filename
-	
-	# MHX to ns
-	ns = (1.0 / clock_mhz) * 1000.0
+def WRITE_CLK_XDC(parser_state, inst_name=None):
+	# Use specified mhz is multimain top
+	clock_name_to_mhz = dict()
+	if inst_name:
+		clock_name_to_mhz["clk"] = SYN.INF_MHZ
+		out_filename = "clock.xdc"
+		Logic = parser_state.LogicInstLookupTable[inst_name]
+		output_dir = SYN.GET_OUTPUT_DIRECTORY(Logic)
+		out_filepath = output_dir+"/"+out_filename
+	else:
+		out_filename = "clocks.xdc"
+		out_filepath = SYN.SYN_OUTPUT_DIRECTORY+"/"+out_filename
+		for main_func in parser_state.main_mhz:
+			clk_name = "clk_" + main_func
+			clock_name_to_mhz[clk_name] = parser_state.main_mhz[main_func]
 	
 	f=open(out_filepath,"w")
-	f.write("create_clock -add -name sys_clk_pin -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports clk]\n");
+	
+	# TEMP assume same clock
+	# TODO: multiple clock crossing timing paths in report
+	if len(set(parser_state.main_mhz.values())) > 1:
+		print "No multi clock for real yet!"
+		sys.exit(0)
+	clock_mhz = clock_name_to_mhz.values()[0]
+	ns = (1.0 / clock_mhz) * 1000.0
+	clock_name = "clk"
+	port_names = clock_name_to_mhz.keys()
+	f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports clk*]\n");
+	
+	#for clock_name in clock_name_to_mhz:
+	#	clock_mhz = clock_name_to_mhz[clock_name]
+	#	ns = (1.0 / clock_mhz) * 1000.0
+	#	f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");	
+	
 	f.close()
 	return out_filepath
 	
+# return path to tcl file
+def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(multimain_timing_params, parser_state):
+	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
+	hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+	out_filename = "top" + hash_ext + ".tcl"
+	out_filepath = SYN.SYN_OUTPUT_DIRECTORY +"/top/"+out_filename
+	f=open(out_filepath,"w")
+	f.write(syn_imp_and_report_timing_tcl)
+	f.close()
+	return out_filepath
+
 
 # return path to tcl file
 def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state):
-	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(inst_name,Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
+	# Make fake multimain params
+	multimain_timing_params = SYN.MultiMainTimingParams()
+	multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
+	syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name)
 	timing_params = TimingParamsLookupTable[inst_name]
 	hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)	
 	out_filename = Logic.func_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
@@ -733,6 +813,45 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,T
 	f.close()
 	return out_filepath
 	
+	
+def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
+	# First create directory for this logic
+	output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+	if not os.path.exists(output_directory):
+		os.makedirs(output_directory)
+	
+	# Set log path
+	# Hash for multi main is just hash of main pipes
+	hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+	log_path = output_directory + "/vivado" + hash_ext + ".log"
+	
+	# If log file exists dont run syn
+	if os.path.exists(log_path):
+		print "Reading log", log_path
+		f = open(log_path, "r")
+		log_text = f.read()
+		f.close()
+	else:
+		# O@O@()(@)Q@$*@($_!@$(@_$(
+		# Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
+		# meaning "procedure is named the same as the entity"
+		VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+		
+		# Write a syn tcl into there
+		syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(multimain_timing_params, parser_state)
+		
+		# Execute vivado sourcing the tcl
+		syn_imp_bash_cmd = (
+			VIVADO_PATH + " "
+			"-journal " + output_directory + "/vivado.jou" + " " + 
+			"-log " + log_path + " " +
+			VIVADO_DEFAULT_ARGS + " " + 
+			'-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
+		
+		print "Running:", syn_imp_bash_cmd
+		log_text = SYN.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
+
+	return ParsedTimingReport(log_text)
 	
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
@@ -776,8 +895,8 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
 		# Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
 		# meaning "procedure is named the same as the entity"
 		#VHDL.GENERATE_PACKAGE_FILE(Logic, parser_state, TimingParamsLookupTable, timing_params, output_directory)
-		VHDL.WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
-		VHDL.WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
+		VHDL.WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
+		VHDL.WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable)
 			
 		# Write xdc describing clock rate
 		
@@ -880,8 +999,10 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
 	return new_reg_name
 	
 # Get deepest in hierarchy possible match , msot specfic match
-def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, LogicInstLookupTable):
+def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
 	#print "DEBUG: REG:", reg_name
+	main_func = GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state)
+	main_func_logic = parser_state.LogicInstLookupTable[main_func]
 	
 	# Get matching submoduel isnt, dont care about var names after self or globals
 	if "[self]" in reg_name:
@@ -901,12 +1022,16 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, Logic
 		#print "Is this real?"
 		#print reg_name
 		#sys.exit(0)
+		inst_name = reg_toks[0]
+		if inst_name not in LogicInstLookupTable:
+			print "Bad inst name from reg?", inst_name, reg_name
+			sys.exit(0)
 		return inst_name
 		
 	# Assume starts with main
 	# Loop constructing more and more specific match
-	curr_logic = logic # Assumed to be main
-	curr_inst_name = inst_name
+	curr_logic = main_func_logic # Assumed to be main
+	curr_inst_name = main_func
 	curr_end_tok_index = 2 # First two toks joined
 	while curr_end_tok_index <= len(reg_toks):
 		curr_reg_str = "/".join(reg_toks[0:curr_end_tok_index])
@@ -937,7 +1062,7 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, inst_name, logic, Logic
 				sys.exit(0)
 			
 			# Use this submodule as next logic
-			curr_logic = LogicInstLookupTable[max_match_submodule_inst]
+			curr_logic = parser_state.LogicInstLookupTable[max_match_submodule_inst]
 			curr_inst_name = max_match_submodule_inst
 			
 		# Include next reg tok

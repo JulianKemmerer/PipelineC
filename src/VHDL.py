@@ -52,9 +52,212 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
 	else:
 		return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
 
+def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
+	text = ""
+	text += "library ieee;" + "\n"
+	text += "use ieee.std_logic_1164.all;" + "\n"
+	text += "use ieee.numeric_std.all;" + "\n"
+	# Include C defined structs
+	text += "use work.c_structs_pkg.all;\n"
+	# Include clock cross types
+	text += "use work.clk_cross_t_pkg.all;\n"
+	
+	# Hash for multi main is just hash of main pipes
+	hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+		
+	# Entity and file name
+	entity_name = ""
+	if not is_final_top:
+		entity_name = "top" + hash_ext
+	else:
+		entity_name = "top"	
+	filename = entity_name + VHDL_FILE_EXT
+	
+	text += '''
+	entity ''' + entity_name + ''' is
+port(
+	-- IO for each main func
+'''
+	# IO
+	for main_func in parser_state.main_mhz:
+		main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+		# Clk
+		text += "clk_" + main_func + " : in std_logic;\n"
+		# Inputs
+		for input_port in main_func_logic.inputs:
+			c_type = main_func_logic.wire_to_c_type[input_port]
+			vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
+			text += main_func + "_" + input_port + " : in " + vhdl_type + ";\n"
+		# Outputs
+		for output_port in main_func_logic.outputs:
+			c_type = main_func_logic.wire_to_c_type[output_port]
+			vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
+			text += main_func + "_" + output_port + " : out " + vhdl_type + ";\n"
+	
+	# Remove last two chars
+	text = text[0:len(text)-2]
+		
+	text += '''
+	);
+end ''' + entity_name + ''';
+architecture arch of ''' + entity_name + ''' is
+'''
 
-def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=False):	
+	# Clock cross wires
+	text += '''
+-- Clock cross wires
+signal clk_cross_read : clk_cross_read_t;
+signal clk_cross_write : clk_cross_write_t;
+'''
+ 
+	# Dont touch IO
+	if not is_final_top:
+		text += "attribute dont_touch : string;\n"
+		# IO
+		for main_func in parser_state.main_mhz:
+			main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+			# The inputs regs of the logic
+			for input_name in main_func_logic.inputs:
+				# Get type for input
+				vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,main_func_logic,parser_state)
+				text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, main_func_logic, parser_state) + ";" + "\n"
+				if not is_final_top:
+					# Dont touch
+					text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+				
+			text += "\n"
+			
+			# Output regs and signals
+			for output_port in main_func_logic.outputs:
+				output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port,main_func_logic,parser_state)
+				text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
+				text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+				if not is_final_top:
+					# Dont touch
+					text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+		text += "\n"
+	
+	
+	text += '''
+begin
+'''
+
+	# IO regs
+	if not is_final_top:
+		text += "\n"	
+		text += "	" + "-- IO regs\n"
+		
+		for main_func in parser_state.main_mhz:
+			text += "	" + "process(clk_" + main_func + ") is" + "\n"
+			text += "	" + "begin" + "\n"
+			text += "	" + "	" + "if rising_edge(clk_" + main_func + ") then" + "\n"
+			main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+			# Register inputs
+			for input_name in main_func_logic.inputs:
+				# Get type for input
+				vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,main_func_logic,parser_state)
+				text += "	" + "	" + "	" + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + ";" + "\n"
+				
+			# Output regs	
+			for out_wire in main_func_logic.outputs:
+				text += "	" + "	" + "	" + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output;" + "\n"
+			
+			text += "	" + "	" + "end if;" + "\n"		
+			text += "	" + "end process;" + "\n"
+		
+	# Output wire connection
+	if not is_final_top:
+		for main_func in parser_state.main_mhz:
+			main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+			# Connect to top output port
+			for out_wire in main_func_logic.outputs:
+				text += "	" + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + " <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg;" + "\n"
+
+	text += '''
+-- Instantiate each main
+'''
+	# Main instances
+	for main_func in parser_state.main_mhz:
+		main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+		main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
+		 
+		# ENTITY
+		main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func];
+		main_needs_clk = LOGIC_NEEDS_CLOCK(main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+		main_needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(main_func,main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+		main_needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_func,main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+		
+		new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
+		text += new_inst_name + " : entity work." + GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state) +" port map (\n"
+		# Clock
+		if main_needs_clk:
+			text += "clk_" + main_func + ",\n"
+		# Clock cross in
+		if main_needs_clk_cross_read:
+			text += "clk_cross_read,\n"
+		# Clock cross out	
+		if main_needs_clk_cross_write:
+			text += "clk_cross_write,\n"
+		# Inputs
+		for in_port in main_func_logic.inputs:
+			in_wire = main_func + "_" + in_port
+			text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic) 
+			if not is_final_top: 
+				text += "_input_reg"
+			text += ",\n"
+		# Outputs
+		for out_port in main_func_logic.outputs:
+			out_wire = main_func + "_" + out_port
+			text += WIRE_TO_VHDL_NAME(out_wire, main_func_logic)
+			if not is_final_top: 
+				text += "_output"
+			text += ",\n"
+			 
+		# Remove last two chars
+		text = text[0:len(text)-2]
+		text += ");\n\n"
+
+
+	# Clock crossings
+	text += '''
+	-- Instantiate each clock crossing
+'''
+	for var_name in parser_state.clk_cross_var_name_to_write_read_main_funcs:
+		read_func = var_name + "_READ"
+		write_func = var_name + "_WRITE"
+		write_main, read_main = parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name]
+		text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
+		(
+'''
+		# Clk in input
+		text += "clk_" + write_main + ",\n"
+		# Clk cross in data from pipeline output
+		text += "clk_cross_write." + write_func + ",\n"
+		# Clk out input
+		text += "clk_" + read_main + ",\n"
+		# Clk cross out data to pipeline input
+		text += "clk_cross_read." + read_func + "\n"
+		text += '''
+		);
+'''
+	
+	text += '''
+end arch;
+'''
+	output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+	if not os.path.exists(output_dir):
+		os.makedirs(output_dir)
+	f = open(output_dir + "/" + filename,"w")
+	f.write(text)
+	f.close()
+	
+
+def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=False):	
 	timing_params = TimingParamsLookupTable[inst_name]
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	
 	if not is_final_top:
 		filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
@@ -68,9 +271,11 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	rv += "use ieee.numeric_std.all;" + "\n"
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
+	if needs_clk_cross_read or needs_clk_cross_write:
+		# Include clock cross types
+		rv += "use work.clk_cross_t_pkg.all;\n"
 	
-	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
+	
 	
 	if not is_final_top:
 		rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
@@ -79,17 +284,25 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	
 	rv += "port(" + "\n"
 	rv += "	clk : in std_logic;" + "\n"
+	
+	# Clock cross as needed
+	if needs_clk_cross_read:
+		rv += "	clk_cross_read : in clk_cross_read_t;\n"
+	if needs_clk_cross_write:
+		rv += "	clk_cross_write : out clk_cross_write_t;\n"
+		
 	# The inputs of the logic
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
-		
 		rv += "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
 	
 	# Output is type of return wire
-	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
-	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
-	
+	for output_port in Logic.outputs:
+		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port,Logic,parser_state)
+		rv += "	" + WIRE_TO_VHDL_NAME(output_port, Logic) + " : out " + vhdl_type_str + ";" + "\n"
+
+	rv = rv.strip("\n").strip(";")
 	rv += ");" + "\n"
 	
 	if not is_final_top:
@@ -106,7 +319,7 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	if not is_final_top:
 		rv += "attribute dont_touch : string;\n"
 	
-	# The inputs of the logic
+	# The inputs regs of the logic
 	for input_name in Logic.inputs:
 		# Get type for input
 		vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
@@ -117,14 +330,23 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 		
 	rv += "\n"
 	
-	# Output reg and signal
-	output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
-	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
-	rv += "signal " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
-	if not is_final_top:
-		# Dont touch
-		rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + '''_output_reg : signal is "true";\n'''
+	# Output regs and signals
+	for output_port in Logic.outputs:
+		output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port,Logic,parser_state)
+		rv += "signal " + WIRE_TO_VHDL_NAME(output_port, Logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
+		rv += "signal " + WIRE_TO_VHDL_NAME(output_port, Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+		if not is_final_top:
+			# Dont touch
+			rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
 
+	rv += "\n"
+	
+	# Clock cross regs and signals
+	if needs_clk_cross_read:
+		rv += "signal clk_cross_read_input_reg : clk_cross_read_t;" + "\n"
+	if needs_clk_cross_write:
+		rv += "signal clk_cross_write_output : clk_cross_write_t;" + "\n"
+		rv += "signal clk_cross_write_output_reg : clk_cross_write_t;" + "\n"
 	
 	# Write vhdl func if needed
 	if Logic.is_vhdl_func:
@@ -136,7 +358,8 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	# As entity or as function?
 	if Logic.is_vhdl_func:
 		# FUNCTION INSTANCE
-		rv += WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output <= " + Logic.func_name + "(\n"
+		for output_port in Logic.outputs:
+			rv += WIRE_TO_VHDL_NAME(output_port, Logic) + "_output <= " + Logic.func_name + "(\n"
 		# Inputs from regs
 		for in_port in Logic.inputs:
 			rv += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
@@ -149,6 +372,11 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 		rv += GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" : entity work." + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" port map (\n"
 		if needs_clk:
 			rv += "clk,\n"
+		# Clock cross as needed
+		if needs_clk_cross_read:
+			rv += "	clk_cross_read_input_reg,\n"
+		if needs_clk_cross_write:
+			rv += "	clk_cross_write_output,\n"
 		# Inputs from regs
 		for in_port in Logic.inputs:
 			rv += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
@@ -175,14 +403,27 @@ def WRITE_VHDL_TOP(inst_name, Logic, output_directory, parser_state, TimingParam
 	for out_wire in Logic.outputs:
 		rv += "	" + "	" + "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output;" + "\n"
 	
+	# Clock cross registers
+	if needs_clk_cross_read:
+		rv += "	" + "	" + "	" + "clk_cross_read_input_reg <= clk_cross_read;" + "\n"
+	if needs_clk_cross_write:
+		rv += "	" + "	" + "	" + "clk_cross_write_output_reg <= clk_cross_write_output;" + "\n"
+	
 	rv += "	" + "	" + "end if;" + "\n"		
 	rv += "	" + "end process;" + "\n"
+	
+	# Connect to top output port
+	for out_wire in Logic.outputs:
+		rv += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) +" <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg;" + "\n"
 		
-	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) +" <= " + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + "_output_reg;" + "\n"
+	# Connect to top clk cross outputs
+	if needs_clk_cross_write:
+		rv += "	" + "clk_cross_write <= clk_cross_write_output_reg;" + "\n"	
+		
 	rv += "end arch;" + "\n"
 	
 	if not os.path.exists(output_directory):
-		os.mkdirs(output_directory)
+		os.makedirs(output_directory)
 	
 	#print "NOT WRIT TOP"
 	f = open(output_directory+ "/" + filename,"w")
@@ -295,13 +536,127 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsL
 	timing_params = TimingParamsLookupTable[inst_name]
 	package_file_text = ""
 	# Raw hdl logic is static in the stages code here but coded as generic
-	if len(logic.submodule_instances) <= 0 and logic.func_name != "main":
+	if len(logic.submodule_instances) <= 0 and logic.func_name not in parser_state.main_mhz:
 		package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
 	else:
 		package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable)
 	
 	return package_file_text
+	
+	
+def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
+	text = ""
+	
 
+	for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
+		write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]
+		# Simple only for now
+		if write_size != read_size:
+			print "Do better clock crossings!"
+			sys.exit(0)
+		c_type = parser_state.volatile_global_info[var_name].type_name
+		in_t = c_type + "_array_" + str(write_size) + "_t"
+		in_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(in_t, parser_state)
+		out_t = c_type + "_array_" + str(read_size) + "_t"
+		out_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(out_t, parser_state)
+		
+		text += '''
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use ieee.numeric_std.all;
+use work.c_structs_pkg.all; -- User types
+'''
+		
+		text += '''
+		entity clk_cross_''' + var_name + ''' is
+		port(
+			in_clk : in std_logic;
+			i : in ''' + in_vhdl_t + ''';
+			out_clk : in std_logic;
+			o : out ''' + out_vhdl_t + '''
+		);
+		end clk_cross_''' + var_name + ''';
+		architecture arch of clk_cross_''' + var_name + ''' is
+		begin
+			-- Assume same clock
+			o <= i;
+		end arch;
+		'''
+		
+	if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
+		os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)	
+	path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL_FILE_EXT
+	
+	f=open(path,"w")
+	f.write(text)
+	f.close()
+		
+		
+
+
+def WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state):
+	text = ""
+	text += '''
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use ieee.numeric_std.all;
+use work.c_structs_pkg.all; -- User types
+-- Clock crossings
+package clk_cross_t_pkg is
+'''
+	
+	#if len(parser_state.clk_cross_var_name_to_write_read_sizes.keys()) > 0:
+	# Write types
+	text += '''
+		type clk_cross_read_t is record
+		DUMMY : std_logic;
+'''
+	# Inputs
+	for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
+		# Clock cross inputs act as outputs from READ clock cross submodule
+		func_name = var_name + "_READ"
+		func_logic = parser_state.FuncLogicLookupTable[func_name]		
+		for output_port in func_logic.outputs:
+			# submodule instance name == Func name for clk cross since single instance?
+			output_port_wire = func_name + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+			c_type = func_logic.wire_to_c_type[output_port]
+			text += "			" + func_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
+
+	text += '''
+	end record;
+'''
+	
+	text += '''
+	type clk_cross_write_t is record
+	DUMMY : std_logic;
+'''
+	# Outputs
+	for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
+		# Clock cross outputs act as inputs to WRITE clock cross submodule
+		func_name = var_name + "_WRITE"
+		func_logic = parser_state.FuncLogicLookupTable[func_name]				
+		for input_port in func_logic.inputs:
+			# submodule instance name == Func name for clk cross since single instance?
+			input_port_wire = func_name + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+			c_type = func_logic.wire_to_c_type[input_port]
+			text += "			" + func_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
+	
+	text += '''
+	end record;
+'''
+	text += '''
+end clk_cross_t_pkg;
+'''
+	
+	if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
+		os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)	
+
+	path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL_PKG_EXT
+	
+	f=open(path,"w")
+	f.write(text)
+	f.close()
+	
 
 def WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state):
 	
@@ -477,6 +832,34 @@ end c_structs_pkg;
 	f=open(path,"w")
 	f.write(text)
 	f.close()
+
+def LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable):
+	# Look for clock cross submodule ending in _READ() implying input 
+	i_need_clk_cross_readput = SW_LIB.IS_CLOCK_CROSSING(Logic) and Logic.func_name.endswith("_READ")
+	
+	# Check submodules too
+	needs_clk_cross_read = i_need_clk_cross_readput
+	for inst in Logic.submodule_instances:
+		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+		submodule_logic_name = Logic.submodule_instances[inst]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		needs_clk_cross_read = needs_clk_cross_read or LOGIC_NEEDS_CLOCK_CROSS_READ(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+		
+	return needs_clk_cross_read
+	
+def LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable):
+	# Look for clock cross submodule ending in _WRITE() implying output 
+	i_need_clk_cross_writeput = SW_LIB.IS_CLOCK_CROSSING(Logic) and Logic.func_name.endswith("_WRITE")
+	
+	# Check submodules too
+	needs_clk_cross_write = i_need_clk_cross_writeput
+	for inst in Logic.submodule_instances:
+		instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+		submodule_logic_name = Logic.submodule_instances[inst]
+		submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+		needs_clk_cross_write = needs_clk_cross_write or LOGIC_NEEDS_CLOCK_CROSS_WRITE(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+	
+	return needs_clk_cross_write
 	
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
 	timing_params = TimingParamsLookupTable[inst_name]
@@ -536,7 +919,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 	varables_t_pre += "	-- All of the wires in function\n"
 	wrote_variables_t = False
 	# Raw HDL functions are done differently
-	if len(Logic.submodule_instances) <= 0 and Logic.func_name != "main":
+	if len(Logic.submodule_instances) <= 0 and Logic.func_name not in parser_state.main_mhz:
 		text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, Logic, parser_state, timing_params)
 		if text != "":
 			rv += varables_t_pre
@@ -678,6 +1061,9 @@ type volatile_global_registers_t is record'''
 		# Skip VHDL
 		if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 			continue
+		# Skip clock cross
+		if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+			continue
 		
 		rv += "-- " + instance_name + "\n"
 		# Inputs
@@ -764,7 +1150,7 @@ end function;
 	
 	return rv
 	
-def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_top=False):	
+def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_top=False):	
 	# Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
 	if Logic.is_vhdl_func or Logic.is_vhdl_expr:
 		print "Why write vhdl func/expr entity?"
@@ -778,6 +1164,11 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	else:
 		filename = Logic.func_name + ".vhd"
 		
+	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable)
+		
 	rv = ""
 	rv += "library ieee;" + "\n"
 	rv += "use ieee.std_logic_1164.all;" + "\n"
@@ -786,11 +1177,10 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	rv += "use ieee_proposed.float_pkg.all;" + "\n" #
 	# Include C defined structs
 	rv += "use work.c_structs_pkg.all;\n"
-	
-	latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-	needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
-	
-	
+	# Include clock crossing type
+	if needs_clk_cross_read or needs_clk_cross_write:
+		rv += "use work.clk_cross_t_pkg.all;\n"
+
 	# Debug 
 	num_non_vhdl_expr_submodules = 0
 	for submodule_inst in Logic.submodule_instances:
@@ -805,8 +1195,19 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	else:
 		rv += "entity " + Logic.func_name + " is" + "\n"
 	rv += "port(" + "\n"
+	
+	# Clock?
 	if needs_clk:
 		rv += "	clk : in std_logic;" + "\n"
+		
+	# Clock cross inputs?
+	if needs_clk_cross_read:
+		rv += "	clk_cross_read : in clk_cross_read_t;" + "\n"
+	
+	# Clock cross outputs?
+	if needs_clk_cross_write:
+		rv += "	clk_cross_write : out clk_cross_write_t;" + "\n"
+		
 	# The inputs of the Logic
 	for input_name in Logic.inputs:
 		# Get type for input
@@ -815,9 +1216,12 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 		rv += "	" + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
 	
 	# Output is type of return wire
-	vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(Logic.outputs[0],Logic,parser_state)
-	rv += "	" + WIRE_TO_VHDL_NAME(Logic.outputs[0], Logic) + " : out " + vhdl_type_str + "" + "\n"
+	if len(Logic.outputs) > 0:
+		for out_port in Logic.outputs:
+			vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_port,Logic,parser_state)
+			rv += "	" + WIRE_TO_VHDL_NAME(out_port, Logic) + " : out " + vhdl_type_str + ";" + "\n"
 	
+	rv = rv.strip("\n").strip(";")
 	rv += ");" + "\n"
 	
 	if not is_final_top:
@@ -847,6 +1251,9 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 			# Skip VHDL
 			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 				continue 
+			# Skip clock crossing
+			if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+				continue
 			
 			new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
 			rv += "-- " + new_inst_name + "\n"
@@ -878,7 +1285,7 @@ def WRITE_VHDL_ENTITY(inst_name, Logic, output_directory, parser_state, TimingPa
 	rv += "end arch;" + "\n"
 
 	if not os.path.exists(output_directory):
-		os.mkdirs(output_directory)
+		os.makedirs(output_directory)
 	
 	#print "NOT WRITE ENTITY"
 	f = open(output_directory+ "/" + filename,"w")
@@ -898,6 +1305,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
 	needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable)
+	#needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable)
 	
 	rv = ""
 	rv += "\n"
@@ -910,6 +1319,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 	if needs_regs:
 		rv += "	-- Registers\n"
 		rv += "	" + "registers_r,\n"
+	if needs_clk_cross_read:
+		rv += "	-- Clock cross input\n"
+		rv += "	" + "clk_cross_read,\n"
 	submodule_text = ""
 	has_submodules_to_print = False
 	if len(Logic.submodule_instances) > 0:
@@ -923,19 +1335,19 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 			# Skip vhdl
 			if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
 				continue
+			# Skip clock cross
+			if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+				continue
 			
 			has_submodules_to_print = True				
 			new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
 			submodule_text += "	-- " + new_inst_name + "\n"
 			# Outputs
-			if len(submodule_logic.outputs) <= 0:
-				print "Submodule has no outputs?", instance_name
-				sys.exit(0)
 			for out_port in submodule_logic.outputs:
 				out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
 				submodule_text += "	" + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
 	if has_submodules_to_print:
-		rv += 	submodule_text	
+		rv += submodule_text	
 				
 	# Remove last two chars
 	rv = rv[0:len(rv)-2]
@@ -1048,8 +1460,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
 			rv += "	" + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
 	rv += "\n"	
 	rv += "	" + "-- Drive registers and outputs\n"
-	rv += "	" + "-- Last stage of pipeline return wire to entity return port\n"
-	rv += "	" + C_TO_LOGIC.RETURN_WIRE_NAME + " <= " + "write_self_regs(LATENCY)." + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
+	
+	for output_wire in Logic.outputs:
+		rv += "	" + "-- Last stage of pipeline return wire to entity return port\n"
+		rv += "	" + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
+		
 	if needs_self_regs:
 		rv += "	" + "registers.self <= write_self_regs;\n"
 	# 	Globals
@@ -1387,6 +1802,8 @@ def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic
 		return GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
 	elif submodule_logic.is_vhdl_func:
 		return GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, stage_ordered_submodule_list, stage)
+	elif SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+		return GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
 	else:
 		return GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
 
@@ -1438,6 +1855,29 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_n
 
 	return rv
 
+def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
+	# Use logic to write vhdl
+	timing_params = TimingParamsLookupTable[inst_name]
+	text = ""
+	# Clock crossing will have either inputs (WRITE) or outputs (READ)
+	# And should only have one input and one output
+	
+	for input_port in submodule_logic.inputs:
+		text += "			-- Inputs" + "\n"
+		input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+		text += "			clk_cross_write." + submodule_logic.func_name + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
+
+	# Only do output connection if zero clk which it should be
+	if submodule_latency_from_container_logic != 0:
+		print "Wtf latency clock cross?"
+		sys.exit(-1)
+	
+	for output_port in submodule_logic.outputs:
+		text += "			-- Outputs" + "\n"
+		output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+		text +=  "			" + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := clk_cross_read." + submodule_logic.func_name + ";\n"
+	
+	return text
 
 def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic):
 	# Use logic to write vhdl

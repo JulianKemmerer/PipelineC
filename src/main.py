@@ -12,11 +12,12 @@ import MODELSIM
 import VIVADO
 
 c_file = "main.c"
-top_level_func_name = "main"
-
 # AWS example runs at 125
 # However, experiments show we might need margin to meet timing at scalez
-mhz = 156.25 #125.0 # 125 * 1.25 = 156.25
+mhz = 600.0 #156.25 #125.0 # 125 * 1.25 = 156.25
+#main_mhz = { 'global_main' : mhz, 'pipeline_main' : mhz }
+main_mhz = { 'main' : mhz }
+
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -29,10 +30,9 @@ print '''
 
 print "TODO:"
 print "	REMOVE DUMB_ARRAY_STRUCT_THING since implementinged public facing code gen"
-print "	Do combinatorial feed back some how - mabye looks like clock crossing?"
-print "	Do clock crossing somehow??? with globals?? allow multiple reads of same global too will allow flow control and parallel pipelines!!  ....  ???'false path' volatile globals???"
-print "	Really try for allow return types of fixed size arrays will make clock crossing easier."
+print "	Detect single instance funcs and record logic.is_single_inst"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
+print "	Do clock crossing for real - not same mhz"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
@@ -47,7 +47,6 @@ print "	Look into intermediate representation such FIRRTL instead of VHDL..."
 print "	Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated..."
 print "	Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?"
 print "	Add checks for globals not being used conditionally"
-print "	Syn each pipeline stage ... this is hard... like slicing zero clock logic "
 print "	Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?"
 print "	Redo eq,and,or,..etc raw vhdl ops with pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work"
 print "	Check for non global functions that call global functions when evaluating const"
@@ -60,24 +59,23 @@ print "	Only parse to logic funcs if used, do recursive from main() isntead of a
 print "	Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?"
 print "	Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])"
 print "	Multiple reads on globals from pipelined logic is fine, do at some point..."
+print "	Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <func_name>_t {x,y,z}"
+print "	Syn each pipeline stage ... this is hard... like slicing zero clock logic "
 
 print "================== Parsing C Code to Logical Hierarchy ================================"
-parser_state = C_TO_LOGIC.PARSE_FILE(top_level_func_name, c_file)
+parser_state = C_TO_LOGIC.PARSE_FILE(c_file, main_mhz)
 
 print "================== Adding Timing Information from Synthesis Tool (Vivado) ================================"
-parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state.LogicInstLookupTable[top_level_func_name], parser_state)
-logic = parser_state.FuncLogicLookupTable[top_level_func_name]
+parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
 print "================== Doing Optional Modelsim Debug ================================"
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print "================== Beginning Throughput Sweep ================================"
-skip_course_sweep=False
-skip_fine_sweep=True
-TimingParamsLookupTable = SYN.DO_THROUGHPUT_SWEEP(top_level_func_name, logic, parser_state, mhz, skip_course_sweep, skip_fine_sweep)
+multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)
 
 print "================== Writing Results of Throughput Sweep ================================"
-VIVADO.WRITE_FINAL_FILES(top_level_func_name, logic, TimingParamsLookupTable, parser_state)
+VIVADO.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print "Done."
 
 

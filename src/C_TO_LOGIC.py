@@ -51,48 +51,51 @@ BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
 BIN_OP_DIV_NAME = "DIV"
 
-# CPP args, mostly for including generated code 
-CPP_ARG_SYN_DIR = "-I" + SYN.SYN_OUTPUT_DIRECTORY
-
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
 def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
-    """ Preprocess a file using cpp.
-        filename:
-            Name of the file you want to preprocess.
-        cpp_path:
-        cpp_args:
-            Refer to the documentation of parse_file for the meaning of these
-            arguments.
-        When successful, returns the preprocessed file's contents.
-        Errors from cpp will be printed out.
-    """
-    path_list = [cpp_path]
-    if isinstance(cpp_args, list):
-        path_list += cpp_args
-    elif cpp_args != '':
-        path_list += [cpp_args]  
-    if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
-			path_list += [CPP_ARG_SYN_DIR]
-    path_list += [filename]
+	""" Preprocess a file using cpp.
+	filename:
+	Name of the file you want to preprocess.
+	cpp_path:
+	cpp_args:
+	Refer to the documentation of parse_file for the meaning of these
+	arguments.
+	When successful, returns the preprocessed file's contents.
+	Errors from cpp will be printed out.
+	"""
+	path_list = [cpp_path]
+	if isinstance(cpp_args, list):
+		path_list += cpp_args
+	elif cpp_args != '':
+		path_list += [cpp_args]
 
-    try:
-        # Note the use of universal_newlines to treat all newlines
-        # as \n for Python's purpose
-        #
-        pipe = Popen(   path_list,
-                        stdout=PIPE,
-                        universal_newlines=True)
-        text = pipe.communicate()[0]
-    except OSError as e:
-        raise RuntimeError("Unable to invoke 'cpp'.  " +
-            'Make sure its path was passed correctly\n' +
-            ('Original error: %s' % e))
-    except Exception as e:
-			print "Something went wrong preprocessing:"
-			print "File:",filename
-			raise e
+	# Include output directory, and other generated output dir
+	if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
+		path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
+	for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
+		path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir]
 
-    return text
+	# Finally the file
+	path_list += [filename]
+
+	try:
+		# Note the use of universal_newlines to treat all newlines
+		# as \n for Python's purpose
+		#
+		pipe = Popen(   path_list,
+		stdout=PIPE,
+		universal_newlines=True)
+		text = pipe.communicate()[0]
+	except OSError as e:
+		raise RuntimeError("Unable to invoke 'cpp'.  " +
+		'Make sure its path was passed correctly\n' +
+		('Original error: %s' % e))
+	except Exception as e:
+		print "Something went wrong preprocessing:"
+		print "File:",filename
+		raise e
+
+	return text
     
 
 def preprocess_text(text, cpp_path='cpp'):
@@ -105,11 +108,17 @@ def preprocess_text(text, cpp_path='cpp'):
             arguments.
         When successful, returns the preprocessed file's contents.
         Errors from cpp will be printed out.
-    """
+  """
     
 	path_list = [cpp_path]
+	
+	# Include output directory, and other generated output dir
 	if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
-			path_list += [CPP_ARG_SYN_DIR]
+		path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
+	for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
+		path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir]
+	
+	# Finally read from std in
 	path_list += ["-"] # TO read from std in
 
 	try:
@@ -267,8 +276,8 @@ class Logic:
 		self.func_name = None # Function name
 		
 		
-		# My containing FUNC NAME
-		self.containing_func = None
+		# My containing func names (could be used in multiple places
+		self.containing_funcs = set()
 		
 		self.variable_names=set() # Unordered set original variable names  
 		self.wires=set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
@@ -347,7 +356,7 @@ class Logic:
 		rv.wire_to_c_type = dict(self.wire_to_c_type) #IMMUTABLE
 		rv.delay = self.delay
 		rv.c_code_text = self.c_code_text
-		rv.containing_func = self.containing_func
+		rv.containing_funcs = set(self.containing_funcs)
 		rv.ref_submodule_instance_to_input_port_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_input_port_driven_ref_toks)
 		rv.ref_submodule_instance_to_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_ref_toks)
 		
@@ -739,7 +748,42 @@ class Logic:
 		
 		return None
 		
-	def WIRE_ALLOW_NO_DRIVE(self,wire,FuncLogicLookupTable):
+	# Allow a wire not to be driven
+	def WIRE_ALLOW_NO_DRIVEN_BY(self, wire, FuncLogicLookupTable):
+		if wire in self.variable_names:
+			return True
+		if wire in self.inputs:
+			return True
+		if wire in self.volatile_global_wires:
+			return True
+		# Only output ports are allowed to not to be driven by something
+		if (SUBMODULE_MARKER in wire):
+			toks = wire.split(SUBMODULE_MARKER)
+			submodule_inst = toks[0]
+			# Uh if inst doesnt exist then problem....
+			if submodule_inst not in self.submodule_instances:
+				print "self.func_name", self.func_name
+				print "wire",wire
+				print "No submodule instance called", submodule_inst
+				print 0/0
+				sys.exit(0)
+			# Otherwise proceed checking for outputs
+			submodule_func_name = self.submodule_instances[submodule_inst]
+			if submodule_func_name not in FuncLogicLookupTable:
+				print "self.func_name", self.func_name
+				print "wire",wire
+				print "No func def for sub", submodule_func_name
+				print FuncLogicLookupTable
+				sys.exit(0)
+			submodule_logic = FuncLogicLookupTable[submodule_func_name]
+			port_name = toks[1]
+			if port_name in submodule_logic.outputs:
+				return True
+				
+		return False
+	
+	# Allow a wire not to drive anything
+	def WIRE_ALLOW_NO_DRIVES(self,wire,FuncLogicLookupTable):
 		if wire in self.variable_names:
 			return True
 		if wire in self.inputs:
@@ -773,7 +817,7 @@ class Logic:
 			port_name = toks[1]
 			if port_name in submodule_logic.inputs:
 				return True
-			return False
+				
 		return False
 		
 	def WIRE_DO_NOT_COLLAPSE(self, wire):
@@ -1243,7 +1287,9 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
 		# Parse and return the only func def
 		func_name = partially_complete_logic.func_name
 		#print "... as C code...",partially_complete_logic.func_name
-		sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT(c_code_text, parser_state)
+		
+		preprocessed_c_code_text = preprocess_text(c_code_text)
+		sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_code_text, parser_state)
 		# Merge into existing
 		for sw_func_name in sw_func_name_2_logic:
 			#print "sw_func_name",sw_func_name
@@ -4207,7 +4253,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	is_global_func = False
 	if func_base_name in parser_state.FuncLogicLookupTable:
 		func_logic = parser_state.FuncLogicLookupTable[func_base_name]
-		is_global_func = len(func_logic.global_wires) + len(func_logic.volatile_global_wires) > 0
+		is_global_func = (len(func_logic.global_wires) + len(func_logic.volatile_global_wires) > 0) or func_logic.uses_globals
 	if is_global_func:
 		return None
 			
@@ -4492,12 +4538,13 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	# Set type for outputs based on func_name (only base name known right now? base name== func name for parsed C coe) if possible
 	if func_base_name in parser_state.FuncLogicLookupTable:
 		func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
-		# Get type of output
-		output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
-		# Set this type for the output if not set already? # This seems really hacky
-		for output_driven_wire_name in output_driven_wire_names:
-			if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
-				parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type	
+		if len(func_def_logic_object.outputs) > 0:
+			# Get type of output
+			output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
+			# Set this type for the output if not set already? # This seems really hacky
+			for output_driven_wire_name in output_driven_wire_names:
+				if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
+					parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
 	
 	# Set type for outputs based on output port if possible
 	output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
@@ -4508,14 +4555,10 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 			if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
 				parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
 	
-	#Set mux type / 	
-	# Sanity check this function drives something? ... Mux OK?
-	if len(output_driven_wire_names) <= 0 and func_base_name==MUX_LOGIC_NAME:
+	# Set mux type? Hacky wtf?
+	if func_base_name==MUX_LOGIC_NAME:
 		if output_wire_name not in parser_state.existing_logic.wire_to_c_type:
-			parser_state.existing_logic.wire_to_c_type[output_wire_name] = input_driver_types[1] #[0] is cond for mux	
-	elif len(output_driven_wire_names) <= 0 and func_base_name!=MUX_LOGIC_NAME:
-		print func_base_name, func_c_ast_node.coord, "does not drive anything?"
-		sys.exit(0)
+			parser_state.existing_logic.wire_to_c_type[output_wire_name] = input_driver_types[1] #[0] is cond for mux
 		
 	#print "func_base_name",func_base_name,"out",parser_state.existing_logic.wire_to_c_type[output_wire_name]
 	
@@ -4535,13 +4578,15 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 		
 	
 	# Build func name
-	output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
+	output_type = "void"
+	if output_wire_name in parser_state.existing_logic.wire_to_c_type:
+		output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
 	func_name = BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name)
 	# Sub module inst
 	parser_state.existing_logic.submodule_instances[func_inst_name] = func_name
 	# C ast node
 	parser_state.existing_logic.submodule_instance_to_c_ast_node[func_inst_name]=func_c_ast_node
-	
+
 	# Record all input port names for this submodule
 	# This might not be needed but not thinking about that now
 	parser_state.existing_logic.submodule_instance_to_input_port_names[func_inst_name] = input_port_names[:]
@@ -4601,7 +4646,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 	
 	# Outputs
 	# Finally connect the output of this operation to each of the driven wires
-	parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
+	if len(output_driven_wire_names) > 0:
+		parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
 	
 	return parser_state.existing_logic
 		
@@ -4653,10 +4699,11 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
 	input_port_names = [] # Port names on submodule
 	
 	# Helpful check
-	if len(c_ast_func_call.args.exprs) != len(not_inst_func_logic.inputs):
-		print "The function definition for",func_name,"has",len(c_ast_func_call.args.exprs), "arguments."
-		print "as used at", c_ast_func_call.coord, "it has", len(not_inst_func_logic.inputs), "arguments."
-		sys.exit(0)
+	if c_ast_func_call.args is not None:
+		if len(c_ast_func_call.args.exprs) != len(not_inst_func_logic.inputs):
+			print "The function definition for",func_name,"has",len(c_ast_func_call.args.exprs), "arguments."
+			print "as used at", c_ast_func_call.coord, "it has", len(not_inst_func_logic.inputs), "arguments."
+			sys.exit(0)
 	
 	# Assume inputs are in arg order
 	for i in range(0, len(not_inst_func_logic.inputs)):
@@ -4670,13 +4717,14 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
 		
 		
 	# Output is type of logic not_inst_func_logic output wire
-	if len(not_inst_func_logic.outputs) != 1:
-		print "Whats going on here multiple outputs??"
-		sys.exit(0)
-	output_port_name = not_inst_func_logic.outputs[0]
-	output_c_type = not_inst_func_logic.wire_to_c_type[output_port_name]
-	output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
-	parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
+	if len(not_inst_func_logic.outputs) > 0:
+		if len(not_inst_func_logic.outputs) != 1:
+			print "Whats going on here multiple outputs??"
+			sys.exit(0)
+		output_port_name = not_inst_func_logic.outputs[0]
+		output_c_type = not_inst_func_logic.wire_to_c_type[output_port_name]
+		output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
+		parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
 	
 	# Before evaluating input nodes make sure type of port is there so constants can be evaluated
 	# Get types from func defs
@@ -5403,24 +5451,27 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	parser_state.existing_logic.c_ast_node = c_ast_funcdef
 	
 	# All func def logic has an output wire called "return"
-	return_wire_name = RETURN_WIRE_NAME
-	parser_state.existing_logic.outputs.append(return_wire_name)
-	parser_state.existing_logic.wires.add(return_wire_name)
-	parser_state.existing_logic.wire_to_c_type[return_wire_name] = c_ast_funcdef.decl.type.type.type.names[0]
+	return_type = c_ast_funcdef.decl.type.type.type.names[0]
+	if return_type != "void":
+		return_wire_name = RETURN_WIRE_NAME
+		parser_state.existing_logic.outputs.append(return_wire_name)
+		parser_state.existing_logic.wires.add(return_wire_name)
+		parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
 
 	# First get name of function from the declaration
 	parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
 	
 	# Then get input wire names from the function def
 	#print "func def:",c_ast_funcdef
-	for param_decl in c_ast_funcdef.decl.type.args.params:
-		input_wire_name = param_decl.name
-		parser_state.existing_logic.inputs.append(input_wire_name)
-		parser_state.existing_logic.wires.add(input_wire_name)
-		parser_state.existing_logic.variable_names.add(input_wire_name)
-		#print "Append input", input_wire_name
-		c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
-		parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
+	if c_ast_funcdef.decl.type.args is not None:
+		for param_decl in c_ast_funcdef.decl.type.args.params:
+			input_wire_name = param_decl.name
+			parser_state.existing_logic.inputs.append(input_wire_name)
+			parser_state.existing_logic.wires.add(input_wire_name)
+			parser_state.existing_logic.variable_names.add(input_wire_name)
+			#print "Append input", input_wire_name
+			c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
+			parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
 	
 	
 	# Merge with logic from the body of the func def
@@ -5429,11 +5480,6 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
 	if parse_body:
 		body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)		
 		parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
-				
-	# Sanity check for return
-	if RETURN_WIRE_NAME not in parser_state.existing_logic.wire_driven_by and not SW_LIB.IS_BIT_MANIP(parser_state.existing_logic) and not SW_LIB.IS_MEM(parser_state.existing_logic):
-		print "No return statement in function:", parser_state.existing_logic.func_name
-		sys.exit(0)
 		
 	# Write cache
 	_C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
@@ -5478,7 +5524,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 	for wire in set(func_logic.wires): # Copy for iter
 		if wire in func_logic.wires: # Changes during iter
 			drives_nothing = (wire not in func_logic.wire_drives)
-			must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVE(wire, parser_state.FuncLogicLookupTable)
+			must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVES(wire, parser_state.FuncLogicLookupTable)
 			if drives_nothing and must_drive_something:
 				#print func_logic.func_name, "Removing", wire
 				func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
@@ -5553,19 +5599,40 @@ def DEL_ALL_CACHES():
 # This class hold all the state obtained by parsing a single C file
 class ParserState:
 	def __init__(self):
-		self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
-		self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
-		self.FuncToInstances=dict() #dict[func_name]=[instance, name, usages, of , func]
-		self.existing_logic = None # Temp working copy of logic ? idk it should work
+		# Parsed from pre-prepreprocessed text
+		
+		# From parsed preprocessed text		
+		# The file of parsed C code
+		self.c_file_ast = None # Single C file tree
+		
+		# Parsed pre func defintions
+		# Build map just of func names and where there are used
+		self.func_name_to_calls = dict() # dict[func_name] = set(called_func_names)
+		self.func_names_to_called_from = dict() # dict[func_name] = set(calling_func_names)
 		self.struct_to_field_type_dict = dict()
 		self.enum_to_ids_dict = dict()
 		self.global_info = dict()
 		self.volatile_global_info = dict()
-		self.global_mhz_limit = None
-		self.c_file_ast = None # Single C file tree
-		# Oh fuck needing to internally fake returning arrays aw shit
-		self.dumb_array_struct_type_to_c_array_type = dict() #[DUMBSTRUCT type] = "elem[i][j][k]"
 		
+		# Parsed from function defintions
+		self.existing_logic = None # Temp working copy of current func logic, probably should not be here?
+		# Function definitons as logic
+		self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
+		# Elaborated to instances
+		self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
+		self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
+		
+		# Clock crossing info
+		self.main_mhz = dict() # dict[main_func_name]=mhz
+		# Clock crossing read/write func to clock cross var name
+		self.clk_cross_var_name_to_write_read_main_funcs = dict() # dict[var_name]= (write_main_func, read_main_func)
+		self.clk_cross_var_name_to_write_read_sizes = dict() # dict[var_name] = (write size,read size)
+
+		# Oh fuck needing to internally fake returning arrays aw shit
+		# NOT ANY MORE ~~~~~~~  SCOOOO
+		print "TODO remove dumb_array_struct_type_to_c_array_type"
+		self.dumb_array_struct_type_to_c_array_type = dict() #[DUMBSTRUCT type] = "elem[i][j][k]"
+
 	def DEEPCOPY(self):
 		# Fuck me how many times will I get caught with objects getting copied incorrectly?
 		rv = ParserState()
@@ -5590,53 +5657,129 @@ class ParserState:
 		rv.enum_to_ids_dict = dict(self.enum_to_ids_dict)
 		rv.global_info = dict(self.global_info)
 		rv.volatile_global_info = dict(self.volatile_global_info)
-		rv.global_mhz_limit = self.global_mhz_limit
+		
 		rv.dumb_array_struct_type_to_c_array_type = dict(self.dumb_array_struct_type_to_c_array_type)
+		
+		rv.func_name_to_calls = dict(self.func_name_to_calls)
+		rv.func_names_to_called_from = dict(self.func_name_to_calls)
+		
+		rv.main_mhz = dict(self.main_mhz)
+		rv.clk_cross_var_name_to_write_read_main_funcs = dict(self.clk_cross_var_name_to_write_read_main_funcs)
+		rv.clk_cross_var_name_to_write_read_sizes = dict(self.clk_cross_var_name_to_write_read_sizes)
+		
 		return rv
     
 
-def GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name):
-	key = top_level_func_name 
+def GET_PARSER_STATE_CACHE_FILEPATH(c_filename):
+	key = c_filename 
 	output_directory = SYN.SYN_OUTPUT_DIRECTORY
 	filepath = output_directory + "/" + key + ".parsed"
 	return filepath
 
-def WRITE_PARSER_STATE_CACHE(parser_state, top_level_func_name):
+def WRITE_PARSER_STATE_CACHE(parser_state, c_filename):
 	# Write dir first if needed
 	output_directory = SYN.SYN_OUTPUT_DIRECTORY
 	if not os.path.exists(output_directory):
 		os.makedirs(output_directory)
 		
 	# Write file
-	filepath = GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name)
+	filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
 	with open(filepath, 'w') as output:
 		pickle.dump(parser_state, output, pickle.HIGHEST_PROTOCOL)
 
-def GET_PARSER_STATE_CACHE(top_level_func_name):
-	filepath = GET_PARSER_STATE_CACHE_FILEPATH(top_level_func_name)
+def GET_PARSER_STATE_CACHE(c_filename):
+	filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
 	if os.path.exists(filepath):
 		with open(filepath, 'rb') as input:
 			parser_state = pickle.load(input)
 			return parser_state
 	return None
 	
+# dict[func_name] = set(called_func_names)
+# dict[func_name] = set(calling_func_names)
+# func_name_to_calls, func_names_to_called_from = 
+def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
+	func_name_to_calls = dict()
+	func_names_to_called_from = dict()
+	# Do this by manually recursing through all nodes in each func def
+	c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+	for c_ast_func_def in c_ast_func_defs:
+		func_name = c_ast_func_def.decl.name
+		func_call_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.FuncCall, parser_state)
+		for func_call_c_ast_node in func_call_c_ast_nodes:
+			called_func_name = func_call_c_ast_node.name.name
+			# Record
+			if func_name not in func_name_to_calls:
+				func_name_to_calls[func_name] = set()
+			func_name_to_calls[func_name].add(called_func_name)
+			if called_func_name not in func_names_to_called_from:
+				func_names_to_called_from[called_func_name] = set()
+			func_names_to_called_from[called_func_name].add(func_name)
+			
+	return func_name_to_calls, func_names_to_called_from
+			
+def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, parser_state, nodes=[]):
+	if type(c_ast_node) == c_ast_type:
+		nodes.append(c_ast_node)
+	children_tuples = c_ast_node.children()
+	for children_tuple in children_tuples:
+		child_node = children_tuple[1]
+		nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(child_node, c_ast_type, parser_state, nodes)
+	return nodes
+
+def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called_from, main_funcs):
+	# Is it main?
+	if func_name in main_funcs:
+		return func_name
+	# Where called from?
+	if func_name in func_names_to_called_from:
+		called_from_funcs = func_names_to_called_from[func_name]
+		# Should only be called once?
+		if len(called_from_funcs) == 1:
+			called_from_func = called_from_funcs[0]
+			return RECURSIVE_FIND_MAIN_FUNC(called_from_func, func_name_to_calls, func_names_to_called_from, main_funcs)
+			
+	return None
+
+
 # Returns ParserState
-def PARSE_FILE(top_level_func_name, c_filename):
+# TODO make as ParserState then 
+def PARSE_FILE(c_filename, main_mhz):
 	# Do we have a cached parser state?
-	cached_parser_state = GET_PARSER_STATE_CACHE(top_level_func_name)
+	cached_parser_state = GET_PARSER_STATE_CACHE(c_filename)
 	if cached_parser_state is not None:
-		print "Already parsed C code for",top_level_func_name,", using cache..."
+		print "Already parsed C code for",c_filename,", using cache..."
 		return cached_parser_state
 	
 	# Otherwise do for real
 	
 	# Catch pycparser exceptions
 	try:
+		# Read file
+		text = open(c_filename).read()
+		
+		# Code generate empty to-be-generated header files 
+		# so initial preprocessing can happen
+		# Then do repeated re-parsing as code gen continues
+		SW_LIB.GEN_EMPTY_GENERATED_HEADERS(text)
+		
+		# Preprocess the text
+		preprocessed_c_text = preprocess_text(text)
+		
+		# Code gen based purely on preprocessed C text
+		SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
+		# Preprocess the text again to pull in generated code
+		preprocessed_c_text = preprocess_text(text)
+		
+		# Begin parsing		
 		parser_state = ParserState()
+		parser_state.main_mhz = main_mhz;
 		print "Parsing PipelinedC code..."
-		SW_LIB.WRITE_PRE_PARSE_GEN_CODE(top_level_func_name, c_filename)
 		# Get the C AST
-		parser_state.c_file_ast = GET_C_FILE_AST(c_filename)
+		parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+		
+		# Parse definitions first before code structure
+		print "...non-function definitions..."
 		# Get the parsed struct def info
 		parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
 		# Get global variable info
@@ -5645,33 +5788,81 @@ def PARSE_FILE(top_level_func_name, c_filename):
 		parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state)
 		# Get the parsed enum info
 		parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
+		# Build primative map of function use
+		parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
+		# Elborate what the clock crossings look like
+		parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
+		
+		# Do code gen based on preprocessed C text and non-function definitions
+		# This is the newer better way
+		SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
+		# This is the old more hacky way
 		# Get SW existing logic for this c file
-		parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP(c_filename, parser_state)
-		#print "parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict		
-		# Get the function definitions
+		parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
+		# Preprocess the text again to pull in generated code
+		preprocessed_c_text = preprocess_text(text)
+		# Get the C AST again to reflect new generated code
+		parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+		
+		# Parse the function definitions for code structure
+		print "...function definitions..."
 		parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
+		# Sanity check main funcs are there
+		for main_func in parser_state.main_mhz.keys():
+			if main_func not in parser_state.FuncLogicLookupTable:
+				print "Main function:", main_func, "does not exist?"
+				sys.exit(0)		
+		
+		# Code gen based on pre elborated logic
+		# TODO SW_LIB.WRITE_PRE_ELAB_GEN_CODE(preprocessed_c_text, parser_state)
+		# Preprocess the text again to pull in generated code
+		# preprocessed_c_text = preprocess_text(text)
+		# Get the C AST again to reflect new generated code
+		# parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+		
 		# Fuck me add struct info for array wrapper
+		# TO BE REMOVED
+		print "Remove ARRAY_STRUCT thing..."
 		parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
 		
+		# Elaborate the logic down to raw vhdl modules
+		print "Elaborating pipeline hierarchies down to raw HDL logic..."
+		for main_func in parser_state.main_mhz.keys():
+			adjusted_containing_logic_inst_name=""
+			main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+			c_ast_node_when_used = parser_state.FuncLogicLookupTable[main_func].c_ast_node
+			parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(main_func, main_func, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
 		
 		
-		print "BLAH BLAH DO _post_ GEN CODE - WRITE TO DIR"
 		
+		# Code gen based on fully elaborated logic
+		# Write c code
+		print "Writing generated PipelineC code from elaboration to output directories..."
+		for func_name in parser_state.FuncLogicLookupTable:
+			func_logic = parser_state.FuncLogicLookupTable[func_name]
+			if not(func_logic.c_code_text is None):
+				# Fake name
+				fake_filename = func_name + ".c"
+				out_dir = SYN.GET_OUTPUT_DIRECTORY(func_logic)
+				outpath = out_dir + "/" + fake_filename
+				if not os.path.exists(out_dir):
+					os.makedirs(out_dir)
+				f=open(outpath,"w")
+				f.write(func_logic.c_code_text)
+				f.close()	
 		
-		
+		# Remove excess user code
+		print "Doing obvious logic trimming/collapsing..."
+		for main_func in parser_state.main_mhz.keys():
+			main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+			parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
 		
 		# Sanity check no duplicate globals
 		for g in parser_state.global_info:
 			if g in parser_state.volatile_global_info:
 				print "Global variable", g, "declared as a volatile global too!?"
 				sys.exit(0)
-		
-		# cHECK FOR EXPECTED FUNC NAME
-		if top_level_func_name not in parser_state.FuncLogicLookupTable:
-			print "There doesnt seem to be as function called '", top_level_func_name,"' in the file '",c_filename,"'"
-			sys.exit(0)
-			
-		'''	
+				
 		# Check for double use of globals+volatiles the dumb way to print useful info
 		for func_name1 in parser_state.FuncLogicLookupTable:
 			func1_logic = parser_state.FuncLogicLookupTable[func_name1]
@@ -5684,38 +5875,10 @@ def PARSE_FILE(top_level_func_name, c_filename):
 						print "Heyo can't use globals in more than one function!"
 						print func1_global, "used in", func_name1, "and", func_name2
 						sys.exit(0)
-		'''
-		#print "TEMP STOP"
-		#sys.exit(0)
-		
-		print "Elaborating hierarchy down to raw HDL logic..."
-		adjusted_containing_logic_inst_name=""
-		main_func_logic = parser_state.FuncLogicLookupTable["main"]
-		c_ast_node_when_used = parser_state.FuncLogicLookupTable[top_level_func_name].c_ast_node
-		parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(top_level_func_name, top_level_func_name, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
-		
-		# Remove excess user code
-		print "Doing obvious logic trimming/collapsing..."
-		parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
-		
-		# Write c code
-		print "Writing generated pipelined C code to output directories..."
-		for func_name in parser_state.FuncLogicLookupTable:
-			func_logic = parser_state.FuncLogicLookupTable[func_name]
-			if not(func_logic.c_code_text is None):
-				# Fake name
-				fake_filename = func_name + ".c"
-				out_dir = SYN.GET_OUTPUT_DIRECTORY(func_logic)
-				outpath = out_dir + "/" + fake_filename
-				if not os.path.exists(out_dir):
-					os.makedirs(out_dir)
-				f=open(outpath,"w")
-				f.write(func_logic.c_code_text)
-				f.close()
 
 		# Write cache
 		print "Writing cache of parsed information to file..."
-		WRITE_PARSER_STATE_CACHE(parser_state, top_level_func_name)
+		WRITE_PARSER_STATE_CACHE(parser_state, c_filename)
 		
 		# Clear in memory caches
 		DEL_ALL_CACHES()
@@ -5723,8 +5886,6 @@ def PARSE_FILE(top_level_func_name, c_filename):
 		return parser_state
 
 	except c_parser.ParseError as pe:
-		print "Top level:",top_level_func_name
-		#print casthelp(pe)
 		print "PARSE_FILE pycparser says you messed up here:",pe
 		sys.exit(0)
 		
@@ -5826,7 +5987,110 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
 				
 	return parser_state
 				
+def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):	
+	# Regex search c_text for pair of write and read funcs
+	r="\w+" + "_WRITE" + "\s?\("
+	write_func_calls = SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+	write_func_names = []
+	for write_func_call in write_func_calls:
+		write_func_names.append(write_func_call.strip("(").strip())
+	r="\w+" + "_READ" + "\s?\("
+	read_func_calls = SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+	read_func_names = []
+	for read_func_call in read_func_calls:
+		read_func_names.append(read_func_call.strip("(").strip())
+	
+	# Find pairs that are volatile globals
+	var_names = []
+	for write_func_name in write_func_names:
+		var_name = write_func_name.replace("_WRITE","")
+		read_func_name = var_name + "_READ"
+		if read_func_name in read_func_names:
+			if var_name in parser_state.volatile_global_info:
+				var_names.append(var_name)
 				
+	# Find and read and write main funcs
+	for var_name in var_names:
+		read_func_name = var_name + "_READ"
+		write_func_name = var_name + "_WRITE"
+		read_containing_func = None
+		write_containing_func = None
+		# Search for container
+		for func_name in parser_state.func_name_to_calls:
+			called_funcs = parser_state.func_name_to_calls[func_name]
+			# Read
+			if read_func_name in called_funcs:
+				if read_containing_func is not None:
+					if read_containing_func != func_name:
+						print "Multiple uses of",read_func_name,"?"
+						sys.exit(0)
+				read_containing_func = func_name
+			# Write
+			if write_func_name in called_funcs:
+				if write_containing_func is not None:
+					if write_containing_func != func_name:
+						print "Multiple uses of",write_func_name,"?"
+						sys.exit(0)
+				write_containing_func = func_name
+			if write_containing_func is not None and read_containing_func is not None:
+				break
+				
+		# Recursively lookup main_func
+		read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
+		write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
+		if read_main_func is None or write_main_func is None:
+			print "Problem finding main functions for", read_containing_func,write_containing_func
+			sys.exit(0)
+			
+		read_mhz = parser_state.main_mhz[read_main_func]
+		write_mhz = parser_state.main_mhz[write_main_func]
+		ratio = 0
+		write_size = 0
+		read_size = 0
+		if write_mhz > read_mhz:
+			# Write side is faster
+			ratio = int(math.ceil(write_mhz/read_mhz))
+			write_size = 1
+			read_size = ratio
+		else:
+			# Read side is faster
+			ratio = int(math.ceil(read_mhz/write_mhz))
+			read_size = 1
+			write_size = ratio
+		
+		# Record
+		parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name] = (write_main_func,read_main_func)
+		parser_state.clk_cross_var_name_to_write_read_sizes[var_name] = (write_size, read_size)
+	
+
+	'''
+	# Loop over all funcs and get instances 
+	clk_cross_readst_containing_inst_set = set()
+	for func_name in parser_state.FuncLogicLookupTable:
+		logic = parser_state.FuncLogicLookupTable[func_name]
+		if not SW_LIB.IS_CLOCK_CROSSING(logic):
+			continue
+		# Should only be one instance:
+		insts = parser_state.FuncToInstances[func_name]
+		if len(insts) > 1:
+			print "More than one clock crossing instance?", func_name, insts
+			print "Screwed - Janelle Monae"
+			sys.exit(-1)
+		inst_name = list(insts)[0]
+		# And one containing instance
+		if len(logic.containing_funcs) > 1:
+			print "More than one continer func for clock crossing instance?", func_name, insts
+			sys.exit(-1)
+		containing_func_name = list(logic.containing_funcs)[0]
+		containing_insts = parser_state.FuncToInstances[containing_func_name]
+		if len(containing_insts) > 1:
+			print "More than one continer func instance for clock crossing instance?", func_name, insts
+			sys.exit(-1)
+		containing_inst = list(containing_insts)[0]
+		clk_cross_readst_containing_inst_set.add((inst_name,containing_inst))
+		'''		
+
+	return parser_state
 
 def GET_ENUM_IDS_DICT(c_file_ast):
 	# Read in file with C parser and get function def nodes
@@ -5915,16 +6179,25 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
 		driven_wire_names=[]
 		prepend_text=""
 		logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
+		# Final chance for SW_LIB generated code to do stuff to func logic
+		logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
 		FuncLogicLookupTable[logic.func_name] = logic	
 		parser_state.FuncLogicLookupTable = FuncLogicLookupTable
-			
+		
+	# Do dumb? loops to find containing func
+	for func_logic in FuncLogicLookupTable.values():
+		for submodule_inst in func_logic.submodule_instances:
+			submodule_func_name = func_logic.submodule_instances[submodule_inst]
+			if submodule_func_name in FuncLogicLookupTable:
+				FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.func_name)
+							
 	return FuncLogicLookupTable
 	
 			
 def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_state, containing_logic_inst_name="", c_ast_node_when_used=None):
 	# Use prepend text to contruct full instance names
 	new_inst_name_prepend_text = containing_logic_inst_name + SUBMODULE_MARKER
-	if func_name == "main":
+	if func_name in parser_state.main_mhz:
 		# Main never gets prepend text
 		if containing_logic_inst_name != "":
 			print "Wtf main never has container?",containing_logic_inst_name
@@ -5944,7 +6217,8 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
 		# Try to use full inst name of containing module
 		containing_func_logic = parser_state.LogicInstLookupTable[containing_logic_inst_name]
 		#if containing_func_logic is not None:			
-		orig_func_logic = BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, local_inst_name, parser_state)	
+		orig_func_logic = BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, local_inst_name, parser_state)
+		orig_func_logic.containing_funcs.add(containing_func_logic.func_name)
 		# Update FuncLogicLookupTable with this new func logic
 		parser_state.FuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
 		
@@ -5953,8 +6227,8 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
 	inst_name = new_inst_name_prepend_text + local_inst_name
 	parser_state.LogicInstLookupTable[inst_name] = orig_func_logic
 	if func_name not in parser_state.FuncToInstances:
-		parser_state.FuncToInstances[func_name] = []
-	parser_state.FuncToInstances[func_name].append(inst_name)
+		parser_state.FuncToInstances[func_name] = set()
+	parser_state.FuncToInstances[func_name].add(inst_name)
 	
 	# Then recursively do submodules
 	# USING local names from orig_func_logic
@@ -5978,25 +6252,28 @@ def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
 	#print "========="
 	return func_defs
 
-def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename):
-	# Use C parser to do some lifting
-	# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
-	try:
-		parser = c_parser.CParser()
-		# Use preprocessor function
-		c_text = preprocess_text(text)
+def GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename):
 		#print "========="
 		#print "fake_filename",fake_filename
 		#print "preprocessed text",c_text
 		
 		# Hacky because somehow parser.parse() getting filename from cpp output?
-		c_text = c_text.replace("<stdin>",fake_filename)
-		
-		ast = parser.parse(c_text,filename=fake_filename)
+		c_text = c_text.replace("<stdin>",c_filename)
+		parser = c_parser.CParser()
+		ast = parser.parse(c_text,filename=c_filename)
 		#ast.show()
 		return ast
+		
+		
+def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
+	# Use C parser to do some lifting
+	# See https://github.com/eliben/pycparser/blob/master/examples/explore_ast.py
+	try:
+		# Use preprocessor function
+		c_text = preprocess_text(text)
+		return GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename)
 	except c_parser.ParseError as pe:
-		print "Parsed fake file name:",fake_filename
+		print "Parsed fake file name:",c_filename
 		print "Parsed text:"
 		print c_text
 		print "pycparser says you messed up here:",pe
@@ -6083,11 +6360,3 @@ def GET_TYPE_FROM_LIST(py_type, l):
 		if type(i) == py_type:
 			rv.append(i)
 	return rv
-	
-	
-def GET_C_FILE_AST(c_filename):
-	# Read text
-	f = open(c_filename)
-	text = f.read()
-	return GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename)		
-	
