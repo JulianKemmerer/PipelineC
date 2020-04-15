@@ -366,18 +366,13 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
 	driven_ref_toks_i = 0
 	for input_port in logic.inputs:
 		#input_port = input_port_inst_name.replace(local_inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-		vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic) # input_port.replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+		vhdl_input_port = VHDL.WIRE_TO_VHDL_NAME(input_port, logic)
 		#print "input_port",input_port
 		
 		# ref toks not from port name
 		driven_ref_toks = driven_ref_toks_list[driven_ref_toks_i]
 		driven_ref_toks_i += 1
 		var_ref_toks = not C_TO_LOGIC.C_AST_REF_TOKS_ARE_CONST(driven_ref_toks)
-		
-		# Get ref toks as best we can
-		#ref_tok_strs = input_port.split(C_TO_LOGIC.REF_TOK_DELIM)
-		# Is this a variable ref tok?
-		#var_ref_tok_strs = "*" in ref_tok_strs
 		
 		# Read just the variable indicies from the right side
 		# Get ref tok index of variable indicies

@@ -1794,7 +1794,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 	
 def WIRE_TO_VHDL_NAME(wire_name, Logic):
 	leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
-	rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","").replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_")
+	rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","")
 	return rv
 
 def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
@@ -1902,7 +1902,7 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name
 def GET_TOP_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
 	LogicInstLookupTable = parser_state.LogicInstLookupTable
 	timing_params = TimingParamsLookupTable[inst_name]
-	return C_TO_LOGIC.LEAF_NAME(inst_name, do_submodule_split=True).replace(C_TO_LOGIC.REF_TOK_DELIM,"_REF_") + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
+	return C_TO_LOGIC.LEAF_NAME(inst_name, do_submodule_split=True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
 	
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
 def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):

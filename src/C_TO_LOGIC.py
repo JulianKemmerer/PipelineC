@@ -18,7 +18,6 @@ import SYN
 
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
-REF_TOK_DELIM = "__REF__" # This is dumb, so am I
 DUMB_ARRAY_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I  
 CONST_PREFIX="CONST_"
 MUX_LOGIC_NAME="MUX"

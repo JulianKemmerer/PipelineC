@@ -1666,7 +1666,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	
 	# Inputs
 	for input_wire in partially_complete_logic.inputs:
-		input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+		input_c_name = input_wire 
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
 		if C_TO_LOGIC.C_TYPE_IS_ARRAY(input_t):
 			# Dimensions go after variable name
@@ -1708,7 +1708,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[partially_complete_logic_local_inst_name]
 	for input_wire in partially_complete_logic.inputs: 
 		if "var_dim_" not in input_wire:
-			input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+			input_c_name = input_wire 
 			# Assign to base			
 			# Remove base variable
 			
@@ -1829,7 +1829,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 		prefix = c_type.strip("_t")
 		var_dim_input_wire = var_dim_input_wires[var_dim_i]
 		input_width = var_dim_input_widths[var_dim_i]
-		input_c_name = var_dim_input_wire.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","")
+		input_c_name = var_dim_input_wire
 		text += "	sel = " + sel_prefix + "_" + prefix + "_" + str(index) + "( sel, " + input_c_name + ");\n"
 		index += input_width
 	
@@ -1949,7 +1949,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 	
 	# Inputs
 	for input_wire in partially_complete_logic.inputs:
-		input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+		input_c_name = input_wire 
 		input_t = partially_complete_logic.wire_to_c_type[input_wire]
 		if C_TO_LOGIC.C_TYPE_IS_ARRAY(input_t):
 			# Dimensions go after variable name
@@ -1990,7 +1990,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 	ref_toks_i = 0
 	for input_wire in partially_complete_logic.inputs[1:]: 
 		if "var_dim_" not in input_wire:
-			input_c_name = input_wire #.replace(C_TO_LOGIC.REF_TOK_DELIM, "_ref_").replace("_*","_STAR")
+			input_c_name = input_wire 
 			
 			# ref toks not from port name
 			driven_ref_toks = driven_ref_toks_list[ref_toks_i]
