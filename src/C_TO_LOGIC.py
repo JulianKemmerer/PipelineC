@@ -18,7 +18,6 @@ import SYN
 
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
-DUMB_ARRAY_STRUCT_THING = "_ARRAY_STRUCT" # C is dumb, so am I  
 CONST_PREFIX="CONST_"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
@@ -1807,18 +1806,11 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
 		#print "var_dim_ref_tok_indices, var_dims, var_dim_iter_types",var_dim_ref_tok_indices, var_dims, var_dim_iter_types
 		#print "lhs_array_type",lhs_array_type
 			
-		# FUCK FUCK C cant return array blah blah 
-		#TODOD ????.replace("[","_").replace("]","_").replace("__","_")
-		#_ARRAY_STRUCT for multi dimensional?
-		lhs_dumb_struct_array_type = lhs_elem_c_type.replace("[","_").replace("]","_").replace("__","_").strip("_") + DUMB_ARRAY_STRUCT_THING
+		# Use recognized auto generated array types
+		lhs_struct_array_type = lhs_elem_c_type.replace("[","_").replace("]","_").replace("__","_").strip("_") + "_array"
 		for var_dim in var_dims:
-			lhs_dumb_struct_array_type += "_" + str(var_dim)
-		# Record being dumb
-		parser_state.dumb_array_struct_type_to_c_array_type[lhs_dumb_struct_array_type] = lhs_array_type
-		
-		#print "lhs_struct_array_type",lhs_struct_array_type
-		#sys.exit(0)
-		
+			lhs_struct_array_type += "_" + str(var_dim)
+		lhs_struct_array_type += "_t"		
 		
 		# This is going to be implemented in as C so func name needs to be unique
 		func_name = VAR_REF_ASSIGN_FUNC_NAME_PREFIX
@@ -2708,7 +2700,7 @@ Structref and constant array look very similar
 #	s.y[1][1]
 
 def C_TYPE_IS_STRUCT(c_type_str, parser_state):
-	return (c_type_str in parser_state.struct_to_field_type_dict) or (DUMB_ARRAY_STRUCT_THING in c_type_str)
+	return (c_type_str in parser_state.struct_to_field_type_dict) or SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type_str, parser_state)
 	
 def C_TYPE_IS_ENUM(c_type_str, parser_state):
 	return c_type_str in parser_state.enum_to_ids_dict
@@ -2719,8 +2711,8 @@ def C_TYPE_IS_ARRAY(c_type):
 def C_TYPE_IS_USER_TYPE(c_type,parser_state):
 	user_code = False
 	if C_TYPE_IS_STRUCT(c_type,parser_state):
-		if DUMB_ARRAY_STRUCT_THING in c_type:
-			c_array_type = parser_state.dumb_array_struct_type_to_c_array_type[c_type]
+		if SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
+			c_array_type = SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(c_type, parser_state)
 			elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
 			if C_TYPE_IS_STRUCT(elem_t,parser_state):
 				user_code = True
@@ -3329,15 +3321,14 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
 		output_c_type = c_type
 		# Variable ref reads are implemented in C
 		# and so cant have an output type of an array type
-		# Do dumb struct thing if needed
+		# Use auto gen struct array types
 		if not C_AST_REF_TOKS_ARE_CONST(ref_toks) and C_TYPE_IS_ARRAY(c_type):
 			elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)				
-			output_dumb_struct_array_type = elem_t.replace("[","_").replace("]","_").replace("__","_").strip("_") + DUMB_ARRAY_STRUCT_THING
+			output_struct_array_type = elem_t.replace("[","_").replace("]","_").replace("__","_").strip("_") + "_array"
 			for dim in dims:
-				output_dumb_struct_array_type += "_" + str(dim)
-			output_c_type = output_dumb_struct_array_type
-			# Record being dumb
-			parser_state.dumb_array_struct_type_to_c_array_type[output_dumb_struct_array_type] = c_type		
+				output_struct_array_type += "_" + str(dim)
+			output_struct_array_type += "_t"
+			output_c_type = output_struct_array_type
 		
 		output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
 		parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
@@ -5296,9 +5287,9 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 					continue
 				# I'm dumb and C doesnt return arrays
 				elif (
-							 ( (DUMB_ARRAY_STRUCT_THING in driven_wire_type) and (parser_state.dumb_array_struct_type_to_c_array_type[driven_wire_type]==rhs_type) )
+							 ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type,parser_state) and (SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(driven_wire_type,parser_state)==rhs_type) )
 							or
-							 ( (DUMB_ARRAY_STRUCT_THING in rhs_type) and (driven_wire_type==parser_state.dumb_array_struct_type_to_c_array_type[rhs_type]) )
+							 ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(rhs_type, parser_state) and (driven_wire_type==SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(rhs_type, parser_state)) )
 						 ):
 					continue
 				
@@ -5627,11 +5618,6 @@ class ParserState:
 		self.clk_cross_var_name_to_write_read_main_funcs = dict() # dict[var_name]= (write_main_func, read_main_func)
 		self.clk_cross_var_name_to_write_read_sizes = dict() # dict[var_name] = (write size,read size)
 
-		# Oh fuck needing to internally fake returning arrays aw shit
-		# NOT ANY MORE ~~~~~~~  SCOOOO
-		print "TODO remove dumb_array_struct_type_to_c_array_type"
-		self.dumb_array_struct_type_to_c_array_type = dict() #[DUMBSTRUCT type] = "elem[i][j][k]"
-
 	def DEEPCOPY(self):
 		# Fuck me how many times will I get caught with objects getting copied incorrectly?
 		rv = ParserState()
@@ -5656,8 +5642,6 @@ class ParserState:
 		rv.enum_to_ids_dict = dict(self.enum_to_ids_dict)
 		rv.global_info = dict(self.global_info)
 		rv.volatile_global_info = dict(self.volatile_global_info)
-		
-		rv.dumb_array_struct_type_to_c_array_type = dict(self.dumb_array_struct_type_to_c_array_type)
 		
 		rv.func_name_to_calls = dict(self.func_name_to_calls)
 		rv.func_names_to_called_from = dict(self.func_name_to_calls)
@@ -5972,8 +5956,8 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
 		func_logic = parser_state.FuncLogicLookupTable[func_name]
 		for wire in func_logic.wire_to_c_type:
 			c_type  = func_logic.wire_to_c_type[wire]
-			if DUMB_ARRAY_STRUCT_THING in c_type:
-				c_array_type = parser_state.dumb_array_struct_type_to_c_array_type[c_type]
+			if SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type,parser_state):
+				c_array_type = SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(c_type)
 				elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
 				data_array_type = elem_t
 				for dim in dims:

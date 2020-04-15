@@ -98,6 +98,25 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(text):
 		if not os.path.exists(dir_name):
 			os.makedirs(dir_name)
 		open(path, 'w').write("")
+		
+def C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
+	r="\w+_array(_[0-9]+)+_t"
+	array_struct_types = FIND_REGEX_MATCHES(r, c_type)
+	is_array_type = len(array_struct_types) == 1
+	#print "c_type array struct?",c_type, is_array_type
+	#TODO inspect type is defined and elem type exists?
+	return is_array_type
+	
+def C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(array_struct_c_type, parser_state):
+	s = array_struct_c_type.strip("_t")
+	toks = s.split("_array_")
+	elem_t = toks[0]
+	dims = toks[1].split("_")
+	array_c_type = elem_t
+	for dim in dims:
+		array_c_type += "[" + dim + "]"
+	#print "c_type array struct type to array type",array_struct_c_type, array_c_type	
+	return array_c_type
 
 def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(text):
 	# Regex search c_text for "<type>_array_<num>_t.h"
@@ -237,8 +256,9 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, par
 # Not including user types and dumb struct thing everywhere we internally run C parsser
 # so just fake it # Pups To Dust - Modest Mouse
 def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
-	return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in c_type)	
+	return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state)	
 	
+
 
 # Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
 # Zero clock cycles just infers RAM primitives implemented in LUTS
@@ -1769,7 +1789,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 	for const_ref in const_refs:
 		# Declare and begin assignment
 		text += "	" + output_t + " " + const_ref + ";\n"
-		if C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in output_t:
+		if C_TYPE_IS_ARRAY_STRUCT(output_t, parser_state):
 			text += "	" + const_ref + ".data = base"
 		else:
 			text += "	" + const_ref + " = base"

@@ -1556,10 +1556,10 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 			resize_toks = ["to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
 			
 		# Making yourself sad to work around issues you didnt forsee is ok
-		elif (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in left_type):
+		elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
 			# Assigning to dumb , dumb = (data => value);  -- no others in struct
 			resize_toks = ["(data => ",")"]
-		elif (C_TO_LOGIC.DUMB_ARRAY_STRUCT_THING in right_type):
+		elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(right_type, parser_state):
 			# Assigning to arry from dumb
 			# array = dumb.data
 			resize_toks = ["",".data"]

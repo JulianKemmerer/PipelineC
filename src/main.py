@@ -29,7 +29,6 @@ print '''
 '''
 
 print "TODO:"
-print "	REMOVE DUMB_ARRAY_STRUCT_THING since implementinged public facing code gen"
 print "	Detect single instance funcs and record logic.is_single_inst"
 print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Do clock crossing for real - not same mhz"

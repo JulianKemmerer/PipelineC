@@ -400,7 +400,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
 			expr = '''			base''' + vhdl_ref_str + ''' := ''' + vhdl_input_port
 			if var_ref_toks:
 				# Index into RHS
-				# Uses that DUMB_ARRAY_STRUCT_THING struct wrapper?
+				# Uses that array struct thing?
 				# Need to have ".data"?
 				expr += ".data"
 				for var_ref_tok_index in var_ref_tok_indicies:
