@@ -84,7 +84,7 @@ process(
 		i.pcis.write.req.wstrb(byte_i)   <= (others => axi_wstrb(byte_i));
 	end loop;
 	--		Ready
-	i.pcis.bready  <= axi_bready ;
+	i.pcis.write.bready  <= axi_bready ;
 	--	Read
 	--		Request
 	i.pcis.read.req.arsize  <= axi_arsize ;
@@ -93,7 +93,7 @@ process(
 	i.pcis.read.req.arvalid <= axi_arvalid;
 	i.pcis.read.req.arlen   <= axi_arlen  ;
 	--		Ready
-	i.pcis.rready  <= axi_rready ;
+	i.pcis.read.rready  <= axi_rready ;
 		
 	
 	-- Outputs
@@ -120,11 +120,12 @@ process(
 end process;
 	
 -- Instantiate PipelineC main entity
-main_i : entity work.main port map
+top_i : entity work.top port map
 (	
-	clk,
-	i,
-	o
+	clk_aws_fpga_dma => clk,
+	aws_fpga_dma_i => i,
+	aws_fpga_dma_return_output => o,
+	clk_work_wrapper => clk
 );
 
 end arch;
