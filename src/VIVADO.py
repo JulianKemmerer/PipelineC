@@ -191,7 +191,11 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
           print "TODO: Improve clock crossing paths"
           print "Cross from", start_main_func, "to", end_main_func
           sys.exit(0)
-        possible_main_funcs.add(start_main_func)          
+        main_func = start_main_func
+        timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
+        total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
+        last_stage = total_latency
+        possible_main_funcs.add(main_func)          
               
         # Expect a one stage length path
         if found_end_reg_abs_index - found_start_reg_abs_index != 1:

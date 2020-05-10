@@ -1,13 +1,12 @@
-// Code wrapping AXI4 (FPGA) hardware to a common 'DMA message' 
+// Code wrapping AXI4 (FPGA) hardware to a common 'DMA message'
+// Message buffer is a shift register of AXI-4 words
+// (i.e. memory 'seek time' is 1 clk per word position difference from last word)
+// There is a message buffer for deserializing and another for serializing
 
 #include "../../axi.h"
 #include "dma_msg.h"
 
-// !!!!!!!  WARNING: !!!!!!!!!!!
-//		THIS IMPLEMENTATION DOES NOT HAVE FLOW CONTROL LOGIC.
-//		ASSUMES ALWAYS READY FOR INPUT AND OUTPUT.
-
-// DMA data comes in chunks of 64B
+// DMA data comes in word chunks of 64B
 #define DMA_WORD_SIZE 64
 #define LOG2_DMA_WORD_SIZE 6
 #define DMA_MSG_WORDS (DMA_MSG_SIZE/DMA_WORD_SIZE)
@@ -33,80 +32,216 @@ dma_msg_t deserializer_unpack(dma_word_buffer_t word_buffer)
 	return msg;
 }
 
-// Parse input AXI-4 to a wider lower duty cycle message stream
-// Input regs
-axi512_i_t deserializer_axi;
-// Output regs
-dma_word_buffer_t deserializer_msg_buffer;
-uint1_t deserializer_msg_buffer_valid;
-// Other regs
-dma_msg_size_t deserializer_word_pos;
-dma_msg_s deserializer(axi512_i_t axi)
+// The DMA message as passed around in hardware with some extra info
+typedef struct dma_msg_hw_t
 {
-	// Output regs (immediately read global to return later)
-	// Buffer as output reg by outputting the reg value without modificaiton
-	dma_msg_s msg;
-	msg.data = deserializer_unpack(deserializer_msg_buffer);
-	// Message done/valid?
-	msg.valid = deserializer_msg_buffer_valid;
-	
-	// Start off assuming we dont have another valid buffer already
-	deserializer_msg_buffer_valid = 0;
-	
-	// Maybe write incoming data into circular buffer
-	// Read word from front/top (upper addr word) of circular buff
-	uint8_t word[DMA_WORD_SIZE];
-	word = deserializer_msg_buffer.words[DMA_MSG_WORDS-1];
+  dma_msg_t msg; // The message
+  dma_msg_size_t axi_bursts; // # of axi bursts received for message
+} dma_msg_hw_t;
+// Stream version
+typedef struct dma_msg_hw_s
+{
+  dma_msg_hw_t data; // The message
+  uint1_t valid;
+} dma_msg_hw_s;
+#include "dma_msg_hw_s_array_N_t.h"
 
-	// Write incoming data to byte location in word
-	uint32_t byte_i;
-	byte_i = 0;
-	for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
-	{
-		if(deserializer_axi.wstrb[byte_i])
-		{
-			word[byte_i] = deserializer_axi.wdata[byte_i];
-		}
-	}
-	
-	// Handle the write data if valid
-	if(deserializer_axi.wvalid)
-	{
-		// Write modified word back into buffer
-		deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word;
-		// If current word high bytes written then next bytes will be for next word
-		if(deserializer_axi.wstrb[DMA_WORD_SIZE-1])
-		{
-			// Increment pos for next word
-			deserializer_word_pos = deserializer_word_pos + 1;
-			// Shift circular buffer to make room for next word if this is not the last word
-			if(deserializer_word_pos != DMA_MSG_WORDS)
-			{
-				uint8_t word0[DMA_WORD_SIZE];
-				word0 = deserializer_msg_buffer.words[0];
-				uint32_t word_i;
-				for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
-				{
-					deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
-				}
-				deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
-			}
-		}
-	}
-	
-	// Done with entire message?
-	if(deserializer_word_pos == DMA_MSG_WORDS)
-	{
-		// Validate output message buffer
-		deserializer_msg_buffer_valid = 1;
-		// Reset pos
-		deserializer_word_pos = 0;
-	}
-	
-	// Input regs (assign to global for next iteration)
-	deserializer_axi = axi;
-	
-  return msg;
+// Parse input AXI-4 to a wider lower duty cycle message stream
+// Deserializer state
+typedef enum deserializer_state_t {
+	ALIGN_WORD_POS,
+	DESERIALIZE
+} deserializer_state_t;
+deserializer_state_t deserializer_state;
+// AXI-4 burst begin with address
+dma_msg_size_t deserializer_start_word_pos;
+uint1_t deserializer_start_word_pos_valid;
+// Mesg buffer / output reg
+dma_word_buffer_t deserializer_msg_buffer;
+dma_msg_size_t deserializer_msg_axi_bursts;
+uint1_t deserializer_msg_buffer_valid;
+// Word position at the front of msg_buffer
+dma_msg_size_t deserializer_word_pos;
+// Output
+//    Each message is the result of N incoming AXI-4 bursts
+//    After each message is processed each of the bursts needs to output response
+typedef struct deserializer_outputs_t
+{
+	dma_msg_hw_s msg_stream;
+  axi512_write_ready_t ready;
+} deserializer_outputs_t;
+deserializer_outputs_t deserializer(axi512_write_req_t axi)
+{
+  // Output message from register (immediately read global reg to return later)
+  deserializer_outputs_t o;
+  o.msg_stream.data.msg = deserializer_unpack(deserializer_msg_buffer);
+  o.msg_stream.data.axi_bursts = deserializer_msg_axi_bursts;
+  o.msg_stream.valid = deserializer_msg_buffer_valid;
+  // Default not ready for input addr+data yet
+  o.ready.awready = 0;
+  o.ready.wready = 0;
+  
+  // If outputting message then time to reset axi burst counter
+  if(deserializer_msg_buffer_valid)
+  {
+    deserializer_msg_axi_bursts = 0;
+  }
+  
+  // Start off assuming we dont have another valid buffer ready to output
+  deserializer_msg_buffer_valid = 0;
+  
+  // Ready for new address if dont have one 
+  if(!deserializer_start_word_pos_valid)
+  {
+    o.ready.awready = 1;
+    deserializer_start_word_pos = axi.awaddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
+    deserializer_start_word_pos_valid = axi.awvalid;
+  }
+  
+  // Flag to cause shift buffer to rotate, default not shifting
+  uint1_t do_shift_buff_increment_pos;
+  do_shift_buff_increment_pos = 0;
+  
+  // What state are we actually in?
+  
+  // Aligning buffer
+  if(deserializer_state == ALIGN_WORD_POS)
+  {
+    // Buffer word pos needs to match 
+    // starting axi word addr before leaving this state
+    if(deserializer_start_word_pos_valid)
+    {
+      // Only thing we can do is shift buffer by one if pos doesnt match
+      if(deserializer_start_word_pos != deserializer_word_pos)
+      {
+        do_shift_buff_increment_pos = 1;
+      }
+      else 
+      {
+        // No shifting required, done
+        deserializer_state = DESERIALIZE;
+        // No longer need to hold onto start addr
+        deserializer_start_word_pos_valid = 0;
+      }
+    }
+  }
+  
+  // Last word in message?
+  uint1_t at_end_word;
+	at_end_word = deserializer_word_pos==DMA_MSG_WORDS-1;
+  // Calc next pos with rollover
+  dma_msg_size_t next_deserializer_word_pos;
+  if(at_end_word)
+  {
+    next_deserializer_word_pos = 0;
+  }
+  else
+  {
+    next_deserializer_word_pos = deserializer_word_pos + 1;
+  }
+  
+  // Deserializing into buffer
+  if(deserializer_state == DESERIALIZE)
+  {
+    // Default ready for more data
+    o.ready.wready = 1;
+    
+    // Read copy of word from front/top (upper addr word) of circular buff
+    uint8_t word[DMA_WORD_SIZE];
+    word = deserializer_msg_buffer.words[DMA_MSG_WORDS-1];
+
+    // Write incoming data to byte location in word
+    uint32_t byte_i;
+    byte_i = 0;
+    for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
+    {
+      if(axi.wstrb[byte_i])
+      {
+        word[byte_i] = axi.wdata[byte_i];
+      }
+    }
+
+    // Handle that write data in word if valid
+    // Maybe write incoming data into circular buffer
+    if(axi.wvalid)
+    {
+      // Write modified word back into buffer
+      deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word;
+      // If current word high bytes written 
+      // then next bytes will be for next word, shift buffer
+      if(axi.wstrb[DMA_WORD_SIZE-1])
+      {
+        do_shift_buff_increment_pos = 1;
+      }
+      // Dont shift the buffer if this was the last word in the message
+      // (need to keep buffer in place to act as output reg)
+      if(at_end_word)
+      {
+        // Dont shift
+        do_shift_buff_increment_pos = 0;
+        // Validate output message buffer
+        deserializer_msg_buffer_valid = 1;
+      }
+      
+      // Last incoming word of this burst? 
+      if(axi.wlast)
+      {
+        // Increment burst count
+        deserializer_msg_axi_bursts = deserializer_msg_axi_bursts + 1;
+        
+        // Might need to align pos for next burst
+        uint1_t need_align;
+        need_align = 1;
+        // Most of the time the next burt starts at next pos
+        // and thus doesnt need additional alignment
+        // Do we have the next start pos?
+        if(deserializer_start_word_pos_valid)
+        {
+          // Might need to align depending on shifting or not
+          uint1_t next_start_is_next_word;
+          next_start_is_next_word = deserializer_start_word_pos==next_deserializer_word_pos;
+          uint1_t next_start_is_curr_word;
+          next_start_is_curr_word = deserializer_start_word_pos==deserializer_word_pos;
+          // Not shifting and expecting to start in same place
+          if(!do_shift_buff_increment_pos & next_start_is_curr_word)
+          {
+            need_align = 0;
+          }
+          // Shifting and expecting to start in next place
+          if(do_shift_buff_increment_pos & next_start_is_next_word)
+          {
+            need_align = 0;
+          }
+        }
+        
+        // Only need to leave this state if need to align buffer
+        if(need_align)
+        {
+          // Need to align buffer
+          deserializer_state = ALIGN_WORD_POS;
+        }    
+      }
+    }
+  }
+  
+  // Shift buffer logic
+  if(do_shift_buff_increment_pos)
+  {
+    // Increment pos for next word with wrap around
+    deserializer_word_pos = next_deserializer_word_pos;
+    
+    // Circular buffer
+    uint8_t word0[DMA_WORD_SIZE];
+    word0 = deserializer_msg_buffer.words[0];
+    uint32_t word_i;
+    for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
+    {
+            deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
+    }
+    deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
+  }
+
+  return o;
 }
 
 // Pack byte array into word array buffer
@@ -125,204 +260,187 @@ dma_word_buffer_t serializer_pack(dma_msg_t msg)
 	return word_buffer;
 }
 
-// Serialize messages as AXI
-// 1. Respond to writes immediately 
-// 2. Buffer incoming DMA messages to serialize
-// 3. Since no flow control 
-//		N reads can show up back to back representing 
-//    the software read of the enitre DMA_MSG_SIZE bytes
-//    Store/fifo these and respond to each correctly
-typedef struct serializer_read_request_t
-{
-   dma_msg_size_t burst_words;
-   dma_msg_size_t word_pos;
-   uint1_t valid;
-} serializer_read_request_t;
+// Respond to writes and serialize messages as AXI reads
+// Message buffer / input reg
+dma_word_buffer_t serializer_msg;
+dma_msg_size_t serializer_msg_axi_bursts;
+uint1_t serializer_msg_valid;
+// AXI-4 burst begin with address+size
+dma_msg_size_t serializer_start_word_pos;
+dma_msg_size_t serializer_start_burst_words;
+uint1_t serializer_start_valid;
+// General state regs
 typedef enum serializer_state_t {
-	GET_READ_REQ,
 	ALIGN_WORD_POS,
 	SERIALIZE
 } serializer_state_t;
-#define SER_READ_REQ_BUFF_SIZE 4 // Back to back reads to buffer
-// Input regs
-axi512_i_t serializer_axi_in;
-dma_word_buffer_t serializer_msg;
-uint1_t serializer_msg_valid;
-// Output regs
-axi512_o_t serializer_axi_out;
-// Other regs
-serializer_read_request_t serializer_read_request_buffer[SER_READ_REQ_BUFF_SIZE];
 serializer_state_t serializer_state;
-serializer_read_request_t serializer_curr_read_request;
 dma_msg_size_t serializer_word_pos;
-axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
+dma_msg_size_t serializer_remaining_burst_words;
+typedef struct serializer_outputs_t
+{
+  axi512_write_resp_t write_resp;
+	axi512_read_o_t read;
+} serializer_outputs_t;
+serializer_outputs_t serializer(dma_msg_hw_s msg_stream, axi512_i_t axi_in)
 {	
-	// Output regs (immediately read global to return later)
-	axi512_o_t axi_out;
-	axi_out = serializer_axi_out;
-	
-	// Default output reg values
-	// Can't really do good flow control - yet.
-  // This is hacky
-  // Ready for write address
-  serializer_axi_out.awready = 1;
-	//  Ready for write data 
-  serializer_axi_out.wready = 1;
-  //  Ready for read address
-  serializer_axi_out.arready = 1;
-	serializer_axi_out.bvalid = 0; // Invalid write response
-	serializer_axi_out.bid = 0;
-	serializer_axi_out.bresp = 0; // Error code
-	serializer_axi_out.rvalid = 0; // Invalid read response
-	serializer_axi_out.rid = 0;
-	serializer_axi_out.rresp = 0;
-	serializer_axi_out.rlast = 0;
+	// Default output values
+  serializer_outputs_t o;
+  // No output write responses yet
+  o.write_resp.bid = 0; // Only ever seen one id?
+  o.write_resp.bresp = 0; // No err
+  o.write_resp.bvalid = 0;
+  // Not yet ready for read addr
+  o.read.arready = 0;
+  // Not output read data
+	o.read.resp.rvalid = 0;
+	o.read.resp.rid = 0;
+	o.read.resp.rresp = 0;
+	o.read.resp.rlast = 0;
 	uint8_t byte_i;
 	for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
 	{
-		serializer_axi_out.rdata[byte_i] = 0;
+		o.read.resp.rdata[byte_i] = 0;
 	}
-	
-	// Respond to DMA writes immediately
-	if(serializer_axi_in.wvalid & serializer_axi_in.wlast)
-	{
-		serializer_axi_out.bvalid = 1;
-	}
-		
-	// Buffer up to N read requests as they come in
-	if(serializer_axi_in.arvalid)
-	{
-		// Form new request
-		serializer_read_request_t new_read_request;
-		// The burst length for AXI4 is defined as,
+  
+  // Respond to write bursts if received a message to output
+  if(serializer_msg_valid)
+  {
+    // Only valid if have if burts to respond to
+    if(serializer_msg_axi_bursts > 0)
+    {
+      o.write_resp.bvalid = 1;
+      // Decrement count if downstream was ready to receive
+      if(axi_in.write.bready)
+      {
+        serializer_msg_axi_bursts = serializer_msg_axi_bursts - 1;
+      }
+    }
+  }
+
+  // Ready for new read address+size if dont have one
+  if(!serializer_start_valid)
+  {
+    o.read.arready = 1;
+    serializer_start_word_pos = axi_in.read.req.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
+    // The burst length for AXI4 is defined as,
 	  // Burst_Length = AxLEN[7:0] + 1,
-		new_read_request.burst_words = serializer_axi_in.arlen + 1;
-		new_read_request.word_pos = serializer_axi_in.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
-		new_read_request.valid = 1;
-		// Put at the end of the shiftreg/buffer (assume empty)
-		serializer_read_request_buffer[SER_READ_REQ_BUFF_SIZE-1] = new_read_request;	
-	}
+		serializer_start_burst_words = axi_in.read.req.arlen + 1;
+    serializer_start_valid = axi_in.read.req.arvalid;
+  }
+  
+  // Flag to cause shift buffer to rotate, default not shifting
+  uint1_t do_shift_buff_increment_pos;
+  do_shift_buff_increment_pos = 0;
+  
+  // What state are we actually in?
 	
-	// What entry is at the front of the buffer? Maybe used
-	serializer_read_request_t next_read_request;
-	next_read_request = serializer_read_request_buffer[0];
-	
-	// Shift out that next request to make room in buffer?
-	uint1_t front_empty;
-	front_empty = next_read_request.valid == 0;
-	// Have serializer_msg to serialize and read req buffered?
-	uint1_t have_buffers;
-	have_buffers = serializer_msg_valid & next_read_request.valid;
-	// And trying to read those buffers?
-	uint1_t trying_read_buffers;
-	trying_read_buffers = (serializer_state == GET_READ_REQ);
-	// Then suceeded at reading front from front
-	uint1_t read_good;
-	read_good = have_buffers & trying_read_buffers;
-	// Shift if front empty or reading good entry from front
-	uint1_t do_req_buff_shift;
-	do_req_buff_shift = front_empty | read_good;
-	if(do_req_buff_shift)
-	{
-		// Move old data forward
-		uint32_t buff_i;
-		for(buff_i=0; buff_i < SER_READ_REQ_BUFF_SIZE-1; buff_i = buff_i + 1)
-		{
-			serializer_read_request_buffer[buff_i] = serializer_read_request_buffer[buff_i+1];
-		}
-		// To empty spot at end
-		serializer_read_request_buffer[SER_READ_REQ_BUFF_SIZE-1].valid = 0;
-	}
-	
-	// Do functionality to respond to reads based on state
-	// (not else-ifs since not required to delay until next iteration)
-	
-	// Pull a read request from the above shift buffer
-	if(serializer_state == GET_READ_REQ)
-	{
-		// Have a buffers ready?
-		if(have_buffers)
-		{
-			// Then start serializing by aligning word pos of circular buffer
-			serializer_curr_read_request = next_read_request;
-			serializer_state = ALIGN_WORD_POS;
-		}
-	}
-	
-	// Align shift buffer as needed to output next read request
-	uint1_t do_shift_buff_increment_pos;
-	do_shift_buff_increment_pos = 0;
+	// Align shift buffer as needed to output next read burst
 	if(serializer_state == ALIGN_WORD_POS)
 	{
-		// Is the current word pos aligned with the requested one?
-		if(serializer_word_pos == serializer_curr_read_request.word_pos)
-		{
-			// Current data at front of buffer is correct word pos, begin outputting it
-			serializer_state = SERIALIZE;
-		}
-		else
-		{
-			// Not aligned, shift buffer and increment pos
-			do_shift_buff_increment_pos = 1;
-		}
+		// Buffer word pos needs to match 
+    // starting axi word addr before leaving this state
+    if(serializer_msg_valid & serializer_start_valid)
+    {
+      // Only thing we can do is shift buffer by one if pos doesnt match
+      if(serializer_word_pos != serializer_start_word_pos)
+      {
+        do_shift_buff_increment_pos = 1;
+      }
+      else 
+      {
+        // No shifting required, done
+        serializer_state = SERIALIZE;
+        // No longer need to hold onto start info
+        serializer_remaining_burst_words = serializer_start_burst_words;
+        serializer_start_valid = 0;
+      }
+    }
 	}
 	
-	// Output the data on the bus
-	uint1_t at_end_word;
+  // Last word?
+  uint1_t at_end_word;
 	at_end_word = serializer_word_pos==DMA_MSG_SIZE-1;
-	// Select the next word from front of buffer
-	uint8_t word[DMA_WORD_SIZE];
-	word = serializer_msg.words[0];
+  // Calc next pos with rollover
+  dma_msg_size_t next_serializer_word_pos;
+  if(at_end_word)
+  {
+    next_serializer_word_pos = 0;
+  }
+  else
+  {
+    next_serializer_word_pos = serializer_word_pos + 1;
+  }
+  
+  // Select the next word from front of buffer
+  uint8_t word[DMA_WORD_SIZE];
+  word = serializer_msg.words[0];
+  
+	// Output the data on the bus
 	if(serializer_state == SERIALIZE)
-	{
+	{    
 		// Put word on the bus
-		serializer_axi_out.rdata = word;
-		serializer_axi_out.rvalid = 1;
-		
-		// Record outputting this word
-		serializer_curr_read_request.burst_words = serializer_curr_read_request.burst_words - 1;
-		
-		// End this read request serialization?
-		if(serializer_curr_read_request.burst_words==0)
+		o.read.resp.rdata = word;
+		o.read.resp.rvalid = 1;
+    
+    // Last word of this read burst serialization?
+		if(serializer_remaining_burst_words==1)
 		{
-			// End the stream and reset
-			serializer_axi_out.rlast = 1;
-			serializer_curr_read_request.valid = 0;
-			serializer_state = GET_READ_REQ;
-		}
-		
-		// If this is the last word then only part 
-		// of the word may have been actually accepted
-		// Do not shift the buffer + increment pos once at the last word
-		// may need it at the start of next burst as determined by ALIGN_WORD_POS
-		do_shift_buff_increment_pos = !serializer_axi_out.rlast;
-		
-		// Dont need to invaldiate serializer_msg buffer since could be read again just fine?
-		/*
-		// Done with the whole DMA message if at end pos
-		// and no next read request (helps assume last word was fully read)
-		next_read_request = serializer_read_request_buffer[0];
-		if( at_end_word & !next_read_request.valid )
-		{
-			serializer_msg_valid = 0;
-			serializer_word_pos = 0; // Shouldnt need?
-			do_shift_buff_increment_pos = 0; // Shouldnt need?
-		}
-		*/ 
+			// End the stream
+			o.read.resp.rlast = 1;
+    }
+    
+		// Increment/next state if downstream was ready to receive 
+    if(axi_in.read.rready)
+    {
+      // Record outputting this word
+      serializer_remaining_burst_words = serializer_remaining_burst_words - 1;
+      
+      // If this is the last word then only part 
+      // of the word may have been actually accepted
+      // Do not shift the buffer + increment pos once at the last word
+      // may need it at the start of next burst as determined below
+      do_shift_buff_increment_pos = !o.read.resp.rlast;
+      
+      uint1_t need_align;
+      need_align = 1;
+      
+      // Most of the time the next burt starts at next pos
+      // and thus doesnt need additional alignment
+      // Do we have the next start pos?
+      if(serializer_start_valid)
+      {
+        // Might need to align depending on shifting or not
+        uint1_t next_start_is_next_word;
+        next_start_is_next_word = serializer_start_word_pos==next_serializer_word_pos;
+        uint1_t next_start_is_curr_word;
+        next_start_is_curr_word = serializer_start_word_pos==serializer_word_pos;
+        // Not shifting and expecting to start in same place
+        if(!do_shift_buff_increment_pos & next_start_is_curr_word)
+        {
+          need_align = 0;
+        }
+        // Shifting and expecting to start in next place
+        else if(do_shift_buff_increment_pos & next_start_is_next_word)
+        {
+          need_align = 0;
+        }
+      }
+      
+      // Only need to leave this state if need to align buffer
+      if(need_align)
+      {
+        // Not ready to output data, need to align buffer
+        serializer_state = ALIGN_WORD_POS;
+      }    
+    }
 	}
 	
 	// Do circular buffer shift and wrapping increment when requested
 	if(do_shift_buff_increment_pos)
 	{
-		// Increment pos, roll over if at end
-		if(at_end_word)
-		{
-			serializer_word_pos = 0;
-		}
-		else
-		{
-			serializer_word_pos = serializer_word_pos + 1;
-		}
+		// Increment pos, w roll over
+    serializer_word_pos = next_serializer_word_pos;
 
 		// Shift circular buffer
 		uint32_t word_i;
@@ -334,15 +452,13 @@ axi512_o_t serializer(dma_msg_s msg, axi512_i_t axi_in)
 	}
 	
 	// Input regs (assign to global for next iteration)
-	//	AXI4 bus
-	serializer_axi_in = axi_in;
-	// 	Message stream
-	if(msg.valid)
+	// 	Message buffer stream
+	if(msg_stream.valid)
 	{
-		serializer_msg = serializer_pack(msg.data); // Stored by word
+		serializer_msg = serializer_pack(msg_stream.data.msg); // Stored by word
 		serializer_msg_valid = 1;
 		serializer_word_pos = 0; // Resets what address is at front of buffer
 	}
   
-  return axi_out;
+  return o;
 }

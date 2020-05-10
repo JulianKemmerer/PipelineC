@@ -11,12 +11,15 @@ import SW_LIB
 import MODELSIM
 import VIVADO
 
-c_file = "main.c"
 # AWS example runs at 125
 # However, experiments show we might need margin to meet timing at scalez
-mhz = 600.0 #156.25 #125.0 # 125 * 1.25 = 156.25
-#main_mhz = { 'global_main' : mhz, 'pipeline_main' : mhz }
-main_mhz = { 'main' : mhz }
+mhz = 150 #125.0 # 125 * 1.20 = 150
+
+# Main functions and operating frequencies
+main_mhz = { 'aws_fpga_dma' : mhz, 'work_wrapper' : mhz }
+#main_mhz = { 'main' : mhz }
+# All main functions must be in main.c
+c_file = "main.c"
 
 
 print '''
@@ -30,8 +33,8 @@ print '''
 
 print "TODO:"
 print "	Detect single instance funcs and record logic.is_single_inst"
-print "	Fix bug where user can't have empty/pass through/no submodules functions"
 print "	Do clock crossing for real - not same mhz"
+print " Relative clock crossings - not absolute specified in main? Can point at any non-single-inst function to run in requested relative clock..from:How to wrap multiple mains for later instantiation? All mains need to be specified at top level?"
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
