@@ -68,42 +68,55 @@ process(
 	-- Entity output
 	o
 ) begin
-	-- Inputs 
-	i.pcis.arsize  <= axi_arsize ;
-	i.pcis.awsize  <= axi_awsize ;
-	i.pcis.araddr  <= axi_araddr ;
-	i.pcis.awaddr  <= axi_awaddr ;
-	i.pcis.wlast   <= axi_wlast  ;
-	i.pcis.rready  <= axi_rready ;
-	i.pcis.awvalid <= axi_awvalid;
-	i.pcis.arid    <= axi_arid   ;
-	i.pcis.wvalid  <= axi_wvalid ;
-	i.pcis.bready  <= axi_bready ;
-	i.pcis.arvalid <= axi_arvalid;
-	i.pcis.arlen   <= axi_arlen  ;
-	i.pcis.awlen   <= axi_awlen  ;
-	i.pcis.awid    <= axi_awid   ;
-	-- Input arrays
+
+	-- Inputs
+	-- 	Write
+	--		Request
+	i.pcis.write.req.awlen   <= axi_awlen  ;
+	i.pcis.write.req.awid    <= axi_awid   ;
+	i.pcis.write.req.awsize  <= axi_awsize ;
+	i.pcis.write.req.awaddr  <= axi_awaddr ;
+	i.pcis.write.req.awvalid <= axi_awvalid;
+	i.pcis.write.req.wlast   <= axi_wlast  ;
+	i.pcis.write.req.wvalid  <= axi_wvalid ;
 	for byte_i in 0 to 63 loop
-		i.pcis.wdata(byte_i)   <= axi_wdata(((byte_i+1)*8)-1 downto (byte_i*8));
-		i.pcis.wstrb(byte_i)   <= (others => axi_wstrb(byte_i));
+		i.pcis.write.req.wdata(byte_i)   <= axi_wdata(((byte_i+1)*8)-1 downto (byte_i*8));
+		i.pcis.write.req.wstrb(byte_i)   <= (others => axi_wstrb(byte_i));
 	end loop;
+	--		Ready
+	i.pcis.bready  <= axi_bready ;
+	--	Read
+	--		Request
+	i.pcis.read.req.arsize  <= axi_arsize ;
+	i.pcis.read.req.araddr  <= axi_araddr ;
+	i.pcis.read.req.arid    <= axi_arid   ;
+	i.pcis.read.req.arvalid <= axi_arvalid;
+	i.pcis.read.req.arlen   <= axi_arlen  ;
+	--		Ready
+	i.pcis.rready  <= axi_rready ;
+		
 	
 	-- Outputs
-  axi_arready       <= o.pcis.arready ;
-  axi_bid           <= o.pcis.bid     ;
-  axi_rlast         <= o.pcis.rlast   ;
-  axi_rresp         <= o.pcis.rresp   ;
-  axi_rvalid        <= o.pcis.rvalid  ;
-  axi_wready        <= o.pcis.wready  ;
-  axi_bvalid        <= o.pcis.bvalid  ;
-  axi_rid           <= o.pcis.rid     ;
-  axi_bresp         <= o.pcis.bresp   ;
-  axi_awready       <= o.pcis.awready ;
-  -- Output arrays
+	-- 	Write
+	--		Response
+	axi_bid           <= o.pcis.write.resp.bid     ;
+	axi_bresp         <= o.pcis.write.resp.bresp   ;
+	axi_bvalid        <= o.pcis.write.resp.bvalid  ;
+	--		Ready
+	axi_awready       <= o.pcis.write.ready.awready ;
+	axi_wready        <= o.pcis.write.ready.wready  ;
+	--	Read
+	--		Response
+  axi_rlast         <= o.pcis.read.resp.rlast   ;
+  axi_rresp         <= o.pcis.read.resp.rresp   ;
+  axi_rvalid        <= o.pcis.read.resp.rvalid  ;
+  axi_rid           <= o.pcis.read.resp.rid     ;
   for byte_i in 0 to 63 loop
-		axi_rdata(((byte_i+1)*8)-1 downto (byte_i*8)) <= o.pcis.rdata(byte_i);
-	end loop; 
+		axi_rdata(((byte_i+1)*8)-1 downto (byte_i*8)) <= o.pcis.read.resp.rdata(byte_i);
+	end loop;
+	--		Ready
+	axi_arready       <= o.pcis.read.arready ;
+	
 end process;
 	
 -- Instantiate PipelineC main entity
