@@ -32,9 +32,10 @@ print '''
 '''
 
 print "TODO:"
+print	"	Use pragmas to solve problem of sharing main funcs and mhz? from:How to wrap multiple mains for later instantiation? All mains need to be specified at top level?"
 print "	Detect single instance funcs and record logic.is_single_inst"
 print "	Do clock crossing for real - not same mhz"
-print " Relative clock crossings - not absolute specified in main? Can point at any non-single-inst function to run in requested relative clock..from:How to wrap multiple mains for later instantiation? All mains need to be specified at top level?"
+print "	Relative clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock.."
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
