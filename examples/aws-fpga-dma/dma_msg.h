@@ -15,3 +15,8 @@ typedef struct dma_msg_t
 {
   uint8_t data[DMA_MSG_SIZE];
 } dma_msg_t;
+typedef struct dma_msg_s
+{
+  dma_msg_t data;
+  uint1_t valid;
+} dma_msg_s;

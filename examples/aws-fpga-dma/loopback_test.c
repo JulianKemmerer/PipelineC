@@ -19,22 +19,23 @@ dma_msg_t input_init(int i)
 }
 
 // Helper to compare two output datas
-void compare(int i, dma_msg_t cpu, dma_msg_t fpga)
+int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
 {
-  int good = 1;
+  int bad = 0;
   for(int v=0;v<DMA_MSG_SIZE;v++)
 	{
 		if(fpga.data[v] != cpu.data[v])
     {
-      good = 0;
-      printf("Output %d does not match at %d! FPGA: %f, CPU: %f\n", i, fpga.data[v], cpu.data[v]);
+      bad = 1;
+      printf("Output %d does not match at %d! FPGA: %d, CPU: %d\n", i, fpga.data[v], cpu.data[v]);
       break;
     }
 	}
+	return bad;
 }
 
-// Do work() using the FPGA hardware
-dma_msg_t work_fpga(dma_msg_t input)
+// Do loopback using the FPGA hardware
+dma_msg_t loopback_fpga(dma_msg_t input)
 {
 	// Write those DMA bytes to the FPGA
 	dma_write(input);
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
 	dma_msg_t* fpga_outputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
 	for(int i = 0; i < n; i++)
 	{
-		inputs[i] = work_inputs_init(i);
+		inputs[i] = input_init(i);
 	}
 	
 	// Time things
@@ -85,7 +86,7 @@ int main(int argc, char **argv)
 	// Do the work on the FPGA
 	for(int i = 0; i < n; i++)
 	{
-		fpga_outputs[i] = work_fpga(inputs[i]);
+		fpga_outputs[i] = loopback_fpga(inputs[i]);
 	}
 	// End time
 	t = clock() - t; 
@@ -99,7 +100,10 @@ int main(int argc, char **argv)
 	// Compare the outputs
 	for(int i = 0; i < n; i++)
 	{
-		compare(i,cpu_outputs[i],fpga_outputs[i]);
+		if(compare_bad(i,cpu_outputs[i],fpga_outputs[i]))
+		{
+			break;
+		}
 	}
 
 	// Close direct memory access to/from FPGA
