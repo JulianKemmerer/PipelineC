@@ -27,7 +27,7 @@ int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
 		if(fpga.data[v] != cpu.data[v])
     {
       bad = 1;
-      printf("Output %d does not match at %d! FPGA: %u, CPU: %u\n", i, fpga.data[v], cpu.data[v]);
+      printf("Output %d does not match at %d! FPGA: %d, CPU: %d\n", i, v, fpga.data[v], cpu.data[v]);
       break;
     }
 	}
