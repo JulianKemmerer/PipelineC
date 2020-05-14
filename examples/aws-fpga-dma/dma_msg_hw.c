@@ -129,16 +129,6 @@ deserializer_outputs_t deserializer(axi512_write_req_t axi)
   // Last word in message?
   uint1_t at_end_word;
 	at_end_word = deserializer_word_pos==DMA_MSG_WORDS-1;
-  // Calc next pos with rollover
-  dma_msg_size_t next_deserializer_word_pos;
-  if(at_end_word)
-  {
-    next_deserializer_word_pos = 0;
-  }
-  else
-  {
-    next_deserializer_word_pos = deserializer_word_pos + 1;
-  }
   
   // Deserializing into buffer
   if(deserializer_state == DESERIALIZE)
@@ -190,36 +180,10 @@ deserializer_outputs_t deserializer(axi512_write_req_t axi)
         deserializer_msg_axi_bursts = deserializer_msg_axi_bursts + 1;
         
         // Might need to align pos for next burst
-        uint1_t need_align;
-        need_align = 1;
-        // Most of the time the next burt starts at next pos
-        // and thus doesnt need additional alignment
-        // Do we have the next start pos?
-        if(deserializer_start_word_pos_valid)
-        {
-          // Might need to align depending on shifting or not
-          uint1_t next_start_is_next_word;
-          next_start_is_next_word = deserializer_start_word_pos==next_deserializer_word_pos;
-          uint1_t next_start_is_curr_word;
-          next_start_is_curr_word = deserializer_start_word_pos==deserializer_word_pos;
-          // Not shifting and expecting to start in same place
-          if(!do_shift_buff_increment_pos & next_start_is_curr_word)
-          {
-            need_align = 0;
-          }
-          // Shifting and expecting to start in next place
-          if(do_shift_buff_increment_pos & next_start_is_next_word)
-          {
-            need_align = 0;
-          }
-        }
-        
-        // Only need to leave this state if need to align buffer
-        if(need_align)
-        {
-          // Need to align buffer
-          deserializer_state = ALIGN_WORD_POS;
-        }    
+        // Since states are written as pass-through (if,if not if,elseif)
+        // can always go to align state and 
+        // will pass through back to deser if possible
+        deserializer_state = ALIGN_WORD_POS;   
       }
     }
   }
@@ -228,7 +192,14 @@ deserializer_outputs_t deserializer(axi512_write_req_t axi)
   if(do_shift_buff_increment_pos)
   {
     // Increment pos for next word with wrap around
-    deserializer_word_pos = next_deserializer_word_pos;
+		if(at_end_word)
+		{
+			deserializer_word_pos = 0;
+		}
+		else
+		{
+			deserializer_word_pos = deserializer_word_pos + 1;
+		}
     
     // Circular buffer
     uint8_t word0[DMA_WORD_SIZE];
@@ -236,7 +207,7 @@ deserializer_outputs_t deserializer(axi512_write_req_t axi)
     uint32_t word_i;
     for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
     {
-            deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
+			deserializer_msg_buffer.words[word_i] = deserializer_msg_buffer.words[word_i+1];
     }
     deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
   }
@@ -265,6 +236,8 @@ dma_word_buffer_t serializer_pack(dma_msg_t msg)
 dma_word_buffer_t serializer_msg;
 dma_msg_size_t serializer_msg_axi_bursts;
 uint1_t serializer_msg_valid;
+// Word position at the front of msg_buffer
+dma_msg_size_t serializer_word_pos;
 // AXI-4 burst begin with address+size
 dma_msg_size_t serializer_start_word_pos;
 dma_msg_size_t serializer_start_burst_words;
@@ -275,7 +248,6 @@ typedef enum serializer_state_t {
 	SERIALIZE
 } serializer_state_t;
 serializer_state_t serializer_state;
-dma_msg_size_t serializer_word_pos;
 dma_msg_size_t serializer_remaining_burst_words;
 typedef struct serializer_outputs_t
 {
@@ -382,7 +354,6 @@ serializer_outputs_t serializer(dma_msg_hw_s msg_stream, axi512_i_t axi_in)
 		// Put word on the bus
 		o.read.resp.rdata = word;
 		o.read.resp.rvalid = 1;
-    
     // Last word of this read burst serialization?
 		if(serializer_remaining_burst_words==1)
 		{
@@ -395,44 +366,35 @@ serializer_outputs_t serializer(dma_msg_hw_s msg_stream, axi512_i_t axi_in)
     {
       // Record outputting this word
       serializer_remaining_burst_words = serializer_remaining_burst_words - 1;
+      // Shift buffer to next word
+      do_shift_buff_increment_pos = 1;
       
-      // If this is the last word then only part 
+      // If this is the last word of burst then only part 
       // of the word may have been actually accepted
-      // Do not shift the buffer + increment pos once at the last word
-      // may need it at the start of next burst as determined below
-      do_shift_buff_increment_pos = !o.read.resp.rlast;
-      
-      uint1_t need_align;
-      need_align = 1;
-      
-      // Most of the time the next burt starts at next pos
-      // and thus doesnt need additional alignment
-      // Do we have the next start pos?
-      if(serializer_start_valid)
-      {
-        // Might need to align depending on shifting or not
-        uint1_t next_start_is_next_word;
-        next_start_is_next_word = serializer_start_word_pos==next_serializer_word_pos;
-        uint1_t next_start_is_curr_word;
-        next_start_is_curr_word = serializer_start_word_pos==serializer_word_pos;
-        // Not shifting and expecting to start in same place
-        if(!do_shift_buff_increment_pos & next_start_is_curr_word)
-        {
-          need_align = 0;
-        }
-        // Shifting and expecting to start in next place
-        else if(do_shift_buff_increment_pos & next_start_is_next_word)
-        {
-          need_align = 0;
-        }
-      }
-      
-      // Only need to leave this state if need to align buffer
-      if(need_align)
-      {
-        // Not ready to output data, need to align buffer
-        serializer_state = ALIGN_WORD_POS;
-      }    
+      // 			DO NOT HAVE A READ STROBE INPUT TO KNOW LIKE WRITE SIDE
+      // So instead try to look ahead to next read addr
+			if(o.read.resp.rlast)
+			{
+				// Default assume dont shift buffer at rlast
+				do_shift_buff_increment_pos = 0;
+				// Only shift buffer if 
+				// we know the next starting addr
+				// And that addr would be next
+				if(serializer_start_valid)
+				{
+					if(serializer_start_word_pos == next_serializer_word_pos)
+					{
+						do_shift_buff_increment_pos = 1;
+					}
+				}
+				
+				// Most of the time the next burt starts at next pos
+				// and thus doesnt need additional alignment
+				// Since states are written as pass-through (if,if not if,elseif)
+				// can always go to align state and 
+				// will pass through back to serialize if possible
+				serializer_state = ALIGN_WORD_POS;
+			}
     }
 	}
 	
@@ -440,7 +402,7 @@ serializer_outputs_t serializer(dma_msg_hw_s msg_stream, axi512_i_t axi_in)
 	if(do_shift_buff_increment_pos)
 	{
 		// Increment pos, w roll over
-    serializer_word_pos = next_serializer_word_pos;
+		serializer_word_pos = next_serializer_word_pos;
 
 		// Shift circular buffer
 		uint32_t word_i;
@@ -456,6 +418,7 @@ serializer_outputs_t serializer(dma_msg_hw_s msg_stream, axi512_i_t axi_in)
 	if(msg_stream.valid)
 	{
 		serializer_msg = serializer_pack(msg_stream.data.msg); // Stored by word
+		serializer_msg_axi_bursts = msg_stream.data.axi_bursts;
 		serializer_msg_valid = 1;
 		serializer_word_pos = 0; // Resets what address is at front of buffer
 	}
