@@ -56,6 +56,7 @@ int main(int argc, char **argv)
 	
 	// Prepare N work inputs, and 2 output pairs (cpu vs fpga)
 	int n = 10000;
+	int total_bytes = n * DMA_MSG_SIZE;
 	dma_msg_t* inputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
 	dma_msg_t* cpu_outputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
 	dma_msg_t* fpga_outputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
@@ -77,9 +78,14 @@ int main(int argc, char **argv)
 	}
 	// End time
 	t = clock() - t; 
-  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
-  printf("CPU took %f seconds to execute \n", time_taken); 
+	time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+	printf("CPU took %f seconds to execute \n", time_taken); 
 	double cpu_time = time_taken;
+	double cpu_per_iter = cpu_time / (float)n;
+	printf("CPU iteration time: %f seconds\n", cpu_per_iter);
+	double cpu_bytes_per_sec = (float)total_bytes / cpu_time;
+	printf("CPU bytes per sec: %f seconds\n", cpu_bytes_per_sec);
+
 
 	// Start time
 	t = clock(); 
@@ -90,12 +96,16 @@ int main(int argc, char **argv)
 	}
 	// End time
 	t = clock() - t; 
-  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
-  printf("FPGA took %f seconds to execute \n", time_taken);
-  double fpga_time = time_taken;
+	time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+	printf("FPGA took %f seconds to execute \n", time_taken);
+	double fpga_time = time_taken;
+	double fpga_per_iter = fpga_time / (float)n;
+	printf("FPGA iteration time: %f seconds\n", fpga_per_iter);
+	double fpga_bytes_per_sec = (float)total_bytes / fpga_time;
+	printf("FPGA bytes per sec: %f seconds\n", fpga_bytes_per_sec);
   
-  // Speedy?
-  printf("Speedup: %f\n",cpu_time/fpga_time);  
+  	// Speedy?
+  	printf("Speedup: %f\n",cpu_time/fpga_time);  
 	
 	// Compare the outputs
 	for(int i = 0; i < n; i++)
