@@ -55,7 +55,7 @@ int main(int argc, char **argv)
 	// which uses the FPGA to compute the 'work()' function
 	
 	// Prepare N work inputs, and 2 output pairs (cpu vs fpga)
-	int n = 1;
+	int n = 100000000;
 	dma_msg_t* inputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
 	dma_msg_t* cpu_outputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
 	dma_msg_t* fpga_outputs = (dma_msg_t*)malloc(n*sizeof(dma_msg_t));
