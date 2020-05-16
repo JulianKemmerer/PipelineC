@@ -11,16 +11,8 @@ import SW_LIB
 import MODELSIM
 import VIVADO
 
-# AWS example runs at 125
-# However, experiments show we might need margin to meet timing at scalez
-mhz = 150 #125.0 # 125 * 1.20 = 150
-
-# Main functions and operating frequencies
-main_mhz = { 'aws_fpga_dma' : mhz, 'work_wrapper' : mhz }
-#main_mhz = { 'main' : mhz }
 # All main functions must be in main.c
 c_file = "main.c"
-
 
 print '''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -32,13 +24,12 @@ print '''
 '''
 
 print "TODO:"
-print	"	Use pragmas to solve problem of sharing main funcs and mhz? from:How to wrap multiple mains for later instantiation? All mains need to be specified at top level?"
+print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	Detect single instance funcs and record logic.is_single_inst"
 print "	Do clock crossing for real - not same mhz"
 print "	Relative clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock.."
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
-print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	Use gcc array init instead of for loop many const ref tok assignments that are bulky?"
 print "	Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?"
@@ -66,7 +57,7 @@ print "	Auto gen <func_name>_t type which is inputs to function func(x,y,z)  str
 print "	Syn each pipeline stage ... this is hard... like slicing zero clock logic "
 
 print "================== Parsing C Code to Logical Hierarchy ================================"
-parser_state = C_TO_LOGIC.PARSE_FILE(c_file, main_mhz)
+parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
 print "================== Adding Timing Information from Synthesis Tool (Vivado) ================================"
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)

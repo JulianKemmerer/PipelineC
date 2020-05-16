@@ -1,3 +1,5 @@
+//TODO MAKE FULLY FLOW CONTROLABLE for fosix experiment
+
 // The top level 'main' function for the AWS FPGA DMA example
 
 #include "../../axi.h"
@@ -22,6 +24,9 @@ volatile dma_msg_hw_s in_msg;
 volatile dma_msg_hw_s out_msg;
 #include "out_msg_clock_crossing.h"
 
+// AWS example runs at 125
+// However, experiments show we might need margin to meet timing at scalez
+#pragma MAIN_MHZ aws_fpga_dma 150.0
 aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
 {
   aws_fpga_dma_outputs_t o;
@@ -55,6 +60,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
 
 // Wraps work() function 
 // with data read and written back into main
+#pragma MAIN_MHZ work_wrapper 150.0
 void work_wrapper()
 {
 	// Read DMA message bytes from main

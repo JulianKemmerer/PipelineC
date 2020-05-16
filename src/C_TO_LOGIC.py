@@ -5790,7 +5790,7 @@ def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called
 
 # Returns ParserState
 # TODO make as ParserState then 
-def PARSE_FILE(c_filename, main_mhz):
+def PARSE_FILE(c_filename):
   # Do we have a cached parser state?
   cached_parser_state = GET_PARSER_STATE_CACHE(c_filename)
   if cached_parser_state is not None:
@@ -5820,11 +5820,11 @@ def PARSE_FILE(c_filename, main_mhz):
     
     # Begin parsing C AST
     parser_state = ParserState()
-    parser_state.main_mhz = main_mhz;
     print "Parsing PipelinedC code..."
     # Get the C AST
     parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
-    
+    # Parse pragmas
+    parse_state = APPEND_PRAGMA_INFO(parser_state)
     # Parse definitions first before code structure
     print "...non-function definitions..."
     # Get the parsed struct def info
@@ -6285,7 +6285,18 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
 
   return parser_state
 
-
+def APPEND_PRAGMA_INFO(parser_state):
+  # Get all pragmas in ast
+  pragmas = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Pragma, parser_state)
+  
+  # Only care about MAIN_MHZ right now
+  parser_state.main_mhz = dict()
+  for pragma in pragmas:
+    if pragma.string.startswith("MAIN_MHZ"):
+      toks = pragma.string.split(" ")
+      main_func = toks[1]
+      mhz = float(toks[2])
+      parser_state.main_mhz[main_func] = mhz
 
 def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
   ast = GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename)

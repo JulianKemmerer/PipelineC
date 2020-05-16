@@ -1,4 +1,14 @@
 // This is the main program for driving a loopback test
+/*
+4K message size:
+CPU took 0.020000 seconds to execute 
+CPU iteration time: 0.000002 seconds
+CPU bytes per sec: 2048000000.000000 seconds
+FPGA took 0.410000 seconds to execute 
+FPGA iteration time: 0.000041 seconds
+FPGA bytes per sec: 99902439.024390 seconds
+Speedup: 0.048780
+*/
 
 #include <math.h>
 #include <time.h>
