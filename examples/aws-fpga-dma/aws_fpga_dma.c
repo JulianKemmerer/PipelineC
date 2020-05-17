@@ -47,8 +47,8 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   // Deserializer handles write side
   // Pull messages out of incoming DMA write requests
   deserializer_outputs_t deser_output;
-  deser_output = deserializer(i.pcis.write.req, work_ready);
-  o.pcis.write = deser_output.write;
+  deser_output = deserializer(i.pcis.write, work_ready);
+  o.pcis.write = deser_output.axi;
   
   // Write the input message stream into work_wrapper for processing
 	dma_msg_s_array_1_t msgs_in;
@@ -64,13 +64,13 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   // Serializer handles read side
   // Put output message into outgoing DMA read requests
   serializer_outputs_t serializer_output;
-  serializer_output = serializer(msg_out, i.pcis);
-  o.pcis.read = serializer_output.read;
+  serializer_output = serializer(msg_out, i.pcis.read);
+  o.pcis.read = serializer_output.axi;
   
   // Write ready for work output msg flag into work_wrapper
-  uint1_t_array_1_t dma_msg_readys;
-  dma_readys.data[0] = serializer_output.msg_in_ready;
-  out_msg_ready_WRITE(dma_msg_readys);
+  uint1_t_array_1_t dma_out_msg_readys;
+  dma_out_msg_readys.data[0] = serializer_output.msg_in_ready;
+  out_msg_ready_WRITE(dma_out_msg_readys);
   
   return o;
 }

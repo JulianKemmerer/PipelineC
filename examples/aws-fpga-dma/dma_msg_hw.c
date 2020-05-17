@@ -52,7 +52,7 @@ dma_msg_size_t deserializer_axi_bursts_num_resp;
 // Output
 typedef struct deserializer_outputs_t
 {
-  axi512_write_o_t write; // Write flow control/response
+  axi512_write_o_t axi; // Write flow control/response
 	dma_msg_s msg_stream; // Outgoing messages
 } deserializer_outputs_t;
 deserializer_outputs_t deserializer(axi512_write_i_t axi, uint1_t msg_out_ready)
@@ -62,17 +62,17 @@ deserializer_outputs_t deserializer(axi512_write_i_t axi, uint1_t msg_out_ready)
   o.msg_stream.data = deserializer_unpack(deserializer_msg_buffer);
   o.msg_stream.valid = deserializer_msg_buffer_valid;
   // Default not ready for input addr+data yet
-  o.write.ready.awready = 0;
-  o.write.ready.wready = 0;
+  o.axi.ready.awready = 0;
+  o.axi.ready.wready = 0;
   // No output write responses yet
-  o.write.resp.bid = 0; // Only ever seen one id?
-  o.write.resp.bresp = 0; // No err
-  o.write.resp.bvalid = 0;
+  o.axi.resp.bid = 0; // Only ever seen one id?
+  o.axi.resp.bresp = 0; // No err
+  o.axi.resp.bvalid = 0;
   
   // Respond to write bursts if have pending responses
   if(deserializer_axi_bursts_num_resp > 0)
   {
-		o.write.resp.bvalid = 1;
+		o.axi.resp.bvalid = 1;
 		// Decrement count if downstream was ready to receive
 		if(axi.bready)
 		{
@@ -83,7 +83,7 @@ deserializer_outputs_t deserializer(axi512_write_i_t axi, uint1_t msg_out_ready)
   // Ready for new address if dont have addr
   if(!deserializer_start_word_pos_valid)
   {
-    o.write.ready.awready = 1;
+    o.axi.ready.awready = 1;
     deserializer_start_word_pos = axi.req.awaddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
     deserializer_start_word_pos_valid = axi.req.awvalid;
   }
@@ -137,7 +137,7 @@ deserializer_outputs_t deserializer(axi512_write_i_t axi, uint1_t msg_out_ready)
     if(deserializer_state == DESERIALIZE)
     {
       // Default ready for more data
-      o.write.ready.wready = 1;
+      o.axi.ready.wready = 1;
       
       // Read copy of word from front/top (upper addr word) of circular buff
       uint8_t word[DMA_WORD_SIZE];
@@ -255,26 +255,26 @@ dma_msg_size_t serializer_remaining_burst_words;
 // Output
 typedef struct serializer_outputs_t
 {
-  axi512_read_o_t read; // Read flow control/response
+  axi512_read_o_t axi; // Read flow control/response
 	uint1_t msg_in_ready; // Incoming msg flow control
 } serializer_outputs_t;
-serializer_outputs_t serializer(dma_msg_s msg_stream, axi512_i_t axi_in)
+serializer_outputs_t serializer(dma_msg_s msg_stream, axi512_read_i_t axi)
 {	
 	// Default output values
   serializer_outputs_t o;
   // Not ready for input messages
   o.msg_in_ready = 0;
   // Not yet ready for read addr
-  o.read.arready = 0;
+  o.axi.arready = 0;
   // No output read data
-  o.read.resp.rid = 0;
-	o.read.resp.rresp = 0;
-	o.read.resp.rvalid = 0;
-	o.read.resp.rlast = 0;
+  o.axi.resp.rid = 0;
+	o.axi.resp.rresp = 0;
+	o.axi.resp.rvalid = 0;
+	o.axi.resp.rlast = 0;
 	uint8_t byte_i;
 	for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
 	{
-		o.read.resp.rdata[byte_i] = 0;
+		o.axi.resp.rdata[byte_i] = 0;
 	}
   
   // Ready for input msg if dont have one to serialize
@@ -288,12 +288,12 @@ serializer_outputs_t serializer(dma_msg_s msg_stream, axi512_i_t axi_in)
   // Ready for new read address+size if dont have one
   if(!serializer_start_valid)
   {
-    o.read.arready = 1;
-    serializer_start_word_pos = axi_in.read.req.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
+    o.axi.arready = 1;
+    serializer_start_word_pos = axi.req.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
     // The burst length for AXI4 is defined as,
 	  // Burst_Length = AxLEN[7:0] + 1,
-		serializer_start_burst_words = axi_in.read.req.arlen + 1;
-    serializer_start_valid = axi_in.read.req.arvalid;
+		serializer_start_burst_words = axi.req.arlen + 1;
+    serializer_start_valid = axi.req.arvalid;
   }
   
   // Flag to cause shift buffer to rotate, default not shifting
@@ -347,17 +347,17 @@ serializer_outputs_t serializer(dma_msg_s msg_stream, axi512_i_t axi_in)
 	if(serializer_state == SERIALIZE)
 	{    
 		// Put word on the bus
-		o.read.resp.rdata = word;
-		o.read.resp.rvalid = 1;
+		o.axi.resp.rdata = word;
+		o.axi.resp.rvalid = 1;
     // Last word of this read burst serialization?
 		if(serializer_remaining_burst_words==1)
 		{
 			// End the stream
-			o.read.resp.rlast = 1;
+			o.axi.resp.rlast = 1;
     }
     
 		// Increment/next state if downstream was ready to receive 
-    if(axi_in.read.rready)
+    if(axi.rready)
     {
       // Record outputting this word
       serializer_remaining_burst_words = serializer_remaining_burst_words - 1;
@@ -368,7 +368,7 @@ serializer_outputs_t serializer(dma_msg_s msg_stream, axi512_i_t axi_in)
       // of the word may have been actually accepted
       // 			DO NOT HAVE A READ STROBE INPUT TO KNOW LIKE WRITE SIDE
       // So instead try to look ahead to next read addr
-			if(o.read.resp.rlast)
+			if(o.axi.resp.rlast)
 			{
 				// Default assume dont shift buffer at rlast
 				do_shift_buff_increment_pos = 0;
