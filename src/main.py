@@ -26,7 +26,7 @@ print '''
 print "TODO:"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	Detect single instance funcs and record logic.is_single_inst"
-print "	Do clock crossing for real - not same mhz"
+print "	Do clock crossing for real - not same mhz - make nonvolatile(same mhz) not need arrays in crossings?"
 print "	Relative clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock.."
 print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"

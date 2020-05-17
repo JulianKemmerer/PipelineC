@@ -5820,13 +5820,12 @@ def PARSE_FILE(c_filename):
     
     # Begin parsing C AST
     parser_state = ParserState()
-    print "Parsing PipelinedC code..."
     # Get the C AST
     parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
     # Parse pragmas
     parse_state = APPEND_PRAGMA_INFO(parser_state)
     # Parse definitions first before code structure
-    print "...non-function definitions..."
+    print "Parsing non-function definitions..."
     # Get the parsed struct def info
     parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
     # Get global variable info
@@ -5852,7 +5851,7 @@ def PARSE_FILE(c_filename):
     parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
     
     # Parse the function definitions for code structure
-    print "...function definitions..."
+    print "Parsing function definitions..."
     parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
     # Sanity check main funcs are there
     for main_func in parser_state.main_mhz.keys():
@@ -6043,13 +6042,13 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   for read_func_call in read_func_calls:
     read_func_names.append(read_func_call.strip("(").strip())
   
-  # Find pairs that are volatile globals
+  # Find pairs that are global or volatile global vars
   var_names = []
   for write_func_name in write_func_names:
     var_name = write_func_name.replace("_WRITE","")
     read_func_name = var_name + "_READ"
     if read_func_name in read_func_names:
-      if var_name in parser_state.volatile_global_info:
+      if (var_name in parser_state.global_info) or (var_name in parser_state.volatile_global_info):
         var_names.append(var_name)
         
   # Find and read and write main funcs
@@ -6101,6 +6100,12 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       ratio = int(math.ceil(read_mhz/write_mhz))
       read_size = 1
       write_size = ratio
+      
+    # Check that non volatile crosses are identical freq
+    if var_name in parser_state.global_info:
+			if ratio != 1.0:
+				print "Non-volatile clock crossing", var_name, "is used like volatile clock crossing from",write_main_func,"to",read_main_func
+				sys.exit(0)
     
     # Record
     parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name] = (write_main_func,read_main_func)
@@ -6224,6 +6229,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
     # Final chance for SW_LIB generated code to do stuff to func logic
+    # Hah wtf this is hacky
     logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
     FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable

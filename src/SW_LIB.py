@@ -36,7 +36,12 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
   # Write two funcs in a header for each var
   for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
     write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]
-    c_type = parser_state.volatile_global_info[var_name].type_name
+    c_type = None
+    if var_name in parser_state.global_info:
+			c_type = parser_state.global_info[var_name].type_name
+    if var_name in parser_state.volatile_global_info:
+			c_type = parser_state.volatile_global_info[var_name].type_name
+    
     text = "#pragma once\n"
     text += '#include "' + c_type + '_array_N_t.h"\n'
     text += '''
