@@ -2604,10 +2604,11 @@ def GET_CACHED_PATH_DELAY(logic):
     
   return None 
   
-
-
 def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
-  # TODO parallelize this
+  # Parallelized
+  NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
+  my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
+  
   print "Starting with combinatorial logic..."  
   # initial params are 0 clk latency for all submodules
   TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
@@ -2637,11 +2638,66 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   all_funcs_done = False
   while not all_funcs_done:
     all_funcs_done = True
-    for logic_func_name in parser_state.FuncLogicLookupTable:
-      # If already done then skip
-      if logic_func_name in func_names_done_so_far:
-        continue
 
+    # Determine funcs that need syn and can be syn'd in parallel
+    parallel_func_names = []
+    still_finding_parallel_funcs = True
+    while still_finding_parallel_funcs:
+      still_finding_parallel_funcs = False
+      for logic_func_name in parser_state.FuncLogicLookupTable:
+        # If already done then skip
+        if logic_func_name in func_names_done_so_far:
+          continue
+        # Get logic
+        logic = parser_state.FuncLogicLookupTable[logic_func_name]
+        # All dependencies met?
+        all_dep_met = True
+        for submodule_inst in logic.submodule_instances:
+          submodule_func_name = logic.submodule_instances[submodule_inst]
+          if submodule_func_name not in func_names_done_so_far:
+            #print logic_func_name, "submodule_func_name not in func_names_done_so_far",submodule_func_name
+            all_dep_met = False
+            break 
+        # If all dependencies met then maybe add to list do syn yet
+        if all_dep_met:
+          # Try to get cached path delay
+          cached_path_delay = GET_CACHED_PATH_DELAY(logic)
+          if cached_path_delay is not None:
+            logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
+            print "Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay
+            if cached_path_delay > 0.0 and logic.delay==0:
+              print "Have timing path of",cached_path_delay,"ns"
+              print "...but recorded zero delay. Increase delay multiplier!"
+              sys.exit(0)
+          # Then check for known delays
+          elif LOGIC_IS_ZERO_DELAY(logic, parser_state):
+            logic.delay = 0
+          elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
+            logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
+            print "Function:", logic.func_name, "assumed same delay as it's single submodule..."
+          
+          # Save delay value or prepare for syn to determine
+          if logic.delay is None:
+            # Run real syn in parallel
+            if logic_func_name not in parallel_func_names:
+              parallel_func_names.append(logic_func_name)
+              still_finding_parallel_funcs = True
+          else:
+            # Save value
+            # Save logic with delay into lookup
+            parser_state.FuncLogicLookupTable[logic_func_name] = logic
+            # Done
+            func_names_done_so_far.append(logic_func_name)
+        else:
+          # Not all funcs are done
+          all_funcs_done = False
+    
+    # Start parallel syn for parallel_func_names
+    func_name_to_async_result = dict()
+    for logic_func_name in parallel_func_names:
+      # Do syn for logic 
+      #print "Function:", GET_OUTPUT_DIRECTORY(logic).replace(SYN_OUTPUT_DIRECTORY,"")
+      
       # Get logic
       logic = parser_state.FuncLogicLookupTable[logic_func_name]
       
@@ -2651,87 +2707,64 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
       if inst_name is None:
         #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
-        continue  
-      
-      # All dependencies met?
-      all_dep_met = True
-      for submodule_inst in logic.submodule_instances:
-        submodule_func_name = logic.submodule_instances[submodule_inst]
-        if submodule_func_name not in func_names_done_so_far:
-          #print "submodule_func_name not in func_names_done_so_far",submodule_func_name
-          all_dep_met = False
-          break 
-      
-      # If not all dependencies met then dont do syn yet
-      if not all_dep_met:
-        all_funcs_done = False
         continue
       
-      # Do syn for logic 
-      #print "Function:", GET_OUTPUT_DIRECTORY(logic).replace(SYN_OUTPUT_DIRECTORY,"")
+      # Impossible goal for timing since just want path delay
+      clock_mhz = INF_MHZ 
+      print "Synthesizing function:",logic.func_name
+      # Print pipeline map before syn results
+      if len(logic.submodule_instances) > 0:
+        zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
+        print zero_clk_pipeline_map
+      # Run Syn
+      total_latency=0
+      my_async_result = my_thread_pool.apply_async(VIVADO.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency))
+      func_name_to_async_result[logic_func_name] = my_async_result
       
-      # Try to get cached path delay
-      cached_path_delay = GET_CACHED_PATH_DELAY(logic)
-
-      if LOGIC_IS_ZERO_DELAY(logic, parser_state):
-        logic.delay = 0
-      elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
-        logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
-        print "Function:", logic.func_name, "assumed same delay as it's single submodule..."
-      elif cached_path_delay is not None:
-        logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
-        print "Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay
-        if cached_path_delay > 0.0 and logic.delay==0:
-          print "Have timing path of",cached_path_delay,"ns"
+    # Finish parallel syn
+    for logic_func_name in parallel_func_names:
+      # Get logic
+      logic = parser_state.FuncLogicLookupTable[logic_func_name]
+      # Get result
+      my_async_result = func_name_to_async_result[logic_func_name]
+      print "...Waiting on synthesis for:", logic_func_name
+      parsed_timing_report =  my_async_result.get()
+      if parsed_timing_report.path_delay is None:
+        print "Cannot synthesize for path delay ",logic.func_name
+        print parsed_timing_report.orig_text
+        if DO_SYN_FAIL_SIM:
+          MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
+        sys.exit(0)
+      mhz = 1000.0 / parsed_timing_report.path_delay
+      # Make adjustment for 0 LLs to have 0 delay
+      if parsed_timing_report.logic_levels > 0:
+        logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)        
+        # Sanity check multiplier is working
+        if parsed_timing_report.path_delay > 0.0 and logic.delay==0:
+          print "Have timing path of",parsed_timing_report.path_delay,"ns"
           print "...but recorded zero delay. Increase delay multiplier!"
           sys.exit(0)
       else:
-        # Impossible goal for timing since just want path delay
-        clock_mhz = INF_MHZ 
-        print "Function:",logic.func_name
-        # Print pipeline map before syn results
-        if len(logic.submodule_instances) > 0:
-          zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
-          print zero_clk_pipeline_map
-        # Run Syn
-        parsed_timing_report = VIVADO.SYN_AND_REPORT_TIMING(inst_name, logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency=0)
-        if parsed_timing_report.path_delay is None:
-          print "Cannot synthesize for path delay ",logic.func_name
-          print parsed_timing_report.orig_text
-          if DO_SYN_FAIL_SIM:
-            MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
-          sys.exit(0)
-        mhz = 1000.0 / parsed_timing_report.path_delay
-        # Make adjustment for 0 LLs to have 0 delay
-        if parsed_timing_report.logic_levels > 0:
-          logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)        
-          # Sanity check multiplier is working
-          if parsed_timing_report.path_delay > 0.0 and logic.delay==0:
-            print "Have timing path of",parsed_timing_report.path_delay,"ns"
-            print "...but recorded zero delay. Increase delay multiplier!"
-            sys.exit(0)
-        else:
-          logic.delay = 0
+        logic.delay = 0
+        
+      # Syn results are delay and clock 
+      print "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
+      print ""
+      # Record worst global
+      #if len(logic.global_wires) > 0:
+      if logic.uses_globals:
+        if mhz < min_mhz:
+          min_mhz_func_name = logic.func_name
+          min_mhz = mhz
           
-        # Syn results are delay and clock 
-        print "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
-        print ""
-        # Record worst global
-        #if len(logic.global_wires) > 0:
-        if logic.uses_globals:
-          if mhz < min_mhz:
-            min_mhz_func_name = logic.func_name
-            min_mhz = mhz
-            
-
-        # Cache delay syn result if not user code
-        if not IS_USER_CODE(logic, parser_state):
-          filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic)
-          if not os.path.exists(PATH_DELAY_CACHE_DIR):
-            os.makedirs(PATH_DELAY_CACHE_DIR)         
-          f=open(filepath,"w")
-          f.write(str(parsed_timing_report.path_delay))
-          f.close()       
+      # Cache delay syn result if not user code
+      if not IS_USER_CODE(logic, parser_state):
+        filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic)
+        if not os.path.exists(PATH_DELAY_CACHE_DIR):
+          os.makedirs(PATH_DELAY_CACHE_DIR)         
+        f=open(filepath,"w")
+        f.write(str(parsed_timing_report.path_delay))
+        f.close()       
       
       # Save logic with delay into lookup
       parser_state.FuncLogicLookupTable[logic_func_name] = logic
