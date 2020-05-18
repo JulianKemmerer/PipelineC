@@ -554,7 +554,10 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
 		if write_size != read_size:
 			print "Do better clock crossings!"
 			sys.exit(0)
-		c_type = parser_state.volatile_global_info[var_name].type_name
+    if var_name in parser_state.global_info:
+			c_type = parser_state.global_info[var_name].type_name
+    if var_name in parser_state.volatile_global_info:
+			c_type = parser_state.volatile_global_info[var_name].type_name
 		in_t = c_type + "_array_" + str(write_size) + "_t"
 		in_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(in_t, parser_state)
 		out_t = c_type + "_array_" + str(read_size) + "_t"

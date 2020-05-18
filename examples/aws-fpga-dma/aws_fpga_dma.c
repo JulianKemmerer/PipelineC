@@ -1,4 +1,4 @@
-// TODO: How big of buffer can loopback be?
+// TODO: How big of buffer can message be?
 
 // The top level 'main' function for the AWS FPGA DMA example
 
