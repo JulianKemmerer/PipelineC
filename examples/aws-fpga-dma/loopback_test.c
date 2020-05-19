@@ -1,13 +1,14 @@
 // This is the main program for driving a loopback test
 /*
-4K message size:
+DMA_MSG_SIZE: 4096 
+Total bytes: 40960000 
 CPU took 0.020000 seconds to execute 
 CPU iteration time: 0.000002 seconds
 CPU bytes per sec: 2048000000.000000 seconds
-FPGA took 0.410000 seconds to execute 
-FPGA iteration time: 0.000041 seconds
-FPGA bytes per sec: 99902439.024390 seconds
-Speedup: 0.048780
+FPGA took 0.430000 seconds to execute 
+FPGA iteration time: 0.000043 seconds
+FPGA bytes per sec: 95255813.953488 seconds
+Speedup: 0.046512
 */
 
 #include <math.h>
@@ -117,8 +118,8 @@ int main(int argc, char **argv)
 	double fpga_bytes_per_sec = (float)total_bytes / fpga_time;
 	printf("FPGA bytes per sec: %f seconds\n", fpga_bytes_per_sec);
   
-  	// Speedy?
-  	printf("Speedup: %f\n",cpu_time/fpga_time);  
+  // Speedy?
+  printf("Speedup: %f\n",cpu_time/fpga_time);  
 	
 	// Compare the outputs
 	for(int i = 0; i < n; i++)

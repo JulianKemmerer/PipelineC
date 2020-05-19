@@ -2494,8 +2494,12 @@ def TRIM_VAR_REF_TOKS(ref_toks):
   _TRIM_VAR_REF_TOKS_cache[ref_toks] = ref_toks
   return ref_toks
   
-_REF_TOKS_COVERED_BY_cache = dict()
+#_REF_TOKS_COVERED_BY_cache = dict()
+# With cache: 63.812 seconds, 206.699 seconds
+# Without cache: 47.065 seconds, 128.514 seconds
 def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
+  
+  '''
   # Try for cache
   if parser_state.existing_logic.func_name is None:
     print "Wtf none??????"
@@ -2505,6 +2509,7 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
     return _REF_TOKS_COVERED_BY_cache[cache_key]
   except:
     pass
+  '''
   
   # Remove last variable tok since
   # Ex. (a,1,c) covers same as (a,1,c,*), and makes len check easier below
@@ -2551,9 +2556,11 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
       else:
         rv = False
         break
-      
+  
+  '''
   # Update cache
   _REF_TOKS_COVERED_BY_cache[cache_key] = rv
+  '''
   
   return rv
 
@@ -2586,7 +2593,14 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 
 # THIS IS DIFFERENT FROM REDUCE DONE ABOVE
 # (does modifies remaining_ref_toks, but use return value since can be cached)
-_REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
+
+# Fat cache...
+# With cache, run time 230 sec w heapy, Total size = 1261187248 bytes
+# Without cache, run time 180 sec w heapy, Total size = 1098484016 bytes
+#_REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
+# Try without heapy...
+# With cache runtime: 74.670 seconds, 304.788 seconds
+# Without cache runtime: 61.963 seconds, 210.264 seconds, 
 def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_ast_node, parser_state): 
   debug = False
   #debug = (parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538") and driven_ref_toks==('base', 0, 63)
@@ -2598,6 +2612,8 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
     print "Wtf none??????"
     sys.exit(0)
   
+  
+  '''
   # Try for cache
   cache_key = (parser_state.existing_logic.func_name, driven_ref_toks, frozenset(remaining_ref_toks_set))
   remaining_ref_toks_set_cache = None
@@ -2621,6 +2637,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
       
     remaining_ref_toks_set = remaining_ref_toks_set_cache
     return remaining_ref_toks_set
+  '''
 
   # Removed covered branches
   removed_something = False
@@ -2686,15 +2703,16 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
       print "remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set
       print ""        
   
-      
+  '''
   # Update cache  
   _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = frozenset(remaining_ref_toks_set) # Copy since set is mutable + WILL be mutated
   if debug:
     print "Updating cache", cache_key
     print _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]
-
+  '''
+  
   #WTF?
-  if (driven_ref_toks in remaining_ref_toks_set) or (driven_ref_toks in _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]):
+  if (driven_ref_toks in remaining_ref_toks_set): # or (driven_ref_toks in _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]):
     print "WTF? driven_ref_toks in remaining_ref_toks_set2"
     sys.exit(0)
 
@@ -5851,7 +5869,7 @@ def PARSE_FILE(c_filename):
     parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
     
     # Parse the function definitions for code structure
-    print "Parsing function definitions..."
+    print "Parsing function logic..."
     parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
     # Sanity check main funcs are there
     for main_func in parser_state.main_mhz.keys():
@@ -5876,6 +5894,12 @@ def PARSE_FILE(c_filename):
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       c_ast_node_when_used = parser_state.FuncLogicLookupTable[main_func].c_ast_node
       parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(main_func, main_func, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
+      
+    #from guppy import hpy
+    #h = hpy()
+    #print h.heap()
+    print "TEMP STOP"
+    sys.exit(-1)
     
     # Code gen based on fully elaborated logic
     # Write c code
