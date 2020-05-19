@@ -5898,8 +5898,8 @@ def PARSE_FILE(c_filename):
     #from guppy import hpy
     #h = hpy()
     #print h.heap()
-    print "TEMP STOP"
-    sys.exit(-1)
+    #print "TEMP STOP"
+    #sys.exit(-1)
     
     # Code gen based on fully elaborated logic
     # Write c code
