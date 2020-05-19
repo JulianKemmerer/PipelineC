@@ -15,10 +15,3 @@ typedef struct dma_msg_t
 {
   uint8_t data[DMA_MSG_SIZE];
 } dma_msg_t;
-// Stream version
-typedef struct dma_msg_s
-{
-  dma_msg_t data; // The message
-  uint1_t valid;
-} dma_msg_s;
-#include "dma_msg_s_array_N_t.h"
