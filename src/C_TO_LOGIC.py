@@ -3829,15 +3829,6 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
     # Do next statement
     i = i + 1
     parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.next, [], iter_prepend_text, parser_state)
-
-    
-    # Debug
-    #print iter_prepend_text
-    #print i, c_ast_node.coord
-    if i > 10000:
-      print "Woah over 10000 iters?"
-      print c_ast_node.coord
-      sys.exit(0)
     
   return parser_state.existing_logic
   
