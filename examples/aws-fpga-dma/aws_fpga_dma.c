@@ -36,7 +36,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
 {
   aws_fpga_dma_outputs_t o;
   
-  // Read work input msg ready flag from work_wrapper
+  // Read work input msg ready flag from work function wrapper
   uint1_t_array_1_t work_readys;
   work_readys = in_msg_ready_READ();
   uint1_t work_ready;
@@ -48,12 +48,12 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   deser_output = deserializer(i.pcis.write, work_ready);
   o.pcis.write = deser_output.axi;
   
-  // Write the input message stream into work_wrapper for processing
+  // Write the input message stream into work function wrapper for processing
 	dma_msg_s_array_1_t msgs_in;
 	msgs_in.data[0] = deser_output.msg_stream;
 	in_msg_WRITE(msgs_in);
 	
-	// Read output message stream from work_wrapper
+	// Read output message stream from work function wrapper
 	dma_msg_s_array_1_t msgs_out;
 	msgs_out = out_msg_READ();
   dma_msg_s msg_out;
@@ -65,7 +65,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   serializer_output = serializer(msg_out, i.pcis.read);
   o.pcis.read = serializer_output.axi;
   
-  // Write ready for work output msg flag into work_wrapper
+  // Write ready for work output msg flag into work function wrapper
   uint1_t_array_1_t dma_out_msg_readys;
   dma_out_msg_readys.data[0] = serializer_output.msg_in_ready;
   out_msg_ready_WRITE(dma_out_msg_readys);

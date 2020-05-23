@@ -435,6 +435,11 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
     print "Cant GET_WIDTH_FROM_C_TYPE_STR since isnt int/uint N", c_type_str
     print 0/0
     sys.exit(0) 
+    
+  # Chars?
+  if c_type_str == 'char':
+    return 8
+    
   return int(c_type_str.replace("uint","").replace("int","").replace("_t",""))
   
 def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str):
@@ -458,6 +463,11 @@ def C_TYPE_IS_UINT_N(type_str):
     width = int(type_str.replace("uint","").replace("_t",""))
     return True
   except:
+    
+    # Chars?
+    if type_str == 'char':
+      return True
+    
     return False
   
 def C_TYPE_IS_INT_N(type_str):
@@ -684,6 +694,8 @@ package c_structs_pkg is
     types_written.append("int" + str(i) + "_t")
   # Oh dont forget to be extra dumb
   types_written.append("float")
+  # Oh hey adding to the dumb
+  types_written.append("char")
   
   
   # Write structs
@@ -1754,7 +1766,13 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
     c_type =  Logic.wire_to_c_type[wire_name]
     val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
     
-    if C_TYPE_IS_UINT_N(c_type):
+    if c_type == 'char':
+      vhdl_char_str = "'" + val_str + "'"
+      if val_str == '\\n':
+        vhdl_char_str = "LF"
+      #HAHA have fun filling this in dummy    
+      return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
+    elif C_TYPE_IS_UINT_N(c_type):
       width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
       return "to_unsigned(" + val_str + ", " + str(width) + ")"
     elif C_TYPE_IS_INT_N(c_type):

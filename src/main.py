@@ -24,6 +24,7 @@ print '''
 '''
 
 print "TODO:"
+print "	Add constant defintion (struct+array init)"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	Detect single instance funcs and record logic.is_single_inst"
 print "	Do clock crossing for real - not same mhz - make nonvolatile(same mhz) not need arrays in crossings?"

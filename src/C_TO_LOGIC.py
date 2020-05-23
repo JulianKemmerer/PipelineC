@@ -3571,6 +3571,8 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
   # Create wire for this constant
   c_type_str = None
   value_str = c_ast_node.value
+  #print "value_str",value_str
+  
   return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
 def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
@@ -3596,10 +3598,13 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
       c_type_str = "int" + str(bits+1) + "_t"
     else:
       c_type_str = "uint" + str(bits) + "_t"
+  elif c_ast_node.type=='char':
+    value = value_str.strip("'")
+    c_type_str = "char"
+    #print "Char val", value 
   else:
     print "What type of constant is?", value_str, c_ast_node
     sys.exit(0)
-  
   
   if is_negated:
     value = value * -1
@@ -5067,7 +5072,13 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
       driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
       parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
-  
+      
+  # Same thing as ENUM (wanting bin op port to be int so cast happens)
+  # Dont want bin op ports based on char type or enum types
+  if left_type == 'char':
+    left_type = "uint8_t"
+  if right_type == 'char':
+    right_type = "uint8_t"  
   
   # Prepare for N arg inst
   input_drivers = [] # Prefer wires
@@ -5337,6 +5348,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
         # Some C casts are handled in VHDL with resize or enum conversions
         # 
         # Integer promotion / slash supported truncation in C lets this be OK
+        # Chars are essentially uint8_t
         if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
           and 
            ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
@@ -5344,7 +5356,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
         # Enum driving UINT is fine
         elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
           continue
-        # I'm dumb and C doesnt return arrays
+        # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
         elif (
                ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type,parser_state) and (SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(driven_wire_type,parser_state)==rhs_type) )
               or
@@ -6318,6 +6330,11 @@ def APPEND_PRAGMA_INFO(parser_state):
       main_func = toks[1]
       mhz = float(toks[2])
       parser_state.main_mhz[main_func] = mhz
+  # Sanity check
+  if len(parser_state.main_mhz) == 0:
+    print "No main function specified?"
+    print "Ex. #pragma MAIN_MHZ main 100.0"
+    sys.exit(-1)
 
 def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
   ast = GET_C_FILE_AST_FROM_C_CODE_TEXT(text, fake_filename)
