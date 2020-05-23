@@ -2098,32 +2098,26 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   else:
     # CONSTANT ~~~~~~~~~~~~~~
     ###########################################
+    return C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_assignment.lvalue, c_ast_assignment.rvalue, parser_state, prepend_text)
+    
+    
+def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_ast_node, parser_state, prepend_text):
     # RECORD NEW ALIAS FOR THIS ASSIGNMENT!!!
+    lhs_orig_var_name = lhs_ref_toks[0]
     
     # Assignments are ordered over time with existing logic
     # Assigning to a variable creates an alias
     # future reads on this variable are done from the alias
-    lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
-    #print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
+    lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, lhs_c_ast_node, parser_state)
       
     # /\
     # SET LHS TYPE
-    parser_state.existing_logic = parser_state.existing_logic
-    lhs_c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
+    lhs_c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(lhs_ref_toks, lhs_c_ast_node, parser_state)
     parser_state.existing_logic.variable_names.add(lhs_orig_var_name)
     # Type of alias wire is same as original wire
     parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
-    
-    
-    #print "lhs_c_type",lhs_c_type
-    #print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
-    
-
-    #print "c_ast_assignment.rvalue"
-    #casthelp(c_ast_assignment.rvalue)
     driven_wire_names=[lhs_next_wire_assignment_alias]
-    parser_state.existing_logic = parser_state.existing_logic
-    rhs_to_lhs_logic = C_AST_NODE_TO_LOGIC(c_ast_assignment.rvalue, driven_wire_names, prepend_text, parser_state)
+    rhs_to_lhs_logic = C_AST_NODE_TO_LOGIC(rhs_c_ast_node, driven_wire_names, prepend_text, parser_state)
     
     # Set type of RHS wire as LHS type if not known
     rhs_driver = rhs_to_lhs_logic.wire_driven_by[lhs_next_wire_assignment_alias]
@@ -2147,14 +2141,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
     parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
     parser_state.existing_logic.alias_to_driven_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
     parser_state.existing_logic.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
-    
-
-    
-    # Update parser state since merged in exsiting logic earlier
-    parser_state.existing_logic = parser_state.existing_logic
-    
-    #print parser_state.existing_logic.wire_to_c_type
-    
+   
     return parser_state.existing_logic
   
   
@@ -3712,10 +3699,9 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
   
   # If has init value then is also assignment
   if not(parent_c_ast_decl.init is None):
-    print "No variable declarations with intialziations yet..."
-    print parent_c_ast_decl.coord
-    #casthelp(parent_c_ast_decl)
-    sys.exit(0)
+    #print parent_c_ast_decl.init
+    lhs_ref_toks = (wire_name,)
+    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_typedecl, parent_c_ast_decl.init, parser_state, prepend_text)
     
   # Update parser state since merged in exsiting logic earlier
   parser_state.existing_logic = rv
