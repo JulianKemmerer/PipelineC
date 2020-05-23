@@ -1326,17 +1326,19 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv = ""
   rv += "\n"
   rv += " -- Combinatorial process for pipeline stages\n"
-  rv += "process (\n"
-  rv += " -- Inputs\n"
-  for input_wire in Logic.inputs:
-    vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
-    rv += " " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
+  rv += "process "
+  process_sens_list = ""
+  if len(Logic.inputs) > 0:
+    process_sens_list += " -- Inputs\n"
+    for input_wire in Logic.inputs:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
+      process_sens_list += " " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
   if needs_regs:
-    rv += " -- Registers\n"
-    rv += " " + "registers_r,\n"
+    process_sens_list += " -- Registers\n"
+    process_sens_list += " " + "registers_r,\n"
   if needs_clk_cross_read:
-    rv += " -- Clock cross input\n"
-    rv += " " + "clk_cross_read,\n"
+    process_sens_list += " -- Clock cross input\n"
+    process_sens_list += " " + "clk_cross_read,\n"
   submodule_text = ""
   has_submodules_to_print = False
   if len(Logic.submodule_instances) > 0:
@@ -1362,11 +1364,15 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
         out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
         submodule_text += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
   if has_submodules_to_print:
-    rv += submodule_text  
-        
-  # Remove last two chars
-  rv = rv[0:len(rv)-2]
-  rv += ")\n"
+    process_sens_list += submodule_text 
+    
+  if process_sens_list != "":
+    rv += "(\n"
+    # Remove last two chars
+    process_sens_list = process_sens_list[0:len(process_sens_list)-2]
+    rv += process_sens_list
+    rv += ")\n"
+
   rv += "is \n"
   
   # READ PIPE

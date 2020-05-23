@@ -3699,6 +3699,12 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
   
   # If has init value then is also assignment
   if not(parent_c_ast_decl.init is None):
+    # Dont support struct init here yet
+    if type(parent_c_ast_decl.init) == c_ast.InitList:
+      print parent_c_ast_decl.init
+      print "Dont support local variable struct init statement yet...", parent_c_ast_decl.init.coord
+      sys.exit(-1)
+    
     #print parent_c_ast_decl.init
     lhs_ref_toks = (wire_name,)
     parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_typedecl, parent_c_ast_decl.init, parser_state, prepend_text)
@@ -4442,6 +4448,10 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # CONST REFs are ok not to reduce for now. I.e CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
     elif func_base_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
       return None
+    # If func has no inputs and is not global then must be const
+    # similar to above cant propogate consts through compound types yet?
+    elif len(input_drivers) == 0:
+      return None    
     else:
       print "Warning: Not reducing constant function call:"
       print func_inst_name,
@@ -5972,6 +5982,8 @@ def GET_GLOBAL_INFO(parser_state):
         
     # Handle initialization
     if global_def.init is not None:
+      #todo
+      #HOW TO GET STRUCT INIT INTO VHDL? make global_info.init a c ast node
       # Only handle simple one node constant init right now?
       if type(global_def.init) == c_ast.Constant:
         #print global_def.init
