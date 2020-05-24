@@ -1463,30 +1463,30 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
   prepend_text=""
   return_logic = C_AST_NODE_TO_LOGIC(c_ast_return.expr, driven_wire_names, prepend_text, parser_state)
   
-
-  ##### Bleh do the easier hard coded for 0 clk way for now
   
-  # Also tie all globals to global wire
+  parser_state.existing_logic = return_logic
+  # Connect the return logic node to this one
+  return return_logic
+  
+def CONNECT_FINAL_GLOBALS(prepend_text, parser_state, c_ast_node):
+  # Tie all globals to global wire
   # Collpase struct ref hierarchy to get top most orig wire name nodes
   #print "global_orig_wire_names",global_orig_wire_names
   # Whooray
   for global_wire in parser_state.existing_logic.global_wires:
     # Read ref_toks takes care of it
     ref_toks = (global_wire,)
-    connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [global_wire], prepend_text, parser_state)
-    return_logic.MERGE_COMB_LOGIC(connect_logic)
+    connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [global_wire], prepend_text, parser_state)
+    parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)
     
   # Same for volatile globals
   for volatile_global_wire in parser_state.existing_logic.volatile_global_wires:
     # Read ref_toks takes care of it
     ref_toks = (volatile_global_wire,)
-    connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_return, [volatile_global_wire], prepend_text, parser_state)
-    return_logic.MERGE_COMB_LOGIC(connect_logic)
-  
-  
-  parser_state.existing_logic = return_logic
-  # Connect the return logic node to this one
-  return return_logic
+    connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [volatile_global_wire], prepend_text, parser_state)
+    parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)
+    
+  return parser_state.existing_logic
 
   
 def GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref):
@@ -3050,14 +3050,15 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   #sys.exit(0)
   if len(driving_aliases_over_time)==0:
     #if debug:
-    print "=="
-    print "func name",parser_state.existing_logic.func_name
-    print "ref_toks",ref_toks
-    print "driving_aliases_over_time",driving_aliases_over_time
-    print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
-    print "No driving aliases?", prepend_text, c_ast_ref.coord
-    print 0/0
-    sys.exit(0)
+    #print "=="
+    #print "func name",parser_state.existing_logic.func_name
+    #print "ref_toks",ref_toks
+    #print "driving_aliases_over_time",driving_aliases_over_time
+    #print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
+    #print "No driving aliases?", prepend_text, c_ast_ref.coord
+    #print 0/0
+    print ref_toks, "not fully driven when read at?", c_ast_ref.coord
+    sys.exit(-1)
   
   # Find the first alias (IN REVERSE ORDER) that elminates some branches
   remaining_ref_toks_set = set(entire_tree_ref_toks_set)
@@ -5538,6 +5539,17 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
     body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)   
     parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
     
+  # Connect globals at end of func logic
+  parser_state.existing_logic = CONNECT_FINAL_GLOBALS(prepend_text, parser_state, c_ast_funcdef)
+  
+  # Sanity check for return wire
+  if parse_body:
+    if len(parser_state.existing_logic.submodule_instances) > 0:
+      for out_wire in parser_state.existing_logic.outputs:
+        if out_wire not in parser_state.existing_logic.wire_driven_by:
+          print "Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire
+          sys.exit(-1)
+  
   # Write cache
   _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
   
@@ -5916,11 +5928,14 @@ def PARSE_FILE(c_filename):
         f.write(func_logic.c_code_text)
         f.close() 
     
+    print "Skipping user code trimming for debug..."
+    '''
     # Remove excess user code
     print "Doing obvious logic trimming/collapsing..."
     for main_func in parser_state.main_mhz.keys():
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
+    '''
     
     # Sanity check no duplicate globals
     for g in parser_state.global_info:

@@ -7,6 +7,7 @@
 // Do work on inputs to form outputs
 #define FLOAT_SIZE 4
 #define N_SUM (DMA_MSG_SIZE/FLOAT_SIZE)
+#define LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1 7 //15 //12 //11 //10 //9 // log2(N_SUM)+1
 typedef struct work_inputs_t
 {
   float values[N_SUM];

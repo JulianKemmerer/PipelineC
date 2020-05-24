@@ -2,7 +2,6 @@
 
 #include "../../axi.h"
 #include "dma_msg_hw.c"
-#include "work_hw.c"
 
 // AWS HDK shell I/O
 // Only interface supported is PCIS AXI-4 bus for now

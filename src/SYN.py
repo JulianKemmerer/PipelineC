@@ -351,7 +351,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     sys.exit(0)
     
   # FORGIVE ME - never
-  print_debug = False
+  print_debug = False #inst_name=="posix_aws_fpga_dma" #False
   bad_inf_loop = False
     
   LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -359,8 +359,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   est_total_latency = len(timing_params.slices)
   rv = PipelineMap(logic)
   
-  # Shouldnt need debug for zero clock?
-  print_debug = print_debug and (est_total_latency>0)
+  # Shouldnt need debug for zero clock? You wish you sad lazy person
+  #print_debug = print_debug and (est_total_latency>0)
   
   if print_debug:
     print "==============================Getting pipeline map======================================="
@@ -457,7 +457,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     for output in logic.outputs:
       if (output not in wires_driven_by_so_far) or (wires_driven_by_so_far[output]==None):
         if print_debug:
-          print "Pipeline not done.",output
+          print "Pipeline not done output.",output
         return False
       if print_debug:
         print "Output driven ", output, "<=",wires_driven_by_so_far[output]
@@ -465,7 +465,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     for global_wire in logic.global_wires:
       if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
         if print_debug:
-          print "Pipeline not done.",global_wire
+          print "Pipeline not done global.",global_wire
         return False
       if print_debug:
         print "Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire]
@@ -478,7 +478,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # Has a driving wire so must be driven for func to be done
         if (volatile_global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[volatile_global_wire]==None):
           if print_debug:
-            print "Pipeline not done.",volatile_global_wire
+            print "Pipeline not done volatile global.",volatile_global_wire
           return False
       if print_debug:
         print "Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire]
@@ -487,7 +487,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     for wire in logic.wires:
       if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire,parser_state.FuncLogicLookupTable): # None is OK? since only use for globals and inputs and such?
         if print_debug:
-          print "Pipeline not done.",wire
+          print "Pipeline not done wire.",wire
         return False
       if print_debug:
         print "Wire driven ", wire, "<=",wires_driven_by_so_far[wire]
