@@ -19,7 +19,7 @@ syscall_t decode_syscall_id(dma_msg_t msg)
 {
   syscall_t rv;
   rv = POSIX_UNKNOWN;
-  printf("msg.data[0] = %d\n",msg.data[0]);
+  //printf("msg.data[0] = %d\n",msg.data[0]);
   if(msg.data[0]==POSIX_READ)
   {
     rv = POSIX_READ;
@@ -38,6 +38,12 @@ syscall_t decode_syscall_id(dma_msg_t msg)
   }
   return rv;
 }
+dma_msg_t apply_syscall_id(syscall_t id, dma_msg_t msg)
+{
+  msg.data[0] = id;
+  return msg;
+}
+
 
 // Bytes[1+] are specific to syscall
 
@@ -45,6 +51,7 @@ syscall_t decode_syscall_id(dma_msg_t msg)
 dma_msg_s open_req_to_dma(open_req_t req)
 {
   dma_msg_s msg_stream = DMA_MSG_S_NULL();
+  msg_stream.data = apply_syscall_id(POSIX_OPEN, msg_stream.data);
   msg_stream.valid = req.valid;  
   
   // Bytes[1-PATH_SIZE] are path
@@ -85,6 +92,7 @@ open_resp_t dma_to_open_resp(dma_msg_s msg_stream)
 dma_msg_s open_resp_to_dma(open_resp_t resp)
 {
   dma_msg_s msg_stream = DMA_MSG_S_NULL();
+  msg_stream.data = apply_syscall_id(POSIX_OPEN, msg_stream.data);
   msg_stream.valid = resp.valid;
   
   // Byte[1] = fildes
@@ -98,6 +106,7 @@ dma_msg_s open_resp_to_dma(open_resp_t resp)
 dma_msg_s write_req_to_dma(write_req_t req)
 {
   dma_msg_s msg_stream = DMA_MSG_S_NULL();
+  msg_stream.data = apply_syscall_id(POSIX_WRITE, msg_stream.data);
   msg_stream.valid = req.valid;  
   
   // Byte[1] = fildes
@@ -147,6 +156,7 @@ write_resp_t dma_to_write_resp(dma_msg_s msg_stream)
 dma_msg_s write_resp_to_dma(write_resp_t resp)
 {
   dma_msg_s msg_stream = DMA_MSG_S_NULL();
+  msg_stream.data = apply_syscall_id(POSIX_WRITE, msg_stream.data);
   msg_stream.valid = resp.valid;
   
   // Byte[1] = nbyte
