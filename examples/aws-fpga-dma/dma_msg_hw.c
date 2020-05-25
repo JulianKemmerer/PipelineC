@@ -5,20 +5,6 @@
 
 #include "../../axi.h"
 #include "dma_msg.h"
-
-// Stream version of message
-typedef struct dma_msg_s
-{
-  dma_msg_t data; // The message
-  uint1_t valid;
-} dma_msg_s;
-dma_msg_s DMA_MSG_S_NULL()
-{
-  dma_msg_s rv;
-  rv.data = DMA_MSG_T_NULL();
-  rv.valid = 0;
-  return rv;
-}
 #include "dma_msg_s_array_N_t.h"
 
 // DMA data comes in word chunks of 64B

@@ -2727,6 +2727,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       total_latency=0
       my_async_result = my_thread_pool.apply_async(VIVADO.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency))
       func_name_to_async_result[logic_func_name] = my_async_result
+      print ""
       
     # Finish parallel syn
     for logic_func_name in parallel_func_names:
@@ -2755,7 +2756,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         logic.delay = 0
         
       # Syn results are delay and clock 
-      print "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
+      print logic_func_name, "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
       print ""
       # Record worst global
       #if len(logic.global_wires) > 0:
