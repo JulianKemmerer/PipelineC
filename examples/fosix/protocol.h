@@ -19,6 +19,7 @@ syscall_t decode_syscall_id(dma_msg_t msg)
 {
   syscall_t rv;
   rv = POSIX_UNKNOWN;
+  printf("msg.data[0] = %d\n",msg.data[0]);
   if(msg.data[0]==POSIX_READ)
   {
     rv = POSIX_READ;
