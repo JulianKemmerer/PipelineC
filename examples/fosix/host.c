@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "dma_msg_sw.c"
+#include "../aws-fpga-dma/dma_msg_sw.c"
 #include "protocol.h"
 
 posix_h2c_t do_syscall_get_resp(posix_c2h_t req)
