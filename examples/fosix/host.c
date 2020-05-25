@@ -15,11 +15,13 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req)
   posix_h2c_t resp;
   if(req.sys_open.req.valid)
   {
+    printf("Open...\n");
     resp.sys_open.resp.fildes = open(req.sys_open.req.path, O_RDWR); //, 0777);
     resp.sys_open.resp.valid = 1;
   }
   else if(req.sys_write.req.valid)
   {
+    printf("Write...\n");
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
   }
@@ -37,7 +39,9 @@ int main(int argc, char **argv)
   while(1)
   {
     // Read request dma msg
+    printf("Reading DMA msg...\n");
     dma_msg_t read_msg = dma_read();
+    printf("Read DMA msg...\n");
     
     // Convert to host request struct
     posix_c2h_t request = dma_to_request(read_msg);
@@ -49,7 +53,12 @@ int main(int argc, char **argv)
     dma_msg_s write_msg = response_to_dma(response);
     
     // Write response dma msg 
-    if(write_msg.valid) dma_write(write_msg.data);  
+    if(write_msg.valid)
+    {
+      printf("Writing DMA msg...\n");
+      dma_write(write_msg.data);
+      printf("Wrote DMA msg...\n");
+    }
   }  
 
 	// Close direct memory access to/from FPGA
