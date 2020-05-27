@@ -57,7 +57,9 @@ outputs_t main(inputs_t i)
   }
   else if(state==OPEN_RESP)
   {
-    // Wait here until we get response
+    // Wait here ready for response
+    o.posix_c2h.sys_open.resp_ready = 1;
+    // Until we get valid response
     if(i.posix_h2c.sys_open.resp.valid)
     { 
       // Save file descriptor
@@ -96,7 +98,9 @@ outputs_t main(inputs_t i)
   }
   else if(state==WRITE_RESP)
   {
-    // Wait here until we get response
+    // Wait here ready for response
+    o.posix_c2h.sys_write.resp_ready = 1;
+    // Until we get valid response
     if(i.posix_h2c.sys_write.resp.valid)
     { 
       // Would do something based on how many bytes were written
