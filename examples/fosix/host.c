@@ -10,20 +10,29 @@
 #include "../aws-fpga-dma/dma_msg_sw.c"
 #include "protocol.h"
 
-posix_h2c_t do_syscall_get_resp(posix_c2h_t req)
+posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
 {
   posix_h2c_t resp;
   if(req.sys_open.req.valid)
   {
-    printf("Open...\n");
-    resp.sys_open.resp.fildes = open(req.sys_open.req.path, O_RDWR); //, 0777);
+    int fildes = open(req.sys_open.req.path, O_RDWR); //, 0777);
+    if(fildes>255)
+    {
+      printf("File descriptor too large...TODO: fix.\n");
+      exit(-1);
+    }
+    resp.sys_open.resp.fildes = fildes;
     resp.sys_open.resp.valid = 1;
   }
   else if(req.sys_write.req.valid)
   {
-    printf("Write...\n");
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
+  }
+  else
+  {
+    printf("UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+    exit(-1);
   }
   return resp;
 }
@@ -39,15 +48,15 @@ int main(int argc, char **argv)
   while(1)
   {
     // Read request dma msg
-    printf("Reading DMA msg...\n");
+    //printf("Reading DMA msg...\n");
     dma_msg_t read_msg = dma_read();
-    printf("Read DMA msg...\n");
+    //printf("Read DMA msg...\n");
     
     // Convert to host request struct
     posix_c2h_t request = dma_to_request(read_msg);
     
     // Do the requested syscall and form response
-    posix_h2c_t response = do_syscall_get_resp(request);
+    posix_h2c_t response = do_syscall_get_resp(request, read_msg);
     
     // Convert to dma message
     dma_msg_s write_msg = response_to_dma(response);
@@ -55,9 +64,14 @@ int main(int argc, char **argv)
     // Write response dma msg 
     if(write_msg.valid)
     {
-      printf("Writing DMA msg...\n");
+      //printf("Writing DMA msg...\n");
       dma_write(write_msg.data);
-      printf("Wrote DMA msg...\n");
+      //printf("Wrote DMA msg...\n");
+    }
+    else
+    {
+      printf("NO SYSTEM CALL RESPONSE\n");
+      exit(-1);
     }
   }  
 
