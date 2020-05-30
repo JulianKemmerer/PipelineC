@@ -224,7 +224,7 @@ void fosix()
       in_flight_syscall = POSIX_OPEN;
       if(h2c_main.sys_open.req_ready)
       {
-        fosix_state==WAIT_RESP;
+        fosix_state = WAIT_RESP;
       }
     }
     // WRITE
@@ -257,7 +257,7 @@ void fosix()
       in_flight_syscall = POSIX_WRITE;
       if(h2c_main.sys_write.req_ready)
       {
-        fosix_state==WAIT_RESP;
+        fosix_state = WAIT_RESP;
       }
     }
     // READ
@@ -290,7 +290,7 @@ void fosix()
       in_flight_syscall = POSIX_READ;
       if(h2c_main.sys_read.req_ready)
       {
-        fosix_state==WAIT_RESP;
+        fosix_state = WAIT_RESP;
       }
     }
     // CLOSE
@@ -323,7 +323,7 @@ void fosix()
       in_flight_syscall = POSIX_CLOSE;
       if(h2c_main.sys_close.req_ready)
       {
-        fosix_state==WAIT_RESP;
+        fosix_state = WAIT_RESP;
         // Make updates as needed based on response
         // CLOSE file descriptors table update
         // TODO move to response maybe close failed?
@@ -363,7 +363,7 @@ void fosix()
       // if was valid response when ready seen
       if(h2c_main.sys_open.resp.valid & c2h_main.sys_open.resp_ready)
       {
-        fosix_state==WAIT_REQ;
+        fosix_state = WAIT_REQ;
         // Make updates as needed based on response
         // OPEN file descriptors table update
         // Insert file host decriptor response into table
@@ -394,7 +394,7 @@ void fosix()
       // if was valid response when ready seen
       if(h2c_main.sys_write.resp.valid & c2h_main.sys_write.resp_ready)
       {
-        fosix_state==WAIT_REQ;
+        fosix_state = WAIT_REQ;
       }
     }
     // READ
@@ -418,7 +418,7 @@ void fosix()
       // if was valid response when ready seen
       if(h2c_main.sys_read.resp.valid & c2h_main.sys_read.resp_ready)
       {
-        fosix_state==WAIT_REQ;
+        fosix_state = WAIT_REQ;
       }
     }
     // CLOSE
@@ -442,7 +442,7 @@ void fosix()
       // if was valid response when ready seen
       if(h2c_main.sys_close.resp.valid & c2h_main.sys_close.resp_ready)
       {
-        fosix_state==WAIT_REQ;
+        fosix_state = WAIT_REQ;
       }
     }
   }
