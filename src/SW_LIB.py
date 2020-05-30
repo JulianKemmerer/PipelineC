@@ -317,7 +317,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 '''
       # In case type is actually user type - hacky
       if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
-        text += '''typedef uint8_t ''' + elem_t + ";/n"
+        text += '''typedef uint8_t ''' + elem_t + ";\n"
       text += elem_t + ''' ''' + var_name
       for dim in dims:
          text += "[" + str(dim) + "]"

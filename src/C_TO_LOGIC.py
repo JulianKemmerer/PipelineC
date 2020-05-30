@@ -6122,7 +6122,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
     write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
     if read_main_func is None or write_main_func is None:
-      print "Problem finding main functions for", read_containing_func,write_containing_func
+      print "Problem finding main functions for",var_name,"clock crossing read write:", read_containing_func,write_containing_func
       sys.exit(0)
       
     read_mhz = parser_state.main_mhz[read_main_func]

@@ -15,6 +15,7 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
   posix_h2c_t resp;
   if(req.sys_open.req.valid)
   {
+    // OPEN
     int fildes = open(req.sys_open.req.path, O_RDWR); //, 0777);
     if(fildes>255)
     {
@@ -26,8 +27,21 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
   }
   else if(req.sys_write.req.valid)
   {
+    // WRITE
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
+  }
+  else if(req.sys_read.req.valid)
+  {
+    // READ
+    resp.sys_read.resp.nbyte = read(req.sys_read.req.fildes, &(resp.sys_read.resp.buf[0]), req.sys_read.req.nbyte);
+    resp.sys_read.resp.valid = 1;
+  }
+  else if(req.sys_close.req.valid)
+  {
+    // CLOSE
+    resp.sys_close.resp.err = close(req.sys_close.req.fildes);
+    resp.sys_close.resp.valid = 1;
   }
   else
   {
