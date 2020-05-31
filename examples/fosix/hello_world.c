@@ -3,7 +3,8 @@
  to STDOUT via user space system calls on a host machine.
 */
 
-#include "fosix.c" // FPGA POSIX?
+//#include "fosix.c" // FPGA POSIX? General
+#include "fosix_aws_fpga_dma.c" // FPGA POSIX? AWS direct
 
 // hello world
 //  Uses posix busses for IO
@@ -114,4 +115,5 @@ outputs_t main(inputs_t i)
 }
 
 // Include wrapper connecting 'main' to fosix 'host'
-#include "main_wrapper.c"
+//#include "main_wrapper.c" // General
+#include "main_wrapper_fosix_aws_direct.c" // AWS direct
