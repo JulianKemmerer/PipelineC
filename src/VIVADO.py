@@ -191,6 +191,7 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
           print "TODO: How to improve clock crossing paths?"
           print "Cross from", start_main_func, "to", end_main_func
           print "For now assuming start main func..."
+          
         main_func = start_main_func
         timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
         total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
