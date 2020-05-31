@@ -726,6 +726,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv += "set_msg_config -id {Synth 8-3331} -limit 10000" + "\n"
   # [Synth 8-5546] ROM won't be mapped to RAM because it is too sparse
   rv += "set_msg_config -id {Synth 8-5546} -limit 10000" + "\n"
+  # [Synth 8-3848] Net in module/entity does not have driver.
+  rv += "set_msg_config -id {Synth 8-3848} -limit 10000" + "\n"
   
   # Multi threading help? max is 8?
   rv += "set_param general.maxThreads 8" + "\n" 

@@ -1495,6 +1495,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   if len(Logic.volatile_global_wires) > 0:
     rv += " " + "registers.volatile_global_regs <= write_volatile_global_regs;\n"
     
+  # Add wait statement if nothing in sensitivity list for simulation?
+  if process_sens_list == "":
+    rv += " " + "-- For simulation? \n"
+    rv += " " + "wait;\n"
+    
   rv += "end process;\n"
   
   # Register the combinatorial registers signal

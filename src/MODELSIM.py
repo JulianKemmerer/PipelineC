@@ -84,7 +84,7 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 			MODELSIM_PATH + " " + "-do 'source {" + do_filepath + "}' " )
 			
 			
-		log_text = SYN.GET_SHELL_CMD_OUTPUT(bash_cmd)
+		log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
 		print log_text
 		sys.exit(0)
 	
