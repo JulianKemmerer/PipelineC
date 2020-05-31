@@ -122,11 +122,12 @@ end process;
 -- Instantiate PipelineC main entity
 top_i : entity work.top port map
 (	
-  clk_main_wrapper => clk,
-  clk_fosix => clk,
-  clk_bram => clk,
-  clk_fosix_aws_fpga_dma => clk,
-	clk_aws_fpga_dma => clk,
+  --clk_main_wrapper => clk,
+  --clk_fosix => clk,
+  --clk_bram => clk,
+  --clk_fosix_aws_fpga_dma => clk,
+	clk_aws_fpga_dma_loopback => clk,
+  clk_aws_fpga_dma => clk,
 	aws_fpga_dma_i => i,
 	aws_fpga_dma_return_output => o
 );
