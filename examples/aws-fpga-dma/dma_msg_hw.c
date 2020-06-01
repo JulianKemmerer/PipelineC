@@ -71,7 +71,7 @@ typedef struct aws_deserializer_outputs_t
   axi512_write_o_t axi; // Write flow control/response
 	dma_msg_s msg_stream; // Outgoing messages
 } aws_deserializer_outputs_t;
-aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_out_ready)
+aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_out_ready, uint1_t rst)
 {
   // Output message from register (immediately read global reg to return later)
   aws_deserializer_outputs_t o;
@@ -231,6 +231,16 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
       aws_deserializer_msg_buffer.words[DMA_MSG_WORDS-1] = word0;
     }
   }
+  
+  // Reset
+  if(rst)
+  {
+    aws_deserializer_state = ALIGN_WORD_POS;
+    aws_deserializer_start_word_pos_valid = 0;
+    aws_deserializer_msg_buffer_valid = 0;
+    aws_deserializer_word_pos = 0;
+    aws_deserializer_axi_bursts_num_resp = 0;
+  }
 
   return o;
 }
@@ -258,7 +268,7 @@ typedef struct aws_serializer_outputs_t
   axi512_read_o_t axi; // Read flow control/response
 	uint1_t msg_in_ready; // Incoming msg flow control
 } aws_serializer_outputs_t;
-aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t axi)
+aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t axi, uint1_t rst)
 {	
 	// Default output values
   aws_serializer_outputs_t o;
@@ -398,8 +408,10 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
 	{
 		// Increment pos, w roll over
 		aws_serializer_word_pos = next_serializer_word_pos;
-    // If rolling over to start then done with this msg
-    if(at_end_word)
+    // Shifting and at end word = rolling over to start
+    // If while outputing valid data then done with this msg
+    //  Ex. & aws_serializer_state == SERIALIZE, in case was stuck in ALIGN_WORD_POS?
+    if(at_end_word & o.axi.resp.rvalid) 
     {
       aws_serializer_msg_valid = 0;
     }
@@ -421,6 +433,14 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
 		aws_serializer_msg_valid = 1;
 		aws_serializer_word_pos = 0; // Resets what address is at front of buffer
 	}
+  
+  // Reset
+  if(rst)
+  {
+    aws_serializer_msg_valid = 0;
+    aws_serializer_start_valid = 0;
+    aws_serializer_state = ALIGN_WORD_POS;
+  }
   
   return o;
 }

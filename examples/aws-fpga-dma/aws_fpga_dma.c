@@ -31,7 +31,7 @@ uint1_t aws_in_msg_ready; // Input flow control
 // AWS example runs at 125
 // However, experiments show we might need margin to meet timing at scalez
 #pragma MAIN_MHZ aws_fpga_dma 150.0
-aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
+aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i, uint1_t rst)
 {
   aws_fpga_dma_outputs_t o;
   
@@ -44,7 +44,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   // Deserializer handles write side
   // Pull messages out of incoming DMA write requests
   aws_deserializer_outputs_t deser_output;
-  deser_output = aws_deserializer(i.pcis.write, work_ready);
+  deser_output = aws_deserializer(i.pcis.write, work_ready, rst);
   o.pcis.write = deser_output.axi;
   
   // Write the input message stream into work function wrapper for processing
@@ -61,7 +61,7 @@ aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i)
   // Serializer handles read side
   // Put output message into outgoing DMA read requests
   aws_serializer_outputs_t serializer_output;
-  serializer_output = aws_serializer(msg_out, i.pcis.read);
+  serializer_output = aws_serializer(msg_out, i.pcis.read, rst);
   o.pcis.read = serializer_output.axi;
   
   // Write ready for work output msg flag into work function wrapper

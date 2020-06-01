@@ -244,6 +244,7 @@ assign sh_cl_dma_pcis_bus.rready = sh_cl_dma_pcis_rready;
 pipelinec_dma_pcis_slv pipelinec_dma_pcis_slv_i 
 (
 	.clk(clk),
+  .rst(!dma_pcis_slv_sync_rst_n),
   // Inputs
 	.axi_arsize (sh_cl_dma_pcis_bus.arsize ),
 	.axi_awsize (sh_cl_dma_pcis_bus.awsize ), 

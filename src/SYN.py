@@ -2614,7 +2614,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   
   print "Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?"
-  WRITE_ALL_ZERO_CLK_VHDL_ENTITIES(parser_state, TimingParamsLookupTable)
+  WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
   #print "WHY SLO"
   #sys.exit(0)
@@ -2793,7 +2793,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 # Abstracting is something more
 
 
-def WRITE_ALL_ZERO_CLK_VHDL_ENTITIES(parser_state, ZeroClkTimingParamsLookupTable): 
+def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable): 
   # All instances are zero clock so just pick any instance
   for func_name in parser_state.FuncLogicLookupTable:
     if func_name in parser_state.FuncToInstances:
@@ -2809,6 +2809,14 @@ def WRITE_ALL_ZERO_CLK_VHDL_ENTITIES(parser_state, ZeroClkTimingParamsLookupTabl
       if not os.path.exists(syn_out_dir):
         os.makedirs(syn_out_dir)
       VHDL.WRITE_LOGIC_ENTITY(inst_name, logic, syn_out_dir, parser_state, ZeroClkTimingParamsLookupTable)
+      
+  # Include a zero clock multi main top too
+  multimain_timing_params = MultiMainTimingParams()
+  multimain_timing_params.TimingParamsLookupTable = ZeroClkTimingParamsLookupTable;
+  is_final_top = True
+  VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
+  # And clock cross entities
+  VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
 
 
 def GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, inst_name, logic, parser_state, TimingParamsLookupTable):

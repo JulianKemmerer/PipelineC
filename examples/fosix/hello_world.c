@@ -17,7 +17,8 @@ typedef struct outputs_t
   posix_c2h_t c2h;
 } outputs_t;
 // State machine to do the steps of
-typedef enum state_t {
+typedef enum state_t { 
+  RESET, // State while in reset? Debug...
 	OPEN_REQ, // Ask to open the file (starting state)
 	OPEN_RESP, // Receive file descriptor
 	WRITE_REQ, // Ask to write to file descriptor
@@ -26,14 +27,18 @@ typedef enum state_t {
 } state_t;
 state_t state;
 fd_t stdout_fildes; // File descriptor for stdout
-outputs_t main(inputs_t i)
+outputs_t main(inputs_t i, uint1_t rst)
 {
   // Default output/reset/null values
   outputs_t o;
   o.c2h = POSIX_C2H_T_NULL();
   
   // State machine
-  if(state==OPEN_REQ)
+  if(state==RESET)
+  {
+    state = OPEN_REQ;
+  }
+  else if(state==OPEN_REQ)
   {
     // Request to open /dev/stdout (stdout on driver program on host)
     // Hard code bytes for now
@@ -110,7 +115,13 @@ outputs_t main(inputs_t i)
       state = DONE;
     }
   }
-  
+
+  // Reset
+  if(rst)
+  {
+    state = RESET;
+  }
+    
   return o;
 }
 

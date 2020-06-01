@@ -1,6 +1,6 @@
 // Instantiate main
 #pragma MAIN_MHZ main_wrapper 150.0
-void main_wrapper()
+void main_wrapper(uint1_t rst)
 {
   inputs_t i;
   outputs_t o;
@@ -10,7 +10,7 @@ void main_wrapper()
   h2cs = aws_h2c_READ();
   i.h2c = h2cs.data[0];
   
-  o = main(i);
+  o = main(i, rst);
   
   // Write aws c2h going out from main into fosix_aws_fpga_dma
   posix_c2h_t_array_1_t c2hs;

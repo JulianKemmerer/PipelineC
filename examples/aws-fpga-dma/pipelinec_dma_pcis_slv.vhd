@@ -7,6 +7,7 @@ entity pipelinec_dma_pcis_slv is
 port
 (
 	clk         : in std_logic;
+  rst         : in std_logic;
 	-- Inputs
 	axi_arsize  : in unsigned(2 downto 0);
 	axi_awsize  : in unsigned(2 downto 0);
@@ -41,10 +42,13 @@ end pipelinec_dma_pcis_slv;
 
 architecture arch of pipelinec_dma_pcis_slv is
 
+signal rst_unsigned : unsigned(0 downto 0);
 signal i : aws_fpga_dma_inputs_t;
 signal o : aws_fpga_dma_outputs_t;
 
 begin
+
+rst_unsigned <= (others => rst);
 
 -- Convert SLV to record/array
 process(
@@ -127,13 +131,16 @@ top_i : entity work.top port map
   --clk_bram => clk,
   
   clk_main_wrapper => clk,
+  main_wrapper_rst => rst_unsigned,
+
   clk_fosix_aws_fpga_dma => clk,
   
-	--clk_aws_fpga_dma_loopback => clk,
+  --clk_aws_fpga_dma_loopback => clk,
   
   clk_aws_fpga_dma => clk,
-	aws_fpga_dma_i => i,
-	aws_fpga_dma_return_output => o
+  aws_fpga_dma_rst => rst_unsigned,
+  aws_fpga_dma_i => i,
+  aws_fpga_dma_return_output => o
 );
 
 end arch;
