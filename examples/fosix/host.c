@@ -48,7 +48,7 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
     printf("UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
     exit(-1);
   }
-  printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+  //printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
   return resp;
 }
 
@@ -57,9 +57,11 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
 int main(int argc, char **argv) 
 {
 	// Init direct memory access to/from FPGA
+  printf("Initializing direct memory access to/from FPGA...\n");
 	init_dma();
-	
+  
 	// Control loop
+  printf("Beginning FOSIX Host control loop...\n");
   while(1)
   {
     // Read request dma msg
