@@ -4,7 +4,8 @@
 */
 
 //#include "fosix.c" // FPGA POSIX? General
-#include "fosix_aws_fpga_dma.c" // FPGA POSIX? AWS direct
+//#include "fosix_aws_fpga_dma.c" // FPGA POSIX? AWS direct
+#include "fosix_aws_fpga_dma_state_fc.c" // FPGA POSIX? AWS direct with state flow control
 
 // hello world
 //  Uses posix busses for IO
