@@ -1,11 +1,12 @@
 // This is the main program for driving a small msg read test
-#define SMALL 16
 
 #include <math.h>
 #include <time.h>
 
 #include "dma_msg_sw.c"
 #include "work_sw.c"
+
+#define SMALL DMA_MSG_SIZE
 
 dma_msg_t inc_read_msg(dma_msg_t msg)
 {

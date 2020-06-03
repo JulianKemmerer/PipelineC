@@ -1,6 +1,6 @@
 #include "aws_fpga_dma.c"
 
-#define SMALL 16  // BUFSIZE = 128,  DMA_MSG_SIZE 256
+#define SMALL DMA_MSG_SIZE  // BUFSIZE = 128,  DMA_MSG_SIZE 256
 dma_msg_t small_msg;
 uint1_t small_msg_valid = 1;
 
