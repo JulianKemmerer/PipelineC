@@ -11,16 +11,17 @@
 dma_msg_t inc_read_msg(dma_msg_t msg)
 {
   // Zero out
+  dma_msg_t msg_out;
   for(int v=0;v<DMA_MSG_SIZE;v++)
 	{
-		msg.data[v] = 0;
+		msg_out.data[v] = 0;
 	}
   // Increment small part of message
   for(int v=0;v<SMALL;v++)
 	{
-		msg.data[v] = msg.data[v] + 1;
+		msg_out.data[v] = msg.data[v] + 1;
 	}
-	return msg;
+	return msg_out;
 }
 
 // Helper to compare two output datas
