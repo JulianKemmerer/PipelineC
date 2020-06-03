@@ -1,6 +1,6 @@
 #include "aws_fpga_dma.c"
 
-#pragma MAIN_MHZ aws_fpga_dma_loopback 150.0
+#pragma MAIN_MHZ main_wrapper 150.0
 void main_wrapper(uint1_t rst)
 {
 	// Read ready for output msg flag from aws_fpga_dma
