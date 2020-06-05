@@ -76,7 +76,13 @@ int main(int argc, char **argv)
 	// which uses the FPGA to compute the 'work()' function
 	
 	// Prepare N work inputs, and 2 output pairs (cpu vs fpga)
-	int n = 3;
+	int n = 1;
+  if(argc>1)
+  {
+    char *n_str = argv[1];
+    n = atoi(n_str); 
+  }  
+  
 	int total_bytes = n * DMA_MSG_SIZE;
   printf("n: %d \n", n); 
   printf("DMA_MSG_SIZE: %d \n", DMA_MSG_SIZE);
