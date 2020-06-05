@@ -240,6 +240,9 @@ assign cl_sh_dma_pcis_rresp = sh_cl_dma_pcis_bus.rresp;
 assign cl_sh_dma_pcis_rdata = sh_cl_dma_pcis_bus.rdata;
 assign sh_cl_dma_pcis_bus.rready = sh_cl_dma_pcis_rready;
 
+(* dont_touch = "true" *) logic dma_pcis_slv_sync_rst_n;
+lib_pipe #(.WIDTH(1), .STAGES(4)) DMA_PCIS_SLV_SLC_RST_N (.clk(clk), .rst_n(1'b1), .in_bus(sync_rst_n), .out_bus(dma_pcis_slv_sync_rst_n));
+
 // PipelineC module replaces PCIS slave module
 pipelinec_dma_pcis_slv pipelinec_dma_pcis_slv_i 
 (
@@ -307,8 +310,7 @@ assign cl_sh_ddr_bus.rdata = sh_cl_ddr_rdata;
 assign cl_sh_ddr_bus.rlast = sh_cl_ddr_rlast;
 assign cl_sh_ddr_rready = cl_sh_ddr_bus.rready;
 
-(* dont_touch = "true" *) logic dma_pcis_slv_sync_rst_n;
-lib_pipe #(.WIDTH(1), .STAGES(4)) DMA_PCIS_SLV_SLC_RST_N (.clk(clk), .rst_n(1'b1), .in_bus(sync_rst_n), .out_bus(dma_pcis_slv_sync_rst_n));
+
 cl_dma_pcis_slv #(.SCRB_BURST_LEN_MINUS1(DDR_SCRB_BURST_LEN_MINUS1),
                     .SCRB_MAX_ADDR(DDR_SCRB_MAX_ADDR),
                     .NO_SCRB_INST(NO_SCRB_INST)) CL_DMA_PCIS_SLV (
