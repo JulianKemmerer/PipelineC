@@ -181,15 +181,15 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
         if(axi.req.wstrb[DMA_WORD_SIZE-1])
         {
           do_shift_buff_increment_pos = 1;
-        }
-        // Dont shift the buffer if this was the last word in the message
-        // (need to keep buffer in place to act as output reg)
-        if(at_end_word)
-        {
-          // Dont shift
-          do_shift_buff_increment_pos = 0;
-          // Validate output message buffer
-          aws_deserializer_msg_buffer_valid = 1;
+          // Dont shift the buffer if this was the last word in the message
+          // (need to keep buffer in place to act as output reg)
+          if(at_end_word)
+          {
+            // Dont shift
+            do_shift_buff_increment_pos = 0;
+            // Validate output message buffer
+            aws_deserializer_msg_buffer_valid = 1;
+          }
         }
         
         // Last incoming word of this burst? 
