@@ -315,7 +315,18 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
 	// Align shift buffer as needed to output next read burst
 	if(aws_serializer_state == ALIGN_WORD_POS)
 	{
-		// Buffer needs to be valid and word pos needs to match 
+    // TODO BUG!?:
+    // aws_serializer_msg_valid might be prev message keeping valid
+    //    in case of reading end word again
+    // We clear aws_serializer_msg_valid when rolling over for next addr
+    // BUT MIGHT NOT HAVE NEXT starting ADDR EVER, might need to 
+    // accept another input message for control logic flow to continue
+    // This module could/will? get stuck in never ready state when from SW
+    // it appears that all data was read and should be ready for new MSG
+    // Not being ready for more input data when software isnt asking for more
+    // isnt necessarily bad but feels weird...
+    
+    // Buffer needs to be valid and word pos needs to match 
     // starting axi word addr before leaving this state
     if(aws_serializer_msg_valid & aws_serializer_start_valid)
     {
@@ -409,9 +420,16 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
 		// Increment pos, w roll over
 		aws_serializer_word_pos = next_serializer_word_pos;
     // Shifting and at end word = rolling over to start
-    // If while outputing valid data then done with this msg
-    //  Ex. & aws_serializer_state == SERIALIZE, in case was stuck in ALIGN_WORD_POS?
-    if(at_end_word & o.axi.resp.rvalid) 
+    // ---If while outputing valid data then done with this msg
+    // --- Ex. & aws_serializer_state == SERIALIZE, in case was stuck in ALIGN_WORD_POS?
+    // CANT DO THIS ^^^---
+    // if next start burst addr is not known yet but is start of new msg
+    // then does not shift buffer in SERIALIZE, does not hit this if
+    // Would roll over to new message start in ALIGN_WORD_POS
+    // 
+    // This simple logic makes alot of sense, if the buffer is rolling over
+    // then whatever above logic knows we want to get rid of msg valid
+    if(at_end_word) //& o.axi.resp.rvalid) 
     {
       aws_serializer_msg_valid = 0;
     }
