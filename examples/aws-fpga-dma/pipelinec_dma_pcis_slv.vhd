@@ -128,7 +128,8 @@ top_i : entity work.top port map
 (	
   --clk_fosix => clk,
   --clk_bram => clk,
-  --clk_fosix_aws_fpga_dma => clk,
+  
+  clk_fosix_aws_fpga_dma => clk,
   
   clk_main_wrapper => clk,
   main_wrapper_rst => rst_unsigned,
