@@ -125,9 +125,10 @@ end process;
 	
 -- Instantiate PipelineC main entity
 top_i : entity work.top port map
-(	
-  --clk_fosix => clk,
-  --clk_bram => clk,
+(
+  clk_bram => clk,
+  
+  clk_fosix => clk,
   
   clk_fosix_aws_fpga_dma => clk,
   
