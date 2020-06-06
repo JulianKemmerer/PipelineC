@@ -16,39 +16,54 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
   if(req.sys_open.req.valid)
   {
     // OPEN
-    int fildes = open(req.sys_open.req.path, O_RDWR); //, 0777);
-    if(fildes>255)
-    {
-      printf("File descriptor too large...TODO: fix.\n");
-      exit(-1);
-    }
+    int fildes = open(req.sys_open.req.path, O_RDWR | O_CREAT); // TODO FLAGS
     resp.sys_open.resp.fildes = fildes;
     resp.sys_open.resp.valid = 1;
+    if(fildes>255)
+    {
+      printf("File descriptor too large / err %d, %s ...TODO: fix.\n", fildes, req.sys_open.req.path);
+      exit(-1);
+    }
   }
   else if(req.sys_write.req.valid)
   {
     // WRITE
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
+    if(resp.sys_write.resp.nbyte != req.sys_write.req.nbyte)
+    {
+      printf("Bad write? fd %d, resp %d != req %d\n", req.sys_write.req.fildes, resp.sys_write.resp.nbyte, req.sys_write.req.nbyte);
+      exit(-1);
+    }
   }
   else if(req.sys_read.req.valid)
   {
     // READ
     resp.sys_read.resp.nbyte = read(req.sys_read.req.fildes, &(resp.sys_read.resp.buf[0]), req.sys_read.req.nbyte);
     resp.sys_read.resp.valid = 1;
+    if(resp.sys_read.resp.nbyte != req.sys_read.req.nbyte)
+    {
+      printf("Bad read? fd %d, resp %d != req %d\n", req.sys_read.req.fildes, resp.sys_read.resp.nbyte, req.sys_read.req.nbyte);
+      exit(-1);
+    }
   }
   else if(req.sys_close.req.valid)
   {
     // CLOSE
     resp.sys_close.resp.err = close(req.sys_close.req.fildes);
     resp.sys_close.resp.valid = 1;
+    if(resp.sys_close.resp.err)
+    {
+      printf("Close err? fd %d\n", req.sys_close.req.fildes);
+      exit(-1);
+    }
   }
   else
   {
     printf("UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
     exit(-1);
   }
-  //printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+  printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
   return resp;
 }
 
