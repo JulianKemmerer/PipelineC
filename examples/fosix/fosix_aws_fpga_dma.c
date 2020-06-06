@@ -98,29 +98,28 @@ void fosix_aws_fpga_dma()
   dma_msg_in_ready = 0;
   // Unless the message is for a syscall that is ready
   // What syscall is the incoming DMA mesage a response to?
-  // OK to have dumb constant priority 
-  // and valid<->ready combinatorial feedback for now
-  syscall_t resp_id = decode_syscall_id(dma_msg_in.data);
+  // OK to have dumb valid<->ready combinatorial feedback for now
   // Convert incoming dma msg into response
+  // Only one response will be valid, if any
+  h2c.sys_open.resp = dma_to_open_resp(dma_msg_in);
+  h2c.sys_write.resp = dma_to_write_resp(dma_msg_in);
+  h2c.sys_read.resp = dma_to_read_resp(dma_msg_in);
+  h2c.sys_close.resp = dma_to_close_resp(dma_msg_in);
   // and connect flow control
-  if(resp_id == POSIX_OPEN)
+  if(h2c.sys_open.resp.valid)
   {
-    h2c.sys_open.resp = dma_to_open_resp(dma_msg_in);
     dma_msg_in_ready = c2h.sys_open.resp_ready;
   }
-  else if(resp_id == POSIX_WRITE)
+  else if(h2c.sys_write.resp.valid)
   {
-    h2c.sys_write.resp = dma_to_write_resp(dma_msg_in);
     dma_msg_in_ready = c2h.sys_write.resp_ready;
   }
-  else if(resp_id == POSIX_READ)
+  else if(h2c.sys_read.resp.valid)
   {
-    h2c.sys_read.resp = dma_to_read_resp(dma_msg_in);
     dma_msg_in_ready = c2h.sys_read.resp_ready;
   }
-  else if(resp_id == POSIX_CLOSE)
+  else if(h2c.sys_close.resp.valid)
   {
-    h2c.sys_close.resp = dma_to_close_resp(dma_msg_in);
     dma_msg_in_ready = c2h.sys_close.resp_ready;
   }
   
