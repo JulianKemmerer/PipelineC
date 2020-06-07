@@ -427,7 +427,6 @@ class ParsedTimingReport:
         #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
         #sys.exit(0)
 
-      
       # Unconnected ports are maybe problem?
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
         if syn_output_line.endswith("unconnected port clk"):
@@ -435,7 +434,11 @@ class ParsedTimingReport:
           print "Disconnected clock!?",syn_output_line
           sys.exit(0)
         #else:
-        # print syn_output_line
+        #  print syn_output_line
+        
+      # No driver?
+      if (("Net " in syn_output_line) and (" does not have driver" in syn_output_line)):
+        print syn_output_line
         
         
       # REG MERGING
@@ -634,8 +637,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   if inst_name:
     # Does inst need clk cross?
     Logic = parser_state.LogicInstLookupTable[inst_name]
-    needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+    needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
     needs_clk_cross_t = needs_clk_cross_read or needs_clk_cross_write
   if needs_clk_cross_t:
     # Clock crossing record

@@ -184,20 +184,20 @@ begin
     # ENTITY
     main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func];
     main_needs_clk = LOGIC_NEEDS_CLOCK(main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
-    main_needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(main_func,main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
-    main_needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_func,main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+    main_needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    main_needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
     
     new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
-    text += new_inst_name + " : entity work." + GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state) +" port map (\n"
+    text += new_inst_name + " : entity work." + main_entity_name +" port map (\n"
     # Clock
     if main_needs_clk:
       text += "clk_" + main_func + ",\n"
     # Clock cross in
     if main_needs_clk_cross_read:
-      text += "clk_cross_read,\n"
+      text += "clk_cross_read." + main_func + ",\n"
     # Clock cross out 
     if main_needs_clk_cross_write:
-      text += "clk_cross_write,\n"
+      text += "clk_cross_write." + main_func + ",\n"
     # Inputs
     for in_port in main_func_logic.inputs:
       in_wire = main_func + "_" + in_port
@@ -226,17 +226,53 @@ begin
     read_func = var_name + "_READ"
     write_func = var_name + "_WRITE"
     write_main, read_main = parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name]
+    
+    # Find the full inst name for write and read func instances
+    # (should only be one instance), and break into toks
+    
+    # Main func inst name is special case, 
+    #and clock cross wire replace clock cross func inst name last tok
+    # Write
+    write_func_inst = None
+    write_func_insts = parser_state.FuncToInstances[write_func]
+    if len(write_func_insts) > 1:
+      print "More than one use of", write_func
+      sys.exit(-1)
+    write_func_inst = list(write_func_insts)[0]
+    write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    # Start with main func then apply hier instances
+    write_text = write_main
+    for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)-1]:
+      write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+      write_text += "." + write_func_inst_str
+    write_text += "." + write_func
+    
+    # Read
+    read_func_inst = None
+    read_func_insts = parser_state.FuncToInstances[read_func]
+    if len(read_func_insts) > 1:
+      print "More than one use of", read_func
+      sys.exit(-1)
+    read_func_inst = list(read_func_insts)[0]
+    read_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    # Start with main func then apply hier instances
+    read_text = read_main
+    for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
+      read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+      read_text += "." + read_func_inst_str
+    read_text += "." + read_func
+    
     text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
     (
 '''
     # Clk in input
     text += "clk_" + write_main + ",\n"
     # Clk cross in data from pipeline output
-    text += "clk_cross_write." + write_func + ",\n"
+    text += "clk_cross_write." + write_text + ",\n"
     # Clk out input
     text += "clk_" + read_main + ",\n"
     # Clk cross out data to pipeline input
-    text += "clk_cross_read." + read_func + "\n"
+    text += "clk_cross_read." + read_text + "\n"
     text += '''
     );
 '''
@@ -256,11 +292,12 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   timing_params = TimingParamsLookupTable[inst_name]
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name, Logic, parser_state, TimingParamsLookupTable)
+  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, TimingParamsLookupTable)
+  entity_name = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state)
   
   if not is_final_top:
-    filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + "_top.vhd"
+    filename = entity_name + "_top.vhd"
   else:
     filename = Logic.func_name + ".vhd"
     
@@ -278,7 +315,7 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   
   
   if not is_final_top:
-    rv += "entity " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+    rv += "entity " + entity_name + "_top is" + "\n"
   else:
     rv += "entity " + Logic.func_name + " is" + "\n"
   
@@ -287,9 +324,9 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   
   # Clock cross as needed
   if needs_clk_cross_read:
-    rv += " clk_cross_read : in clk_cross_read_t;\n"
+    rv += " clk_cross_read : in " + Logic.func_name + "_clk_cross_read_t;\n"
   if needs_clk_cross_write:
-    rv += " clk_cross_write : out clk_cross_write_t;\n"
+    rv += " clk_cross_write : out " + Logic.func_name + "_clk_cross_write_t;\n"
     
   # The inputs of the logic
   for input_name in Logic.inputs:
@@ -306,12 +343,12 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   rv += ");" + "\n"
   
   if not is_final_top:
-    rv += "end " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top;" + "\n"
+    rv += "end " + entity_name + "_top;" + "\n"
   else:
     rv += "end " + Logic.func_name + ";" + "\n"
 
   if not is_final_top:
-    rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) + "_top is" + "\n"
+    rv += "architecture arch of " + entity_name + "_top is" + "\n"
   else:
     rv += "architecture arch of " + Logic.func_name + " is" + "\n"
     
@@ -343,10 +380,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   
   # Clock cross regs and signals
   if needs_clk_cross_read:
-    rv += "signal clk_cross_read_input_reg : clk_cross_read_t;" + "\n"
+    rv += "signal clk_cross_read_input_reg : " + Logic.func_name + "_clk_cross_read_t;" + "\n"
   if needs_clk_cross_write:
-    rv += "signal clk_cross_write_output : clk_cross_write_t;" + "\n"
-    rv += "signal clk_cross_write_output_reg : clk_cross_write_t;" + "\n"
+    rv += "signal clk_cross_write_output : " + Logic.func_name + "_clk_cross_write_t;" + "\n"
+    rv += "signal clk_cross_write_output_reg : " + Logic.func_name + "_clk_cross_write_t;" + "\n"
   
   # Write vhdl func if needed
   if Logic.is_vhdl_func:
@@ -369,7 +406,7 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   else:
     # ENTITY
     rv += "-- Instantiate entity\n"
-    rv += GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" : entity work." + GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state) +" port map (\n"
+    rv += entity_name +" : entity work." + entity_name + " port map (\n"
     if needs_clk:
       rv += "clk,\n"
     # Clock cross as needed
@@ -618,45 +655,157 @@ use work.c_structs_pkg.all; -- User types
 package clk_cross_t_pkg is
 '''
   
-  #if len(parser_state.clk_cross_var_name_to_write_read_sizes.keys()) > 0:
-  # Write types
-  text += '''
-    type clk_cross_read_t is record
-    DUMMY : std_logic;
-'''
-  # Inputs
-  for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
-    # Clock cross inputs act as outputs from READ clock cross submodule
-    func_name = var_name + "_READ"
+  # Type for each func, with hierarchy
+  # could do recursive but ...dumb
+  read_funcs_written = set()
+  write_funcs_written = set()
+  # Collect funcs that dont need clk cross first
+  # And funcs that are themselves the clock crossing (dont need port)
+  for func_name in parser_state.FuncLogicLookupTable:
     func_logic = parser_state.FuncLogicLookupTable[func_name]   
-    for output_port in func_logic.outputs:
-      # submodule instance name == Func name for clk cross since single instance?
-      output_port_wire = func_name + C_TO_LOGIC.SUBMODULE_MARKER + output_port
-      c_type = func_logic.wire_to_c_type[output_port]
-      text += "     " + func_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
-
-  text += '''
+    if not LOGIC_NEEDS_CLOCK_CROSS_READ(func_logic, parser_state):
+      read_funcs_written.add(func_name)
+    if not LOGIC_NEEDS_CLOCK_CROSS_WRITE(func_logic, parser_state):
+      write_funcs_written.add(func_name)
+    if SW_LIB.IS_CLOCK_CROSSING(func_logic):
+      if func_name.endswith("_READ"): 
+        read_funcs_written.add(func_name)
+      if func_name.endswith("_WRITE"):
+        write_funcs_written.add(func_name) 
+  
+  # Dumb loop
+  still_writing = True
+  while still_writing:
+    still_writing = False
+    
+    # READ
+    for func_name in parser_state.FuncLogicLookupTable:
+      func_logic = parser_state.FuncLogicLookupTable[func_name] 
+      # Read?
+      if not LOGIC_NEEDS_CLOCK_CROSS_READ(func_logic, parser_state):
+        continue 
+      # Done already?
+      if func_name in read_funcs_written:
+        continue
+      # All submodule funcs written?
+      all_subs_written = True
+      for sub_inst in func_logic.submodule_instances:
+        sub_func_name = func_logic.submodule_instances[sub_inst]
+        if sub_func_name not in read_funcs_written:
+          all_subs_written = False
+          break
+      if not all_subs_written:
+        continue
+      #
+      # clk_cross _t for this func 
+      text += '''
+  type ''' + func_name + '''_clk_cross_read_t is record
+    '''   
+      # First include var _READ for this func
+      # Which submodules are clock crossings, get var name from sub
+      for sub_inst in func_logic.submodule_instances:
+        sub_func = func_logic.submodule_instances[sub_inst]
+        sub_logic = parser_state.FuncLogicLookupTable[sub_func]
+        if SW_LIB.IS_CLOCK_CROSSING(sub_logic) and sub_logic.func_name.endswith("_READ"):
+          for output_port in sub_logic.outputs:
+            # submodule instance name == Func name for clk cross since single instance?
+            output_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+            c_type = sub_logic.wire_to_c_type[output_port]
+            text += "     " + sub_func + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+      # Then include types for submodules (not clock crossing submodules)
+      for sub_inst in func_logic.submodule_instances:
+        sub_func = func_logic.submodule_instances[sub_inst]
+        sub_logic = parser_state.FuncLogicLookupTable[sub_func]
+        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+          continue        
+        if LOGIC_NEEDS_CLOCK_CROSS_READ(sub_logic, parser_state):
+          text += '''
+    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_clk_cross_read_t;"
+  
+      text += '''
   end record;
 '''
+      still_writing = True
+      read_funcs_written.add(func_name)
   
-  text += '''
-  type clk_cross_write_t is record
-  DUMMY : std_logic;
+  
+    # WRITE
+    for func_name in parser_state.FuncLogicLookupTable:
+      func_logic = parser_state.FuncLogicLookupTable[func_name] 
+      # Write?
+      if not LOGIC_NEEDS_CLOCK_CROSS_WRITE(func_logic, parser_state):
+        continue 
+      # Done already?
+      if func_name in write_funcs_written:
+        continue
+      # All submodule funcs written?
+      all_subs_written = True
+      for sub_inst in func_logic.submodule_instances:
+        sub_func_name = func_logic.submodule_instances[sub_inst]
+        if sub_func_name not in write_funcs_written:
+          all_subs_written = False
+          break
+      if not all_subs_written:
+        continue
+      #
+      # clk_cross _t for this func 
+      text += '''
+  type ''' + func_name + '''_clk_cross_write_t is record
+    '''   
+      # First include var _WRITE for this func
+      # Which submodules are clock crossings, get var name from sub
+      for sub_inst in func_logic.submodule_instances:
+        sub_func = func_logic.submodule_instances[sub_inst]
+        sub_logic = parser_state.FuncLogicLookupTable[sub_func]
+        if SW_LIB.IS_CLOCK_CROSSING(sub_logic) and sub_logic.func_name.endswith("_WRITE"):
+          for input_port in sub_logic.inputs:
+            # submodule instance name == Func name for clk cross since single instance?
+            input_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+            c_type = sub_logic.wire_to_c_type[input_port]
+            text += "     " + sub_func + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+      # Then include types for submodules (not clock crossing submodules)
+      for sub_inst in func_logic.submodule_instances:
+        sub_func = func_logic.submodule_instances[sub_inst]
+        sub_logic = parser_state.FuncLogicLookupTable[sub_func]
+        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+          continue  
+        if LOGIC_NEEDS_CLOCK_CROSS_WRITE(sub_logic, parser_state):
+          text += '''
+    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_clk_cross_write_t;"
+  
+      text += '''
+  end record;
+  
 '''
-  # Outputs
-  for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
-    # Clock cross outputs act as inputs to WRITE clock cross submodule
-    func_name = var_name + "_WRITE"
-    func_logic = parser_state.FuncLogicLookupTable[func_name]       
-    for input_port in func_logic.inputs:
-      # submodule instance name == Func name for clk cross since single instance?
-      input_port_wire = func_name + C_TO_LOGIC.SUBMODULE_MARKER + input_port
-      c_type = func_logic.wire_to_c_type[input_port]
-      text += "     " + func_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
+      still_writing = True
+      write_funcs_written.add(func_name)
   
+  
+  
+  # Done writing hierarchy, write multimain top types
+  
+  text += '''type clk_cross_read_t is record'''
+  for main_func in parser_state.main_mhz:
+    main_logic = parser_state.FuncLogicLookupTable[main_func]
+    if LOGIC_NEEDS_CLOCK_CROSS_READ(main_logic, parser_state):
+      text += '''
+    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_clk_cross_read_t;"
   text += '''
   end record;
-'''
+  
+  '''
+  
+  text += '''type clk_cross_write_t is record'''
+  for main_func in parser_state.main_mhz:
+    main_logic = parser_state.FuncLogicLookupTable[main_func]
+    if LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_logic, parser_state):
+      text += '''
+    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_clk_cross_write_t;"
+  text += '''
+  end record;
+  
+  '''
+  
   text += '''
 end clk_cross_t_pkg;
 '''
@@ -848,32 +997,34 @@ end c_structs_pkg;
   f.write(text)
   f.close()
 
-def LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable):
+def LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state):
   # Look for clock cross submodule ending in _READ() implying input 
   i_need_clk_cross_readput = SW_LIB.IS_CLOCK_CROSSING(Logic) and Logic.func_name.endswith("_READ")
   
   # Check submodules too
   needs_clk_cross_read = i_need_clk_cross_readput
   for inst in Logic.submodule_instances:
-    instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
     submodule_logic_name = Logic.submodule_instances[inst]
-    submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-    needs_clk_cross_read = needs_clk_cross_read or LOGIC_NEEDS_CLOCK_CROSS_READ(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
+    if submodule_logic_name in parser_state.FuncLogicLookupTable:
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      needs_clk_cross_read = needs_clk_cross_read or LOGIC_NEEDS_CLOCK_CROSS_READ(submodule_logic, parser_state)
     
   return needs_clk_cross_read
   
-def LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable):
+def LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state):
   # Look for clock cross submodule ending in _WRITE() implying output 
   i_need_clk_cross_writeput = SW_LIB.IS_CLOCK_CROSSING(Logic) and Logic.func_name.endswith("_WRITE")
   
   # Check submodules too
   needs_clk_cross_write = i_need_clk_cross_writeput
   for inst in Logic.submodule_instances:
-    instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
     submodule_logic_name = Logic.submodule_instances[inst]
-    submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-    needs_clk_cross_write = needs_clk_cross_write or LOGIC_NEEDS_CLOCK_CROSS_WRITE(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
-  
+    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
+    if submodule_logic_name in parser_state.FuncLogicLookupTable:
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      needs_clk_cross_write = needs_clk_cross_write or LOGIC_NEEDS_CLOCK_CROSS_WRITE(submodule_logic, parser_state)
+    
   return needs_clk_cross_write
   
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
@@ -1181,8 +1332,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable)
+  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, TimingParamsLookupTable)
     
   rv = ""
   rv += "library ieee;" + "\n"
@@ -1217,11 +1368,11 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     
   # Clock cross inputs?
   if needs_clk_cross_read:
-    rv += " clk_cross_read : in clk_cross_read_t;" + "\n"
+    rv += " clk_cross_read : in " + Logic.func_name + "_clk_cross_read_t;" + "\n"
   
   # Clock cross outputs?
   if needs_clk_cross_write:
-    rv += " clk_cross_write : out clk_cross_write_t;" + "\n"
+    rv += " clk_cross_write : out " + Logic.func_name + "_clk_cross_write_t;" + "\n"
     
   # The inputs of the Logic
   for input_name in Logic.inputs:
@@ -1320,8 +1471,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name,Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(inst_name,Logic, parser_state, TimingParamsLookupTable)
-  #needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(inst_name,Logic, parser_state, TimingParamsLookupTable)
+  needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, TimingParamsLookupTable)
+  #needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, TimingParamsLookupTable)
   
   rv = ""
   rv += "\n"
@@ -1824,7 +1975,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
     return "write_pipe." + WIRE_TO_VHDL_NAME(wire_name, Logic)  
   
   
-def WIRE_TO_VHDL_NAME(wire_name, Logic):
+def WIRE_TO_VHDL_NAME(wire_name, Logic=None): # TODO remove Logic
   leaf_name = C_TO_LOGIC.LEAF_NAME(wire_name)
   rv = leaf_name.replace(C_TO_LOGIC.SUBMODULE_MARKER,"_").replace("_*","_STAR").replace("[*]","_STAR").replace(".","_").replace("[","_").replace("]","")
   return rv
