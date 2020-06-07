@@ -23,7 +23,9 @@ ENV_VIVADO_DIR = os.environ.get('XILINX_VIVADO')
 if ENV_VIVADO_DIR:
   VIVADO_DIR = ENV_VIVADO_DIR
 else:
-  VIVADO_DIR  = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
+  #VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
+  VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
+
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch"
 VIVADO_PART="xcvu9p-flgb2104-2-i"  # xcvu9p-flgb2104-2-i = AWS F1, xc7a35ticsg324-1l = Arty
