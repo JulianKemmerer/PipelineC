@@ -1038,7 +1038,7 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
     #print reg_name
     #sys.exit(0)
     inst_name = reg_toks[0]
-    if inst_name not in LogicInstLookupTable:
+    if inst_name not in parser_state.LogicInstLookupTable:
       print "Bad inst name from reg?", inst_name, reg_name
       sys.exit(0)
     return inst_name
