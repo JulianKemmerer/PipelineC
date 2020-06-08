@@ -11,7 +11,7 @@
 typedef enum state_t {
   STDOUT_OPEN, // For debug open stdout to keep track of progress (starting state)
   PRINT_OPEN_IN, // Print info about opening input file
-	IN_OPEN, // Open the input file 
+  IN_OPEN, // Open the input file 
   BRAM_OPEN0, // Open the BRAM file for first time
   PRINT_READ_IN, // Print info about reading input file
   //
@@ -72,7 +72,7 @@ typedef struct outputs_t
 
 // Some repeated logic would probably benefit from some macros...TODO...
 
-outputs_t main(inputs_t i)
+outputs_t main(inputs_t i, uint1_t rst)
 {
   // Default output/reset/null values
   outputs_t o;
