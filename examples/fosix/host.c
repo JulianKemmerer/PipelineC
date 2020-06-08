@@ -60,10 +60,10 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
   }
   else
   {
-    printf("UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+    printf("TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
     exit(-1);
   }
-  printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+  //printf("GOOD SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
   return resp;
 }
 
