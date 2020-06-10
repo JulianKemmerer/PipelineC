@@ -127,8 +127,10 @@ end process;
 top_i : entity work.top port map
 (
   clk_bram => clk,
+  bram_rst => rst_unsigned,
   
   clk_fosix => clk,
+  fosix_rst => rst_unsigned,
   
   clk_fosix_aws_fpga_dma => clk,
   

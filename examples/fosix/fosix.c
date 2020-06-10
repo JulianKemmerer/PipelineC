@@ -113,6 +113,16 @@ fd_lut_t remove_fd(fd_t local_fildes, fd_lut_t fd_lut)
   return fd_lut;
 }
 
+fd_lut_t clear_lut(fd_lut_t fd_lut)
+{
+  uint8_t i;
+  for(i=0;i<POSIX_NUM_FILDES;i=i+1)
+  {
+    fd_lut.elem[i].valid = 0;
+  }
+  return fd_lut;
+}
+
 uint1_t fd_is_bram(fd_t local_fildes, fd_lut_t fd_lut)
 {
   uint1_t rv = 0;
@@ -144,6 +154,7 @@ posix_c2h_t posix_c2h;
 // OK to have dumb constant priority 
 // and valid<->ready combinatorial feedback for now too...
 typedef enum fosix_state_t {
+  RESET,
   WAIT_REQ, // Wait for request from main
   WAIT_RESP // Wait for response into main
 } fosix_state_t;
@@ -153,7 +164,7 @@ uint1_t in_flight_syscall_dev_is_bram;
 fd_lut_t fosix_fd_lut;
 
 #pragma MAIN_MHZ fosix 150.0
-void fosix()
+void fosix(uint1_t rst)
 {
   // Inputs
   posix_h2c_t h2c_stdio;
@@ -185,9 +196,13 @@ void fosix()
   h2c_main = POSIX_H2C_T_NULL();
   //////////////////////////////////////////////////////////////////////
 
+  if(fosix_state==RESET)
+  {
+    fosix_state = WAIT_REQ;
+  }
   
   // WAIT ON REQUESTS //////////////////////////////////////////////////
-  if(fosix_state==WAIT_REQ)
+  else if(fosix_state==WAIT_REQ)
   {
     // Start off signaling ready for all requests from main
     h2c_main = h2c_set_ready(h2c_main);
@@ -445,6 +460,12 @@ void fosix()
         fosix_state = WAIT_REQ;
       }
     }
+  }
+  
+  if(rst)
+  {
+    fosix_state = RESET;
+    fosix_fd_lut = clear_lut(fosix_fd_lut);
   }
   
   //////////////////////////////////////////////////////////////////////

@@ -9,7 +9,8 @@
 
 // Primary state machine to do the steps of
 typedef enum state_t {
-  STDOUT_OPEN, // For debug open stdout to keep track of progress (starting state)
+  RESET, //(starting state)
+  STDOUT_OPEN, // For debug open stdout to keep track of progress 
   PRINT_OPEN_IN, // Print info about opening input file
   IN_OPEN, // Open the input file 
   BRAM_OPEN0, // Open the BRAM file for first time
@@ -83,7 +84,11 @@ outputs_t main(inputs_t i, uint1_t rst)
   
   //////////////////////////////////////////////////////////////////////
   // Primary state machine 
-  if(state==STDOUT_OPEN)
+  if(state==RESET)
+  {
+    state = STDOUT_OPEN;
+  }
+  else if(state==STDOUT_OPEN)
   {
     // Open /dev/stdout (stdout on driver program on host)
     // Subroutine arguments
@@ -475,6 +480,12 @@ outputs_t main(inputs_t i, uint1_t rst)
   {
     // This state allows primary state machine to get return values
     state = sub_return_state;
+    sub_state = IDLE;
+  }
+  
+  if(rst)
+  {
+    state = RESET;
     sub_state = IDLE;
   }
   

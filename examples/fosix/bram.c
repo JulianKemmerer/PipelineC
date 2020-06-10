@@ -50,6 +50,7 @@ uint1_t path_is_bram(open_req_t req)
 
 // Simple single state machine to start
 typedef enum bram_state_t {
+  RESET,
   WAIT_REQ, // Wait for valid request
   WAIT_OPEN_RESP, // Wait until ready for open response
   WAIT_WRITE_RESP, // Wait to output write resp
@@ -77,7 +78,7 @@ uint1_t bram_valid_delay[BRAM_DELAY];
 bram_mem_elem_t bram_output;
 uint1_t bram_output_valid;
 #pragma MAIN_MHZ bram 150.0
-void bram()
+void bram(uint1_t rst)
 {
   // Inputs
   posix_c2h_t c2h;
@@ -106,8 +107,12 @@ void bram()
   uint1_t wr_en = 0;
   uint1_t valid = 0;
   
+  if(bram_state==RESET)
+  {
+    bram_state = WAIT_REQ;
+  }
   // Wait for incoming request
-  if(bram_state==WAIT_REQ)
+  else if(bram_state==WAIT_REQ)
   {
     // Start by signaling ready for all requests
     h2c = h2c_set_ready(h2c);
@@ -271,6 +276,18 @@ void bram()
     bram_valid_delay[d] = bram_valid_delay[d+1];
   }
   bram_valid_delay[BRAM_DELAY-1] = valid;
+  
+  if(rst)
+  {
+    bram_state = RESET;
+    bram_byte_offset = 0;
+    bram_byte_count = 0;
+    bram_output_valid = 0;
+    for(d=0;d<(BRAM_DELAY-1);d=d+1)
+    {
+      bram_valid_delay[d] = 0;
+    }
+  }
   
   //////////////////////////////////////////////////////////////////////
   // Write driven outputs into other modules
