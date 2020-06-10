@@ -9,10 +9,11 @@
 
 // Primary state machine to do the steps of
 typedef enum state_t {
-  RESET, //(starting state)
+  RESET, // Starting state
   STDOUT_OPEN, // For debug open stdout to keep track of progress 
   PRINT_OPEN_IN, // Print info about opening input file
-  IN_OPEN, // Open the input file 
+  IN_OPEN, // Open the input file
+  PRINT_OPEN_BRAM, // Print info about opening bram file
   BRAM_OPEN0, // Open the BRAM file for first time
   PRINT_READ_IN, // Print info about reading input file
   //
@@ -147,9 +148,35 @@ outputs_t main(inputs_t i, uint1_t rst)
     sub_path[7]  = 0; // Null term
     sub_start_state = OPEN_REQ;
     // State to return to from subroutine
-    sub_return_state = BRAM_OPEN0;
+    sub_return_state = PRINT_OPEN_BRAM;
     // Subroutine return values
     in_fd = sub_fd; // File descriptor
+  }
+  else if(state==PRINT_OPEN_BRAM)
+  {
+    // Print debug
+    // Subroutine arguments
+    sub_io_buf[0]  = 'O';
+    sub_io_buf[1]  = 'p';
+    sub_io_buf[2]  = 'e';
+    sub_io_buf[3]  = 'n';
+    sub_io_buf[4]  = 'i';
+    sub_io_buf[5]  = 'n';
+    sub_io_buf[6]  = 'g';
+    sub_io_buf[7]  = ' ';
+    sub_io_buf[8]  = 'b';
+    sub_io_buf[9]  = 'r';
+    sub_io_buf[10] = 'a';
+    sub_io_buf[11] = 'm';
+    sub_io_buf[12] = '\n';
+    sub_io_buf[13] = 0; // Null term
+    sub_io_buf_nbytes = 14;
+    sub_fd = stdout_fd;
+    sub_start_state = WRITE_REQ;
+    // State to return to from subroutine
+    sub_return_state = BRAM_OPEN0;
+    // Subroutine return values
+    //    not used
   }
   else if(state==BRAM_OPEN0 | state==BRAM_OPEN1)
   {
