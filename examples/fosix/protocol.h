@@ -286,7 +286,6 @@ posix_c2h_t dma_to_request(dma_msg_t msg)
 dma_msg_s response_to_dma(posix_h2c_t resp)
 {
   dma_msg_s msg_stream = DMA_MSG_S_NULL();
-  msg_stream.valid = 0;
   if(resp.sys_open.resp.valid)
   {
     msg_stream = open_resp_to_dma(resp.sys_open.resp);
