@@ -21,8 +21,7 @@ typedef enum state_t {
 	OPEN_REQ, // Ask to open the file (starting state)
 	OPEN_RESP, // Receive file descriptor
 	WRITE_REQ, // Ask to write to file descriptor
-	WRITE_RESP, // Receive how many bytes were written
-  DONE // Stay here doing nothing until FPGA bitstream reloaded
+	WRITE_RESP // Receive how many bytes were written
 } state_t;
 state_t state;
 fd_t stdout_fildes; // File descriptor for stdout
@@ -110,8 +109,8 @@ outputs_t main(inputs_t i, uint1_t rst)
     { 
       // Would do something based on how many bytes were written
       //    i.h2c.sys_write.resp.nbyte
-      // But for now assume it went well, done
-      state = DONE;
+      // But for now assume it went well, write again
+      state = WRITE_REQ;
     }
   }
 
