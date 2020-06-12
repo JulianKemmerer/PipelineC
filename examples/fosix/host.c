@@ -32,11 +32,6 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
     printf("FOSIX: WRITE\n");
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
-    if(resp.sys_write.resp.nbyte != req.sys_write.req.nbyte)
-    {
-      printf("Bad write? fd %d, resp %d != req %d\n", req.sys_write.req.fildes, resp.sys_write.resp.nbyte, req.sys_write.req.nbyte);
-      exit(-1);
-    }
   }
   else if(req.sys_read.req.valid)
   {
@@ -44,11 +39,6 @@ posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
     printf("FOSIX: READ\n");
     resp.sys_read.resp.nbyte = read(req.sys_read.req.fildes, &(resp.sys_read.resp.buf[0]), req.sys_read.req.nbyte);
     resp.sys_read.resp.valid = 1;
-    if(resp.sys_read.resp.nbyte != req.sys_read.req.nbyte)
-    {
-      printf("Bad read? fd %d, resp %d != req %d\n", req.sys_read.req.fildes, resp.sys_read.resp.nbyte, req.sys_read.req.nbyte);
-      exit(-1);
-    }
   }
   else if(req.sys_close.req.valid)
   {
