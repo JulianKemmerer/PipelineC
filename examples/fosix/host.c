@@ -12,7 +12,7 @@
 
 posix_h2c_t do_syscall_get_resp(posix_c2h_t req, dma_msg_t msg)
 {
-  posix_h2c_t resp;
+  posix_h2c_t resp = POSIX_H2C_T_NULL();
   if(req.sys_open.req.valid)
   {
     // OPEN
@@ -111,5 +111,6 @@ int main(int argc, char **argv)
   }
 
 	// Close direct memory access to/from FPGA
+  printf("Closing direct memory access to/from FPGA...\n");
 	close_dma();    
 }
