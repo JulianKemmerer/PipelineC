@@ -24,13 +24,15 @@ print '''
 '''
 
 print "TODO:"
+print " Fix bug of not being able to include auto gen headers in auto gend files"
+print " Need to pass structs from software C to PipelineC. Really generate headers/sizeof support for to/from bytes"
 print "	Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst"
 print "	Add constant defintion (struct+array init), use const keyword? #define init expressions? Init becomes like const ref funcs assigning ref toks"
 print "	How to do module instantiation? Does that need to be macro based? #define to set 'generics'?"
 print "	Do clock crossing for real - not same mhz - make nonvolatile(same mhz) not need arrays in crossings?"
 print "	Relative clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock.."
 print "	Fix for vhdl restricted words. Append _restricted?"
-print "	Really write/generate? headers for full gcc compatibilty - write SW generated C bit manip/math?"
+print " Raw vhdl includes, probably pragma easiest"
 print "	Get serious about using C macros fool because yall know you aint parsing C++"
 print "	FIX EXTRA LOGIC LEVEL AND LUTS IN SOME FUNCTIONS! +1 extra logic level in some places...mostly needed for 0 clk delay measurement?"
 print "	Do auto gen unsigned to array functions now that support array_N_t"

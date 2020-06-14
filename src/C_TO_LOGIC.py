@@ -6335,15 +6335,27 @@ def APPEND_PRAGMA_INFO(parser_state):
   # Get all pragmas in ast
   pragmas = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Pragma, parser_state)
   
-  # Only care about MAIN_MHZ right now
-  parser_state.main_mhz = dict()
+  # Parse some stuff
+  parser_state.main_mhz = dict() # MAIN_MHZ
+  parser_state.main_marked_debug = set()
+  
+  # Loop over all pragmas
   for pragma in pragmas:
+    # MAIN_MHZ
     if pragma.string.startswith("MAIN_MHZ"):
       toks = pragma.string.split(" ")
       main_func = toks[1]
       mhz = float(toks[2])
       parser_state.main_mhz[main_func] = mhz
-  # Sanity check
+  
+    # MAIN_MARK_DEBUG
+    if pragma.string.startswith("MAIN_MARK_DEBUG"):
+      toks = pragma.string.split(" ")
+      main_func = toks[1]
+      parser_state.main_marked_debug.add(main_func)
+  
+  # Sanity checks
+  # MAIN_MHZ
   if len(parser_state.main_mhz) == 0:
     print "No main function specified?"
     print "Ex. #pragma MAIN_MHZ main 100.0"

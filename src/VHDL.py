@@ -104,7 +104,14 @@ architecture arch of ''' + entity_name + ''' is
 '''
 
   # Clock cross wires
-  text += '''
+  has_clk_cross = False
+  for main_func in parser_state.main_mhz:
+    main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+    if LOGIC_NEEDS_CLOCK_CROSS_READ(main_func_logic,parser_state) or LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_func_logic,parser_state):
+      has_clk_cross = True
+      break
+  if has_clk_cross:
+    text += '''
 -- Clock cross wires
 signal clk_cross_read : clk_cross_read_t;
 signal clk_cross_write : clk_cross_write_t;
@@ -783,25 +790,30 @@ package clk_cross_t_pkg is
   
   
   # Done writing hierarchy, write multimain top types
-  
-  text += '''type clk_cross_read_t is record'''
+  read_text = ""
   for main_func in parser_state.main_mhz:
     main_logic = parser_state.FuncLogicLookupTable[main_func]
     if LOGIC_NEEDS_CLOCK_CROSS_READ(main_logic, parser_state):
-      text += '''
+      read_text += '''
     ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_clk_cross_read_t;"
-  text += '''
+  if read_text != "":
+    text += '''type clk_cross_read_t is record'''
+    text += read_text
+    text += '''
   end record;
   
   '''
   
-  text += '''type clk_cross_write_t is record'''
+  write_text = ""
   for main_func in parser_state.main_mhz:
     main_logic = parser_state.FuncLogicLookupTable[main_func]
     if LOGIC_NEEDS_CLOCK_CROSS_WRITE(main_logic, parser_state):
-      text += '''
+      write_text += '''
     ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_clk_cross_write_t;"
-  text += '''
+  if write_text != "":
+    text += '''type clk_cross_write_t is record'''
+    text += write_text
+    text += '''
   end record;
   
   '''
@@ -1215,6 +1227,10 @@ type volatile_global_registers_t is record'''
     rv += "signal " + "registers : registers_t;\n"
     # Main regs nulled out
     rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
+    # Mark debug?
+    if Logic.func_name in parser_state.main_marked_debug:
+      rv += "attribute mark_debug : string;\n"
+      rv += '''attribute mark_debug of registers_r : signal is "true";\n'''
     rv += "\n"
 
   # Signals for submodule ports
