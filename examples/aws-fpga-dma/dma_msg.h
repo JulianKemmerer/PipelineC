@@ -8,7 +8,7 @@
 // 	Minimum 64 bytes messages (1 cycle of aligned AXI4 512b data)
 //    Maximum tested was 4096
 //    Only tested sizes multiple of 64 bytes 
-#define DMA_MSG_SIZE 256
+#define DMA_MSG_SIZE 4096
 #define dma_msg_size_t uint16_t
 typedef struct dma_msg_t
 {
