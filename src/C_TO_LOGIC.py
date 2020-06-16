@@ -5928,14 +5928,12 @@ def PARSE_FILE(c_filename):
         f.write(func_logic.c_code_text)
         f.close() 
     
-    print "Skipping user code trimming for debug..."
-    '''
+    #print "Skipping user code trimming for debug..."
     # Remove excess user code
     print "Doing obvious logic trimming/collapsing..."
     for main_func in parser_state.main_mhz.keys():
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
-    '''
     
     # Sanity check no duplicate globals
     for g in parser_state.global_info:
