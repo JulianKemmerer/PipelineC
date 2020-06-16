@@ -126,16 +126,18 @@ end process;
 -- Instantiate PipelineC main entity
 top_i : entity work.top port map
 (
-  clk_bram => clk,
-  bram_rst => rst_unsigned,
+  --clk_bram => clk,
+  --bram_rst => rst_unsigned,
   
-  clk_fosix => clk,
-  fosix_rst => rst_unsigned,
+  --clk_fosix => clk,
+  --fosix_rst => rst_unsigned,
   
-  clk_fosix_aws_fpga_dma => clk,
+  --clk_fosix_aws_fpga_dma => clk,
   
-  clk_main_wrapper => clk,
-  main_wrapper_rst => rst_unsigned,
+  clk_work_pipeline => clk,
+  
+  clk_main => clk,
+  main_rst => rst_unsigned,
   
   clk_aws_fpga_dma => clk,
   aws_fpga_dma_rst => rst_unsigned,
