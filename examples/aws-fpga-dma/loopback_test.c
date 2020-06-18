@@ -59,10 +59,10 @@ int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
 dma_msg_t loopback_fpga(dma_msg_t input)
 {
 	// Write those DMA bytes to the FPGA
-	dma_write(input);
+	dma_write(&input);
 	// Read a DMA bytes back from FPGA
 	dma_msg_t read_msg;
-	read_msg = dma_read();
+        dma_read(&read_msg);
 	return read_msg;
 }
 

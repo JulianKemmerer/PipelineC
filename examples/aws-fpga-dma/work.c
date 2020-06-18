@@ -62,17 +62,20 @@ dma_msg_s work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
   // as elements are read out from front
   
   // Read from front
-  dma_msg_s out_msg = DMA_MSG_S_NULL();
+  dma_msg_s out_msg = work_msg_buf[0];
+  // Not validated until read requested
+  out_msg.valid = 0;
   if(read)
   {
-    out_msg = work_msg_buf[0];
+    out_msg.valid = work_msg_buf[0].valid;
+    // Read clears output buffer to allow for shifting forward
     work_msg_buf[0].valid = 0;
   }
   
   // Shift array elements forward if possible
   // Which positions should shift?
   uint1_t pos_do_shift[WORK_MSG_BUF_SIZE];
-  pos_do_shift[0] = 0;
+  pos_do_shift[0] = 0; // Nothing ot left of 0
   work_msg_buf_size_t i;
   for(i=1;i<WORK_MSG_BUF_SIZE;i=i+1)
   {
@@ -90,10 +93,7 @@ dma_msg_s work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
   }
   
   // No overflow check, input goes into back of queue, assumed empty
-  if(in_msg.valid)
-  {
-    work_msg_buf[WORK_MSG_BUF_SIZE-1] = in_msg;
-  }
+  work_msg_buf[WORK_MSG_BUF_SIZE-1] = in_msg;
   
   return out_msg;  
 }
@@ -108,13 +108,14 @@ void main(uint1_t rst)
   dma_msg_s_array_1_t aws_msgs_in = aws_in_msg_READ();
   dma_msg_s aws_msg_in = aws_msgs_in.data[0];
   
-  // Signal ready for this message + connect to msg_to_work
+  // Signal ready for this message + validate to msg_to_work
   // if not too many messages in flight
-  dma_msg_s msg_to_work = DMA_MSG_S_NULL();
+  dma_msg_s msg_to_work = aws_msg_in;
+  msg_to_work.valid = 0;
   uint1_t aws_msg_in_ready = 0;
   if(work_msgs_in_flight < WORK_MSG_BUF_SIZE)
   {
-    msg_to_work = aws_msg_in;
+    msg_to_work.valid = aws_msg_in.valid;
     aws_msg_in_ready = 1;
     // Message into work pipeline increments in flight count
     if(msg_to_work.valid)
@@ -161,6 +162,6 @@ void main(uint1_t rst)
   if(rst)
   {
     work_msgs_in_flight = 0;
-    // TODO actuallly wait for pipeline to flush
+    // TODO actuallly wait for pipeline to flush out remaining in flight
   }
 }

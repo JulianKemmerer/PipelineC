@@ -72,9 +72,9 @@ void close_dma()
 }
 
 // Wrapper around AWS fpga write for this example
-int dma_write(dma_msg_t msg)
+int dma_write(dma_msg_t* msg)
 {
-	uint8_t* buffer = &(msg.data[0]);
+	uint8_t* buffer = &(msg->data[0]);
 	size_t xfer_sz = DMA_MSG_SIZE;
 	size_t address = 0; // Write address ignored in hardware
 	int rc = fpga_dma_burst_write(write_fd, buffer, xfer_sz, address);
@@ -87,10 +87,9 @@ int dma_write(dma_msg_t msg)
 }
 
 // Wrapper around AWS fpga read for this example
-dma_msg_t dma_read()
+int dma_read(dma_msg_t* msg)
 {
-	dma_msg_t msg;
-	uint8_t* buffer = &(msg.data[0]);
+	uint8_t* buffer = &(msg->data[0]);
 	size_t xfer_sz = DMA_MSG_SIZE;
 	size_t address = 0; // Read address ignored in hardware
 	int rc = fpga_dma_burst_read(read_fd, buffer, xfer_sz, address);
@@ -99,7 +98,7 @@ dma_msg_t dma_read()
 		printf("DMA read failed");
 		exit(-1);
 	}
-  return msg;
+  return rc;
 }
 
 

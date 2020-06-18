@@ -56,7 +56,7 @@ int main(int argc, char **argv)
 	{
 		// Read
     dma_msg_t read_msg;
-    read_msg = dma_read();
+    dma_read(&read_msg);
     // Compare
     if(compare_bad(i,expected_read_msg,read_msg))
 		{
@@ -64,7 +64,7 @@ int main(int argc, char **argv)
 		}
     // Write modified msg
     expected_read_msg = inc_read_msg(read_msg);
-    dma_write(expected_read_msg);
+    dma_write(&expected_read_msg);
 	}
 
 	// Close direct memory access to/from FPGA

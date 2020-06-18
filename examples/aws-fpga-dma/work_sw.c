@@ -27,13 +27,12 @@ dma_msg_t inputs_to_bytes(work_inputs_t inputs)
 	return msg;
 }
 
-work_outputs_t bytes_to_outputs(dma_msg_t msg)
+void bytes_to_outputs(dma_msg_t* msg, work_outputs_t* outputs)
 {
 	// Assemble single float output from first 4 bytes
-	work_outputs_t outputs;
 	// Convert from little endian? bytes to big endian? float
-	uint8_t b[] = {msg.data[0], msg.data[1], msg.data[2], msg.data[3]};
-	memcpy(&(outputs.sum), &b, sizeof(float));
+	uint8_t b[] = {msg->data[0], msg->data[1], msg->data[2], msg->data[3]};
+	memcpy(&(outputs->sum), &b, sizeof(float));
 	return outputs;
 }
 
