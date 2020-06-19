@@ -49,17 +49,21 @@ void work_pipeline()
 // However, we can only read them out as fast as the AWS logic allows
 // Choose some number to of messages to buffer before not allowing 
 // any more messages to come in
-#define WORK_MSG_BUF_SIZE 4
-#define work_msg_buf_size_t uint3_t // 0-4 , 3 bits
+#define WORK_MSG_BUF_SIZE 8
+#define work_msg_buf_size_t uint4_t // 0-8 , 4 bits
 
 // Define a little FIFO/queue thing to do the buffering
-// (no overflow check needed since 
-// keeping limit on in flight to buffer size)
 dma_msg_s work_msg_buf[WORK_MSG_BUF_SIZE];
-dma_msg_s work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
+typedef struct work_msg_buf_func_t
+{
+  dma_msg_s out_msg;
+  uint1_t has_room;
+} work_msg_buf_func_t;
+work_msg_buf_func_t work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
 {
   // Shift buffer thing, shift an element forward if possible
   // as elements are read out from front
+  work_msg_buf_func_t rv;
   
   // Read from front
   dma_msg_s out_msg = work_msg_buf[0];
@@ -92,15 +96,20 @@ dma_msg_s work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
     }
   }
   
-  // No overflow check, input goes into back of queue, assumed empty
+  // Input goes into back of queue rv.has_room checked next iter
   work_msg_buf[WORK_MSG_BUF_SIZE-1] = in_msg;
   
-  return out_msg;  
+  // Pack up rv
+  rv.out_msg = out_msg;
+  rv.has_room = !work_msg_buf[WORK_MSG_BUF_SIZE-1].valid;
+  
+  return rv;  
 }
 
 // The main function is used to control the flow of data 
 // into and out of the work pipeline
 work_msg_buf_size_t work_msgs_in_flight; // Many messages let into the pipeline?
+uint1_t work_msg_buf_has_room = 1;
 #pragma MAIN_MHZ main 150.0
 void main(uint1_t rst)
 {
@@ -112,11 +121,10 @@ void main(uint1_t rst)
   // if not too many messages in flight
   dma_msg_s msg_to_work = aws_msg_in;
   msg_to_work.valid = 0;
-  uint1_t aws_msg_in_ready = 0;
-  if(work_msgs_in_flight < WORK_MSG_BUF_SIZE)
+  uint1_t aws_msg_in_ready = (work_msgs_in_flight < WORK_MSG_BUF_SIZE) & work_msg_buf_has_room;
+  if(aws_msg_in_ready)
   {
     msg_to_work.valid = aws_msg_in.valid;
-    aws_msg_in_ready = 1;
     // Message into work pipeline increments in flight count
     if(msg_to_work.valid)
     {
@@ -145,7 +153,9 @@ void main(uint1_t rst)
   // Write message from work into buffer where it waits for aws_fpga_dma
   // Read from message buffer if aws_fpga_dma is ready
   uint1_t work_msg_buf_read = aws_msg_out_ready;
-  dma_msg_s aws_msg_out = work_msg_buf_func(msg_from_work, work_msg_buf_read);
+  work_msg_buf_func_t work_msg_buf_rv = work_msg_buf_func(msg_from_work, work_msg_buf_read);
+  dma_msg_s aws_msg_out = work_msg_buf_rv.out_msg;
+  work_msg_buf_has_room = work_msg_buf_rv.has_room;
   
   // Message coming out of buffer decrements in flight count
   if(aws_msg_out.valid)
@@ -154,14 +164,15 @@ void main(uint1_t rst)
   }
   
   // Write message into aws_fpga_dma
-	dma_msg_s_array_1_t aws_msgs_out;
-	aws_msgs_out.data[0] = aws_msg_out;
-	aws_out_msg_WRITE(aws_msgs_out);
+  dma_msg_s_array_1_t aws_msgs_out;
+  aws_msgs_out.data[0] = aws_msg_out;
+  aws_out_msg_WRITE(aws_msgs_out);
   
   // Reset global state
   if(rst)
   {
     work_msgs_in_flight = 0;
+    work_msg_buf_has_room = 1;
     // TODO actuallly wait for pipeline to flush out remaining in flight
   }
 }
