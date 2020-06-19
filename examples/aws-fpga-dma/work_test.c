@@ -212,11 +212,13 @@ int main(int argc, char **argv)
   printf("Speedup: %f\n",cpu_time/fpga_time);  
   
   // Compare the outputs
+  int num_bad = 0;
   for(int i = 0; i < n_works; i++)
   {
     if(compare_bad(i,cpu_outputs[i],fpga_outputs[i]))
     {
-      break;
+      num_bad++;
+      if(num_bad>5) break;
     }
   }
 
