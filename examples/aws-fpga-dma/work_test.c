@@ -157,7 +157,7 @@ void cpu_work(float* sum)
   void* status;
   for(t=0; t<NUM_THREADS; t++)
   {
-    int rc = pthread_join(threads[t], &status);
+    pthread_join(threads[t], &status);
     *sum += *(thread_args[t].thread_sum);
   }
 }
