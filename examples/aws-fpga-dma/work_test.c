@@ -34,7 +34,7 @@ void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 }
 
 // Work inputs (as dma msgs too)
-int n_works = 1 * NUM_THREADS;
+int n_works = 10 * NUM_THREADS;
 //int n_values = n_works * N_SUM;
 work_inputs_t* inputs;
 dma_msg_t* fpga_input_msgs;
