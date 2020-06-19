@@ -22,7 +22,7 @@ work_inputs_t work_inputs_init(int i)
 }
 
 // Helper to compare two output datas
-void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
+int compare_bad(int i, work_outputs_t cpu, work_outputs_t fpga)
 {
   float ep = max_val / 1000.0; // 1/1000th of range;
   if(fabs(fpga.sum - cpu.sum) > ep)
@@ -30,11 +30,13 @@ void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
     printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
     printf("  FPGA: 0x%x\n",*(unsigned int*)&fpga.sum);
     printf("  CPU:  0x%x\n",*(unsigned int*)&cpu.sum);
+    return 1;
   }
+  return 0;
 }
 
 // Work inputs (as dma msgs too)
-int n_works = 10 * NUM_THREADS;
+int n_works = 100000 * NUM_THREADS;
 //int n_values = n_works * N_SUM;
 work_inputs_t* inputs;
 dma_msg_t* fpga_input_msgs;
@@ -212,7 +214,10 @@ int main(int argc, char **argv)
   // Compare the outputs
   for(int i = 0; i < n_works; i++)
   {
-    compare(i,cpu_outputs[i],fpga_outputs[i]);
+    if(compare_bad(i,cpu_outputs[i],fpga_outputs[i]))
+    {
+      break;
+    }
   }
 
   // Close direct memory access to/from FPGA
