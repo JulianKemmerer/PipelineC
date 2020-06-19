@@ -12,25 +12,25 @@
 float max_val = 100.0;
 work_inputs_t work_inputs_init(int i)
 {
-	// Randomizeish float values to sum
-	work_inputs_t inputs;
-	for(int v=0;v<N_SUM;v++)
-	{
-		inputs.values[v] = (float)rand()/(float)(RAND_MAX/max_val); // rand[0..100]
-	}
-	return inputs;
+  // Randomizeish float values to sum
+  work_inputs_t inputs;
+  for(int v=0;v<N_SUM;v++)
+  {
+    inputs.values[v] = (float)rand()/(float)(RAND_MAX/max_val); // rand[0..100]
+  }
+  return inputs;
 }
 
 // Helper to compare two output datas
 void compare(int i, work_outputs_t cpu, work_outputs_t fpga)
 {
-	float ep = max_val / 1000.0; // 1/1000th of range;
-	if(fabs(fpga.sum - cpu.sum) > ep)
-	{
-		printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
-		printf("	FPGA: 0x%x\n",*(unsigned int*)&fpga.sum);
-		printf("	CPU:  0x%x\n",*(unsigned int*)&cpu.sum);
-	}
+  float ep = max_val / 1000.0; // 1/1000th of range;
+  if(fabs(fpga.sum - cpu.sum) > ep)
+  {
+    printf("Output %d does not match! FPGA: %f, CPU: %f\n", i, fpga.sum, cpu.sum);
+    printf("  FPGA: 0x%x\n",*(unsigned int*)&fpga.sum);
+    printf("  CPU:  0x%x\n",*(unsigned int*)&cpu.sum);
+  }
 }
 
 // Work inputs (as dma msgs too)
@@ -84,7 +84,7 @@ void fpga_works(float* sum)
   }  
   // Start another thread reading outputs from work pipeline
   pthread_t read_thread;
-  int rc = pthread_create(&read_thread, NULL, fpga_reader, (void*)sum);
+  rc = pthread_create(&read_thread, NULL, fpga_reader, (void*)sum);
   if (rc){
     printf("ERROR; return code from pthread_create() is %d\n", rc);
     exit(-1);
@@ -157,67 +157,67 @@ void cpu_work(float* sum)
   void* status;
   for(t=0; t<NUM_THREADS; t++)
   {
-    rc = pthread_join(threads[t], &status);
-    *sum += *(thread_args[t].sum);
+    int rc = pthread_join(threads[t], &status);
+    *sum += *(thread_args[t].thread_sum);
   }
 }
 
 // Init + do some work + close
 int main(int argc, char **argv) 
 {
-	// Init direct memory access to/from FPGA
-	init_dma();
-	
+  // Init direct memory access to/from FPGA
+  init_dma();
+  
   // Prepare work inputs (as dma msgs too), and 2 output pairs cpu vs fpga(as dma msg too)
-	inputs = (work_inputs_t*)malloc(n_works*sizeof(work_inputs_t));
-        fpga_input_msgs = (dma_msg_t*)malloc(n_works*sizeof(dma_msg_t));
-	cpu_outputs = (work_outputs_t*)malloc(n_works*sizeof(work_outputs_t));
-        fpga_output_msgs = (dma_msg_t*)malloc(n_works*sizeof(dma_msg_t));
-	fpga_outputs = (work_outputs_t*)malloc(n_works*sizeof(work_outputs_t));
-	for(int i = 0; i < n_works; i++)
-	{
-		inputs[i] = work_inputs_init(i);
+  inputs = (work_inputs_t*)malloc(n_works*sizeof(work_inputs_t));
+  fpga_input_msgs = (dma_msg_t*)malloc(n_works*sizeof(dma_msg_t));
+  cpu_outputs = (work_outputs_t*)malloc(n_works*sizeof(work_outputs_t));
+  fpga_output_msgs = (dma_msg_t*)malloc(n_works*sizeof(dma_msg_t));
+  fpga_outputs = (work_outputs_t*)malloc(n_works*sizeof(work_outputs_t));
+  for(int i = 0; i < n_works; i++)
+  {
+    inputs[i] = work_inputs_init(i);
                 fpga_input_msgs[i] = inputs_to_bytes(inputs[i]);
-	}
-	
-	// Time things
-	clock_t t;
-	double time_taken;
-	
-	// Start time
-	t = clock(); 
-	// Do the work on the cpu
-        float cpu_sum = 0.0;
-        cpu_work(&cpu_sum);
-	// End time
-	t = clock() - t; 
-        time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
-        printf("CPU took %f seconds to execute \n", time_taken); 
-	double cpu_time = time_taken;
-
-	// Start time
-	t = clock(); 
-	// Do the work on the FPGA
-        float fpga_sum = 0.0;
-        fpga_works(&fpga_sum);
-        // End time
-	t = clock() - t; 
-        time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
-        printf("FPGA took %f seconds to execute \n", time_taken);
-        double fpga_time = time_taken;	
+  }
   
-        // Speedy?
-        printf("Speedup: %f\n",cpu_time/fpga_time);  
-	
-	// Compare the outputs
-	for(int i = 0; i < n; i++)
-	{
-		compare(i,cpu_outputs[i],fpga_outputs[i]);
-	}
-
-	// Close direct memory access to/from FPGA
-	close_dma();
+  // Time things
+  clock_t t;
+  double time_taken;
   
-        /* Last thing that main() should do */
-        pthread_exit(NULL);   
+  // Start time
+  t = clock(); 
+  // Do the work on the cpu
+  float cpu_sum = 0.0;
+  cpu_work(&cpu_sum);
+  // End time
+  t = clock() - t; 
+  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  printf("CPU took %f seconds to execute \n", time_taken); 
+  double cpu_time = time_taken;
+
+  // Start time
+  t = clock(); 
+  // Do the work on the FPGA
+  float fpga_sum = 0.0;
+  fpga_works(&fpga_sum);
+  // End time
+  t = clock() - t; 
+  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  printf("FPGA took %f seconds to execute \n", time_taken);
+  double fpga_time = time_taken;  
+  
+  // Speedy?
+  printf("Speedup: %f\n",cpu_time/fpga_time);  
+  
+  // Compare the outputs
+  for(int i = 0; i < n_works; i++)
+  {
+    compare(i,cpu_outputs[i],fpga_outputs[i]);
+  }
+
+  // Close direct memory access to/from FPGA
+  close_dma();
+  
+  /* Last thing that main() should do */
+  pthread_exit(NULL);   
 }
