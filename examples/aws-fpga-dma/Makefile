@@ -3,7 +3,7 @@
 INCLUDES = -I$(SDK_DIR)/userspace/include
 
 CC = gcc
-CFLAGS = -DCONFIG_LOGLEVEL=4 -std=gnu11 -g -Wall -Werror $(INCLUDES)
+CFLAGS = -DCONFIG_LOGLEVEL=4 -std=gnu11 -g -pthread -Wall -Werror $(INCLUDES)
 
 LDLIBS = -lfpga_mgmt
 
