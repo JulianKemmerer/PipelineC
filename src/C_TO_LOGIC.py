@@ -4837,11 +4837,56 @@ def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
     input_port_names,
     output_driven_wire_names,
     parser_state)
+    
+def C_TYPE_SIZE(c_type, parser_state):
+  if VHDL.C_TYPES_ARE_INTEGERS([c_type]):
+    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+    byte_size = int(math.ceil(float(bit_width)/float(8)))
+  elif c_type == "float":
+    return 4
+  elif C_TYPE_IS_ARRAY(c_type):
+    elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+    elem_size = C_TYPE_SIZE(elem_t, parser_state)
+    byte_size = elem_size
+    for dim in dims:
+      byte_size = byte_size * dim
+  elif C_TYPE_IS_STRUCT(c_type, parser_state):
+    field_to_type_dict = parser_state.struct_to_field_type_dict[c_type]
+    byte_size = 0;
+    for field in field_to_type_dict:
+      field_type = field_to_type_dict[field]
+      field_size = C_TYPE_SIZE(field_type,parser_state)
+      byte_size = byte_size + field_size
+  else:
+    print "How to sizeof",c_type, "???"
+    sys.exit(-1)
+  
+  return byte_size
+    
+def C_AST_SIZEOF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state):
+  # This is weird - todo error check
+  c_type_str = c_ast_node.expr.type.type.names[0];
+  # Replace with constant
+  size = C_TYPE_SIZE(c_type_str, parser_state)
+  value_str = str(size)
+  is_negated = False
+  return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
+  
+  
+  
+  
   
 def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, parser_state):
-  existing_logic = parser_state.existing_logic
-  # Decompose to N arg func
+  # What op?
   c_ast_unary_op_str = str(c_ast_unary_op.op)
+  
+  # Apparently sizeof() is a unary op - cool
+  if c_ast_unary_op_str == "sizeof":
+    # Replace with constant
+    return C_AST_SIZEOF_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, parser_state)
+  
+  # Decompose to N arg func
+  existing_logic = parser_state.existing_logic
   
   # Is this UNARY op negating a constant?
   if (c_ast_unary_op_str=="-") and (type(c_ast_unary_op.expr) == c_ast.Constant):
