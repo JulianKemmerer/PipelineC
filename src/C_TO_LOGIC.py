@@ -4838,13 +4838,8 @@ def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
     output_driven_wire_names,
     parser_state)
     
-def C_TYPE_SIZE(c_type, parser_state):
-  if VHDL.C_TYPES_ARE_INTEGERS([c_type]):
-    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
-    byte_size = int(math.ceil(float(bit_width)/float(8)))
-  elif c_type == "float":
-    return 4
-  elif C_TYPE_IS_ARRAY(c_type):
+def C_TYPE_SIZE(c_type, parser_state, allow_fail=False):
+  if C_TYPE_IS_ARRAY(c_type):
     elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
     elem_size = C_TYPE_SIZE(elem_t, parser_state)
     byte_size = elem_size
@@ -4857,9 +4852,16 @@ def C_TYPE_SIZE(c_type, parser_state):
       field_type = field_to_type_dict[field]
       field_size = C_TYPE_SIZE(field_type,parser_state)
       byte_size = byte_size + field_size
+  elif VHDL.C_TYPES_ARE_INTEGERS([c_type]):
+    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+    byte_size = int(math.ceil(float(bit_width)/float(8)))
+  elif c_type == "float":
+    return 4
   else:
-    print "How to sizeof",c_type, "???"
-    sys.exit(-1)
+    if not allow_fail:
+      print "How to sizeof",c_type, "???"
+      sys.exit(-1)
+    byte_size = -1
   
   return byte_size
     
@@ -5875,54 +5877,81 @@ def PARSE_FILE(c_filename):
   
   # Catch pycparser exceptions
   try:
-    # Use cpp --MM --MG to parse the #include tree and get all files
-    # that need to be code gen'd again
-    all_code_files = GET_INCLUDED_FILES(c_filename)
     
-    # Code generate empty to-be-generated header files 
-    # so initial preprocessing can happen
-    # Then do repeated re-parsing as code gen continues
-    SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files)
+    def parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=False, post_preprocess_wnonfuncdefs=False, old_autogen_funclookup=False):
+      if gen_empty:
+        # Use cpp --MM --MG to parse the #include tree and get all files
+        # that need to be code gen'd again
+        all_code_files = GET_INCLUDED_FILES(c_filename)
+        
+        # Code generate empty to-be-generated header files 
+        # so initial preprocessing can happen
+        # Then do repeated re-parsing as code gen continues
+        SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files)
+      
+      if post_preprocess_gen:
+        # Preprocess the main file to get single block of text
+        preprocessed_c_text = preprocess_file(c_filename)
+        #print "preprocessed_c_text",preprocessed_c_text
+        # Code gen based purely on preprocessed C text
+        SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
+        
+      if c_ast_nonfuncdefs:
+        # Preprocess the main file to get single block of text
+        preprocessed_c_text = preprocess_file(c_filename)
+        
+        # Get the C AST
+        parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+        # Parse pragmas
+        parse_state = APPEND_PRAGMA_INFO(parser_state)
+        # Parse definitions first before code structure
+        print "Parsing non-function definitions..."
+        # Get the parsed struct def info
+        parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
+        # Get global variable info
+        parser_state = GET_GLOBAL_INFO(parser_state)
+        # Get volatile globals
+        parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state)
+        # Get the parsed enum info
+        parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
+        # Build primative map of function use
+        parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
+        # Elborate what the clock crossings look like
+        parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
+      
+      
+      if post_preprocess_wnonfuncdefs:
+        # Preprocess the main file to get single block of text
+        preprocessed_c_text = preprocess_file(c_filename)
+        
+        # Do code gen based on preprocessed C text and non-function definitions
+        # This is the newer better way
+        SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
+        
+      
+      if old_autogen_funclookup:
+        # Preprocess the file again to pull in generated code
+        preprocessed_c_text = preprocess_file(c_filename)
+        #print "preprocessed_c_text",preprocessed_c_text
+        # Get the C AST again to reflect new generated code
+        parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+        # This is the old more hacky way
+        # Get SW existing logic for this c file
+        parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
     
-    # Preprocess the main file to get single block of text
-    preprocessed_c_text = preprocess_file(c_filename)
     
-    # Code gen based purely on preprocessed C text
-    SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
-    # Preprocess the orig file again to pull in generated code
-    preprocessed_c_text = preprocess_file(c_filename)
     
-    # Begin parsing C AST
+    # Begin parsing/generating code
     parser_state = ParserState()
-    # Get the C AST
-    parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
-    # Parse pragmas
-    parse_state = APPEND_PRAGMA_INFO(parser_state)
-    # Parse definitions first before code structure
-    print "Parsing non-function definitions..."
-    # Get the parsed struct def info
-    parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
-    # Get global variable info
-    parser_state = GET_GLOBAL_INFO(parser_state)
-    # Get volatile globals
-    parser_state = GET_VOLATILE_GLOBAL_INFO(parser_state)
-    # Get the parsed enum info
-    parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
-    # Build primative map of function use
-    parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
-    # Elborate what the clock crossings look like
-    parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
+    # Need to do multiple passes 
+    parse_pass(parser_state, gen_empty=True, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
+    parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True)
+    #parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
+    #parse_pass(parser_state, post_preprocess_wnonfuncdefs=True)
+    #print "Temp stop"
+    #sys.exit(-1)
     
-    # Do code gen based on preprocessed C text and non-function definitions
-    # This is the newer better way
-    SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
-    # This is the old more hacky way
-    # Get SW existing logic for this c file
-    parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
-    # Preprocess the file again to pull in generated code
-    preprocessed_c_text = preprocess_file(c_filename)
-    # Get the C AST again to reflect new generated code
-    parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+    
     
     # Parse the function definitions for code structure
     print "Parsing function logic..."
@@ -6278,7 +6307,7 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast):
     #casthelp(struct_def)
     struct_name = str(struct_def.name)
     #print "struct_name",struct_name
-    rv[struct_name] = dict()
+    rv[struct_name] = OrderedDict()
     for child in struct_def.decls:
       # Assume type decl  
       field_name = str(child.name)
