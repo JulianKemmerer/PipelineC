@@ -67,7 +67,7 @@ void* fpga_reader(void* sum_ptr)
     // Read DMA bytes from the FPGA
     dma_read(&(fpga_output_msgs[i]));
     // Convert to work output (probably slow memcpy)
-    bytes_to_outputs(&(fpga_output_msgs[i]), &(fpga_outputs[i]));
+    bytes_to_work_outputs_t(&(fpga_output_msgs[i]), &(fpga_outputs[i]));
     // Accumulate
     *sum += fpga_outputs[i].sum;
   }
@@ -179,7 +179,7 @@ int main(int argc, char **argv)
   for(int i = 0; i < n_works; i++)
   {
     inputs[i] = work_inputs_init(i);
-                fpga_input_msgs[i] = inputs_to_bytes(inputs[i]);
+    work_inputs_t_to_bytes(&(inputs[i]), &(fpga_input_msgs[i].data[0]));
   }
   
   // Time things

@@ -29,14 +29,26 @@ void work_pipeline()
   dma_msg_s_array_1_t msgs_in = main_to_work_READ();
   dma_msg_t in_msg = msgs_in.data[0].data;
   
+  uint32_t i;
+  
   // Convert bytes to inputs
-  work_inputs_t inputs = bytes_to_inputs(in_msg);
+  work_inputs_t_bytes_t input_bytes;
+  for(i=0; i<sizeof(work_inputs_t); i=i+1)
+  {
+    input_bytes.data[i] = in_msg.data[i];
+  }
+  work_inputs_t inputs = bytes_to_work_inputs_t(input_bytes);
   
   // Do work on inputs, get outputs
   work_outputs_t outputs = work(inputs);
   
   // Convert output to bytes
-  dma_msg_t out_msg = outputs_to_bytes(outputs);
+  work_outputs_t_bytes_t output_bytes = work_outputs_t_to_bytes(outputs);
+  dma_msg_t out_msg = DMA_MSG_T_NULL();
+  for(i=0; i<sizeof(work_outputs_t); i=i+1)
+  {
+    out_msg.data[i] = output_bytes.data[i];
+  }
   
   // Write outgoing msg into main
   dma_msg_s_array_1_t msgs_out;
@@ -54,6 +66,7 @@ void work_pipeline()
 
 // Define a little FIFO/queue thing to do the buffering
 dma_msg_s work_msg_buf[WORK_MSG_BUF_SIZE];
+uint1_t work_msg_buf_overflow;
 typedef struct work_msg_buf_func_t
 {
   dma_msg_s out_msg;
@@ -96,7 +109,23 @@ work_msg_buf_func_t work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
     }
   }
   
-  // Input goes into back of queue rv.has_room checked next iter
+  // Apply overflow flag if set from prev iter
+  if(work_msg_buf_overflow)
+  {
+    // TODO overwrite all bytes?
+    out_msg.data.data[0] = 0;
+    out_msg.data.data[1] = 0;
+    out_msg.data.data[2] = 0;
+    out_msg.data.data[3] = 0;
+  }  
+  
+  // Input goes into back of queue
+  // Do overflow check
+  if(work_msg_buf[WORK_MSG_BUF_SIZE-1].valid & in_msg.valid)
+  {
+    work_msg_buf_overflow = 1;
+  }
+  // Accept input
   work_msg_buf[WORK_MSG_BUF_SIZE-1] = in_msg;
   
   // Pack up rv

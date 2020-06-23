@@ -8,6 +8,14 @@
 
 // Helper functions to convert DMA bytes to/from 'work' inputs/outputs
 
+// TODO gen all inside work_input_t_bytes_t.h
+#include "uint8_t_array_N_t.h" 
+#include "uint8_t_bytes_t.h"
+#include "float_bytes_t.h"
+#include "work_inputs_t_bytes_t.h"
+#include "work_outputs_t_bytes_t.h"
+
+/*
 work_inputs_t bytes_to_inputs(dma_msg_t msg_in)
 {
   // Convert bytes into floats (32b/4B each)
@@ -50,3 +58,4 @@ dma_msg_t outputs_to_bytes(work_outputs_t outputs)
 	
 	return dma_msg;
 }
+*/

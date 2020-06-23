@@ -14,10 +14,15 @@ typedef struct work_inputs_t
 } work_inputs_t;
 typedef struct work_outputs_t
 {
-  float sum;
+  //float sum;
+  
+  // TEMP LOOPBACK
+  float values[N_SUM];
+  
 } work_outputs_t;
 work_outputs_t work(work_inputs_t inputs)
 {
+  /*
 	// Sum N values 'as parallel as possible' using a binary tree
 	// Ex. N=16
 	//    Level 0: 16 input values
@@ -58,6 +63,11 @@ work_outputs_t work(work_inputs_t inputs)
 	work_outputs_t outputs;
 	outputs.sum = nodes[LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1-1][0];
 	return outputs;
+  */
+  
+  work_outputs_t outputs;
+  outputs.values = inputs.values;
+  return outputs;  
 }
 
 
