@@ -24,6 +24,7 @@ print '''
 '''
 
 print "TODO:"
+print " Do multithreaded loopback to see where work off by one is coming from..."
 print " Fix bug of not being able to include auto gen headers in auto gend files"
 print " Need to pass structs from software C to PipelineC. Really generate headers/sizeof support for to/from bytes"
 print "	Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst"

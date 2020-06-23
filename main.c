@@ -10,13 +10,13 @@ typedef struct point
 {
   uint8_t an_array[3][3];
   float a_float;
-  uint13_t weird;
+  uint64_t a_u64;
 } point;
 // TODO gen all inside point_bytes_t.h
 #include "uint8_t_array_N_t.h" 
 #include "uint8_t_bytes_t.h"
 #include "float_bytes_t.h"
-#include "uint13_t_bytes_t.h"
+#include "uint64_t_bytes_t.h"
 #include "point_bytes_t.h"
 
 #pragma MAIN_MHZ main 150.0

@@ -406,6 +406,169 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     # Write file
     path = out_dir + "/" + type_t + "_bytes_t.h"
     open(path,'w').write(text)
+    
+    ####################################################################
+    #
+    ## DO THE SAME THING AGAIN FOR REAL C SOFTWARE SIDE
+    #
+    ####################################################################
+    
+    # Fully generate a good header file for this type
+    text = "#pragma once\n"
+    
+    # #define the _bytes_t to be the uint8_t_array_N_t type
+    size = C_TO_LOGIC.C_TYPE_SIZE(type_t, parser_state, allow_fail=True)
+    # hacky mchack
+    if size <= 0:
+      continue
+    
+    # Func type to bytes ###############################################
+    text += '''
+void ''' + type_t + "_to_bytes(" + type_t + '''* x, uint8_t* bytes)
+{
+'''
+    # Base type formulas
+    if C_TO_LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+      # Counters for packing into rv
+      text += "size_t pos = 0;\n"
+      
+      # Loop over each field
+      field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+      for field in field_to_type_dict:
+        text += "// " + field + "\n"
+        field_type = field_to_type_dict[field]
+        field_size = C_TO_LOGIC.C_TYPE_SIZE(field_type, parser_state)
+        # Need to manually handle array fields for now
+        if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
+          elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          elem_size = C_TO_LOGIC.C_TYPE_SIZE(elem_t, parser_state)
+          # nest for loop for each dim
+          for dim_i in range(0,len(dims)):
+            dim = dims[dim_i]
+            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t = "uint"+str(dim_size_t_width)+"_t"
+            text += "size_t dim_" + str(dim_i) + ";\n"
+            dim_var = "dim_"+str(dim_i)
+            text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
+            
+          # The repeated bytes assignments similar to normal case below
+          text += " " + elem_t + "_to_bytes(&(x->" + field
+          for dim_i in range(0,len(dims)):
+            text += "["+"dim_"+str(dim_i)+"]"
+          text += "), &(bytes[pos]));\n"
+          text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
+          
+          # Close braces
+          # nest for loop for each dim
+          for dim_i in range(0,len(dims)):
+            text += "}\n"
+        else:
+          # Normal, just do recursive _to_bytes
+          text += field_type + "_to_bytes(&(x->" + field + "), &(bytes[pos]));\n"
+          text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
+      
+    elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+      width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+      typeprefix = type_t.split("_t")[0]
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      while high_i < width:
+        text += "bytes[" + str(byte_i) + "] = (uint8_t)(*x>>" + str(low_i) + ");\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        print "Non byte bit width in C?",width
+        print "Dance Hall - Modest Mouse"
+        sys.exit(-1)
+    elif type_t == "float":
+      text += '''memcpy(bytes, x, 4);
+'''
+    else:
+      print "to sw bytes for type:", type_t
+      sys.exit(-1)
+
+    text += '''
+}
+'''
+
+    # Func bytes to type ###############################################
+    text += '''
+void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
+{
+'''
+    # Base type formulas
+    if C_TO_LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+      # Counters for packing into rv
+      text += "size_t pos = 0;\n"
+      
+      # Loop over each field
+      field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+      for field in field_to_type_dict:
+        text += "// " + field + "\n"
+        field_type = field_to_type_dict[field]
+        field_size = C_TO_LOGIC.C_TYPE_SIZE(field_type, parser_state)
+        # Need to manually handle array fields for now
+        if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
+          elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          elem_size = C_TO_LOGIC.C_TYPE_SIZE(elem_t, parser_state)
+          # nest for loop for each dim
+          for dim_i in range(0,len(dims)):
+            dim = dims[dim_i]
+            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t = "uint"+str(dim_size_t_width)+"_t"
+            text += "size_t dim_" + str(dim_i) + ";\n"
+            dim_var = "dim_"+str(dim_i)
+            text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
+            
+          # The repeated bytes assignments similar to normal case below
+          text += " bytes_to_" + elem_t + "(&(bytes[pos]), &(x->" + field
+          for dim_i in range(0,len(dims)):
+            text += "["+"dim_"+str(dim_i)+"]"
+          text += ");\n"
+          text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
+          
+          # Close braces
+          # nest for loop for each dim
+          for dim_i in range(0,len(dims)):
+            text += "}\n"
+        else:
+          # Normal, just do recursive _to_bytes
+          text += "bytes_to_" + field_type + "(&(bytes[pos]), &(x->" + field + "));\n"
+          text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
+      
+    elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+      width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+      typeprefix = type_t.split("_t")[0]
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      text += "*x = 0;\n"
+      while high_i < width:
+        text += "*x |= (((" + type_t + ")bytes[" + str(byte_i) + "])<<"+ str(low_i) + ");\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        print "Non byte bit width in C?",width
+        print "Perfect Disguise - Modest Mouse"
+        sys.exit(-1)
+    elif type_t == "float":
+      text += '''memcpy(x, bytes, 4);
+'''
+    else:
+      print "to type from sw bytes, type:", type_t
+      sys.exit(-1)
+
+    text += '''
+}
+'''
+
+    # Write file
+    path = out_dir + "/" + type_t + "_bytes.h" #SW version doesnt have since dont need to deinfe byte type in SW?
+    open(path,'w').write(text)
+    
 
 def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text):
   # Regex search c_text for <type>_array_<num>_t
