@@ -526,7 +526,7 @@ void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
           text += " bytes_to_" + elem_t + "(&(bytes[pos]), &(x->" + field
           for dim_i in range(0,len(dims)):
             text += "["+"dim_"+str(dim_i)+"]"
-          text += ");\n"
+          text += "));\n"
           text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
           
           # Close braces
