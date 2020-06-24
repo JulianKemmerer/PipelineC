@@ -9,10 +9,10 @@
 // Helper functions to convert DMA bytes to/from 'work' inputs/outputs
 
 // TODO gen all inside work_input_t_bytes.h
-#include "uint8_t_bytes.h"
-#include "float_bytes.h"
-#include "work_inputs_t_bytes_t.h"
-#include "work_outputs_t_bytes_t.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/uint8_t_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/float_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/work_inputs_t_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/work_outputs_t_bytes.h"
 
 /*
 dma_msg_t inputs_to_bytes(work_inputs_t inputs)

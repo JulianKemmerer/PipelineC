@@ -66,7 +66,11 @@ work_outputs_t work(work_inputs_t inputs)
   */
   
   work_outputs_t outputs;
-  outputs.values = inputs.values;
+  uint32_t v;
+  for(v=0;v<N_SUM;v=v+1)
+  {
+    outputs.values[v] = inputs.values[v];
+  }
   return outputs;  
 }
 
