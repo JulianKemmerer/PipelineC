@@ -10,15 +10,16 @@ FPGA iteration time: 0.000039 seconds
 FPGA bytes per sec: 6564102.564103 seconds
 Speedup: 0.000000
 
+n: 100000 
 DMA_MSG_SIZE: 4096 
-Total bytes: 40960000 
-CPU took 0.020000 seconds to execute 
+Total bytes: 409600000 
+CPU took 0.160000 seconds to execute 
 CPU iteration time: 0.000002 seconds
-CPU bytes per sec: 2048000000.000000 seconds
-FPGA took 0.430000 seconds to execute 
+CPU bytes per sec: 2560000000.000000 seconds
+FPGA took 4.310000 seconds to execute 
 FPGA iteration time: 0.000043 seconds
-FPGA bytes per sec: 95255813.953488 seconds
-Speedup: 0.046512
+FPGA bytes per sec: 95034802.784223 seconds
+Speedup: 0.037123
 */
 
 #include <math.h>
