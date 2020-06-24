@@ -56,14 +56,12 @@ int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
 }
 
 // Do loopback using the FPGA hardware
-dma_msg_t loopback_fpga(dma_msg_t input)
+void loopback_fpga(dma_msg_t* input, dma_msg_t* output)
 {
 	// Write those DMA bytes to the FPGA
-	dma_write(&input);
+	dma_write(input);
 	// Read a DMA bytes back from FPGA
-	dma_msg_t read_msg;
-        dma_read(&read_msg);
-	return read_msg;
+  dma_read(output);
 }
 
 // Init + do some work + close
@@ -122,7 +120,7 @@ int main(int argc, char **argv)
 	// Do the work on the FPGA
 	for(int i = 0; i < n; i++)
 	{
-		fpga_outputs[i] = loopback_fpga(inputs[i]);
+    loopback_fpga(&(inputs[i]),&(fpga_outputs[i]));
 	}
 	// End time
 	t = clock() - t; 
