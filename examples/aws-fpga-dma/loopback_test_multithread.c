@@ -11,7 +11,7 @@
 // Helper to init an input data
 dma_msg_t input_init(int i)
 {
-	// Randomizeish values to sum
+	// Randomize values
 	dma_msg_t input;
 	for(int v=0;v<DMA_MSG_SIZE;v++)
 	{
@@ -54,7 +54,7 @@ void* fpga_writer()
 }
 
 // Thread reading all the dma msgs as fast as possible
-void* fpga_reader(void* sum_ptr)
+void* fpga_reader()
 {
   for(int i = 0; i < n_works; i++)
   {
@@ -65,7 +65,7 @@ void* fpga_reader(void* sum_ptr)
 }
 
 // Do work()'s using the FPGA hardware
-void fpga_works(float* sum)
+void fpga_works()
 {
   // Start thread writing inputs into work pipeline
   pthread_t write_thread;
@@ -177,7 +177,6 @@ int main(int argc, char **argv)
   // Start time
   t = clock(); 
   // Do the work on the cpu
-  float cpu_sum = 0.0;
   cpu_work();
   // End time
   t = clock() - t; 
@@ -192,7 +191,6 @@ int main(int argc, char **argv)
   // Start time
   t = clock(); 
   // Do the work on the FPGA
-  float fpga_sum = 0.0;
   fpga_works();
   // End time
   t = clock() - t; 
