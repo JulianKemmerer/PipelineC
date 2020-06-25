@@ -5,8 +5,15 @@
 #include <pthread.h>
 #define NUM_THREADS 8 // 2 thread per 4 cores?
 
-#include "dma_msg_sw.c"
-#include "work_sw.c"
+// Definition of work related stuff
+#include "dma_msg.h"
+#include "work.h"
+// Helper functions to convert DMA bytes to/from 'work' inputs/outputs
+// TODO gen all inside work_*_bytes.h
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/uint8_t_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/float_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/work_inputs_t_bytes.h"
+#include "/home/centos/pipelinec_syn_output/type_bytes_t.h/work_outputs_t_bytes.h"
 
 // Helper to init a work_inputs_t
 float max_val = 100.0;

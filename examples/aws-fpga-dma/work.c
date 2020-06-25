@@ -2,7 +2,15 @@
 #include "aws_fpga_dma.c"
 
 // Definition of work related stuff
-#include "work_hw.c"
+#include "dma_msg.h"
+#include "work.h"
+// Helper functions to convert DMA bytes to/from 'work' inputs/outputs
+// TODO gen all inside work_input_t_bytes_t.h
+#include "uint8_t_array_N_t.h" 
+#include "uint8_t_bytes_t.h"
+#include "float_bytes_t.h"
+#include "work_inputs_t_bytes_t.h"
+#include "work_outputs_t_bytes_t.h"
 
 // The work pipeline could be massive and we absolutely want it pipelined
 // The easiest/clearest way to ensure autopipelining 

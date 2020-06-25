@@ -30,7 +30,7 @@ loopback_test: $(OBJ_LOOP)
 small_msg_read_test: $(OBJ_SMALL)
 	$(CC) $(CFLAGS) -o small_msg_read_test small_msg_read_test.o $(LDFLAGS) $(LDLIBS)
 	
-loopback_test: $(OBJ_LOOP_MT)
+loopback_test_multithread: $(OBJ_LOOP_MT)
 	$(CC) $(CFLAGS) -o loopback_test_multithread loopback_test_multithread.o $(LDFLAGS) $(LDLIBS)
 
 clean:

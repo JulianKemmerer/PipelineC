@@ -26,7 +26,6 @@ Speedup: 0.037123
 #include <time.h>
 
 #include "dma_msg_sw.c"
-#include "work_sw.c"
 
 // Helper to init an input data
 dma_msg_t input_init(int i)
