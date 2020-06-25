@@ -16,6 +16,9 @@ OBJ_LOOP= $(SRC_LOOP:.c=.o)
 SRC_SMALL = small_msg_read_test.c 
 OBJ_SMALL= $(SRC_SMALL:.c=.o)
 
+SRC_LOOP_MT = loopback_test_multithread.c
+OBJ_LOOP_MT = $(SRC_LOOP_MT:.c=.o)
+
 all: work_test loopback_test small_msg_read_test $(BIN)
 
 work_test: $(OBJ_WORK)
@@ -26,6 +29,9 @@ loopback_test: $(OBJ_LOOP)
 	
 small_msg_read_test: $(OBJ_SMALL)
 	$(CC) $(CFLAGS) -o small_msg_read_test small_msg_read_test.o $(LDFLAGS) $(LDLIBS)
+	
+loopback_test: $(OBJ_LOOP_MT)
+	$(CC) $(CFLAGS) -o loopback_test_multithread loopback_test_multithread.o $(LDFLAGS) $(LDLIBS)
 
 clean:
-	rm -f *.o work_test loopback_test small_msg_read_test
+	rm -f *.o work_test loopback_test small_msg_read_test loopback_test_multithread
