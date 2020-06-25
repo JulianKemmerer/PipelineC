@@ -35,6 +35,8 @@ int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
 	return bad;
 }
 
+// How much work to do?
+int n = 1;
 // Input messages
 dma_msg_t* inputs;
 // Work output pairs cpu vs fpga(as dma msg too)
@@ -44,7 +46,7 @@ dma_msg_t* fpga_outputs;
 // Thread writing all the dma msgs as fast as possible
 void* fpga_writer()
 {
-  for(int i = 0; i < n_works; i++)
+  for(int i = 0; i < n; i++)
   {
     // Write DMA bytes to the FPGA
     dma_write(&(inputs[i]));
@@ -55,7 +57,7 @@ void* fpga_writer()
 // Thread reading all the dma msgs as fast as possible
 void* fpga_reader()
 {
-  for(int i = 0; i < n_works; i++)
+  for(int i = 0; i < n; i++)
   {
     // Read DMA bytes from the FPGA
     dma_read(&(fpga_outputs[i]));
@@ -114,12 +116,12 @@ void cpu_work()
   cpu_thread_args_t thread_args[NUM_THREADS];
   
   // How much work per thread?
-  if(n_works%NUM_THREADS != 0)
+  if(n%NUM_THREADS != 0)
   {
      printf("ERROR: Bad number of works per thread\n");
      exit(-1);
   }
-  int works_per_thread = n_works / NUM_THREADS;
+  int works_per_thread = n / NUM_THREADS;
   
   // Start threads
   int t;
@@ -148,7 +150,6 @@ int main(int argc, char **argv)
   init_dma();
   
   // Prepare N work inputs, and 2 output pairs (cpu vs fpga)
-	int n = 1;
   if(argc>1)
   {
     char *n_str = argv[1];
@@ -206,7 +207,7 @@ int main(int argc, char **argv)
   
   // Compare the outputs
   int num_bad = 0;
-  for(int i = 0; i < n_works; i++)
+  for(int i = 0; i < n; i++)
   {
     if(compare_bad(i,cpu_outputs[i],fpga_outputs[i]))
     {
