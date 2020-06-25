@@ -6,7 +6,6 @@
 #define NUM_THREADS 8 // 2 thread per 4 cores?
 
 #include "dma_msg_sw.c"
-#include "work_sw.c"
 
 // Helper to init an input data
 dma_msg_t input_init(int i)
