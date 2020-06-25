@@ -7,6 +7,19 @@
 
 #include "dma_msg_sw.c"
 
+/*
+n: 800 
+DMA_MSG_SIZE: 4096 
+Total bytes: 3276800 
+CPU took 0.000000 seconds to execute 
+CPU iteration time: 0.000000 seconds
+CPU bytes per sec: inf seconds
+FPGA took 0.030000 seconds to execute 
+FPGA iteration time: 0.000037 seconds
+FPGA bytes per sec: 109226666.666667 seconds
+Speedup: 0.000000
+*/
+
 // Helper to init an input data
 dma_msg_t input_init(int i)
 {
