@@ -1,8 +1,11 @@
 
 //#include "examples/aws-fpga-dma/loopback.c"
-//#include "examples/aws-fpga-dma/work.c"
+#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
 //#include "examples/fosix/bram_loopback.c"
+
+/*
+#define FIFO_SIZE 32
 
 #include "fifo.h"
 
@@ -14,10 +17,11 @@ typedef struct some_type
 } some_type;
 
 // A fifo 
-fifo_shift(the_fifo, some_type, 32)
+fifo_shift(the_fifo, some_type, FIFO_SIZE)
 
 #pragma MAIN_MHZ main 150.0
 the_fifo_t main(uint1_t read, some_type x, uint1_t write)
 {
   return the_fifo_func(read, x, write);
 }
+*/

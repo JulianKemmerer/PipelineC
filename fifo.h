@@ -12,6 +12,7 @@ typedef struct name##_t\
   type data_out;\
   uint1_t data_out_valid;\
   uint1_t data_in_ready;\
+  uint1_t data_in_ready_next;\
   uint1_t write_ack;\
 } name##_t;\
 name##_t name##_func(uint1_t rd, type data_in, uint1_t wr)\
@@ -59,5 +60,7 @@ name##_t name##_func(uint1_t rd, type data_in, uint1_t wr)\
     name##_valid_buf[size-1] = wr;\
     rv.write_ack = wr;\
   }\
+  /* Ready for data next iteration if back of queue is empty still */\
+  rv.data_in_ready_next = !name##_valid_buf[size-1];\
   return rv;\
 }

@@ -55,16 +55,19 @@ typedef enum aws_deserializer_state_t {
 	DESERIALIZE
 } aws_deserializer_state_t;
 aws_deserializer_state_t aws_deserializer_state;
-// AXI-4 burst begin with address
+// AXI-4 burst begin with address and id
 dma_msg_size_t aws_deserializer_start_word_pos;
-uint1_t aws_deserializer_start_word_pos_valid;
+axi_id_t aws_deserializer_start_id;
+uint1_t aws_deserializer_start_valid;
 // Mesg buffer / output reg
 dma_word_buffer_t aws_deserializer_msg_buffer;
 uint1_t aws_deserializer_msg_buffer_valid;
 // Word position at the front of msg_buffer
 dma_msg_size_t aws_deserializer_word_pos;
-// Number of pending write responses
-dma_msg_size_t aws_deserializer_axi_bursts_num_resp;
+// The pending write response
+uint1_t aws_deserializer_resp_pending;
+axi_id_t aws_deserializer_resp_id;
+uint1_t aws_deserializer_resp_id_valid;
 // Output
 typedef struct aws_deserializer_outputs_t
 {
@@ -85,23 +88,27 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
   o.axi.resp.bresp = 0; // No err
   o.axi.resp.bvalid = 0;
   
-  // Respond to write bursts if have pending responses
-  if(aws_deserializer_axi_bursts_num_resp > 0)
+  // Form response of pending response id
+  o.axi.resp.bvalid = aws_deserializer_resp_id_valid;
+  o.axi.resp.bid = aws_deserializer_resp_id;
+  // Invalidate if was ready for response, no longer needed
+  if(axi.bready)
   {
-		o.axi.resp.bvalid = 1;
-		// Decrement count if downstream was ready to receive
-		if(axi.bready)
-		{
-			aws_deserializer_axi_bursts_num_resp = aws_deserializer_axi_bursts_num_resp - 1;
-		}
-  }
+    // No longer pending if was valid
+    if(aws_deserializer_resp_id_valid)
+    {
+      aws_deserializer_resp_pending = 0;
+    }
+    aws_deserializer_resp_id_valid = 0;
+  }  
   
-  // Ready for new address if dont have addr
-  if(!aws_deserializer_start_word_pos_valid)
+  // Ready for new start info if dont have valid info yet
+  if(!aws_deserializer_start_valid)
   {
     o.axi.ready.awready = 1;
     aws_deserializer_start_word_pos = axi.req.awaddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
-    aws_deserializer_start_word_pos_valid = axi.req.awvalid;
+    aws_deserializer_start_id = axi.req.awid;
+    aws_deserializer_start_valid = axi.req.awvalid;
   }
   
   // Only clear output msg valid if downstream ready
@@ -128,7 +135,7 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
     {
       // Buffer word pos needs to match 
       // starting axi word addr before leaving this state
-      if(aws_deserializer_start_word_pos_valid)
+      if(aws_deserializer_start_valid)
       {
         // Only thing we can do is shift buffer by one if pos doesnt match
         if(aws_deserializer_start_word_pos != aws_deserializer_word_pos)
@@ -137,10 +144,19 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
         }
         else 
         {
-          // No shifting required, done
-          aws_deserializer_state = DESERIALIZE;
-          // No longer need to hold onto start addr
-          aws_deserializer_start_word_pos_valid = 0;
+          // No more shifting required
+          // Final check that not waiting on prev pending response
+          if(!aws_deserializer_resp_pending)
+          {
+            // Ready to begin deserializing data
+            aws_deserializer_state = DESERIALIZE;
+            // No longer need to hold onto start info
+            aws_deserializer_resp_id = aws_deserializer_start_id;
+            aws_deserializer_start_valid = 0;
+            // Resp ID not validated until end of data stream
+            // But is 'pending' starting now
+            aws_deserializer_resp_pending = 1;
+          }
         }
       }
     }
@@ -195,8 +211,8 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
         // Last incoming word of this burst? 
         if(axi.req.wlast)
         {
-          // Increment burst count to respond to
-          aws_deserializer_axi_bursts_num_resp = aws_deserializer_axi_bursts_num_resp + 1;
+          // Validate the resp id now so it can be used
+          aws_deserializer_resp_id_valid = 1;
           
           // Might need to align pos for next burst
           // Since states are written as pass-through (if,if not if,elseif)
@@ -236,10 +252,11 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
   if(rst)
   {
     aws_deserializer_state = ALIGN_WORD_POS;
-    aws_deserializer_start_word_pos_valid = 0;
+    aws_deserializer_start_valid = 0;
     aws_deserializer_msg_buffer_valid = 0;
     aws_deserializer_word_pos = 0;
-    aws_deserializer_axi_bursts_num_resp = 0;
+    aws_deserializer_resp_pending = 0;
+    aws_deserializer_resp_id_valid = 0;
   }
 
   return o;
@@ -251,9 +268,12 @@ dma_word_buffer_t aws_serializer_msg;
 uint1_t aws_serializer_msg_valid; // Cleared when done serializing msg
 // Word position at the front of msg_buffer
 dma_msg_size_t aws_serializer_word_pos;
-// AXI-4 burst begin with address+size
+// Current read id being serialized out
+axi_id_t aws_serializer_id;
+// AXI-4 burst begin with address+size+id
 dma_msg_size_t aws_serializer_start_word_pos;
 dma_msg_size_t aws_serializer_start_burst_words;
+axi_id_t aws_serializer_start_id;
 uint1_t aws_serializer_start_valid;
 // General state regs
 typedef enum aws_serializer_state_t {
@@ -303,6 +323,7 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
     // The burst length for AXI4 is defined as,
 	  // Burst_Length = AxLEN[7:0] + 1,
 		aws_serializer_start_burst_words = axi.req.arlen + 1;
+    aws_serializer_start_id = axi.req.arid;
     aws_serializer_start_valid = axi.req.arvalid;
   }
   
@@ -341,6 +362,7 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
         aws_serializer_state = SERIALIZE;
         // No longer need to hold onto start info
         aws_serializer_remaining_burst_words = aws_serializer_start_burst_words;
+        aws_serializer_id = aws_serializer_start_id;
         aws_serializer_start_valid = 0;
       }
     }
@@ -370,6 +392,7 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
 		// Put word on the bus
 		o.axi.resp.rdata = word;
 		o.axi.resp.rvalid = 1;
+    o.axi.resp.rid = aws_serializer_id;
     // Last word of this read burst serialization?
 		if(aws_serializer_remaining_burst_words==1)
 		{

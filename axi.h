@@ -1,6 +1,8 @@
 #pragma once
 #include "uintN_t.h"
 
+#define axi_id_t uint6_t
+
 // 512b AXI-4 bus is bidirectional
 
 typedef struct axi512_write_req_t
@@ -8,7 +10,7 @@ typedef struct axi512_write_req_t
   //  Address
   //    "Write this stream to a location in memory"
   //    Should be valid before data starts
-  uint6_t awid;
+  axi_id_t awid;
   uint64_t awaddr;
   uint8_t awlen; // In cycles
   uint3_t awsize; // 2^size = Transfer width in bytes, 8 to 1024 bits supported
@@ -32,7 +34,7 @@ typedef struct axi512_read_req_t
   //  Address
   //    "Give me a stream from a place in memory"
   //    Should be valid before data starts
-  uint6_t arid;
+  axi_id_t arid;
   uint64_t araddr;
   uint8_t arlen;
   uint3_t arsize; // 2^size = Transfer width in bytes, 8 to 1024 bits supported
@@ -61,7 +63,7 @@ typedef struct axi512_i_t
 typedef struct axi512_write_resp_t
 {
   //  Write response
-  uint6_t bid;
+  axi_id_t bid;
   uint2_t bresp; // Error code
   uint1_t bvalid;
 } axi512_write_resp_t;
@@ -83,7 +85,7 @@ typedef struct axi512_write_o_t
 typedef struct axi512_read_resp_t
 {
   //  Data stream from memory
-  uint6_t rid;
+  axi_id_t rid;
   uint8_t rdata[64];
   uint2_t rresp;
   uint1_t rlast;
