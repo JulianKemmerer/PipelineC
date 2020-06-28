@@ -7,12 +7,17 @@
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 ```
 
-C hardware description language and compiler producing synthesizable VHDL.
+A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3) as an additional language construct/compiler feature.
+
+1. Not actually regular C. But mostly compileable by gcc for doing 'simulation'.
+2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable VHDL.
+3. If a computation can be written as pure function without side effects (i.e. no global variables) then it will be autopipelined.
+
+By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC code need not be rewritten for each new target device / operating frequency. The hope is to build shared, high performance, device agnostic, hardware designs described in a somewhat familiar C language look.
 
 Get started by reading the [wiki](https://github.com/JulianKemmerer/PipelineC/wiki) .
 
-
-The PipelineC compiler pipelines functions as most industry High Level Synthesis (HLS) tools would. 
+The PipelineC compiler pipelines pure functions as most industry High Level Synthesis (HLS) tools would. 
 
 However, PipelineC is not HLS. It is not meant as some abstracted virtual machine with a memory model. Instead hardware pipelines are presented as C functions.
 
