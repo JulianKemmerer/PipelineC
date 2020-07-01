@@ -19,8 +19,10 @@
 // PipelineC header
 #include "dma_msg.h"
 
-// Wrapper around DMA init
+// Writes = CHANNEL 0
+// Reads  = CHANNEL 1
 int write_fd, read_fd;
+// Wrapper around DMA init
 int init_dma()
 {
 	// Return code (0=OK)
@@ -40,7 +42,7 @@ int init_dma()
 	int slot_id = 0;
 	// Read 
 	read_fd = fpga_dma_open_queue(FPGA_DMA_XDMA, slot_id,
-			/*channel*/ 0, /*is_read*/ true);
+			/*channel*/ 1, /*is_read*/ true);
 	if((rc = (read_fd < 0) ? -1 : 0))
 	{
 		printf("unable to open read dma queue");
@@ -76,7 +78,7 @@ int dma_write(dma_msg_t* msg)
 {
 	uint8_t* buffer = &(msg->data[0]);
 	size_t xfer_sz = DMA_MSG_SIZE;
-	size_t address = 0; // Write address ignored in hardware
+	size_t address = 0; // Must be 0 for now
 	int rc = fpga_dma_burst_write(write_fd, buffer, xfer_sz, address);
   if(rc)
 	{
@@ -91,7 +93,7 @@ int dma_read(dma_msg_t* msg)
 {
 	uint8_t* buffer = &(msg->data[0]);
 	size_t xfer_sz = DMA_MSG_SIZE;
-	size_t address = 0; // Read address ignored in hardware
+	size_t address = 0; // Must be 0 for now
 	int rc = fpga_dma_burst_read(read_fd, buffer, xfer_sz, address);
   if(rc)
 	{
