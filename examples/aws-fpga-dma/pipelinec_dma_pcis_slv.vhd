@@ -134,7 +134,7 @@ top_i : entity work.top port map
   
   --clk_fosix_aws_fpga_dma => clk,
   
-  clk_work_pipeline => clk,
+  --clk_work_pipeline => clk,
   
   clk_main => clk,
   main_rst => rst_unsigned,
