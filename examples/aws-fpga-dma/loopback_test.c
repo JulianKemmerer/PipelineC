@@ -112,7 +112,7 @@ int main(int argc, char **argv)
 	double cpu_per_iter = cpu_time / (float)n;
 	printf("CPU iteration time: %f seconds\n", cpu_per_iter);
 	double cpu_bytes_per_sec = (float)total_bytes / cpu_time;
-	printf("CPU bytes per sec: %f seconds\n", cpu_bytes_per_sec);
+	printf("CPU bytes per sec: %f B/s\n", cpu_bytes_per_sec);
 
 
 	// Start time
@@ -130,7 +130,7 @@ int main(int argc, char **argv)
 	double fpga_per_iter = fpga_time / (float)n;
 	printf("FPGA iteration time: %f seconds\n", fpga_per_iter);
 	double fpga_bytes_per_sec = (float)total_bytes / fpga_time;
-	printf("FPGA bytes per sec: %f seconds\n", fpga_bytes_per_sec);
+	printf("FPGA bytes per sec: %f B/s\n", fpga_bytes_per_sec);
   
   // Speedy?
   printf("Speedup: %f\n",cpu_time/fpga_time);  
