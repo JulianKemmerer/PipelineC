@@ -45,6 +45,10 @@ int compare_bad(int i, dma_msg_t cpu, dma_msg_t fpga)
       break;
     }
 	}
+  if(!bad)
+  {
+    printf("Output %d does match at %d! FPGA: %d, CPU: %d\n", i, 0, fpga.data[0], cpu.data[0]);
+  }
 	return bad;
 }
 
