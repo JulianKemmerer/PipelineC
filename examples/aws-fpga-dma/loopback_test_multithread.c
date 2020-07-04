@@ -27,7 +27,7 @@ dma_msg_t input_init(int i)
 	dma_msg_t input;
 	for(int v=0;v<DMA_MSG_SIZE;v++)
 	{
-		input.data[v] = rand();
+		input.data[v] = v; //rand();
 	}
 	return input;
 }
