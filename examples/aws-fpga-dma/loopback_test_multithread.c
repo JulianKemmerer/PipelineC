@@ -8,16 +8,17 @@
 #include "dma_msg_sw.c"
 
 /*
-n: 800 
+SINGLE MSG BUFFER IN FPGA - NOT FASTER THAN SINGLE THREAD
+n: 80000 
 DMA_MSG_SIZE: 4096 
-Total bytes: 3276800 
-CPU took 0.000000 seconds to execute 
-CPU iteration time: 0.000000 seconds
-CPU bytes per sec: inf seconds
-FPGA took 0.030000 seconds to execute 
-FPGA iteration time: 0.000037 seconds
-FPGA bytes per sec: 109226666.666667 seconds
-Speedup: 0.000000
+Total bytes: 327680000 
+CPU took 0.270000 seconds to execute 
+CPU iteration time: 0.000003 seconds
+CPU bytes per sec: 1213629629.629630 B/s
+FPGA took 3.550000 seconds to execute 
+FPGA iteration time: 0.000044 seconds
+FPGA bytes per sec: 92304225.352113 B/s
+Speedup: 0.076056
 */
 
 // Helper to init an input data
