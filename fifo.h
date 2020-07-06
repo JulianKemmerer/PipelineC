@@ -14,6 +14,9 @@ typedef struct name##_t\
   uint1_t data_in_ready;\
   uint1_t data_in_ready_next;\
   uint1_t write_ack;\
+  uint1_t read_ack;\
+  uint1_t overflow;\
+  uint1_t underflow;\
 } name##_t;\
 name##_t name(uint1_t rd, type data_in, uint1_t wr)\
 {\
@@ -23,10 +26,14 @@ name##_t name(uint1_t rd, type data_in, uint1_t wr)\
   /* Read from front, fwft */\
   rv.data_out = name##_data_buf[0];\
   rv.data_out_valid = name##_valid_buf[0];\
+  rv.underflow = 0;\
+  rv.read_ack = 0;\
   /* Read clears output buffer to allow for shifting forward*/\
   if(rd)\
   {\
     name##_valid_buf[0] = 0;\
+    rv.underflow = !rv.data_out_valid;\
+    rv.read_ack = rv.data_out_valid;\
   }\
   \
   /* Shift array elements forward if possible*/\
@@ -54,11 +61,16 @@ name##_t name(uint1_t rd, type data_in, uint1_t wr)\
   rv.data_in_ready = !name##_valid_buf[size-1];\
   /* Input write goes into back of queue if ready*/\
   rv.write_ack = 0;\
+  rv.overflow = 0;\
   if(rv.data_in_ready)\
   {\
     name##_data_buf[size-1] = data_in;\
     name##_valid_buf[size-1] = wr;\
     rv.write_ack = wr;\
+  }\
+  else\
+  {\
+    rv.overflow = wr;\
   }\
   /* Ready for data next iteration if back of queue is empty still */\
   rv.data_in_ready_next = !name##_valid_buf[size-1];\

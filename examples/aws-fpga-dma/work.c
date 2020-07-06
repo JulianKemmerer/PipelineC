@@ -4,6 +4,8 @@
 // Definition of work related stuff
 #include "dma_msg.h"
 #include "work.h"
+// FIFO modules
+#include "../../fifo.h"
 // Helper functions to convert DMA bytes to/from 'work' inputs/outputs
 // TODO gen all inside work_input_t_bytes_t.h
 #include "uint8_t_array_N_t.h" 
@@ -30,7 +32,7 @@ dma_msg_s work_to_main;
 //    Does work on the work inputs to form the work outputs
 //    Work outputs are converted to an outgoing DMA message
 //    Writes DMA output message back into main 
-#pragma MAIN_MHZ work_pipeline 150.0
+#pragma MAIN_MHZ work_pipeline 260.0
 void work_pipeline()
 {
   // Read incoming msg from main
@@ -71,94 +73,28 @@ void work_pipeline()
 // any more messages to come in
 #define WORK_MSG_BUF_SIZE 8
 #define work_msg_buf_size_t uint4_t // 0-8 , 4 bits
-
 // Define a little FIFO/queue thing to do the buffering
-dma_msg_s work_msg_buf[WORK_MSG_BUF_SIZE];
-uint1_t work_msg_buf_overflow;
-typedef struct work_msg_buf_func_t
-{
-  dma_msg_s out_msg;
-  uint1_t has_room;
-} work_msg_buf_func_t;
-work_msg_buf_func_t work_msg_buf_func(dma_msg_s in_msg, uint1_t read)
-{
-  // Shift buffer thing, shift an element forward if possible
-  // as elements are read out from front
-  work_msg_buf_func_t rv;
-  
-  // Read from front
-  dma_msg_s out_msg = work_msg_buf[0];
-  // Not validated until read requested
-  out_msg.valid = 0;
-  if(read)
-  {
-    out_msg.valid = work_msg_buf[0].valid;
-    // Read clears output buffer to allow for shifting forward
-    work_msg_buf[0].valid = 0;
-  }
-  
-  // Shift array elements forward if possible
-  // Which positions should shift?
-  uint1_t pos_do_shift[WORK_MSG_BUF_SIZE];
-  pos_do_shift[0] = 0; // Nothing ot left of 0
-  work_msg_buf_size_t i;
-  for(i=1;i<WORK_MSG_BUF_SIZE;i=i+1)
-  {
-    // Can shift if next pos is empty
-    pos_do_shift[i] = !work_msg_buf[i-1].valid;
-  }
-  // Do the shifting
-  for(i=1;i<WORK_MSG_BUF_SIZE;i=i+1)
-  {
-    if(pos_do_shift[i])
-    {
-      work_msg_buf[i-1] = work_msg_buf[i];
-      work_msg_buf[i].valid = 0;
-    }
-  }
-  
-  // Apply overflow flag if set from prev iter
-  if(work_msg_buf_overflow)
-  {
-    // TODO overwrite all bytes?
-    out_msg.data.data[0] = 0;
-    out_msg.data.data[1] = 0;
-    out_msg.data.data[2] = 0;
-    out_msg.data.data[3] = 0;
-  }  
-  
-  // Input goes into back of queue
-  // Do overflow check
-  if(work_msg_buf[WORK_MSG_BUF_SIZE-1].valid & in_msg.valid)
-  {
-    work_msg_buf_overflow = 1;
-  }
-  // Accept input
-  work_msg_buf[WORK_MSG_BUF_SIZE-1] = in_msg;
-  
-  // Pack up rv
-  rv.out_msg = out_msg;
-  rv.has_room = !work_msg_buf[WORK_MSG_BUF_SIZE-1].valid;
-  
-  return rv;  
-}
+fifo_shift(work_msg_fifo, dma_msg_t, WORK_MSG_BUF_SIZE)
 
 // The main function is used to control the flow of data 
 // into and out of the work pipeline
 work_msg_buf_size_t work_msgs_in_flight; // Many messages let into the pipeline?
 uint1_t work_msg_buf_has_room = 1;
-#pragma MAIN_MHZ main 150.0
+uint1_t overflow; // Should not occur but wanted for debug
+#pragma MAIN_MHZ main 260.0
 void main(uint1_t rst)
 {
 	// Read DMA message data from aws_fpga_dma
   dma_msg_s_array_1_t aws_msgs_in = aws_in_msg_READ();
   dma_msg_s aws_msg_in = aws_msgs_in.data[0];
   
-  // Signal ready for this message + validate to msg_to_work
+  // Signal ready for this message + validate msg_to_work
   // if not too many messages in flight
   dma_msg_s msg_to_work = aws_msg_in;
   msg_to_work.valid = 0;
-  uint1_t aws_msg_in_ready = (work_msgs_in_flight < WORK_MSG_BUF_SIZE) & work_msg_buf_has_room;
+  // Sanity debug idk wtf is wrong compare to WORK_MSG_BUF_SIZE-1 to be sure?
+  // & work_msg_buf_has_room essentially doesnt the 1/2 rate max for slow shift buffer
+  uint1_t aws_msg_in_ready = (work_msgs_in_flight < (WORK_MSG_BUF_SIZE-1)) & work_msg_buf_has_room;
   if(aws_msg_in_ready)
   {
     msg_to_work.valid = aws_msg_in.valid;
@@ -190,14 +126,32 @@ void main(uint1_t rst)
   // Write message from work into buffer where it waits for aws_fpga_dma
   // Read from message buffer if aws_fpga_dma is ready
   uint1_t work_msg_buf_read = aws_msg_out_ready;
-  work_msg_buf_func_t work_msg_buf_rv = work_msg_buf_func(msg_from_work, work_msg_buf_read);
-  dma_msg_s aws_msg_out = work_msg_buf_rv.out_msg;
-  work_msg_buf_has_room = work_msg_buf_rv.has_room;
+  work_msg_fifo_t work_msg_fifo_rv = work_msg_fifo(work_msg_buf_read, msg_from_work.data, msg_from_work.valid);
+  dma_msg_s aws_msg_out;
+  aws_msg_out.data = work_msg_fifo_rv.data_out;
+  aws_msg_out.valid = work_msg_fifo_rv.data_out_valid;
+  work_msg_buf_has_room = work_msg_fifo_rv.data_in_ready_next;
   
   // Message coming out of buffer decrements in flight count
-  if(aws_msg_out.valid)
+  if(work_msg_fifo_rv.read_ack) // Same as rd & data_out_valid
   {
     work_msgs_in_flight = work_msgs_in_flight - 1;
+  }
+  
+  // DEBUG
+  // Detect overflow
+  if(work_msg_fifo_rv.overflow)
+  {
+    overflow = 1;
+  }
+  // And put bad data pattern, zeros, into data from now on
+  if(overflow)
+  {
+    // bytes0-3
+    aws_msg_out.data.data[0] = 0;
+    aws_msg_out.data.data[1] = 0;
+    aws_msg_out.data.data[2] = 0;
+    aws_msg_out.data.data[3] = 0;
   }
   
   // Write message into aws_fpga_dma
@@ -210,6 +164,7 @@ void main(uint1_t rst)
   {
     work_msgs_in_flight = 0;
     work_msg_buf_has_room = 1;
+    overflow = 0;
     // TODO actuallly wait for pipeline to flush out remaining in flight
   }
 }
