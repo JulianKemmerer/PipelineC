@@ -1,6 +1,6 @@
 #include "aws_fpga_dma.c"
 
-#pragma MAIN_MHZ main 150.0
+#pragma MAIN_MHZ main 260.0
 void main(uint1_t rst)
 {
 	// Read ready for output msg flag from aws_fpga_dma

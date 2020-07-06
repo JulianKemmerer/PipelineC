@@ -30,7 +30,7 @@ uint1_t aws_in_msg_ready; // Input flow control
 
 // AWS example runs at 125
 // However, experiments show we might need margin to meet timing at scalez
-#pragma MAIN_MHZ aws_fpga_dma 150.0
+#pragma MAIN_MHZ aws_fpga_dma 260.0
 aws_fpga_dma_outputs_t aws_fpga_dma(aws_fpga_dma_inputs_t i, uint1_t rst)
 {
   aws_fpga_dma_outputs_t o;
