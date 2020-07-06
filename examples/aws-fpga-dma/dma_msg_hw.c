@@ -20,39 +20,39 @@ typedef struct dma_word_buffer_t
 dma_msg_t dma_word_buffer_unpack(dma_word_buffer_t word_buffer)
 {
   // Unpack 2D byte array word buffer into long 1D output byte array
-	dma_msg_t msg;
-	uint32_t word_i;
-	uint32_t byte_i;
-	for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-	{
-		for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-		{
-			msg.data[(word_i*DMA_WORD_SIZE)+byte_i] = word_buffer.words[word_i][byte_i];
-		}
-	}
-	return msg;
+  dma_msg_t msg;
+  uint32_t word_i;
+  uint32_t byte_i;
+  for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
+  {
+    for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
+    {
+      msg.data[(word_i*DMA_WORD_SIZE)+byte_i] = word_buffer.words[word_i][byte_i];
+    }
+  }
+  return msg;
 }
 // Pack byte array into word array buffer
 dma_word_buffer_t dma_msg_pack(dma_msg_t msg)
 {
-	dma_word_buffer_t word_buffer;
-	uint32_t word_i;
-	uint32_t byte_i;
-	for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-	{
-		for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-		{
-			word_buffer.words[word_i][byte_i] = msg.data[(word_i*DMA_WORD_SIZE)+byte_i];
-		}
-	}
-	return word_buffer;
+  dma_word_buffer_t word_buffer;
+  uint32_t word_i;
+  uint32_t byte_i;
+  for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
+  {
+    for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
+    {
+      word_buffer.words[word_i][byte_i] = msg.data[(word_i*DMA_WORD_SIZE)+byte_i];
+    }
+  }
+  return word_buffer;
 }
 
 // Parse input AXI-4 to a wider lower duty cycle message stream
 // Deserializer state
 typedef enum aws_deserializer_state_t {
-	ALIGN_WORD_POS,
-	DESERIALIZE
+  ALIGN_WORD_POS,
+  DESERIALIZE
 } aws_deserializer_state_t;
 aws_deserializer_state_t aws_deserializer_state;
 // AXI-4 burst begin with address and id
@@ -72,7 +72,7 @@ uint1_t aws_deserializer_resp_id_valid;
 typedef struct aws_deserializer_outputs_t
 {
   axi512_write_o_t axi; // Write flow control/response
-	dma_msg_s msg_stream; // Outgoing messages
+  dma_msg_s msg_stream; // Outgoing messages
 } aws_deserializer_outputs_t;
 aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_out_ready, uint1_t rst)
 {
@@ -262,6 +262,12 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
   return o;
 }
 
+// Pre moving aws_serializer_start_valid 
+//  to be more like input reg and not pass through data
+//  and not pass-through ALIGN->SERIALIZE
+//    aws_serializer Path delay (ns): 2.256 = 443.262411348 MHz
+// Post: TODO
+
 // Repsond to reads with serialized messages
 // Message buffer / input reg
 dma_word_buffer_t aws_serializer_msg;
@@ -277,8 +283,8 @@ axi_id_t aws_serializer_start_id;
 uint1_t aws_serializer_start_valid;
 // General state regs
 typedef enum aws_serializer_state_t {
-	ALIGN_WORD_POS,
-	SERIALIZE
+  ALIGN_WORD_POS,
+  SERIALIZE
 } aws_serializer_state_t;
 aws_serializer_state_t aws_serializer_state;
 dma_msg_size_t aws_serializer_remaining_burst_words;
@@ -286,11 +292,11 @@ dma_msg_size_t aws_serializer_remaining_burst_words;
 typedef struct aws_serializer_outputs_t
 {
   axi512_read_o_t axi; // Read flow control/response
-	uint1_t msg_in_ready; // Incoming msg flow control
+  uint1_t msg_in_ready; // Incoming msg flow control
 } aws_serializer_outputs_t;
 aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t axi, uint1_t rst)
-{	
-	// Default output values
+{ 
+  // Default output values
   aws_serializer_outputs_t o;
   // Not ready for input messages
   o.msg_in_ready = 0;
@@ -298,44 +304,48 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
   o.axi.arready = 0;
   // No output read data
   o.axi.resp.rid = 0;
-	o.axi.resp.rresp = 0;
-	o.axi.resp.rvalid = 0;
-	o.axi.resp.rlast = 0;
-	uint8_t byte_i;
-	for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
-	{
-		o.axi.resp.rdata[byte_i] = 0;
-	}
+  o.axi.resp.rresp = 0;
+  o.axi.resp.rvalid = 0;
+  o.axi.resp.rlast = 0;
+  uint8_t byte_i;
+  for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
+  {
+    o.axi.resp.rdata[byte_i] = 0;
+  }
   
-  // Ready for input msg if dont have one to serialize
-  if(!aws_serializer_msg_valid)
-  {
-    // Input registers at end of function
-    // Just signal ready here
-    o.msg_in_ready = 1;
-  }
-
-  // Ready for new read address+size if dont have one
-  if(!aws_serializer_start_valid)
-  {
-    o.axi.arready = 1;
-    aws_serializer_start_word_pos = axi.req.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
-    // The burst length for AXI4 is defined as,
-	  // Burst_Length = AxLEN[7:0] + 1,
-		aws_serializer_start_burst_words = axi.req.arlen + 1;
-    aws_serializer_start_id = axi.req.arid;
-    aws_serializer_start_valid = axi.req.arvalid;
-  }
+  // Ready for new read address+size if dont have it now
+  o.axi.arready = !aws_serializer_start_valid;
+  
+  // Ready for new msg if dont have one
+  o.msg_in_ready = !aws_serializer_msg_valid;
   
   // Flag to cause shift buffer to rotate, default not shifting
   uint1_t do_shift_buff_increment_pos;
   do_shift_buff_increment_pos = 0;
   
+  // Last word of dma message?
+  uint1_t at_end_word;
+  at_end_word = aws_serializer_word_pos==DMA_MSG_WORDS-1;
+  // Calc next pos with rollover
+  dma_msg_size_t next_serializer_word_pos;
+  if(at_end_word)
+  {
+    next_serializer_word_pos = 0;
+  }
+  else
+  {
+    next_serializer_word_pos = aws_serializer_word_pos + 1;
+  }
+  
+  // Select the next word from front of buffer
+  uint8_t word[DMA_WORD_SIZE];
+  word = aws_serializer_msg.words[0];
+  
   // What serializing state are we actually in?
-	
-	// Align shift buffer as needed to output next read burst
-	if(aws_serializer_state == ALIGN_WORD_POS)
-	{
+  
+  // Align shift buffer as needed to output next read burst
+  if(aws_serializer_state == ALIGN_WORD_POS)
+  {
     // TODO BUG!?:
     // aws_serializer_msg_valid might be prev message keeping valid
     //    in case of reading end word again
@@ -366,41 +376,18 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
         aws_serializer_start_valid = 0;
       }
     }
-	}
-	
-  // Last word of dma message?
-  uint1_t at_end_word;
-	at_end_word = aws_serializer_word_pos==DMA_MSG_WORDS-1;
-  // Calc next pos with rollover
-  dma_msg_size_t next_serializer_word_pos;
-  if(at_end_word)
-  {
-    next_serializer_word_pos = 0;
   }
-  else
-  {
-    next_serializer_word_pos = aws_serializer_word_pos + 1;
-  }
-  
-  // Select the next word from front of buffer
-  uint8_t word[DMA_WORD_SIZE];
-  word = aws_serializer_msg.words[0];
-  
-	// Output the data on the bus
-	if(aws_serializer_state == SERIALIZE)
-	{    
-		// Put word on the bus
-		o.axi.resp.rdata = word;
-		o.axi.resp.rvalid = 1;
+  // Output the data on the bus
+  else if(aws_serializer_state == SERIALIZE)
+  {    
+    // Put word on the bus
+    o.axi.resp.rdata = word;
+    o.axi.resp.rvalid = 1;
     o.axi.resp.rid = aws_serializer_id;
     // Last word of this read burst serialization?
-		if(aws_serializer_remaining_burst_words==1)
-		{
-			// End the stream
-			o.axi.resp.rlast = 1;
-    }
+    o.axi.resp.rlast = aws_serializer_remaining_burst_words==1;
     
-		// Increment/next state if downstream was ready to receive 
+    // Increment/next state if downstream was ready to receive 
     if(axi.rready)
     {
       // Record outputting this word
@@ -410,38 +397,41 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
       
       // If this is the last word of burst then only part 
       // of the word may have been actually accepted
-      // 			DO NOT HAVE A READ STROBE INPUT TO KNOW LIKE WRITE SIDE
+      //      DO NOT HAVE A READ STROBE INPUT TO KNOW LIKE WRITE SIDE
       // So instead try to look ahead to next read addr
-			if(o.axi.resp.rlast)
-			{
-				// Default assume dont shift buffer at rlast
-				do_shift_buff_increment_pos = 0;
-				// Only shift buffer if 
-				// we know the next starting addr
-				// And that addr would be next
-				if(aws_serializer_start_valid)
-				{
-					if(aws_serializer_start_word_pos == next_serializer_word_pos)
-					{
-						do_shift_buff_increment_pos = 1;
-					}
-				}
-				
-				// Most of the time the next burst starts at next pos
-				// and thus doesnt need additional alignment
-				// Since states are written as pass-through (if,if not if,elseif)
-				// can always go to align state and 
-				// will pass through back to serialize if possible
-				aws_serializer_state = ALIGN_WORD_POS;
-			}
+      if(o.axi.resp.rlast)
+      {
+        // Default assume dont shift buffer at rlast
+        do_shift_buff_increment_pos = 0;
+        
+        // Below look ahead is unecessary - 
+        //  can add back inalong with pass through ALIGN->SERIAL if low latency is needed
+        // Only shift buffer if 
+        // we know the next starting addr
+        // And that addr would be next
+        //if(aws_serializer_start_valid)
+        //{
+        //  if(aws_serializer_start_word_pos == next_serializer_word_pos)
+        //  {
+        //    do_shift_buff_increment_pos = 1;
+        //  }
+        //}
+        
+        // Most of the time the next burst starts at next pos
+        // and thus doesnt need additional alignment
+        // Since states are written as pass-through (if,if not if,elseif)
+        // can always go to align state and 
+        // will pass through back to serialize if possible
+        aws_serializer_state = ALIGN_WORD_POS;
+      }
     }
-	}
-	
-	// Do circular buffer shift and wrapping increment when requested
-	if(do_shift_buff_increment_pos)
-	{
-		// Increment pos, w roll over
-		aws_serializer_word_pos = next_serializer_word_pos;
+  }
+  
+  // Do circular buffer shift and wrapping increment when requested
+  if(do_shift_buff_increment_pos)
+  {
+    // Increment pos, w roll over
+    aws_serializer_word_pos = next_serializer_word_pos;
     // Shifting and at end word = rolling over to start
     // ---If while outputing valid data then done with this msg
     // --- Ex. & aws_serializer_state == SERIALIZE, in case was stuck in ALIGN_WORD_POS?
@@ -457,23 +447,35 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
       aws_serializer_msg_valid = 0;
     }
 
-		// Shift circular buffer
-		uint32_t word_i;
-		for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
-		{
-			aws_serializer_msg.words[word_i] = aws_serializer_msg.words[word_i+1];
-		}
-		aws_serializer_msg.words[DMA_MSG_WORDS-1] = word;
-	}
-	
-	// Input regs (assign to global for next iteration)
-	// 	Accept message buffer stream if valid and ready to receive
-	if(msg_stream.valid & o.msg_in_ready)
-	{
-		aws_serializer_msg = dma_msg_pack(msg_stream.data); // Stored by word
-		aws_serializer_msg_valid = 1;
-		aws_serializer_word_pos = 0; // Resets what address is at front of buffer
-	}
+    // Shift circular buffer
+    uint32_t word_i;
+    for(word_i=0; word_i<DMA_MSG_WORDS-1; word_i=word_i+1)
+    {
+      aws_serializer_msg.words[word_i] = aws_serializer_msg.words[word_i+1];
+    }
+    aws_serializer_msg.words[DMA_MSG_WORDS-1] = word;
+  }
+  
+  // INPUT REGS (assign to global for next iteration)
+  //  START INFO
+  //  Accept start addr,len,etc if ready
+  if(o.axi.arready)
+  {
+    aws_serializer_start_word_pos = axi.req.araddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
+    // The burst length for AXI4 is defined as,
+    // Burst_Length = AxLEN[7:0] + 1,
+    aws_serializer_start_burst_words = axi.req.arlen + 1;
+    aws_serializer_start_id = axi.req.arid;
+    aws_serializer_start_valid = axi.req.arvalid;
+  }
+  //  DMA MSG
+  //  Accept message buffer stream if valid and ready to receive
+  if(msg_stream.valid & o.msg_in_ready)
+  {
+    aws_serializer_msg = dma_msg_pack(msg_stream.data); // Stored by word
+    aws_serializer_msg_valid = 1;
+    aws_serializer_word_pos = 0; // Resets what address is at front of buffer
+  }
   
   // Reset
   if(rst)
