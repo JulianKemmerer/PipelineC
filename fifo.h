@@ -15,7 +15,7 @@ typedef struct name##_t\
   uint1_t data_in_ready_next;\
   uint1_t write_ack;\
 } name##_t;\
-name##_t name##_func(uint1_t rd, type data_in, uint1_t wr)\
+name##_t name(uint1_t rd, type data_in, uint1_t wr)\
 {\
   /* Shift buffer thing, shift an element forward if possible*/\
   /* as elements are read out from front*/\
