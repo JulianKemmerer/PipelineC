@@ -1259,7 +1259,9 @@ typedef uint8_t ''' + result_t + '''; // FUCK
   # Parse to list of width toks
   n_bin_op_func_names = []
   # uint24_sum24(left_resized);
-  for type_regex in ["uint[0-9]+","uint[0-9]+_array","float","float_array"]:
+  # TODO better regexs
+  # TODO make full type _t in name not just uintN
+  for type_regex in ["int[0-9]+","int[0-9]+_array", "uint[0-9]+","uint[0-9]+_array","float","float_array"]:
     for op_regex in ["sum", "or", "and"]:
       regex = type_regex + "_" + op_regex + "[0-9]+\s?\("
       p = re.compile(regex)
@@ -1285,7 +1287,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
         if in_elem_t_str == "float":
           in_elem_t = "float"
         else:
-          # Assume uint
+          # Assume u/int
           in_elem_t = in_elem_t_str + "_t"
         
         # how many elements?        
@@ -1296,20 +1298,26 @@ typedef uint8_t ''' + result_t + '''; // FUCK
         if in_elem_t == "float":
           result_t = "float"
         else:
-          # Assume uint
+          # Assume u/int
           # Depends on op
           if op_regex == "sum":
-            type_width = int(in_elem_t_str.replace("uint",""))
+            type_width = int(in_elem_t_str.replace("uint","").replace("int",""))
             # Sum 2 would be bit width increase of 1
-            max_in_val = (math.pow(2,type_width)-1)
+            if in_elem_t.startswith("u"):
+              max_in_val = (math.pow(2,type_width)-1)
+            else:
+              max_in_val = (math.pow(2,type_width-1))
             max_sum = max_in_val * n_elem
             result_width = int(math.ceil(math.log(max_sum+1,2)))
-            result_t = "uint" + str(result_width) + "_t"
+            if in_elem_t.startswith("u"):
+              result_t = "uint" + str(result_width) + "_t"
+            else:
+              result_t = "int" + str(result_width+1) + "_t"
           elif op_regex == "or" or op_regex == "and":
             # Result is same width as input
             result_t = in_elem_t
           else:
-            print "Whats32@#%?@#?"
+            print "Whats32@#%?@#?todo bit widths for array op"
             sys.exit(0)
         
         # Keep track of variable type so 
@@ -1615,7 +1623,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   # Parse to list of width toks
   bit_ass_func_names = []
   # uint64_uint15_2(uint64_t in, uint15_t x)  // out = in; out(16 downto 2) = x
-  p = re.compile('uint[0-9]+_uint[0-9]+_[0-9]+\s?\(')
+  p = re.compile('u?int[0-9]+_uint[0-9]+_[0-9]+\s?\(')
   bit_ass_func_names = p.findall(c_text)
   bit_ass_func_names = list(set(bit_ass_func_names))
   for bit_ass_func_name in bit_ass_func_names:
@@ -1626,9 +1634,9 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     low_index = int(toks[2])
     high_index = low_index + assign_width - 1
     result_width = input_bit_width    
-    result_t = "uint" + str(result_width) + "_t"
     in_prefix = toks[0]
     in_t = in_prefix + "_t"
+    result_t = in_t
     x_prefix = toks[1]
     x_t = x_prefix + "_t"
     func_name = bit_ass_func_name
