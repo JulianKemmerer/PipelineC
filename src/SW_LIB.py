@@ -3891,6 +3891,7 @@ def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state
   #int_h ='''#include "''' + top_dir + '''/intN_t.h"'''
   
   text += '''
+#include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
