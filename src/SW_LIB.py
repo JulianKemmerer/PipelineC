@@ -2658,7 +2658,7 @@ def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
   elif VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
     return GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   elif VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
-    return GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir)
+    return GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
   else:
     print "GET_BIN_OP_MULT_C_CODE Only mult between uint and float for now!"
     sys.exit(0)
@@ -3863,7 +3863,7 @@ def GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
   
 
   
-def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir):
+def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
