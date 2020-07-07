@@ -48,6 +48,11 @@ dma_word_buffer_t dma_msg_pack(dma_msg_t msg)
   return word_buffer;
 }
 
+// Pre mimicing serializer and increasing latency to meet timing:
+//    aws_deserializer Path delay (ns): 1.967 = 508.388408744 MHz
+// Post:
+//    TODO
+
 // Parse input AXI-4 to a wider lower duty cycle message stream
 // Deserializer state
 typedef enum aws_deserializer_state_t {
@@ -84,41 +89,20 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
   o.axi.ready.awready = 0;
   o.axi.ready.wready = 0;
   // No output write responses yet
-  o.axi.resp.bid = 0; // Only ever seen one id?
+  o.axi.resp.bid = 0;
   o.axi.resp.bresp = 0; // No err
   o.axi.resp.bvalid = 0;
+  
+  // Ready for new start info if dont have valid info yet
+  o.axi.ready.awready = !aws_deserializer_start_valid;
+  
+  // Can modify the buffer if not trying to output it as valid
+  uint1_t can_modify_msg_buffer;
+  can_modify_msg_buffer = !aws_deserializer_msg_buffer_valid;
   
   // Form response of pending response id
   o.axi.resp.bvalid = aws_deserializer_resp_id_valid;
   o.axi.resp.bid = aws_deserializer_resp_id;
-  // Invalidate if was ready for response, no longer needed
-  if(axi.bready)
-  {
-    // No longer pending if was valid
-    if(aws_deserializer_resp_id_valid)
-    {
-      aws_deserializer_resp_pending = 0;
-    }
-    aws_deserializer_resp_id_valid = 0;
-  }  
-  
-  // Ready for new start info if dont have valid info yet
-  if(!aws_deserializer_start_valid)
-  {
-    o.axi.ready.awready = 1;
-    aws_deserializer_start_word_pos = axi.req.awaddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
-    aws_deserializer_start_id = axi.req.awid;
-    aws_deserializer_start_valid = axi.req.awvalid;
-  }
-  
-  // Only clear output msg valid if downstream ready
-  if(msg_out_ready)
-  {
-    aws_deserializer_msg_buffer_valid = 0;
-  }
-  // Can modify the buffer if not trying to output it as valid next iter
-  uint1_t can_modify_msg_buffer;
-  can_modify_msg_buffer = !aws_deserializer_msg_buffer_valid;
   
   // Dont bother doing anything deserializing write data 
   // unless can write new data into msg buffer
@@ -127,6 +111,10 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
     // Flag to cause shift buffer to rotate, default not shifting
     uint1_t do_shift_buff_increment_pos;
     do_shift_buff_increment_pos = 0;
+    
+    // Last word in message?
+    uint1_t at_end_word;
+    at_end_word = aws_deserializer_word_pos==DMA_MSG_WORDS-1;
     
     // What deserializing state are we actually in?
     
@@ -160,13 +148,8 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
         }
       }
     }
-    
-    // Last word in message?
-    uint1_t at_end_word;
-    at_end_word = aws_deserializer_word_pos==DMA_MSG_WORDS-1;
-    
     // Deserializing into buffer
-    if(aws_deserializer_state == DESERIALIZE)
+    else if(aws_deserializer_state == DESERIALIZE)
     {
       // Default ready for more data
       o.axi.ready.wready = 1;
@@ -215,9 +198,7 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
           aws_deserializer_resp_id_valid = 1;
           
           // Might need to align pos for next burst
-          // Since states are written as pass-through (if,if not if,elseif)
-          // can always go to align state and 
-          // will pass through back to deser if possible
+          // If low latency needed can do look ahead
           aws_deserializer_state = ALIGN_WORD_POS;   
         }
       }
@@ -248,6 +229,31 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
     }
   }
   
+  // Accept new start info if ready
+  if(o.axi.ready.awready)
+  {
+    aws_deserializer_start_word_pos = axi.req.awaddr >> LOG2_DMA_WORD_SIZE; // / DMA_WORD_SIZE
+    aws_deserializer_start_id = axi.req.awid;
+    aws_deserializer_start_valid = axi.req.awvalid;
+  }
+  
+  // Only clear output msg valid if downstream ready
+  if(msg_out_ready)
+  {
+    aws_deserializer_msg_buffer_valid = 0;
+  }
+  
+  // Clear response if was ready for response, no longer needed
+  if(axi.bready)
+  {
+    aws_deserializer_resp_id_valid = 0;
+    // No longer pending if was valid
+    if(o.axi.resp.bvalid)
+    {
+      aws_deserializer_resp_pending = 0;
+    }
+  }
+  
   // Reset
   if(rst)
   {
@@ -266,7 +272,8 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
 //  to be more like input reg and not pass through data
 //  and not pass-through ALIGN->SERIALIZE
 //    aws_serializer Path delay (ns): 2.256 = 443.262411348 MHz
-// Post: TODO
+// Post: 
+//    aws_serializer Path delay (ns): 1.479 = 676.132521974 MHz
 
 // Repsond to reads with serialized messages
 // Message buffer / input reg
