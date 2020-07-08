@@ -19,6 +19,18 @@ FPGA took 3.550000 seconds to execute
 FPGA iteration time: 0.000044 seconds
 FPGA bytes per sec: 92304225.352113 B/s
 Speedup: 0.076056
+
+250 MHz not really much faster?
+n: 80000 
+DMA_MSG_SIZE: 4096 
+Total bytes: 327680000 
+CPU took 0.200000 seconds to execute 
+CPU iteration time: 0.000003 seconds
+CPU bytes per sec: 1638400000.000000 B/s
+FPGA took 3.350000 seconds to execute 
+FPGA iteration time: 0.000042 seconds
+FPGA bytes per sec: 97814925.373134 B/s
+Speedup: 0.059701
 */
 
 // Helper to init an input data
