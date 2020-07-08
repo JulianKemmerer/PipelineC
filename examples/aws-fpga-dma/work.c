@@ -10,7 +10,7 @@
 // TODO gen all inside work_input_t_bytes_t.h
 #include "uint8_t_array_N_t.h" 
 #include "uint8_t_bytes_t.h"
-#include "float_bytes_t.h"
+#include "int16_t_bytes_t.h"
 #include "work_inputs_t_bytes_t.h"
 #include "work_outputs_t_bytes_t.h"
 

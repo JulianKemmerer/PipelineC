@@ -5,73 +5,43 @@
 #pragma once
 
 // Do work on inputs to form outputs
-#define FLOAT_SIZE 4
-#define N_SUM (DMA_MSG_SIZE/FLOAT_SIZE)
-#define LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1 11 // log2(N_SUM)+1
+
+// MATRIX MULT EXAMPLE
+
+#define DIM 45 //45^2 * 2 bytes ~=4096 dma bytes
+#define data_t int16_t
+#define array_sum int16_array_sum45
+
 typedef struct work_inputs_t
 {
-  float values[N_SUM];
+  data_t matrix0[DIM][DIM];
+  data_t matrix1[DIM][DIM];
 } work_inputs_t;
 typedef struct work_outputs_t
 {
-  //float sum;
-  
-  // TEMP LOOPBACK
-  float values[N_SUM];
-  
+  data_t result[DIM][DIM];
 } work_outputs_t;
 work_outputs_t work(work_inputs_t inputs)
 {
-  /*
-	// Sum N values 'as parallel as possible' using a binary tree
-	// Ex. N=16
-	//    Level 0: 16 input values
-	// 		Level 1: 8 adders in parallel
-	//    Level 2: 4 adders in parallel
-	//    Level 3: 2 adders in parallel
-	//    Level 4: 1 final adder
-	// 	PipelineC generates a piplined binary tree of 15 floating point adders
-	
-	// All the nodes of the tree in arrays so can be written using loops
-	// log2(N) levels, max of N values in parallel
-	float nodes[LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1][N_SUM]; // Unused elements optimize away
-	
-	// Assign inputs to level 0
-	uint32_t i;
-	for(i=0; i<N_SUM; i=i+1)
-	{
-		nodes[0][i] = inputs.values[i];
-	}
-	
-	// Do the computation starting at level 1
-	uint32_t n_adds;
-	n_adds = N_SUM/2;
-	uint32_t level;
-	for(level=1; level<LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1; level=level+1)
-	{	
-		// Parallel sums
-		for(i=0; i<n_adds; i=i+1)
-		{
-			nodes[level][i] = nodes[level-1][i*2] + nodes[level-1][(i*2)+1];
-		}
-		
-		// Each level decreases adders by half
-		n_adds = n_adds / 2;
-	}
-	
-	// Return the last node in tree
-	work_outputs_t outputs;
-	outputs.sum = nodes[LOG2_DMA_MSG_SIZE_DIV_FLOAT_SIZE_PLUS1-1][0];
-	return outputs;
-  */
-  
   work_outputs_t outputs;
-  uint32_t v;
-  for(v=0;v<N_SUM;v=v+1)
-  {
-    outputs.values[v] = inputs.values[v];
+  // Matrix mult
+  uint64_t i;
+  uint64_t j;
+  uint64_t k;
+  for (i = 0; i < DIM; i = i + 1) 
+  { 
+    for (j = 0; j < DIM; j = j + 1) 
+    { 
+      data_t res_k[DIM];
+      for (k = 0; k < DIM; k = k + 1)
+      {
+          res_k[k] = inputs.matrix0[i][k] * inputs.matrix1[k][j]; 
+      }
+      outputs.result[i][j] = array_sum(res_k);
+    } 
   }
-  return outputs;  
+    
+  return outputs;
 }
 
 
