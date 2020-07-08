@@ -51,7 +51,7 @@ dma_word_buffer_t dma_msg_pack(dma_msg_t msg)
 // Pre mimicing serializer and increasing latency to meet timing:
 //    aws_deserializer Path delay (ns): 1.967 = 508.388408744 MHz
 // Post:
-//    TODO
+//    aws_deserializer Path delay (ns): 1.643 = 608.642726719 MHz
 
 // Parse input AXI-4 to a wider lower duty cycle message stream
 // Deserializer state
@@ -99,10 +99,26 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
   // Can modify the buffer if not trying to output it as valid
   uint1_t can_modify_msg_buffer;
   can_modify_msg_buffer = !aws_deserializer_msg_buffer_valid;
+  // Only clear output msg valid if downstream ready
+  if(msg_out_ready)
+  {
+    aws_deserializer_msg_buffer_valid = 0;
+  }
   
   // Form response of pending response id
+  uint1_t resp_pending = aws_deserializer_resp_pending;
   o.axi.resp.bvalid = aws_deserializer_resp_id_valid;
   o.axi.resp.bid = aws_deserializer_resp_id;
+  // Clear response if was ready for response, no longer needed
+  if(axi.bready)
+  {
+    aws_deserializer_resp_id_valid = 0;
+    // No longer pending if was valid
+    if(o.axi.resp.bvalid)
+    {
+      aws_deserializer_resp_pending = 0;
+    }
+  }
   
   // Dont bother doing anything deserializing write data 
   // unless can write new data into msg buffer
@@ -134,7 +150,7 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
         {
           // No more shifting required
           // Final check that not waiting on prev pending response
-          if(!aws_deserializer_resp_pending)
+          if(!resp_pending)
           {
             // Ready to begin deserializing data
             aws_deserializer_state = DESERIALIZE;
@@ -237,23 +253,6 @@ aws_deserializer_outputs_t aws_deserializer(axi512_write_i_t axi, uint1_t msg_ou
     aws_deserializer_start_valid = axi.req.awvalid;
   }
   
-  // Only clear output msg valid if downstream ready
-  if(msg_out_ready)
-  {
-    aws_deserializer_msg_buffer_valid = 0;
-  }
-  
-  // Clear response if was ready for response, no longer needed
-  if(axi.bready)
-  {
-    aws_deserializer_resp_id_valid = 0;
-    // No longer pending if was valid
-    if(o.axi.resp.bvalid)
-    {
-      aws_deserializer_resp_pending = 0;
-    }
-  }
-  
   // Reset
   if(rst)
   {
@@ -310,15 +309,15 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
   // Not yet ready for read addr
   o.axi.arready = 0;
   // No output read data
-  o.axi.resp.rid = 0;
-  o.axi.resp.rresp = 0;
+  o.axi.resp.rid = aws_serializer_id;
+  o.axi.resp.rresp = 0; // No err
   o.axi.resp.rvalid = 0;
   o.axi.resp.rlast = 0;
-  uint8_t byte_i;
-  for(byte_i=0; byte_i<DMA_WORD_SIZE; byte_i=byte_i+1)
-  {
-    o.axi.resp.rdata[byte_i] = 0;
-  }
+  // Default data bytes are just whatever is at front of buffer
+  // Select the next word from front of buffer
+  uint8_t word[DMA_WORD_SIZE];
+  word = aws_serializer_msg.words[0];
+  o.axi.resp.rdata = word;
   
   // Ready for new read address+size if dont have it now
   o.axi.arready = !aws_serializer_start_valid;
@@ -327,12 +326,10 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
   o.msg_in_ready = !aws_serializer_msg_valid;
   
   // Flag to cause shift buffer to rotate, default not shifting
-  uint1_t do_shift_buff_increment_pos;
-  do_shift_buff_increment_pos = 0;
+  uint1_t do_shift_buff_increment_pos = 0;
   
   // Last word of dma message?
-  uint1_t at_end_word;
-  at_end_word = aws_serializer_word_pos==DMA_MSG_WORDS-1;
+  uint1_t at_end_word = aws_serializer_word_pos==DMA_MSG_WORDS-1;
   // Calc next pos with rollover
   dma_msg_size_t next_serializer_word_pos;
   if(at_end_word)
@@ -343,10 +340,6 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
   {
     next_serializer_word_pos = aws_serializer_word_pos + 1;
   }
-  
-  // Select the next word from front of buffer
-  uint8_t word[DMA_WORD_SIZE];
-  word = aws_serializer_msg.words[0];
   
   // What serializing state are we actually in?
   
@@ -388,9 +381,9 @@ aws_serializer_outputs_t aws_serializer(dma_msg_s msg_stream, axi512_read_i_t ax
   else if(aws_serializer_state == SERIALIZE)
   {    
     // Put word on the bus
-    o.axi.resp.rdata = word;
+    //o.axi.resp.rdata = word; // Already default
+    //o.axi.resp.rid = aws_serializer_id; // Already default
     o.axi.resp.rvalid = 1;
-    o.axi.resp.rid = aws_serializer_id;
     // Last word of this read burst serialization?
     o.axi.resp.rlast = aws_serializer_remaining_burst_words==1;
     
