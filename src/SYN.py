@@ -115,6 +115,10 @@ class TimingParams:
   # I was dumb and used get latency all over
   # mAKE CACHED VERSION
   def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
+    # All modules latency is determined by slices right now
+    # TODO slices between submodules
+    return len(self.slices)
+    '''
     # C built in has multiple shared latencies based on where used
     if len(self.logic.submodule_instances) <= 0:
       return len(self.slices)   
@@ -137,7 +141,13 @@ class TimingParams:
       
     pipeline_map = GET_PIPELINE_MAP(self.inst_name, self.logic, parser_state, TimingParamsLookupTable)
     latency = pipeline_map.num_stages - 1
+    
+    if latency != len(self.slices):
+      print "Oh bad latency",latency ,self.slices
+      sys.exit(-1)
+    
     return latency
+  '''
     
   def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
     if self.hash_ext is None:
@@ -386,7 +396,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     print "is_zero_clk_has_delay",is_zero_clk_has_delay
     
   # Keep track of submodules whos inputs are fully driven
-  fully_driven_submodule_inst_2_logic = dict() 
+  fully_driven_submodule_inst_2_logic = dict()
+  # And keep track of which submodules remain
+  # as to not keep looping over all submodules (sloo)
+  not_fully_driven_submodules = set(logic.submodule_instances.keys())
     
   # Upon writing a submodule do not 
   # add output wire (and driven by output wires) to wires_driven_so_far
@@ -424,16 +437,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
       #print "CONST->",wire
       RECORD_DRIVEN_BY(None, wire)
-  # DONT NEED THIS \/
-  # ~~~~~ These subnmodules will will appear and drive outputs in level 0 
-  ## Outputs from any submodules that do not have inputs
-  #for sub_inst in logic.submodule_instances:
-  # sub_func_name = logic.submodule_instances[sub_inst]
-  # sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-  # if len(sub_func_logic.inputs) == 0:
-  #   for sub_output_port in sub_func_logic.outputs:
-  #     sub_output_wire = sub_inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_output_port
-  #     RECORD_DRIVEN_BY(None, sub_output_wire)
       
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
@@ -614,7 +617,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       fully_driven_submodule_inst_this_level_2_logic = dict()
       # Get submodule logics
       # Loop over each sumodule and check if all inputs are driven
-      for submodule_inst in logic.submodule_instances:
+      not_fully_driven_submodules_iter = set(not_fully_driven_submodules)
+      for submodule_inst in not_fully_driven_submodules_iter:
         submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
         # Skip submodules weve done already
         already_fully_driven = submodule_inst in fully_driven_submodule_inst_2_logic
@@ -653,6 +657,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           if submodule_has_all_inputs_driven: 
             fully_driven_submodule_inst_2_logic[submodule_inst]=submodule_logic
             fully_driven_submodule_inst_this_level_2_logic[submodule_inst] = submodule_logic
+            not_fully_driven_submodules.remove(submodule_inst)
             if bad_inf_loop:
               print "submodule",submodule_inst, "HAS ALL INPUTS DRIVEN"
 
@@ -2616,7 +2621,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   print "Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?"
   WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
-  #print "WHY SLO"
+  #print "WHY SLO?"
   #sys.exit(0)
 
   print "Writing the constant struct+enum definitions as defined from C code..."
@@ -2808,9 +2813,11 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
       if not os.path.exists(syn_out_dir):
         os.makedirs(syn_out_dir)
+      print "Writing func",func_name,"..."
       VHDL.WRITE_LOGIC_ENTITY(inst_name, logic, syn_out_dir, parser_state, ZeroClkTimingParamsLookupTable)
       
   # Include a zero clock multi main top too
+  print "Writing multi main top level files..."
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClkTimingParamsLookupTable;
   is_final_top = True
