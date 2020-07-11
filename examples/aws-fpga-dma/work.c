@@ -71,8 +71,8 @@ void work_pipeline()
 // However, we can only read them out as fast as the AWS logic allows
 // Choose some number to of messages to buffer before not allowing 
 // any more messages to come in
-#define WORK_MSG_BUF_SIZE 8
-#define work_msg_buf_size_t uint4_t // 0-8 , 4 bits
+#define WORK_MSG_BUF_SIZE 4
+#define work_msg_buf_size_t uint3_t // 0-4 , 3 bits
 // Define a little FIFO/queue thing to do the buffering
 fifo_shift(work_msg_fifo, dma_msg_t, WORK_MSG_BUF_SIZE)
 

@@ -2704,12 +2704,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           # Not all funcs are done
           all_funcs_done = False
     
-    # Start parallel syn for parallel_func_names
-    func_name_to_async_result = dict()
+    # Print what is being synthesized first
     for logic_func_name in parallel_func_names:
-      # Do syn for logic 
-      #print "Function:", GET_OUTPUT_DIRECTORY(logic).replace(SYN_OUTPUT_DIRECTORY,"")
-      
       # Get logic
       logic = parser_state.FuncLogicLookupTable[logic_func_name]
       
@@ -2728,11 +2724,25 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       if len(logic.submodule_instances) > 0:
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
         print zero_clk_pipeline_map
+        print ""
+    
+    # Start parallel syn for parallel_func_names
+    func_name_to_async_result = dict()
+    for logic_func_name in parallel_func_names:
+      # Get logic
+      logic = parser_state.FuncLogicLookupTable[logic_func_name]
+      # Any inst will do
+      inst_name = None
+      if logic_func_name in parser_state.FuncToInstances:
+        inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
+      if inst_name is None:
+        #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
+        continue
       # Run Syn
       total_latency=0
+      clock_mhz = INF_MHZ 
       my_async_result = my_thread_pool.apply_async(VIVADO.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency))
       func_name_to_async_result[logic_func_name] = my_async_result
-      print ""
       
     # Finish parallel syn
     for logic_func_name in parallel_func_names:
