@@ -95,7 +95,7 @@ data_t elem_func(row_pair_t row_pair)
 }
 
 // Function doing the entire matrix mult
-work_outputs_t work_main(work_inputs_t inputs)
+work_outputs_t work(work_inputs_t inputs)
 {
   // Unpack to elem_func inputs
   elem_inputs_t elem_func_input = unpack(inputs);
