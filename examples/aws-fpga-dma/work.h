@@ -8,9 +8,9 @@
 
 // MATRIX MULT EXAMPLE
 
-#define DIM 45 //45^2 * 2 bytes ~=4096 dma bytes
+#define DIM 32 //45^2 * 2 bytes ~=4096 dma bytes
 #define data_t int16_t
-#define array_sum int16_array_sum45
+#define array_sum int16_array_sum32
 
 typedef struct work_inputs_t
 {

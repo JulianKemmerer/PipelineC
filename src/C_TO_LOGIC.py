@@ -2462,6 +2462,8 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
   return rv_ref_toks_set
 
 # Please just be mostly used for silly len(ref_toks) compare stuff, not fundamentally required
+#141 sec w/ cache
+#186 w/o cache
 _TRIM_VAR_REF_TOKS_cache = dict()
 def TRIM_VAR_REF_TOKS(ref_toks):
   # Try for cache
@@ -2484,6 +2486,7 @@ def TRIM_VAR_REF_TOKS(ref_toks):
 #_REF_TOKS_COVERED_BY_cache = dict()
 # With cache: 63.812 seconds, 206.699 seconds
 # Without cache: 47.065 seconds, 128.514 seconds
+# More testing: without cache: 141, with cache: 240
 def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
   
   '''
@@ -5961,6 +5964,9 @@ def PARSE_FILE(c_filename):
       if main_func not in parser_state.FuncLogicLookupTable:
         print "Main function:", main_func, "does not exist?"
         sys.exit(0)   
+    
+    #print "WHHY SLO?"
+    #sys.exit(-1)
     
     # Code gen based on pre elborated logic
     # TODO SW_LIB.WRITE_PRE_ELAB_GEN_CODE(preprocessed_c_text, parser_state)
