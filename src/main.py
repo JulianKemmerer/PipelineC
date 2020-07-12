@@ -24,9 +24,9 @@ print '''
 '''
 
 print "TODO:"
+print " Cache/return once true/reorganize into timing params LOGIC_NEEDS_ code?"
 print " Do multithreaded loopback to see where work off by one is coming from..."
-print " Convert work buf func to use fifo.h"
-print " See if aws matrix mult is useful work()?"
+print " Do a better Arty7 example"
 print " PYTHON3 dummy!"
 print " Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?"
 print "	Only parse to logic funcs if used - should allow mixing in software C code and pipeline C together, do recursive from main's isntead of all func defs in c text"
