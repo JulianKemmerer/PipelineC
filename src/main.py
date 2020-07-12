@@ -24,6 +24,7 @@ print '''
 '''
 
 print "TODO:"
+print " Parallelize parsing of func def bodies since indepdent of other func def bodies?"
 print " Cache/return once true/reorganize into timing params LOGIC_NEEDS_ code?"
 print " Do multithreaded loopback to see where work off by one is coming from..."
 print " Do a better Arty7 example"

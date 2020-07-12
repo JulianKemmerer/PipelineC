@@ -2514,7 +2514,7 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
     rv = False
   else:
     '''
-    # Simple compare of range -  not really faster?
+    # Simple compare of range -  NOT faster
     if ref_toks[0:len(covering_ref_toks)] == covering_ref_toks:
       rv = True
     else:
@@ -2530,22 +2530,23 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
       if ref_tok == covering_ref_tok:
         pass
       # Didnt match check type first, isinstance is slow?
-      elif (type(covering_ref_tok)==str and type(ref_tok)==str) and (covering_ref_tok != ref_tok):
-        rv = False
-        break
-      elif (type(covering_ref_tok)==int and type(ref_tok)==int) and (covering_ref_tok != ref_tok):
-        rv = False
-        break
-      # Variable c ast nodes only match one way
-      # * covers digit but digit doesnt cover *
-      elif isinstance(covering_ref_tok, c_ast.Node) and ref_tok.isdigit():
-        pass
-      # * covers others *
-      elif isinstance(covering_ref_tok, c_ast.Node) and isinstance(ref_tok, c_ast.Node):
-        pass      
       else:
-        rv = False
-        break
+        if (type(covering_ref_tok)==int and type(ref_tok)==int): # ALREADY KNOW != and (covering_ref_tok != ref_tok):
+          rv = False
+          break
+        elif (type(covering_ref_tok)==str and type(ref_tok)==str): # ALREADY KNOW != and (covering_ref_tok != ref_tok):
+          rv = False
+          break
+        # Variable c ast nodes only match one way
+        # * covers digit but digit doesnt cover *
+        elif isinstance(covering_ref_tok, c_ast.Node) and ref_tok.isdigit():
+          pass
+        # * covers others *
+        elif isinstance(covering_ref_tok, c_ast.Node) and isinstance(ref_tok, c_ast.Node):
+          pass      
+        else:
+          rv = False
+          break
   
   '''
   # Update cache
@@ -2592,6 +2593,9 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 # With cache runtime: 74.670 seconds, 304.788 seconds
 # Without cache runtime: 61.963 seconds, 210.264 seconds, 
 def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_ast_node, parser_state): 
+  #print "remaining_ref_toks_set",remaining_ref_toks_set
+  #print "driven_ref_toks",driven_ref_toks
+  #print "=="
   debug = False
   #debug = (parser_state.existing_logic.func_name == "VAR_REF_RD_uint8_t_64_uint8_t_64_64_VAR_4538") and driven_ref_toks==('base', 0, 63)
   
@@ -2632,16 +2636,19 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
   # Removed covered branches
   removed_something = False
   # Given alias wire (a,1,c) it covers any remaining wire (a,1,c) , (a,1,c,0) ,  (a,1,c,1)
-  for ref_toks in set(remaining_ref_toks_set): # Copy for iteration
+  to_be_removed = set()
+  for ref_toks in remaining_ref_toks_set: #set(remaining_ref_toks_set): # NO -slo? Copy for iteration
     if REF_TOKS_COVERED_BY(ref_toks, driven_ref_toks, parser_state):
       # Remove this ref toks
       if debug:
         print ref_toks, "covered by", driven_ref_toks
-      remaining_ref_toks_set.remove(ref_toks)
+      #remaining_ref_toks_set.remove(ref_toks)
+      to_be_removed.add(ref_toks)
       removed_something = True
     else:
       if debug:
         print ref_toks, "not covered by", driven_ref_toks
+  remaining_ref_toks_set -= to_be_removed
 
   if debug:
     print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
@@ -2663,6 +2670,10 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
       keep_root = True # default keep root branch
       # Is root even a compound type?
       own_branch_ref_toks = REF_TOKS_TO_OWN_BRANCH_REF_TOKS(root_toks, c_ast_node, parser_state)
+      
+      # Set stuff faster?
+      keep_root = len(own_branch_ref_toks.intersection(remaining_ref_toks_set))>0
+      '''
       if len(own_branch_ref_toks) > 0:
         # Has branches, are they all removed now?
         keep_root = False # Assume all branches are gone
@@ -2671,6 +2682,9 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
               # Found a remaining branch, root stays
               keep_root = True
               break
+      '''
+        
+        
     
       if not keep_root:
         # Remove root, and loop again
