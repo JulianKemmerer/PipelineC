@@ -86,5 +86,5 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 			
 		log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
 		print log_text
-		sys.exit(0)
+		sys.exit(-1)
 	

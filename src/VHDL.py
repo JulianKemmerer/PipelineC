@@ -45,7 +45,7 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
       return "to_signed(" + str(init) + "," + str(width) + ")"
     else:
       print "What type of int blah?"
-      sys.exit(0)
+      sys.exit(-1)
 
     return 
   # If not use null
@@ -478,7 +478,7 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
   if not (C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str)):
     print "Cant GET_WIDTH_FROM_C_TYPE_STR since isnt int/uint N", c_type_str
     print 0/0
-    sys.exit(0) 
+    sys.exit(-1) 
     
   # Chars?
   if c_type_str == 'char':
@@ -499,7 +499,7 @@ def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str):
   else:
     print "Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str
     print 0/0
-    sys.exit(0)   
+    sys.exit(-1)   
   
   
 def C_TYPE_IS_UINT_N(type_str):
@@ -581,7 +581,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
     return False
   else:
     print "Is logic_func_name",logic_func_name,"with input types",input_c_types,"raw VHDL or not?"
-    sys.exit(0)
+    sys.exit(-1)
   
   
 def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable):
@@ -607,7 +607,7 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
     # Simple only for now
     if write_size != read_size:
       print "Do better clock crossings!"
-      sys.exit(0)
+      sys.exit(-1)
     if var_name in parser_state.global_info:
       c_type = parser_state.global_info[var_name].type_name
     if var_name in parser_state.volatile_global_info:
@@ -1337,7 +1337,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   if Logic.is_vhdl_func or Logic.is_vhdl_expr:
     print "Why write vhdl func/expr entity?"
     print 0/0
-    sys.exit(0)
+    sys.exit(-1)
   
   timing_params = TimingParamsLookupTable[inst_name]
   
@@ -1730,7 +1730,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         print "What to do about sign extension ? Can't infer if RHS should be sign extended?"
         print "driven_wire",driven_wire,left_type
         print "driving_wire",driving_wire,right_type
-        sys.exit(0)
+        sys.exit(-1)
       else:     
         # Cast int to slv then to unsigned then resize
         #resize(unsigned(std_logic_vector(x)),31)
@@ -1762,7 +1762,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
       print "DRIVING"
       print driven_wire, left_type
       print 0/0
-      sys.exit(0)
+      sys.exit(-1)
     
     
     # APPPLY CONVERSION
@@ -1846,7 +1846,7 @@ def WIRES_TO_C_INT_BIT_WIDTH(wires,logic):
         print logic.wire_to_c_type
         print "rv_width, width", rv_width, width
         print 0/0
-        sys.exit(0)
+        sys.exit(-1)
   return rv_width
   
 def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage):
@@ -1967,7 +1967,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
       enum_wire = local_name.split("$")[0]
       if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
         print "Non const enum constant?",enum_wire
-        sys.exit(0)
+        sys.exit(-1)
       enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
       #print "local_name",local_name
       #print "enum_name",enum_name
@@ -1982,7 +1982,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
       if not match:
         print parser_state.enum_to_ids_dict
         print enum_name, "doesn't look like an ENUM constant?"
-        sys.exit(0)
+        sys.exit(-1)
       
       return enum_name
     
@@ -2011,7 +2011,7 @@ def GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_n
     return GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
   else:
     print "VHDL EXPR connection text for",submodule_logic.func_name
-    sys.exit(0)
+    sys.exit(-1)
 
 def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage):
   input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.inputs[0] 
@@ -2028,7 +2028,7 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule
       vhdl_ref_str += "." + ref_tok
     else:
       print "Only constant references right now blbblbaaaghghhh2!", logic.c_ast_node.coord
-      sys.exit(0)
+      sys.exit(-1)
   
   text = ""
   RHS = GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage)
@@ -2109,7 +2109,7 @@ def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est
   if Logic.is_vhdl_func or Logic.is_vhdl_expr:
     print "Why entity for vhdl func?"
     print 0/0
-    sys.exit(0)
+    sys.exit(-1)
   
   timing_params = TimingParamsLookupTable[inst_name]
   latency = est_total_latency
@@ -2150,7 +2150,7 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
   else:
     print "Unknown VHDL type for C type: '" + c_type_str + "'"
     #print 0/0
-    sys.exit(0)
+    sys.exit(-1)
 
 
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
@@ -2178,4 +2178,4 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
   else:
     print "Unknown VHDL null str for C type: '" + c_type_str + "'"
     print 0/0
-    sys.exit(0)
+    sys.exit(-1)

@@ -65,7 +65,7 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
     
   else:
     print "GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name
-    sys.exit(0)
+    sys.exit(-1)
     
 
 def GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, parser_state, multimain_timing_params):  
@@ -99,7 +99,7 @@ def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
   
   if rv_main_func == "":
     print "No matching main func for io reg",reg_name
-    sys.exit(0)
+    sys.exit(-1)
     
   return rv_main_func
   
@@ -109,7 +109,7 @@ def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
   main_func = reg_name.split("/")[0]
   if main_func not in parser_state.main_mhz:
     print "Bad main from reg?",reg_name
-    sys.exit(0)
+    sys.exit(-1)
   
   return main_func
 
@@ -174,13 +174,13 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
       elif REG_NAME_IS_OUTPUT_REG(start_name):
         print " Path is loop from global register acting as output register from last stage?"
         print " Is this normal?"
-        sys.exit(0)
+        sys.exit(-1)
         
       elif REG_NAME_IS_INPUT_REG(end_name):
         # Ending at input reg must be global combinatorial loop in first stage
         print " Path is loop from global register acting as input reg in first stage?"
         print " Is this normal?"
-        sys.exit(0)
+        sys.exit(-1)
       else:
         # Start
         start_main_func, start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(start_name, parser_state, multimain_timing_params)
@@ -239,7 +239,7 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
               
             #print "possible_stages_indices",possible_stages_indices
             #print "TEMP UNCLEAR STOP"
-            #sys.exit(0)
+            #sys.exit(-1)
         else:
           # Normal 1 stage path
           possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
@@ -403,10 +403,10 @@ class ParsedTimingReport:
         #do_debug=True
         #print "ASSUMING LATENCY=",latency
         #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-        #sys.exit(0)
+        #sys.exit(-1)
       if "inferred exception to break timing loop" in syn_output_line:
         print syn_output_line
-        #sys.exit(0)
+        #sys.exit(-1)
       
       # OK so apparently mult by self results in constants
       # See scratch notes "wtf_multiply_by_self" dir
@@ -425,14 +425,14 @@ class ParsedTimingReport:
         #do_debug=True
         #print "ASSUMING LATENCY=",latency
         #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-        #sys.exit(0)
+        #sys.exit(-1)
 
       # Unconnected ports are maybe problem?
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
         if syn_output_line.endswith("unconnected port clk"):
           # Clock NOT OK to disconnect
           print "Disconnected clock!?",syn_output_line
-          sys.exit(0)
+          sys.exit(-1)
         #else:
         #  print syn_output_line
         
@@ -523,12 +523,12 @@ class ParsedTimingReport:
           print "Reg merge len(left_names) != len(right_names) ??"
           print "left_names",left_names
           print "right_names",right_names
-          sys.exit(0)
+          sys.exit(-1)
         
         for i in range(0, len(left_names)):
           #if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
           # print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
-          # sys.exit(0)
+          # sys.exit(-1)
           
           #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
           #self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
@@ -549,7 +549,7 @@ class ParsedTimingReport:
       #do_debug=True
       #print "ASSUMING LATENCY=",latency
       #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)          
-      sys.exit(0)
+      sys.exit(-1)
     
     #LOOPS
     if self.has_loops or self.has_latch_loops:
@@ -561,7 +561,7 @@ class ParsedTimingReport:
       #do_debug=True
       #print "ASSUMING LATENCY=",latency
       #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #sys.exit(0)
+      #sys.exit(-1)
     
     
     # Multiple timign report stuff
@@ -783,7 +783,7 @@ def WRITE_CLK_XDC(parser_state, inst_name=None):
   # TODO: multiple clock crossing timing paths in report
   if len(set(parser_state.main_mhz.values())) > 1:
     print "No multi clock for real yet!"
-    sys.exit(0)
+    sys.exit(-1)
   clock_mhz = clock_name_to_mhz.values()[0]
   ns = (1.0 / clock_mhz) * 1000.0
   clock_name = "clk"
@@ -874,7 +874,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   # Hard rule for now, functions with globals must be zero clk
   if total_latency > 0 and len(Logic.global_wires) > 0:
     print "Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency
-    sys.exit(0)
+    sys.exit(-1)
     
   
   # Timing params for this logic
@@ -1036,11 +1036,11 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
   if len(reg_toks) == 1:
     #print "Is this real?"
     #print reg_name
-    #sys.exit(0)
+    #sys.exit(-1)
     inst_name = reg_toks[0]
     if inst_name not in parser_state.LogicInstLookupTable:
       print "Bad inst name from reg?", inst_name, reg_name
-      sys.exit(0)
+      sys.exit(-1)
     return inst_name
     
   # Assume starts with main
@@ -1074,7 +1074,7 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
       if max_match_submodule_inst is None:
         print "Wtf?", curr_reg_str
         print "curr_inst_name",curr_inst_name
-        sys.exit(0)
+        sys.exit(-1)
       
       # Use this submodule as next logic
       curr_logic = parser_state.LogicInstLookupTable[max_match_submodule_inst]

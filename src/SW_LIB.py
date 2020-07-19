@@ -677,7 +677,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, par
         #print "func_name (func_name_logic_lookup)",func_name
         #if len(func_name_logic_lookup[func_name].wire_drives) == 0:
         # print "BAD!"
-        # sys.exit(0)
+        # sys.exit(-1)
       else:
         # For now allow if from bit manip
         #print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
@@ -688,7 +688,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, par
           print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
           print "==="
           print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
-          sys.exit(0)
+          sys.exit(-1)
   
   return rv
 
@@ -731,7 +731,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       c_type = parser_state.global_info[var_name].type_name
       if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
         print "Ram function on non array?",ram_sp_rf_func_name
-        sys.exit(0)
+        sys.exit(-1)
       elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
       # Multiple addresses now folks # Starfucker - Girls Just Want To Have
       #dim = dims[0]
@@ -784,7 +784,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
   #print "MEM_HEADER_FILE"
   #print text   
-  #sys.exit(0)
+  #sys.exit(-1)
       
   if text != "":
     # Ok had some code, include headers
@@ -811,7 +811,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         global_name = func_name.split("_" + RAM_SP_RF+"_2")[0]
       else:
         print "What mem func?", func_name
-        sys.exit(0)
+        sys.exit(-1)
       
       # Add global for this logic
       #print "RAM GLOBAL:",global_name
@@ -834,7 +834,7 @@ def GET_MEM_NAME(logic):
     return RAM_SP_RF+"_2"
   else:
     print "GET_MEM_NAME for func", logic.func_name, "?"
-    sys.exit(0)
+    sys.exit(-1)
 
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   text = ""
@@ -863,7 +863,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       
       if type_regex == "float":
         print " #DO int,float negate?"
-        sys.exit(0)
+        sys.exit(-1)
       else:
         in_t = in_prefix + "_t"
         
@@ -907,7 +907,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       result_t = "uint" + str(in_width) + "_t"
       if type_regex == "float":
         print " #DO float abs?"
-        sys.exit(0)
+        sys.exit(-1)
       else:
         in_t = in_prefix + "_t"
         
@@ -1318,7 +1318,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
             result_t = in_elem_t
           else:
             print "Whats32@#%?@#?todo bit widths for array op"
-            sys.exit(0)
+            sys.exit(-1)
         
         # Keep track of variable type so 
         # result type can be determined if needed
@@ -1400,7 +1400,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
                 op_result_t = in_elem_t
               else:
                 print "Whats32?"
-                sys.exit(0)           
+                sys.exit(-1)           
             
             op_var = "layer" + str(layer) + "_node" + str(node)
             var_2_type[op_var] = op_result_t
@@ -1501,7 +1501,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
         print "BIT_MATH_HEADER_FILE"
         print text
         print "Bad parsing of BIT MATH",func_name
-        sys.exit(0)
+        sys.exit(-1)
     
     return FuncLogicLookupTable
     
@@ -1838,7 +1838,7 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
   else:
     print "Implement more casting: Easy/Lucky/Free Bright Eyes"
     print in_t, out_t
-    sys.exit(0)
+    sys.exit(-1)
     
 def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
   # Int to float
@@ -2195,7 +2195,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
             lhs += "." + expanded_ref_tok
           else:
             print "WTF var ref input wire as input ref tok to var ref??", expanded_ref_tok
-            sys.exit(0)
+            sys.exit(-1)
         
 
         # Do assingment
@@ -2257,7 +2257,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
         text += "." + ref_tok
       else:
         print "Why ref tok?", ref_tok
-        sys.exit(0)
+        sys.exit(-1)
     
     text += ";\n"
   
@@ -2365,7 +2365,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 
   #print "GET_VAR_REF_RD_C_CODE text"
   #print text
-  #sys.exit(0)
+  #sys.exit(-1)
   
   return text
 
@@ -2381,7 +2381,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
   
   #print lhs_ref_toks
   #print orig_var_name, "base_c_type",base_c_type
-  #sys.exit(0)
+  #sys.exit(-1)
   
 
 
@@ -2475,7 +2475,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
             lhs += "." + expanded_ref_tok
           else:
             print "WTF var ref input wire as input ref tok to var ref??", expanded_ref_tok
-            sys.exit(0)
+            sys.exit(-1)
         
         # Do assignment
         text += " " + lhs + " = " + input_c_name + ";\n"
@@ -2519,7 +2519,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
         rhs += "." + expanded_ref_tok
       else:
         print "WTF var ref input wire as input ref tok to var ref?? rhs", expanded_ref_tok
-        sys.exit(0)
+        sys.exit(-1)
         
     text += " " + lhs + " = " + rhs + ";\n" 
     
@@ -2559,7 +2559,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 
   #print "GET_VAR_REF_ASSIGN_C_CODE text"
   #print text
-  #sys.exit(0)
+  #sys.exit(-1)
   
   return text
   
@@ -2576,13 +2576,13 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
   if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
     print "SW defined constant shift right?"
-    sys.exit(0)
+    sys.exit(-1)
   
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
     print "GET_BIN_OP_SR_C_CODE Only sr uint for now! DO ARITHMETIC SHIFT for INT"
-    sys.exit(0)
+    sys.exit(-1)
     
 def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2595,14 +2595,14 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
   if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
     print "SW defined constant shift left?"
-    sys.exit(0)
+    sys.exit(-1)
   
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
     # DO ARITHMETIC SHIFT for INT LHS
     print "GET_BIN_OP_SL_C_CODE Only sl uint for now!"
-    sys.exit(0) 
+    sys.exit(-1) 
       
 def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
   # If one of inputs is signed int then other input will be bit extended to include positive sign bit
@@ -2612,7 +2612,7 @@ def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
     return GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
   else:
     print "GET_BIN_OP_PLUS_C_CODE Only plus between float for now!"
-    sys.exit(0)
+    sys.exit(-1)
 
 def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
   # If one of inputs is signed int then other input will be bit extended to include positive sign bit
@@ -2622,7 +2622,7 @@ def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
     return GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
   else:
     print "GET_BIN_OP_MINUS_C_CODE Only plus between float for now!"
-    sys.exit(0)
+    sys.exit(-1)
 
 def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2634,7 +2634,7 @@ def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
     return GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
     print "GET_BIN_OP_MOD_C_CODE Only mod between float for now!"
-    sys.exit(0)
+    sys.exit(-1)
   
 def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2645,7 +2645,7 @@ def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir):
     return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
     print "GET_BIN_OP_DIV_C_CODE Only div between uint and float for now!"
-    sys.exit(0)
+    sys.exit(-1)
     
     
 def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
@@ -2661,7 +2661,7 @@ def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
     return GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
   else:
     print "GET_BIN_OP_MULT_C_CODE Only mult between uint and float for now!"
-    sys.exit(0)
+    sys.exit(-1)
     
 def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2669,7 +2669,7 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
     print '''"left_t != "float" or  right_t != "float" output_t too  for plus'''
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32
@@ -2870,7 +2870,7 @@ def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
     return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
   else:
     print "GET_BIN_OP_LT_LTE_C_CODE Only between float for now!"
-    sys.exit(0)
+    sys.exit(-1)
     
 def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
@@ -2880,12 +2880,12 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
   # Inputs must be float
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
     print '''"left_t != "float" or  right_t != "float" for <= '''
-    sys.exit(0)
+    sys.exit(-1)
     
   # Output must be bool
   if output_t != "uint1_t":
     print "GET_BIN_OP_LT_LTE_FLOAT_C_CODE output_t != uint1_t"
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32  
@@ -2998,7 +2998,7 @@ def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
     return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
   else:
     print "GET_BIN_OP_GT_GTE_C_CODE Only between float for now!"
-    sys.exit(0)
+    sys.exit(-1)
   
 # GT/GTE
 def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
@@ -3007,12 +3007,12 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
     print '''"left_t != "float" or  right_t != "float" for >= '''
-    sys.exit(0)
+    sys.exit(-1)
     
   # Output must be bool
   if output_t != "uint1_t":
     print "GET_BIN_OP_GT_GTE_FLOAT_C_CODE output_t != uint1_t"
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32
@@ -3107,7 +3107,7 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
     print '''"left_t != "float" or  right_t != "float" output_t too  for minus'''
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32
@@ -3339,7 +3339,7 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
     print left_t, right_t, output_t
     print '''"left_t != "float" or  right_t != "float" output_t mod'''
-    sys.exit(0)
+    sys.exit(-1)
 
   text = ""
   
@@ -3391,7 +3391,7 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
     print left_t, right_t, output_t
     print '''"left_t != "float" or  right_t != "float" output_t too div/mod'''
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32
@@ -3582,7 +3582,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
     print left_t, right_t, output_t
     print '''"left_t != "float" or  right_t != "float" output_t too'''
-    sys.exit(0)
+    sys.exit(-1)
   
   left_width = 32
   right_width = 32
@@ -3780,7 +3780,7 @@ def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
 }'''
   #print "GET_BIN_OP_SR_UINT_C_CODE text"
   #print text
-  #sys.exit(0)
+  #sys.exit(-1)
   return text
   
 
@@ -4216,7 +4216,7 @@ P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[
   
   return text 
   #print text
-  #sys.exit(0)
+  #sys.exit(-1)
 
 
     
@@ -4435,7 +4435,7 @@ P[15] P[14] P[13] P[12] P[11] P[10]  P[9]  P[8]  P[7]  P[6]  P[5]  P[4]  P[3]  P
   
   return text 
   #print text
-  #sys.exit(0)    
+  #sys.exit(-1)    
   
   
   
@@ -4528,7 +4528,7 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir):
 }'''
   
   #print text
-  #sys.exit(0)
+  #sys.exit(-1)
   
   return text 
     
