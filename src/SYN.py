@@ -238,11 +238,12 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     func_name = Logic.submodule_instances[sub_inst]
     sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
     if sub_func_logic.delay is None:
+      print sub_func_logic.func_name
       has_delay = False
       break
   if not has_delay:
-    print "Can't get zero clock pipeline map without delay?"
-    print 0/0 
+    print "Can't get zero clock pipeline map without delay?" 
+    print 0/0
     sys.exit(-1)
     
   # Try cache
@@ -1273,6 +1274,9 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
     for func_name in parser_state.main_mhz:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       sweep_state.func_sweep_state[func_name] = LogicSweepState()
+      # Get get pipeline map of vhdl text module?
+      if func_logic.is_vhdl_text_module:
+        continue
       # Any instance will do 
       inst_name = list(parser_state.FuncToInstances[func_name])[0]
       sweep_state.func_sweep_state[func_name].zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, func_logic, parser_state, write_files=False)
@@ -2007,11 +2011,12 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       print main_func, ": currently is",main_func_to_course_latency[main_func],"clocks latency..."
       # Sanity check on resolution
-      # Sanity check cant more clocks than delay units
-      if main_func_to_course_latency[main_func] > sweep_state.func_sweep_state[main_func].zero_clk_pipeline_map.zero_clk_max_delay:
-        print "Not enough resolution to slice this logic into",main_func_to_course_latency[main_func],"clocks..."
-        print "Increase DELAY_UNIT_MULT?"
-        sys.exit(-1)
+      if not main_func_logic.is_vhdl_text_module:
+        # Sanity check cant more clocks than delay units
+        if main_func_to_course_latency[main_func] > sweep_state.func_sweep_state[main_func].zero_clk_pipeline_map.zero_clk_max_delay:
+          print "Not enough resolution to slice this logic into",main_func_to_course_latency[main_func],"clocks..."
+          print "Increase DELAY_UNIT_MULT?"
+          sys.exit(-1)
       
       # Make even slices      
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_course_latency[main_func])
@@ -2521,6 +2526,8 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
     return True
   elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
     return True
+  elif logic.is_vhdl_text_module:
+    return False # No idea what user has in there
   else:
     # Maybe all submodules are zero delay?
     if len(logic.submodule_instances) > 0:
@@ -2538,6 +2545,8 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
   
 def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
   if len(logic.submodule_instances) != 1:
+    return None
+  if logic.is_vhdl_text_module:
     return None
     
   submodule_inst = logic.submodule_instances.keys()[0]
@@ -2640,6 +2649,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Do depth first 
   # haha no do it the dumb easy way
   func_names_done_so_far = []
+  func_names_done_so_far.append(C_TO_LOGIC.VHDL_FUNC_NAME) # Hacky?
   all_funcs_done = False
   while not all_funcs_done:
     all_funcs_done = True
@@ -2652,6 +2662,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       for logic_func_name in parser_state.FuncLogicLookupTable:
         # If already done then skip
         if logic_func_name in func_names_done_so_far:
+          continue
+        # Skip vhdl funcs as they will be syn'd as container logic
+        if logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
           continue
         # Get logic
         logic = parser_state.FuncLogicLookupTable[logic_func_name]
@@ -2721,7 +2734,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       clock_mhz = INF_MHZ 
       print "Synthesizing function:",logic.func_name
       # Print pipeline map before syn results
-      if len(logic.submodule_instances) > 0:
+      if (len(logic.submodule_instances) > 0) and not logic.is_vhdl_text_module:
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
         print zero_clk_pipeline_map
         print ""
@@ -2815,7 +2828,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       inst_name = list(parser_state.FuncToInstances[func_name])[0]
       logic = parser_state.FuncLogicLookupTable[func_name]
       # ONly write non vhdl 
-      if logic.is_vhdl_func or logic.is_vhdl_expr:
+      if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME):
         continue
       # Dont write clock cross funcs
       if SW_LIB.IS_CLOCK_CROSSING(logic):

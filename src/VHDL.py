@@ -543,6 +543,7 @@ def C_TYPES_ARE_TYPE(c_types, the_type):
 def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
   # IS RAW VHDL
   if  (
+      logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME or
       logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_") or
@@ -1042,16 +1043,21 @@ def LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state):
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  i_need_clk = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  
+  i_need_clk = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable) or Logic.is_vhdl_text_module
   needs_clk = i_need_clk
+  # No need ot check subs if self needs already
+  if needs_clk:
+    return needs_clk
+  
   # Check submodules too
   for inst in Logic.submodule_instances:
     instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
     submodule_logic_name = Logic.submodule_instances[inst]
     submodule_logic = parser_state.LogicInstLookupTable[instance_name]
     needs_clk = needs_clk or LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
-  
+    if needs_clk: # got set
+      break
+      
   return needs_clk
   
 def LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
@@ -1067,7 +1073,22 @@ def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
   return needs_self_regs or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
   
-  
+def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    # Logic should have exactly one __vhdl__ func submodule to get text from
+    if len(Logic.submodule_instances) != 1:
+      print "Bad vhdl text sub count"
+      sys.exit(-1)
+    sub_func_name = Logic.submodule_instances.values()[0]
+    sub_inst_name = Logic.submodule_instances.keys()[0]
+    if sub_func_name != C_TO_LOGIC.VHDL_FUNC_NAME:
+      print "Bad vhdl text sub func name"
+      sys.exit(-1)      
+    c_ast_node = Logic.submodule_instance_to_c_ast_node[sub_inst_name]
+    text = c_ast_node.args.exprs[0].value.strip('"')[:]
+    # hacky replace two chars \n with single char '\n'
+    text = text.replace('\\' + 'n', '\n')
+    return text
+
 def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   if SW_LIB.IS_MEM(Logic):
     return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
@@ -1363,14 +1384,15 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   if needs_clk_cross_read or needs_clk_cross_write:
     rv += "use work.clk_cross_t_pkg.all;\n"
 
-  # Debug 
-  num_non_vhdl_expr_submodules = 0
-  for submodule_inst in Logic.submodule_instances:
-    submodule_func_name = Logic.submodule_instances[submodule_inst]
-    submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-    if not submodule_logic.is_vhdl_expr:
-      num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
-  rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
+  # Debug
+  if not Logic.is_vhdl_text_module:
+    num_non_vhdl_expr_submodules = 0
+    for submodule_inst in Logic.submodule_instances:
+      submodule_func_name = Logic.submodule_instances[submodule_inst]
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+      if not submodule_logic.is_vhdl_expr and not submodule_logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
+        num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
+    rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
   
   if not is_final_top:
     rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
@@ -1415,56 +1437,60 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
   else:
     rv += "architecture arch of " + Logic.func_name + " is" + "\n"
-  
-  # Get declarations for this arch
-  rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  
-  rv += "begin" + "\n"
+    
+  # VHDL func replaces arch decl and body
+  if Logic.is_vhdl_text_module:
+    rv += GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
+  else:
+    # Get declarations for this arch
+    rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
+    
+    rv += "begin" + "\n"
 
-  rv += "\n"
-  # Connect submodules
-  if len(Logic.submodule_instances) > 0:
-    rv += "-- SUBMODULE INSTANCES \n"
-    for inst in Logic.submodule_instances:
-      instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
-      submodule_logic_name = Logic.submodule_instances[inst]
-      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-      
-      # Skip VHDL
-      if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
-        continue 
-      # Skip clock crossing
-      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
-        continue
-      
-      new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
-      rv += "-- " + new_inst_name + "\n"
-
-      # ENTITY
-      submodule_timing_params = TimingParamsLookupTable[instance_name];
-      submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-      submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
-      rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
-      if submodule_needs_clk:
-        rv += "clk,\n"
-      # Inputs
-      for in_port in submodule_logic.inputs:
-        in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
-        rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
-      # Outputs
-      for out_port in submodule_logic.outputs:
-        out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-        rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
-      # Remove last two chars
-      rv = rv[0:len(rv)-2]
-      rv += ");\n\n"
+    rv += "\n"
+    # Connect submodules
+    if len(Logic.submodule_instances) > 0:
+      rv += "-- SUBMODULE INSTANCES \n"
+      for inst in Logic.submodule_instances:
+        instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+        submodule_logic_name = Logic.submodule_instances[inst]
+        submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
         
-  # Get the text that is actually the pipeline logic in this entity
-  rv += "\n"
-  rv += GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
+        # Skip VHDL
+        if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
+          continue 
+        # Skip clock crossing
+        if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+          continue
+        
+        new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
+        rv += "-- " + new_inst_name + "\n"
+
+        # ENTITY
+        submodule_timing_params = TimingParamsLookupTable[instance_name];
+        submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+        submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+        rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
+        if submodule_needs_clk:
+          rv += "clk,\n"
+        # Inputs
+        for in_port in submodule_logic.inputs:
+          in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+          rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+        # Outputs
+        for out_port in submodule_logic.outputs:
+          out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+          rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+        # Remove last two chars
+        rv = rv[0:len(rv)-2]
+        rv += ");\n\n"
+          
+    # Get the text that is actually the pipeline logic in this entity
+    rv += "\n"
+    rv += GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   
   # Done with entity
-  rv += "end arch;" + "\n"
+  rv += "\n" + "end arch;" + "\n"
 
   if not os.path.exists(output_directory):
     os.makedirs(output_directory)

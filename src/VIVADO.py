@@ -431,8 +431,8 @@ class ParsedTimingReport:
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
         if syn_output_line.endswith("unconnected port clk"):
           # Clock NOT OK to disconnect
-          print "Disconnected clock!?",syn_output_line
-          sys.exit(-1)
+          print "WARNING: Disconnected clock!?",syn_output_line
+          #sys.exit(-1)
         #else:
         #  print syn_output_line
         
@@ -675,7 +675,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
       logic_i = parser_state.LogicInstLookupTable[inst_name_i]
       # Write file text
       # ONly write non vhdl
-      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr:
+      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
         continue
       # Dont write clock cross
       if SW_LIB.IS_CLOCK_CROSSING(logic_i):

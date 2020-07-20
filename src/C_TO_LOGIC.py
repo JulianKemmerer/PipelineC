@@ -27,6 +27,7 @@ VAR_REF_ASSIGN_FUNC_NAME_PREFIX="VAR_REF_ASSIGN"
 VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
 CAST_FUNC_NAME_PREFIX = "CAST"
 BOOL_C_TYPE = "uint1_t"
+VHDL_FUNC_NAME = "__vhdl__"
 
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
@@ -302,7 +303,6 @@ def DICT_SET_VALUE_MERGE(self_d1,d2):
   return rv   
 
 
-#_removed_subs = []
 class Logic:
   def __init__(self):
     
@@ -313,18 +313,13 @@ class Logic:
     #~~~~~~~~~~~~~
     #~~~~  Zero plus zero is the lord's work ^^^^^^
     # ``            `````````
-    # of Montreal - St. Sebastian
-
+    # of Montreal - St. Sebastian    
     
     # FOR LOGIC IMPLEMENTED IN C THE STRINGS MUST BE C SAFE
     # (inst name adjust is after all the parsing so dont count SUBMODULE_MARKER)    
-    
     self.func_name = None # Function name
-    
-    
     # My containing func names (could be used in multiple places
     self.containing_funcs = set()
-    
     self.variable_names=set() # Unordered set original variable names  
     self.wires=set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
     self.inputs=[] # Ordered list of inputs ["a","b"] 
@@ -340,6 +335,8 @@ class Logic:
     self.is_vhdl_func = False
     # Is this logic implemented as a VHDL expression (also 0 clk)
     self.is_vhdl_expr = False
+    # Is this logic completely replaced with vhdl module text? (non-pipelineable global func like)
+    self.is_vhdl_text_module = False
     
     # Mostly for c built in C functions
     self.submodule_instance_to_c_ast_node = dict()
@@ -392,6 +389,7 @@ class Logic:
     rv.is_c_built_in = self.is_c_built_in
     rv.is_vhdl_func = self.is_vhdl_func
     rv.is_vhdl_expr = self.is_vhdl_expr
+    rv.is_vhdl_text_module = self.is_vhdl_text_module
     rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
     rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
     rv.wire_drives = self.DEEPCOPY_DICT_SET(self.wire_drives)
@@ -493,6 +491,23 @@ class Logic:
       self.is_vhdl_expr = self.is_vhdl_expr
     else:
       self.is_vhdl_expr = logic_b.is_vhdl_expr
+      
+    # VHDL text module status must match if set
+    if (self.is_vhdl_text_module is not None) and (logic_b.is_vhdl_text_module is not None):
+      if self.is_vhdl_text_module != logic_b.is_vhdl_text_module:
+        print "Cannot merge comb logic with mismatching is_vhdl_text_module !"
+        print self.func_name, self.is_vhdl_text_module
+        print logic_b.func_name, logic_b.is_vhdl_text_module
+        sys.exit(-1)
+      else:
+        self.is_vhdl_text_module = self.is_vhdl_text_module
+    # Otherwise use whichever is set
+    elif self.is_vhdl_text_module is not None:
+      self.is_vhdl_text_module = self.is_vhdl_text_module
+    else:
+      self.is_vhdl_text_module = logic_b.is_vhdl_text_module
+      
+    # TODO refactor all the above copypasta
       
     # Absorb true values of using globals
     self.uses_globals = self.uses_globals or logic_b.uses_globals
@@ -1239,6 +1254,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   output_port_name = RETURN_WIRE_NAME
   submodule_logic.outputs.append(RETURN_WIRE_NAME)
   output_wire_name = submodule_inst + SUBMODULE_MARKER + output_port_name
+  c_type = None
   if output_wire_name in containing_func_logic.wire_to_c_type:
     c_type = containing_func_logic.wire_to_c_type[output_wire_name]
   else:
@@ -1251,17 +1267,20 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
         sys.exit(-1)
       c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
     else:
-      print "containing_func_logic.func_name",containing_func_logic.func_name
-      print "output_wire_name",output_wire_name
-      #print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
-      for wire in containing_func_logic.wire_drives:
-        print wire,"=>",containing_func_logic.wire_drives[wire]
-      print "Input type to output type mapping assumption for built in submodule output "
-      print submodule_logic.func_name
-      sys.exit(-1)   
+      # Fine if vhdl func
+      if submodule_logic.func_name != VHDL_FUNC_NAME:
+        print "containing_func_logic.func_name",containing_func_logic.func_name
+        print "output_wire_name",output_wire_name
+        #print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
+        for wire in containing_func_logic.wire_drives:
+          print wire,"=>",containing_func_logic.wire_drives[wire]
+        print "Input type to output type mapping assumption for built in submodule output "
+        print submodule_logic.func_name
+        sys.exit(-1)   
   
   # Record output type
-  submodule_logic.wire_to_c_type[output_port_name]=c_type 
+  if c_type is not None:
+    submodule_logic.wire_to_c_type[output_port_name]=c_type 
   
   # Also do submodule instances for built in logic that is not raw VHDL
   if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name,input_types): 
@@ -4749,6 +4768,47 @@ def BUILD_INST_NAME(prepend_text,func_base_name, c_ast_node):
   inst_name = prepend_text + func_base_name + "[" + file_coord_str + "]"
   return inst_name
   
+def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
+  #print c_ast_func_call.coord
+  #casthelp(c_ast_func_call)
+  #sys.exit(-1)
+  
+  # One vhdl text func call marks logic - hello future me?
+  parser_state.existing_logic.is_vhdl_text_module = True
+  
+  # Mark as using globals, need to assume like needs_clk
+  parser_state.existing_logic.uses_globals = True
+  
+  func_name = str(c_ast_func_call.name.name)
+  #print "FUNC CALL:",func_name,c_ast_func_call.coord
+  func_base_name = func_name
+  func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
+  
+  # Return n arg func?
+  # Can use same func name and use submodule_instance_to_c_ast_node to get text?
+  
+  base_name_is_name = True
+  input_drivers = []
+  input_driver_types = []
+  input_port_names = []
+  output_driven_wire_names = driven_wire_names
+  
+  # Record output port type as the to_type
+  #output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+  #output_t = None
+  #parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
+  
+  return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+    prepend_text,
+    c_ast_func_call,
+    func_base_name,
+    base_name_is_name,
+    input_drivers,
+    input_driver_types,
+    input_port_names,
+    output_driven_wire_names,
+    parser_state)
+  
 def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   FuncLogicLookupTable = parser_state.FuncLogicLookupTable
   func_name = str(c_ast_func_call.name.name)
@@ -4756,6 +4816,12 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   func_base_name = func_name
   func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
   if not(func_name in FuncLogicLookupTable):
+    # Uhh.. lets check for some built in compiler things because
+    # stacking complexity without real planning is like totally rad
+    if func_name == VHDL_FUNC_NAME:
+      return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
+      
+    # Ok panic
     print "C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?"
     print c_ast_func_call.coord
     casthelp(c_ast_func_call)
@@ -5610,11 +5676,12 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   
   # Sanity check for return wire
   if parse_body:
-    if len(parser_state.existing_logic.submodule_instances) > 0:
-      for out_wire in parser_state.existing_logic.outputs:
-        if out_wire not in parser_state.existing_logic.wire_driven_by:
-          print "Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire
-          sys.exit(-1)
+    if not parser_state.existing_logic.is_vhdl_text_module:
+      if len(parser_state.existing_logic.submodule_instances) > 0:
+        for out_wire in parser_state.existing_logic.outputs:
+          if out_wire not in parser_state.existing_logic.wire_driven_by:
+            print "Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire
+            sys.exit(-1)
   
   # Write cache
   _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
@@ -5698,6 +5765,11 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   # Do for each submodule too
   for submodule_inst in func_logic.submodule_instances:
     submodule_func_name = func_logic.submodule_instances[submodule_inst]
+    
+    # Skip vhdl?
+    if submodule_func_name == VHDL_FUNC_NAME:
+      continue
+    
     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
     parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
     
