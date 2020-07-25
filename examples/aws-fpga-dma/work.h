@@ -3,14 +3,14 @@
 // 	Output data format
 // 	The actual computation 'work' to be done
 #pragma once
+#include "../../xstr.h" // Stringification for raw vhdl
 
 // Do work on inputs to form outputs
 
 // MATRIX MULT EXAMPLE
-
-#define DIM 32 //45^2 * 2 bytes ~=4096 dma bytes
+#define DIM 8 //45^2 * 2 bytes ~=4096 dma bytes
 #define data_t int16_t
-#define array_sum int16_array_sum32
+#define array_sum int16_array_sum8
 
 typedef struct work_inputs_t
 {
@@ -22,28 +22,22 @@ typedef struct work_outputs_t
   data_t result[DIM][DIM];
 } work_outputs_t;
 
-/*
-work_outputs_t work(work_inputs_t inputs)
-{
-  work_outputs_t outputs;
-  // Matrix mult
-  uint64_t i;
-  uint64_t j;
-  uint64_t k;
-  for (i = 0; i < DIM; i = i + 1) 
-  { 
-    for (j = 0; j < DIM; j = j + 1) 
+/* Basic algorithm from internet
+void multiply(int mat1[][N],  
+              int mat2[][N],  
+              int res[][N]) 
+{ 
+    int i, j, k; 
+    for (i = 0; i < N; i++) 
     { 
-      data_t res_k[DIM];
-      for (k = 0; k < DIM; k = k + 1)
-      {
-          res_k[k] = inputs.matrix0[i][k] * inputs.matrix1[k][j]; 
-      }
-      outputs.result[i][j] = array_sum(res_k);
+        for (j = 0; j < N; j++) 
+        { 
+            res[i][j] = 0; 
+            for (k = 0; k < N; k++) 
+                res[i][j] += mat1[i][k] *  
+                             mat2[k][j]; 
+        } 
     } 
-  }
-    
-  return outputs;
 }
 */
 
@@ -62,24 +56,21 @@ typedef struct elem_inputs_t
   row_pair_t row_pair[DIM][DIM];
 }elem_inputs_t;
 // Unpack the normal input matrices to row ordered elem_inputs_t
+#pragma MAIN_WIRES unpack
 elem_inputs_t unpack(work_inputs_t inputs)
 {
-  elem_inputs_t rv;
-  uint64_t i;
-  uint64_t j;
-  uint64_t k;
-  for (i = 0; i < DIM; i = i + 1) 
-  { 
-    for (j = 0; j < DIM; j = j + 1) 
-    { 
-      for (k = 0; k < DIM; k = k + 1)
-      {
-          rv.row_pair[i][j].data_0i[k] = inputs.matrix0[i][k];
-          rv.row_pair[i][j].data_1j[k] = inputs.matrix1[k][j]; 
-      }
-    }
-  }
-  return rv;
+  // For sake of compile time do loop in raw vhdl
+__vhdl__("\
+begin \n\
+  i_gen: for i in 0 to (" xstr(DIM) "-1) generate \n\
+    j_gen: for j in 0 to (" xstr(DIM) "-1) generate \n\
+      k_gen: for k in 0 to (" xstr(DIM) "-1) generate \n\
+          return_output.row_pair(i)(j).data_0i(k) <= inputs.matrix0(i)(k); \n\
+          return_output.row_pair(i)(j).data_1j(k) <= inputs.matrix1(k)(j);  \n\
+      end generate; \n\
+    end generate; \n\
+  end generate; \n\
+");
 }
 
 // Function to determine value of a single element in the result matrix

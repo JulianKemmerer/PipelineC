@@ -5831,6 +5831,7 @@ class ParserState:
     
     # Clock crossing info
     self.main_mhz = dict() # dict[main_func_name]=mhz
+    self.main_marked_wires = set()
     # Clock crossing read/write func to clock cross var name
     self.clk_cross_var_name_to_write_read_main_funcs = dict() # dict[var_name]= (write_main_func, read_main_func)
     self.clk_cross_var_name_to_write_read_sizes = dict() # dict[var_name] = (write size,read size)
@@ -5864,6 +5865,7 @@ class ParserState:
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
     
     rv.main_mhz = dict(self.main_mhz)
+    rv.main_marked_wires = set(self.main_marked_wires)
     rv.clk_cross_var_name_to_write_read_main_funcs = dict(self.clk_cross_var_name_to_write_read_main_funcs)
     rv.clk_cross_var_name_to_write_read_sizes = dict(self.clk_cross_var_name_to_write_read_sizes)
     
@@ -6519,6 +6521,12 @@ def APPEND_PRAGMA_INFO(parser_state):
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.main_marked_debug.add(main_func)
+      
+    # MAIN_WIRES
+    if pragma.string.startswith("MAIN_WIRES"):
+      toks = pragma.string.split(" ")
+      main_func = toks[1]
+      parser_state.main_marked_wires.add(main_func)
   
   # Sanity checks
   # MAIN_MHZ

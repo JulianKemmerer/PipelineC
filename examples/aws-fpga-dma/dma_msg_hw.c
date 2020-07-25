@@ -4,6 +4,7 @@
 // There is a message buffer for deserializing and another for serializing
 
 #include "../../axi.h"
+#include "../../xstr.h"
 #include "dma_msg.h"
 #include "dma_msg_s_array_N_t.h"
 
@@ -17,35 +18,33 @@ typedef struct dma_word_buffer_t
 } dma_word_buffer_t;
 
 // Unpack word array into byte array
+// Written as raw vhdl for faster compile time
+#pragma MAIN_WIRES dma_word_buffer_unpack
 dma_msg_t dma_word_buffer_unpack(dma_word_buffer_t word_buffer)
 {
-  // Unpack 2D byte array word buffer into long 1D output byte array
-  dma_msg_t msg;
-  uint32_t word_i;
-  uint32_t byte_i;
-  for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-  {
-    for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-    {
-      msg.data[(word_i*DMA_WORD_SIZE)+byte_i] = word_buffer.words[word_i][byte_i];
-    }
-  }
-  return msg;
+__vhdl__("\
+begin \n\
+  -- Unpack 2D byte array word buffer into long 1D output byte array \n\
+  word_i_gen : for word_i in 0 to (" xstr(DMA_MSG_WORDS) "-1) generate  \n\
+    byte_i_gen : for byte_i in 0 to (" xstr(DMA_WORD_SIZE) "-1) generate  \n\
+      return_output.data((word_i*" xstr(DMA_WORD_SIZE) ")+byte_i) <= word_buffer.words(word_i)(byte_i);  \n\
+    end generate; \n\
+  end generate; \n\
+  ");
 }
 // Pack byte array into word array buffer
+// Written as raw vhdl for faster compile time
+#pragma MAIN_WIRES dma_msg_pack
 dma_word_buffer_t dma_msg_pack(dma_msg_t msg)
 {
-  dma_word_buffer_t word_buffer;
-  uint32_t word_i;
-  uint32_t byte_i;
-  for(word_i=0;word_i<DMA_MSG_WORDS;word_i=word_i+1)
-  {
-    for(byte_i=0;byte_i<DMA_WORD_SIZE;byte_i=byte_i+1)
-    {
-      word_buffer.words[word_i][byte_i] = msg.data[(word_i*DMA_WORD_SIZE)+byte_i];
-    }
-  }
-  return word_buffer;
+__vhdl__("\
+begin \n\
+  word_i_gen : for word_i in 0 to (" xstr(DMA_MSG_WORDS) "-1) generate \n\
+    byte_i_gen : for byte_i in 0 to (" xstr(DMA_WORD_SIZE) "-1) generate \n\
+      return_output.words(word_i)(byte_i) <= msg.data((word_i*" xstr(DMA_WORD_SIZE) ")+byte_i);  \n\
+    end generate; \n\
+  end generate; \n\
+  ");
 }
 
 // Pre mimicing serializer and increasing latency to meet timing:

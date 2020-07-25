@@ -2518,7 +2518,9 @@ def GET_OUTPUT_DIRECTORY(Logic):
   return output_directory
   
 def LOGIC_IS_ZERO_DELAY(logic, parser_state):
-  if SW_LIB.IS_BIT_MANIP(logic):
+  if logic.func_name in parser_state.main_marked_wires:
+    return True
+  elif SW_LIB.IS_BIT_MANIP(logic):
     return True
   elif SW_LIB.IS_CLOCK_CROSSING(logic):
     return True # For now? How to handle paths through clock cross logic?

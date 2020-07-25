@@ -1087,6 +1087,7 @@ def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     text = c_ast_node.args.exprs[0].value.strip('"')[:]
     # hacky replace two chars \n with single char '\n'
     text = text.replace('\\' + 'n', '\n')
+    #print text
     return text
 
 def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
