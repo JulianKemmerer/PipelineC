@@ -8,9 +8,9 @@
 // Do work on inputs to form outputs
 
 // MATRIX MULT EXAMPLE
-#define DIM 8 //45^2 * 2 bytes ~=4096 dma bytes
+#define DIM 45 //45^2 * 2 bytes ~=4096 dma bytes
 #define data_t int16_t
-#define array_sum int16_array_sum8
+#define array_sum int16_array_sum45
 
 typedef struct work_inputs_t
 {
