@@ -19,7 +19,7 @@ typedef struct dma_word_buffer_t
 
 // Unpack word array into byte array
 // Written as raw vhdl for faster compile time
-#pragma MAIN_WIRES dma_word_buffer_unpack
+#pragma FUNC_WIRES dma_word_buffer_unpack
 dma_msg_t dma_word_buffer_unpack(dma_word_buffer_t word_buffer)
 {
 __vhdl__("\
@@ -34,7 +34,7 @@ begin \n\
 }
 // Pack byte array into word array buffer
 // Written as raw vhdl for faster compile time
-#pragma MAIN_WIRES dma_msg_pack
+#pragma FUNC_WIRES dma_msg_pack
 dma_word_buffer_t dma_msg_pack(dma_msg_t msg)
 {
 __vhdl__("\

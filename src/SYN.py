@@ -2518,7 +2518,7 @@ def GET_OUTPUT_DIRECTORY(Logic):
   return output_directory
   
 def LOGIC_IS_ZERO_DELAY(logic, parser_state):
-  if logic.func_name in parser_state.main_marked_wires:
+  if logic.func_name in parser_state.func_marked_wires:
     return True
   elif SW_LIB.IS_BIT_MANIP(logic):
     return True

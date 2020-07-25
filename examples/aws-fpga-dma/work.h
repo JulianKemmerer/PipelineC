@@ -56,7 +56,7 @@ typedef struct elem_inputs_t
   row_pair_t row_pair[DIM][DIM];
 }elem_inputs_t;
 // Unpack the normal input matrices to row ordered elem_inputs_t
-#pragma MAIN_WIRES unpack
+#pragma FUNC_WIRES unpack
 elem_inputs_t unpack(work_inputs_t inputs)
 {
   // For sake of compile time do loop in raw vhdl
