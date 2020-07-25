@@ -2513,7 +2513,12 @@ def GET_OUTPUT_DIRECTORY(Logic):
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)
-    output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
+    # hacky catch generated files from output dir already?
+    if src_file.startswith(SYN_OUTPUT_DIRECTORY+"/"):
+      output_directory = os.path.dirname(src_file)
+    else:
+      # Otherwise normal
+      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
     
   return output_directory
   

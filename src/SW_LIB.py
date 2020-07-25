@@ -141,7 +141,7 @@ def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files):
       array_type_header = array_type_header_str_quote.strip('"')
       toks = array_type_header.split("_array_")
       type_name = toks[0]
-      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_ARRAY_N_T_HEADER 
+      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_ARRAY_N_T_HEADER + "/" + type_name + "_array_N_t.h"
       path = dir_name + "/" + type_name + "_array_N_t.h"
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
@@ -158,7 +158,7 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files):
       bytes_header = bytes_header_str_quote.strip('"')
       toks = bytes_header.split("_bytes_t.h")
       type_name = toks[0]
-      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER 
+      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER + "/" + type_name + "_bytes_t.h"
       path = dir_name + "/" + type_name + "_bytes_t.h"
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
@@ -168,11 +168,7 @@ def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text):
   # Regex search c_text for <type>_bytes_t
   r="\w+_bytes_t"
   byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
-  
-  out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER
-  if not os.path.exists(out_dir):
-    os.makedirs(out_dir)    
-  
+
   # #define replacing  Typedef each one
   for byte_type in byte_types:
     #print "array_type",array_type
@@ -186,6 +182,9 @@ typedef uint8_t ''' + byte_type + ''';
 '''
 
     # Write file
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER + "/" + elem_t + "_bytes_t.h"
+    if not os.path.exists(out_dir):
+      os.makedirs(out_dir)    
     path = out_dir + "/" + elem_t + "_bytes_t.h"
     open(path,'w').write(text)
     
@@ -195,10 +194,6 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
   # Regex search c_text for <type>_bytes_t
   r="\w+_bytes_t"
   byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
-  
-  out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER
-  if not os.path.exists(out_dir):
-    os.makedirs(out_dir)    
   
   # #define replacing each one with array_n_t type
   for byte_type in byte_types:
@@ -219,10 +214,12 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     size_t_width = int(math.ceil(math.log(size,2))) + 1
     size_t = "uint" + str(size_t_width) + "_t"
     text += "#define " + type_t+"_size_t" + " " + size_t + "\n"
+    func_name = type_t + "_to_bytes"
     
     # Func type to bytes ###############################################
     text += '''
-''' + byte_type + " " + type_t + "_to_bytes(" + type_t + ''' x)
+#pragma FUNC_WIRES ''' + func_name + '''
+''' + byte_type + " " + func_name + "(" + type_t + ''' x)
 {
 ''' + byte_type + ''' rv;
 '''
@@ -306,8 +303,10 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
 '''
 
     # Func bytes to type ###############################################
+    func_name = "bytes_to_" + type_t
     text += '''
-''' + type_t + " bytes_to_" + type_t + "(" + byte_type + ''' bytes)
+#pragma FUNC_WIRES ''' + func_name + '''
+''' + type_t + " " + func_name + "(" + byte_type + ''' bytes)
 {
 ''' + type_t + ''' rv;
 '''
@@ -404,6 +403,9 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
 }'''
 
     # Write file
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_BYTES_T_HEADER + "/" + type_t + "_bytes_t.h"
+    if not os.path.exists(out_dir):
+      os.makedirs(out_dir)   
     path = out_dir + "/" + type_t + "_bytes_t.h"
     open(path,'w').write(text)
     
@@ -575,9 +577,7 @@ def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text):
   r="\w+_array_[0-9]+_t"
   array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
   
-  out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_ARRAY_N_T_HEADER
-  if not os.path.exists(out_dir):
-    os.makedirs(out_dir)    
+  
   text = "#pragma once\n"
   # Typedef each one
   for array_type in array_types:
@@ -592,6 +592,9 @@ typedef struct ''' + array_type + '''
 } ''' + array_type + ''';'''
 
     # Write file
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_ARRAY_N_T_HEADER + "/" + elem_t + "_array_N_t.h"
+    if not os.path.exists(out_dir):
+      os.makedirs(out_dir)    
     path = out_dir + "/" + elem_t + "_array_N_t.h"
     open(path,'w').write(text)
 
@@ -613,7 +616,7 @@ def IS_AUTO_GENERATED(logic):
            # and not logic.is_c_built_in ) or logic.func_name.startswith(
            
            
-# Bit manip occur sin bit manip fiel and is not the built in generated code
+# Bit manip occurs in bit manip fiel and is not the built in generated code
 def IS_BIT_MANIP(logic):
   rv = str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE) and not logic.is_c_built_in  
   return rv

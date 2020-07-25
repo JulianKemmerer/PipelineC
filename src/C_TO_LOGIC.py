@@ -72,10 +72,25 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
   if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
     path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
   for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
-    path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir]
-
+    # Include the header dir - maybe future wanted idk?
+    path_str = SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir
+    path_list += ["-I" + path_str]
+    # But also anything else? idk hacky
+    for thing in os.listdir(path_str):
+      #os.isdir wasnt working?
+      thing_path = path_str + "/" + thing
+      isdir = True
+      try:
+        os.listdir(thing_path)
+      except:
+        isdir = False
+      if isdir:
+        path_list += ["-I" + thing_path]
+      
   # Finally the file
   path_list += [filename]
+  
+  #print "path_list",path_list
 
   try:
     # Note the use of universal_newlines to treat all newlines
