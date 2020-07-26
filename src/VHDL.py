@@ -1016,12 +1016,16 @@ def LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state):
   
   # Check submodules too
   needs_clk_cross_read = i_need_clk_cross_readput
+  if needs_clk_cross_read:
+    return True
   for inst in Logic.submodule_instances:
     submodule_logic_name = Logic.submodule_instances[inst]
     # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
       needs_clk_cross_read = needs_clk_cross_read or LOGIC_NEEDS_CLOCK_CROSS_READ(submodule_logic, parser_state)
+      if needs_clk_cross_read:
+        return True
     
   return needs_clk_cross_read
   
@@ -1031,12 +1035,16 @@ def LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state):
   
   # Check submodules too
   needs_clk_cross_write = i_need_clk_cross_writeput
+  if needs_clk_cross_write:
+    return True
   for inst in Logic.submodule_instances:
     submodule_logic_name = Logic.submodule_instances[inst]
     # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
       needs_clk_cross_write = needs_clk_cross_write or LOGIC_NEEDS_CLOCK_CROSS_WRITE(submodule_logic, parser_state)
+      if needs_clk_cross_write:
+        return True
     
   return needs_clk_cross_write
   
