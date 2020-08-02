@@ -52,7 +52,7 @@ class MultiMainTimingParams:
       # TimingParamsLookupTable == None 
       # means these slices go through global code
       if type(new_TimingParamsLookupTable) is not dict:
-        print "Can't syn when slicing through globals!"
+        print("Can't syn when slicing through globals!")
         return None, None, None, None
     # Use the new params
     self.TimingParamsLookupTable = new_TimingParamsLookupTable
@@ -72,9 +72,9 @@ class MultiMainTimingParams:
       total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, self.TimingParamsLookupTable)
       #print "Latency (clocks):",total_latency
       if len(timing_params.slices) != total_latency:
-        print "Calculated total latency based on timing params does not match latency from number of slices?"
-        print " current_slices:",slices
-        print " total_latency",total_latency
+        print("Calculated total latency based on timing params does not match latency from number of slices?")
+        print(" current_slices:",slices)
+        print(" total_latency",total_latency)
         sys.exit(-1)
   
   def GET_HASH_EXT(self, parser_state):
@@ -84,7 +84,7 @@ class MultiMainTimingParams:
       timing_params = self.TimingParamsLookupTable[main_func]
       top_level_str += str(timing_params.slices)
     s = top_level_str
-    hash_ext = "_" + ((hashlib.md5(s).hexdigest())[0:4]) #4 chars enough?
+    hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
     return hash_ext
 
 # These are the parameters that describe how a pipeline should be formed
@@ -157,12 +157,12 @@ class TimingParams:
     
   def ADD_SLICE(self, slice_point):     
     if slice_point > 1.0:
-      print "Slice > 1.0?",slice_point
+      print("Slice > 1.0?",slice_point)
       sys.exit(-1)
       slice_point = 1.0
     if slice_point < 0.0:
-      print "Slice < 0.0?",slice_point
-      print 0/0
+      print("Slice < 0.0?",slice_point)
+      print(0/0)
       sys.exit(-1)
       slice_point = 0.0
 
@@ -172,8 +172,8 @@ class TimingParams:
     self.INVALIDATE_CACHE()
     
     if self.calcd_total_latency is not None:
-      print "WTF adding a slice and has latency cache?",self.calcd_total_latency
-      print 0/0
+      print("WTF adding a slice and has latency cache?",self.calcd_total_latency)
+      print(0/0)
       sys.exit(-1)
     
   def SET_RAW_HDL_SLICE(self, slice_index, slice_point):
@@ -230,7 +230,7 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable):
 
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
-  key = Logic.func_name
+  key = Logic.__name__
   
   has_delay = True
   # Only need to check submodules, not self
@@ -238,12 +238,12 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     func_name = Logic.submodule_instances[sub_inst]
     sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
     if sub_func_logic.delay is None:
-      print sub_func_logic.func_name
+      print(sub_func_logic.__name__)
       has_delay = False
       break
   if not has_delay:
-    print "Can't get zero clock pipeline map without delay?" 
-    print 0/0
+    print("Can't get zero clock pipeline map without delay?") 
+    print(0/0)
     sys.exit(-1)
     
   # Try cache
@@ -252,8 +252,8 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     #print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
     
     # Sanity?
-    if rv.logic.func_name != Logic.func_name:
-      print "Zero clock cache no mactho"
+    if rv.logic.__name__ != Logic.__name__:
+      print("Zero clock cache no mactho")
       sys.exit(-1)
     
     return rv
@@ -356,9 +356,9 @@ class PipelineMap:
 # 
 def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):  
   # RAW HDL doesnt need this
-  if len(logic.submodule_instances) <= 0 and logic.func_name not in parser_state.main_mhz:
-    print "DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!"
-    print 0/0
+  if len(logic.submodule_instances) <= 0 and logic.__name__ not in parser_state.main_mhz:
+    print("DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!")
+    print(0/0)
     sys.exit(-1)
     
   # FORGIVE ME - never
@@ -374,10 +374,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   #print_debug = print_debug and (est_total_latency>0)
   
   if print_debug:
-    print "==============================Getting pipeline map======================================="
-    print "GET_PIPELINE_MAP:"
-    print "inst_name",inst_name
-    print "logic.func_name",logic.func_name
+    print("==============================Getting pipeline map=======================================")
+    print("GET_PIPELINE_MAP:")
+    print("inst_name",inst_name)
+    print("logic.func_name",logic.__name__)
     #print "logic.submodule_instances:",logic.submodule_instances
   
   # Delay stuff was hacked into here and only works for combinatorial logic
@@ -393,8 +393,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   is_zero_clk_has_delay = is_zero_clk and has_delay
 
   if print_debug:
-    print "timing_params.slices",timing_params.slices
-    print "is_zero_clk_has_delay",is_zero_clk_has_delay
+    print("timing_params.slices",timing_params.slices)
+    print("is_zero_clk_has_delay",is_zero_clk_has_delay)
     
   # Keep track of submodules whos inputs are fully driven
   fully_driven_submodule_inst_2_logic = dict()
@@ -442,12 +442,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
   delay_offset_when_driven = dict()
-  for wire_driven_so_far in wires_driven_by_so_far.keys():
+  for wire_driven_so_far in list(wires_driven_by_so_far.keys()):
     delay_offset_when_driven[wire_driven_so_far] = 0 # Is per stage value but we know is start of stage 0 
   
   # Start with wires that have drivers
   last_wires_starting_level = None
-  wires_starting_level=wires_driven_by_so_far.keys()[:] 
+  wires_starting_level=list(wires_driven_by_so_far.keys())[:] 
   next_wires_to_follow=[]
 
   # Bound on latency for sanity
@@ -461,18 +461,18 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     for output in logic.outputs:
       if (output not in wires_driven_by_so_far) or (wires_driven_by_so_far[output]==None):
         if print_debug:
-          print "Pipeline not done output.",output
+          print("Pipeline not done output.",output)
         return False
       if print_debug:
-        print "Output driven ", output, "<=",wires_driven_by_so_far[output]
+        print("Output driven ", output, "<=",wires_driven_by_so_far[output])
     # ALl globals driven
     for global_wire in logic.global_wires:
       if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
         if print_debug:
-          print "Pipeline not done global.",global_wire
+          print("Pipeline not done global.",global_wire)
         return False
       if print_debug:
-        print "Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire]
+        print("Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire])
     # ALl voltatile globals driven
     # Some volatiles are read only - ex. valid indicator bit
     # And thus are never driven
@@ -482,19 +482,19 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # Has a driving wire so must be driven for func to be done
         if (volatile_global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[volatile_global_wire]==None):
           if print_debug:
-            print "Pipeline not done volatile global.",volatile_global_wire
+            print("Pipeline not done volatile global.",volatile_global_wire)
           return False
       if print_debug:
-        print "Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire]
+        print("Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire])
     
     # All other wires driven?
     for wire in logic.wires:
       if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire,parser_state.FuncLogicLookupTable): # None is OK? since only use for globals and inputs and such?
         if print_debug:
-          print "Pipeline not done wire.",wire
+          print("Pipeline not done wire.",wire)
         return False
       if print_debug:
-        print "Wire driven ", wire, "<=",wires_driven_by_so_far[wire]
+        print("Wire driven ", wire, "<=",wires_driven_by_so_far[wire])
         
     return True
   
@@ -502,8 +502,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   while not PIPELINE_DONE():      
     # Print stuff and set debug if obviously wrong
     if (stage_num >= max_possible_latency_with_extra):
-      print "Something is wrong here, infinite loop probably..."
-      print "inst_name", inst_name
+      print("Something is wrong here, infinite loop probably...")
+      print("inst_name", inst_name)
       #print 0/0
       sys.exit(-1)
     elif (stage_num >= max_possible_latency+1):
@@ -511,7 +511,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       print_debug = True
       
     if print_debug:
-      print "STAGE NUM =", stage_num
+      print("STAGE NUM =", stage_num)
 
     rv.per_stage_texts[stage_num] = []
     submodule_level = 0
@@ -520,7 +520,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       submodule_level_text = ""
             
       if print_debug:
-        print "SUBMODULE LEVEL",submodule_level
+        print("SUBMODULE LEVEL",submodule_level)
       
       #########################################################################################
       # THIS WHILE LOOP FOLLOWS WIRES TO SUBMODULES
@@ -534,7 +534,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         wires_to_follow = sorted(wires_to_follow)
         for driving_wire in wires_to_follow:
           if bad_inf_loop:
-            print "driving_wire",driving_wire
+            print("driving_wire",driving_wire)
           
           # Record driving wire as being driven?
           if driving_wire not in wires_driven_by_so_far:
@@ -549,17 +549,17 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           if driving_wire in logic.wire_drives:
             driven_wires = logic.wire_drives[driving_wire]
             if bad_inf_loop:
-              print "driven_wires",driven_wires
+              print("driven_wires",driven_wires)
               
             # Sort for easy debug
             driven_wires = sorted(driven_wires)
             for driven_wire in driven_wires:
               if bad_inf_loop:
-                print "handling driven wire", driven_wire
+                print("handling driven wire", driven_wire)
                 
               if not(driven_wire in logic.wire_driven_by):
                 # In
-                print "!!!!!!!!!!!! DANGLING LOGIC???????",driven_wire, "is not driven!?"
+                print("!!!!!!!!!!!! DANGLING LOGIC???????",driven_wire, "is not driven!?")
                 continue
                             
               # Add driven wire to wires driven so far
@@ -647,7 +647,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if driving_wire not in wires_driven_by_so_far:
               submodule_has_all_inputs_driven = False
               if bad_inf_loop:
-                print "!! " + submodule_inst + " input wire " + input_port_name + " not driven yet"
+                print("!! " + submodule_inst + " input wire " + input_port_name + " not driven yet")
                 #print " is driven by", driving_wire
                 #print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
                 #print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
@@ -660,7 +660,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             fully_driven_submodule_inst_this_level_2_logic[submodule_inst] = submodule_logic
             not_fully_driven_submodules.remove(submodule_inst)
             if bad_inf_loop:
-              print "submodule",submodule_inst, "HAS ALL INPUTS DRIVEN"
+              print("submodule",submodule_inst, "HAS ALL INPUTS DRIVEN")
 
 
             # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -687,16 +687,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
               submodule_delay = parser_state.LogicInstLookupTable[submodule_inst_name].delay
               if submodule_delay is None:
-                print "What cant do this without delay!"
+                print("What cant do this without delay!")
                 sys.exit(-1)
               submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)
               
               
               # Sanity?
               if submodule_latency > 0:
-                print "What non zero latency for pipeline map? FIX MEhow? Probably dont fix now since fractional delay dont/cant make sense yet?"
+                print("What non zero latency for pipeline map? FIX MEhow? Probably dont fix now since fractional delay dont/cant make sense yet?")
                 #HOW TO ALLOCATE delay?
-                print 0/0
+                print(0/0)
                 sys.exit(-1)
               # End offset is start offset plus delay
               # Ex. 0 delay in offset 0 
@@ -716,9 +716,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 end_offset = rv.zero_clk_submodule_end_offset[submodule_inst]
                 for abs_delay in range(start_offset,end_offset+1):
                   if abs_delay < 0:
-                    print "<0 delay offset?"
-                    print start_offset,end_offset
-                    print delay_offset_when_driven
+                    print("<0 delay offset?")
+                    print(start_offset,end_offset)
+                    print(delay_offset_when_driven)
                     sys.exit(-1)
                   # Submodule isnts
                   if not(abs_delay in rv.zero_clk_per_delay_submodules_map):
@@ -732,20 +732,20 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           else:
             # Otherwise save for later
             if bad_inf_loop:
-              print "submodule",submodule_inst, "does not have all inputs driven yet"
+              print("submodule",submodule_inst, "does not have all inputs driven yet")
             
         else:
           #if not already_fully_driven and not incorrect_stage_for_submodule:
           if print_debug:
             if not already_fully_driven:
-              print "submodule",submodule_inst
-              print "already_fully_driven",already_fully_driven
+              print("submodule",submodule_inst)
+              print("already_fully_driven",already_fully_driven)
               #if submodule_inst in timing_params.submodule_to_start_stage:
               # print "incorrect_stage_for_submodule",incorrect_stage_for_submodule," = ",stage_num, "stage_num != ", timing_params.submodule_to_start_stage[submodule_inst]
           
       #print "got input driven submodules, wires_driven_by_so_far",wires_driven_by_so_far
       if bad_inf_loop:
-        print "fully_driven_submodule_inst_this_level_2_logic",fully_driven_submodule_inst_this_level_2_logic
+        print("fully_driven_submodule_inst_this_level_2_logic",fully_driven_submodule_inst_this_level_2_logic)
       #/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\
       
       # Im dumb
@@ -779,17 +779,17 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           # Construct the name of this wire in the original logic
           submodule_output_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
           if bad_inf_loop:
-            print "following output",submodule_output_wire
+            print("following output",submodule_output_wire)
           # Add this output port wire on the submodule after the latency of the submodule
           if bad_inf_loop:
-            print "submodule_output_wire",submodule_output_wire
+            print("submodule_output_wire",submodule_output_wire)
           wire_to_remaining_clks_before_driven[submodule_output_wire] = submodule_latency_from_container_logic
           
           # Sanity?
           submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
           submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)
           if submodule_latency != submodule_latency_from_container_logic:
-            print "submodule_latency != submodule_latency_from_container_logic"
+            print("submodule_latency != submodule_latency_from_container_logic")
             sys.exit(-1)
             
           # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -797,7 +797,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           if is_zero_clk_has_delay:
             # Assume zero latency fix me
             if submodule_latency != 0:
-              print "non zero submodule latency? fix me"
+              print("non zero submodule latency? fix me")
               sys.exit(-1)
             # Set delay offset for this wire
             submodule_delay = parser_state.LogicInstLookupTable[submodule_inst_name].delay
@@ -830,7 +830,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # Append text to dict entry
         rv.per_stage_texts[stage_num][submodule_level] += submodule_level_text
         if print_debug:
-          print submodule_level_text
+          print(submodule_level_text)
           
       # Sometimes submodule levels iterations dont have submodules as we iterate driving wires / for multiple clks
       # Only update counters if was real submodule level with submodules
@@ -849,7 +849,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         if wire_to_remaining_clks_before_driven[wire]==0:
           if wire not in wires_driven_by_so_far:
             if bad_inf_loop:
-              print "wire remaining clks done, is driven now",wire
+              print("wire remaining clks done, is driven now",wire)
             
             driving_wire = None
             if wire in logic.wire_driven_by:
@@ -865,8 +865,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # Record these last wires starting level and loop again
         # This is dumb and probably doesnt work?
         if last_wires_starting_level == wires_starting_level:
-          print "Same wires starting level?"
-          print wires_starting_level
+          print("Same wires starting level?")
+          print(wires_starting_level)
           #if print_debug:
           sys.exit(-1)
           #print_debug = True
@@ -878,7 +878,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if is_zero_clk_has_delay:
       # Get max delay
-      if len(rv.zero_clk_per_delay_submodules_map.keys()) == 0:
+      if len(list(rv.zero_clk_per_delay_submodules_map.keys())) == 0:
         rv.zero_clk_max_delay = 0
       else:
         rv.zero_clk_max_delay = max(rv.zero_clk_per_delay_submodules_map.keys()) +1 # +1 since 0 indexed
@@ -900,12 +900,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       # Sanity check that output is driven in last stage
       my_total_latency = stage_num - 1
       if PIPELINE_DONE() and (my_total_latency!= est_total_latency):
-        print "Seems like pipeline is done before or after last stage?" 
-        print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-        print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
-        print "timing_params.slices",timing_params.slices
+        print("Seems like pipeline is done before or after last stage?") 
+        print("inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state))
+        print("est_total_latency",est_total_latency, "calculated total_latency",my_total_latency)
+        print("timing_params.slices",timing_params.slices)
         #print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage 
-        print 0/0
+        print(0/0)
         sys.exit(-1)
         print_debug = True
   
@@ -919,10 +919,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     
   # Sanity check against estimate
   if est_total_latency != my_total_latency:
-    print "BUG IN PIPELINE MAP!"
-    print "inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-    print "est_total_latency",est_total_latency, "calculated total_latency",my_total_latency
-    print "timing_params.slices5",timing_params.slices
+    print("BUG IN PIPELINE MAP!")
+    print("inst_name",inst_name, timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state))
+    print("est_total_latency",est_total_latency, "calculated total_latency",my_total_latency)
+    print("timing_params.slices5",timing_params.slices)
     #print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage
     sys.exit(-1)
     
@@ -939,7 +939,7 @@ def BUILD_HASH_EXT(inst_name, Logic, TimingParamsLookupTable, parser_state):
   # Dont need to go down into submodules
   s = top_level_str
       
-  hash_ext = "_" + ((hashlib.md5(s).hexdigest())[0:4]) #4 chars enough?
+  hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
     
   return hash_ext
   
@@ -976,14 +976,14 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   if logic.uses_globals:
     # Can't slice globals, return index of bad slice
     if print_debug:
-      print "Can't slice, uses globals"
+      print("Can't slice, uses globals")
     return slice_index
   
   # Double check slice
   est_total_latency = len(timing_params.slices)
   
   if print_debug:
-    print "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", inst_name, new_slice_pos, "write_files",write_files
+    print("SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES", inst_name, new_slice_pos, "write_files",write_files)
   
 
   # Shouldnt need debug for zero clock?
@@ -998,9 +998,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
     epsilon = SLICE_EPSILON(total_delay)
     
     # Sanity?
-    if logic.func_name != zero_clk_pipeline_map.logic.func_name:
-      print "Zero clk inst name:",zero_clk_pipeline_map.logic.func_name
-      print "Wtf using pipeline map from other func?"
+    if logic.__name__ != zero_clk_pipeline_map.logic.__name__:
+      print("Zero clk inst name:",zero_clk_pipeline_map.logic.__name__)
+      print("Wtf using pipeline map from other func?")
       sys.exit(-1)
     
     # Get the offset as float
@@ -1113,8 +1113,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
         submodule_total_delay = submodule_logic.delay
         slice_pos = float(local_offset_w_decimal) / float(submodule_total_delay)      
         if print_debug:
-          print " Slicing:", submodule_inst
-          print "   @", slice_pos
+          print(" Slicing:", submodule_inst)
+          print("   @", slice_pos)
             
         # Slice into that submodule
         skip_boundary_slice = False
@@ -1124,11 +1124,11 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
         if type(TimingParamsLookupTable) is int:
           # Slice into submodule was bad
           if print_debug:
-            print "Adding slice",slice_pos
-            print "To", submodule_inst
-            print "Submodule Slice index", TimingParamsLookupTable
-            print "Container slice index", slice_index
-            print "Was bad"
+            print("Adding slice",slice_pos)
+            print("To", submodule_inst)
+            print("Submodule Slice index", TimingParamsLookupTable)
+            print("Container slice index", slice_index)
+            print("Was bad")
           # Return the slice in the container that was bad
           return slice_index
         
@@ -1157,14 +1157,14 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
     if rounding_so_fuck_it:
       # Return bad slice
       if print_debug:
-        print "Rounding so allowed to fail latency test with bad slice index", slice_index
+        print("Rounding so allowed to fail latency test with bad slice index", slice_index)
       return slice_index
     else:
-      print "Not doing dumb global fuckery but still bad slicing?"
-      print "inst_name",inst_name
-      print "Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency
-      print "Adding new slice:2", new_slice_pos
-      print "timing_params.slices2",timing_params.slices
+      print("Not doing dumb global fuckery but still bad slicing?")
+      print("inst_name",inst_name)
+      print("Did not slice down hierarchy right!?2 est_total_latency",est_total_latency, "calculated total_latency",total_latency)
+      print("Adding new slice:2", new_slice_pos)
+      print("timing_params.slices2",timing_params.slices)
       sys.exit(-1)
   
   
@@ -1193,9 +1193,9 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   total_latency = total_latency_maybe_recalc
     
   if est_total_latency != total_latency:
-    print "Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency
-    print "current slices:",current_slices
-    print "timing_params.slices",timing_params.slices   
+    print("Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency)
+    print("current slices:",current_slices)
+    print("timing_params.slices",timing_params.slices)   
     sys.exit(-1)
   
   return TimingParamsLookupTable
@@ -1208,8 +1208,8 @@ def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state, do_get_stag
   # Then run syn
   timing_report = VIVADO.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
   if timing_report.start_reg_name is None:
-    print timing_report.orig_text
-    print "Using a bad syn log file?"
+    print(timing_report.orig_text)
+    print("Using a bad syn log file?")
     sys.exit(-1)
   
   # Get stage range and main_funcs from timing report
@@ -1263,14 +1263,14 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
   cached_sweep_state = GET_MOST_RECENT_CACHED_SWEEP_STATE()
   sweep_state = None
   if not(cached_sweep_state is None):
-    print "Using cached most recent sweep state..."
+    print("Using cached most recent sweep state...")
     sweep_state = cached_sweep_state
   else:
-    print "Starting with blank sweep state..."
+    print("Starting with blank sweep state...")
     sweep_state = SweepState()
     # Set defaults
     sweep_state.multimain_timing_params = multimain_timing_params
-    print "...determining slicing information for each main function..."
+    print("...determining slicing information for each main function...")
     for func_name in parser_state.main_mhz:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       sweep_state.func_sweep_state[func_name] = LogicSweepState()
@@ -1294,7 +1294,7 @@ def GET_MOST_RECENT_CACHED_SWEEP_STATE():
   if len(sweep_files) > 0 :
     #print "sweep_files",sweep_files
     sweep_files.sort(key=os.path.getmtime)
-    print sweep_files[-1] # most recent file
+    print(sweep_files[-1]) # most recent file
     most_recent_sweep_file = sweep_files[-1]
     
     with open(most_recent_sweep_file, 'rb') as input:
@@ -1318,7 +1318,7 @@ def WRITE_SWEEP_STATE_CACHE_FILE(sweep_state, parser_state):
     os.makedirs(output_directory)
     
   # Write file
-  with open(filepath, 'w') as output:
+  with open(filepath, 'wb') as output:
     pickle.dump(state, output, pickle.HIGHEST_PROTOCOL)
 
 def SHIFT_SLICE(slices, index, direction, amount,min_dist):
@@ -1338,7 +1338,7 @@ def SHIFT_SLICE(slices, index, direction, amount,min_dist):
     new_slice = curr_slice - amount
     
   else:
-    print "WHATATSTDTSTTTS"
+    print("WHATATSTDTSTTTS")
     sys.exit(-1)
     
     
@@ -1358,7 +1358,7 @@ def SHIFT_SLICE(slices, index, direction, amount,min_dist):
         new_slice = slice_i + min_dist # slightly to right of matching slice
         
       else:
-        print "WHATATSTD$$$$TSTTTS"
+        print("WHATATSTD$$$$TSTTTS")
         sys.exit(-1)
       break
   
@@ -1411,7 +1411,7 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
   # Debug?
   print_debug = False
   if print_debug:
-    print "Rounding:", current_slices
+    print("Rounding:", current_slices)
   
   total_delay = sweep_state.func_sweep_state[sweep_state.curr_main_func].zero_clk_pipeline_map.zero_clk_max_delay
   epsilon = SLICE_EPSILON(total_delay)
@@ -1428,15 +1428,15 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
     
     
     if print_debug:
-      print "Trying slices:", working_slices
+      print("Trying slices:", working_slices)
     
     # Try to find next bad slice
     bad_slice_or_params_OLD = bad_slice_or_params
     bad_slice_or_params = ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(sweep_state.curr_main_func, parser_state.FuncLogicLookupTable[sweep_state.curr_main_func], working_slices, parser_state, None, write_files=False, rounding_so_fuck_it=True)
   
     if bad_slice_or_params == bad_slice_or_params_OLD:
-      print "Looped working on bad_slice_or_params_OLD",bad_slice_or_params_OLD
-      print "And didn't change?"
+      print("Looped working on bad_slice_or_params_OLD",bad_slice_or_params_OLD)
+      print("And didn't change?")
       sys.exit(-1)
   
     if type(bad_slice_or_params) is dict:
@@ -1448,15 +1448,15 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
       bad_slice = bad_slice_or_params
       
       if print_debug:
-        print "Bad slice index:", bad_slice
+        print("Bad slice index:", bad_slice)
       
       # Done too much?
       # If and slice index has been adjusted twice something is wrong and give up
       for slice_index in range(0,len(current_slices)):
         if seen_bad_slices.count(slice_index) >= 2:
-          print "current_slices",current_slices
-          print "Wtf? Can't round away from globals?"
-          print "TODO: Fix dummy."
+          print("current_slices",current_slices)
+          print("Wtf? Can't round away from globals?")
+          print("TODO: Fix dummy.")
           sys.exit(-1)
           #return None
           print_debug = True # WTF???
@@ -1483,11 +1483,11 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
         pushed_right_slices = sorted(pushed_right_slices)
         
         if print_debug:
-          print "working_slices",working_slices
-          print "total_delay",total_delay
-          print "sweep_state.func_sweep_state[sweep_state.curr_main_func].slice_step",sweep_state.func_sweep_state[sweep_state.curr_main_func].slice_step
-          print "pushed_left_slices",pushed_left_slices
-          print "pushed_right_slices",pushed_right_slices
+          print("working_slices",working_slices)
+          print("total_delay",total_delay)
+          print("sweep_state.func_sweep_state[sweep_state.curr_main_func].slice_step",sweep_state.func_sweep_state[sweep_state.curr_main_func].slice_step)
+          print("pushed_left_slices",pushed_left_slices)
+          print("pushed_right_slices",pushed_right_slices)
           
           
         # Try left and right
@@ -1497,14 +1497,14 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
         if (type(left_bad_slice_or_params) is type(0)) and (left_bad_slice_or_params != bad_slice):
           # Got different bad slice, use pushed slices as working
           if print_debug:
-            print "bad left slice", left_bad_slice_or_params
+            print("bad left slice", left_bad_slice_or_params)
           bad_slice = left_bad_slice_or_params
           working_slices = pushed_left_slices[:]
           break
         elif (type(right_bad_slice_or_params) is type(0)) and (right_bad_slice_or_params != bad_slice):
           # Got different bad slice, use pushed slices as working
           if print_debug:
-            print "bad right slice", right_bad_slice_or_params
+            print("bad right slice", right_bad_slice_or_params)
           bad_slice = right_bad_slice_or_params
           working_slices = pushed_right_slices[:]
           break
@@ -1513,31 +1513,31 @@ def ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(current_slices, parser_state, sweep_stat
           working_params_dict = left_bad_slice_or_params
           working_slices = pushed_left_slices[:]
           if print_debug:
-            print "Shift to left worked!"
+            print("Shift to left worked!")
           break
         elif type(right_bad_slice_or_params) is dict:
           # Worked
           working_params_dict = right_bad_slice_or_params
           working_slices = pushed_right_slices[:]
           if print_debug:
-            print "Shift to right worked!"
+            print("Shift to right worked!")
           break
         elif (type(left_bad_slice_or_params) is type(0)) and (type(right_bad_slice_or_params) is type(0)):
           # Slices are still bad, keep pushing
           if print_debug:
-            print "Slices are still bad, keep pushing"
-            print "left_bad_slice_or_params",left_bad_slice_or_params
-            print "right_bad_slice_or_params",right_bad_slice_or_params
+            print("Slices are still bad, keep pushing")
+            print("left_bad_slice_or_params",left_bad_slice_or_params)
+            print("right_bad_slice_or_params",right_bad_slice_or_params)
                         
           #print "WHAT"
           #print left_bad_slice_or_params, right_bad_slice_or_params
           pass
         else:
-          print "pushed_left_slices",pushed_left_slices
-          print "pushed_right_slices",pushed_right_slices
-          print "left_bad_slice_or_params",left_bad_slice_or_params
-          print "right_bad_slice_or_params",right_bad_slice_or_params
-          print "WTF?"
+          print("pushed_left_slices",pushed_left_slices)
+          print("pushed_right_slices",pushed_right_slices)
+          print("left_bad_slice_or_params",left_bad_slice_or_params)
+          print("right_bad_slice_or_params",right_bad_slice_or_params)
+          print("WTF?")
           sys.exit(-1)
       
       
@@ -1688,7 +1688,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     return sweep_state
   
   # Round slices and try again
-  print "Rounding slices for syn..."
+  print("Rounding slices for syn...")
   old_possible_adjusted_slices = possible_adjusted_slices[:]
   possible_adjusted_slices = []
   for slices in old_possible_adjusted_slices:
@@ -1696,9 +1696,9 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     if rounded_slices not in possible_adjusted_slices:
       possible_adjusted_slices.append(rounded_slices)
   
-  print "Slices after rounding:"
+  print("Slices after rounding:")
   for slices in possible_adjusted_slices: 
-    print slices
+    print(slices)
   
   slices_to_multimain_timing_params = dict()
   slices_to_syn_tup = dict()
@@ -1717,13 +1717,13 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
   # Collect all the results
   for slices in possible_adjusted_slices:
     my_async_result = slices_to_thread[str(slices)]
-    print "...Waiting on synthesis for slices:", slices
+    print("...Waiting on synthesis for slices:", slices)
     my_syn_tup = my_async_result.get()
     slices_to_syn_tup[str(slices)] = my_syn_tup
   
   
   # Check that each result isnt the same (only makes sense if > 1 elements)
-  syn_tups = slices_to_syn_tup.values()
+  syn_tups = list(slices_to_syn_tup.values())
   datapath_delays = []
   for syn_tup in syn_tups:
     syn_tup_main_func, syn_tup_stage_range, syn_tup_timing_report = syn_tup
@@ -1732,7 +1732,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
   
   if all_same_delays:
     # Cant pick best
-    print "All adjustments yield same result..."
+    print("All adjustments yield same result...")
     return sweep_state # was deep copy
   else:
     # Pick the best result
@@ -1750,13 +1750,13 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
       # Only if Changed Mhz / changed critical path
       if syn_tup_timing_report.path_delay != curr_delay:
         mhz = 1000.0 / syn_tup_timing_report.path_delay
-        print " ", slices, "MHz:", mhz
+        print(" ", slices, "MHz:", mhz)
         if (mhz > best_mhz) :
           best_mhz = mhz
           best_slices = slices
           best_syn_tup = syn_tup
     if best_mhz == 0:
-      print "All adjustments yield same (equal to current) result..."
+      print("All adjustments yield same (equal to current) result...")
       return sweep_state # unchanged state, no best ot pick
         
     # Check for tie
@@ -1936,7 +1936,7 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, sweep_state):
     if not SEEN_SLICES(possible_slices,sweep_state):
       unseen_possible_adjusted_slices.append(possible_slices)
     else:
-      print " Saw,",possible_slices,"already"
+      print(" Saw,",possible_slices,"already")
   return unseen_possible_adjusted_slices
 
 
@@ -1944,7 +1944,7 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, sweep_state):
 # Course then fine - knowhaimsayin
 def DO_THROUGHPUT_SWEEP(parser_state): #,skip_course_sweep=False, skip_fine_sweep=False):
   for main_func in parser_state.main_mhz:
-    print "Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func]
+    print("Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func])
   
   # Populate timing lookup table as all 0 clk
   ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
@@ -2009,34 +2009,34 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
     done = False
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-      print main_func, ": currently is",main_func_to_course_latency[main_func],"clocks latency..."
+      print(main_func, ": currently is",main_func_to_course_latency[main_func],"clocks latency...")
       # Sanity check on resolution
       if not main_func_logic.is_vhdl_text_module:
         # Sanity check cant more clocks than delay units
         if main_func_to_course_latency[main_func] > sweep_state.func_sweep_state[main_func].zero_clk_pipeline_map.zero_clk_max_delay:
-          print "Not enough resolution to slice this logic into",main_func_to_course_latency[main_func],"clocks..."
-          print "Increase DELAY_UNIT_MULT?"
+          print("Not enough resolution to slice this logic into",main_func_to_course_latency[main_func],"clocks...")
+          print("Increase DELAY_UNIT_MULT?")
           sys.exit(-1)
       
       # Make even slices      
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_course_latency[main_func])
       # Update slice step
       sweep_state.func_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(main_func_to_course_latency[main_func]+1))  
-      print main_func,"current slices:", best_guess_slices
+      print(main_func,"current slices:", best_guess_slices)
       # If making slices then make sure the slices dont go through global logic
       if len(best_guess_slices) > 0:
-        print " ...rounding away from globals..."
+        print(" ...rounding away from globals...")
         inst_name = main_func
         sweep_state.curr_main_func = main_func
         best_guess_slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(best_guess_slices, parser_state, sweep_state)
-        print " ...rounded slices:", best_guess_slices
+        print(" ...rounded slices:", best_guess_slices)
       # Do slicing and writing VHDL
       sweep_state.multimain_timing_params.REBUILD_FROM_MAIN_SLICES(best_guess_slices, main_func, parser_state)
     
     # Run syn on multi main top
     sweep_state.curr_main_func, stage_range, sweep_state.timing_report = DO_SYN_FROM_TIMING_PARAMS(sweep_state.multimain_timing_params, parser_state)
     curr_mhz = 1000.0 / sweep_state.timing_report.path_delay
-    print "MHz:", curr_mhz
+    print("MHz:", curr_mhz)
     sweep_state.timing_params_to_mhz[sweep_state.multimain_timing_params] = curr_mhz
     
     # Last loop?
@@ -2046,7 +2046,7 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
     # Passed timing?
     if curr_mhz >= target_mhz:
       # Yes, ok run one more time at last non passing latency
-      print "Found maximum pipeline latency..."
+      print("Found maximum pipeline latency...")
       ## If skipping fine grain then return passing latency now
       #if skip_fine_sweep:
       break 
@@ -2062,7 +2062,7 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
         main_to_last_non_passing_latency[main_func] = main_func_to_course_latency[main_func]
         
       # And make course adjustmant
-      print "Making course adjustment and trying again..."
+      print("Making course adjustment and trying again...")
       # Which main funcs show up in timing report?
       main_funcs = VIVADO.GET_MAIN_FUNCS_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state)
       for main_func in main_funcs:
@@ -2411,7 +2411,7 @@ def BUILD_SLICES(slice_per_stage):
   
 # Return slices
 def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, state, min_dist): 
-  print "<<<<<<<<<<< EXPANDING", missing_stages, "VIA_ADJ_COUNT:",current_slices
+  print("<<<<<<<<<<< EXPANDING", missing_stages, "VIA_ADJ_COUNT:",current_slices)
   slice_per_stage = GET_SLICE_PER_STAGE(current_slices)
   # Each missing stage is expanded by slice_step/num missing stages
   # Div by num missing stages since might not be able to shrink enough slices 
@@ -2432,7 +2432,7 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(missing_stages, current_slices, slice_step, stat
   if len(stages_to_shrink) > 0:
     shrink_per_stage = total_expansion / float(len(stages_to_shrink))
     for stage in stages_to_shrink:
-      print "Shrinking stage",stage, "curr size:", slice_per_stage[stage]
+      print("Shrinking stage",stage, "curr size:", slice_per_stage[stage])
       slice_per_stage[stage] -= shrink_per_stage  
     
     # reconstruct new slcies
@@ -2509,7 +2509,7 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
 
 def GET_OUTPUT_DIRECTORY(Logic):
   if Logic.is_c_built_in:
-    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.__name__
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)
@@ -2518,20 +2518,20 @@ def GET_OUTPUT_DIRECTORY(Logic):
       output_directory = os.path.dirname(src_file)
     else:
       # Otherwise normal
-      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
+      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.__name__
     
   return output_directory
   
 def LOGIC_IS_ZERO_DELAY(logic, parser_state):
-  if logic.func_name in parser_state.func_marked_wires:
+  if logic.__name__ in parser_state.func_marked_wires:
     return True
   elif SW_LIB.IS_BIT_MANIP(logic):
     return True
   elif SW_LIB.IS_CLOCK_CROSSING(logic):
     return True # For now? How to handle paths through clock cross logic?
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
     return True
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
     return True
   elif logic.is_vhdl_text_module:
     return False # No idea what user has in there
@@ -2542,7 +2542,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
         submodule_func_name = logic.submodule_instances[submodule_inst]
         submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
         if submodule_logic.delay is None:
-          print "Wtf none to check delay?"
+          print("Wtf none to check delay?")
           sys.exit(-1)
         if submodule_logic.delay > 0:
           return False
@@ -2556,11 +2556,11 @@ def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
   if logic.is_vhdl_text_module:
     return None
     
-  submodule_inst = logic.submodule_instances.keys()[0]
+  submodule_inst = list(logic.submodule_instances.keys())[0]
   submodule_func_name = logic.submodule_instances[submodule_inst]
   submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
   if submodule_logic.delay is None:
-    print "Wtf none to check delay???????"
+    print("Wtf none to check delay???????")
     sys.exit(-1)
      
   return submodule_logic.delay
@@ -2596,10 +2596,10 @@ def IS_USER_CODE(logic, parser_state):
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic):
   # Default sanity
-  key = logic.func_name
+  key = logic.__name__
   
   # Mux is same delay no matter type
-  if logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+  if logic.is_c_built_in and logic.__name__.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
     key = "mux"
   else:
     # MEM has var name - weird yo
@@ -2630,23 +2630,23 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
   my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
   
-  print "Starting with combinatorial logic..."  
+  print("Starting with combinatorial logic...")  
   # initial params are 0 clk latency for all submodules
   TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   
-  print "Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?"
+  print("Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?")
   WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
   #print "WHY SLO?"
   #sys.exit(-1)
 
-  print "Writing the constant struct+enum definitions as defined from C code..."
+  print("Writing the constant struct+enum definitions as defined from C code...")
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-  print "Writing clock cross defintions as parsed from C code..."
+  print("Writing clock cross defintions as parsed from C code...")
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   
-  print "Synthesizing as combinatorial logic to get total logic delay..."
-  print ""
+  print("Synthesizing as combinatorial logic to get total logic delay...")
+  print("")
   
   # Record stats on functions with globals - TODO per main func?
   min_mhz = 999999999
@@ -2696,17 +2696,17 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           cached_path_delay = GET_CACHED_PATH_DELAY(logic)
           if cached_path_delay is not None:
             logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
-            print "Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay
+            print("Function:",logic.__name__, "Cached path delay(ns):", cached_path_delay)
             if cached_path_delay > 0.0 and logic.delay==0:
-              print "Have timing path of",cached_path_delay,"ns"
-              print "...but recorded zero delay. Increase delay multiplier!"
+              print("Have timing path of",cached_path_delay,"ns")
+              print("...but recorded zero delay. Increase delay multiplier!")
               sys.exit(-1)
           # Then check for known delays
           elif LOGIC_IS_ZERO_DELAY(logic, parser_state):
             logic.delay = 0
           elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
             logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
-            print "Function:", logic.func_name, "assumed same delay as it's single submodule..."
+            print("Function:", logic.__name__, "assumed same delay as it's single submodule...")
           
           # Save delay value or prepare for syn to determine
           if logic.delay is None:
@@ -2739,12 +2739,12 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       
       # Impossible goal for timing since just want path delay
       clock_mhz = INF_MHZ 
-      print "Synthesizing function:",logic.func_name
+      print("Synthesizing function:",logic.__name__)
       # Print pipeline map before syn results
       if (len(logic.submodule_instances) > 0) and not logic.is_vhdl_text_module:
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
-        print zero_clk_pipeline_map
-        print ""
+        print(zero_clk_pipeline_map)
+        print("")
     
     # Start parallel syn for parallel_func_names
     func_name_to_async_result = dict()
@@ -2770,11 +2770,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       logic = parser_state.FuncLogicLookupTable[logic_func_name]
       # Get result
       my_async_result = func_name_to_async_result[logic_func_name]
-      print "...Waiting on synthesis for:", logic_func_name
+      print("...Waiting on synthesis for:", logic_func_name)
       parsed_timing_report =  my_async_result.get()
       if parsed_timing_report.path_delay is None:
-        print "Cannot synthesize for path delay ",logic.func_name
-        print parsed_timing_report.orig_text
+        print("Cannot synthesize for path delay ",logic.__name__)
+        print(parsed_timing_report.orig_text)
         if DO_SYN_FAIL_SIM:
           MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
         sys.exit(-1)
@@ -2784,20 +2784,20 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)        
         # Sanity check multiplier is working
         if parsed_timing_report.path_delay > 0.0 and logic.delay==0:
-          print "Have timing path of",parsed_timing_report.path_delay,"ns"
-          print "...but recorded zero delay. Increase delay multiplier!"
+          print("Have timing path of",parsed_timing_report.path_delay,"ns")
+          print("...but recorded zero delay. Increase delay multiplier!")
           sys.exit(-1)
       else:
         logic.delay = 0
         
       # Syn results are delay and clock 
-      print logic_func_name, "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz"
-      print ""
+      print(logic_func_name, "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz")
+      print("")
       # Record worst global
       #if len(logic.global_wires) > 0:
       if logic.uses_globals:
         if mhz < min_mhz:
-          min_mhz_func_name = logic.func_name
+          min_mhz_func_name = logic.__name__
           min_mhz = mhz
           
       # Cache delay syn result if not user code
@@ -2835,7 +2835,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       inst_name = list(parser_state.FuncToInstances[func_name])[0]
       logic = parser_state.FuncLogicLookupTable[func_name]
       # ONly write non vhdl 
-      if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME):
+      if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.__name__ == C_TO_LOGIC.VHDL_FUNC_NAME):
         continue
       # Dont write clock cross funcs
       if SW_LIB.IS_CLOCK_CROSSING(logic):
@@ -2843,11 +2843,11 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
       if not os.path.exists(syn_out_dir):
         os.makedirs(syn_out_dir)
-      print "Writing func",func_name,"..."
+      print("Writing func",func_name,"...")
       VHDL.WRITE_LOGIC_ENTITY(inst_name, logic, syn_out_dir, parser_state, ZeroClkTimingParamsLookupTable)
       
   # Include a zero clock multi main top too
-  print "Writing multi main top level files..."
+  print("Writing multi main top level files...")
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClkTimingParamsLookupTable;
   is_final_top = True
@@ -2895,8 +2895,8 @@ def GET_LOCAL_SUBMODULE_STAGE_WHEN_USED(submodule_inst, container_inst_name, con
           earliest_stage = stage
   
   if earliest_match is None:
-    print "What stage when submodule used?", submodule_inst
-    print "per_stage_time_order",per_stage_time_order
+    print("What stage when submodule used?", submodule_inst)
+    print("per_stage_time_order",per_stage_time_order)
     sys.exit(-1)
     
   return earliest_stage
@@ -2919,8 +2919,8 @@ def GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME(wire_write_pipe_var_name, logic):
       return wire_name
       
   # Not a submodule port wire 
-  print "GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME Not a submodule port wire ?"
-  print "wire_write_pipe_var_name",wire_write_pipe_var_name
+  print("GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME Not a submodule port wire ?")
+  print("wire_write_pipe_var_name",wire_write_pipe_var_name)
   sys.exit(-1)
 
 '''

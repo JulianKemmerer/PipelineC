@@ -7,7 +7,7 @@ import math
 import hashlib
 import copy
 import difflib
-import Levenshtein
+#import Levenshtein
 import pickle
 import glob
 
@@ -64,7 +64,7 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
     return 0
     
   else:
-    print "GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name
+    print("GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name)
     sys.exit(-1)
     
 
@@ -98,7 +98,7 @@ def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
       rv_main_func = main_func
   
   if rv_main_func == "":
-    print "No matching main func for io reg",reg_name
+    print("No matching main func for io reg",reg_name)
     sys.exit(-1)
     
   return rv_main_func
@@ -108,7 +108,7 @@ def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
 def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
   main_func = reg_name.split("/")[0]
   if main_func not in parser_state.main_mhz:
-    print "Bad main from reg?",reg_name
+    print("Bad main from reg?",reg_name)
     sys.exit(-1)
   
   return main_func
@@ -153,17 +153,17 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
     for end_name in end_names:
       # Check this path
       if REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
-        print " Path to and from register IO regs in top..."
+        print(" Path to and from register IO regs in top...")
         possible_stages_indices.append(0)
         possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
         possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state))
       elif REG_NAME_IS_INPUT_REG(start_name) and not(REG_NAME_IS_OUTPUT_REG(end_name)):
-        print " Path from input register to pipeline logic..."
+        print(" Path from input register to pipeline logic...")
         #start_stage = 0
         possible_stages_indices.append(0)
         possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
       elif not(REG_NAME_IS_INPUT_REG(start_name)) and REG_NAME_IS_OUTPUT_REG(end_name):
-        print " Path from pipeline logic to output register..."
+        print(" Path from pipeline logic to output register...")
         main_func = GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state)
         timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
         total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
@@ -172,14 +172,14 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
         possible_stages_indices.append(last_stage)
         
       elif REG_NAME_IS_OUTPUT_REG(start_name):
-        print " Path is loop from global register acting as output register from last stage?"
-        print " Is this normal?"
+        print(" Path is loop from global register acting as output register from last stage?")
+        print(" Is this normal?")
         sys.exit(-1)
         
       elif REG_NAME_IS_INPUT_REG(end_name):
         # Ending at input reg must be global combinatorial loop in first stage
-        print " Path is loop from global register acting as input reg in first stage?"
-        print " Is this normal?"
+        print(" Path is loop from global register acting as input reg in first stage?")
+        print(" Is this normal?")
         sys.exit(-1)
       else:
         # Start
@@ -190,9 +190,9 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
               
         # Clock cross
         if start_main_func != end_main_func:
-          print "TODO: How to improve clock crossing paths?"
-          print "Cross from", start_main_func, "to", end_main_func
-          print "For now assuming start main func..."
+          print("TODO: How to improve clock crossing paths?")
+          print("Cross from", start_main_func, "to", end_main_func)
+          print("For now assuming start main func...")
           
         main_func = start_main_func
         timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
@@ -203,11 +203,11 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
         # Expect a one stage length path
         if found_end_reg_abs_index - found_start_reg_abs_index != 1:
           # Not normal path?
-          print " Unclear stages from register names..."
-          print " Start?:",found_start_reg_abs_index, start_name
-          print "   ", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
-          print " End?:",found_end_reg_abs_index, end_name
-          print "   ", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/")
+          print(" Unclear stages from register names...")
+          print(" Start?:",found_start_reg_abs_index, start_name)
+          print("   ", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
+          print(" End?:",found_end_reg_abs_index, end_name)
+          print("   ", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
           
           # Global regs do not have self offset so hard to know exact offset
           # Prefer if one end of the path isnt a global
@@ -220,7 +220,7 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
           else:
             # Do dumb inclusive range plus +1 before and after if globals?
             # Uh... totally guessing now?
-            print "Really unclear regs?"
+            print("Really unclear regs?")
             guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
             guessed_end_reg_abs_index = max(found_start_reg_abs_index+1,found_end_reg_abs_index) # +1 since corresponding end index from start index is plus 1
             # Stage range bounds
@@ -232,7 +232,7 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
               min_bound = max(0, min_bound-1)
             if "global_regs]" in end_name:
               max_bound = min(last_stage+1, max_bound+1)
-            stage_range = range(min_bound, max_bound)
+            stage_range = list(range(min_bound, max_bound))
             for stage in stage_range:
               possible_stages_indices.append(stage)     
               
@@ -395,7 +395,7 @@ class ParsedTimingReport:
         self.has_latch_loops = False
       if "[Synth 8-295] found timing loop." in syn_output_line:
         #print single_timing_report
-        print syn_output_line
+        print(syn_output_line)
         #print "FOUND TIMING LOOPS!"
         #print
         # Do debug?
@@ -405,21 +405,21 @@ class ParsedTimingReport:
         #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
         #sys.exit(-1)
       if "inferred exception to break timing loop" in syn_output_line:
-        print syn_output_line
+        print(syn_output_line)
         #sys.exit(-1)
       
       # OK so apparently mult by self results in constants
       # See scratch notes "wtf_multiply_by_self" dir
       if ( (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_output_reg_reg" in syn_output_line)) or
            (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_intput_reg_reg" in syn_output_line)) ):
-        print syn_output_line
+        print(syn_output_line)
         
         
       # Constant outputs? 
       if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
         #print single_timing_report
         #print "Unconnected or constant ports!? Wtf man"
-        print syn_output_line
+        print(syn_output_line)
         # Do debug?
         #latency=1
         #do_debug=True
@@ -431,14 +431,14 @@ class ParsedTimingReport:
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
         if syn_output_line.endswith("unconnected port clk"):
           # Clock NOT OK to disconnect
-          print "WARNING: Disconnected clock!?",syn_output_line
+          print("WARNING: Disconnected clock!?",syn_output_line)
           #sys.exit(-1)
         #else:
         #  print syn_output_line
         
       # No driver?
       if (("Net " in syn_output_line) and (" does not have driver" in syn_output_line)):
-        print syn_output_line
+        print(syn_output_line)
         
         
       # REG MERGING
@@ -520,9 +520,9 @@ class ParsedTimingReport:
         
         # Need same count
         if len(left_names) != len(right_names):
-          print "Reg merge len(left_names) != len(right_names) ??"
-          print "left_names",left_names
-          print "right_names",right_names
+          print("Reg merge len(left_names) != len(right_names) ??")
+          print("left_names",left_names)
+          print("right_names",right_names)
           sys.exit(-1)
         
         for i in range(0, len(left_names)):
@@ -543,8 +543,8 @@ class ParsedTimingReport:
     
     # Catch problems
     if self.slack_ns is None:
-      print "Something is wrong with this timing report?"
-      print single_timing_report
+      print("Something is wrong with this timing report?")
+      print(single_timing_report)
       #latency=0
       #do_debug=True
       #print "ASSUMING LATENCY=",latency
@@ -555,7 +555,7 @@ class ParsedTimingReport:
     if self.has_loops or self.has_latch_loops:
       #print single_timing_report
       #print syn_output_line
-      print "TIMING LOOPS!"
+      print("TIMING LOOPS!")
       ## Do debug?
       #latency=0
       #do_debug=True
@@ -675,13 +675,13 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
       logic_i = parser_state.LogicInstLookupTable[inst_name_i]
       # Write file text
       # ONly write non vhdl
-      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
+      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.__name__ == C_TO_LOGIC.VHDL_FUNC_NAME:
         continue
       # Dont write clock cross
       if SW_LIB.IS_CLOCK_CROSSING(logic_i):
         continue
       timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
-      func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))
+      func_name_slices = (logic_i.__name__,tuple(timing_params_i.slices))
       if func_name_slices not in func_name_slices_so_far:
         func_name_slices_so_far.add(func_name_slices)
         # Include entity file for this functions slice variant
@@ -782,12 +782,12 @@ def WRITE_CLK_XDC(parser_state, inst_name=None):
   # TEMP assume same clock
   # TODO: multiple clock crossing timing paths in report
   if len(set(parser_state.main_mhz.values())) > 1:
-    print "No multi clock for real yet!"
+    print("No multi clock for real yet!")
     sys.exit(-1)
-  clock_mhz = clock_name_to_mhz.values()[0]
+  clock_mhz = list(clock_name_to_mhz.values())[0]
   ns = (1.0 / clock_mhz) * 1000.0
   clock_name = "clk"
-  port_names = clock_name_to_mhz.keys()
+  port_names = list(clock_name_to_mhz.keys())
   get_ports_text = ""
   for port_name in port_names:
     get_ports_text += "[get_ports " + port_name + "]" + " "
@@ -821,7 +821,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,T
   syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name)
   timing_params = TimingParamsLookupTable[inst_name]
   hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)  
-  out_filename = Logic.func_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
+  out_filename = Logic.__name__ + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
   out_filepath = output_directory+"/"+out_filename
   f=open(out_filepath,"w")
   f.write(syn_imp_and_report_timing_tcl)
@@ -842,7 +842,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
   
   # If log file exists dont run syn
   if os.path.exists(log_path):
-    print "Reading log", log_path
+    print("Reading log", log_path)
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
@@ -863,7 +863,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
       VIVADO_DEFAULT_ARGS + " " + 
       '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
     
-    print "Running:", syn_imp_bash_cmd
+    print("Running:", syn_imp_bash_cmd)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
 
   return ParsedTimingReport(log_text)
@@ -873,7 +873,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   
   # Hard rule for now, functions with globals must be zero clk
   if total_latency > 0 and len(Logic.global_wires) > 0:
-    print "Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency
+    print("Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency)
     sys.exit(-1)
     
   
@@ -901,7 +901,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   # If log file exists dont run syn
   if os.path.exists(log_to_read) and use_existing_log_file:
     #print "SKIPPED:", syn_imp_bash_cmd
-    print "Reading log", log_to_read
+    print("Reading log", log_to_read)
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
@@ -926,7 +926,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
       VIVADO_DEFAULT_ARGS + " " + 
       '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
     
-    print "Running:", syn_imp_bash_cmd
+    print("Running:", syn_imp_bash_cmd)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
     
     
@@ -1015,7 +1015,7 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
   
 # Get deepest in hierarchy possible match , msot specfic match
 def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
-  #print "DEBUG: REG:", reg_name
+  #print("DEBUG: REG:", reg_name)
   main_func = GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state)
   main_func_logic = parser_state.LogicInstLookupTable[main_func]
   
@@ -1039,7 +1039,7 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
     #sys.exit(-1)
     inst_name = reg_toks[0]
     if inst_name not in parser_state.LogicInstLookupTable:
-      print "Bad inst name from reg?", inst_name, reg_name
+      print("Bad inst name from reg?", inst_name, reg_name)
       sys.exit(-1)
     return inst_name
     
@@ -1064,16 +1064,16 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
         #print "new_inst",new_inst
         # Compare
         lib_match_amount = difflib.SequenceMatcher(None, new_reg_name, new_inst).ratio()
-        lev_match_amount = Levenshtein.ratio(new_reg_name, new_inst)
-        match_amount = lib_match_amount * lev_match_amount
+        #lev_match_amount = Levenshtein.ratio(new_reg_name, new_inst)
+        match_amount = lib_match_amount #* lev_match_amount
         #print "match_amount",match_amount
         if match_amount > max_match:
           max_match = match_amount
           max_match_submodule_inst = submodule_inst_name
       
       if max_match_submodule_inst is None:
-        print "Wtf?", curr_reg_str
-        print "curr_inst_name",curr_inst_name
+        print("Wtf?", curr_reg_str)
+        print("curr_inst_name",curr_inst_name)
         sys.exit(-1)
       
       # Use this submodule as next logic
@@ -1085,6 +1085,6 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
     
   # Must have most matching inst now
   
-  #print "DEBUG: INST:", max_match_submodule_inst
+  #print("DEBUG: INST:", max_match_submodule_inst)
   
   return max_match_submodule_inst

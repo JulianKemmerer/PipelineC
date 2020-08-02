@@ -86,11 +86,9 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
         isdir = False
       if isdir:
         path_list += ["-I" + thing_path]
-      
+    
   # Finally the file
   path_list += [filename]
-  
-  #print "path_list",path_list
 
   try:
     # Note the use of universal_newlines to treat all newlines
@@ -105,8 +103,8 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
     'Make sure its path was passed correctly\n' +
     ('Original error: %s' % e))
   except Exception as e:
-    print "Something went wrong preprocessing:"
-    print "File:",filename
+    print("Something went wrong preprocessing:")
+    print("File:",filename)
     raise e
 
   return text
@@ -158,14 +156,14 @@ def preprocess_text(text, cpp_path='cpp'):
 def GET_SHELL_CMD_OUTPUT(cmd_str):
   # Kill pid after 
   process = subprocess.Popen(cmd_str, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-  output_text = process.stdout.read()
+  output_text = str(process.stdout.read().decode("utf-8"))
   # For some reason vivado likes to stay alive? Be sure to kill?
   os.kill(process.pid, signal.SIGTERM)
   process.wait()
   if process.returncode != 0:
-    print "Command failed:",cmd_str
-    print cmd_str
-    print output_text
+    print("Command failed:",cmd_str)
+    print(cmd_str)
+    print(output_text)
     sys.exit(-1)
 
   return output_text
@@ -182,6 +180,7 @@ def GET_INCLUDED_FILES(c_filename):
   cmd = "cpp -MM -MG " + c_filename
   include_str = GET_SHELL_CMD_OUTPUT(cmd)
   include_str = include_str.replace("\\\n"," ")
+  
   '''
 main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
  examples/aws-fpga-dma/../../axi.h examples/aws-fpga-dma/../../uintN_t.h \
@@ -205,7 +204,7 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
 
 def casthelp(arg):
   try:
-    print arg
+    print(arg)
   except:
     pass;
   
@@ -215,7 +214,7 @@ def casthelp(arg):
     pass;
   
   try:  
-    print dir(arg)
+    print(dir(arg))
   except:
     pass; 
     
@@ -239,11 +238,11 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
       v1 = self_d1[key]
       v2 = d2[key]
       if C_AST_NODE_COORD_STR(v1) != C_AST_NODE_COORD_STR(v2):
-        print "C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",self_d1,d2
-        print "key", key
-        print "v1",C_AST_NODE_COORD_STR(v1)
-        print "v2",C_AST_NODE_COORD_STR(v2)
-        print 0/0
+        print("C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",self_d1,d2)
+        print("key", key)
+        print("v1",C_AST_NODE_COORD_STR(v1))
+        print("v2",C_AST_NODE_COORD_STR(v2))
+        print(0/0)
         sys.exit(-1)
   
   # Do merge with dict methods
@@ -263,11 +262,11 @@ def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
       v1 = self_d1[key]
       v2 = d2[key]
       if str(v1) != str(v2):
-        print "List val dicts aren't unique:",self_d1,d2
-        print "key", key
-        print "v1",v1
-        print "v2",v2
-        print 0/0
+        print("List val dicts aren't unique:",self_d1,d2)
+        print("key", key)
+        print("v1",v1)
+        print("v2",v2)
+        print(0/0)
         sys.exit(-1)
         
         
@@ -290,11 +289,11 @@ def UNIQUE_KEY_DICT_MERGE(self_d1,d2):
       v1 = self_d1[key]
       v2 = d2[key]
       if v1 != v2:
-        print "Dicts aren't unique:",self_d1,d2
-        print "key", key
-        print "v1",v1
-        print "v2",v2
-        print 0/0
+        print("Dicts aren't unique:",self_d1,d2)
+        print("key", key)
+        print("v1",v1)
+        print("v2",v2)
+        print(0/0)
         sys.exit(-1)
     #except:
     # pass
@@ -332,7 +331,7 @@ class Logic:
     
     # FOR LOGIC IMPLEMENTED IN C THE STRINGS MUST BE C SAFE
     # (inst name adjust is after all the parsing so dont count SUBMODULE_MARKER)    
-    self.func_name = None # Function name
+    self.__name__ = None # Function name
     # My containing func names (could be used in multiple places
     self.containing_funcs = set()
     self.variable_names=set() # Unordered set original variable names  
@@ -391,7 +390,7 @@ class Logic:
   # Help!
   def DEEPCOPY(self):
     rv = Logic()
-    rv.func_name = self.func_name
+    rv.__name__ = self.__name__
     rv.variable_names = set(self.variable_names)
     rv.wires = set(self.wires)  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
     rv.inputs = self.inputs[:] #["a","b"]
@@ -448,26 +447,26 @@ class Logic:
       return None
     
     # Func name must match if set
-    if (self.func_name is not None) and (logic_b.func_name is not None):
-      if self.func_name != logic_b.func_name:
-        print "Cannot merge comb logic with mismatching func names!"
-        print self.func_name
-        print logic_b.func_name
+    if (self.__name__ is not None) and (logic_b.__name__ is not None):
+      if self.__name__ != logic_b.__name__:
+        print("Cannot merge comb logic with mismatching func names!")
+        print(self.__name__)
+        print(logic_b.__name__)
       else:
-        self.func_name = self.func_name
+        self.__name__ = self.__name__
     # Otherwise use whichever is set
-    elif self.func_name is not None:
-      self.func_name = self.func_name
+    elif self.__name__ is not None:
+      self.__name__ = self.__name__
     else:
-      self.func_name = logic_b.func_name
+      self.__name__ = logic_b.__name__
     
       
     # C built in status must match if set
     if (self.is_c_built_in is not None) and (logic_b.is_c_built_in is not None):
       if self.is_c_built_in != logic_b.is_c_built_in:
-        print "Cannot merge comb logic with mismatching is_c_built_in !"
-        print self.func_name, self.is_c_built_in
-        print logic_b.func_name, logic_b.is_c_built_in
+        print("Cannot merge comb logic with mismatching is_c_built_in !")
+        print(self.__name__, self.is_c_built_in)
+        print(logic_b.__name__, logic_b.is_c_built_in)
         sys.exit(-1)
       else:
         self.is_c_built_in = self.is_c_built_in
@@ -480,9 +479,9 @@ class Logic:
     # VHDL func status must match if set
     if (self.is_vhdl_func is not None) and (logic_b.is_vhdl_func is not None):
       if self.is_vhdl_func != logic_b.is_vhdl_func:
-        print "Cannot merge comb logic with mismatching is_vhdl_func !"
-        print self.func_name, self.is_vhdl_func
-        print logic_b.func_name, logic_b.is_vhdl_func
+        print("Cannot merge comb logic with mismatching is_vhdl_func !")
+        print(self.__name__, self.is_vhdl_func)
+        print(logic_b.__name__, logic_b.is_vhdl_func)
         sys.exit(-1)
       else:
         self.is_vhdl_func = self.is_vhdl_func
@@ -495,9 +494,9 @@ class Logic:
     # VHDL expression status must match if set
     if (self.is_vhdl_expr is not None) and (logic_b.is_vhdl_expr is not None):
       if self.is_vhdl_expr != logic_b.is_vhdl_expr:
-        print "Cannot merge comb logic with mismatching is_vhdl_expr !"
-        print self.func_name, self.is_vhdl_expr
-        print logic_b.func_name, logic_b.is_vhdl_expr
+        print("Cannot merge comb logic with mismatching is_vhdl_expr !")
+        print(self.__name__, self.is_vhdl_expr)
+        print(logic_b.__name__, logic_b.is_vhdl_expr)
         sys.exit(-1)
       else:
         self.is_vhdl_expr = self.is_vhdl_expr
@@ -510,9 +509,9 @@ class Logic:
     # VHDL text module status must match if set
     if (self.is_vhdl_text_module is not None) and (logic_b.is_vhdl_text_module is not None):
       if self.is_vhdl_text_module != logic_b.is_vhdl_text_module:
-        print "Cannot merge comb logic with mismatching is_vhdl_text_module !"
-        print self.func_name, self.is_vhdl_text_module
-        print logic_b.func_name, logic_b.is_vhdl_text_module
+        print("Cannot merge comb logic with mismatching is_vhdl_text_module !")
+        print(self.__name__, self.is_vhdl_text_module)
+        print(logic_b.__name__, logic_b.is_vhdl_text_module)
         sys.exit(-1)
       else:
         self.is_vhdl_text_module = self.is_vhdl_text_module
@@ -538,10 +537,10 @@ class Logic:
     if len(self.inputs) > 0 and len(logic_b.inputs) > 0:
       # Check for equal
       if self.inputs != logic_b.inputs:
-        print "Cannot merge comb logic with mismatching inputs !"
-        print self.func_name, self.inputs
-        print logic_b.func_name, logic_b.inputs
-        print 0/0
+        print("Cannot merge comb logic with mismatching inputs !")
+        print(self.__name__, self.inputs)
+        print(logic_b.__name__, logic_b.inputs)
+        print(0/0)
         sys.exit(-1)
       else:
         self.inputs = self.inputs[:]
@@ -554,9 +553,9 @@ class Logic:
     if len(self.outputs) > 0 and len(logic_b.outputs) > 0:
       # Check for equal
       if self.outputs != logic_b.outputs:
-        print "Cannot merge comb logic with mismatching outputs !"
-        print self.func_name, self.outputs
-        print logic_b.func_name, logic_b.outputs
+        print("Cannot merge comb logic with mismatching outputs !")
+        print(self.__name__, self.outputs)
+        print(logic_b.__name__, logic_b.outputs)
         sys.exit(-1)
       else:
         self.outputs = self.outputs[:]
@@ -576,11 +575,11 @@ class Logic:
     lens = len(self.wire_drives)+ len(logic_b.wire_drives)
     self.wire_drives = DICT_SET_VALUE_MERGE(self.wire_drives,logic_b.wire_drives)
     if lens > 0 and len(self.wire_drives) == 0:
-      print "self.wire_drives",self.wire_drives
-      print "logic_b.wire_drives",logic_b.wire_drives
-      print "Should have at least",lens, "entries..."
-      print "MERGE COMB self.wire_drives",self.wire_drives
-      print "WTF"
+      print("self.wire_drives",self.wire_drives)
+      print("logic_b.wire_drives",logic_b.wire_drives)
+      print("Should have at least",lens, "entries...")
+      print("MERGE COMB self.wire_drives",self.wire_drives)
+      print("WTF")
       sys.exit(-1)
     
     # C ast node values wont be == , manual check with coord str
@@ -624,12 +623,12 @@ class Logic:
       # For now its the same c ast node if its the same coord
       # If causes problems... abandon then
       if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
-        print "Cannot merge comb logic with mismatching c_ast_node!"
-        print self.func_name
-        print logic_b.func_name
-        print self.c_ast_node
-        print logic_b.c_ast_node
-        print 0/0
+        print("Cannot merge comb logic with mismatching c_ast_node!")
+        print(self.__name__)
+        print(logic_b.__name__)
+        print(self.c_ast_node)
+        print(logic_b.c_ast_node)
+        print(0/0)
         sys.exit(-1)
       else:
         self.c_ast_node = self.c_ast_node
@@ -653,9 +652,9 @@ class Logic:
     # Code text keep whichever is set
     if (self.c_code_text is not None) and (logic_b.c_code_text is not None):
       if self.c_code_text != logic_b.c_code_text:
-        print "Cannot merge comb logic with mismatching c_code_text!"
-        print self.c_code_text
-        print logic_b.c_code_text
+        print("Cannot merge comb logic with mismatching c_code_text!")
+        print(self.c_code_text)
+        print(logic_b.c_code_text)
       else:
         self.c_code_text = self.c_code_text
     # Otherwise use whichever is set
@@ -710,9 +709,9 @@ class Logic:
             # if sorted_first_driven_wires[i] != sorted_second_driven_wires[i]:
             for sorted_first_driven_wire in sorted_first_driven_wires:
               if sorted_first_driven_wire not in sorted_second_driven_wires:
-                print "first driven wire:", sorted_first_driven_wire,"was not in second logic driven wires? was removed? wtf?"
-                print "first:",sorted_first_driven_wires
-                print "second:", sorted_second_driven_wires
+                print("first driven wire:", sorted_first_driven_wire,"was not in second logic driven wires? was removed? wtf?")
+                print("first:",sorted_first_driven_wires)
+                print("second:", sorted_second_driven_wires)
                 #print 0/0
                 sys.exit(-1)
             # Got match, first is subset of second, update first to match second
@@ -723,15 +722,15 @@ class Logic:
             
           else:
             # First has same or more, cant match second at this point
-            print "orig_var",orig_var
+            print("orig_var",orig_var)
             aliases = self.wire_aliases_over_time[orig_var]
-            print "first aliases",aliases
+            print("first aliases",aliases)
             last_alias = aliases[len(aliases)-1]
-            print "first logic last_alias",last_alias
-            print "self.wire_drives[orig_var]",first_driven_wires
-            print "second_logic.wire_drives[orig_var]",second_driven_wires
+            print("first logic last_alias",last_alias)
+            print("self.wire_drives[orig_var]",first_driven_wires)
+            print("second_logic.wire_drives[orig_var]",second_driven_wires)
             # Get the last alias for that var from first logic
-            print "second aliases", second_logic.wire_aliases_over_time[orig_var]
+            print("second aliases", second_logic.wire_aliases_over_time[orig_var])
             
             # If this last alias is not in the first logic 
             
@@ -744,7 +743,7 @@ class Logic:
             second_logic.wire_drives.pop(orig_var, None)
             # Replace with last alias
             second_logic.wire_drives[last_alias] = temp_value
-            print last_alias," DRIVES ", temp_value
+            print(last_alias," DRIVES ", temp_value)
             sys.exit(-1)
             
     
@@ -768,10 +767,10 @@ class Logic:
         # in the period of time they share (the first logic)
         for i in range(0, len(first)):
           if first[i] != second[i]:
-            print "At time index", i,"for orig variable name =", var_name,"the first and second logic do not agree:"
-            print "First logic aliases over time:", first
-            print "Second logic aliases over time:", second
-            print 0/0
+            print("At time index", i,"for orig variable name =", var_name,"the first and second logic do not agree:")
+            print("First logic aliases over time:", first)
+            print("Second logic aliases over time:", second)
+            print(0/0)
             sys.exit(-1)
         
         # Equal in shared time so only append not shared part of second
@@ -838,18 +837,18 @@ class Logic:
       submodule_inst = toks[0]
       # Uh if inst doesnt exist then problem....
       if submodule_inst not in self.submodule_instances:
-        print "self.func_name", self.func_name
-        print "wire",wire
-        print "No submodule instance called", submodule_inst
-        print 0/0
+        print("self.func_name", self.__name__)
+        print("wire",wire)
+        print("No submodule instance called", submodule_inst)
+        print(0/0)
         sys.exit(-1)
       # Otherwise proceed checking for outputs
       submodule_func_name = self.submodule_instances[submodule_inst]
       if submodule_func_name not in FuncLogicLookupTable:
-        print "self.func_name", self.func_name
-        print "wire",wire
-        print "No func def for sub", submodule_func_name
-        print FuncLogicLookupTable
+        print("self.func_name", self.__name__)
+        print("wire",wire)
+        print("No func def for sub", submodule_func_name)
+        print(FuncLogicLookupTable)
         sys.exit(-1)
       submodule_logic = FuncLogicLookupTable[submodule_func_name]
       port_name = toks[1]
@@ -876,18 +875,18 @@ class Logic:
       submodule_inst = toks[0]
       # Uh if inst doesnt exist then problem....
       if submodule_inst not in self.submodule_instances:
-        print "self.func_name", self.func_name
-        print "wire",wire
-        print "No submodule instance called", submodule_inst
-        print 0/0
+        print("self.func_name", self.__name__)
+        print("wire",wire)
+        print("No submodule instance called", submodule_inst)
+        print(0/0)
         sys.exit(-1)
       # Otherwise proceed checking for inputs
       submodule_func_name = self.submodule_instances[submodule_inst]
       if submodule_func_name not in FuncLogicLookupTable:
-        print "self.func_name", self.func_name
-        print "wire",wire
-        print "No func def for sub", submodule_func_name
-        print FuncLogicLookupTable
+        print("self.func_name", self.__name__)
+        print("wire",wire)
+        print("No func def for sub", submodule_func_name)
+        print(FuncLogicLookupTable)
         sys.exit(-1)
       submodule_logic = FuncLogicLookupTable[submodule_func_name]
       port_name = toks[1]
@@ -954,7 +953,7 @@ class Logic:
     if SUBMODULE_MARKER in wire:
       toks = wire.split(SUBMODULE_MARKER)
       if len(toks) > 2:
-        print "What berries? Goji Berries - Rubik"
+        print("What berries? Goji Berries - Rubik")
         sys.exit(-1)
       submodule_inst = toks[0]
       submodule_func_name = self.submodule_instances[submodule_inst]
@@ -1116,7 +1115,7 @@ def show_graph_with_labels(adjacency_matrix, mylabels):
     import networkx as nx
     import numpy as np
     rows, cols = np.where(adjacency_matrix == 1)
-    edges = zip(rows.tolist(), cols.tolist())
+    edges = list(zip(rows.tolist(), cols.tolist()))
     gr = nx.Graph()
     gr.add_edges_from(edges)
     nx.draw(gr, node_size=500, labels=mylabels, with_labels=True)
@@ -1144,11 +1143,11 @@ def WIRE_IS_CONSTANT(wire):
   # Hey - this is dumb
   rv = last_tok.startswith(CONST_PREFIX) and not last_tok.startswith(CONST_REF_RD_FUNC_NAME_PREFIX+"_") and not last_tok.startswith(CONST_PREFIX+BIN_OP_SL_NAME + "_") and not last_tok.startswith(CONST_PREFIX+BIN_OP_SR_NAME + "_")
   if (CONST_PREFIX in wire) and not(rv) and not(CONST_REF_RD_FUNC_NAME_PREFIX+"_" in wire) and not(CONST_PREFIX+BIN_OP_SL_NAME+"_" in wire) and not(CONST_PREFIX+BIN_OP_SR_NAME+"_" in wire):
-    print "WHJAT!?"
-    print "wire",wire
-    print "new_wire", new_wire
-    print "WIRE_IS_CONSTANT   but is not?"
-    print 0/0
+    print("WHJAT!?")
+    print("wire",wire)
+    print("new_wire", new_wire)
+    print("WIRE_IS_CONSTANT   but is not?")
+    print(0/0)
     sys.exit(-1) 
   
   return rv
@@ -1197,7 +1196,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   submodule_logic_name = containing_func_logic.submodule_instances[submodule_inst]
   #print "submodule_inst",submodule_inst
   #print "submodule_logic_name",submodule_logic_name
-  submodule_logic.func_name = submodule_logic_name
+  submodule_logic.__name__ = submodule_logic_name
   #print "...",submodule_logic.func_name
   
   # CONST refs are vhdl funcs
@@ -1278,19 +1277,19 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
     if output_wire_name in containing_func_logic.wire_drives:
       driven_wires = containing_func_logic.wire_drives[output_wire_name]
       if len(driven_wires)==0 :
-        print "Built in submodule not driving anthying?",submodule_inst
+        print("Built in submodule not driving anthying?",submodule_inst)
         sys.exit(-1)
       c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
     else:
       # Fine if vhdl func
-      if submodule_logic.func_name != VHDL_FUNC_NAME:
-        print "containing_func_logic.func_name",containing_func_logic.func_name
-        print "output_wire_name",output_wire_name
+      if submodule_logic.__name__ != VHDL_FUNC_NAME:
+        print("containing_func_logic.func_name",containing_func_logic.__name__)
+        print("output_wire_name",output_wire_name)
         #print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
         for wire in containing_func_logic.wire_drives:
-          print wire,"=>",containing_func_logic.wire_drives[wire]
-        print "Input type to output type mapping assumption for built in submodule output "
-        print submodule_logic.func_name
+          print(wire,"=>",containing_func_logic.wire_drives[wire])
+        print("Input type to output type mapping assumption for built in submodule output ")
+        print(submodule_logic.__name__)
         sys.exit(-1)   
   
   # Record output type
@@ -1311,7 +1310,7 @@ _other_partial_logic_cache = dict()
 def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, parser_state, containing_func_logic):
   
   # Cache the other partial logic
-  cache_tok = partially_complete_logic.func_name
+  cache_tok = partially_complete_logic.__name__
   # SHOULDNT NEED INPUT TYPES SINCE FUNC NAME IS UNIQUE
     
   if cache_tok in _other_partial_logic_cache:
@@ -1323,36 +1322,36 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     #print "partially_complete_logic.func_name",partially_complete_logic.func_name
     #print "containing_func_logic.func_name",containing_func_logic.func_name
     #print "=================================================================="
-    if partially_complete_logic.func_name.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"):
+    if partially_complete_logic.__name__.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)
-    elif partially_complete_logic.func_name.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
+    elif partially_complete_logic.__name__.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)  
-    elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
+    elif partially_complete_logic.__name__.startswith(CAST_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)  
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">")
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">=")
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<")
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<=")
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state)
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
+    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state)
     else:
-      print "How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.func_name, "?"
+      print("How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.__name__, "?")
       sys.exit(-1) 
       
     # Use the c code to get the logic
@@ -1363,12 +1362,12 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     
     # And read logic
     #print "partially_complete_logic.
-    fake_filename = partially_complete_logic.func_name + ".c"
+    fake_filename = partially_complete_logic.__name__ + ".c"
     #print "fake_filename",fake_filename
     out_path = out_dir + "/" + fake_filename
       
     # Parse and return the only func def
-    func_name = partially_complete_logic.func_name
+    func_name = partially_complete_logic.__name__
     #print "... as C code...",partially_complete_logic.func_name
     
     preprocessed_c_code_text = preprocess_text(c_code_text)
@@ -1382,13 +1381,13 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     
     # Get the other partial logic if it exists
     if not(func_name in FuncLogicLookupTable ):
-      print "I cant find func name",func_name,"in the C code so far"
-      print "c_code_text"
-      print c_code_text
-      print "========="
-      print "sw_func_name_2_logic"
-      print sw_func_name_2_logic
-      print "CHECK CODE PARSING autogenerated stuff?"
+      print("I cant find func name",func_name,"in the C code so far")
+      print("c_code_text")
+      print(c_code_text)
+      print("=========")
+      print("sw_func_name_2_logic")
+      print(sw_func_name_2_logic)
+      print("CHECK CODE PARSING autogenerated stuff?")
       sys.exit(-1)
     other_partial_logic = FuncLogicLookupTable[func_name]
     # CACHE THIS
@@ -1422,7 +1421,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
     driven_wire_names=[]
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
-    FuncLogicLookupTable[logic.func_name] = logic
+    FuncLogicLookupTable[logic.__name__] = logic
   
   return FuncLogicLookupTable
   
@@ -1477,9 +1476,9 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     return C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   else:
     #start here
-    print "Animal Collective - The Purple Bottle"
-    print "Cannot parse c ast node to logic:", c_ast_node.coord
-    print c_ast_node
+    print("Animal Collective - The Purple Bottle")
+    print("Cannot parse c ast node to logic:", c_ast_node.coord)
+    print(c_ast_node)
     #casthelp(c_ast_node)
     #print "driven_wire_names=",driven_wire_names
     sys.exit(-1)
@@ -1487,7 +1486,7 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
   # Check for double return
   if RETURN_WIRE_NAME in parser_state.existing_logic.wire_driven_by:
-    print "What, more than one return? Come on man don't make me sad...", str(c_ast_return.coord)
+    print("What, more than one return? Come on man don't make me sad...", str(c_ast_return.coord))
     sys.exit(-1) 
   
   # Return is just connection to wire
@@ -1538,7 +1537,7 @@ def GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref):
     names_list = names_list + [c_ast_structref.field.name]
     return names_list
   else:
-    print "Need entry in GET_NAMES_LIST_FROM_STRUCTREF", 
+    print("Need entry in GET_NAMES_LIST_FROM_STRUCTREF", end=' ') 
     casthelp(c_ast_structref.name)
     sys.exit(-1)
   
@@ -1569,7 +1568,7 @@ def C_AST_REF_TOKS_ARE_CONST(ref_toks):
       pass
     # Sanity check
     elif (type(ref_tok) == str) and (ref_tok=="*"):
-      print "Using string variable ref tok when not aware, fix."
+      print("Using string variable ref tok when not aware, fix.")
       sys.exit(-1)
     # ID or struct ref
     elif type(ref_tok) == str:
@@ -1578,7 +1577,7 @@ def C_AST_REF_TOKS_ARE_CONST(ref_toks):
     elif isinstance(ref_tok, c_ast.Node):
       return False
     else:
-      print "Whats this ref eh yo?", ref_tok, c_ast_node.coord
+      print("Whats this ref eh yo?", ref_tok, c_ast_node.coord)
       sys.exit(-1)
   return True
       
@@ -1604,7 +1603,7 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_st
     elif isinstance(ref_tok, c_ast.Node):
       id_str += "[*]"
     else:
-      print "Whats this ref eh?", ref_tok, c_ast_node.coord
+      print("Whats this ref eh?", ref_tok, c_ast_node.coord)
       sys.exit(-1)
       
   
@@ -1689,7 +1688,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
       c_array_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(curr_ref_toks, c_ast_node, parser_state)
       # Sanity check
       if not C_TYPE_IS_ARRAY(c_array_type):
-        print "Oh no not an array?", c_array_type
+        print("Oh no not an array?", c_array_type)
         sys.exit(-1)
       # Get the dims from the array
       #print "c_array_type",c_array_type
@@ -1783,7 +1782,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   
   # Sanity check
   if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
-    print "It looks like variable",lhs_orig_var_name,"isn't declared?", c_ast_assignment.coord
+    print("It looks like variable",lhs_orig_var_name,"isn't declared?", c_ast_assignment.coord)
     sys.exit(-1)
   lhs_base_type = parser_state.existing_logic.wire_to_c_type[lhs_orig_var_name]
   const_lhs = C_AST_REF_TOKS_ARE_CONST(lhs_ref_toks)
@@ -1826,7 +1825,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
         # What dimension is this variable
         # Sanity check
         if orig_ref_tok_i not in var_dim_ref_tok_indices:
-          print "Wait this ref tok isnt variable?", orig_ref_tok
+          print("Wait this ref tok isnt variable?", orig_ref_tok)
           sys.exit(-1)
         # Get index of this var dim is list of var dims
         var_dim_i = var_dim_ref_tok_indices.index(orig_ref_tok_i)
@@ -1916,7 +1915,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
       elif isinstance(ref_tok, c_ast.Node):
         func_name += "_" + "VAR"
       else:
-        print "What is lhs ref tok?", ref_tok
+        print("What is lhs ref tok?", ref_tok)
         sys.exit(-1)
     # input ref toks  --dont include base var name
     for ref_toks in sorted_reduced_ref_toks_set:
@@ -1928,7 +1927,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
         elif isinstance(ref_tok, c_ast.Node):
           func_name += "_" + "VAR"
         else:
-          print "What is lhs ref tok?", ref_tok
+          print("What is lhs ref tok?", ref_tok)
           sys.exit(-1)
     
     # NEED HASH to account for reduced ref toks as name
@@ -1942,10 +1941,10 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
         elif isinstance(ref_tok, c_ast.Node):
           input_ref_toks_str += "_" + "VAR"
         else:
-          print "What is ref tok bleh????", ref_tok
+          print("What is ref tok bleh????", ref_tok)
           sys.exit(-1)
     # Hash the string
-    hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) # 4 chars enough?
+    hash_ext = "_" + ((hashlib.md5(input_ref_toks_str.encode("utf-8")).hexdigest())[0:4]) # 4 chars enough?
     func_name += hash_ext
     
     
@@ -2032,7 +2031,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
       ref_tok_c_ast_node = lhs_ref_toks[ref_tok_index]
       # Sanity check
       if not isinstance(ref_tok_c_ast_node, c_ast.Node):
-        print "Not a variable ref tok?", ref_tok_c_ast_node
+        print("Not a variable ref tok?", ref_tok_c_ast_node)
         sys.exit(-1)
         
       # Cant use hacky str encode sinc eis just "*"
@@ -2186,7 +2185,7 @@ def C_AST_NODE_TO_ORIG_VAR_NAME(c_ast_node):
   elif type(c_ast_node) == c_ast.StructRef:
     return GET_BASE_VARIABLE_NAME_FROM_STRUCTREF(c_ast_node)
   else:
-    print "WHat C_AST_NODE_TO_ORIG_VAR_NAME", c_ast_node
+    print("WHat C_AST_NODE_TO_ORIG_VAR_NAME", c_ast_node)
     sys.exit(-1)
   
 def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
@@ -2217,7 +2216,7 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
       c_array_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(curr_ref_toks_faked, c_ast_ref, parser_state)
       # Sanity check
       if not C_TYPE_IS_ARRAY(c_array_type):
-        print "Oh no not an array?2", c_array_type
+        print("Oh no not an array?2", c_array_type)
         sys.exit(-1)
       # Get the dims from the array
       elem_type,dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
@@ -2246,7 +2245,7 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
       # What dimension is this variable
       # Sanity check
       if orig_ref_tok_i not in var_dim_ref_tok_indices:
-        print "Wait this ref tok isnt variable?2", orig_ref_tok
+        print("Wait this ref tok isnt variable?2", orig_ref_tok)
         sys.exit(-1)
       # Get index of this var dim is list of var dims
       var_dim_i = var_dim_ref_tok_indices.index(orig_ref_tok_i)
@@ -2284,10 +2283,10 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = dict()
 def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   # Try for cache
-  if parser_state.existing_logic.func_name is None:
-    print "Wtf none??????"
+  if parser_state.existing_logic.__name__ is None:
+    print("Wtf none??????")
     sys.exit(-1)
-  cache_key = (parser_state.existing_logic.func_name, ref_toks)
+  cache_key = (parser_state.existing_logic.__name__, ref_toks)
   try:
     return set(_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2306,7 +2305,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     # Child branches are struct field names
     field_type_dict = parser_state.struct_to_field_type_dict[c_type]
     if debug:
-      print "Struct:",field_type_dict   
+      print("Struct:",field_type_dict)   
     for field in field_type_dict:
       new_toks = ref_toks[:]
       new_toks += (field,)
@@ -2350,10 +2349,10 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   debug = False 
   
   # Try for cache
-  if parser_state.existing_logic.func_name is None:
-    print "Wtf none??????"
+  if parser_state.existing_logic.__name__ is None:
+    print("Wtf none??????")
     sys.exit(-1)
-  cache_key = (parser_state.existing_logic.func_name, ref_toks)
+  cache_key = (parser_state.existing_logic.__name__, ref_toks)
   try:
     return set(_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2371,7 +2370,7 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     rv |= REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(next_branch_ref_toks, c_ast_ref, parser_state)
   
   if debug:
-    print "All branches:", rv
+    print("All branches:", rv)
     sys.exit(-1)     
       
   # Update cache
@@ -2383,10 +2382,10 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 _REDUCE_REF_TOKS_OR_STRS_cache = dict()
 def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
   # Try for cache
-  if parser_state.existing_logic.func_name is None:
-    print "Wtf none??????"
+  if parser_state.existing_logic.__name__ is None:
+    print("Wtf none??????")
     sys.exit(-1) 
-  cache_key = (parser_state.existing_logic.func_name, frozenset(ref_toks_set))
+  cache_key = (parser_state.existing_logic.__name__, frozenset(ref_toks_set))
   try:
     return set(_REDUCE_REF_TOKS_OR_STRS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2609,10 +2608,10 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
     elif wire in parser_state.volatile_global_info:
       driven_ref_toks=(wire,)
     else:
-      print "wire:",wire
-      print "var name?:",parser_state.existing_logic.variable_names
-      print "does not have associatated ref toks", parser_state.existing_logic.alias_to_driven_ref_toks
-      print 0/0
+      print("wire:",wire)
+      print("var name?:",parser_state.existing_logic.variable_names)
+      print("does not have associatated ref toks", parser_state.existing_logic.alias_to_driven_ref_toks)
+      print(0/0)
       sys.exit(-1)
       
   return driven_ref_toks
@@ -2637,8 +2636,8 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
   if debug:
     orig_remaining_ref_toks_set = set(remaining_ref_toks_set) #debug
   
-  if parser_state.existing_logic.func_name is None:
-    print "Wtf none??????"
+  if parser_state.existing_logic.__name__ is None:
+    print("Wtf none??????")
     sys.exit(-1)
   
   
@@ -2676,19 +2675,19 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
     if REF_TOKS_COVERED_BY(ref_toks, driven_ref_toks, parser_state):
       # Remove this ref toks
       if debug:
-        print ref_toks, "covered by", driven_ref_toks
+        print(ref_toks, "covered by", driven_ref_toks)
       #remaining_ref_toks_set.remove(ref_toks)
       to_be_removed.add(ref_toks)
       removed_something = True
     else:
       if debug:
-        print ref_toks, "not covered by", driven_ref_toks
+        print(ref_toks, "not covered by", driven_ref_toks)
   remaining_ref_toks_set -= to_be_removed
 
   if debug:
-    print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
-    print "orig driven_ref_toks",driven_ref_toks
-    print "remaining_ref_toks_set after removing coverage",remaining_ref_toks_set
+    print("orig_remaining_ref_toks_set",orig_remaining_ref_toks_set)
+    print("orig driven_ref_toks",driven_ref_toks)
+    print("remaining_ref_toks_set after removing coverage",remaining_ref_toks_set)
 
   if removed_something:
     # The current driven_ref_toks would be removed from list 
@@ -2739,8 +2738,8 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
         break;
       
     if debug:
-      print "remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set
-      print ""        
+      print("remaining_ref_toks_set after collpasing refs too",remaining_ref_toks_set)
+      print("")        
   
   '''
   # Update cache  
@@ -2752,7 +2751,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
   
   #WTF?
   if (driven_ref_toks in remaining_ref_toks_set): # or (driven_ref_toks in _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]):
-    print "WTF? driven_ref_toks in remaining_ref_toks_set2"
+    print("WTF? driven_ref_toks in remaining_ref_toks_set2")
     sys.exit(-1)
 
   return remaining_ref_toks_set
@@ -2876,7 +2875,7 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
     # Get value from this constant
     maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
     if not maybe_digit.isdigit():
-      print "Constant array ref with non integer index?", const_driving_wire
+      print("Constant array ref with non integer index?", const_driving_wire)
       sys.exit(-1)
     #print "CONST",maybe_digit
     return int(maybe_digit), parser_state.existing_logic
@@ -2908,8 +2907,8 @@ def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
     toks += new_toks
     toks += (str(c_ast_ref.field.name),)
   else:
-    print "Uh what node in C_AST_REF_TO_TOKENS?",c_ast_ref
-    print 0/0
+    print("Uh what node in C_AST_REF_TO_TOKENS?",c_ast_ref)
+    print(0/0)
     sys.exit(-1)
     
   # Reverse reverse
@@ -2923,7 +2922,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
   #print "ref_toks",ref_toks
   # Try to get cache
   # Build key
-  ref_toks_str = parser_state.existing_logic.func_name[:]
+  ref_toks_str = parser_state.existing_logic.__name__[:]
   for ref_tok in ref_toks:
     if type(ref_tok) == int:
       ref_toks_str += "_INT_" + str(ref_tok)
@@ -2932,7 +2931,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
     elif isinstance(ref_tok, c_ast.Node):
       ref_toks_str += "_" + "VAR"
     else:
-      print "What is ref tok bleh?sdsd???", ref_tok
+      print("What is ref tok bleh?sdsd???", ref_tok)
       sys.exit(-1)
   cache_key = ref_toks_str
   #cache_key = (parser_state.existing_logic.func_name, ref_toks)
@@ -2953,7 +2952,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
     #print "parser_state.existing_logic",parser_state.existing_logic
     #print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
     #print "known variables:",parser_state.existing_logic.variable_names
-    print "It looks like variable", var_name, "is not defined?",c_ast_ref.coord
+    print("It looks like variable", var_name, "is not defined?",c_ast_ref.coord)
     #for wire in sorted(parser_state.existing_logic.wire_to_c_type):
     # print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
     #print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
@@ -2980,7 +2979,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Constant array ref
         # Sanity check
         if not C_TYPE_IS_ARRAY(current_c_type):
-          print "Arrayref tok but not array type?", current_c_type, remaining_toks,c_ast_ref.coord
+          print("Arrayref tok but not array type?", current_c_type, remaining_toks,c_ast_ref.coord)
           sys.exit(-1)
         # Go to next tok      
         remaining_toks = remaining_toks[1:]
@@ -2990,11 +2989,11 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Struct
         # Sanity check
         if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
-          print "Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord
+          print("Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord)
           sys.exit(-1)
         field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
         if next_tok not in field_type_dict:
-          print next_tok, "is not a member field of",current_c_type, c_ast_ref.coord
+          print(next_tok, "is not a member field of",current_c_type, c_ast_ref.coord)
           #print 0/0
           sys.exit(-1)
         # Go to next tok      
@@ -3004,7 +3003,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Variable array ref
         # Sanity check
         if not C_TYPE_IS_ARRAY(current_c_type):
-          print "Arrayref tok but not array type?2", current_c_type, remaining_toks,c_ast_ref.coord
+          print("Arrayref tok but not array type?2", current_c_type, remaining_toks,c_ast_ref.coord)
           sys.exit(-1)
         # Go to next tok      
         remaining_toks = remaining_toks[1:]
@@ -3012,7 +3011,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         current_c_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(current_c_type)   
       else:
         casthelp(next_tok)
-        print "What kind of reference is this?", c_ast_ref.coord
+        print("What kind of reference is this?", c_ast_ref.coord)
         sys.exit(-1)
       
   # Sanity check on const ref must be array type
@@ -3053,7 +3052,7 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
   elif type(c_ast_ref) == c_ast.ID:
     pass
   else:
-    print "What type of ref is this?", c_ast_ref
+    print("What type of ref is this?", c_ast_ref)
     sys.exit(-1)
     
   # Get tokens to identify the reference
@@ -3095,8 +3094,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   #print "ref_toks",ref_toks
   entire_tree_ref_toks_set = REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state)
   if debug:
-    print "ref_toks to logic",ref_toks
-    print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
+    print("ref_toks to logic",ref_toks)
+    print("entire_tree_ref_toks_set",entire_tree_ref_toks_set)
   #print ""
   
   #sys.exit(-1)
@@ -3109,7 +3108,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     #print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
     #print "No driving aliases?", prepend_text, c_ast_ref.coord
     #print 0/0
-    print ref_toks, "not fully driven when read at?", c_ast_ref.coord
+    print(ref_toks, "not fully driven when read at?", c_ast_ref.coord)
     sys.exit(-1)
   
   # Find the first alias (IN REVERSE ORDER) that elminates some branches
@@ -3118,15 +3117,15 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   first_driving_alias = None
   while len(remaining_ref_toks_set) == len(entire_tree_ref_toks_set):
     if i < 0:
-      print "Ran out of aliases?"
-      print "func name",parser_state.existing_logic.func_name
-      print "ref_toks",ref_toks
-      print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
-      print "driving_aliases_over_time",driving_aliases_over_time
-      print "remaining_ref_toks_set",remaining_ref_toks_set
-      print "This is either my problem or your code doesnt drive all your local variables..."
-      print "Why you so angry at me?"
-      print "   The Lemon Twigs - Baby, Baby"
+      print("Ran out of aliases?")
+      print("func name",parser_state.existing_logic.__name__)
+      print("ref_toks",ref_toks)
+      print("entire_tree_ref_toks_set",entire_tree_ref_toks_set)
+      print("driving_aliases_over_time",driving_aliases_over_time)
+      print("remaining_ref_toks_set",remaining_ref_toks_set)
+      print("This is either my problem or your code doesnt drive all your local variables...")
+      print("Why you so angry at me?")
+      print("   The Lemon Twigs - Baby, Baby")
       sys.exit(-1)
 
     alias = driving_aliases_over_time[i]
@@ -3134,18 +3133,18 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     alias_driven_ref_toks = WIRE_TO_DRIVEN_REF_TOKS(alias, parser_state)
     
     if debug:
-      print "maybe first alias#",i,alias
-      print "alias_driven_ref_toks",alias_driven_ref_toks
-      print "orig ref_toks",ref_toks
-      print "pre remaining_ref_toks_set",remaining_ref_toks_set
+      print("maybe first alias#",i,alias)
+      print("alias_driven_ref_toks",alias_driven_ref_toks)
+      print("orig ref_toks",ref_toks)
+      print("pre remaining_ref_toks_set",remaining_ref_toks_set)
     
     remaining_ref_toks_set = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, alias_driven_ref_toks, c_ast_ref, parser_state)
     # Next alias working backwards
     i = i - 1
     
     if debug:
-      print "post remaining_ref_toks_set",remaining_ref_toks_set
-      print ""
+      print("post remaining_ref_toks_set",remaining_ref_toks_set)
+      print("")
   
   # At this point alias is first driver
   first_driving_alias = alias
@@ -3179,18 +3178,18 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     i = len(driving_aliases_over_time)-2
     while len(remaining_ref_toks_set) > 0:
       if i < 0:
-        print "Ran out of aliases?@@@@@@@"
-        print "func name",parser_state.existing_logic.func_name
-        print "starting ref_toks",ref_toks
-        print "c_type",c_type
-        print "expanded entire_tree_ref_toks_set",entire_tree_ref_toks_set
-        print "driving_aliases_over_time",driving_aliases_over_time
-        print "remaining_ref_toks_set",remaining_ref_toks_set
+        print("Ran out of aliases?@@@@@@@")
+        print("func name",parser_state.existing_logic.__name__)
+        print("starting ref_toks",ref_toks)
+        print("c_type",c_type)
+        print("expanded entire_tree_ref_toks_set",entire_tree_ref_toks_set)
+        print("driving_aliases_over_time",driving_aliases_over_time)
+        print("remaining_ref_toks_set",remaining_ref_toks_set)
         #print "="
         #print "first_driving_alias",first_driving_alias
         #print "first_driving_alias_c_type",first_driving_alias_c_type
-        print "="
-        print "This is either my problem or your code doesnt drive all your local variables..."
+        print("=")
+        print("This is either my problem or your code doesnt drive all your local variables...")
         sys.exit(-1)
         
       alias = driving_aliases_over_time[i]
@@ -3199,16 +3198,16 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
       len_pre_drive = len(remaining_ref_toks_set)
       
       if debug:
-        print "alias#",i,alias
-        print "alias_driven_ref_toks",alias_driven_ref_toks
-        print "orig ref_toks",ref_toks
-        print "pre remaining_ref_toks_set",remaining_ref_toks_set
+        print("alias#",i,alias)
+        print("alias_driven_ref_toks",alias_driven_ref_toks)
+        print("orig ref_toks",ref_toks)
+        print("pre remaining_ref_toks_set",remaining_ref_toks_set)
       
       remaining_ref_toks_set = REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, alias_driven_ref_toks, c_ast_ref, parser_state)
       
       if debug:
-        print "post remaining_ref_toks_set",remaining_ref_toks_set
-        print ""
+        print("post remaining_ref_toks_set",remaining_ref_toks_set)
+        print("")
       
       # Record this alias as driver if it drove wires
       if len(remaining_ref_toks_set) < len_pre_drive:
@@ -3268,7 +3267,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
       elif isinstance(ref_tok, c_ast.Node):
         func_name += "_" + "VAR"
       else:
-        print "What is ref tok?", ref_tok
+        print("What is ref tok?", ref_tok)
         sys.exit(-1)
     
     
@@ -3286,10 +3285,10 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     
     # Sanity
     if len(sorted_reduced_driven_ref_toks_set) <= 0:
-      print "Wtf no sorted input ref toks for ref read @", c_ast_ref.coord
+      print("Wtf no sorted input ref toks for ref read @", c_ast_ref.coord)
       sys.exit(-1)
     if len(driven_ref_toks_list) <= 0:
-      print "Wtf no input ref toks for ref read @", c_ast_ref.coord
+      print("Wtf no input ref toks for ref read @", c_ast_ref.coord)
       sys.exit(-1)
     
     # Func name built with reduced list
@@ -3302,7 +3301,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
         elif isinstance(ref_tok, c_ast.Node):
           func_name += "_" + "VAR"
         else:
-          print "What is ref tok bleh?", ref_tok
+          print("What is ref tok bleh?", ref_tok)
           sys.exit(-1)
           
           
@@ -3319,10 +3318,10 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
         elif isinstance(ref_tok, c_ast.Node):
           input_ref_toks_str += "_" + "VAR"
         else:
-          print "What is ref tok bleh????", ref_tok
+          print("What is ref tok bleh????", ref_tok)
           sys.exit(-1)
     # Hash the string
-    hash_ext = "_" + ((hashlib.md5(input_ref_toks_str).hexdigest())[0:4]) # 4 chars enough?
+    hash_ext = "_" + ((hashlib.md5(input_ref_toks_str.encode("utf-8")).hexdigest())[0:4]) # 4 chars enough?
     func_name += hash_ext
     
     
@@ -3395,7 +3394,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
       ref_tok_c_ast_node = ref_toks[ref_tok_index]
       # Sanity check
       if not isinstance(ref_tok_c_ast_node, c_ast.Node):
-        print "Not a variable ref tok?2", ref_tok_c_ast_node
+        print("Not a variable ref tok?2", ref_tok_c_ast_node)
         sys.exit(-1)
         
       # Say which variable index this is
@@ -3517,7 +3516,7 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
   elif maybe_not_enum_wire in existing_logic.outputs:
     return False
   else:
-    print "ENUM:",maybe_not_enum_wire
+    print("ENUM:",maybe_not_enum_wire)
     return True
 
 
@@ -3643,7 +3642,7 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
     c_type_str = "char"
     #print "Char val", value 
   else:
-    print "What type of constant is?", value_str, c_ast_node
+    print("What type of constant is?", value_str, c_ast_node)
     sys.exit(-1)
   
   if is_negated:
@@ -3713,7 +3712,7 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   elif type(c_ast_decl.type) == c_ast.TypeDecl:
     return C_AST_TYPEDECL_TO_LOGIC(c_ast_decl.type, prepend_text, parser_state, c_ast_decl)
   else:
-    print "C_AST_DECL_TO_LOGIC",c_ast_decl.type
+    print("C_AST_DECL_TO_LOGIC",c_ast_decl.type)
     sys.exit(-1)
   
 
@@ -3754,8 +3753,8 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
   if not(parent_c_ast_decl.init is None):
     # Dont support struct init here yet
     if type(parent_c_ast_decl.init) == c_ast.InitList:
-      print parent_c_ast_decl.init
-      print "Dont support local variable struct init statement yet...", parent_c_ast_decl.init.coord
+      print(parent_c_ast_decl.init)
+      print("Dont support local variable struct init statement yet...", parent_c_ast_decl.init.coord)
       sys.exit(-1)
     
     #print parent_c_ast_decl.init
@@ -3825,7 +3824,7 @@ def C_AST_NODE_COORD_STR(c_ast_node):
   
   # pycparser doesnt actually do column numbers right
   # But string representation of node is correct and can be hashed
-  hash_ext = "_" + (hashlib.md5(str(c_ast_node)).hexdigest())[0:4] #4 chars enough?
+  hash_ext = "_" + (hashlib.md5(str(c_ast_node).encode("utf-8")).hexdigest())[0:4] #4 chars enough?
   
   file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)+hash_ext
   # Get leaf name (just stem file name of file hierarcy)
@@ -3860,7 +3859,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
     parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.cond, [COND_DUMMY], iter_prepend_text, parser_state) 
     const_cond_wire = FIND_CONST_DRIVING_WIRE(COND_DUMMY, parser_state.existing_logic)
     if const_cond_wire is None:
-      print "I dont know how to handle what you are doing in the for loop condition at", c_ast_node.cond.coord, "iteration", i
+      print("I dont know how to handle what you are doing in the for loop condition at", c_ast_node.cond.coord, "iteration", i)
       sys.exit(-1)
     cond_val = int(GET_VAL_STR_FROM_CONST_WIRE(const_cond_wire, parser_state.existing_logic, parser_state))
     
@@ -3900,7 +3899,7 @@ def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
     elif isinstance(ref_tok, c_ast.Node):
       rv += "_" + "VAR"
     else:
-      print "What kind of ref is this?", ref_toks, c_ast_ref.coord
+      print("What kind of ref is this?", ref_toks, c_ast_ref.coord)
       sys.exit(-1)
   return rv
 
@@ -4393,7 +4392,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       # Get values from constants
       lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state.existing_logic, parser_state)
       rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
-      
       # First check for integer arguments
       is_ints = True
       try:
@@ -4414,18 +4412,22 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       
       # Number who?
       if not is_ints and not is_floats:
-        print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non numbers?"
+        print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op of non numbers?")
         sys.exit(-1)
         
       # What type of binary op
       if func_base_name.endswith(BIN_OP_PLUS_NAME):
-        const_val_str = str(lhs_val+rhs_val)
+          const_val_str = str(lhs_val+rhs_val)
       elif func_base_name.endswith(BIN_OP_MINUS_NAME):
-        const_val_str = str(lhs_val-rhs_val)
+          const_val_str = str(lhs_val-rhs_val)
       elif func_base_name.endswith(BIN_OP_MULT_NAME):
-        const_val_str = str(lhs_val*rhs_val)
+          const_val_str = str(lhs_val*rhs_val)
       elif func_base_name.endswith(BIN_OP_DIV_NAME):
-        const_val_str = str(lhs_val/rhs_val)
+        # Div leaves group of ints and returns float
+        if is_ints:
+          const_val_str = str(int(lhs_val/rhs_val))
+        else:
+          const_val_str = str(lhs_val/rhs_val)
       elif func_base_name.endswith(BIN_OP_LT_NAME):
         const_val_str = "1" if lhs_val<rhs_val else "0"
       elif func_base_name.endswith(BIN_OP_LTE_NAME):
@@ -4439,7 +4441,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       elif func_base_name.endswith(BIN_OP_SR_NAME):
         # SHIFT INT ONLY FOR NOW?
         if not is_ints:
-          print "Constant shift function", func_base_name, func_c_ast_node.coord, "for ints only right now..."
+          print("Constant shift function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
           sys.exit(-1)
         # lhs_val >> rhs_val
         
@@ -4468,7 +4470,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         output_int = to_int(output_bin_str)
         const_val_str = str(output_int)
       else:
-        print "Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name
+        print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
         sys.exit(-1)
     
     
@@ -4480,7 +4482,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
         const_val_str = str(float(in_val_str))
       else:
-        print "How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text
+        print("How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
         sys.exit(-1) 
     # MATH FUNCS
     elif func_base_name == "sqrt" and base_name_is_name:
@@ -4506,9 +4508,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif len(input_drivers) == 0:
       return None    
     else:
-      print "Warning: Not reducing constant function call:"
-      print func_inst_name,
-      print func_base_name, func_c_ast_node.coord
+      print("Warning: Not reducing constant function call:")
+      print(func_inst_name, end=' ')
+      print(func_base_name, func_c_ast_node.coord)
       sys.exit(-1)
       #print const_input_wires
       return None
@@ -4572,7 +4574,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   # CONSTANT condition MUX
   elif func_base_name == MUX_LOGIC_NAME and const_input_wires[0] is not None:
     # Easier to do in C_AST_IF, can not evaluate branch in full instead of just removing MUX func here
-    print "Hey you did a bad job at your job reducing MUXES. Atlas Sound w. Noah Lennox - Walkabout"
+    print("Hey you did a bad job at your job reducing MUXES. Atlas Sound w. Noah Lennox - Walkabout")
     sys.exit(-1)
   # Not a reducable function
   if not is_reducable:
@@ -4632,8 +4634,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     input_port_name = input_port_names[input_i]
     input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
     if input_port_wire in parser_state.existing_logic.wire_driven_by and isinstance(input_drivers[input_i],c_ast.Node):
-      print "Why evaluating c ast node", input_drivers[input_i], "input to", func_inst_name
-      print "When it is known that input",input_port_wire," is driven by:", parser_state.existing_logic.wire_driven_by[input_port_wire]
+      print("Why evaluating c ast node", input_drivers[input_i], "input to", func_inst_name)
+      print("When it is known that input",input_port_wire," is driven by:", parser_state.existing_logic.wire_driven_by[input_port_wire])
       sys.exit(-1)
   
   # Try to determine output type
@@ -4707,7 +4709,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       # Get port name from driven wire
       func_port_type = func_def_logic_object.wire_to_c_type[input_port_name]
       if input_driver_type != func_port_type:
-        print func_inst_name, "port", input_port_name, "mismatched types per func def?",input_driver_type, func_port_type
+        print(func_inst_name, "port", input_port_name, "mismatched types per func def?",input_driver_type, func_port_type)
         sys.exit(-1)
       #parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = func_port_type
       
@@ -4732,12 +4734,12 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             #and VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,driving_wire_c_type) >= VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,input_driver_type) ):
             pass
           else:
-            print "Input index:",i, "(total", len(input_drivers), ")", input_port_names, input_driver_types
-            print "driven_input_wire_name",driven_input_wire_name
-            print "driving_wire",driving_wire
-            print func_inst_name, "port", input_port_name, "mismatched types?",input_driver_type, driving_wire_c_type
-            print func_c_ast_node
-            print 0/0
+            print("Input index:",i, "(total", len(input_drivers), ")", input_port_names, input_driver_types)
+            print("driven_input_wire_name",driven_input_wire_name)
+            print("driving_wire",driving_wire)
+            print(func_inst_name, "port", input_port_name, "mismatched types?",input_driver_type, driving_wire_c_type)
+            print(func_c_ast_node)
+            print(0/0)
             sys.exit(-1)
         #if driven_input_wire_name not in parser_state.existing_logic.wire_to_c_type:
         # parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
@@ -4765,7 +4767,7 @@ def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_i
     # Append input types to base name
     for input_driver_type in input_driver_types:
       if input_driver_type is None:
-        print "oh no, now it is"
+        print("oh no, now it is")
         sys.exit(-1)
       # Input could be array type with brackets so remove for safe C func name
       types_str += "_" + input_driver_type.replace("[","_").replace("]","")
@@ -4837,8 +4839,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
       
     # Ok panic
-    print "C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?"
-    print c_ast_func_call.coord
+    print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
+    print(c_ast_func_call.coord)
     casthelp(c_ast_func_call)
     sys.exit(-1)
   not_inst_func_logic = FuncLogicLookupTable[func_name]
@@ -4852,8 +4854,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   # Helpful check
   if c_ast_func_call.args is not None:
     if len(c_ast_func_call.args.exprs) != len(not_inst_func_logic.inputs):
-      print "The function definition for",func_name,"has",len(c_ast_func_call.args.exprs), "arguments."
-      print "as used at", c_ast_func_call.coord, "it has", len(not_inst_func_logic.inputs), "arguments."
+      print("The function definition for",func_name,"has",len(c_ast_func_call.args.exprs), "arguments.")
+      print("as used at", c_ast_func_call.coord, "it has", len(not_inst_func_logic.inputs), "arguments.")
       sys.exit(-1)
   
   # Assume inputs are in arg order
@@ -4870,7 +4872,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   # Output is type of logic not_inst_func_logic output wire
   if len(not_inst_func_logic.outputs) > 0:
     if len(not_inst_func_logic.outputs) != 1:
-      print "Whats going on here multiple outputs??"
+      print("Whats going on here multiple outputs??")
       sys.exit(-1)
     output_port_name = not_inst_func_logic.outputs[0]
     output_c_type = not_inst_func_logic.wire_to_c_type[output_port_name]
@@ -4959,7 +4961,7 @@ def C_TYPE_SIZE(c_type, parser_state, allow_fail=False):
     return 4
   else:
     if not allow_fail:
-      print "How to sizeof",c_type, "???"
+      print("How to sizeof",c_type, "???")
       sys.exit(-1)
     byte_size = -1
   
@@ -4999,7 +5001,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   if c_ast_unary_op_str == "!":
     c_ast_op_str = UNARY_OP_NOT_NAME
   else:
-    print "UNARY_OP name for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?"
+    print("UNARY_OP name for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
     sys.exit(-1)
     
   # Set port names based on func name
@@ -5029,9 +5031,9 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   if unary_op_input in parser_state.existing_logic.wire_to_c_type:
     input_type = parser_state.existing_logic.wire_to_c_type[unary_op_input]
   else:
-    print func_inst_name, "looks like a constant unary op, what's going on?"
-    print "parser_state.existing_logic.wire_to_c_type"
-    print parser_state.existing_logic.wire_to_c_type
+    print(func_inst_name, "looks like a constant unary op, what's going on?")
+    print("parser_state.existing_logic.wire_to_c_type")
+    print(parser_state.existing_logic.wire_to_c_type)
     sys.exit(-1)
   
   expr_type = parser_state.existing_logic.wire_to_c_type[unary_op_input]
@@ -5046,7 +5048,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
     if c_ast_unary_op_str == "!":
       output_c_type = driven_c_type_str
     else:
-      print "Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?"
+      print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
       sys.exit(-1) 
     # Set type for output wire
     parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
@@ -5115,7 +5117,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   elif c_ast_bin_op_str == "%":
     c_ast_op_str = BIN_OP_MOD_NAME
   else:
-    print "BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?"
+    print("BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?")
     sys.exit(-1)
     
   # Set port names based on func name
@@ -5264,23 +5266,23 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     '''
     # Which ones to use?
     if (left_type is None) and (right_type is None):
-      print func_inst_name, "doesn't have type information for either inputs OR OUTPUT? What's going on?"
-      print "parser_state.existing_logic.wire_to_c_type"
-      print "bin_op_left_input",bin_op_left_input
-      print "bin_op_right_input",bin_op_right_input
-      print "driven_wire_names",driven_wire_names
-      print "Know types:"
-      print parser_state.existing_logic.wire_to_c_type
+      print(func_inst_name, "doesn't have type information for either inputs OR OUTPUT? What's going on?")
+      print("parser_state.existing_logic.wire_to_c_type")
+      print("bin_op_left_input",bin_op_left_input)
+      print("bin_op_right_input",bin_op_right_input)
+      print("driven_wire_names",driven_wire_names)
+      print("Know types:")
+      print(parser_state.existing_logic.wire_to_c_type)
       sys.exit(-1)
     elif not(left_type is None) and (right_type is None):
       # Left type alone known
-      print func_inst_name, "Binary op with only left input type known?"
+      print(func_inst_name, "Binary op with only left input type known?")
       sys.exit(-1)
       #parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
       #parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = left_type
     elif (left_type is None) and not(right_type is None):
       # Right type alone known
-      print func_inst_name, "Binary op with only right input type known?"
+      print(func_inst_name, "Binary op with only right input type known?")
       sys.exit(-1)
       #parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = right_type
       #parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
@@ -5312,7 +5314,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
           # Max?
           max_unsigned_width = max(left_unsigned_width, right_unsigned_width) 
         else:
-          print "Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord
+          print("Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord)
           sys.exit(-1)
       
         # Operator determines output type
@@ -5395,7 +5397,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
           # Shifting right returns type of left operand
           output_c_type = left_type
         else:
-          print "Output C type for '" + c_ast_bin_op_str + "'?"
+          print("Output C type for '" + c_ast_bin_op_str + "'?")
           sys.exit(-1)
   
   # Set type for output wire
@@ -5429,19 +5431,19 @@ def GET_C_TYPE_FROM_WIRE_NAMES(wire_names, logic, allow_fail=False):
       if allow_fail:
         return None
       else:
-        print "Cant GET_C_TYPE_FROM_WIRE_NAMES since", wire_name,"not in logic.wire_to_c_type"
-        print "logic.wire_to_c_type",logic.wire_to_c_type
-        print 0/0
+        print("Cant GET_C_TYPE_FROM_WIRE_NAMES since", wire_name,"not in logic.wire_to_c_type")
+        print("logic.wire_to_c_type",logic.wire_to_c_type)
+        print(0/0)
         sys.exit(-1)
     c_type_str = logic.wire_to_c_type[wire_name]
     if rv is None:
       rv = c_type_str
     else:
       if rv != c_type_str:
-        print "GET_C_TYPE_FROM_WIRE_NAMES multilpe types?"
-        print "wire_name",wire_name
-        print rv, c_type_str
-        print 0/0
+        print("GET_C_TYPE_FROM_WIRE_NAMES multilpe types?")
+        print("wire_name",wire_name)
+        print(rv, c_type_str)
+        print(0/0)
         sys.exit(-1)
       
   return rv
@@ -5471,9 +5473,9 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
     # INSERT CAST FUNCTION if needed
     #print c_ast_id.coord
     if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
-      print "Looks like wire'",driving_wire,"'isn't declared?"
-      print C_AST_NODE_COORD_STR(c_ast_node)
-      print 0/0
+      print("Looks like wire'",driving_wire,"'isn't declared?")
+      print(C_AST_NODE_COORD_STR(c_ast_node))
+      print(0/0)
       sys.exit(-1)
     rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
     for driven_wire_name in driven_wire_names:
@@ -5546,9 +5548,9 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 
         else:
           # Unhandled
-          print "RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord
-          print driven_wire_type, "!=", rhs_type
-          print "Implement nasty casty?" #Fat White Family - Tastes Good With The Money
+          print("RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord)
+          print(driven_wire_type, "!=", rhs_type)
+          print("Implement nasty casty?") #Fat White Family - Tastes Good With The Money
           sys.exit(-1)
     
         
@@ -5589,7 +5591,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
     # Get the dimension with dummies
     dummy_parser_state = ParserState()
     dummy_parser_state.existing_logic = Logic()
-    dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
+    dummy_parser_state.existing_logic.__name__ = "ARRAY_DECL"
     dummy_wire = "ARRAY_DECL_DIM"
     dummy_parser_state.existing_logic = C_AST_NODE_TO_LOGIC(children[1][1], [dummy_wire], "", dummy_parser_state)
     driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
@@ -5664,7 +5666,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
     parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
 
   # First get name of function from the declaration
-  parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
+  parser_state.existing_logic.__name__ = c_ast_funcdef.decl.name
   
   # Then get input wire names from the function def
   #print "func def:",c_ast_funcdef
@@ -5695,7 +5697,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       if len(parser_state.existing_logic.submodule_instances) > 0:
         for out_wire in parser_state.existing_logic.outputs:
           if out_wire not in parser_state.existing_logic.wire_driven_by:
-            print "Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire
+            print("Not all function outputs driven!?", parser_state.existing_logic.__name__, out_wire)
             sys.exit(-1)
   
   # Write cache
@@ -5725,7 +5727,7 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
     else:
       text += "has no driver!!!!?"
       start = None
-  print text
+  print(text)
   return start
   
 def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
@@ -5861,7 +5863,7 @@ class ParserState:
 
     rv.LogicInstLookupTable = dict()
     for inst_name in self.LogicInstLookupTable:
-      func_name = self.LogicInstLookupTable[inst_name].func_name
+      func_name = self.LogicInstLookupTable[inst_name].__name__
       rv_func_logic = rv.FuncLogicLookupTable[func_name]
       rv.LogicInstLookupTable[inst_name] = rv_func_logic
     
@@ -5901,7 +5903,7 @@ def WRITE_PARSER_STATE_CACHE(parser_state, c_filename):
     
   # Write file
   filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
-  with open(filepath, 'w') as output:
+  with open(filepath, 'wb') as output:
     pickle.dump(parser_state, output, pickle.HIGHEST_PROTOCOL)
 
 def GET_PARSER_STATE_CACHE(c_filename):
@@ -5978,7 +5980,7 @@ def PARSE_FILE(c_filename):
   # Do we have a cached parser state?
   cached_parser_state = GET_PARSER_STATE_CACHE(c_filename)
   if cached_parser_state is not None:
-    print "Already parsed C code for",c_filename,", using cache..."
+    print("Already parsed C code for",c_filename,", using cache...")
     return cached_parser_state
   
   # Otherwise do for real
@@ -6013,7 +6015,7 @@ def PARSE_FILE(c_filename):
         # Parse pragmas
         parse_state = APPEND_PRAGMA_INFO(parser_state)
         # Parse definitions first before code structure
-        print "Parsing non-function definitions..."
+        print("Parsing non-function definitions...")
         # Get the parsed struct def info
         parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
         # Get global variable info
@@ -6062,12 +6064,12 @@ def PARSE_FILE(c_filename):
     
     
     # Parse the function definitions for code structure
-    print "Parsing function logic..."
+    print("Parsing function logic...")
     parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
     # Sanity check main funcs are there
-    for main_func in parser_state.main_mhz.keys():
+    for main_func in list(parser_state.main_mhz.keys()):
       if main_func not in parser_state.FuncLogicLookupTable:
-        print "Main function:", main_func, "does not exist?"
+        print("Main function:", main_func, "does not exist?")
         sys.exit(-1)   
     
     #print "WHHY SLO?"
@@ -6084,8 +6086,8 @@ def PARSE_FILE(c_filename):
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
     
     # Elaborate the logic down to raw vhdl modules
-    print "Elaborating pipeline hierarchies down to raw HDL logic..."
-    for main_func in parser_state.main_mhz.keys():
+    print("Elaborating pipeline hierarchies down to raw HDL logic...")
+    for main_func in list(parser_state.main_mhz.keys()):
       adjusted_containing_logic_inst_name=""
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       c_ast_node_when_used = parser_state.FuncLogicLookupTable[main_func].c_ast_node
@@ -6099,7 +6101,7 @@ def PARSE_FILE(c_filename):
     
     # Code gen based on fully elaborated logic
     # Write c code
-    print "Writing generated PipelineC code from elaboration to output directories..."
+    print("Writing generated PipelineC code from elaboration to output directories...")
     for func_name in parser_state.FuncLogicLookupTable:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       if not(func_logic.c_code_text is None):
@@ -6115,15 +6117,15 @@ def PARSE_FILE(c_filename):
     
     #print "Skipping user code trimming for debug..."
     # Remove excess user code
-    print "Doing obvious logic trimming/collapsing..."
-    for main_func in parser_state.main_mhz.keys():
+    print("Doing obvious logic trimming/collapsing...")
+    for main_func in list(parser_state.main_mhz.keys()):
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
     
     # Sanity check no duplicate globals
     for g in parser_state.global_info:
       if g in parser_state.volatile_global_info:
-        print "Global variable", g, "declared as a volatile global too!?"
+        print("Global variable", g, "declared as a volatile global too!?")
         sys.exit(-1)
         
     # Check for double use of globals+volatiles the dumb way to print useful info
@@ -6135,12 +6137,12 @@ def PARSE_FILE(c_filename):
         func2_logic = parser_state.FuncLogicLookupTable[func_name2]
         for func1_global in (func1_logic.global_wires | func1_logic.volatile_global_wires):
           if func1_global in (func2_logic.global_wires | func2_logic.volatile_global_wires):
-            print "Heyo can't use globals in more than one function!"
-            print func1_global, "used in", func_name1, "and", func_name2
+            print("Heyo can't use globals in more than one function!")
+            print(func1_global, "used in", func_name1, "and", func_name2)
             sys.exit(-1)
 
     # Write cache
-    print "Writing cache of parsed information to file..."
+    print("Writing cache of parsed information to file...")
     WRITE_PARSER_STATE_CACHE(parser_state, c_filename)
     
     # Clear in memory caches
@@ -6149,7 +6151,7 @@ def PARSE_FILE(c_filename):
     return parser_state
 
   except c_parser.ParseError as pe:
-    print "PARSE_FILE pycparser says you messed up here:",pe
+    print("PARSE_FILE pycparser says you messed up here:",pe)
     sys.exit(-1)
     
 class GlobalInfo:
@@ -6175,7 +6177,7 @@ def GET_GLOBAL_INFO(parser_state):
     # Check for multiple types!
     if global_info.name in parser_state.global_info:
       if parser_state.global_info[global_info.name].type_name != global_info.type_name:
-        print "Global variable with multiple types?", global_info.name
+        print("Global variable with multiple types?", global_info.name)
         sys.exit(-1)
         
     # Handle initialization
@@ -6187,8 +6189,8 @@ def GET_GLOBAL_INFO(parser_state):
         #print global_def.init
         global_info.init = int(global_def.init.value)
       else:
-        print global_def.init
-        print "Only simple integer constant initializations right now:",global_def.coord
+        print(global_def.init)
+        print("Only simple integer constant initializations right now:",global_def.coord)
         sys.exit(-1)
       
         
@@ -6212,7 +6214,7 @@ def GET_VOLATILE_GLOBAL_INFO(parser_state):
     # Check for multiple types!
     if global_info.name in parser_state.volatile_global_info:
       if parser_state.volatile_global_info[global_info.name].type_name != global_info.type_name:
-        print "Volatile global variable with multiple types?", global_info.name
+        print("Volatile global variable with multiple types?", global_info.name)
         sys.exit(-1)
         
     # Handle initialization
@@ -6222,8 +6224,8 @@ def GET_VOLATILE_GLOBAL_INFO(parser_state):
         #print global_def.init
         global_info.init = int(volatile_global_def.init.value)
       else:
-        print volatile_global_def.init
-        print "Only simple integer constant initializations right now:",volatile_global_def.coord
+        print(volatile_global_def.init)
+        print("Only simple integer constant initializations right now:",volatile_global_def.coord)
         sys.exit(-1)
         
     # Save info
@@ -6288,24 +6290,24 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       if read_func_name in called_funcs:
         if read_containing_func is not None:
           if read_containing_func != func_name:
-            print "Multiple uses of",read_func_name,"?",read_containing_func,func_name
+            print("Multiple uses of",read_func_name,"?",read_containing_func,func_name)
             sys.exit(-1)
         read_containing_func = func_name
       # Write
       if write_func_name in called_funcs:
         if write_containing_func is not None:
           if write_containing_func != func_name:
-            print "Multiple uses of",write_func_name,"?",write_containing_func,func_name
+            print("Multiple uses of",write_func_name,"?",write_containing_func,func_name)
             sys.exit(-1)
         write_containing_func = func_name
       if write_containing_func is not None and read_containing_func is not None:
         break
         
     # Recursively lookup main_func
-    read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
-    write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, parser_state.main_mhz.keys())
+    read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+    write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     if read_main_func is None or write_main_func is None:
-      print "Problem finding main functions for",var_name,"clock crossing read write:", read_containing_func,write_containing_func
+      print("Problem finding main functions for",var_name,"clock crossing read write:", read_containing_func,write_containing_func)
       sys.exit(-1)
       
     read_mhz = parser_state.main_mhz[read_main_func]
@@ -6326,9 +6328,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       
     # Check that non volatile crosses are identical freq
     if var_name in parser_state.global_info:
-			if ratio != 1.0:
-				print "Non-volatile clock crossing", var_name, "is used like volatile clock crossing from",write_main_func,"to",read_main_func
-				sys.exit(-1)
+      if ratio != 1.0:
+        print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from",write_main_func,"to",read_main_func)
+        sys.exit(-1)
     
     # Record
     parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name] = (write_main_func,read_main_func)
@@ -6379,7 +6381,7 @@ def GET_ENUM_IDS_DICT(c_file_ast):
     for child in enum_def.values.enumerators:
       if len(child.children()) > 0:
         child.show()
-        print "Don't assign enums values for now OK?"
+        print("Don't assign enums values for now OK?")
         sys.exit(-1)     
       
       #sys.exit(-1)
@@ -6407,11 +6409,11 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast):
     if struct_def.name is None:
       global _printed_GET_STRUCT_FIELD_TYPE_DICT
       if not _printed_GET_STRUCT_FIELD_TYPE_DICT:
-        print "WARNING: Must use tag_name and struct_alias in struct definitions... for now... Ex."
-        print '''typedef struct tag_name {
+        print("WARNING: Must use tag_name and struct_alias in struct definitions... for now... Ex.")
+        print('''typedef struct tag_name {
   type member1;
   type member2;
-} struct_alias;'''
+} struct_alias;''')
         _printed_GET_STRUCT_FIELD_TYPE_DICT = True
       continue
           
@@ -6454,15 +6456,15 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     # Final chance for SW_LIB generated code to do stuff to func logic
     # Hah wtf this is hacky
     logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
-    FuncLogicLookupTable[logic.func_name] = logic 
+    FuncLogicLookupTable[logic.__name__] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
   # Do dumb? loops to find containing func
-  for func_logic in FuncLogicLookupTable.values():
+  for func_logic in list(FuncLogicLookupTable.values()):
     for submodule_inst in func_logic.submodule_instances:
       submodule_func_name = func_logic.submodule_instances[submodule_inst]
       if submodule_func_name in FuncLogicLookupTable:
-        FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.func_name)
+        FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.__name__)
               
   return FuncLogicLookupTable
   
@@ -6473,7 +6475,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
   if func_name in parser_state.main_mhz:
     # Main never gets prepend text
     if containing_logic_inst_name != "":
-      print "Wtf main never has container?",containing_logic_inst_name
+      print("Wtf main never has container?",containing_logic_inst_name)
       sys.exit(-1) 
     # Override
     new_inst_name_prepend_text = ""
@@ -6491,9 +6493,9 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
     containing_func_logic = parser_state.LogicInstLookupTable[containing_logic_inst_name]
     #if containing_func_logic is not None:      
     orig_func_logic = BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, local_inst_name, parser_state)
-    orig_func_logic.containing_funcs.add(containing_func_logic.func_name)
+    orig_func_logic.containing_funcs.add(containing_func_logic.__name__)
     # Update FuncLogicLookupTable with this new func logic
-    parser_state.FuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
+    parser_state.FuncLogicLookupTable[orig_func_logic.__name__] = orig_func_logic
     
     
   # Record this instance of func logic
@@ -6546,8 +6548,8 @@ def APPEND_PRAGMA_INFO(parser_state):
   # Sanity checks
   # MAIN_MHZ
   if len(parser_state.main_mhz) == 0:
-    print "No main function specified?"
-    print "Ex. #pragma MAIN_MHZ main 100.0"
+    print("No main function specified?")
+    print("Ex. #pragma MAIN_MHZ main 100.0")
     sys.exit(-1)
 
 def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
@@ -6580,10 +6582,10 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
     c_text = preprocess_text(text)
     return GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename)
   except c_parser.ParseError as pe:
-    print "Parsed fake file name:",c_filename
-    print "Parsed text:"
-    print c_text
-    print "pycparser says you messed up here:",pe
+    print("Parsed fake file name:",c_filename)
+    print("Parsed text:")
+    print(c_text)
+    print("pycparser says you messed up here:",pe)
     #casthelp(pe)
     sys.exit(-1)
   

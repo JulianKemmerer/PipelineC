@@ -15,13 +15,13 @@ import VHDL
 def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   
-  if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
+  if logic.__name__.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return wires_decl_text
-  elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
+  elif logic.__name__.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return wires_decl_text
-  elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
+  elif logic.__name__.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
     wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return wires_decl_text
   # Is this bit manip raw HDL?
@@ -31,67 +31,67 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
   # Mem uses no internal signals right now
   elif SW_LIB.IS_MEM(logic):
     return ""
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):  
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):  
     wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
     return wires_decl_text
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
     wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return wires_decl_text
   else:
-    print "GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord
+    print("GET_RAW_HDL_WIRES_DECL_TEXT for", logic.__name__,"?",logic.c_ast_node.coord)
     sys.exit(-1)
 
 
 def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable  
   # Unary ops !
-  if logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
+  if logic.__name__.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return package_stages_text
   # Binary ops + , ==, > etc
-  elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
+  elif logic.__name__.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return package_stages_text
   # IF STATEMENTS
-  elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
+  elif logic.__name__.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
     wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return package_stages_text  
   # Is this bit manip raw HDL?
   elif SW_LIB.IS_BIT_MANIP(logic):
     wires_decl_text, package_stages_text = GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     return package_stages_text
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):  
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):  
     wires_decl_text, package_stages_text = GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
     return package_stages_text
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
     wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return package_stages_text
   else:
-    print "GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.func_name,"?"
+    print("GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.__name__,"?")
     sys.exit(-1)
     
     
 def GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
-  if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
+  if Logic.__name__.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
     return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
+  elif Logic.__name__.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
     return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
   else:
-    print "GET_MEM_ARCH_DECL_TEXT for func", Logic.func_name, "?"
+    print("GET_MEM_ARCH_DECL_TEXT for func", Logic.__name__, "?")
     sys.exit(-1)
       
 def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
-  if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
+  if Logic.__name__.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
     return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
+  elif Logic.__name__.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
     return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
   else:
-    print "GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?"
+    print("GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.__name__, "?")
     sys.exit(-1)
   
 def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
   # Is a clocked process assigning to global reg
-  global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+  global_name = Logic.__name__.split("_"+SW_LIB.RAM_SP_RF)[0]
   global_c_type = Logic.wire_to_c_type[list(Logic.global_wires)[0]]
   global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
   
@@ -142,7 +142,7 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
     signal return_output_r : ''' + out_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(out_t,parser_state) + ''';
 '''
   else:
-    print "Do other clocks for RAMSPRF"
+    print("Do other clocks for RAMSPRF")
     sys.exit(-1)
 
   return rv
@@ -150,8 +150,8 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
     
 def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
   # Is a clocked process assigning to global reg
-  global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
-  global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+  global_name = Logic.__name__.split("_"+SW_LIB.RAM_SP_RF)[0]
+  global_name = Logic.__name__.split("_"+SW_LIB.RAM_SP_RF)[0]
   global_c_type = Logic.wire_to_c_type[list(Logic.global_wires)[0]]
   global_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(global_c_type,parser_state)
   
@@ -205,7 +205,7 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
     return_output <= return_output_r;
 '''
   else:
-    print "Do other clocks for RAMSPRF fool"
+    print("Do other clocks for RAMSPRF fool")
     sys.exit(-1)
   
   return rv
@@ -214,7 +214,7 @@ def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, L
   if str(logic.c_ast_node.op) == "!":
     return GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
   else:
-    print "GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op)
+    print("GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op))
     sys.exit(-1)
 
 
@@ -237,7 +237,7 @@ def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, par
   elif str(logic.c_ast_node.op) == "^":
     return GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
   else:
-    print "GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op)
+    print("GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op))
     sys.exit(-1)
     
 def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
@@ -393,7 +393,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
         elif type(ref_tok) == str:
           vhdl_ref_str += "." + ref_tok
         else:
-          print "Only constant references here!", c_ast_ref.coord
+          print("Only constant references here!", c_ast_ref.coord)
           sys.exit(-1)
     
       # Var ref needs to read input port differently than const
@@ -424,7 +424,7 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
     elif type(ref_tok) == str:
       vhdl_ref_str += "." + ref_tok
     else:
-      print "Only constant references right now blbblbaaaghghhh!", c_ast_ref.coord
+      print("Only constant references right now blbblbaaaghghhh!", c_ast_ref.coord)
       sys.exit(-1)
   
   text += '''
@@ -776,7 +776,7 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
   if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
     return GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
   else:
-    print "Binary op EQ for ", logic.wire_to_c_type, " as SLV?"
+    print("Binary op EQ for ", logic.wire_to_c_type, " as SLV?")
     sys.exit(-1)
     
 def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
@@ -1016,7 +1016,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
   elif VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
     return GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
   else:
-    print "Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type
+    print("Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type)
     sys.exit(-1)
 
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
@@ -1085,10 +1085,10 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
   # sanity check
   maybe_num_bits = sum(bits_per_stage_dict.values())
   if maybe_num_bits != num_bits:
-    print "maybe_num_bits != num_bits"
-    print "maybe_num_bits",maybe_num_bits
-    print "num_bits",num_bits
-    print 0/0
+    print("maybe_num_bits != num_bits")
+    print("maybe_num_bits",maybe_num_bits)
+    print("num_bits",num_bits)
+    print(0/0)
     sys.exit(-1)   
   
     
@@ -1377,7 +1377,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
   elif VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
     return GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
   else:
-    print "Only u/int binary op plus for now!", logic.wire_to_c_types
+    print("Only u/int binary op plus for now!", logic.wire_to_c_types)
     sys.exit(-1)
     
 def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, op_str):
@@ -1389,8 +1389,8 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
   elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
     return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
   else:
-    print logic.c_ast_node
-    print "Binary op LT/E for type?", logic.c_ast_node.coord
+    print(logic.c_ast_node)
+    print("Binary op LT/E for type?", logic.c_ast_node.coord)
     sys.exit(-1)
     
 def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, op_str):
@@ -1402,7 +1402,7 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
   elif VHDL.WIRES_ARE_UINT_N(logic.inputs,logic):
     return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
   else:
-    print "Binary op GT/GTE for type?", logic.c_ast_node.coord
+    print("Binary op GT/GTE for type?", logic.c_ast_node.coord)
     sys.exit(-1)
     
 def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
@@ -1441,7 +1441,7 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
   unsigned_width = width-1 # sign bit 
   max_clocks = unsigned_width
   if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-    print "Cannot do a c built in int binary op GT operation of",compare_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!"
+    print("Cannot do a c built in int binary op GT operation of",compare_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!")
     sys.exit(-1) # Eventually fix
   
     
@@ -1835,10 +1835,10 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
   # Cond input is [0] and bool, look at true and false ones only
   tf_inputs = logic.inputs[1:]
   if len(tf_inputs) != 2:
-    print "Not 2 input MUX??"
+    print("Not 2 input MUX??")
     for tf_input in tf_inputs:
-      print tf_input, logic.wire_to_c_type[tf_input]
-    print "logic.inputs",logic.inputs
+      print(tf_input, logic.wire_to_c_type[tf_input])
+    print("logic.inputs",logic.inputs)
     sys.exit(-1)
     
   # Doesnt need to be clock divisiable at least for now
@@ -1911,15 +1911,15 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
 
 def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
-  toks = logic.func_name.split("_")
+  toks = logic.__name__.split("_")
   # Bit slice or concat?
   #print "toks",toks
   # Bit slice
   if len(toks) ==4:
     # Only known thing is float SEM contructor
     # Just like bit concat
-    if not(logic.func_name.startswith("float_")):
-      print " Only known thing is float SEM constructor"
+    if not(logic.__name__.startswith("float_")):
+      print(" Only known thing is float SEM constructor")
       sys.exit(-1)
     else:
       return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
@@ -1953,7 +1953,7 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
       # Concat
       return GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
   else:
-    print "GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?"
+    print("GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.__name__, "?")
     sys.exit(-1)
     
     
@@ -1975,7 +1975,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 
   # Float constrcut must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a float UINT32 construct concat in multiple clocks!?"
+    print("Cannot do a float UINT32 construct concat in multiple clocks!?")
     sys.exit(-1)
     
   text = '''
@@ -2010,7 +2010,7 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, p
 
   # Float constrcut must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a float construct concat in multiple clocks!?"
+    print("Cannot do a float construct concat in multiple clocks!?")
     sys.exit(-1)
     
   text = '''
@@ -2041,7 +2041,7 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_sta
 
   # Bit concat must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a bit concat in multiple clocks!?"
+    print("Cannot do a bit concat in multiple clocks!?")
     sys.exit(-1)
     
   text = '''
@@ -2054,7 +2054,7 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_sta
 
 def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
-  toks = logic.func_name.split("_")
+  toks = logic.__name__.split("_")
   input_bit_width = int(toks[1])
   result_width = input_bit_width
   
@@ -2070,7 +2070,7 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 
   # Byte swap must be zero clocks
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a byte swap in multiple clocks!?"
+    print("Cannot do a byte swap in multiple clocks!?")
     sys.exit(-1)
     
   text = '''
@@ -2086,7 +2086,7 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 
 def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
-  toks = logic.func_name.split("_")
+  toks = logic.__name__.split("_")
   input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
   assign_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
   low_index = int(toks[2])
@@ -2114,7 +2114,7 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_par
 
   # Bit assign must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a bit assign in multiple clocks!?"
+    print("Cannot do a bit assign in multiple clocks!?")
     sys.exit(-1)
     
   text = '''
@@ -2150,19 +2150,19 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
   
   shift_func = None
   # Shift right might shift in sign bits if signed/arithmetic shfit
-  if logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME):
+  if logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME):
     shift_func = "shift_left"
-  elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
+  elif logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
     shift_func = "shift_right"
   else:
-    print "Blaag: I should start putting the song I am listening too for debug if I remember"
-    print '''Brother Sport
+    print("Blaag: I should start putting the song I am listening too for debug if I remember")
+    print('''Brother Sport
         Animal Collective - Merriweather Post Pavilion
-        '''
+        ''')
     sys.exit(-1)
     
   shift_const = None
-  toks = logic.func_name.split("_")
+  toks = logic.__name__.split("_")
   shift_const = toks[2]
   
   out_vhdl_type = x_vhdl_type
@@ -2174,7 +2174,7 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 
   # Const shift must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a const shift in multiple clocks!?"
+    print("Cannot do a const shift in multiple clocks!?")
     sys.exit(-1)
       
   text = '''
@@ -2206,7 +2206,7 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 
   # Bit slice must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a bit slice in multiple clocks!?"
+    print("Cannot do a bit slice in multiple clocks!?")
     sys.exit(-1)
     
   if high > low:
@@ -2244,15 +2244,15 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 
   # Bit slice must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do array to unsigned in multiple clocks!?"
+    print("Cannot do array to unsigned in multiple clocks!?")
     sys.exit(-1)
   
   # Big bit concat
   text = "return_output := "
-  be_range = range(0, dim)
-  le_range = range(dim-1, -1, -1)
+  be_range = list(range(0, dim))
+  le_range = list(range(dim-1, -1, -1))
   r = be_range
-  if logic.func_name.endswith("_le"):
+  if logic.__name__.endswith("_le"):
     r = le_range
   for i in r:
     text += "x(" + str(i) + ")&"
@@ -2271,7 +2271,7 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
   x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
   x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
   # Multiplier
-  multiplier = int(logic.func_name.split("_")[1])
+  multiplier = int(logic.__name__.split("_")[1])
   out_width = x_width * multiplier
   out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
   
@@ -2282,7 +2282,7 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
 
   # Bit slice must always be zero clock
   if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
-    print "Cannot do a bit dup in multiple clocks!?"
+    print("Cannot do a bit dup in multiple clocks!?")
     sys.exit(-1)
     
   text = '''

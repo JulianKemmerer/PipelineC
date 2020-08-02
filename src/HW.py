@@ -115,7 +115,7 @@ def send_memcached_request(key, value, opcode):
 		extraslen = 8
 		extras_bytes = struct.pack("!II", extras_flags, extras_expir)
 	else:
-		print 0/0
+		print(0/0)
 	datatype = 0
 	vbucket = 0
 	totalbodylen = extraslen + keylen + valuelen
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 	#LONG_STR = "Hello this is a test of a longer packet since minimum frames sizes add padding it seems?" #struct.pack("!s", 
 	#print "LONG_STR",LONG_STR
 	#send_udp(TWO_NUMS, 5678, "5.6.7.8", "\xFE\xED\xFA\xCE\xBE\xEF")
-	print "Sending from:", INTERFACE
+	print("Sending from:", INTERFACE)
 	send_memcached_set("hello", "world")
 	import time
 	time.sleep(1)

@@ -37,7 +37,7 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 				   f.startswith("main_") and f.endswith("CLK.vhd") ):
 					clks = int(f.replace("main_","").replace("CLK.vhd",""))
 					if clks==latency:
-						print "Using top:",abs_path
+						print("Using top:",abs_path)
 						vhd_files.append(abs_path)
 				else:
 					vhd_files.append(abs_path)
@@ -85,6 +85,6 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
 			
 			
 		log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
-		print log_text
+		print(log_text)
 		sys.exit(-1)
 	
