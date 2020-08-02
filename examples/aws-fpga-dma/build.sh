@@ -2,7 +2,7 @@
 
 # Run PipelineC build
 cd ~/src/project_data/PipelineC/;
-python -u ./src/main.py 2>&1
+python3 -u ./src/main.py 2>&1
 
 # Build dcp that will be turned into AFI
 echo "Beginning AWS build process..."
