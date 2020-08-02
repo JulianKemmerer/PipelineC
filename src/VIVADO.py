@@ -675,13 +675,13 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
       logic_i = parser_state.LogicInstLookupTable[inst_name_i]
       # Write file text
       # ONly write non vhdl
-      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.__name__ == C_TO_LOGIC.VHDL_FUNC_NAME:
+      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
         continue
       # Dont write clock cross
       if SW_LIB.IS_CLOCK_CROSSING(logic_i):
         continue
       timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
-      func_name_slices = (logic_i.__name__,tuple(timing_params_i.slices))
+      func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))
       if func_name_slices not in func_name_slices_so_far:
         func_name_slices_so_far.add(func_name_slices)
         # Include entity file for this functions slice variant
@@ -821,7 +821,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,T
   syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name)
   timing_params = TimingParamsLookupTable[inst_name]
   hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)  
-  out_filename = Logic.__name__ + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
+  out_filename = Logic.func_name + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)) + "CLK"+ hash_ext + ".syn.tcl"
   out_filepath = output_directory+"/"+out_filename
   f=open(out_filepath,"w")
   f.write(syn_imp_and_report_timing_tcl)

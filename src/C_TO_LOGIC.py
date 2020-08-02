@@ -331,7 +331,7 @@ class Logic:
     
     # FOR LOGIC IMPLEMENTED IN C THE STRINGS MUST BE C SAFE
     # (inst name adjust is after all the parsing so dont count SUBMODULE_MARKER)    
-    self.__name__ = None # Function name
+    self.func_name = None # Function name
     # My containing func names (could be used in multiple places
     self.containing_funcs = set()
     self.variable_names=set() # Unordered set original variable names  
@@ -390,7 +390,7 @@ class Logic:
   # Help!
   def DEEPCOPY(self):
     rv = Logic()
-    rv.__name__ = self.__name__
+    rv.func_name = self.func_name
     rv.variable_names = set(self.variable_names)
     rv.wires = set(self.wires)  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
     rv.inputs = self.inputs[:] #["a","b"]
@@ -447,26 +447,26 @@ class Logic:
       return None
     
     # Func name must match if set
-    if (self.__name__ is not None) and (logic_b.__name__ is not None):
-      if self.__name__ != logic_b.__name__:
+    if (self.func_name is not None) and (logic_b.func_name is not None):
+      if self.func_name != logic_b.func_name:
         print("Cannot merge comb logic with mismatching func names!")
-        print(self.__name__)
-        print(logic_b.__name__)
+        print(self.func_name)
+        print(logic_b.func_name)
       else:
-        self.__name__ = self.__name__
+        self.func_name = self.func_name
     # Otherwise use whichever is set
-    elif self.__name__ is not None:
-      self.__name__ = self.__name__
+    elif self.func_name is not None:
+      self.func_name = self.func_name
     else:
-      self.__name__ = logic_b.__name__
+      self.func_name = logic_b.func_name
     
       
     # C built in status must match if set
     if (self.is_c_built_in is not None) and (logic_b.is_c_built_in is not None):
       if self.is_c_built_in != logic_b.is_c_built_in:
         print("Cannot merge comb logic with mismatching is_c_built_in !")
-        print(self.__name__, self.is_c_built_in)
-        print(logic_b.__name__, logic_b.is_c_built_in)
+        print(self.func_name, self.is_c_built_in)
+        print(logic_b.func_name, logic_b.is_c_built_in)
         sys.exit(-1)
       else:
         self.is_c_built_in = self.is_c_built_in
@@ -480,8 +480,8 @@ class Logic:
     if (self.is_vhdl_func is not None) and (logic_b.is_vhdl_func is not None):
       if self.is_vhdl_func != logic_b.is_vhdl_func:
         print("Cannot merge comb logic with mismatching is_vhdl_func !")
-        print(self.__name__, self.is_vhdl_func)
-        print(logic_b.__name__, logic_b.is_vhdl_func)
+        print(self.func_name, self.is_vhdl_func)
+        print(logic_b.func_name, logic_b.is_vhdl_func)
         sys.exit(-1)
       else:
         self.is_vhdl_func = self.is_vhdl_func
@@ -495,8 +495,8 @@ class Logic:
     if (self.is_vhdl_expr is not None) and (logic_b.is_vhdl_expr is not None):
       if self.is_vhdl_expr != logic_b.is_vhdl_expr:
         print("Cannot merge comb logic with mismatching is_vhdl_expr !")
-        print(self.__name__, self.is_vhdl_expr)
-        print(logic_b.__name__, logic_b.is_vhdl_expr)
+        print(self.func_name, self.is_vhdl_expr)
+        print(logic_b.func_name, logic_b.is_vhdl_expr)
         sys.exit(-1)
       else:
         self.is_vhdl_expr = self.is_vhdl_expr
@@ -510,8 +510,8 @@ class Logic:
     if (self.is_vhdl_text_module is not None) and (logic_b.is_vhdl_text_module is not None):
       if self.is_vhdl_text_module != logic_b.is_vhdl_text_module:
         print("Cannot merge comb logic with mismatching is_vhdl_text_module !")
-        print(self.__name__, self.is_vhdl_text_module)
-        print(logic_b.__name__, logic_b.is_vhdl_text_module)
+        print(self.func_name, self.is_vhdl_text_module)
+        print(logic_b.func_name, logic_b.is_vhdl_text_module)
         sys.exit(-1)
       else:
         self.is_vhdl_text_module = self.is_vhdl_text_module
@@ -538,8 +538,8 @@ class Logic:
       # Check for equal
       if self.inputs != logic_b.inputs:
         print("Cannot merge comb logic with mismatching inputs !")
-        print(self.__name__, self.inputs)
-        print(logic_b.__name__, logic_b.inputs)
+        print(self.func_name, self.inputs)
+        print(logic_b.func_name, logic_b.inputs)
         print(0/0)
         sys.exit(-1)
       else:
@@ -554,8 +554,8 @@ class Logic:
       # Check for equal
       if self.outputs != logic_b.outputs:
         print("Cannot merge comb logic with mismatching outputs !")
-        print(self.__name__, self.outputs)
-        print(logic_b.__name__, logic_b.outputs)
+        print(self.func_name, self.outputs)
+        print(logic_b.func_name, logic_b.outputs)
         sys.exit(-1)
       else:
         self.outputs = self.outputs[:]
@@ -624,8 +624,8 @@ class Logic:
       # If causes problems... abandon then
       if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
         print("Cannot merge comb logic with mismatching c_ast_node!")
-        print(self.__name__)
-        print(logic_b.__name__)
+        print(self.func_name)
+        print(logic_b.func_name)
         print(self.c_ast_node)
         print(logic_b.c_ast_node)
         print(0/0)
@@ -837,7 +837,7 @@ class Logic:
       submodule_inst = toks[0]
       # Uh if inst doesnt exist then problem....
       if submodule_inst not in self.submodule_instances:
-        print("self.func_name", self.__name__)
+        print("self.func_name", self.func_name)
         print("wire",wire)
         print("No submodule instance called", submodule_inst)
         print(0/0)
@@ -845,7 +845,7 @@ class Logic:
       # Otherwise proceed checking for outputs
       submodule_func_name = self.submodule_instances[submodule_inst]
       if submodule_func_name not in FuncLogicLookupTable:
-        print("self.func_name", self.__name__)
+        print("self.func_name", self.func_name)
         print("wire",wire)
         print("No func def for sub", submodule_func_name)
         print(FuncLogicLookupTable)
@@ -875,7 +875,7 @@ class Logic:
       submodule_inst = toks[0]
       # Uh if inst doesnt exist then problem....
       if submodule_inst not in self.submodule_instances:
-        print("self.func_name", self.__name__)
+        print("self.func_name", self.func_name)
         print("wire",wire)
         print("No submodule instance called", submodule_inst)
         print(0/0)
@@ -883,7 +883,7 @@ class Logic:
       # Otherwise proceed checking for inputs
       submodule_func_name = self.submodule_instances[submodule_inst]
       if submodule_func_name not in FuncLogicLookupTable:
-        print("self.func_name", self.__name__)
+        print("self.func_name", self.func_name)
         print("wire",wire)
         print("No func def for sub", submodule_func_name)
         print(FuncLogicLookupTable)
@@ -1196,7 +1196,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   submodule_logic_name = containing_func_logic.submodule_instances[submodule_inst]
   #print "submodule_inst",submodule_inst
   #print "submodule_logic_name",submodule_logic_name
-  submodule_logic.__name__ = submodule_logic_name
+  submodule_logic.func_name = submodule_logic_name
   #print "...",submodule_logic.func_name
   
   # CONST refs are vhdl funcs
@@ -1282,14 +1282,14 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
       c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
     else:
       # Fine if vhdl func
-      if submodule_logic.__name__ != VHDL_FUNC_NAME:
-        print("containing_func_logic.func_name",containing_func_logic.__name__)
+      if submodule_logic.func_name != VHDL_FUNC_NAME:
+        print("containing_func_logic.func_name",containing_func_logic.func_name)
         print("output_wire_name",output_wire_name)
         #print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
         for wire in containing_func_logic.wire_drives:
           print(wire,"=>",containing_func_logic.wire_drives[wire])
         print("Input type to output type mapping assumption for built in submodule output ")
-        print(submodule_logic.__name__)
+        print(submodule_logic.func_name)
         sys.exit(-1)   
   
   # Record output type
@@ -1310,7 +1310,7 @@ _other_partial_logic_cache = dict()
 def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, parser_state, containing_func_logic):
   
   # Cache the other partial logic
-  cache_tok = partially_complete_logic.__name__
+  cache_tok = partially_complete_logic.func_name
   # SHOULDNT NEED INPUT TYPES SINCE FUNC NAME IS UNIQUE
     
   if cache_tok in _other_partial_logic_cache:
@@ -1322,36 +1322,36 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     #print "partially_complete_logic.func_name",partially_complete_logic.func_name
     #print "containing_func_logic.func_name",containing_func_logic.func_name
     #print "=================================================================="
-    if partially_complete_logic.__name__.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"):
+    if partially_complete_logic.func_name.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)
-    elif partially_complete_logic.__name__.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
+    elif partially_complete_logic.func_name.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)  
-    elif partially_complete_logic.__name__.startswith(CAST_FUNC_NAME_PREFIX + "_"):
+    elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)  
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">")
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str=">=")
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<")
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str="<=")
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state)
-    elif partially_complete_logic.__name__.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
+    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state)
     else:
-      print("How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.__name__, "?")
+      print("How to BUILD_LOGIC_AS_C_CODE for",partially_complete_logic.func_name, "?")
       sys.exit(-1) 
       
     # Use the c code to get the logic
@@ -1362,12 +1362,12 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     
     # And read logic
     #print "partially_complete_logic.
-    fake_filename = partially_complete_logic.__name__ + ".c"
+    fake_filename = partially_complete_logic.func_name + ".c"
     #print "fake_filename",fake_filename
     out_path = out_dir + "/" + fake_filename
       
     # Parse and return the only func def
-    func_name = partially_complete_logic.__name__
+    func_name = partially_complete_logic.func_name
     #print "... as C code...",partially_complete_logic.func_name
     
     preprocessed_c_code_text = preprocess_text(c_code_text)
@@ -1421,7 +1421,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
     driven_wire_names=[]
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
-    FuncLogicLookupTable[logic.__name__] = logic
+    FuncLogicLookupTable[logic.func_name] = logic
   
   return FuncLogicLookupTable
   
@@ -2283,10 +2283,10 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = dict()
 def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   # Try for cache
-  if parser_state.existing_logic.__name__ is None:
+  if parser_state.existing_logic.func_name is None:
     print("Wtf none??????")
     sys.exit(-1)
-  cache_key = (parser_state.existing_logic.__name__, ref_toks)
+  cache_key = (parser_state.existing_logic.func_name, ref_toks)
   try:
     return set(_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2349,10 +2349,10 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   debug = False 
   
   # Try for cache
-  if parser_state.existing_logic.__name__ is None:
+  if parser_state.existing_logic.func_name is None:
     print("Wtf none??????")
     sys.exit(-1)
-  cache_key = (parser_state.existing_logic.__name__, ref_toks)
+  cache_key = (parser_state.existing_logic.func_name, ref_toks)
   try:
     return set(_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2382,10 +2382,10 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
 _REDUCE_REF_TOKS_OR_STRS_cache = dict()
 def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
   # Try for cache
-  if parser_state.existing_logic.__name__ is None:
+  if parser_state.existing_logic.func_name is None:
     print("Wtf none??????")
     sys.exit(-1) 
-  cache_key = (parser_state.existing_logic.__name__, frozenset(ref_toks_set))
+  cache_key = (parser_state.existing_logic.func_name, frozenset(ref_toks_set))
   try:
     return set(_REDUCE_REF_TOKS_OR_STRS_cache[cache_key]) # Copy since set is mutable + WILL be mutated
   except:
@@ -2636,7 +2636,7 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(remaining_ref_toks_set, driven_ref_toks, c_a
   if debug:
     orig_remaining_ref_toks_set = set(remaining_ref_toks_set) #debug
   
-  if parser_state.existing_logic.__name__ is None:
+  if parser_state.existing_logic.func_name is None:
     print("Wtf none??????")
     sys.exit(-1)
   
@@ -2922,7 +2922,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
   #print "ref_toks",ref_toks
   # Try to get cache
   # Build key
-  ref_toks_str = parser_state.existing_logic.__name__[:]
+  ref_toks_str = parser_state.existing_logic.func_name[:]
   for ref_tok in ref_toks:
     if type(ref_tok) == int:
       ref_toks_str += "_INT_" + str(ref_tok)
@@ -3118,7 +3118,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   while len(remaining_ref_toks_set) == len(entire_tree_ref_toks_set):
     if i < 0:
       print("Ran out of aliases?")
-      print("func name",parser_state.existing_logic.__name__)
+      print("func name",parser_state.existing_logic.func_name)
       print("ref_toks",ref_toks)
       print("entire_tree_ref_toks_set",entire_tree_ref_toks_set)
       print("driving_aliases_over_time",driving_aliases_over_time)
@@ -3179,7 +3179,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     while len(remaining_ref_toks_set) > 0:
       if i < 0:
         print("Ran out of aliases?@@@@@@@")
-        print("func name",parser_state.existing_logic.__name__)
+        print("func name",parser_state.existing_logic.func_name)
         print("starting ref_toks",ref_toks)
         print("c_type",c_type)
         print("expanded entire_tree_ref_toks_set",entire_tree_ref_toks_set)
@@ -5591,7 +5591,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
     # Get the dimension with dummies
     dummy_parser_state = ParserState()
     dummy_parser_state.existing_logic = Logic()
-    dummy_parser_state.existing_logic.__name__ = "ARRAY_DECL"
+    dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
     dummy_wire = "ARRAY_DECL_DIM"
     dummy_parser_state.existing_logic = C_AST_NODE_TO_LOGIC(children[1][1], [dummy_wire], "", dummy_parser_state)
     driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
@@ -5666,7 +5666,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
     parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
 
   # First get name of function from the declaration
-  parser_state.existing_logic.__name__ = c_ast_funcdef.decl.name
+  parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
   
   # Then get input wire names from the function def
   #print "func def:",c_ast_funcdef
@@ -5697,7 +5697,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       if len(parser_state.existing_logic.submodule_instances) > 0:
         for out_wire in parser_state.existing_logic.outputs:
           if out_wire not in parser_state.existing_logic.wire_driven_by:
-            print("Not all function outputs driven!?", parser_state.existing_logic.__name__, out_wire)
+            print("Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire)
             sys.exit(-1)
   
   # Write cache
@@ -5863,7 +5863,7 @@ class ParserState:
 
     rv.LogicInstLookupTable = dict()
     for inst_name in self.LogicInstLookupTable:
-      func_name = self.LogicInstLookupTable[inst_name].__name__
+      func_name = self.LogicInstLookupTable[inst_name].func_name
       rv_func_logic = rv.FuncLogicLookupTable[func_name]
       rv.LogicInstLookupTable[inst_name] = rv_func_logic
     
@@ -6456,7 +6456,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     # Final chance for SW_LIB generated code to do stuff to func logic
     # Hah wtf this is hacky
     logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
-    FuncLogicLookupTable[logic.__name__] = logic 
+    FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
   # Do dumb? loops to find containing func
@@ -6464,7 +6464,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     for submodule_inst in func_logic.submodule_instances:
       submodule_func_name = func_logic.submodule_instances[submodule_inst]
       if submodule_func_name in FuncLogicLookupTable:
-        FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.__name__)
+        FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.func_name)
               
   return FuncLogicLookupTable
   
@@ -6493,9 +6493,9 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
     containing_func_logic = parser_state.LogicInstLookupTable[containing_logic_inst_name]
     #if containing_func_logic is not None:      
     orig_func_logic = BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, local_inst_name, parser_state)
-    orig_func_logic.containing_funcs.add(containing_func_logic.__name__)
+    orig_func_logic.containing_funcs.add(containing_func_logic.func_name)
     # Update FuncLogicLookupTable with this new func logic
-    parser_state.FuncLogicLookupTable[orig_func_logic.__name__] = orig_func_logic
+    parser_state.FuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
     
     
   # Record this instance of func logic

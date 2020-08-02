@@ -230,7 +230,7 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable):
 
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
-  key = Logic.__name__
+  key = Logic.func_name
   
   has_delay = True
   # Only need to check submodules, not self
@@ -238,7 +238,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     func_name = Logic.submodule_instances[sub_inst]
     sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
     if sub_func_logic.delay is None:
-      print(sub_func_logic.__name__)
+      print(sub_func_logic.func_name)
       has_delay = False
       break
   if not has_delay:
@@ -252,7 +252,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     #print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
     
     # Sanity?
-    if rv.logic.__name__ != Logic.__name__:
+    if rv.logic.func_name != Logic.func_name:
       print("Zero clock cache no mactho")
       sys.exit(-1)
     
@@ -356,7 +356,7 @@ class PipelineMap:
 # 
 def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):  
   # RAW HDL doesnt need this
-  if len(logic.submodule_instances) <= 0 and logic.__name__ not in parser_state.main_mhz:
+  if len(logic.submodule_instances) <= 0 and logic.func_name not in parser_state.main_mhz:
     print("DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!")
     print(0/0)
     sys.exit(-1)
@@ -377,7 +377,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     print("==============================Getting pipeline map=======================================")
     print("GET_PIPELINE_MAP:")
     print("inst_name",inst_name)
-    print("logic.func_name",logic.__name__)
+    print("logic.func_name",logic.func_name)
     #print "logic.submodule_instances:",logic.submodule_instances
   
   # Delay stuff was hacked into here and only works for combinatorial logic
@@ -998,8 +998,8 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
     epsilon = SLICE_EPSILON(total_delay)
     
     # Sanity?
-    if logic.__name__ != zero_clk_pipeline_map.logic.__name__:
-      print("Zero clk inst name:",zero_clk_pipeline_map.logic.__name__)
+    if logic.func_name != zero_clk_pipeline_map.logic.func_name:
+      print("Zero clk inst name:",zero_clk_pipeline_map.logic.func_name)
       print("Wtf using pipeline map from other func?")
       sys.exit(-1)
     
@@ -2066,6 +2066,12 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
       # Which main funcs show up in timing report?
       main_funcs = VIVADO.GET_MAIN_FUNCS_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state)
       for main_func in main_funcs:
+        main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+        #print("main_func_logic.func_name",main_func_logic.func_name)
+        #print("main_func_logic.global_wires",main_func_logic.global_wires)
+        #print("main_func_logic.uses_globals",main_func_logic.uses_globals)
+        #print("=")
+        #if len(main_func_logic.global_wires) == 0:
         if not main_func_logic.uses_globals:
           main_func_to_course_latency[main_func] = main_func_to_course_latency[main_func] + 1
           # Reset adjustments
@@ -2509,7 +2515,7 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
 
 def GET_OUTPUT_DIRECTORY(Logic):
   if Logic.is_c_built_in:
-    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.__name__
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)
@@ -2518,20 +2524,20 @@ def GET_OUTPUT_DIRECTORY(Logic):
       output_directory = os.path.dirname(src_file)
     else:
       # Otherwise normal
-      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.__name__
+      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
     
   return output_directory
   
 def LOGIC_IS_ZERO_DELAY(logic, parser_state):
-  if logic.__name__ in parser_state.func_marked_wires:
+  if logic.func_name in parser_state.func_marked_wires:
     return True
   elif SW_LIB.IS_BIT_MANIP(logic):
     return True
   elif SW_LIB.IS_CLOCK_CROSSING(logic):
     return True # For now? How to handle paths through clock cross logic?
-  elif logic.__name__.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+  elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
     return True
-  elif logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.__name__.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
+  elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME):
     return True
   elif logic.is_vhdl_text_module:
     return False # No idea what user has in there
@@ -2596,10 +2602,10 @@ def IS_USER_CODE(logic, parser_state):
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic):
   # Default sanity
-  key = logic.__name__
+  key = logic.func_name
   
   # Mux is same delay no matter type
-  if logic.is_c_built_in and logic.__name__.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+  if logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
     key = "mux"
   else:
     # MEM has var name - weird yo
@@ -2696,7 +2702,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           cached_path_delay = GET_CACHED_PATH_DELAY(logic)
           if cached_path_delay is not None:
             logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
-            print("Function:",logic.__name__, "Cached path delay(ns):", cached_path_delay)
+            print("Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay)
             if cached_path_delay > 0.0 and logic.delay==0:
               print("Have timing path of",cached_path_delay,"ns")
               print("...but recorded zero delay. Increase delay multiplier!")
@@ -2706,7 +2712,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             logic.delay = 0
           elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
             logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
-            print("Function:", logic.__name__, "assumed same delay as it's single submodule...")
+            print("Function:", logic.func_name, "assumed same delay as it's single submodule...")
           
           # Save delay value or prepare for syn to determine
           if logic.delay is None:
@@ -2739,7 +2745,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       
       # Impossible goal for timing since just want path delay
       clock_mhz = INF_MHZ 
-      print("Synthesizing function:",logic.__name__)
+      print("Synthesizing function:",logic.func_name)
       # Print pipeline map before syn results
       if (len(logic.submodule_instances) > 0) and not logic.is_vhdl_text_module:
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
@@ -2773,7 +2779,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       print("...Waiting on synthesis for:", logic_func_name)
       parsed_timing_report =  my_async_result.get()
       if parsed_timing_report.path_delay is None:
-        print("Cannot synthesize for path delay ",logic.__name__)
+        print("Cannot synthesize for path delay ",logic.func_name)
         print(parsed_timing_report.orig_text)
         if DO_SYN_FAIL_SIM:
           MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
@@ -2797,7 +2803,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       #if len(logic.global_wires) > 0:
       if logic.uses_globals:
         if mhz < min_mhz:
-          min_mhz_func_name = logic.__name__
+          min_mhz_func_name = logic.func_name
           min_mhz = mhz
           
       # Cache delay syn result if not user code
@@ -2835,7 +2841,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       inst_name = list(parser_state.FuncToInstances[func_name])[0]
       logic = parser_state.FuncLogicLookupTable[func_name]
       # ONly write non vhdl 
-      if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.__name__ == C_TO_LOGIC.VHDL_FUNC_NAME):
+      if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME):
         continue
       # Dont write clock cross funcs
       if SW_LIB.IS_CLOCK_CROSSING(logic):

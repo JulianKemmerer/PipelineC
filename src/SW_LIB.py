@@ -638,11 +638,11 @@ def FUNC_NAME_INCLUDES_TYPES(logic):
   # Currently this is only needed for bitmanip and bit math
   rv = (
       IS_AUTO_GENERATED(logic) or # Excludes mem below
-      logic.__name__.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or 
-      logic.__name__.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX) or
-      logic.__name__.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) or
-      logic.__name__.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) or
-      logic.__name__.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
+      logic.func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX) or 
+      logic.func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX) or
+      logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) or
+      logic.func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) or
+      logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
      )
   
   # Cant be MEM since MEM mem name doesnt include types
@@ -831,12 +831,12 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     return dict()
     
 def GET_MEM_NAME(logic):
-  if logic.__name__.endswith("_" + RAM_SP_RF+"_0"):
+  if logic.func_name.endswith("_" + RAM_SP_RF+"_0"):
     return RAM_SP_RF+"_0"
-  elif logic.__name__.endswith("_" + RAM_SP_RF+"_2"):
+  elif logic.func_name.endswith("_" + RAM_SP_RF+"_2"):
     return RAM_SP_RF+"_2"
   else:
-    print("GET_MEM_NAME for func", logic.__name__, "?")
+    print("GET_MEM_NAME for func", logic.func_name, "?")
     sys.exit(-1)
 
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
@@ -1878,7 +1878,7 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
 #include "''' + BIT_MATH_HEADER_FILE + '''"
 
 // CAST
-''' + out_t + " " + partially_complete_logic.__name__+"("+ in_t + ''' rhs)
+''' + out_t + " " + partially_complete_logic.func_name+"("+ in_t + ''' rhs)
 {
   // Building SEM to return
   ''' + mantissa_t + ''' mantissa;
@@ -1970,7 +1970,7 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
   
   
 def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
-  func_name = partially_complete_logic.__name__
+  func_name = partially_complete_logic.func_name
   
   # Float to int
   input_wire = partially_complete_logic.inputs[0]
@@ -2098,7 +2098,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
   
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   
-  func_c_name = partially_complete_logic.__name__
+  func_c_name = partially_complete_logic.func_name
   
   
   # First need to assign ref tokens into type matching BASE
@@ -2390,7 +2390,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
 
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   #output_t_c_name = output_t.replace("[","_").replace("]","_").replace("__","_")
-  func_c_name = partially_complete_logic.__name__ #.replace("[","_").replace("]","_").replace("__","_")
+  func_c_name = partially_complete_logic.func_name #.replace("[","_").replace("]","_").replace("__","_")
   
   text = ""
   
@@ -2698,7 +2698,7 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 
 // Float adds std_logic_vector in VHDL
 // Adds are complicated
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Get exponent for left and right
   uint''' + str(exponent_width) + '''_t left_exponent;
@@ -2924,7 +2924,7 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 #include "bit_manip.h"
 
 // Float LT/LTE std_logic_vector in C silly
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // LEFT
   uint''' + str(mantissa_width) + '''_t left_mantissa;  
@@ -3038,7 +3038,7 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 #include "bit_manip.h"
 
 // Float GT/GTE std_logic_vector in C silly
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // LEFT
   uint''' + str(mantissa_width) + '''_t left_mantissa;  
@@ -3136,7 +3136,7 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 
 // Float minus std_logic_vector in VHDL
 // Minus is as complicated as add?
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Get exponent for left and right
   uint''' + str(exponent_width) + '''_t left_exponent;
@@ -3352,7 +3352,7 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // Float div std_logic_vector in VHDL
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Quotient
   float q;
@@ -3447,7 +3447,7 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // Float div std_logic_vector in VHDL
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Get mantissa exponent and sign for both
   // LEFT
@@ -3637,7 +3637,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // Float mult std_logic_vector in VHDL
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Get mantissa exponent and sign for both
   // LEFT
@@ -3743,7 +3743,7 @@ def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // ''' + str(left_width) + '''shifted right by maximum ''' + str(max_shift) + '''b
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize the shift amount (right)
   ''' + resized_t + ''' resized_shift_amount;
@@ -3821,7 +3821,7 @@ def GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // ''' + str(left_width) + '''shifted left by maximum ''' + str(max_shift) + '''b
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize the shift amount (right)
   ''' + resized_t + ''' resized_shift_amount;
@@ -3899,7 +3899,7 @@ def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // ''' + str(left_width) + '''b x ''' + str(right_width) + '''b mult
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize
   ''' + resized_t + ''' left_resized;
@@ -4285,7 +4285,7 @@ P[15] P[14] P[13] P[12] P[11] P[10]  P[9]  P[8]  P[7]  P[6]  P[5]  P[4]  P[3]  P
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // ''' + str(left_width) + '''b x ''' + str(right_width) + '''b mult
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize
   ''' + resized_t + ''' left_resized;
@@ -4464,7 +4464,7 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir):
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // ''' + str(left_width) + '''b / ''' + str(right_width) + '''b mult
-''' + output_t + ''' ''' + partially_complete_logic.__name__ + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize
   ''' + resized_t + ''' left_resized;

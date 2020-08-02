@@ -153,7 +153,7 @@ def send_memcached_set(key, value):
 	opcode=MEMCACHED_SET
 	send_memcached_request(key, value, opcode)
 	
-if __name__ == "__main__":
+if func_name == "__main__":
 	#TWO_NUMS = struct.pack("!QQ", 123, 456)
 	#TWO_NUMS = struct.pack("!ff", 1.23, 4.56)
 	#LONG_STR = "Hello this is a test of a longer packet since minimum frames sizes add padding it seems?" #struct.pack("!s", 
