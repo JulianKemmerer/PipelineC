@@ -27,8 +27,7 @@ else:
   VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
-VIVADO_DEFAULT_ARGS = "-mode batch"
-VIVADO_PART="xcvu9p-flgb2104-2-i"  # xcvu9p-flgb2104-2-i = AWS F1, xc7a35ticsg324-1l = Arty
+VIVADO_DEFAULT_ARGS = "-mode batch" 
 TIMING_REPORT_DIVIDER="......................THIS IS THAT STUPID DIVIDER THING................"
 
 def GET_MAIN_FUNCS_FROM_TIMING_REPORT(timing_report, parser_state):
@@ -749,7 +748,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
     flatten_hierarchy_none = " -flatten_hierarchy none"
   
   # SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-  rv += "synth_design -top " + top_entity_name + " -part " + VIVADO_PART + flatten_hierarchy_none + retiming + "\n"
+  rv += "synth_design -top " + top_entity_name + " -part " + parser_state.part + flatten_hierarchy_none + retiming + "\n"
   
   # Report clocks
   #rv += "report_clocks" + "\n"

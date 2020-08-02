@@ -19,7 +19,6 @@ import MODELSIM
 import VIVADO
 
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
-PATH_DELAY_CACHE_DIR="./path_delay_cache_"+VIVADO.VIVADO_PART
 INF_MHZ = 1000 # Impossible timing goal
 DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
@@ -2600,7 +2599,7 @@ def IS_USER_CODE(logic, parser_state):
   return user_code
     
 
-def GET_CACHED_PATH_DELAY_FILE_PATH(logic):
+def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
   # Default sanity
   key = logic.func_name
   
@@ -2617,14 +2616,16 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic):
       for input_port in logic.inputs:
         c_type = logic.wire_to_c_type[input_port]
         key += "_" + c_type
-    
+  
+  PATH_DELAY_CACHE_DIR="./path_delay_cache_"+parser_state.part
+  
   file_path = PATH_DELAY_CACHE_DIR + "/" + key + ".delay"
   
   return file_path
   
-def GET_CACHED_PATH_DELAY(logic): 
+def GET_CACHED_PATH_DELAY(logic, parser_state): 
   # Look in cache dir
-  file_path = GET_CACHED_PATH_DELAY_FILE_PATH(logic)
+  file_path = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
   if os.path.exists(file_path):
     #print "Reading Cached Delay File:", file_path
     return float(open(file_path,"r").readlines()[0])
@@ -2699,7 +2700,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         # If all dependencies met then maybe add to list do syn yet
         if all_dep_met:
           # Try to get cached path delay
-          cached_path_delay = GET_CACHED_PATH_DELAY(logic)
+          cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
           if cached_path_delay is not None:
             logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
             print("Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay)
@@ -2808,7 +2809,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           
       # Cache delay syn result if not user code
       if not IS_USER_CODE(logic, parser_state):
-        filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic)
+        filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
+        PATH_DELAY_CACHE_DIR="./path_delay_cache_"+parser_state.part
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
           os.makedirs(PATH_DELAY_CACHE_DIR)         
         f=open(filepath,"w")

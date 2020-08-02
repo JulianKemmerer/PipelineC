@@ -75,17 +75,23 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
     # Include the header dir - maybe future wanted idk?
     path_str = SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir
     path_list += ["-I" + path_str]
-    # But also anything else? idk hacky
-    for thing in os.listdir(path_str):
-      #os.isdir wasnt working?
-      thing_path = path_str + "/" + thing
-      isdir = True
-      try:
-        os.listdir(thing_path)
-      except:
-        isdir = False
-      if isdir:
-        path_list += ["-I" + thing_path]
+    if os.path.exists(path_str):
+      # But also anything else? idk hacky
+      for thing in os.listdir(path_str):
+        #os.isdir wasnt working?
+        thing_path = path_str + "/" + thing
+        isdir = True
+        try:
+          os.listdir(thing_path)
+        except:
+          isdir = False
+        if isdir:
+          path_list += ["-I" + thing_path]
+  # Also include src files in git root dir
+  dir_path = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+  path_list += ["-I" + dir_path+"/../"]        
+  
+  #print(path_list)
     
   # Finally the file
   path_list += [filename]
@@ -5846,9 +5852,12 @@ class ParserState:
     self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
     self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
     
-    # Clock crossing info
+    # Pragma info
     self.main_mhz = dict() # dict[main_func_name]=mhz
     self.func_marked_wires = set()
+    self.part = None
+    
+    # Clock crossing info
     # Clock crossing read/write func to clock cross var name
     self.clk_cross_var_name_to_write_read_main_funcs = dict() # dict[var_name]= (write_main_func, read_main_func)
     self.clk_cross_var_name_to_write_read_sizes = dict() # dict[var_name] = (write size,read size)
@@ -6544,6 +6553,18 @@ def APPEND_PRAGMA_INFO(parser_state):
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.func_marked_wires.add(main_func)
+  
+    # PART
+    if pragma.string.startswith("PART"):
+      toks = pragma.string.split(" ")
+      part = toks[1].strip('"').strip()
+      #print("part",part)
+      #sys.exit(0)
+      if parser_state.part is not None and parser_state.part != part:
+        print("Already set part to:",parser_state.part,"!=",part)
+        sys.exit(-1)
+      parser_state.part = part
+  
   
   # Sanity checks
   # MAIN_MHZ
