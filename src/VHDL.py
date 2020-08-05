@@ -1987,7 +1987,23 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
       return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
     elif C_TYPE_IS_UINT_N(c_type):
       width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-      return "to_unsigned(" + val_str + ", " + str(width) + ")"
+      #Hack hacky?
+      # A VHDL integer is defined from range -2147483648 to +2147483647
+      if int(val_str) > 2147483647:
+        #print("wire_name",wire_name)
+        #print("c_type",c_type)
+        #print("width",width)
+        hex_str = str(hex(int(val_str))).replace("0x","")
+        need_resize = len(hex_str)*4 > width
+        hex_str = 'X"' + hex_str + '"'
+        #print("hex_str",hex_str)
+        #sys.exit(0)
+        if need_resize:
+          return "resize(" + hex_str + ", " + str(width) + ")" # Extra resize needed
+        else:
+          return hex_str # No extra resizing needed
+      else:
+        return "to_unsigned(" + val_str + ", " + str(width) + ")"
     elif C_TYPE_IS_INT_N(c_type):
       width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
       return "to_signed(" + val_str + ", " + str(width) + ")"

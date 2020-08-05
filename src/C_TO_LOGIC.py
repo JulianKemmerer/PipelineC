@@ -1794,6 +1794,11 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   const_lhs = C_AST_REF_TOKS_ARE_CONST(lhs_ref_toks)
 
   if not const_lhs:
+    # TODO
+    if c_ast_assignment.op != "=":
+      print("Unsupported assignment op non const",c_ast_assignment.op)
+      sys.exit(-1)
+    
     # Variable references write to larger "sized" references then constant references
     # dims=A,B,C
     # x[i] = 0   writes the entire 'x' array  (aka reads from anywhere in 'x' depend on this)
@@ -2138,10 +2143,32 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   else:
     # CONSTANT ~~~~~~~~~~~~~~
     ###########################################
-    return C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_assignment.lvalue, c_ast_assignment.rvalue, parser_state, prepend_text)
+    return C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_assignment.lvalue, c_ast_assignment.rvalue, parser_state, prepend_text, c_ast_assignment)
     
     
-def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_ast_node, parser_state, prepend_text):
+def C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepend_text, parser_state):
+  # Ah fuckery can we just convert this into a binary op now?
+  # I think I am seeing the promise land 
+  # of compiler optimizations and the beauty of pycparser again
+  op = None
+  if c_ast_assignment.op == "^=":
+    op='^'
+  elif c_ast_assignment.op == "|=":
+    op="|"
+    
+  if op is not None:
+    fake_bin_op_rhs = c_ast.BinaryOp(op,left=c_ast_assignment.lvalue, right=c_ast_assignment.rvalue)
+    fake_bin_op_rhs.coord = c_ast_assignment.coord
+    #print(fake_bin_op_rhs.coord)
+    #casthelp(fake_bin_op_rhs)
+    #sys.exit(0)
+    return C_AST_BINARY_OP_TO_LOGIC(fake_bin_op_rhs, driven_wire_names, prepend_text, parser_state)
+  else:
+    print("Unsupported assignment op",c_ast_assignment.op)
+    sys.exit(-1)
+    
+    
+def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_ast_node, parser_state, prepend_text, c_ast_assignment):
     # RECORD NEW ALIAS FOR THIS ASSIGNMENT!!!
     lhs_orig_var_name = lhs_ref_toks[0]
     
@@ -2156,8 +2183,15 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_a
     parser_state.existing_logic.variable_names.add(lhs_orig_var_name)
     # Type of alias wire is same as original wire
     parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_c_type
+    
+    # Get the RHS logic driving the alias
     driven_wire_names=[lhs_next_wire_assignment_alias]
-    rhs_to_lhs_logic = C_AST_NODE_TO_LOGIC(rhs_c_ast_node, driven_wire_names, prepend_text, parser_state)
+    # Ahhhh jeez this is shitty special casing for augmented operators
+    if c_ast_assignment is not None and c_ast_assignment.op != "=":
+      rhs_to_lhs_logic = C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepend_text, parser_state)
+    else:
+      # Normal "=" 'operator'
+      rhs_to_lhs_logic = C_AST_NODE_TO_LOGIC(rhs_c_ast_node, driven_wire_names, prepend_text, parser_state)
     
     # Set type of RHS wire as LHS type if not known
     rhs_driver = rhs_to_lhs_logic.wire_driven_by[lhs_next_wire_assignment_alias]
@@ -3622,9 +3656,10 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
 
 def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
   if value_str.startswith("0x"):
-    hex_str = value_str.replace("0x","") 
+    hex_str = value_str.replace("0x","")
+    hex_str = hex_str.strip("LL").strip("U")
     value = int(hex_str, 16)
-    bits = int(math.ceil(math.log(abs(value)+1,2)))
+    bits = value.bit_length()
     if bits == 0:
       bits = 1
     if is_negated:
@@ -3636,7 +3671,7 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
     c_type_str = "float"
   elif value_str.isdigit():
     value = int(value_str)
-    bits = int(math.ceil(math.log(abs(value)+1,2)))
+    bits = value.bit_length()
     if bits == 0:
       bits = 1
     if is_negated:
@@ -3765,7 +3800,7 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
     
     #print parent_c_ast_decl.init
     lhs_ref_toks = (wire_name,)
-    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_typedecl, parent_c_ast_decl.init, parser_state, prepend_text)
+    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_typedecl, parent_c_ast_decl.init, parser_state, prepend_text, None)
     
   # Update parser state since merged in exsiting logic earlier
   parser_state.existing_logic = rv
@@ -4426,6 +4461,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           const_val_str = str(lhs_val+rhs_val)
       elif func_base_name.endswith(BIN_OP_MINUS_NAME):
           const_val_str = str(lhs_val-rhs_val)
+      elif func_base_name.endswith(BIN_OP_OR_NAME):
+          const_val_str = str(lhs_val|rhs_val)
       elif func_base_name.endswith(BIN_OP_MULT_NAME):
           const_val_str = str(lhs_val*rhs_val)
       elif func_base_name.endswith(BIN_OP_DIV_NAME):
@@ -4444,13 +4481,13 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         const_val_str = "1" if lhs_val>=rhs_val else "0"
       elif func_base_name.endswith(BIN_OP_EQ_NAME):
         const_val_str = "1" if lhs_val==rhs_val else "0"
-      elif func_base_name.endswith(BIN_OP_SR_NAME):
+      # Bit operations
+      elif func_base_name.endswith(BIN_OP_SR_NAME): 
         # SHIFT INT ONLY FOR NOW?
         if not is_ints:
-          print("Constant shift function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
+          print("Constant bit operation function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
           sys.exit(-1)
-        # lhs_val >> rhs_val
-        
+          
         # Output type is type of LHS
         c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
         width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
@@ -4460,21 +4497,27 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             return bin(integer)[2:].zfill(digits)
           else:
             return bin(2**digits + integer)[2:]
-        lhs_bin_str = int2bin(lhs_val, width)
-        fill_bit = "0"
-        if VHDL.C_TYPE_IS_INT_N(c_type):
-          fill_bit = lhs_bin_str[0] # Sign bit
-        
-        fill_bits = fill_bit * rhs_val
-        output_bin_str = (fill_bits + lhs_bin_str)[0:width]
         # STACKOVERFLOW MY MAN
         def to_int(bin):
           x = int(bin, 2)
           if bin[0] == '1': # "sign bit", big-endian
              x -= 2**len(bin)
           return x
-        output_int = to_int(output_bin_str)
-        const_val_str = str(output_int)
+        
+        # TODO actually use this if
+        if func_base_name.endswith(BIN_OP_SR_NAME):
+          # lhs_val >> rhs_val
+          lhs_bin_str = int2bin(lhs_val, width)
+          fill_bit = "0"
+          if VHDL.C_TYPE_IS_INT_N(c_type):
+            fill_bit = lhs_bin_str[0] # Sign bit
+          fill_bits = fill_bit * rhs_val
+          output_bin_str = (fill_bits + lhs_bin_str)[0:width]
+          output_int = to_int(output_bin_str)
+          const_val_str = str(output_int)
+        else:
+          print("Unsupported const bit operation")
+          sys.exit(-1)
       else:
         print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
         sys.exit(-1)
@@ -5004,7 +5047,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
     return C_AST_CONSTANT_TO_LOGIC(c_ast_unary_op.expr,driven_wire_names, prepend_text, parser_state, is_negated=True)
   
   # Determine op string to use in func name
-  if c_ast_unary_op_str == "!":
+  if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
     c_ast_op_str = UNARY_OP_NOT_NAME
   else:
     print("UNARY_OP name for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")

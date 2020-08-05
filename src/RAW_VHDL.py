@@ -211,7 +211,7 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
   return rv
     
 def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
-  if str(logic.c_ast_node.op) == "!":
+  if str(logic.c_ast_node.op) == "!" or str(logic.c_ast_node.op) == "~":
     return GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
   else:
     print("GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op))
