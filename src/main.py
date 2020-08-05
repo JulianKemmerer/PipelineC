@@ -63,7 +63,7 @@ print(" Auto gen <func_name>_t type which is inputs to function func(x,y,z)  str
 print(" Syn each pipeline stage ... this is hard... like slicing zero clock logic ")
 print(" Maybe exta luts in some places - not in add, I dont think - double check GT/GTE, etc?")
 print(" Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b")
-print(" Const SR/SL as vhdl funcs instead of modules..thought this was done..."
+print(" Const SR/SL as vhdl funcs instead of modules..thought this was done...")
 
 
 print("================== Parsing C Code to Logical Hierarchy ================================")

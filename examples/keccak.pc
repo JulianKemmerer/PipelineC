@@ -1,0 +1,127 @@
+// No real C headers
+//#include <stdint.h>
+//#include <string.h>
+#include "uintN_t.h" // <stdint.h> based
+
+#define ROTL64(x, n)		(((x) << (n)) | ((x) >> (64 - (n))))
+
+//#include "uint64_t_array_N_t.h" // Gen'd header to return constant size arrays like below
+typedef struct uint64_t_array_25_t
+{
+  uint64_t data[25];
+}uint64_t_array_25_t;
+
+// Input 80 bytes, output 200 bytes
+#pragma MAIN_MHZ keccakf 700.0
+#pragma PART "xcvu9p-fsgd2104-2LV-e"
+uint64_t_array_25_t keccakf(uint64_t in_data[10])
+{
+    uint64_t i;
+    
+    // Constants
+    uint64_t keccakf_rnd_consts[24];
+    keccakf_rnd_consts[0] = 0x0000000000000001ULL;
+    keccakf_rnd_consts[1] = 0x0000000000008082ULL;
+    keccakf_rnd_consts[2] = 0x800000000000808aULL;
+    keccakf_rnd_consts[3] = 0x8000000080008000ULL;
+    keccakf_rnd_consts[4] = 0x000000000000808bULL;
+    keccakf_rnd_consts[5] = 0x0000000080000001ULL;
+    keccakf_rnd_consts[6] = 0x8000000080008081ULL;
+    keccakf_rnd_consts[7] = 0x8000000000008009ULL;
+    keccakf_rnd_consts[8] = 0x000000000000008aULL;
+    keccakf_rnd_consts[9] = 0x0000000000000088ULL; 
+    keccakf_rnd_consts[10] = 0x0000000080008009ULL; 
+    keccakf_rnd_consts[11] = 0x000000008000000aULL;
+    keccakf_rnd_consts[12] = 0x000000008000808bULL; 
+    keccakf_rnd_consts[13] = 0x800000000000008bULL; 
+    keccakf_rnd_consts[14] = 0x8000000000008089ULL;
+    keccakf_rnd_consts[15] = 0x8000000000008003ULL; 
+    keccakf_rnd_consts[16] = 0x8000000000008002ULL; 
+    keccakf_rnd_consts[17] = 0x8000000000000080ULL; 
+    keccakf_rnd_consts[18] = 0x000000000000800aULL; 
+    keccakf_rnd_consts[19] = 0x800000008000000aULL; 
+    keccakf_rnd_consts[20] = 0x8000000080008081ULL;
+    keccakf_rnd_consts[21] = 0x8000000000008080ULL; 
+    keccakf_rnd_consts[22] = 0x0000000080000001ULL; 
+    keccakf_rnd_consts[23] = 0x8000000080008008ULL;
+    
+    // Full 200 byte st array
+    uint64_t st[25];
+    // Init to zeros
+    for(i = 0; i < 25; i=i+1)
+    {
+      st[i] = 0;
+    }
+    // Copy input
+    // memcpy(st, in, 76);
+    for(i = 0; i < 10; i=i+1)
+    {
+      st[i] = in_data[i];
+    }
+    // Set constants
+    //bytes[76]=1
+    //bytes[8*9 + 4] = 1
+    st[9] |= 0x0000000100000000ULL;
+    // bytes[135] |= 0x80;
+    // byte[16*8 + 7] |= 0x80;
+    st[16] |= 0x8000000000000000ULL;
+    
+    for(i = 0; i < 24; i=i+1)
+    {
+      uint64_t bc[5];
+      uint64_t tmp;
+
+      // Theta
+      bc[0] = st[4] ^ st[9] ^ st[14] ^ st[19] ^ st[24] ^ ROTL64(st[1] ^ st[6] ^ st[11] ^ st[16] ^ st[21], 1); 
+      bc[1] = st[0] ^ st[5] ^ st[10] ^ st[15] ^ st[20] ^ ROTL64(st[2] ^ st[7] ^ st[12] ^ st[17] ^ st[22], 1); 
+      bc[2] = st[1] ^ st[6] ^ st[11] ^ st[16] ^ st[21] ^ ROTL64(st[3] ^ st[8] ^ st[13] ^ st[18] ^ st[23], 1); 
+      bc[3] = st[2] ^ st[7] ^ st[12] ^ st[17] ^ st[22] ^ ROTL64(st[4] ^ st[9] ^ st[14] ^ st[19] ^ st[24], 1); 
+      bc[4] = st[3] ^ st[8] ^ st[13] ^ st[18] ^ st[23] ^ ROTL64(st[0] ^ st[5] ^ st[10] ^ st[15] ^ st[20], 1); 
+      st[0] ^= bc[0]; 
+
+      // Rho & Pi
+      tmp = ROTL64(st[ 1] ^ bc[1], 1); 
+      st[ 1] = ROTL64(st[ 6] ^ bc[1], 44); 
+      st[ 6] = ROTL64(st[ 9] ^ bc[4], 20); 
+      st[ 9] = ROTL64(st[22] ^ bc[2], 61); 
+      st[22] = ROTL64(st[14] ^ bc[4], 39); 
+      st[14] = ROTL64(st[20] ^ bc[0], 18); 
+      st[20] = ROTL64(st[ 2] ^ bc[2], 62); 
+      st[ 2] = ROTL64(st[12] ^ bc[2], 43); 
+      st[12] = ROTL64(st[13] ^ bc[3], 25); 
+      st[13] = ROTL64(st[19] ^ bc[4],  8); 
+      st[19] = ROTL64(st[23] ^ bc[3], 56); 
+      st[23] = ROTL64(st[15] ^ bc[0], 41); 
+      st[15] = ROTL64(st[ 4] ^ bc[4], 27); 
+      st[ 4] = ROTL64(st[24] ^ bc[4], 14); 
+      st[24] = ROTL64(st[21] ^ bc[1],  2); 
+      st[21] = ROTL64(st[ 8] ^ bc[3], 55); 
+      st[ 8] = ROTL64(st[16] ^ bc[1], 45); 
+      st[16] = ROTL64(st[ 5] ^ bc[0], 36); 
+      st[ 5] = ROTL64(st[ 3] ^ bc[3], 28); 
+      st[ 3] = ROTL64(st[18] ^ bc[3], 21); 
+      st[18] = ROTL64(st[17] ^ bc[2], 15); 
+      st[17] = ROTL64(st[11] ^ bc[1], 10); 
+      st[11] = ROTL64(st[ 7] ^ bc[2],  6); 
+      st[ 7] = ROTL64(st[10] ^ bc[0],  3); 
+      st[10] = tmp; 
+
+      // Chi
+      bc[0] = st[ 0]; bc[1] = st[ 1]; st[ 0] ^= (~bc[1]) & st[ 2]; st[ 1] ^= (~st[ 2]) & st[ 3]; st[ 2] ^= (~st[ 3]) & st[ 4]; st[ 3] ^= (~st[ 4]) & bc[0]; st[ 4] ^= (~bc[0]) & bc[1]; 
+      bc[0] = st[ 5]; bc[1] = st[ 6]; st[ 5] ^= (~bc[1]) & st[ 7]; st[ 6] ^= (~st[ 7]) & st[ 8]; st[ 7] ^= (~st[ 8]) & st[ 9]; st[ 8] ^= (~st[ 9]) & bc[0]; st[ 9] ^= (~bc[0]) & bc[1]; 
+      bc[0] = st[10]; bc[1] = st[11]; st[10] ^= (~bc[1]) & st[12]; st[11] ^= (~st[12]) & st[13]; st[12] ^= (~st[13]) & st[14]; st[13] ^= (~st[14]) & bc[0]; st[14] ^= (~bc[0]) & bc[1]; 
+      bc[0] = st[15]; bc[1] = st[16]; st[15] ^= (~bc[1]) & st[17]; st[16] ^= (~st[17]) & st[18]; st[17] ^= (~st[18]) & st[19]; st[18] ^= (~st[19]) & bc[0]; st[19] ^= (~bc[0]) & bc[1]; 
+      bc[0] = st[20]; bc[1] = st[21]; st[20] ^= (~bc[1]) & st[22]; st[21] ^= (~st[22]) & st[23]; st[22] ^= (~st[23]) & st[24]; st[23] ^= (~st[24]) & bc[0]; st[24] ^= (~bc[0]) & bc[1]; 
+
+      // Iota
+      st[0] ^= keccakf_rnd_consts[i];
+    }
+    
+    // Copy into dumb return struct
+    uint64_t_array_25_t rv;
+    for(i = 0; i < 25; i=i+1)
+    {
+      rv.data[i] = st[i];
+    }
+    return rv;
+}
