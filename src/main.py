@@ -24,6 +24,7 @@ print('''
 ''')
 
 print("TODO:")
+print(" Do hacky if generate with pragmas? oh gosh")
 print(" Do a better Arty7 example - hobby more likely to try something new?")
 print(" Do clock crossing for real - not same mhz - make nonvolatile(same mhz) not need arrays in crossings?")
 print(" Raw vhdl - black box includes, extra info via pragma - dont bother with specific IP .xci's etc yet")
@@ -51,6 +52,7 @@ print(" Yo dummy dont make built in operations have resize() on outputs, output 
 print(" Add look ahead for built in functions so cast can be inferred")
 print(" Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated...")
 print(" Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?")
+print(" Pragmas for reset stuff, tag global regs for reset, special clock domain handling stuff with PLL lock and such?")
 print(" Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?")
 print(" Redo eq,and,or,..etc raw vhdl ops with pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work")
 print(" Redo old code to use for loops instead of generated code (ex. float div)")

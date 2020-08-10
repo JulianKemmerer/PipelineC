@@ -2155,6 +2155,8 @@ def C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepe
     op='^'
   elif c_ast_assignment.op == "|=":
     op="|"
+  elif c_ast_assignment.op == "+=":
+    op="+"
     
   if op is not None:
     fake_bin_op_rhs = c_ast.BinaryOp(op,left=c_ast_assignment.lvalue, right=c_ast_assignment.rvalue)
@@ -2164,7 +2166,7 @@ def C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepe
     #sys.exit(0)
     return C_AST_BINARY_OP_TO_LOGIC(fake_bin_op_rhs, driven_wire_names, prepend_text, parser_state)
   else:
-    print("Unsupported assignment op",c_ast_assignment.op)
+    print("Unsupported assignment op",c_ast_assignment.op, c_ast_assignment.coord)
     sys.exit(-1)
     
     
@@ -3666,7 +3668,7 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
       c_type_str = "int" + str(bits+1) + "_t"
     else:
       c_type_str = "uint" + str(bits) + "_t"
-  elif "." in value_str:
+  elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
     value = float(value_str)
     c_type_str = "float"
   elif value_str.isdigit():
@@ -3678,7 +3680,7 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
       c_type_str = "int" + str(bits+1) + "_t"
     else:
       c_type_str = "uint" + str(bits) + "_t"
-  elif c_ast_node.type=='char':
+  elif type(c_ast_node) == c_ast.Constant and c_ast_node.type=='char':
     value = value_str.strip("'")
     c_type_str = "char"
     #print "Char val", value 
@@ -3973,6 +3975,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Just only parse one branch of the logic as is just a compound statement in line
   const_driving_wire = FIND_CONST_DRIVING_WIRE(mux_intermediate_cond_wire_wo_var_name, parser_state.existing_logic)
   if const_driving_wire is not None:
+    print("const_driving_wire",const_driving_wire)
     # ONLY USE ONE BRANCH AND RETURN
     const_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic,parser_state)
     const_cond_val = int(const_val_str)
@@ -3995,10 +3998,18 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     
     if const_cond_val == 1:
       # TRUE BRANCH ONLY
+      # Sanity check?
+      if(c_ast_node.iftrue is None):
+        print("If reduces to true branch but true is none?", c_ast_node.coord)
+        sys.exit(-1) 
       parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iftrue, driven_wire_names, prepend_text, parser_state)
       return parser_state.existing_logic
     else:
       # FALSE BRANCH ONLY
+      # Sanity check?
+      if(c_ast_node.iffalse is None):
+        print("If reduces to false branch but false is none?", c_ast_node.coord)
+        sys.exit(-1)      
       parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text, parser_state)
       return parser_state.existing_logic
     
@@ -4530,9 +4541,12 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
       if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
         const_val_str = str(float(in_val_str))
+      elif in_t == "float" and VHDL.C_TYPES_ARE_INTEGERS([out_t]) :
+        const_val_str = str(int(float(in_val_str)))
       else:
         print("How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
         sys.exit(-1) 
+        
     # MATH FUNCS
     elif func_base_name == "sqrt" and base_name_is_name:
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
@@ -5339,7 +5353,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       # Types for both left and right are known
       # Derive output
       # Floats yield floats
-      if left_type == "float" and right_type == "float":
+      if left_type == "float" or right_type == "float":
         output_c_type = "float"
       else:
         # Ints only
