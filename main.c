@@ -2,8 +2,10 @@
 //#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
 //#include "examples/fosix/bram_loopback.c"
-//#include "examples/arty/src/blink.c"
-#include "examples/keccak.pc"
+//#include "examples/keccak.pc"
+//#include "examples/arty/src/uart_loopback.c"
+#include "examples/arty/src/uart_loopback_min_buffer_no_fc.c"
+
 
 /*
 #include "uintN_t.h" // <stdint.h> based
