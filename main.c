@@ -4,7 +4,7 @@
 //#include "examples/fosix/bram_loopback.c"
 //#include "examples/keccak.pc"
 //#include "examples/arty/src/uart_loopback.c"
-#include "examples/arty/src/uart_loopback_min_buffer_no_fc.c"
+#include "examples/arty/src/uart_loopback_no_fc.c"
 
 
 /*

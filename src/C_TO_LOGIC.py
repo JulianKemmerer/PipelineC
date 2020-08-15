@@ -912,13 +912,16 @@ class Logic:
       return True
     if wire in self.volatile_global_wires:
       return True
-    if (SUBMODULE_MARKER in wire):
-      return True     
+      
+    # THIS SEEMS WRONG?
+    # NEED TO BE ABLE TO COLLAPSE/TRIM SUBMODULES?
+    #if (SUBMODULE_MARKER in wire):
+    #  return True 
     
     return False
   
   def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, FuncLogicLookupTable):
-    #print self.func_name, "Removing", wire
+    #print("REMOVE",self.func_name, "  ", wire)
     #print "DEBUG: Not removing", wire
     #return None
     
@@ -3975,7 +3978,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Just only parse one branch of the logic as is just a compound statement in line
   const_driving_wire = FIND_CONST_DRIVING_WIRE(mux_intermediate_cond_wire_wo_var_name, parser_state.existing_logic)
   if const_driving_wire is not None:
-    print("const_driving_wire",const_driving_wire)
+    #print("const_driving_wire",const_driving_wire)
     # ONLY USE ONE BRANCH AND RETURN
     const_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic,parser_state)
     const_cond_val = int(const_val_str)
@@ -4813,6 +4816,10 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   ################################# INPUTS DONE ##########################################
   
   # Outputs
+  # Add wire even if below it ends up driving nothing
+  # need this to see the unconnected wire and rip up form there
+  #     ~~~ Akron/Family - Franny/You're Human ~~~
+  parser_state.existing_logic.wires.add(output_wire_name)
   # Finally connect the output of this operation to each of the driven wires
   if len(output_driven_wire_names) > 0:
     parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
@@ -5803,19 +5810,28 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   #   the only wires that can stay and not drive anything to module
   #   Inputs for some faked funcs with no func body need to be saved too
   #   Original variable wires dont drive things because alias will drive instead; int x; x=1;
-  for wire in set(func_logic.wires): # Copy for iter
+  for wire in set(func_logic.wires): # Copy for iter 
+    debug = False
     if wire in func_logic.wires: # Changes during iter
       drives_nothing = (wire not in func_logic.wire_drives)
       must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVES(wire, parser_state.FuncLogicLookupTable)
       if drives_nothing and must_drive_something:
-        #print func_logic.func_name, "Removing", wire
+        if debug:
+          print(func_logic.func_name, "Removing", wire)
         func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
-    #else:
-    # print func_logic.func_name, "NOT Removing", wire
-    # print "drives_nothing",drives_nothing
-    # if not drives_nothing:
-    #   print func_logic.wire_drives[wire]
-    # print "must_drive_something",must_drive_something
+      else:
+        if debug:
+          print("drives_nothing", drives_nothing)
+          if not drives_nothing:
+            print("Drives:",func_logic.wire_drives[wire])
+          print("must_drive_something",must_drive_something)
+    else:
+      if debug:
+        print(func_logic.func_name, "NOT Removing", wire)
+        print("drives_nothing",drives_nothing)
+        if not drives_nothing:
+          #print(func_logic.wire_drives[wire])
+          print("must_drive_something",must_drive_something)
       
       
   # Songs: Ohia - Farewell Transmission
