@@ -970,6 +970,8 @@ class Logic:
       # Do the output ports drive anything now? 
       # (know this output port wire doesnt)
       all_outputs_disconnected = True
+      if len(submodule_logic.outputs) == 0:
+        all_outputs_disconnected = False
       for output_port in submodule_logic.outputs:
         submodule_output_wire = submodule_inst + SUBMODULE_MARKER + output_port
         if submodule_output_wire in self.wire_drives:
@@ -5071,7 +5073,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
     c_ast_op_str = UNARY_OP_NOT_NAME
   else:
-    print("UNARY_OP name for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
+    print("Unsupported unary op '" + c_ast_unary_op_str + "'?", c_ast_unary_op.coord)
     sys.exit(-1)
     
   # Set port names based on func name
@@ -5861,12 +5863,14 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   # Do for each submodule too
   for submodule_inst in func_logic.submodule_instances:
     submodule_func_name = func_logic.submodule_instances[submodule_inst]
-    
     # Skip vhdl?
     if submodule_func_name == VHDL_FUNC_NAME:
       continue
-    
+    # Skip clock crossings too
     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+    if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+      continue   
+    
     parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
     
   return parser_state
