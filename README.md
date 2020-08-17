@@ -38,7 +38,7 @@ On the B) side of things you are likely doing a complete rewrite of the code to 
 Right now PipelineC is closer to the B side of things - closer to writing hardware description language. I dont think I've made it too ugly yet and so far only basic hardware knowledge is required. For software folks I want writing PipelineC to feel like solving a programming puzzle in C, not a whole new programming language. The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language.
 
 ```
-Currently Supported Tools:
+Currently Supported Tools (Linux only for now):
 Simulation: Modelsim
 Synthesis: Xilinx Vivado
 ```
