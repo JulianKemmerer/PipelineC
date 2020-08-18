@@ -1,3 +1,4 @@
+#pragma once
 
 #define deserializer(name, in_data_t, OUT_SIZE) \
 in_data_t name##_out_buffer[OUT_SIZE]; \
@@ -8,13 +9,11 @@ typedef struct name##_o_t \
   in_data_t out_data[OUT_SIZE]; \
   uint1_t out_data_valid; \
   uint1_t in_data_ready; \
-  uint1_t overflow; \
 }name##_o_t; \
 name##_o_t name(in_data_t in_data, uint1_t in_data_valid, uint1_t out_data_ready) \
 { \
   name##_o_t rv; \
-  /* Overflow if no room for incoming data*/  \
-  rv.overflow = in_data_valid & name##_out_buffer_valid; \
+  /* Read if buffer empty*/  \
   rv.in_data_ready = !name##_out_buffer_valid; \
   /* Output registers*/ \
   rv.out_data = name##_out_buffer; \

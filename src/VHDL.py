@@ -1479,9 +1479,17 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
         submodule_timing_params = TimingParamsLookupTable[instance_name];
         submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
         submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
+        submodule_needs_clk_cross_read = LOGIC_NEEDS_CLOCK_CROSS_READ(submodule_logic, parser_state)
+        submodule_needs_clk_cross_write = LOGIC_NEEDS_CLOCK_CROSS_WRITE(submodule_logic, parser_state)
         rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
         if submodule_needs_clk:
           rv += "clk,\n"
+        # Clock cross in
+        if submodule_needs_clk_cross_read:
+          rv += "clk_cross_read." + WIRE_TO_VHDL_NAME(inst) + ",\n"
+        # Clock cross out 
+        if submodule_needs_clk_cross_write:
+          rv += "clk_cross_write." + WIRE_TO_VHDL_NAME(inst) + ",\n"
         # Inputs
         for in_port in submodule_logic.inputs:
           in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port

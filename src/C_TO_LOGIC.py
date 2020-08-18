@@ -6054,8 +6054,11 @@ def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called
     called_from_funcs = func_names_to_called_from[func_name]
     # Should only be called once?
     if len(called_from_funcs) == 1:
-      called_from_func = called_from_funcs[0]
+      called_from_func = list(called_from_funcs)[0]
       return RECURSIVE_FIND_MAIN_FUNC(called_from_func, func_name_to_calls, func_names_to_called_from, main_funcs)
+    else:
+      print("Expected single main func for func, but is called from?",func_name,called_from_func)
+      sys.exit(-1)
       
   return None
 

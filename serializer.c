@@ -1,3 +1,5 @@
+#pragma once
+
 #define serializer(name, out_data_t, IN_SIZE) \
 out_data_t name##_in_buffer[IN_SIZE]; \
 uint1_t name##_in_buffer_valid; \
@@ -7,7 +9,6 @@ typedef struct name##_o_t \
   out_data_t out_data; \
   uint1_t out_data_valid; \
   uint1_t in_data_ready; \
-  uint1_t overflow; \
 }name##_o_t; \
 name##_o_t name(out_data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_ready) \
 { \
@@ -15,8 +16,7 @@ name##_o_t name(out_data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_
   /* Default outputs from front of shift buffer */ \
   rv.out_data = name##_in_buffer[0]; \
   rv.out_data_valid = name##_in_buffer_valid; \
-  /* Overflow if no room for incoming data */ \
-  rv.overflow = in_data_valid & name##_in_buffer_valid; \
+  /* Read if buffer empty */ \
   rv.in_data_ready = !name##_in_buffer_valid; \
   \
   /* Only shift buffer if output ready */ \
