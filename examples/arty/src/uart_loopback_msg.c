@@ -42,7 +42,7 @@ sys_clk_main_outputs_t sys_clk_main(sys_clk_main_inputs_t inputs)
   uint1_t_array_1_t tx_readys_in = uart_tx_ready_READ();
   uint1_t tx_ready_in = tx_readys_in.data[0];
   
-  // Receive N byte messages words
+  // Receive N byte messages
   uart_rx_msg_o_t uart_rx_msg_output = uart_rx_msg(inputs.uart_txd_in, tx_ready_in);
   // Transmit N byte messages  
   uart_tx_msg_o_t uart_tx_msg_output = uart_tx_msg(uart_rx_msg_output.msg_out);
