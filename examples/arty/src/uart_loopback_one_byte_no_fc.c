@@ -1,9 +1,17 @@
-// Logic to receive and transmit 1 byte UART words
-// UART PHY?MAC?(de)serialize? logic
-#pragma once
+// Loopback UART with just enough buffering
+// as to never overflow with balanced I/O bandwidth
 
 #include "uintN_t.h"
 
+// Each main function is a clock domain
+// Only one clock in the design for now 'sys_clk' @ 100MHz
+#define SYS_CLK_MHZ 100.0
+#define CLKS_PER_SEC (SYS_CLK_MHZ*1000000.0)
+#define SEC_PER_CLK (1.0/CLKS_PER_SEC)
+#pragma MAIN_MHZ sys_clk_main 100.0
+#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
+
+// UART PHY?MAC?(de)serialize? logic
 #define UART_BAUD 115200
 #define UART_WORD_BITS 8
 #define uart_word_t uint8_t
@@ -27,9 +35,6 @@ typedef struct uart_mac_s
 }uart_mac_s;
 
 // RX side
-// Deserialize eight bits into one 8b byte
-#include "deserializer.c"
-deserializer(uart_deserializer, uint1_t, UART_WORD_BITS) 
 // Global regs
 typedef enum uart_rx_mac_state_t
 {
@@ -40,20 +45,14 @@ typedef enum uart_rx_mac_state_t
 uart_rx_mac_state_t uart_rx_mac_state;
 uart_clk_count_t uart_rx_clk_counter;
 uart_bit_count_t uart_rx_bit_counter;
-// Output type
-typedef struct uart_rx_mac_o_t
-{
-  uart_mac_s word_out;
-  uint1_t overflow;
-}uart_rx_mac_o_t;
+uint1_t uart_rx_bit_buffer[UART_WORD_BITS];
 // RX logic
-uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
+uart_mac_s uart_rx_mac(uint1_t data_in)
 {
-  uart_rx_mac_o_t output;
-
-  // Sampling bits from the async serial data frame
-  uint1_t data_sample = 0;
-  uint1_t data_sample_valid = 0;
+  // Default no output
+  uart_mac_s output;
+  output.data = 0;
+  output.valid = 0;
   
   // State machine for receiving
   if(uart_rx_mac_state==IDLE)
@@ -91,25 +90,28 @@ uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
       // Reset counter for next bit
       uart_rx_clk_counter = 0;
       
-      // Sample current data into deserializer
-      data_sample = data_in;
-      data_sample_valid = 1;
+      // Shift bit buffer to make room for incoming bit
+      uint32_t i;
+      for(i=0;i<(UART_WORD_BITS-1);i=i+1)
+      {
+        uart_rx_bit_buffer[i] = uart_rx_bit_buffer[i+1];
+      }
+      
+      // Sample current bit into back of shift buffer
+      uart_rx_bit_buffer[UART_WORD_BITS-1] = data_in;
       uart_rx_bit_counter += 1;
       
       // Last bit of word?
       if(uart_rx_bit_counter==UART_WORD_BITS)
       {
+        // Output the full valid word
+        output.data = uart_word_from_bits(uart_rx_bit_buffer);
+        output.valid = 1;
         // Back to idle waiting for next word
         uart_rx_mac_state = IDLE;
       }
     }
   }
-  
-  // Input 1 bit 8 times to get to get 1 byte out
-  uart_deserializer_o_t deser = uart_deserializer(data_sample, data_sample_valid, out_ready);
-  output.word_out.data = uart_word_from_bits(deser.out_data);
-  output.word_out.valid = deser.out_data_valid;
-  output.overflow = data_sample_valid & !deser.in_data_ready;
   
   return output;
 }
@@ -119,9 +121,6 @@ uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
 // Do a hacky off by one fewer clock cycles to ensure TX bandwidth
 // is always slighty greater than RX bandwidth to avoid overflow
 #define TX_CHEAT_CYCLES 1
-// Serialize one 8b byte into eight single bits
-#include "serializer.c"
-serializer(uart_serializer, uint1_t, UART_WORD_BITS)
 // Global regs
 typedef enum uart_tx_mac_state_t
 {
@@ -133,11 +132,14 @@ typedef enum uart_tx_mac_state_t
 uart_tx_mac_state_t uart_tx_mac_state;
 uart_clk_count_t uart_tx_clk_counter;
 uart_bit_count_t uart_tx_bit_counter;
+uart_mac_s uart_tx_word_in_buffer;
+uint1_t uart_tx_bit_buffer[UART_WORD_BITS];
 // Output type
 typedef struct uart_tx_mac_o_t
 {
   uint1_t word_in_ready;
   uint1_t data_out;
+  uint1_t overflow;
 }uart_tx_mac_o_t;
 // TX logic
 uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
@@ -148,40 +150,32 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   output.data_out = UART_IDLE; // UART high==idle
   uint32_t i = 0;
   
-  // Calculate condition for shifting buffer/next bit each bit period
-  uint1_t do_next_bit_stuff = 0;
-  // Transmitting
-  if(uart_tx_mac_state==TRANSMIT)
+  // Ready for an incoming word to send
+  // if dont have valid word_in already (i.e. input buffer empty)
+  output.word_in_ready = !uart_tx_word_in_buffer.valid;
+  output.overflow = !output.word_in_ready & word_in.valid;
+  // Input registers
+  if(output.word_in_ready)
   {
-    // And about to roll over
-    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-TX_CHEAT_CYCLES-1)) //-1 since pre increment
-    {
-      do_next_bit_stuff = 1;
-    }
+    uart_tx_word_in_buffer = word_in;
   }
-  
-  // Input one 8b word into serializer buffer and get eight single bits
-  uint1_t ser_out_data_ready = do_next_bit_stuff;
-  // Hacky loop to get bits from uint8_t 
-  uint1_t ser_in_data[UART_WORD_BITS];
-  for(i=0;i<UART_WORD_BITS;i=i+1)
-  {
-    ser_in_data[i] = word_in.data >> i;
-  }
-  uart_serializer_o_t ser = uart_serializer(ser_in_data, word_in.valid, ser_out_data_ready);
-  output.word_in_ready = ser.in_data_ready;
-  uint1_t tx_bit = ser.out_data;
-  uint1_t tx_bit_valid = ser.out_data_valid;
   
   // State machine for transmitting
   if(uart_tx_mac_state==IDLE)
   {
-    // Wait for valid bit(s) from serializer buffer
-    if(tx_bit_valid)
+    // Wait for valid bits in input buffer
+    if(uart_tx_word_in_buffer.valid)
     {
+      // Save the bits of the word into shift buffer
+      for(i=0;i<UART_WORD_BITS;i=i+1)
+      {
+        uart_tx_bit_buffer[i] = uart_tx_word_in_buffer.data >> i;
+      }
       // Start transmitting start bit
       uart_tx_mac_state = SEND_START;
       uart_tx_clk_counter = 0;
+      // No longer need data in input buffer
+      uart_tx_word_in_buffer.valid = 0;
     }
   }
   // Pass through single cycle low latency from IDLE to SEND_START since if()
@@ -200,14 +194,21 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   }
   else if(uart_tx_mac_state==TRANSMIT)
   {
-    // Output tx_bit from serializer for one bit period
-    output.data_out = tx_bit;
+    // Output from front of shift buffer for one bit period
+    output.data_out = uart_tx_bit_buffer[0];
     uart_tx_clk_counter += 1;
-    if(do_next_bit_stuff)
+    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-TX_CHEAT_CYCLES))
     {
       // Reset counter for next bit
       uart_tx_clk_counter = 0;
+      
+      // Shift bit buffer to bring next bit to front
+      for(i=0;i<(UART_WORD_BITS-1);i=i+1)
+      {
+        uart_tx_bit_buffer[i] = uart_tx_bit_buffer[i+1];
+      }
       uart_tx_bit_counter += 1;
+      
       // Last bit of word?
       if(uart_tx_bit_counter==UART_WORD_BITS)
       {
@@ -232,3 +233,42 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   return output;
 }
 
+// Make structs that wrap up the inputs and outputs
+typedef struct sys_clk_main_inputs_t
+{
+  // UART Input
+	uint1_t uart_txd_in;
+} sys_clk_main_inputs_t;
+typedef struct sys_clk_main_outputs_t
+{
+  // UART Output
+	uint1_t uart_rxd_out;
+  // LEDs
+	uint1_t led[4];
+} sys_clk_main_outputs_t;
+
+// Sticky save overflow bit
+uint1_t overflow;
+// Break path from rx->tx in one clock by having buffer reg
+uart_mac_s rx_word_buffer;
+
+// The sys_clk_main function
+sys_clk_main_outputs_t sys_clk_main(sys_clk_main_inputs_t inputs)
+{
+  // Loopback RX to TX without connecting backwards facing flow control/ready
+  uart_mac_s rx_word = uart_rx_mac(inputs.uart_txd_in);
+  uart_tx_mac_o_t uart_tx_mac_output = uart_tx_mac(rx_word_buffer);
+  // Break path from rx->tx in one clock by having buffer reg
+  rx_word_buffer = rx_word;
+  sys_clk_main_outputs_t outputs;
+  outputs.uart_rxd_out = uart_tx_mac_output.data_out;
+  
+  // Light up all four leds if overflow occurs
+  overflow = overflow | uart_tx_mac_output.overflow; // Sticky
+  outputs.led[0] = overflow;
+  outputs.led[1] = overflow;
+  outputs.led[2] = overflow;
+  outputs.led[3] = overflow;
+  
+  return outputs;
+}
