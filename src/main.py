@@ -24,6 +24,7 @@ print('''
 ''')
 
 print("TODO:")
+print(" Document pragmas and make main mhz allow pointing at exisintg point func name instead of float")
 print(" Do a better Arty7 example - hobby more likely to try something new?")
 print(" Do clock crossing for real - not same mhz - make nonvolatile(same mhz) not need arrays in crossings?")
 print(" Raw vhdl - black box includes, extra info via pragma - dont bother with specific IP .xci's etc yet")

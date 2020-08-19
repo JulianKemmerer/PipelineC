@@ -967,6 +967,11 @@ class Logic:
       submodule_inst = toks[0]
       submodule_func_name = self.submodule_instances[submodule_inst]
       submodule_logic = FuncLogicLookupTable[submodule_func_name]
+      
+      # Skip ripping up vhdl text submodules modules
+      if submodule_func_name == VHDL_FUNC_NAME:
+        return
+      
       # Do the output ports drive anything now? 
       # (know this output port wire doesnt)
       all_outputs_disconnected = True
@@ -4913,7 +4918,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     # Ok panic
     print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
     print(c_ast_func_call.coord)
-    casthelp(c_ast_func_call)
+    #casthelp(c_ast_func_call)
     sys.exit(-1)
   not_inst_func_logic = FuncLogicLookupTable[func_name]
     
@@ -5863,7 +5868,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   # Do for each submodule too
   for submodule_inst in func_logic.submodule_instances:
     submodule_func_name = func_logic.submodule_instances[submodule_inst]
-    # Skip vhdl?
+    # Skip vhdl
     if submodule_func_name == VHDL_FUNC_NAME:
       continue
     # Skip clock crossings too

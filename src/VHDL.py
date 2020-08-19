@@ -1084,7 +1084,7 @@ def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
 def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     # Logic should have exactly one __vhdl__ func submodule to get text from
     if len(Logic.submodule_instances) != 1:
-      print("Bad vhdl text sub count")
+      print("Bad vhdl text sub count", len(Logic.submodule_instances))
       sys.exit(-1)
     sub_func_name = list(Logic.submodule_instances.values())[0]
     sub_inst_name = list(Logic.submodule_instances.keys())[0]
