@@ -1769,6 +1769,12 @@ def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
     
     # Add as variable name
     parser_state.existing_logic.variable_names.add(maybe_global_var)
+    
+  # Sanity check not using clock cross globals?
+  # TODO: for other things like brams declared but not directly used?
+  if maybe_global_var in parser_state.clk_cross_var_name_to_write_read_main_funcs:
+    print("Looks like you are using a clock crossing variable '", maybe_global_var, "' directly instead of with READ and WRITE functions?")
+    sys.exit(-1) 
 
   return parser_state.existing_logic
 
