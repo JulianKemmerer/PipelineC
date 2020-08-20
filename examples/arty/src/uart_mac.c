@@ -4,6 +4,9 @@
 
 #include "uintN_t.h"
 
+#define CLKS_PER_SEC (SYS_CLK_MHZ*1000000.0)
+#define SEC_PER_CLK (1.0/CLKS_PER_SEC)
+
 #define UART_BAUD 115200
 #define UART_WORD_BITS 8
 #define uart_word_t uint8_t
@@ -28,7 +31,7 @@ typedef struct uart_mac_s
 
 // RX side
 // Deserialize eight bits into one 8b byte
-#include "deserializer.c"
+#include "deserializer.h"
 deserializer(uart_deserializer, uint1_t, UART_WORD_BITS) 
 // Global regs
 typedef enum uart_rx_mac_state_t
@@ -120,7 +123,7 @@ uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
 // is always slighty greater than RX bandwidth to avoid overflow
 #define TX_CHEAT_CYCLES 1
 // Serialize one 8b byte into eight single bits
-#include "serializer.c"
+#include "serializer.h"
 serializer(uart_serializer, uint1_t, UART_WORD_BITS)
 // Global regs
 typedef enum uart_tx_mac_state_t

@@ -3,18 +3,8 @@
 
 // Use UART MAC to send/receive 8b words
 #include "uart_mac.c"
-
-#define UART_MSG_SIZE 256
-typedef struct uart_msg_t
-{
-  uint8_t data[UART_MSG_SIZE];
-}uart_msg_t;
-typedef struct uart_msg_s
-{
-   uart_msg_t data;
-   uint1_t valid;
-}uart_msg_s;
-
+// Include message type
+#include "uart_msg.h"
 
 // Receive messages
 // Deserialize bytes into msg
