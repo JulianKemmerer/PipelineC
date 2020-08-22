@@ -1,7 +1,8 @@
 #include <math.h>
 #include <time.h> // TODO fix time measurements
 
-#include "msg_sw.c"
+// 'Software' side of uart message sending include
+#include "uart_msg_sw.c"
 
 // Helper to init an input data
 msg_t input_init(int i)
@@ -81,7 +82,7 @@ int main(int argc, char **argv)
 	}
 	// End time
 	t = time(NULL) - t; 
-	time_taken = ((double)t); ///CLOCKS_PER_SEC; // in seconds
+	time_taken = ((double)t); //CLOCKS_PER_SEC; // in seconds
 	printf("CPU took %f seconds to execute \n", time_taken); 
 	double cpu_time = time_taken;
 	double cpu_per_iter = cpu_time / (float)n;
