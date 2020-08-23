@@ -6040,9 +6040,39 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     #  print "func_name",func_name,func_name_to_calls[func_name]
     #  print "SCOO"
   
-  #print "func_name_to_calls",func_name_to_calls
+  #print("func_name_to_calls",func_name_to_calls)
   
-  return func_name_to_calls, func_names_to_called_from
+  # Reduce data down to funcs as used by main funcs (trying to avoid regular C code)
+  main_func_name_to_calls = dict()
+  main_func_names_to_called_from = dict()
+  submodule_func_names = set(parser_state.main_mhz.keys())
+  while len(submodule_func_names) > 0:
+    next_submodule_func_names = set()
+    
+    # Every func in level
+    for func_name in submodule_func_names:
+      if func_name in func_name_to_calls:
+        called_func_names = func_name_to_calls[func_name]
+        
+        # Calls
+        if func_name not in main_func_name_to_calls:
+          main_func_name_to_calls[func_name] = set()
+        main_func_name_to_calls[func_name].update(called_func_names)
+        # Called from
+        for called_func_name in called_func_names:
+          if called_func_name not in main_func_names_to_called_from:
+            main_func_names_to_called_from[called_func_name] = set()
+          main_func_names_to_called_from[called_func_name].add(func_name)
+          
+        next_submodule_func_names.update(called_func_names)
+    
+    
+    # Next level of 'recursion' into submodules
+    submodule_func_names = set(next_submodule_func_names)
+    
+  #print("main_func_name_to_calls",main_func_name_to_calls)
+  #print("main_func_names_to_called_from",main_func_names_to_called_from)
+  return main_func_name_to_calls, main_func_names_to_called_from
 
 
 def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, parser_state, nodes=None):
@@ -6145,6 +6175,8 @@ def PARSE_FILE(c_filename):
         #print "preprocessed_c_text",preprocessed_c_text
         # Get the C AST again to reflect new generated code
         parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+        # Update primative map of function use
+        parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
         # This is the old more hacky way
         # Get SW existing logic for this c file
         parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
@@ -6548,6 +6580,10 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   # Read in file with C parser and get function def nodes
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
+    # Skip functions that are not found in the initial from-main hierarchy mapping
+    if (func_def.decl.name not in parser_state.func_name_to_calls) and (func_def.decl.name not in parser_state.func_names_to_called_from):
+      print("Function skipped:",func_def.decl.name)
+      continue    
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
