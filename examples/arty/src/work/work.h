@@ -7,7 +7,7 @@
 // Do work on inputs to form outputs
 
 // MATRIX MULT EXAMPLE
-#define DIM 8
+#define DIM 4
 #define data_t int16_t
 
 typedef struct work_inputs_t
@@ -98,7 +98,7 @@ int compare_bad(int test_num, work_outputs_t cpu, work_outputs_t fpga)
 // Most scalable (making best of O(N^3) as possible), most parallel, PipelineC implementation
 /*
 #include "xstr.h" // Stringification for raw vhdl
-#define array_sum int16_array_sum8 // Built in func
+#define array_sum int16_array_sum4 // Built in func
 // FOR THE SAKE OF COMPILE TIME BREAK THE ABOVE INTO SMALLER MODULES
 // NOT REQUIRED TO DO IF YOU ARE IMMORTAL AND HAVE ALOT OF TIME TO UNROLL LARGE O(N^3) LOOPS
 

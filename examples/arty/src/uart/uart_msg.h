@@ -3,7 +3,7 @@
 #pragma once
 #include "uintN_t.h"
 
-#define UART_MSG_SIZE 256
+#define UART_MSG_SIZE 64
 typedef struct uart_msg_t
 {
   uint8_t data[UART_MSG_SIZE];

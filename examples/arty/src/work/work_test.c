@@ -2,9 +2,19 @@
 // gcc -I ../../../../ -Wall -pthread work_test.c -o work_test
 
 #include <math.h>
-#include <time.h> // Fix time measurement code
+#include <time.h>
+#include <sys/time.h>
 #include <pthread.h>
 #define NUM_THREADS 8 // for cpu testing, 2 threads per 4 cores?
+// Thanks internet
+double get_wall_time(){
+    struct timeval time;
+    if (gettimeofday(&time,NULL)){
+        //  Handle error
+        return 0;
+    }
+    return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}
 
 // Use uart to send/receive messages
 #include "../uart/uart_msg_sw.c"
@@ -142,6 +152,11 @@ int main(int argc, char **argv)
   }
   n = n * NUM_THREADS;
   
+  int total_bytes = n * UART_MSG_SIZE;
+  printf("n: %d \n", n); 
+  printf("UART_MSG_SIZE: %d \n", UART_MSG_SIZE);
+  printf("Total bytes: %d \n", total_bytes);
+  
   // Prepare work inputs (as msgs too), and 2 output pairs cpu vs fpga(as msg too)
   inputs = (work_inputs_t*)malloc(n*sizeof(work_inputs_t));
   fpga_input_msgs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
@@ -155,30 +170,36 @@ int main(int argc, char **argv)
   }
   
   // Time things
-  clock_t t;
+  double t;
   double time_taken;
   
   // Start time
-  t = clock(); 
+  t = get_wall_time();
   // Do the work on the cpu
   float cpu_sum = 0.0;
   cpu_work(&cpu_sum);
   // End time
-  t = clock() - t; 
-  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  time_taken = get_wall_time() - t; 
   printf("CPU took %f seconds to execute \n", time_taken); 
   double cpu_time = time_taken;
+  double cpu_per_iter = cpu_time / (float)n;
+	printf("CPU iteration time: %f seconds\n", cpu_per_iter);
+	double cpu_bytes_per_sec = (float)total_bytes / cpu_time;
+	printf("CPU bytes per sec: %f B/s\n", cpu_bytes_per_sec);
 
   // Start time
-  t = clock(); 
+  t = get_wall_time();
   // Do the work on the FPGA
   float fpga_sum = 0.0;
   fpga_works(&fpga_sum);
   // End time
-  t = clock() - t; 
-  time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+  time_taken = get_wall_time() - t; 
   printf("FPGA took %f seconds to execute \n", time_taken);
   double fpga_time = time_taken;  
+  double fpga_per_iter = fpga_time / (float)n;
+	printf("FPGA iteration time: %f seconds\n", fpga_per_iter);
+	double fpga_bytes_per_sec = (float)total_bytes / fpga_time;
+	printf("FPGA bytes per sec: %f B/s\n", fpga_bytes_per_sec);
   
   // Speedy?
   printf("Speedup: %f\n",cpu_time/fpga_time);  
