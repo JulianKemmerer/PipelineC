@@ -4,8 +4,8 @@
 
 #include "uintN_t.h"
 
-#define CLKS_PER_SEC (SYS_CLK_MHZ*1000000.0)
-#define SEC_PER_CLK (1.0/CLKS_PER_SEC)
+#define SYS_CLKS_PER_SEC (SYS_CLK_MHZ*1000000.0)
+#define SEC_PER_SYS_CLK (1.0/SYS_CLKS_PER_SEC)
 
 #define UART_BAUD 115200
 #define UART_WORD_BITS 8
@@ -13,7 +13,7 @@
 #define uart_bit_count_t uint4_t
 #define uart_word_from_bits uint1_array8_le // PipelineC built in func
 #define UART_SEC_PER_BIT (1.0/UART_BAUD)
-#define UART_CLKS_PER_BIT_FLOAT (UART_SEC_PER_BIT/SEC_PER_CLK)
+#define UART_CLKS_PER_BIT_FLOAT (UART_SEC_PER_BIT/SEC_PER_SYS_CLK)
 #define UART_CLKS_PER_BIT ((uart_clk_count_t)UART_CLKS_PER_BIT_FLOAT)
 #define UART_CLKS_PER_BIT_DIV2 ((uart_clk_count_t)(UART_CLKS_PER_BIT_FLOAT/2.0))
 #define uart_clk_count_t uint16_t

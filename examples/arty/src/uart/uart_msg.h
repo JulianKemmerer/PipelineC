@@ -1,7 +1,7 @@
 // Message to pass between C on host and PipelineC on FPGA
 
 #pragma once
-#include "../../../uintN_t.h"
+#include "uintN_t.h"
 
 #define UART_MSG_SIZE 256
 typedef struct uart_msg_t

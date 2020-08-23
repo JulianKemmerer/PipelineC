@@ -104,19 +104,19 @@ void close_msgs()
 int msg_write(uart_msg_t* msg)
 {
 	uint8_t* buffer = &(msg->data[0]);
-	size_t xfer_sz = MSG_SIZE;
+	size_t xfer_sz = UART_MSG_SIZE;
   int pos = 0;
   int num_tries = 0;
-  while((pos < MSG_SIZE) && (num_tries < 10))
+  while((pos < UART_MSG_SIZE) && (num_tries < 10))
   {
     int n = write(uart_fd, &(buffer[0+pos]), xfer_sz);
     xfer_sz -= n;
     pos += n;
     num_tries++;
   }
-  if(pos != MSG_SIZE)
+  if(pos != UART_MSG_SIZE)
 	{
-		printf("Msg write failed, expected %d, got %d", MSG_SIZE, pos);
+		printf("Msg write failed, expected %d, got %d", UART_MSG_SIZE, pos);
 		exit(-1);
 	}
   //usleep(MSG_SIZE * 100); // sleep approx 100 uS per char tx
@@ -128,19 +128,19 @@ int msg_read(uart_msg_t* msg)
 {
   //usleep(MSG_SIZE * 100); // sleep approx 100 uS per char rx
 	uint8_t* buffer = &(msg->data[0]);
-	size_t xfer_sz = MSG_SIZE;
+	size_t xfer_sz = UART_MSG_SIZE;
   int pos = 0;
   int num_zero = 0;
-  while((pos < MSG_SIZE) && (num_zero < 20))
+  while((pos < UART_MSG_SIZE) && (num_zero < 20))
   {
     int n = read(uart_fd, &(buffer[0+pos]), xfer_sz);
     xfer_sz -= n;
     pos += n;
     num_zero += n == 0 ? 1 : 0;
   }
-  if(pos != MSG_SIZE)
+  if(pos != UART_MSG_SIZE)
 	{
-		printf("Msg read failed, expected %d bytes, got %d\n", MSG_SIZE, pos);
+		printf("Msg read failed, expected %d bytes, got %d\n", UART_MSG_SIZE, pos);
 		exit(-1);
 	}
   return 0;
