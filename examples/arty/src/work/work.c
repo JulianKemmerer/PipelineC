@@ -9,8 +9,6 @@
 
 // Definition of work related stuff
 #include "work.h"
-// FIFO modules
-#include "fifo.h"
 // Helper functions to convert uart bytes to/from 'work' inputs/outputs
 // TODO gen includes all inside work_in|output_t_bytes_t.h
 #include "uint8_t_array_N_t.h" 
@@ -50,7 +48,7 @@ sys_clk_main_outputs_t sys_clk_main(sys_clk_main_inputs_t inputs)
   uint32_t i;
   
   // Receive N byte messages
-  uint1_t rx_msg_ready = 1; // Assume ready and overflow downstream
+  uint1_t rx_msg_ready = 1; // Assume ready and overflow detected downstream
   uart_rx_msg_o_t uart_rx_msg_output = uart_rx_msg(inputs.uart_txd_in, rx_msg_ready);
   uart_msg_s in_msg = uart_rx_msg_output.msg_out;
   
