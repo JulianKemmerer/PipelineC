@@ -188,7 +188,8 @@ typedef uint8_t ''' + byte_type + ''';
     path = out_dir + "/" + elem_t + "_bytes_t.h"
     open(path,'w').write(text)
     
-    
+# Hey this function is dumb large
+# Just sayin
 def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text, parser_state):
   #print preprocessed_c_text
   # Regex search c_text for <type>_bytes_t
@@ -242,20 +243,22 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
             dim = dims[dim_i]
             dim_size_t_width = int(math.ceil(math.log(dim,2)))
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
-            text += dim_size_t + " dim_" + str(dim_i) + ";\n"
-            dim_var = "dim_"+str(dim_i)
+            dim_var = field + "_dim_"+str(dim_i)
+            text += dim_size_t + " " + dim_var + ";\n"
             text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
             
           # The repeated bytes assignments similar to normal case below
           # Get bytes
-          text += " " + elem_t + "_bytes_t elem_bytes = " + elem_t + "_to_bytes(x." + field
+          elem_bytes_var = field + "_elem_bytes"
+          text += " " + elem_t + "_bytes_t " + elem_bytes_var + " = " + elem_t + "_to_bytes(x." + field
           for dim_i in range(0,len(dims)):
-            text += "["+"dim_"+str(dim_i)+"]"
+            dim_var = field + "_dim_"+str(dim_i)
+            text += "["+dim_var+"]"
           text += ");\n"
           # Do loop to assign bytes
           text += ''' for(field_pos=0;field_pos<sizeof('''+elem_t+''');field_pos = field_pos + 1)
   {
-    rv.data[pos] = elem_bytes.data[field_pos];
+    rv.data[pos] = ''' + elem_bytes_var + '''.data[field_pos];
     pos = pos + 1;
   }
 '''
@@ -329,22 +332,24 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
             dim = dims[dim_i]
             dim_size_t_width = int(math.ceil(math.log(dim,2)))
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
-            text += dim_size_t + " dim_" + str(dim_i) + ";\n"
-            dim_var = "dim_"+str(dim_i)
+            dim_var = field + "_dim_"+str(dim_i)
+            text += dim_size_t + " " + dim_var + ";\n"
             text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
             
           # The repeated bytes assignments similar to normal case below
-          text += " "+ elem_t + "_bytes_t  elem_bytes;\n"
+          elem_bytes_var = field+"_elem_bytes"
+          text += " "+ elem_t + "_bytes_t " + elem_bytes_var + ";\n"
           text += ''' for(field_pos=0;field_pos<sizeof('''+elem_t+''');field_pos = field_pos + 1)
   {
-    elem_bytes.data[field_pos] = bytes.data[pos];
+    ''' + elem_bytes_var + '''.data[field_pos] = bytes.data[pos];
     pos = pos + 1;
   }
 '''
           text += " rv."+field
           for dim_i in range(0,len(dims)):
-            text += "["+"dim_"+str(dim_i)+"]"
-          text += " = bytes_to_" + elem_t + "(elem_bytes);\n"
+            dim_var = field + "_dim_"+str(dim_i)
+            text += "["+dim_var+"]"
+          text += " = bytes_to_" + elem_t + "(" + elem_bytes_var + ");\n"
           
           # Close braces
           # nest for loop for each dim
@@ -449,14 +454,15 @@ void ''' + type_t + "_to_bytes(" + type_t + '''* x, uint8_t* bytes)
             dim = dims[dim_i]
             dim_size_t_width = int(math.ceil(math.log(dim,2)))
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
-            text += "size_t dim_" + str(dim_i) + ";\n"
-            dim_var = "dim_"+str(dim_i)
+            dim_var = field+"_dim_"+str(dim_i)
+            text += "size_t " + dim_var + ";\n"
             text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
             
           # The repeated bytes assignments similar to normal case below
           text += " " + elem_t + "_to_bytes(&(x->" + field
           for dim_i in range(0,len(dims)):
-            text += "["+"dim_"+str(dim_i)+"]"
+            dim_var = field+"_dim_"+str(dim_i)
+            text += "["+dim_var+"]"
           text += "), &(bytes[pos]));\n"
           text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
           
@@ -520,14 +526,15 @@ void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
             dim = dims[dim_i]
             dim_size_t_width = int(math.ceil(math.log(dim,2)))
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
-            text += "size_t dim_" + str(dim_i) + ";\n"
-            dim_var = "dim_"+str(dim_i)
+            dim_var = field+"_dim_"+str(dim_i)
+            text += "size_t " + dim_var + ";\n"
             text += "for("+dim_var+"=0;"+dim_var+"<"+str(dim)+";"+dim_var+"="+dim_var+"+1){\n"
             
           # The repeated bytes assignments similar to normal case below
           text += " bytes_to_" + elem_t + "(&(bytes[pos]), &(x->" + field
           for dim_i in range(0,len(dims)):
-            text += "["+"dim_"+str(dim_i)+"]"
+            dim_var = field+"_dim_"+str(dim_i)
+            text += "["+dim_var+"]"
           text += "));\n"
           text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
           
