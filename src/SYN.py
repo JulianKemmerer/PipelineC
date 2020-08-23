@@ -215,10 +215,8 @@ class TimingParams:
     return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     
     
-    
-    
-    
-def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable):
+
+def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable): 
   ZeroClockTimingParamsLookupTable = dict()
   for logic_inst_name in LogicInstLookupTable: 
     logic_i = LogicInstLookupTable[logic_inst_name]
@@ -231,20 +229,6 @@ _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
   key = Logic.func_name
   
-  has_delay = True
-  # Only need to check submodules, not self
-  for sub_inst in Logic.submodule_instances:
-    func_name = Logic.submodule_instances[sub_inst]
-    sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
-    if sub_func_logic.delay is None:
-      print(sub_func_logic.func_name)
-      has_delay = False
-      break
-  if not has_delay:
-    print("Can't get zero clock pipeline map without delay?") 
-    print(0/0)
-    sys.exit(-1)
-    
   # Try cache
   try:
     rv = _GET_ZERO_CLK_PIPELINE_MAP_cache[key]
@@ -258,6 +242,20 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     return rv
   except:
     pass
+    
+  has_delay = True
+  # Only need to check submodules, not self
+  for sub_inst in Logic.submodule_instances:
+    func_name = Logic.submodule_instances[sub_inst]
+    sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
+    if sub_func_logic.delay is None:
+      print(sub_func_logic.func_name)
+      has_delay = False
+      break
+  if not has_delay:
+    print("Can't get zero clock pipeline map without delay?") 
+    print(0/0)
+    sys.exit(-1)
   
   
   # Populate table as all 0 clk
@@ -1186,16 +1184,18 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
     if type(TimingParamsLookupTable) is int:
       return TimingParamsLookupTable
   
-  est_total_latency = len(current_slices)
-  timing_params = TimingParamsLookupTable[inst_name]
-  total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  total_latency = total_latency_maybe_recalc
-    
-  if est_total_latency != total_latency:
-    print("Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency)
-    print("current slices:",current_slices)
-    print("timing_params.slices",timing_params.slices)   
-    sys.exit(-1)
+  # Sanity check
+  if not rounding_so_fuck_it:
+    est_total_latency = len(current_slices)
+    timing_params = TimingParamsLookupTable[inst_name]
+    total_latency_maybe_recalc = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    total_latency = total_latency_maybe_recalc
+      
+    if est_total_latency != total_latency:
+      print("Did not slice down hierarchy right!? est_total_latency",est_total_latency, "calculated total_latency",total_latency)
+      print("current slices:",current_slices)
+      print("timing_params.slices",timing_params.slices)   
+      sys.exit(-1)
   
   return TimingParamsLookupTable
         

@@ -7,6 +7,8 @@
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 ```
 
+*Please feel free to message - very happy to make PipelineC work for you! Always looking for help as well.* -Julian
+
 A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3) as an additional language construct/compiler feature.
 
 1. Not actually regular C. But mostly compileable by gcc for doing 'simulation'.
