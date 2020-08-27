@@ -6440,6 +6440,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     if read_main_func is None or write_main_func is None:
       print("Problem finding main functions for",var_name,"clock crossing read write:", read_containing_func,write_containing_func)
+      print("Missing a #pragma MAIN_MHZ ?")
       sys.exit(-1)
       
     read_mhz = parser_state.main_mhz[read_main_func]
@@ -6583,7 +6584,9 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     # Skip functions that are not found in the initial from-main hierarchy mapping
     if (func_def.decl.name not in parser_state.func_name_to_calls) and (func_def.decl.name not in parser_state.func_names_to_called_from):
       print("Function skipped:",func_def.decl.name)
-      continue    
+      continue
+    else:
+      print("Parsing function:",func_def.decl.name)
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]

@@ -584,10 +584,9 @@ def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text):
   r="\w+_array_[0-9]+_t"
   array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
   
-  
-  text = "#pragma once\n"
   # Typedef each one
   for array_type in array_types:
+    text = "#pragma once\n"
     #print "array_type",array_type
     toks = array_type.split("_array_")
     elem_t = toks[0]
