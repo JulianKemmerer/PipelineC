@@ -2617,6 +2617,11 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
         c_type = logic.wire_to_c_type[input_port]
         key += "_" + c_type
   
+  if parser_state.part is None:
+    print("Did not set FPGA part!")
+    print('Ex. #pragma PART "xc7a35ticsg324-1l"')
+    sys.exit(-1)
+  
   PATH_DELAY_CACHE_DIR="./path_delay_cache_"+parser_state.part
   
   file_path = PATH_DELAY_CACHE_DIR + "/" + key + ".delay"
