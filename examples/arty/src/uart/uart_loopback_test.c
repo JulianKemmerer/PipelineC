@@ -1,3 +1,6 @@
+// gcc uart_loopback_test.c -o uart_loopback_test -I ../../../../
+// sudo ./uart_loopback_test
+
 #include <math.h>
 #include <time.h> // TODO fix time measurements
 
@@ -5,11 +8,11 @@
 #include "uart_msg_sw.c"
 
 // Helper to init an input data
-msg_t input_init(int i)
+uart_msg_t input_init(int i)
 {
 	// Randomizeish values to sum
-	msg_t input;
-	for(int v=0;v<MSG_SIZE;v++)
+	uart_msg_t input;
+	for(int v=0;v<UART_MSG_SIZE;v++)
 	{
 		input.data[v] = rand();
 	}
@@ -17,10 +20,10 @@ msg_t input_init(int i)
 }
 
 // Helper to compare two output datas
-int compare_bad(int i, msg_t cpu, msg_t fpga)
+int compare_bad(int i, uart_msg_t cpu, uart_msg_t fpga)
 {
   int bad = 0;
-  for(int v=0;v<MSG_SIZE;v++)
+  for(int v=0;v<UART_MSG_SIZE;v++)
 	{
 		if(fpga.data[v] != cpu.data[v])
     {
@@ -32,7 +35,7 @@ int compare_bad(int i, msg_t cpu, msg_t fpga)
 }
 
 // Do loopback using the FPGA hardware
-void loopback_fpga(msg_t* input, msg_t* output)
+void loopback_fpga(uart_msg_t* input, uart_msg_t* output)
 {
 	// Write bytes to the FPGA
 	msg_write(input);
@@ -57,13 +60,13 @@ int main(int argc, char **argv)
     n = atoi(n_str); 
   }  
   
-	int total_bytes = n * MSG_SIZE;
+	int total_bytes = n * UART_MSG_SIZE;
   printf("n: %d \n", n); 
-  printf("MSG_SIZE: %d \n", MSG_SIZE);
+  printf("UART_MSG_SIZE: %d \n", UART_MSG_SIZE);
   printf("Total bytes: %d \n", total_bytes);
-	msg_t* inputs = (msg_t*)malloc(n*sizeof(msg_t));
-	msg_t* cpu_outputs = (msg_t*)malloc(n*sizeof(msg_t));
-	msg_t* fpga_outputs = (msg_t*)malloc(n*sizeof(msg_t));
+	uart_msg_t* inputs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
+	uart_msg_t* cpu_outputs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
+	uart_msg_t* fpga_outputs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
 	for(int i = 0; i < n; i++)
 	{
 		inputs[i] = input_init(i);
