@@ -584,26 +584,32 @@ def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text):
   r="\w+_array_[0-9]+_t"
   array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
   
+  text_per_elem_t = dict()
+  
   # Typedef each one
   for array_type in array_types:
-    text = "#pragma once\n"
     #print "array_type",array_type
     toks = array_type.split("_array_")
     elem_t = toks[0]
+    if elem_t not in text_per_elem_t:
+      text_per_elem_t[elem_t] = ""
+    text_per_elem_t[elem_t] += "#pragma once\n"
+    
     size_str = toks[1].replace("_t","")   
-    text += '''
+    text_per_elem_t[elem_t] += '''
 typedef struct ''' + array_type + '''
 {
   ''' + elem_t + ''' data[''' + size_str + '''];
 } ''' + array_type + ''';'''
 
-    # Write file
+  # Write files per elem_t
+  for elem_t in text_per_elem_t:
+    text = text_per_elem_t[elem_t]    
     out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + TYPE_ARRAY_N_T_HEADER + "/" + elem_t + "_array_N_t.h"
     if not os.path.exists(out_dir):
       os.makedirs(out_dir)    
     path = out_dir + "/" + elem_t + "_array_N_t.h"
     open(path,'w').write(text)
-
 
 # Auto generated functions are defined in bit manip or math
 # Built in functions used in this generated code are not auto generated
