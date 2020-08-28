@@ -1,15 +1,13 @@
 // Loopback UART after buffering a 'message' of N bytes
 
-// Each main function is a clock domain
-// Only one clock in the design for now 'sys_clk' @ 100MHz
-#define SYS_CLK_MHZ 100.0
-#define CLKS_PER_SEC (SYS_CLK_MHZ*1000000.0)
-#define SEC_PER_CLK (1.0/CLKS_PER_SEC)
-#pragma MAIN_MHZ sys_clk_main 100.0
-#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
+#include "compiler.h" // MAIN_MHZ macro
 
 // Logic to receive and transmit uart messages
 #include "uart_msg.c"
+
+// Each main function is a clock domain, use the UART clock for main
+MAIN_MHZ(sys_clk_main, UART_CLK_MHZ) // helper pragma macro
+_Pragma("PART xc7a35ticsg324-1l") // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
 
 // Make structs that wrap up the inputs and outputs
 typedef struct sys_clk_main_inputs_t

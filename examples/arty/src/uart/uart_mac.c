@@ -4,7 +4,7 @@
 
 #include "uintN_t.h"
 
-#define UART_CLK_MHZ 100.0
+#define UART_CLK_MHZ 25.0
 #define UART_CLKS_PER_SEC (UART_CLK_MHZ*1000000.0)
 #define SEC_PER_UART_CLK (1.0/UART_CLKS_PER_SEC)
 
@@ -122,7 +122,7 @@ uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
 // Slight clock differences between RX and TX sides can occur.
 // Do a hacky off by one fewer clock cycles to ensure TX bandwidth
 // is always slighty greater than RX bandwidth to avoid overflow
-#define TX_CHEAT_CYCLES 1
+#define UART_TX_CHEAT_CYCLES 1
 // Serialize one 8b byte into eight single bits
 #include "serializer.h"
 serializer(uart_serializer, uint1_t, UART_WORD_BITS)
@@ -158,7 +158,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   if(uart_tx_mac_state==TRANSMIT)
   {
     // And about to roll over
-    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-TX_CHEAT_CYCLES-1)) //-1 since pre increment
+    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-UART_TX_CHEAT_CYCLES-1)) //-1 since pre increment
     {
       do_next_bit_stuff = 1;
     }
@@ -194,7 +194,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
     // Output start bit for one bit period
     output.data_out = UART_START;
     uart_tx_clk_counter += 1;
-    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-TX_CHEAT_CYCLES))
+    if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-UART_TX_CHEAT_CYCLES))
     {
       // Then move onto transmitting word bits
       uart_tx_mac_state = TRANSMIT;
@@ -226,7 +226,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
     // Output stop bit for one bit period
     output.data_out = UART_STOP;
     uart_tx_clk_counter += 1;
-    if(uart_tx_clk_counter>=(UART_CLKS_PER_BIT-TX_CHEAT_CYCLES))
+    if(uart_tx_clk_counter>=(UART_CLKS_PER_BIT-UART_TX_CHEAT_CYCLES))
     {
       // Then back to idle
       uart_tx_mac_state = IDLE;

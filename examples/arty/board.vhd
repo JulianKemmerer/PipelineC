@@ -19,8 +19,26 @@ entity board is
 end board;
 
 architecture arch of board is
+
+-- Clocks based off of the board's CLK100MHZ
+signal clk_25, clk_50, clk_100, clk_200, clk_400 : std_logic;
+signal clks_ready: std_logic;
+component clks_sys_clk_100
+port
+ (-- Clock in ports
+  -- Clock out ports
+  clk_25          : out    std_logic;
+  clk_50          : out    std_logic;
+  clk_100          : out    std_logic;
+  clk_200          : out    std_logic;
+  clk_400          : out    std_logic;
+  -- Status and control signals
+  locked            : out    std_logic;
+  sys_clk_100           : in     std_logic
+ );
+end component;
   
--- Sync inputs to CLK100MHZ
+-- Sync inputs to a clock
 signal sw_r, sw_rr : std_logic_vector(3 downto 0);
 signal uart_txd_in_r, uart_txd_in_rr : std_logic;
   
@@ -30,9 +48,24 @@ signal sys_clk_main_outputs : sys_clk_main_outputs_t;
   
 begin
 
--- Sync inputs to CLK100MHZ
-process(CLK100MHZ) begin
-    if rising_edge(CLK100MHZ) then
+-- Clocks based off of the board's CLK100MHZ
+clks_sys_clk_100_inst : clks_sys_clk_100
+   port map ( 
+  -- Clock out ports  
+   clk_25 => clk_25,
+   clk_50 => clk_50,
+   clk_100 => clk_100,
+   clk_200 => clk_200,
+   clk_400 => clk_400,
+  -- Status and control signals                
+   locked => clks_ready,
+   -- Clock in ports
+   sys_clk_100 => CLK100MHZ
+ );
+
+-- Sync inputs to clk_25 with double regs
+process(clk_25) begin
+    if rising_edge(clk_25) then
         sw_r <= sw;
         sw_rr <= sw_r;
         uart_txd_in_r <= uart_txd_in;
@@ -65,7 +98,7 @@ end process;
 
 -- The PipelineC generated entity
 top_inst : entity work.top port map (
-    clk_sys_clk_main => CLK100MHZ,
+    clk_sys_clk_main => clk_25,
     sys_clk_main_inputs => sys_clk_main_inputs,
     sys_clk_main_return_output => sys_clk_main_outputs
 );

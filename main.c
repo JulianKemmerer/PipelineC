@@ -3,6 +3,8 @@
 //#include "examples/fosix/hello_world.c"
 //#include "examples/fosix/bram_loopback.c"
 //#include "examples/keccak.pc"
-//#include "examples/arty/src/uart_loopback_no_fc.c"
-//#include "examples/arty/src/uart_loopback_msg.c"
-#include "examples/arty/src/work/work.c"
+//#include "examples/arty/src/uart/uart_loopback_no_fc.c"
+#include "examples/arty/src/uart/uart_loopback_msg.c"
+//#include "examples/arty/src/work/work.c"
+//#include "examples/arty/src/fosix/main_bram_loopback.c"
+
