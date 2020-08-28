@@ -1,6 +1,8 @@
 // Use UART RX and TX MAC to receive and send messages of some N bytes
 #pragma once
 
+// Helper macros for global clock cross wires
+#include "wire.h"
 // Use UART MAC to send/receive 8b words
 #include "uart_mac.c"
 // Include message type
@@ -88,3 +90,53 @@ uart_tx_msg_o_t uart_tx_msg(uart_msg_s msg_in)
 }
 
 
+// Main function wrappers around RX and TX that expose message ports as
+// globally visible clock cross wires
+
+// RX
+// Inputs
+uint1_t uart_rx_msg_msg_out_ready;
+#include "uint1_t_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "uart_rx_msg_msg_out_ready_clock_crossing.h"
+// Outputs
+uart_msg_s uart_rx_msg_msg_out;
+#include "uart_msg_s_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "uart_rx_msg_msg_out_clock_crossing.h"
+void uart_rx_msg_main(uint1_t mac_data_in)
+{ 
+  // Read input msg out ready flag
+  uint1_t msg_out_ready;
+  WIRE_READ(uint1_t, msg_out_ready, uart_rx_msg_msg_out_ready)
+  
+  // Connect to RX module
+  uart_rx_msg_o_t uart_rx_msg_o = uart_rx_msg(mac_data_in, msg_out_ready);
+  
+  // Write message out of this function
+  WIRE_WRITE(uart_msg_s, uart_rx_msg_msg_out, uart_rx_msg_o.msg_out)
+}
+
+// TX
+// Inputs
+uart_msg_s uart_tx_msg_msg_in;
+#include "uart_msg_s_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "uart_tx_msg_msg_in_clock_crossing.h"
+// Outputs
+uint1_t uart_tx_msg_msg_in_ready;
+#include "uint1_t_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "uart_tx_msg_msg_in_ready_clock_crossing.h"
+// Output wire is mac_data_out
+uint1_t uart_tx_msg_main()
+{ 
+  // Read incoming uart msg stream
+  uart_msg_s msg_in_stream;
+  WIRE_READ(uart_msg_s, msg_in_stream, uart_tx_msg_msg_in)
+  
+  // Connect to TX module
+  uart_tx_msg_o_t uart_tx_msg_o = uart_tx_msg(msg_in_stream);
+  
+  // Write ready for input message out of this function
+  WIRE_WRITE(uint1_t, uart_tx_msg_msg_in_ready, uart_tx_msg_o.msg_in_ready)
+  
+  // Output mac data
+  return uart_tx_msg_o.mac_data_out;
+}
