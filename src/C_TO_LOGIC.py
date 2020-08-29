@@ -6462,7 +6462,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Check that non volatile crosses are identical freq
     if var_name in parser_state.global_info:
       if ratio != 1.0:
-        print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from",write_main_func,"to",read_main_func)
+        print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_main_func,"to",read_main_func,write_mhz,"MHz ->", read_mhz, "MHz")
         sys.exit(-1)
     
     # Record
