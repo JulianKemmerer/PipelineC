@@ -1,8 +1,9 @@
+#include "compiler.h"
 #include "wire.h"
 #include "fosix.h"
 
-#define BRAM_WIDTH BUF_SIZE // Same as FOSIX example buffer size for now
-#define LOG2_BRAM_WIDTH LOG2_BUF_SIZE //7
+#define BRAM_WIDTH FOSIX_BUF_SIZE // Same as FOSIX example buffer size for now
+#define LOG2_BRAM_WIDTH FOSIX_LOG2_BUF_SIZE //7
 typedef struct bram_mem_elem_t
 {
 	uint8_t bytes[BRAM_WIDTH];
@@ -10,7 +11,7 @@ typedef struct bram_mem_elem_t
 bram_mem_elem_t BRAM_MEM_ELEM_T_NULL()
 {
   bram_mem_elem_t rv;
-  size_t i;
+  fosix_size_t i;
   for(i=0;i<BRAM_WIDTH;i=i+1)
   {
     rv.bytes[i] = 0;
@@ -46,8 +47,8 @@ uint1_t path_is_bram(open_req_t req)
 
 // TODO
 // For now assuming
-//    interface will always request BUF_SIZE bytes
-//    at even BUF_SIZE divisible byte addresses
+//    interface will always request FOSIX_BUF_SIZE bytes
+//    at even FOSIX_BUF_SIZE divisible byte addresses
 
 // Simple single state machine to start
 typedef enum bram_state_t {
@@ -60,36 +61,37 @@ typedef enum bram_state_t {
 } bram_state_t;
 
 // Clock cross into fosix router thing
-posix_sys_to_proc_t bram_sys_to_proc;
-#include "posix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
+fosix_sys_to_proc_t bram_sys_to_proc;
+#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "bram_sys_to_proc_clock_crossing.h"
 // Clock cross out of fosix router thing
-posix_proc_to_sys_t bram_proc_to_sys;
-#include "posix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
+fosix_proc_to_sys_t bram_proc_to_sys;
+#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "bram_proc_to_sys_clock_crossing.h"
 
 // BRAM storage
 bram_mem_elem_t bram_ram[BRAM_DEPTH];
 bram_state_t bram_state;
-size_t bram_req_nbyte;
-size_t bram_byte_offset;
-size_t bram_byte_count;
+fosix_size_t bram_req_nbyte;
+fosix_size_t bram_byte_offset;
+fosix_size_t bram_byte_count;
 #define BRAM_DELAY 2
 uint1_t bram_valid_delay[BRAM_DELAY];
 bram_mem_elem_t bram_output;
 uint1_t bram_output_valid;
-#pragma MAIN_MHZ sys_bram 100.0
+
+MAIN_MHZ(sys_bram, UART_CLK_MHZ) // use uart clock from now
 void sys_bram()
 {
   // Read inputs driven from other modules
   //
   // Read proc_to_sys output from fosix router thing
-  posix_proc_to_sys_t proc_to_sys;
-  WIRE_READ(posix_proc_to_sys_t, proc_to_sys, bram_proc_to_sys)
+  fosix_proc_to_sys_t proc_to_sys;
+  WIRE_READ(fosix_proc_to_sys_t, proc_to_sys, bram_proc_to_sys)
   
   // Outputs
   // Default output values so each state is easier to write
-  posix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
+  fosix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
   //////////////////////////////////////////////////////////////////////
   
   // At end of storage?
@@ -141,7 +143,7 @@ void sys_bram()
       {
         // Do write
         // Send inputs into bram module
-        wr_en = proc_to_sys.sys_write.req.nbyte > 0; // TODO NON BUF_SIZE BYTES
+        wr_en = proc_to_sys.sys_write.req.nbyte > 0; // TODO NON FOSIX_BUF_SIZE BYTES
         addr = bram_byte_offset >> LOG2_BRAM_WIDTH; // / BRAM_WIDTH
         wr_data.bytes = proc_to_sys.sys_write.req.buf;
         bram_req_nbyte = proc_to_sys.sys_write.req.nbyte;
@@ -266,7 +268,7 @@ void sys_bram()
   }
   
   // Delay input valid alongside BRAM
-  size_t d;
+  fosix_size_t d;
   for(d=0;d<(BRAM_DELAY-1);d=d+1)
   {
     bram_valid_delay[d] = bram_valid_delay[d+1];
@@ -291,5 +293,5 @@ void sys_bram()
   // Write driven outputs into other modules
   //
   // Write bram sys_to_proc into fosix router thing
-  WIRE_WRITE(posix_sys_to_proc_t, bram_sys_to_proc, sys_to_proc)
+  WIRE_WRITE(fosix_sys_to_proc_t, bram_sys_to_proc, sys_to_proc)
 }

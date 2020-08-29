@@ -1,52 +1,27 @@
 // Host device (UART based)
 #pragma once
 
+#include "compiler.h"
 // Helper macros for global clock cross wires
 #include "wire.h"
 
 // Pull in the logic to send and receive messages
 #include "../uart/uart_msg.c"
 // Marking the main wrappers as main functions
-#pragma MAIN_MHZ uart_rx_msg_main 100.0
-#pragma MAIN_MHZ uart_tx_msg_main 100.0
+MAIN_MHZ(uart_rx_msg_main, UART_CLK_MHZ)
+MAIN_MHZ(uart_tx_msg_main, UART_CLK_MHZ)
 
 // Include protocol for how pack and unpack syscalls into messages
 #include "fosix_msg.h"
-
-// Helper logic to cast uart types to fosix types
-#pragma FUNC_WIRES uart_msg_s_to_fosix_msg_s
-fosix_msg_s uart_msg_s_to_fosix_msg_s(uart_msg_s uart_msg_in)
-{
-  fosix_msg_s msg_in = FOSIX_MSG_S_NULL();
-  uint32_t i;
-  for(i=0;i<UART_MSG_SIZE;i+=1)
-  {
-    msg_in.data.data[i] = uart_msg_in.data.data[i];
-  }
-  msg_in.valid = uart_msg_in.valid;
-  
-  return msg_in;
-}
-#pragma FUNC_WIRES fosix_msg_s_to_uart_msg_s
-uart_msg_s fosix_msg_s_to_uart_msg_s(fosix_msg_s msg_out)
-{
-  uart_msg_s uart_msg_out = UART_MSG_S_NULL();
-  uint32_t i;
-  for(i=0;i<FOSIX_MSG_SIZE;i+=1)
-  {
-    uart_msg_out.data.data[i] = msg_out.data.data[i];
-  }
-  uart_msg_out.valid = msg_out.valid;
-  return uart_msg_out;
-}
+#include "host_uart.h"
 
 // Clock cross wire to into fosix router thing
-posix_sys_to_proc_t host_sys_to_proc;
-#include "posix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
+fosix_sys_to_proc_t host_sys_to_proc;
+#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "host_sys_to_proc_clock_crossing.h"
 // Clock cross out of fosix
-posix_proc_to_sys_t host_proc_to_sys;
-#include "posix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
+fosix_proc_to_sys_t host_proc_to_sys;
+#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "host_proc_to_sys_clock_crossing.h"
 
 // Need to arbitrate valid and ready signals to and from the 
@@ -55,7 +30,7 @@ posix_proc_to_sys_t host_proc_to_sys;
 // have one msg buffer outgoing, and one msg buffer incoming
 // to/from message logic right now
 
-#pragma MAIN_MHZ sys_host 100.0
+MAIN_MHZ(sys_host, UART_CLK_MHZ)
 void sys_host()
 {
   // Read inputs driven from other modules
@@ -69,12 +44,12 @@ void sys_host()
   // Convert to fosix type
   fosix_msg_s msg_in = uart_msg_s_to_fosix_msg_s(uart_msg_in);
   // Read proc_to_sys output from fosix router thing
-  posix_proc_to_sys_t proc_to_sys;
-  WIRE_READ(posix_proc_to_sys_t, proc_to_sys, host_proc_to_sys)
+  fosix_proc_to_sys_t proc_to_sys;
+  WIRE_READ(fosix_proc_to_sys_t, proc_to_sys, host_proc_to_sys)
   
   // Outputs
   // Default output values so each state is easier to write
-  posix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
+  fosix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
   uint1_t msg_in_ready = 0;
   fosix_msg_s msg_out = FOSIX_MSG_S_NULL();
   //////////////////////////////////////////////////////////////////////
@@ -153,7 +128,7 @@ void sys_host()
   // Write driven outputs into other modules
   //
   // Write sys_to_proc into fosix router thing
-  WIRE_WRITE(posix_sys_to_proc_t, host_sys_to_proc, sys_to_proc)
+  WIRE_WRITE(fosix_sys_to_proc_t, host_sys_to_proc, sys_to_proc)
   // Write ready for input message indicator into msg rx logic
   WIRE_WRITE(uint1_t, uart_rx_msg_msg_out_ready, msg_in_ready)
   // Write message bytes into TX logic 

@@ -87,9 +87,9 @@ fosix_msg_s open_req_to_msg(open_req_t req)
   msg_stream.data = apply_syscall_id(FOSIX_OPEN, msg_stream.data);
   msg_stream.valid = req.valid;  
   
-  // Bytes[1-(PATH_SIZE-1+1)] are path
-  size_t i;
-  for(i=1; i<(PATH_SIZE+1); i=i+1)
+  // Bytes[1-(FOSIX_PATH_SIZE-1+1)] are path
+  fosix_size_t i;
+  for(i=1; i<(FOSIX_PATH_SIZE+1); i=i+1)
   {
     msg_stream.data.data[i] = req.path[i-1];
   }
@@ -101,9 +101,9 @@ open_req_t msg_to_open_req(fosix_msg_t msg)
   open_req_t req;
   req.valid = decode_syscall_id(msg) == FOSIX_OPEN;
   
-  // Bytes[1-(PATH_SIZE-1+1)] are path
-  size_t i;
-  for(i=1; i<(PATH_SIZE+1); i=i+1)
+  // Bytes[1-(FOSIX_PATH_SIZE-1+1)] are path
+  fosix_size_t i;
+  for(i=1; i<(FOSIX_PATH_SIZE+1); i=i+1)
   {
     req.path[i-1] = msg.data[i];
   }
@@ -145,9 +145,9 @@ fosix_msg_s write_req_to_msg(write_req_t req)
   msg_stream.data.data[1] = req.fildes;
   // Byte[2] = nbyte
   msg_stream.data.data[2] = req.nbyte;
-  // Byte[3-(BUF_SIZE-1+3)] = buf
-  size_t i;
-  for(i=3; i<(BUF_SIZE+3); i=i+1)
+  // Byte[3-(FOSIX_BUF_SIZE-1+3)] = buf
+  fosix_size_t i;
+  for(i=3; i<(FOSIX_BUF_SIZE+3); i=i+1)
   {
     msg_stream.data.data[i] = req.buf[i-3];
   }
@@ -163,9 +163,9 @@ write_req_t msg_to_write_req(fosix_msg_t msg)
   req.fildes = msg.data[1];
   // Byte[2] = nbyte
   req.nbyte = msg.data[2];
-  // Byte[3-(BUF_SIZE-1+3)] = buf
-  size_t i;
-  for(i=3; i<(BUF_SIZE+3); i=i+1)
+  // Byte[3-(FOSIX_BUF_SIZE-1+3)] = buf
+  fosix_size_t i;
+  for(i=3; i<(FOSIX_BUF_SIZE+3); i=i+1)
   {
     req.buf[i-3] = msg.data[i];
   }
@@ -231,9 +231,9 @@ read_resp_t msg_to_read_resp(fosix_msg_s msg_stream)
   
   // Byte[1] = nbyte
   resp.nbyte = msg_stream.data.data[1];
-  // Byte[2-(BUF_SIZE-1+2)] = buf
-  size_t i;
-  for(i=2; i<(BUF_SIZE+2); i=i+1)
+  // Byte[2-(FOSIX_BUF_SIZE-1+2)] = buf
+  fosix_size_t i;
+  for(i=2; i<(FOSIX_BUF_SIZE+2); i=i+1)
   {
     resp.buf[i-2] = msg_stream.data.data[i];
   }
@@ -248,9 +248,9 @@ fosix_msg_s read_resp_to_msg(read_resp_t resp)
   
   // Byte[1] = nbyte
   msg_stream.data.data[1] = resp.nbyte;
-  // Byte[2-(BUF_SIZE-1+2)] = buf
-  size_t i;
-  for(i=2; i<(BUF_SIZE+2); i=i+1)
+  // Byte[2-(FOSIX_BUF_SIZE-1+2)] = buf
+  fosix_size_t i;
+  for(i=2; i<(FOSIX_BUF_SIZE+2); i=i+1)
   {
     msg_stream.data.data[i] = resp.buf[i-2];
   }
@@ -305,9 +305,9 @@ fosix_msg_s close_resp_to_msg(close_resp_t resp)
 }
 
 // C2H
-posix_proc_to_sys_t msg_to_request(fosix_msg_t msg)
+fosix_proc_to_sys_t msg_to_request(fosix_msg_t msg)
 {
-  posix_proc_to_sys_t req = POSIX_PROC_TO_SYS_T_NULL();
+  fosix_proc_to_sys_t req = POSIX_PROC_TO_SYS_T_NULL();
   req.sys_open.req  = msg_to_open_req(msg);
   req.sys_write.req = msg_to_write_req(msg);
   req.sys_read.req = msg_to_read_req(msg);
@@ -316,7 +316,7 @@ posix_proc_to_sys_t msg_to_request(fosix_msg_t msg)
 }
 
 // H2C
-fosix_msg_s response_to_msg(posix_sys_to_proc_t resp)
+fosix_msg_s response_to_msg(fosix_sys_to_proc_t resp)
 {
   fosix_msg_s msg_stream = FOSIX_MSG_S_NULL();
   if(resp.sys_open.resp.valid)

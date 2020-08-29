@@ -42,10 +42,6 @@ end component;
 signal sw_r, sw_rr : std_logic_vector(3 downto 0);
 signal uart_txd_in_r, uart_txd_in_rr : std_logic;
   
--- IO type conversion
-signal sys_clk_main_inputs : sys_clk_main_inputs_t;
-signal sys_clk_main_outputs : sys_clk_main_outputs_t;
-  
 begin
 
 -- Clocks based off of the board's CLK100MHZ
@@ -77,30 +73,36 @@ end process;
 process(
     -- Inputs to module
     sw_rr,
-    uart_txd_in_rr,
+    uart_txd_in_rr
     -- Outputs from PipelineC
-    sys_clk_main_outputs
+    --sys_clk_main_outputs
 ) begin
     -- Input
     --sys_clk_main_inputs.sw(0) <= sw_rr(0);
     --sys_clk_main_inputs.sw(1) <= sw_rr(1);
     --sys_clk_main_inputs.sw(2) <= sw_rr(2);
     --sys_clk_main_inputs.sw(3) <= sw_rr(3);
-    sys_clk_main_inputs.uart_txd_in(0) <= uart_txd_in_rr;
+    --sys_clk_main_inputs.uart_txd_in(0) <= uart_txd_in_rr;
     
     -- Outputs
-    led(0) <= sys_clk_main_outputs.led(0)(0);
-    led(1) <= sys_clk_main_outputs.led(1)(0);
-    led(2) <= sys_clk_main_outputs.led(2)(0);
-    led(3) <= sys_clk_main_outputs.led(3)(0);
-    uart_rxd_out <= sys_clk_main_outputs.uart_rxd_out(0);
+    --led(0) <= sys_clk_main_outputs.led(0)(0);
+    --led(1) <= sys_clk_main_outputs.led(1)(0);
+    --led(2) <= sys_clk_main_outputs.led(2)(0);
+    --led(3) <= sys_clk_main_outputs.led(3)(0);
+    --uart_rxd_out <= sys_clk_main_outputs.uart_rxd_out(0);
 end process;
 
 -- The PipelineC generated entity
 top_inst : entity work.top port map (
-    clk_sys_clk_main => clk_25,
-    sys_clk_main_inputs => sys_clk_main_inputs,
-    sys_clk_main_return_output => sys_clk_main_outputs
+clk_uart_rx_msg_main => clk_25,
+uart_rx_msg_main_mac_data_in(0) => uart_txd_in_rr, 
+uart_rx_msg_main_return_output(0) => led(0),
+clk_uart_tx_msg_main => clk_25,
+uart_tx_msg_main_return_output(0) => uart_rxd_out,
+clk_sys_host => clk_25,
+clk_sys_bram => clk_25,
+clk_fosix => clk_25,
+clk_main => clk_25
 );
 
 end arch;

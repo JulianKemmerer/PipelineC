@@ -3,8 +3,10 @@
  reads "/tmp/in" from the host OS into FPGA block ram.
  Then writes "/tmp/out" on the host OS with contents of that block ram.
  "Loopback the file from input to output using BRAM buffer on FPGA"
+ * Create a file of on the system:
+ * $ head -c 16384 < /dev/urandom > /tmp/in
 */
-
+#include "compiler.h"
 #pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
 
 #include "fosix.c" // FPGA POSIX?
@@ -37,11 +39,11 @@ typedef enum state_t {
   DONE // Stays in this state forever (until FPGA bitstream reload)
 } state_t;
 state_t state;
-size_t num_bytes; // Temp holder for number of bytes
-fd_t stdout_fd; // File descriptor for /dev/stdout
-fd_t in_fd; // File descriptor for /tmp/in
-fd_t out_fd; // File descriptor for /tmp/out
-fd_t bram_fd; // File descriptor for BRAM
+fosix_size_t num_bytes; // Temp holder for number of bytes
+fosix_fd_t stdout_fd; // File descriptor for /dev/stdout
+fosix_fd_t in_fd; // File descriptor for /tmp/in
+fosix_fd_t out_fd; // File descriptor for /tmp/out
+fosix_fd_t bram_fd; // File descriptor for BRAM
 
 // Subroutine registers for common/repeated functionality
 typedef enum subroutine_state_t {
@@ -58,21 +60,21 @@ typedef enum subroutine_state_t {
 } subroutine_state_t;
 subroutine_state_t sub_state; // Subroutine state
 state_t sub_return_state; // Primary state machine state to return to
-fd_t sub_fd; // File descriptor for subroutine
-char sub_path[PATH_SIZE]; // Path buf for open()
-uint8_t sub_io_buf[BUF_SIZE]; // IO buf for write+read
-size_t sub_io_buf_nbytes; // Input number of bytes
-size_t sub_io_buf_nbytes_ret; // Return count of bytes
+fosix_fd_t sub_fd; // File descriptor for subroutine
+char sub_path[FOSIX_PATH_SIZE]; // Path buf for open()
+uint8_t sub_io_buf[FOSIX_BUF_SIZE]; // IO buf for write+read
+fosix_size_t sub_io_buf_nbytes; // Input number of bytes
+fosix_size_t sub_io_buf_nbytes_ret; // Return count of bytes
 
 // Some repeated logic would probably benefit from some macros...TODO...
-#pragma MAIN_MHZ main 100.0
+MAIN_MHZ(main, UART_CLK_MHZ) // Use uart clock for main
 void main()
 {
   // Read inputs
-  posix_sys_to_proc_t sys_to_proc;
-  WIRE_READ(posix_sys_to_proc_t, sys_to_proc, main_sys_to_proc)  
+  fosix_sys_to_proc_t sys_to_proc;
+  WIRE_READ(fosix_sys_to_proc_t, sys_to_proc, main_sys_to_proc)  
   // Default output/reset/null values
-  posix_proc_to_sys_t proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
+  fosix_proc_to_sys_t proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
   
   // Control of subroutine state machine from primary state
   subroutine_state_t sub_start_state = IDLE;
@@ -513,5 +515,5 @@ void main()
   */
   
   // Write outputs
-  WIRE_WRITE(posix_proc_to_sys_t, main_proc_to_sys, proc_to_sys)
+  WIRE_WRITE(fosix_proc_to_sys_t, main_proc_to_sys, proc_to_sys)
 }

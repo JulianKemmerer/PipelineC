@@ -102,7 +102,8 @@ uint1_t uart_rx_msg_msg_out_ready;
 uart_msg_s uart_rx_msg_msg_out;
 #include "uart_msg_s_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "uart_rx_msg_msg_out_clock_crossing.h"
-void uart_rx_msg_main(uint1_t mac_data_in)
+// Output wire is overflow
+uint1_t uart_rx_msg_main(uint1_t mac_data_in)
 { 
   // Read input msg out ready flag
   uint1_t msg_out_ready;
@@ -113,6 +114,9 @@ void uart_rx_msg_main(uint1_t mac_data_in)
   
   // Write message out of this function
   WIRE_WRITE(uart_msg_s, uart_rx_msg_msg_out, uart_rx_msg_o.msg_out)
+  
+  // Output overflow flag
+  return uart_rx_msg_o.overflow;
 }
 
 // TX
