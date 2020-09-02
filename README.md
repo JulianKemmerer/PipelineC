@@ -15,9 +15,9 @@ A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
 2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and somewhat human readable VHDL. Hooks exist for inserting raw VHDL / black boxes.
 3. If a computation can be written as pure function without side effects (i.e. no global variables) then it will be autopipelined. 
-   Conceptually similar to technologies like Intel's variable latency [Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208)
-   and Xilinx's [retiming options](https://www.xilinx.com/support/answers/65410.html). 
-   Sharing some of the compiler driven pipelining design goals of Google's [XLS Project](https://google.github.io/xls/) and the [DFiantHDL language](https://dfianthdl.github.io/) as well.
+   Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208)
+   and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). 
+   Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/) and the [DFiantHDL language](https://dfianthdl.github.io/) as well.
 
 By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs need not be rewritten for each new target device / operating frequency. The hope is to build shared, high performance, device agnostic, hardware designs described in a somewhat familiar C language look.
 
