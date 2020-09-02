@@ -6582,7 +6582,9 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
     # Skip functions that are not found in the initial from-main hierarchy mapping
-    if (func_def.decl.name not in parser_state.func_name_to_calls) and (func_def.decl.name not in parser_state.func_names_to_called_from):
+    if ( (func_def.decl.name not in parser_state.func_name_to_calls) and
+         (func_def.decl.name not in parser_state.func_names_to_called_from) and 
+         (func_def.decl.name not in parser_state.main_mhz) ):
       print("Function skipped:",func_def.decl.name)
       continue
     else:
