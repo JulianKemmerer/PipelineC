@@ -1939,9 +1939,9 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, sweep_state):
   return unseen_possible_adjusted_slices
 
 
-# Todo just course for now until someone other than me care to squeeze performance?
+# Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(parser_state): #,skip_course_sweep=False, skip_fine_sweep=False):
+def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_sweep=False):
   for main_func in parser_state.main_mhz:
     print("Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func])
   
@@ -1959,9 +1959,9 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_course_sweep=False, skip_fine_swee
   # Default sweep state is zero clocks
   sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params)
   
-  # Maybe skip course grain
-  #if not sweep_state.fine_grain_sweep and not skip_course_sweep:
-  sweep_state = DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state)#, skip_fine_sweep)
+  # Maybe skip coarse grain
+  #if not sweep_state.fine_grain_sweep and not skip_coarse_sweep:
+  sweep_state = DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state)#, skip_fine_sweep)
   
   # Maybe skip fine grain
   #if not skip_fine_sweep:
@@ -1971,25 +1971,26 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_course_sweep=False, skip_fine_swee
   return sweep_state.multimain_timing_params
 
 # Return SWEEP STATE fo DO_FINE_THROUGHPUT_SWEEP
-def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=False):
-  # Reasonable starting guess and course throughput strategy is dividing each main up to meet target
+def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True): #, skip_fine_sweep=False):
+  # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
   # Dont even bother running multimain top as combinatorial logic
-  main_func_to_course_latency = dict()
+  main_func_to_coarse_latency = dict()
   for main_func in parser_state.main_mhz:
-    main_func_to_course_latency[main_func] = 0 # initial guess is 0
-    main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-    target_mhz = parser_state.main_mhz[main_func]
-    path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
-    if path_delay_ns > 0.0:
-      curr_mhz = 1000.0 / path_delay_ns
-      # How many multiples are we away from the goal
-      mult = target_mhz / curr_mhz
-      if mult > 1.0:
-        # Divide up into that many clocks as a starting guess
-        # If doesnt have global wires
-        if not main_func_logic.uses_globals:
-          clks = int(mult) - 1
-          main_func_to_course_latency[main_func] = clks
+    main_func_to_coarse_latency[main_func] = 0 # initial guess is 0
+    if do_starting_guess:
+      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+      target_mhz = parser_state.main_mhz[main_func]
+      path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
+      if path_delay_ns > 0.0:
+        curr_mhz = 1000.0 / path_delay_ns
+        # How many multiples are we away from the goal
+        mult = target_mhz / curr_mhz
+        if mult > 1.0:
+          # Divide up into that many clocks as a starting guess
+          # If doesnt have global wires
+          if not main_func_logic.uses_globals:
+            clks = int(mult) - 1
+            main_func_to_coarse_latency[main_func] = clks
       
   # Do loop of:
   #   Reset top to 0 clk
@@ -2008,19 +2009,20 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
     done = False
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-      print(main_func, ": currently is",main_func_to_course_latency[main_func],"clocks latency...")
+      target_mhz = parser_state.main_mhz[main_func]
+      print(main_func, ": currently is",main_func_to_coarse_latency[main_func],"clocks latency...")
       # Sanity check on resolution
       if not main_func_logic.is_vhdl_text_module:
         # Sanity check cant more clocks than delay units
-        if main_func_to_course_latency[main_func] > sweep_state.func_sweep_state[main_func].zero_clk_pipeline_map.zero_clk_max_delay:
-          print("Not enough resolution to slice this logic into",main_func_to_course_latency[main_func],"clocks...")
+        if main_func_to_coarse_latency[main_func] > sweep_state.func_sweep_state[main_func].zero_clk_pipeline_map.zero_clk_max_delay:
+          print("Not enough resolution to slice this logic into",main_func_to_coarse_latency[main_func],"clocks...")
           print("Increase DELAY_UNIT_MULT?")
           sys.exit(-1)
       
       # Make even slices      
-      best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_course_latency[main_func])
+      best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_coarse_latency[main_func])
       # Update slice step
-      sweep_state.func_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(main_func_to_course_latency[main_func]+1))  
+      sweep_state.func_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(main_func_to_coarse_latency[main_func]+1))  
       print(main_func,"current slices:", best_guess_slices)
       # If making slices then make sure the slices dont go through global logic
       if len(best_guess_slices) > 0:
@@ -2058,10 +2060,10 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
       # No save non passing latency
       for main_func in parser_state.main_mhz:
         # Save non passing latency
-        main_to_last_non_passing_latency[main_func] = main_func_to_course_latency[main_func]
+        main_to_last_non_passing_latency[main_func] = main_func_to_coarse_latency[main_func]
         
-      # And make course adjustmant
-      print("Making course adjustment and trying again...")
+      # And make coarse adjustmant
+      print("Making coarse adjustment and trying again...")
       # Which main funcs show up in timing report?
       main_funcs = VIVADO.GET_MAIN_FUNCS_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state)
       for main_func in main_funcs:
@@ -2072,9 +2074,9 @@ def DO_COURSE_THROUGHPUT_SWEEP(parser_state, sweep_state): #, skip_fine_sweep=Fa
         #print("=")
         #if len(main_func_logic.global_wires) == 0:
         if not main_func_logic.uses_globals:
-          main_func_to_course_latency[main_func] = main_func_to_course_latency[main_func] + 1
+          main_func_to_coarse_latency[main_func] = main_func_to_coarse_latency[main_func] + 1
           # Reset adjustments
-          for stage in range(0, main_func_to_course_latency[main_func] + 1):
+          for stage in range(0, main_func_to_coarse_latency[main_func] + 1):
             sweep_state.func_sweep_state[main_func].stages_adjusted_this_latency[stage] = 0
           
   return sweep_state
