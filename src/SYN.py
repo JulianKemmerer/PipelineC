@@ -1200,27 +1200,18 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   return TimingParamsLookupTable
         
 
-def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state, do_get_stage_range=True):
+def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state):
   # Dont write files if log file exists
   write_files = False
 
   # Then run syn
   timing_report = VIVADO.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
-  if timing_report.start_reg_name is None:
+  if len(timing_report.path_reports) == 0:
     print(timing_report.orig_text)
     print("Using a bad syn log file?")
     sys.exit(-1)
-  
-  # Get stage range and main_funcs from timing report
-  stage_range = None
-  main_func = None
-  if do_get_stage_range:
-    # To get stage range we need to know this isnt a clock crossing
-    # Get the single main func for the timing report path
-    main_func, stage_range = VIVADO.FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(timing_report, parser_state, multimain_timing_params)
     
-    
-  return main_func, stage_range, timing_report
+  return timing_report
   
 # Sweep state for a single pipeline of logic
 class LogicSweepState:
@@ -1674,6 +1665,7 @@ def REMOVE_DUP_SLICES(slices_list, epsilon):
       rv_slices_list.append(slices)
   return rv_slices_list
   
+'''
 # Each call to SYN_AND_REPORT_TIMING is a new thread
 def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, possible_adjusted_slices):
   NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
@@ -1709,7 +1701,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     multimain_timing_params = copy.deepcopy(sweep_state.multimain_timing_params)
     # Rebuild from current main slices
     multimain_timing_params.REBUILD_FROM_MAIN_SLICES(slices, sweep_state.curr_main_func, parser_state, do_latency_check)
-    my_async_result = my_thread_pool.apply_async(DO_SYN_FROM_TIMING_PARAMS, (multimain_timing_params, parser_state, do_get_stage_range))
+    my_async_result = my_thread_pool.apply_async(DO_SYN_FROM_TIMING_PARAMS, (multimain_timing_params, parser_state))
     slices_to_thread[str(slices)] = my_async_result
     slices_to_multimain_timing_params[str(slices)] = multimain_timing_params
     
@@ -1725,7 +1717,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
   syn_tups = list(slices_to_syn_tup.values())
   datapath_delays = []
   for syn_tup in syn_tups:
-    syn_tup_main_func, syn_tup_stage_range, syn_tup_timing_report = syn_tup
+    syn_tup_timing_report = syn_tup
     datapath_delays.append(syn_tup_timing_report.path_delay)
   all_same_delays = len(set(datapath_delays))==1 and len(datapath_delays) > 1
   
@@ -1792,6 +1784,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     
   
   return rv_state
+'''
   
 '''
 def LOG_SWEEP_STATE(sweep_state, parser_state):
@@ -1970,7 +1963,8 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   #else:
   return sweep_state.multimain_timing_params
 
-# Return SWEEP STATE fo DO_FINE_THROUGHPUT_SWEEP
+# Return SWEEP STATE for DO_FINE_THROUGHPUT_SWEEP someday again...
+# Of Montreal - The Party's Crashing Us
 def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True): #, skip_fine_sweep=False):
   # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
   # Dont even bother running multimain top as combinatorial logic
@@ -2035,19 +2029,30 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       sweep_state.multimain_timing_params.REBUILD_FROM_MAIN_SLICES(best_guess_slices, main_func, parser_state)
     
     # Run syn on multi main top
-    sweep_state.curr_main_func, stage_range, sweep_state.timing_report = DO_SYN_FROM_TIMING_PARAMS(sweep_state.multimain_timing_params, parser_state)
-    curr_mhz = 1000.0 / sweep_state.timing_report.path_delay
-    print("MHz:", curr_mhz)
-    sweep_state.timing_params_to_mhz[sweep_state.multimain_timing_params] = curr_mhz
+    sweep_state.timing_report = DO_SYN_FROM_TIMING_PARAMS(sweep_state.multimain_timing_params, parser_state)
+    # Did it meet timing?
+    fmax = INF_MHZ
+    timing_met = len(sweep_state.timing_report.path_reports) > 0
+    for clock_group in sweep_state.timing_report.path_reports:
+      path_report = sweep_state.timing_report.path_reports[clock_group]
+      curr_mhz = 1000.0 / path_report.path_delay
+      actual_mhz = 1000.0 / path_report.source_ns_per_clock
+      print("Clock Goal:",actual_mhz,", Current MHz:", curr_mhz)
+      if curr_mhz < actual_mhz:
+        timing_met = False
+      if curr_mhz < fmax:
+        fmax = curr_mhz
+    # Record min mhz as fmax
+    sweep_state.timing_params_to_mhz[sweep_state.multimain_timing_params] = fmax
     
     # Last loop?
     if last_loop:
       break
   
     # Passed timing?
-    if curr_mhz >= target_mhz:
+    if timing_met:
       # Yes, ok run one more time at last non passing latency
-      print("Found maximum pipeline latency...")
+      print("Found maximum pipeline latencies...")
       ## If skipping fine grain then return passing latency now
       #if skip_fine_sweep:
       break 
@@ -2065,7 +2070,9 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       # And make coarse adjustmant
       print("Making coarse adjustment and trying again...")
       # Which main funcs show up in timing report?
-      main_funcs = VIVADO.GET_MAIN_FUNCS_FROM_TIMING_REPORT(sweep_state.timing_report, parser_state)
+      main_funcs = set()
+      for path_report in list(sweep_state.timing_report.path_reports.values()):
+        main_funcs = main_funcs.union( VIVADO.GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
       for main_func in main_funcs:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         #print("main_func_logic.func_name",main_func_logic.func_name)
@@ -2786,26 +2793,31 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       my_async_result = func_name_to_async_result[logic_func_name]
       print("...Waiting on synthesis for:", logic_func_name)
       parsed_timing_report =  my_async_result.get()
-      if parsed_timing_report.path_delay is None:
+      # Sanity should be one path reported
+      if len(parsed_timing_report.path_reports) > 1:
+        print("Too many paths reported!",parsed_timing_report.orig_text)
+        sys.exit(-1)
+      path_report = list(parsed_timing_report.path_reports.values())[0]
+      if path_report.path_delay is None:
         print("Cannot synthesize for path delay ",logic.func_name)
         print(parsed_timing_report.orig_text)
         if DO_SYN_FAIL_SIM:
           MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
         sys.exit(-1)
-      mhz = 1000.0 / parsed_timing_report.path_delay
+      mhz = 1000.0 / path_report.path_delay
       # Make adjustment for 0 LLs to have 0 delay
-      if parsed_timing_report.logic_levels > 0:
-        logic.delay = int(parsed_timing_report.path_delay * DELAY_UNIT_MULT)        
+      if path_report.logic_levels > 0:
+        logic.delay = int(path_report.path_delay * DELAY_UNIT_MULT)        
         # Sanity check multiplier is working
-        if parsed_timing_report.path_delay > 0.0 and logic.delay==0:
-          print("Have timing path of",parsed_timing_report.path_delay,"ns")
+        if path_report.path_delay > 0.0 and logic.delay==0:
+          print("Have timing path of",path_report.path_delay,"ns")
           print("...but recorded zero delay. Increase delay multiplier!")
           sys.exit(-1)
       else:
         logic.delay = 0
         
       # Syn results are delay and clock 
-      print(logic_func_name, "Path delay (ns):", parsed_timing_report.path_delay, "=",mhz, "MHz")
+      print(logic_func_name, "Path delay (ns):", path_report.path_delay, "=",mhz, "MHz")
       print("")
       # Record worst global
       #if len(logic.global_wires) > 0:
@@ -2821,7 +2833,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
           os.makedirs(PATH_DELAY_CACHE_DIR)         
         f=open(filepath,"w")
-        f.write(str(parsed_timing_report.path_delay))
+        f.write(str(path_report.path_delay))
         f.close()       
       
       # Save logic with delay into lookup

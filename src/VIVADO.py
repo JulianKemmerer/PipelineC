@@ -28,14 +28,13 @@ else:
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch" 
-TIMING_REPORT_DIVIDER="......................THIS IS THAT STUPID DIVIDER THING................"
 
-def GET_MAIN_FUNCS_FROM_TIMING_REPORT(timing_report, parser_state):
+def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
   main_funcs = set()
   # Include start and end regs in search 
-  all_netlist_resources = set(timing_report.netlist_resources)
-  all_netlist_resources.add(timing_report.start_reg_name)
-  all_netlist_resources.add(timing_report.end_reg_name)
+  all_netlist_resources = set(path_report.netlist_resources)
+  all_netlist_resources.add(path_report.start_reg_name)
+  all_netlist_resources.add(path_report.end_reg_name)
   for netlist_resource in all_netlist_resources:
     toks = netlist_resource.split("/")
     if toks[0] in parser_state.main_mhz:
@@ -111,6 +110,16 @@ def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
     sys.exit(-1)
   
   return main_func
+  
+def GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state):
+  clk_cross_var_name = start_name.split("/")[0]
+  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
+  return read_main_func
+    
+def GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state):
+  clk_cross_var_name = end_name.split("/")[0]
+  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
+  return write_main_func
 
 # [possible,stage,indices]
 def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, parser_state, multimain_timing_params):
@@ -151,7 +160,14 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
   for start_name in start_names:
     for end_name in end_names:
       # Check this path
-      if REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
+      if REG_NAME_IS_CLOCK_CROSSING(start_name, parser_state):
+        possible_stages_indices.append(0)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state))      
+      elif REG_NAME_IS_CLOCK_CROSSING(end_name, parser_state):
+        last_stage = total_latency
+        possible_stages_indices.append(last_stage)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state))
+      elif REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
         print(" Path to and from register IO regs in top...")
         possible_stages_indices.append(0)
         possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
@@ -252,141 +268,26 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
     main_func = list(possible_main_funcs)[0]
   
   return main_func, stage_range
-    
+  
+  
 class ParsedTimingReport:
   def __init__(self, syn_output):
     
-    # Doing multiple things
-    cmd_outputs = syn_output.split(TIMING_REPORT_DIVIDER)
-    single_timing_report = cmd_outputs[0]
-    worst_paths_timing_report = None
-    if len(cmd_outputs) > 2:
-      worst_paths_timing_report = cmd_outputs[2] # divider is printed in log twice
+    # Split into timing report and not
+    split_marker = "Max Delay Paths\n--------------------------------------------------------------------------------------"
+    split_marker_toks = syn_output.split(split_marker)
+    single_timing_report = split_marker_toks[0]
     
-    
-    # SINGLE TIMING REPORT STUFF
-    self.logic_levels = 0
-    self.slack_ns = None
-    self.source_ns_per_clock = 0.0
-    self.start_reg_name = None
-    self.end_reg_name = None
-    self.path_delay = None
-    self.logic_delay = None
-    self.orig_text = single_timing_report
+    self.orig_text = syn_output
     #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
     self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
     self.has_loops = True
     self.has_latch_loops = True
-    self.netlist_resources = set() # Set of strings
-    
-    # Parsing state
-    in_netlist_resources = False
     
     # Parsing:  
     syn_output_lines = single_timing_report.split("\n")
     prev_line=""
     for syn_output_line in syn_output_lines:
-      # LOGIC LEVELS
-      tok1="Logic Levels:           "
-      if tok1 in syn_output_line:
-        self.logic_levels = int(syn_output_line.replace(tok1,"").split("(")[0].strip())
-        
-      # SLACK_NS
-      tok1="Slack ("
-      tok2="  (required time - arrival time)"
-      if (tok1 in syn_output_line) and (tok2 in syn_output_line):
-        slack_w_unit = syn_output_line.replace(tok1,"").replace(tok2,"").split(":")[1].strip()
-        slack_ns_str = slack_w_unit.strip("ns")
-        self.slack_ns = float(slack_ns_str)
-        
-        
-      # CLOCK PERIOD
-      tok1="Source:                 "
-      tok2="                            (rising edge-triggered"
-      tok3="period="
-      if (tok1 in prev_line) and (tok2 in syn_output_line):
-        toks = syn_output_line.split(tok3)
-        per_and_trash = toks[len(toks)-1]
-        period = per_and_trash.strip("ns})")
-        self.source_ns_per_clock = float(period)
-        # START REG
-        self.start_reg_name = prev_line.replace(tok1,"").strip()
-        # Remove everything after last "/"
-        toks = self.start_reg_name.split("/")
-        self.start_reg_name = "/".join(toks[0:len(toks)-1])
-        
-        
-      
-      # END REG
-      tok1="Destination:            "
-      if (tok1 in prev_line) and (tok2 in syn_output_line):
-        self.end_reg_name = prev_line.replace(tok1,"").strip()
-        # Remove everything after last "/"
-        toks = self.end_reg_name.split("/")
-        self.end_reg_name = "/".join(toks[0:len(toks)-1])       
-        
-      
-        
-      #####################################################################################################
-      # Data path delay in report is not the total delay in the path
-      # OMG slack is not jsut a funciton of slack=goal-delay
-      # Wow so dumb of me
-      # VIVADO prints out for 1ns clock
-      '''
-      Slack (VIOLATED) :        -1.021ns  (required time - arrival time)
-      Source:                 add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/SML_DELAY/i_pipe/opt_has_pipe.first_q_reg[0]/C
-                  (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Destination:            add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/DSP2/DSP/A[0]
-                  (rising edge-triggered cell DSP48E1 clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Path Group:             clk
-      Path Type:              Setup (Max at Slow Process Corner)
-      Requirement:            1.000ns  (clk rise@1.000ns - clk rise@0.000ns)
-      Data Path Delay:        0.688ns  (logic 0.254ns (36.896%)  route 0.434ns (63.104%))
-      '''
-      # ^ Actual operating freq period = goal - slack
-      # period = 1.0 - (-1.021) = 2.021 ns
-      ''' Another example from own program
-      Slack (VIOLATED) :        -0.738ns  (required time - arrival time)
-      Source:                 main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][uint24_negate_BIN_OP_PLUS_main_c_9_c_108_registers][submodules][BIN_OP_PLUS_bit_math_h_17_registers][self][0][left_resized][11]/C
-                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Destination:            main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][int26_abs_BIN_OP_PLUS_main_c_9_c_123_registers][self][0][rv_bit_math_h_58_0][21]/D
-                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Path Group:             sys_clk_pin
-      Path Type:              Setup (Max at Slow Process Corner)
-      Requirement:            1.000ns  (sys_clk_pin rise@1.000ns - sys_clk_pin rise@0.000ns)
-      Data Path Delay:        1.757ns  (logic 1.258ns (71.599%)  route 0.499ns (28.401%))
-      '''
-      # 1.0 - (-0.738) = 1.738ns
-      tok1="Data Path Delay:        "
-      if tok1 in syn_output_line:
-        self.path_delay = self.source_ns_per_clock - self.slack_ns
-      #####################################################################################################
-      
-      
-      # LOGIC DELAY
-      tok1="Data Path Delay:        "
-      if tok1 in syn_output_line:
-        self.logic_delay = float(syn_output_line.split("  (logic ")[1].split("ns (")[0])
-        
-      # Netlist resources
-      tok1 = "    Location             Delay type                Incr(ns)  Path(ns)    "
-      #   Set
-      if tok1 in prev_line:
-        in_netlist_resources = True
-      if in_netlist_resources:
-        # Parse resource
-        start_offset = len(tok1)
-        if len(syn_output_line) > start_offset:
-          resource_str = syn_output_line[start_offset:].strip()
-          if len(resource_str) > 0:
-            if "/" in resource_str:           
-              #print "Resource: '",resource_str,"'"
-              self.netlist_resources.add(resource_str)
-        # Reset
-        tok1 = "                         slack"
-        if tok1 in syn_output_line:
-          in_netlist_resources = False        
-      
       # LOOPS!
       if "There are 0 combinational loops in the design." in syn_output_line:
         self.has_loops = False
@@ -535,7 +436,156 @@ class ParsedTimingReport:
           if not(right_names[i] in self.reg_merged_with):
             self.reg_merged_with[right_names[i]] = []
           self.reg_merged_with[right_names[i]].append(left_names[i])
+    
+    
+      # SAVE PREV LINE
+      prev_line = syn_output_line
+      
+    #LOOPS
+    if self.has_loops or self.has_latch_loops:
+      #print single_timing_report
+      #print syn_output_line
+      print("TIMING LOOPS!")
+      ## Do debug?
+      #latency=0
+      #do_debug=True
+      #print "ASSUMING LATENCY=",latency
+      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
+      #sys.exit(-1)
+      
+      
+    # Parse multiple path reports
+    self.path_reports = dict()
+    path_report_texts = split_marker_toks[1:]
+    for path_report_text in path_report_texts:
+      if "(required time - arrival time)" in path_report_text:
+        path_report = PathReport(path_report_text)
+        self.path_reports[path_report.path_group] = path_report
+    
+class PathReport:
+  def __init__(self, single_timing_report):    
+    # SINGLE TIMING REPORT STUFF  (single path report)
+    self.logic_levels = 0
+    self.slack_ns = None
+    self.source_ns_per_clock = 0.0
+    self.start_reg_name = None
+    self.end_reg_name = None
+    self.path_delay = None
+    self.logic_delay = None
+    self.path_group = None
+    
+    self.netlist_resources = set() # Set of strings
+    
+    # Parsing state
+    in_netlist_resources = False
+    
+    # Parsing:  
+    syn_output_lines = single_timing_report.split("\n")
+    prev_line=""
+    for syn_output_line in syn_output_lines:
+      # LOGIC LEVELS
+      tok1="Logic Levels:           "
+      if tok1 in syn_output_line:
+        self.logic_levels = int(syn_output_line.replace(tok1,"").split("(")[0].strip())
         
+      # SLACK_NS
+      tok1="Slack ("
+      tok2="  (required time - arrival time)"
+      if (tok1 in syn_output_line) and (tok2 in syn_output_line):
+        slack_w_unit = syn_output_line.replace(tok1,"").replace(tok2,"").split(":")[1].strip()
+        slack_ns_str = slack_w_unit.strip("ns")
+        self.slack_ns = float(slack_ns_str)
+        
+        
+      # CLOCK PERIOD
+      tok1="Source:                 "
+      tok2="                            (rising edge-triggered"
+      tok3="period="
+      if (tok1 in prev_line) and (tok2 in syn_output_line):
+        toks = syn_output_line.split(tok3)
+        per_and_trash = toks[len(toks)-1]
+        period = per_and_trash.strip("ns})")
+        self.source_ns_per_clock = float(period)
+        # START REG
+        self.start_reg_name = prev_line.replace(tok1,"").strip()
+        # Remove everything after last "/"
+        toks = self.start_reg_name.split("/")
+        self.start_reg_name = "/".join(toks[0:len(toks)-1])
+        
+        
+      
+      # END REG
+      tok1="Destination:            "
+      if (tok1 in prev_line) and (tok2 in syn_output_line):
+        self.end_reg_name = prev_line.replace(tok1,"").strip()
+        # Remove everything after last "/"
+        toks = self.end_reg_name.split("/")
+        self.end_reg_name = "/".join(toks[0:len(toks)-1])       
+        
+      # Path group
+      tok1="Path Group:"
+      if tok1 in syn_output_line:
+        self.path_group = syn_output_line.replace(tok1,"").strip()
+        
+      #####################################################################################################
+      # Data path delay in report is not the total delay in the path
+      # OMG slack is not jsut a funciton of slack=goal-delay
+      # Wow so dumb of me
+      # VIVADO prints out for 1ns clock
+      '''
+      Slack (VIOLATED) :        -1.021ns  (required time - arrival time)
+      Source:                 add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/SML_DELAY/i_pipe/opt_has_pipe.first_q_reg[0]/C
+                  (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
+      Destination:            add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/DSP2/DSP/A[0]
+                  (rising edge-triggered cell DSP48E1 clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
+      Path Group:             clk
+      Path Type:              Setup (Max at Slow Process Corner)
+      Requirement:            1.000ns  (clk rise@1.000ns - clk rise@0.000ns)
+      Data Path Delay:        0.688ns  (logic 0.254ns (36.896%)  route 0.434ns (63.104%))
+      '''
+      # ^ Actual operating freq period = goal - slack
+      # period = 1.0 - (-1.021) = 2.021 ns
+      ''' Another example from own program
+      Slack (VIOLATED) :        -0.738ns  (required time - arrival time)
+      Source:                 main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][uint24_negate_BIN_OP_PLUS_main_c_9_c_108_registers][submodules][BIN_OP_PLUS_bit_math_h_17_registers][self][0][left_resized][11]/C
+                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
+      Destination:            main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][int26_abs_BIN_OP_PLUS_main_c_9_c_123_registers][self][0][rv_bit_math_h_58_0][21]/D
+                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
+      Path Group:             sys_clk_pin
+      Path Type:              Setup (Max at Slow Process Corner)
+      Requirement:            1.000ns  (sys_clk_pin rise@1.000ns - sys_clk_pin rise@0.000ns)
+      Data Path Delay:        1.757ns  (logic 1.258ns (71.599%)  route 0.499ns (28.401%))
+      '''
+      # 1.0 - (-0.738) = 1.738ns
+      tok1="Data Path Delay:        "
+      if tok1 in syn_output_line:
+        self.path_delay = self.source_ns_per_clock - self.slack_ns
+      #####################################################################################################
+      
+      
+      # LOGIC DELAY
+      tok1="Data Path Delay:        "
+      if tok1 in syn_output_line:
+        self.logic_delay = float(syn_output_line.split("  (logic ")[1].split("ns (")[0])
+        
+      # Netlist resources
+      tok1 = "    Location             Delay type                Incr(ns)  Path(ns)    "
+      #   Set
+      if tok1 in prev_line:
+        in_netlist_resources = True
+      if in_netlist_resources:
+        # Parse resource
+        start_offset = len(tok1)
+        if len(syn_output_line) > start_offset:
+          resource_str = syn_output_line[start_offset:].strip()
+          if len(resource_str) > 0:
+            if "/" in resource_str:           
+              #print "Resource: '",resource_str,"'"
+              self.netlist_resources.add(resource_str)
+        # Reset
+        tok1 = "                         slack"
+        if tok1 in syn_output_line:
+          in_netlist_resources = False        
       
       # SAVE PREV LINE
       prev_line = syn_output_line
@@ -549,38 +599,6 @@ class ParsedTimingReport:
       #print "ASSUMING LATENCY=",latency
       #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)          
       sys.exit(-1)
-    
-    #LOOPS
-    if self.has_loops or self.has_latch_loops:
-      #print single_timing_report
-      #print syn_output_line
-      print("TIMING LOOPS!")
-      ## Do debug?
-      #latency=0
-      #do_debug=True
-      #print "ASSUMING LATENCY=",latency
-      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #sys.exit(-1)
-    
-    
-    # Multiple timign report stuff
-    self.worst_paths = None # List of tuples[ (start,end,path_delay), ...,.,.,.]
-    # Also duh just another list of timing reports
-    self.worst_path_reports = None
-    
-    if worst_paths_timing_report is None:
-      return
-    self.worst_paths = []
-    self.worst_path_reports = []
-    
-    # Split this multi timing report into individual ones
-    worst_path_timing_reports = worst_paths_timing_report.split("                         slack                                 ")  
-    for worst_path_timing_report in worst_path_timing_reports:
-      parsed_report = ParsedTimingReport(worst_path_timing_report)
-      # Add to list of tuples
-      self.worst_paths.append( (parsed_report.start_reg_name, parsed_report.end_reg_name, parsed_report.path_delay) )
-      # And add report 
-      self.worst_path_reports.append(parsed_report)
   
 
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
@@ -775,29 +793,22 @@ def WRITE_CLK_XDC(parser_state, inst_name=None):
     out_filename = "clocks.xdc"
     out_filepath = SYN.SYN_OUTPUT_DIRECTORY+"/"+out_filename
     for main_func in parser_state.main_mhz:
-      clk_name = "clk_" + main_func
-      clock_name_to_mhz[clk_name] = parser_state.main_mhz[main_func]
+      clock_mhz = parser_state.main_mhz[main_func]
+      clk_mhz_str = VHDL.CLK_MHZ_STR(clock_mhz)
+      clk_name = "clk_" + clk_mhz_str
+      clock_name_to_mhz[clk_name] = clock_mhz
   
   f=open(out_filepath,"w")
-  
-  # TEMP assume same clock
-  # TODO: multiple clock crossing timing paths in report
-  if len(set(parser_state.main_mhz.values())) > 1:
-    print("No multi clock for real yet!")
-    sys.exit(-1)
-  clock_mhz = list(clock_name_to_mhz.values())[0]
-  ns = (1.0 / clock_mhz) * 1000.0
-  clock_name = "clk"
-  port_names = list(clock_name_to_mhz.keys())
-  get_ports_text = ""
-  for port_name in port_names:
-    get_ports_text += "[get_ports " + port_name + "]" + " "
-  f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [list " + get_ports_text + "]\n");
-  
-  #for clock_name in clock_name_to_mhz:
-  # clock_mhz = clock_name_to_mhz[clock_name]
-  # ns = (1.0 / clock_mhz) * 1000.0
-  # f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n"); 
+  for clock_name in clock_name_to_mhz:
+    clock_mhz = clock_name_to_mhz[clock_name]
+    ns = (1000.0 / clock_mhz)
+    f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
+    
+    
+  # All clock assumed async? Doesnt matter for internal syn
+  # Rely on generated/board provided constraints for real hardware
+  if len(clock_name_to_mhz) > 0:
+    f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
   
   f.close()
   return out_filepath
@@ -934,6 +945,12 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   
   return ParsedTimingReport(log_text)
   
+def REG_NAME_IS_CLOCK_CROSSING(reg_name,parser_state):
+  if "/" in reg_name:
+    top_inst_name = reg_name.split("/")[0]
+    if top_inst_name not in parser_state.main_mhz:
+      return True  
+  return False
   
 def REG_NAME_IS_INPUT_REG(reg_name):
   if REG_NAME_IS_IO_REG(reg_name):
@@ -988,7 +1005,6 @@ def GET_RAW_HDL_SUBMODULE_LATENCY_INDEX_FROM_REG_NAME(reg_name, logic):
 # Try to make vivado reg name match inst name
 def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
   # Adjust reg name for best match
-  
   
   # Remove submodule marker
   adj_reg_name = reg_name.replace("/","_")

@@ -51,7 +51,10 @@ def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # If not use null
   else:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
-
+    
+def CLK_MHZ_STR(mhz):
+  return str(mhz).replace(".","p")
+  
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
   text = ""
   text += "library ieee;" + "\n"
@@ -76,13 +79,20 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
   text += '''
   entity ''' + entity_name + ''' is
 port(
+'''
+
+  # All the clocks
+  clk_mhzs = sorted(list(set(parser_state.main_mhz.values())))
+  for clk_mhz in clk_mhzs:
+    clk_mhz_str = CLK_MHZ_STR(clk_mhz)
+    text += "clk_" + clk_mhz_str + " : in std_logic;\n"
+
+  text += '''
   -- IO for each main func
 '''
   # IO
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-    # Clk
-    text += "clk_" + main_func + " : in std_logic;\n"
     # Inputs
     for input_port in main_func_logic.inputs:
       c_type = main_func_logic.wire_to_c_type[input_port]
@@ -155,9 +165,10 @@ begin
     text += " " + "-- IO regs\n"
     
     for main_func in parser_state.main_mhz:
-      text += " " + "process(clk_" + main_func + ") is" + "\n"
+      clk_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[main_func])
+      text += " " + "process(clk_" + clk_mhz_str + ") is" + "\n"
       text += " " + "begin" + "\n"
-      text += " " + " " + "if rising_edge(clk_" + main_func + ") then" + "\n"
+      text += " " + " " + "if rising_edge(clk_" + clk_mhz_str + ") then" + "\n"
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       # Register inputs
       for input_name in main_func_logic.inputs:
@@ -187,6 +198,7 @@ begin
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.FuncLogicLookupTable[main_func]
     main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
+    clk_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[main_func])
      
     # ENTITY
     main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func];
@@ -198,7 +210,7 @@ begin
     text += new_inst_name + " : entity work." + main_entity_name +" port map (\n"
     # Clock
     if main_needs_clk:
-      text += "clk_" + main_func + ",\n"
+      text += "clk_" + clk_mhz_str + ",\n"
     # Clock cross in
     if main_needs_clk_cross_read:
       text += "clk_cross_read." + main_func + ",\n"
@@ -233,6 +245,8 @@ begin
     read_func = var_name + "_READ"
     write_func = var_name + "_WRITE"
     write_main, read_main = parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name]
+    write_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[write_main])
+    read_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[read_main])
     
     # Find the full inst name for write and read func instances
     # (should only be one instance), and break into toks
@@ -273,11 +287,11 @@ begin
     (
 '''
     # Clk in input
-    text += "clk_" + write_main + ",\n"
+    text += "clk_" + write_mhz_str + ",\n"
     # Clk cross in data from pipeline output
     text += "clk_cross_write." + write_text + ",\n"
     # Clk out input
-    text += "clk_" + read_main + ",\n"
+    text += "clk_" + read_mhz_str + ",\n"
     # Clk cross out data to pipeline input
     text += "clk_cross_read." + read_text + "\n"
     text += '''
@@ -604,15 +618,25 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
   
 
   for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
-    write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]
-    # Simple only for now
-    if write_size != read_size:
-      print("Do better clock crossings!")
+    write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]   
+    if write_size >= read_size:
+      clk_ratio = write_size / read_size
+    else:
+      clk_ratio = read_size / write_size
+    if int(clk_ratio) != clk_ratio:
+      print("TODO: non int ratio clks")
       sys.exit(-1)
+    clk_ratio = int(clk_ratio)
+    CLK_RATIO = str(clk_ratio)
+    CLK_RATIO_MINUS1 = str(clk_ratio - 1)
+    
     if var_name in parser_state.global_info:
       c_type = parser_state.global_info[var_name].type_name
     if var_name in parser_state.volatile_global_info:
       c_type = parser_state.volatile_global_info[var_name].type_name
+    
+    data_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) 
+    
     in_t = c_type + "_array_" + str(write_size) + "_t"
     in_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(in_t, parser_state)
     out_t = c_type + "_array_" + str(read_size) + "_t"
@@ -635,9 +659,147 @@ use work.c_structs_pkg.all; -- User types
     );
     end clk_cross_''' + var_name + ''';
     architecture arch of clk_cross_''' + var_name + ''' is
+    '''
+    
+    text += '''
+    constant CLK_RATIO : integer := ''' + CLK_RATIO + ''';
+    constant CLK_RATIO_MINUS1 : integer := ''' + CLK_RATIO_MINUS1 + ''';
+    '''
+    
+    # Need some regs
+    if write_size != read_size:
+      # A counter
+      text += '''
+      signal fast_clk_counter_r : integer range 0 to CLK_RATIO_MINUS1 := CLK_RATIO_MINUS1;'''
+      # Output register in fast domain
+      text += '''
+      signal o_fast_r : ''' + out_vhdl_t + ''';'''
+      # A slow toggling N regs
+      # Write > read means slow->fast
+      if write_size > read_size: 
+        text += '''
+        signal slow_array_r : ''' + in_vhdl_t + ''';'''
+        # Input register in slow domain
+        text += '''
+        signal i_slow_r : ''' + in_vhdl_t + ''';
+        '''
+      elif write_size < read_size:
+        # Write < read means fast->slow 
+        text += '''
+        signal slow_array_r : ''' + out_vhdl_t + ''';'''
+        # Output register in slow domain
+        text += '''
+        signal o_slow_r : ''' + out_vhdl_t + ''';
+        '''
+        
+      # N valid bits
+      text += '''
+      signal slow_array_valids_r : std_logic_vector(0 to CLK_RATIO_MINUS1);
+      '''
+      
+    
+    text+='''
     begin
+    '''
+
+    # Write > read means slow->fast
+    if write_size > read_size:
+      
+      text +='''
+      
+      -- input reg in slow domain
+      process(in_clk) is
+      begin
+      if rising_edge(in_clk) then
+        i_slow_r <= i;
+      end if;
+      end process;
+      
+      -- slow->fast, need fast domain logic
+      process(out_clk) is
+      begin
+      if rising_edge(out_clk) then
+  
+        -- Always shifting out serial fast data
+        for i in 0 to ''' + str(clk_ratio-2) + ''' loop 
+          slow_array_r.data(i) <= slow_array_r.data(i+1);
+          slow_array_valids_r(i) <= slow_array_valids_r(i+1);
+        end loop;
+        -- Output data null by default
+        o_fast_r.data(0) <= ''' + C_TYPE_STR_TO_VHDL_NULL_STR(c_type, parser_state) + ''';
+        -- If valid data then output from front of array
+        if slow_array_valids_r(0) = '1' then
+          o_fast_r.data(0) <= slow_array_r.data(0);
+        end if;        
+        
+        -- Counter roll over is slow clk enable logic in fast domain
+        -- Incoming slow data registered 
+        if fast_clk_counter_r = CLK_RATIO_MINUS1 then
+          fast_clk_counter_r <= 0;
+          slow_array_valids_r <= (others => '1');
+          slow_array_r <= i_slow_r;
+        else
+          -- Counter
+          fast_clk_counter_r <= fast_clk_counter_r + 1;
+        end if;
+      
+      end if;
+      end process;
+      o <= o_fast_r;
+      '''
+    elif write_size < read_size:
+      # Write < read means fast->slow
+      text +='''
+      
+      -- fast->slow ,need fast domain logic
+      process(in_clk) is
+      begin
+      if rising_edge(in_clk) then
+      
+        -- Always shifting in serial fast data
+        for i in 0 to ''' + str(clk_ratio-2) + ''' loop 
+          slow_array_r.data(i) <= slow_array_r.data(i+1);
+          slow_array_valids_r(i) <= slow_array_valids_r(i+1);
+        end loop;
+        slow_array_r.data(CLK_RATIO_MINUS1) <= i.data(0);
+        slow_array_valids_r(CLK_RATIO_MINUS1) <= '1';        
+        
+        -- Counter roll over is slow clk enable logic in fast domain
+        if fast_clk_counter_r = CLK_RATIO_MINUS1 then
+          fast_clk_counter_r <= 0;
+        
+          -- Output datas null by default
+          for i in 0 to CLK_RATIO_MINUS1 loop
+            o_fast_r.data(i) <= ''' + C_TYPE_STR_TO_VHDL_NULL_STR(c_type, parser_state) + ''';
+            -- If valid data then output data
+            if slow_array_valids_r(i) = '1' then
+              o_fast_r.data(i) <= slow_array_r.data(i);
+            end if;
+          end loop;
+        else
+          -- Counter
+          fast_clk_counter_r <= fast_clk_counter_r + 1;
+        end if;
+            
+      end if;
+      end process;
+      
+      -- output reg on slow output clock
+      process(out_clk) is
+      begin
+      if rising_edge(out_clk) then
+        o_slow_r <= o_fast_r;
+      end if;
+      end process;
+      o <= o_slow_r;
+      '''    
+      
+    elif write_size == read_size:
+      text += '''   
       -- Assume same clock
-      o <= i;
+      o <= i;'''
+    
+    text += '''    
     end arch;
     '''
     
