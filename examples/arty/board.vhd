@@ -25,7 +25,7 @@ signal clk_25, clk_50, clk_100, clk_200, clk_400 : std_logic;
 signal clks_ready: std_logic;
 component clks_sys_clk_100
 port
- (-- Clock in ports
+ (
   -- Clock out ports
   clk_25          : out    std_logic;
   clk_50          : out    std_logic;
@@ -34,6 +34,7 @@ port
   clk_400          : out    std_logic;
   -- Status and control signals
   locked            : out    std_logic;
+  -- Clock in ports
   sys_clk_100           : in     std_logic
  );
 end component;
@@ -94,15 +95,10 @@ end process;
 
 -- The PipelineC generated entity
 top_inst : entity work.top port map (
-clk_uart_rx_msg_main => clk_25,
-uart_rx_msg_main_mac_data_in(0) => uart_txd_in_rr, 
+clk_25p0 => clk_25,
+uart_rx_msg_main_mac_data_in(0) => uart_txd_in_rr,
 uart_rx_msg_main_return_output(0) => led(0),
-clk_uart_tx_msg_main => clk_25,
-uart_tx_msg_main_return_output(0) => uart_rxd_out,
-clk_sys_host => clk_25,
-clk_sys_bram => clk_25,
-clk_fosix => clk_25,
-clk_main => clk_25
+uart_tx_msg_main_return_output(0) => uart_rxd_out
 );
 
 end arch;
