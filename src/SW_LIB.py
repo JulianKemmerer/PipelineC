@@ -38,19 +38,32 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
   # Write two funcs in a header for each var
   for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
     write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]
+    ratio = 0
+    if write_size > read_size:
+      ratio = write_size/read_size
+    else:
+      ratio = read_size/write_size
+    ratio = int(ratio)
+    
     c_type = None
     if var_name in parser_state.global_info:
       c_type = parser_state.global_info[var_name].type_name
     if var_name in parser_state.volatile_global_info:
       c_type = parser_state.volatile_global_info[var_name].type_name
+    write_in_t = c_type + "_array_" + str(write_size) + "_t"
+    read_out_t = c_type + "_array_" + str(read_size) + "_t"
     
     text = "#pragma once\n"
     text += '#include "' + c_type + '_array_N_t.h"\n'
+    text += '#define ' + var_name + "_RATIO " + str(ratio) + "\n"
+    text += '#define ' + var_name + "_write_t " + write_in_t + "\n"
+    text += '#define ' + var_name + "_read_t " + read_out_t + "\n"
+    
     text += '''
 // Clock cross write
 '''
     write_out_t = "void"
-    write_in_t = c_type + "_array_" + str(write_size) + "_t"
+    
     text += write_out_t + ''' ''' + var_name + "_WRITE(" + write_in_t + " in_data)"
     text += '''
 {
@@ -61,7 +74,7 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
     text += '''
 // Clock cross read
 '''
-    read_out_t = c_type + "_array_" + str(read_size) + "_t"
+    
     read_in_t = "void"
     text += read_out_t + ''' ''' + var_name + "_READ()"
     text += '''
@@ -109,7 +122,13 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files):
       path = dir_name + "/" + var_name + "_clock_crossing.h"
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
-      open(path, 'w').write("")
+      f = open(path, 'w')
+      # Need dummy defines
+      f.write('#define ' + var_name + "_RATIO 0\n")
+      f.write('#define ' + var_name + "_write_t int\n")
+      f.write('#define ' + var_name + "_read_t int\n")
+      f.write("")
+      f.close()      
     
 def C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
   r="\w+_array(_[0-9]+)+_t"
