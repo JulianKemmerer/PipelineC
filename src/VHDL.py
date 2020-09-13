@@ -1524,6 +1524,16 @@ end function;
   
   return rv
   
+def GET_FLOAT_PKG_INCLUDE_TEXT():
+  if SYN.SYN_TOOL is VIVADO:
+    return '''
+library ieee_proposed;
+use ieee_proposed.float_pkg.all;
+'''
+  else:
+    return ""
+
+  
 def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_top=False): 
   # Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
   if Logic.is_vhdl_func or Logic.is_vhdl_expr:
@@ -1547,8 +1557,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   rv += "library ieee;" + "\n"
   rv += "use ieee.std_logic_1164.all;" + "\n"
   rv += "use ieee.numeric_std.all;" + "\n"
-  rv += "library ieee_proposed;" + "\n"
-  rv += "use ieee_proposed.float_pkg.all;" + "\n" #
+  rv += GET_FLOAT_PKG_INCLUDE_TEXT()
   # Include C defined structs
   rv += "use work.c_structs_pkg.all;\n"
   # Include clock crossing type

@@ -17,13 +17,15 @@ import VHDL
 import SW_LIB
 import MODELSIM
 import VIVADO
+import QUARTUS
 
+SYN_TOOL = None # Attempts to figure out from part number
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
-INF_MHZ = 1000 # Impossible timing goal
 DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
+INF_MHZ = 1000 # Impossible timing goal
 SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
 MAX_STAGE_ADJUSTMENT = 2 # Uhh 2 should probably be fine? Maybe fixed bug 20 seems whack? 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
 SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
@@ -31,7 +33,24 @@ SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search
 DELAY_UNIT_MULT = 10.0 # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 
 
-# These are the parameters that describe how multiple pipelines are connected
+
+def PART_SET_TOOL(part_str):
+  global SYN_TOOL
+  if SYN_TOOL is None:
+    # Try to guess synthesis tool based on part number
+    # Hacky for now...
+    if part_str is None:
+      print("Need to set part!")
+      print('#pragma PART "EP2AGX45CU17I3"')
+      sys.exit(-1)
+    elif part_str.startswith("xc"):
+      SYN_TOOL = VIVADO
+    else:
+      SYN_TOOL = QUARTUS
+    print("Assuming",SYN_TOOL.__name__, "for synthesizing part:",part_str)   
+
+
+# These are the parameters that describe how multiple pipelines are timed
 class MultiMainTimingParams:
   def __init__(self):
     # Pipeline params
@@ -1199,13 +1218,88 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   
   return TimingParamsLookupTable
         
+def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
+  ext = None
+  if SYN_TOOL is VIVADO:
+    ext = ".xdc"
+  elif SYN_TOOL is QUARTUS:
+    ext = ".sdc"
+    
+  clock_name_to_mhz = dict()
+  if inst_name:
+    clock_name_to_mhz["clk"] = INF_MHZ
+    out_filename = "clock" + ext
+    Logic = parser_state.LogicInstLookupTable[inst_name]
+    output_dir = GET_OUTPUT_DIRECTORY(Logic)
+    out_filepath = output_dir+"/"+out_filename
+  else:
+    out_filename = "clocks" + ext
+    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+    for main_func in parser_state.main_mhz:
+      clock_mhz = parser_state.main_mhz[main_func]
+      clk_mhz_str = VHDL.CLK_MHZ_STR(clock_mhz)
+      clk_name = "clk_" + clk_mhz_str
+      clock_name_to_mhz[clk_name] = clock_mhz
+      
+  return clock_name_to_mhz,out_filepath
+      
+# return path 
+def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
+  
+  # Use specified mhz is multimain top
+  clock_name_to_mhz,out_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name)  
+  f=open(out_filepath,"w")
+  for clock_name in clock_name_to_mhz:
+    clock_mhz = clock_name_to_mhz[clock_name]
+    ns = (1000.0 / clock_mhz)
+    f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
+    
+  # All clock assumed async? Doesnt matter for internal syn
+  # Rely on generated/board provided constraints for real hardware
+  if len(clock_name_to_mhz) > 1:
+    if SYN_TOOL is VIVADO:
+      f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
+    elif SYN_TOOL is QUARTUS:
+      f.write("set_clock_groups -asynchronous -group [get_clocks *] -group [get_clocks *]")
+  
+  f.close()
+  return out_filepath
+  
+def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
+  is_final_top = True
+  VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
+  
+  # read_vhdl.tcl only for Vivado for now
+  if SYN_TOOL is VIVADO:
+    # TODO better quartus GUI / tcl scripts support
+    # Write read_vhdl.tcl
+    tcl = VIVADO.GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
+    rv_lines = []
+    for line in tcl.split('\n'):
+      if "read_vhdl" in line:
+        rv_lines.append(line)
+    
+    rv = ""
+    for line in rv_lines:
+      rv += line + "\n"
+    
+    # One more read_vhdl line for the final entity  with constant name
+    top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
+    rv += "read_vhdl -library work {" + top_file_path + "}\n"
+      
+    # Write file
+    out_filename = "read_vhdl.tcl"
+    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+    f=open(out_filepath,"w")
+    f.write(rv)
+    f.close()
 
 def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state):
   # Dont write files if log file exists
   write_files = False
 
   # Then run syn
-  timing_report = VIVADO.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+  timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
   if len(timing_report.path_reports) == 0:
     print(timing_report.orig_text)
     print("Using a bad syn log file?")
@@ -1718,7 +1812,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
   datapath_delays = []
   for syn_tup in syn_tups:
     syn_tup_timing_report = syn_tup
-    datapath_delays.append(syn_tup_timing_report.path_delay)
+    datapath_delays.append(syn_tup_timing_report.path_delay_ns)
   all_same_delays = len(set(datapath_delays))==1 and len(datapath_delays) > 1
   
   if all_same_delays:
@@ -1731,7 +1825,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     # - we obviously didnt change anything measureable so cant be "best"
     curr_delay = None
     if sweep_state.timing_report is not None:
-      curr_delay = sweep_state.timing_report.path_delay # TODO use actual path names?
+      curr_delay = sweep_state.timing_report.path_delay_ns # TODO use actual path names?
     best_slices = None
     best_mhz = 0
     best_syn_tup = None
@@ -1739,8 +1833,8 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
       syn_tup = slices_to_syn_tup[str(slices)]
       syn_tup_main_func, syn_tup_stage_range, syn_tup_timing_report = syn_tup
       # Only if Changed Mhz / changed critical path
-      if syn_tup_timing_report.path_delay != curr_delay:
-        mhz = 1000.0 / syn_tup_timing_report.path_delay
+      if syn_tup_timing_report.path_delay_ns != curr_delay:
+        mhz = 1000.0 / syn_tup_timing_report.path_delay_ns
         print(" ", slices, "MHz:", mhz)
         if (mhz > best_mhz) :
           best_mhz = mhz
@@ -1755,7 +1849,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
     for slices in possible_adjusted_slices:
       syn_tup = slices_to_syn_tup[str(slices)]
       syn_tup_main_func, syn_tup_stage_range, syn_tup_timing_report = syn_tup
-      mhz = 1000.0 / syn_tup_timing_report.path_delay
+      mhz = 1000.0 / syn_tup_timing_report.path_delay_ns
       if (mhz == best_mhz) :
         best_tied_slices.append(slices)
     
@@ -1765,7 +1859,7 @@ def PARALLEL_SYN_WITH_CURR_MAIN_SLICES_PICK_BEST(sweep_state, parser_state, poss
       for best_tied_slice in best_tied_slices:
         syn_tup = slices_to_syn_tup[str(best_tied_slice)]
         syn_tup_main_func, syn_tup_stage_range, syn_tup_timing_report = syn_tup
-        mhz = 1000.0 / syn_tup_timing_report.path_delay
+        mhz = 1000.0 / syn_tup_timing_report.path_delay_ns
         if not SEEN_SLICES(best_tied_slice, sweep_state):
           best_mhz = mhz
           best_slices = best_tied_slice
@@ -1791,10 +1885,10 @@ def LOG_SWEEP_STATE(sweep_state, parser_state):
   print "Current main pipeline:", sweep_state.curr_main_func
   print "CURRENT SLICES:", sweep_state.multimain_timing_params.TimingParamsLookupTable[sweep_state.curr_main_func].slices
   print "Slice Step:", sweep_state.func_sweep_state[sweep_state.curr_main_func].slice_step  
-  logic_delay_percent = sweep_state.timing_report.logic_delay / sweep_state.timing_report.path_delay
-  mhz = (1.0 / (sweep_state.timing_report.path_delay / 1000.0)) 
+  logic_delay_percent = sweep_state.timing_report.logic_delay / sweep_state.timing_report.path_delay_ns
+  mhz = (1.0 / (sweep_state.timing_report.path_delay_ns / 1000.0)) 
   print "MHz:", mhz
-  print "Path delay (ns):",sweep_state.timing_report.path_delay
+  print "Path delay (ns):",sweep_state.timing_report.path_delay_ns
   print "Logic delay (ns):",sweep_state.timing_report.logic_delay, "(",logic_delay_percent,"%)"
   print "STAGE RANGE:",sweep_state.func_sweep_state[sweep_state.curr_main_func].stage_range
   
@@ -1812,12 +1906,12 @@ def LOG_SWEEP_STATE(sweep_state, parser_state):
   # Keep record of ___BEST___ delay and best slices
   if sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency in sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay:
     # Is it better?
-    if sweep_state.timing_report.path_delay < sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency]:
-      sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.timing_report.path_delay
+    if sweep_state.timing_report.path_delay_ns < sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency]:
+      sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.timing_report.path_delay_ns
       sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_slices[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.multimain_timing_params.TimingParamsLookupTable[sweep_state.curr_main_func].slices[:]
   else:
     # Just add
-    sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.timing_report.path_delay
+    sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_delay[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.timing_report.path_delay_ns
     sweep_state.func_sweep_state[sweep_state.curr_main_func].latency_to_best_slices[sweep_state.func_sweep_state[sweep_state.curr_main_func].total_latency] = sweep_state.multimain_timing_params.TimingParamsLookupTable[sweep_state.curr_main_func].slices[:]
   # RECORD __ALL___ MHZ TO LATENCY AND SLICES
   # Only add if there are no higher Mhz with lower latency already
@@ -1931,6 +2025,18 @@ def FILTER_OUT_SEEN_ADJUSTMENTS(possible_adjusted_slices, sweep_state):
       print(" Saw,",possible_slices,"already")
   return unseen_possible_adjusted_slices
 
+def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
+  main_funcs = set()
+  # Include start and end regs in search 
+  all_netlist_resources = set(path_report.netlist_resources)
+  all_netlist_resources.add(path_report.start_reg_name)
+  all_netlist_resources.add(path_report.end_reg_name)
+  for netlist_resource in all_netlist_resources:
+    toks = netlist_resource.split("/")
+    if toks[0] in parser_state.main_mhz:
+      main_funcs.add(toks[0])
+      
+  return main_funcs
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
@@ -2035,9 +2141,9 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
     timing_met = len(sweep_state.timing_report.path_reports) > 0
     for clock_group in sweep_state.timing_report.path_reports:
       path_report = sweep_state.timing_report.path_reports[clock_group]
-      curr_mhz = 1000.0 / path_report.path_delay
+      curr_mhz = 1000.0 / path_report.path_delay_ns
       actual_mhz = 1000.0 / path_report.source_ns_per_clock
-      print("Clock Goal:",actual_mhz,", Current MHz:", curr_mhz)
+      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz)
       if curr_mhz < actual_mhz:
         timing_met = False
       if curr_mhz < fmax:
@@ -2072,7 +2178,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       # Which main funcs show up in timing report?
       main_funcs = set()
       for path_report in list(sweep_state.timing_report.path_reports.values()):
-        main_funcs = main_funcs.union( VIVADO.GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
+        main_funcs = main_funcs.union( GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
       for main_func in main_funcs:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         #print("main_func_logic.func_name",main_func_logic.func_name)
@@ -2651,11 +2757,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
   my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
   
+  # Make sure synthesis tool is set
+  PART_SET_TOOL(parser_state.part)
+  
   print("Starting with combinatorial logic...")  
   # initial params are 0 clk latency for all submodules
   TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   
-  print("Writing VHDL files for all functions (as combinatorial logic)...  RE ADD PIPELINEMAP CACHE?")
+  print("Writing VHDL files for all functions (as combinatorial logic)...")
   WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
   #print "WHY SLO?"
@@ -2781,8 +2890,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         continue
       # Run Syn
       total_latency=0
-      clock_mhz = INF_MHZ 
-      my_async_result = my_thread_pool.apply_async(VIVADO.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency))
+      my_async_result = my_thread_pool.apply_async(SYN_TOOL.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, total_latency))
       func_name_to_async_result[logic_func_name] = my_async_result
       
     # Finish parallel syn
@@ -2798,26 +2906,25 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         print("Too many paths reported!",parsed_timing_report.orig_text)
         sys.exit(-1)
       path_report = list(parsed_timing_report.path_reports.values())[0]
-      if path_report.path_delay is None:
+      if path_report.path_delay_ns is None:
         print("Cannot synthesize for path delay ",logic.func_name)
         print(parsed_timing_report.orig_text)
         if DO_SYN_FAIL_SIM:
           MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
         sys.exit(-1)
-      mhz = 1000.0 / path_report.path_delay
+      mhz = 1000.0 / path_report.path_delay_ns
+      logic.delay = int(path_report.path_delay_ns * DELAY_UNIT_MULT)
+      # Sanity check multiplier is working
+      if path_report.path_delay_ns > 0.0 and logic.delay==0:
+        print("Have timing path of",path_report.path_delay_ns,"ns")
+        print("...but recorded zero delay. Increase delay multiplier!")
+        sys.exit(-1)      
       # Make adjustment for 0 LLs to have 0 delay
-      if path_report.logic_levels > 0:
-        logic.delay = int(path_report.path_delay * DELAY_UNIT_MULT)        
-        # Sanity check multiplier is working
-        if path_report.path_delay > 0.0 and logic.delay==0:
-          print("Have timing path of",path_report.path_delay,"ns")
-          print("...but recorded zero delay. Increase delay multiplier!")
-          sys.exit(-1)
-      else:
-        logic.delay = 0
+      if (SYN_TOOL is VIVADO) and path_report.logic_levels == 0:
+        logic.delay = 0        
         
       # Syn results are delay and clock 
-      print(logic_func_name, "Path delay (ns):", path_report.path_delay, "=",mhz, "MHz")
+      print(logic_func_name, "Path delay (ns):", path_report.path_delay_ns, "=",mhz, "MHz")
       print("")
       # Record worst global
       #if len(logic.global_wires) > 0:
@@ -2833,7 +2940,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
           os.makedirs(PATH_DELAY_CACHE_DIR)         
         f=open(filepath,"w")
-        f.write(str(path_report.path_delay))
+        f.write(str(path_report.path_delay_ns))
         f.close()       
       
       # Save logic with delay into lookup
@@ -2881,6 +2988,88 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
   VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
   # And clock cross entities
   VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
+  
+# returns vhdl_files_txt,top_entity_name
+def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name=None):
+  # Read in vhdl files with a single (faster than multiple) read_vhdl
+  files_txt = ""
+  
+  # C defined structs
+  files_txt += SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
+  
+  # Clocking crossing if needed
+
+  if not inst_name:
+    # Multimain needs clk cross entities
+    # Clock crossing entities
+    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " " 
+      
+  needs_clk_cross_t = not inst_name # is multimain
+  if inst_name:
+    # Does inst need clk cross?
+    Logic = parser_state.LogicInstLookupTable[inst_name]
+    needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_clk_cross_t = needs_clk_cross_read or needs_clk_cross_write
+  if needs_clk_cross_t:
+    # Clock crossing record
+    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL.VHDL_PKG_EXT + " "
+    
+  
+  # Top not shared
+  top_entity_name = None
+  if inst_name:
+    Logic = parser_state.LogicInstLookupTable[inst_name]
+    output_directory = GET_OUTPUT_DIRECTORY(Logic)
+    top_entity_name = VHDL.GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
+    files_txt += output_directory + "/" + top_entity_name + VHDL.VHDL_FILE_EXT + " "
+  else:
+    # Hash for multi main is just hash of main pipes
+    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+    # Entity and file name
+    top_entity_name = "top" + hash_ext
+    filename = top_entity_name + VHDL.VHDL_FILE_EXT
+    files_txt += SYN_OUTPUT_DIRECTORY + "/top/" +  filename + " "
+    
+    
+  # Write all entities starting at this inst/multi main
+  inst_names = set()
+  if inst_name:
+    inst_names = set([inst_name])
+  else:
+    inst_names = set(parser_state.main_mhz.keys())
+  
+  func_name_slices_so_far = set() # of (func_name,slices) tuples
+  while len(inst_names) > 0:
+    next_inst_names = set()
+    for inst_name_i in inst_names:
+      logic_i = parser_state.LogicInstLookupTable[inst_name_i]
+      # Write file text
+      # ONly write non vhdl
+      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
+        continue
+      # Dont write clock cross
+      if SW_LIB.IS_CLOCK_CROSSING(logic_i):
+        continue
+      timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
+      func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))
+      if func_name_slices not in func_name_slices_so_far:
+        func_name_slices_so_far.add(func_name_slices)
+        # Include entity file for this functions slice variant
+        entity_filename = VHDL.GET_ENTITY_NAME(inst_name_i, logic_i,multimain_timing_params.TimingParamsLookupTable, parser_state) + ".vhd" 
+        syn_output_directory = GET_OUTPUT_DIRECTORY(logic_i)
+        files_txt += syn_output_directory + "/" + entity_filename + " "
+
+      # Add submodules as next inst_names
+      for submodule_inst in logic_i.submodule_instances:
+        full_submodule_inst_name = inst_name_i + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        next_inst_names.add(full_submodule_inst_name)
+          
+    # Use next insts as current
+    inst_names = set(next_inst_names)
+  
+  
+  return files_txt,top_entity_name
 
 
 def GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, inst_name, logic, parser_state, TimingParamsLookupTable):
@@ -2966,15 +3155,15 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(inst_name, logic, start_reg_name, end_re
     end_stage = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     return start_stage, end_stage
   
-  if VIVADO.REG_NAME_IS_INPUT_REG(start_reg_name) and VIVADO.REG_NAME_IS_OUTPUT_REG(end_reg_name):
+  if SYN_TOOL.REG_NAME_IS_INPUT_REG(start_reg_name) and SYN_TOOL.REG_NAME_IS_OUTPUT_REG(end_reg_name):
     print " Comb path to and from register in top.vhd"
     # Search entire space (should be 0 clk anyway)
     start_stage = 0
     end_stage = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)  
-  elif VIVADO.REG_NAME_IS_INPUT_REG(start_reg_name) and not(VIVADO.REG_NAME_IS_OUTPUT_REG(end_reg_name)):
+  elif SYN_TOOL.REG_NAME_IS_INPUT_REG(start_reg_name) and not(SYN_TOOL.REG_NAME_IS_OUTPUT_REG(end_reg_name)):
     print " Comb path from input register in top.vhd to pipeline logic"
     start_stage = 0
-  elif not(VIVADO.REG_NAME_IS_INPUT_REG(start_reg_name)) and VIVADO.REG_NAME_IS_OUTPUT_REG(end_reg_name):
+  elif not(SYN_TOOL.REG_NAME_IS_INPUT_REG(start_reg_name)) and SYN_TOOL.REG_NAME_IS_OUTPUT_REG(end_reg_name):
     print " Comb path from pipeline logic to output register in top.vhd"
     end_stage = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   else:
@@ -2982,7 +3171,7 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(inst_name, logic, start_reg_name, end_re
     
   print " Taking register merging into account and assuming largest search range based on earliest when used and latest when complete times"
   found_start_stage = None
-  if not(VIVADO.REG_NAME_IS_INPUT_REG(start_reg_name)):
+  if not(SYN_TOOL.REG_NAME_IS_INPUT_REG(start_reg_name)):
     # all possible reg paths considering renaming
     # Start names
     start_names = [start_reg_name]
@@ -2993,7 +3182,7 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(inst_name, logic, start_reg_name, end_re
     
     start_stages_when_used = []
     for start_name in start_names:
-      start_inst = VIVADO.GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(start_name, inst_name, logic, LogicLookupTable)
+      start_inst = SYN_TOOL.GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(start_name, inst_name, logic, LogicLookupTable)
       when_used = GET_ABS_SUBMODULE_STAGE_WHEN_USED(start_inst, inst_name, logic, parser_state, TimingParamsLookupTable)
       print "   ",start_name
       print "     ",start_inst,"used in absolute stage number:",when_used
@@ -3001,7 +3190,7 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(inst_name, logic, start_reg_name, end_re
     found_start_stage = min(start_stages_when_used)
   
   found_end_stage = None
-  if not(VIVADO.REG_NAME_IS_OUTPUT_REG(end_reg_name)):
+  if not(SYN_TOOL.REG_NAME_IS_OUTPUT_REG(end_reg_name)):
     # all possible reg paths considering renaming
     # End names
     end_names = [end_reg_name]
@@ -3012,7 +3201,7 @@ def GET_START_STAGE_END_STAGE_FROM_REGS(inst_name, logic, start_reg_name, end_re
 
     end_stages_when_complete = []
     for end_name in end_names:
-      end_inst = VIVADO.GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(end_name, inst_name, logic, LogicLookupTable)
+      end_inst = SYN_TOOL.GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(end_name, inst_name, logic, LogicLookupTable)
       when_complete = GET_ABS_SUBMODULE_STAGE_WHEN_COMPLETE(end_inst, inst_name, logic, LogicLookupTable, TimingParamsLookupTable)
       print "   ",end_name
       print "     ",end_inst,"completes in absolute stage number:",when_complete

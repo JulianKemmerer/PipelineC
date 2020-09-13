@@ -9,15 +9,24 @@
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 
 /*
-#pragma MAIN_MHZ main 500.0
-#pragma PART "xc7a35ticsg324-1l" // Arty
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 1000.0
+#pragma PART "xc7v2000tfhg1761-2"
 float main(float x, float y)
 {
   return x + y;
 }
 */
 
-#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
+
+// xc7a35ticsg324-1l = Arty
+// xcvu9p-flgb2104-2-i = AWS F1
+// xc7vx1140t-1flg1930c = Virtex 7
+// EP2AGX45CU17I3 Arria II GX
+// 10CL120ZF780I8G Cyclone 10 LP
+// 10M50SCE144I7G Max 10
+
+#pragma PART "xc7a35ticsg324-1l" 
 
 #pragma MAIN_MHZ fast 300.0
 #pragma MAIN_MHZ slow 100.0
@@ -70,3 +79,4 @@ void slow()
   // Send data into fast domain
   slow_to_fast_WRITE(to_fast_array);
 }
+

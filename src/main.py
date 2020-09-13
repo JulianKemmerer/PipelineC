@@ -5,13 +5,10 @@ import sys
 sys.dont_write_bytecode = True
 
 import C_TO_LOGIC
-import VHDL
 import SYN
-import SW_LIB
 import MODELSIM
-import VIVADO
 
-# All main functions must be in main.c
+# All code must be in single main.c for now
 c_file = "main.c"
 
 print('''
@@ -26,6 +23,7 @@ print('''
 print("TODO:")
 print(" Document pragmas and make main mhz allow pointing at existing func name instead of float")
 print(" Do a better Arty7 example - hobby more likely to try something new?")
+print(" Do a simple RISCV? cpu? But avoid just doing RTL clone?")
 print(" Do clock crossing for non-integer ratio + async clock crossings")
 print(" Fix fine grain sweep to work again")
 print(" Fix bug of not being able to include auto gen headers in auto gend files")
@@ -69,12 +67,13 @@ print(" Syn each pipeline stage ... this is hard... like slicing zero clock logi
 print(" Seems like extra luts in N cycle comparator for sure")
 print(" Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b")
 print(" Const SR/SL as vhdl funcs instead of modules..thought this was done...")
+print(" Add Quartus fine grain sweep support and better generated final files")
 
 
 print("================== Parsing C Code to Logical Hierarchy ================================")
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
-print("================== Adding Timing Information from Synthesis Tool (Vivado) ================================")
+print("================== Adding Timing Information from Synthesis Tool ================================")
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
 print("================== Doing Optional Modelsim Debug ================================")
@@ -84,7 +83,7 @@ print("================== Beginning Throughput Sweep ===========================
 multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)
 
 print("================== Writing Results of Throughput Sweep ================================")
-VIVADO.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.")
 
 

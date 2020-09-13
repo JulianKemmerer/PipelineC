@@ -29,19 +29,6 @@ else:
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch" 
 
-def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
-  main_funcs = set()
-  # Include start and end regs in search 
-  all_netlist_resources = set(path_report.netlist_resources)
-  all_netlist_resources.add(path_report.start_reg_name)
-  all_netlist_resources.add(path_report.end_reg_name)
-  for netlist_resource in all_netlist_resources:
-    toks = netlist_resource.split("/")
-    if toks[0] in parser_state.main_mhz:
-      main_funcs.add(toks[0])
-      
-  return main_funcs
-
 def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
   # Parse the self offset from the reg names
   # main_registers_r_reg     [self]      [0][MUX_rv_main_c_46_iftrue][17]/D
@@ -470,10 +457,9 @@ class PathReport:
     self.source_ns_per_clock = 0.0
     self.start_reg_name = None
     self.end_reg_name = None
-    self.path_delay = None
+    self.path_delay_ns = None
     self.logic_delay = None
     self.path_group = None
-    
     self.netlist_resources = set() # Set of strings
     
     # Parsing state
@@ -559,7 +545,7 @@ class PathReport:
       # 1.0 - (-0.738) = 1.738ns
       tok1="Data Path Delay:        "
       if tok1 in syn_output_line:
-        self.path_delay = self.source_ns_per_clock - self.slack_ns
+        self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
       #####################################################################################################
       
       
@@ -600,33 +586,6 @@ class PathReport:
       #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)          
       sys.exit(-1)
   
-
-def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
-  is_final_top = True
-  VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
-  
-  # Write read_vhdl.tcl
-  tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
-  rv_lines = []
-  for line in tcl.split('\n'):
-    if "read_vhdl" in line:
-      rv_lines.append(line)
-  
-  rv = ""
-  for line in rv_lines:
-    rv += line + "\n"
-  
-  # One more read_vhdl line for the final entity  with constant name
-  top_file_path = SYN.SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
-  rv += "read_vhdl -library work {" + top_file_path + "}\n"
-    
-  # Write file
-  out_filename = "read_vhdl.tcl"
-  out_filepath = SYN.SYN_OUTPUT_DIRECTORY+"/"+out_filename
-  f=open(out_filepath,"w")
-  f.write(rv)
-  f.close()
-
 # inst_name=None means multimain
 def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None):
   rv = ""
@@ -637,92 +596,16 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd\n"
   rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd]\n"
   
-  # Read in vhdl files with a single (faster than multiple) read_vhdl
-  files_txt = ""
-  
-  # C defined structs
-  files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "
-  
-  # Clocking crossing if needed
-
-  if not inst_name:
-    # Multimain needs clk cross entities
-    # Clock crossing entities
-    files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " " 
-      
-  needs_clk_cross_t = not inst_name # is multimain
-  if inst_name:
-    # Does inst need clk cross?
-    Logic = parser_state.LogicInstLookupTable[inst_name]
-    needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_t = needs_clk_cross_read or needs_clk_cross_write
-  if needs_clk_cross_t:
-    # Clock crossing record
-    files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL.VHDL_PKG_EXT + " "
-    
-  
-  # Top not shared
-  top_entity_name = None
-  if inst_name:
-    Logic = parser_state.LogicInstLookupTable[inst_name]
-    output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
-    top_entity_name = VHDL.GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
-    files_txt += output_directory + "/" + top_entity_name + VHDL.VHDL_FILE_EXT + " "
-  else:
-    # Hash for multi main is just hash of main pipes
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    # Entity and file name
-    top_entity_name = "top" + hash_ext
-    filename = top_entity_name + VHDL.VHDL_FILE_EXT
-    files_txt += SYN.SYN_OUTPUT_DIRECTORY + "/top/" +  filename + " "
-    
-    
-  # Write all entities starting at this inst/multi main
-  inst_names = set()
-  if inst_name:
-    inst_names = set([inst_name])
-  else:
-    inst_names = set(parser_state.main_mhz.keys())
-  
-  func_name_slices_so_far = set() # of (func_name,slices) tuples
-  while len(inst_names) > 0:
-    next_inst_names = set()
-    for inst_name_i in inst_names:
-      logic_i = parser_state.LogicInstLookupTable[inst_name_i]
-      # Write file text
-      # ONly write non vhdl
-      if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
-        continue
-      # Dont write clock cross
-      if SW_LIB.IS_CLOCK_CROSSING(logic_i):
-        continue
-      timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
-      func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))
-      if func_name_slices not in func_name_slices_so_far:
-        func_name_slices_so_far.add(func_name_slices)
-        # Include entity file for this functions slice variant
-        entity_filename = VHDL.GET_ENTITY_NAME(inst_name_i, logic_i,multimain_timing_params.TimingParamsLookupTable, parser_state) + ".vhd" 
-        syn_output_directory = SYN.GET_OUTPUT_DIRECTORY(logic_i)
-        files_txt += syn_output_directory + "/" + entity_filename + " "
-
-      # Add submodules as next inst_names
-      for submodule_inst in logic_i.submodule_instances:
-        full_submodule_inst_name = inst_name_i + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
-        next_inst_names.add(full_submodule_inst_name)
-          
-    # Use next insts as current
-    inst_names = set(next_inst_names)
-  
   
   # Bah tcl doesnt like brackets in file names
   # Becuase dumb
   
   # Single read vhdl line
+  files_txt,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
   rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
     
   # Write clock xdc and include it
-  clk_xdc_filepath = WRITE_CLK_XDC(parser_state, inst_name)
+  clk_xdc_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
   # Single xdc with single clock for now
   rv += 'read_xdc {' + clk_xdc_filepath + '}\n'
   
@@ -777,41 +660,6 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv += "report_timing_summary -setup" + "\n"
   
   return rv
-
-
-# return path 
-def WRITE_CLK_XDC(parser_state, inst_name=None):
-  # Use specified mhz is multimain top
-  clock_name_to_mhz = dict()
-  if inst_name:
-    clock_name_to_mhz["clk"] = SYN.INF_MHZ
-    out_filename = "clock.xdc"
-    Logic = parser_state.LogicInstLookupTable[inst_name]
-    output_dir = SYN.GET_OUTPUT_DIRECTORY(Logic)
-    out_filepath = output_dir+"/"+out_filename
-  else:
-    out_filename = "clocks.xdc"
-    out_filepath = SYN.SYN_OUTPUT_DIRECTORY+"/"+out_filename
-    for main_func in parser_state.main_mhz:
-      clock_mhz = parser_state.main_mhz[main_func]
-      clk_mhz_str = VHDL.CLK_MHZ_STR(clock_mhz)
-      clk_name = "clk_" + clk_mhz_str
-      clock_name_to_mhz[clk_name] = clock_mhz
-  
-  f=open(out_filepath,"w")
-  for clock_name in clock_name_to_mhz:
-    clock_mhz = clock_name_to_mhz[clock_name]
-    ns = (1000.0 / clock_mhz)
-    f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
-    
-    
-  # All clock assumed async? Doesnt matter for internal syn
-  # Rely on generated/board provided constraints for real hardware
-  if len(clock_name_to_mhz) > 0:
-    f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
-  
-  f.close()
-  return out_filepath
   
 # return path to tcl file
 def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(multimain_timing_params, parser_state):
@@ -826,7 +674,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(multimain_timing_params, 
 
 
 # return path to tcl file
-def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz, parser_state):
+def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, parser_state):
   # Make fake multimain params
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
@@ -840,7 +688,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,T
   f.close()
   return out_filepath
   
-  
+# Returns parsed timing report
 def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
   # First create directory for this logic
   output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
@@ -881,7 +729,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
   return ParsedTimingReport(log_text)
   
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, clock_mhz, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):
   
   # Hard rule for now, functions with globals must be zero clk
   if total_latency > 0 and len(Logic.global_wires) > 0:
@@ -928,7 +776,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
     # Write xdc describing clock rate
     
     # Write a syn tcl into there
-    syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable, clock_mhz,parser_state)
+    syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(inst_name, Logic,output_directory,TimingParamsLookupTable,parser_state)
     
     # Execute vivado sourcing the tcl
     syn_imp_bash_cmd = (
