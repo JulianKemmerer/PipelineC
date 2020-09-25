@@ -2737,7 +2737,7 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
     print('Ex. #pragma PART "xc7a35ticsg324-1l"')
     sys.exit(-1)
   
-  PATH_DELAY_CACHE_DIR="./path_delay_cache_"+parser_state.part
+  PATH_DELAY_CACHE_DIR="./path_delay_cache/"+parser_state.part
   
   file_path = PATH_DELAY_CACHE_DIR + "/" + key + ".delay"
   
