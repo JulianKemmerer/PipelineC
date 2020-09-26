@@ -2936,7 +2936,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       # Cache delay syn result if not user code
       if not IS_USER_CODE(logic, parser_state):
         filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
-        PATH_DELAY_CACHE_DIR="./path_delay_cache_"+parser_state.part
+        PATH_DELAY_CACHE_DIR="./path_delay_cache/"+parser_state.part
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
           os.makedirs(PATH_DELAY_CACHE_DIR)         
         f=open(filepath,"w")
