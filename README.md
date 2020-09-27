@@ -11,7 +11,7 @@
 
 A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3) as an additional language construct/compiler feature.
 
-1. Not actually regular C. But mostly compileable by gcc for doing functional verification/'simulation'. 
+1. Not actually regular C. But mostly compileable by gcc for doing basic functional verification/'simulation'.
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
 2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and somewhat human readable VHDL. Hooks exist for inserting raw VHDL / black boxes.
 3. If a computation can be written as a pure function without side effects (i.e. no global variables) then it will be autopipelined. 
@@ -48,7 +48,7 @@ For software folks I want writing PipelineC to feel like solving a programming p
 The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language.
 
 ```
-Currently Supported Tools (Linux only for now):
-Synthesis: Xilinx Vivado, Intel Quartus
+Currently Supported Tools (tested on Linux):
+Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond
 Simulation: Modelsim
 ```

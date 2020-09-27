@@ -21,7 +21,7 @@ print('''
 ''')
 
 print("TODO:")
-print(" Add Lattice support?")
+print(" Add Yosys/nextpnr support")
 print(" Static locals == globals as an option, better for scope AND globals cant be used by multiple funcs right now so...")
 print(" Document pragmas and make main mhz allow pointing at existing func name instead of float")
 print(" Do a better Arty7 example - hobby more likely to try something new?")

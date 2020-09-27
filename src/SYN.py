@@ -18,6 +18,7 @@ import SW_LIB
 import MODELSIM
 import VIVADO
 import QUARTUS
+import DIAMOND
 
 SYN_TOOL = None # Attempts to figure out from part number
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
@@ -45,9 +46,11 @@ def PART_SET_TOOL(part_str):
       sys.exit(-1)
     elif part_str.startswith("xc"):
       SYN_TOOL = VIVADO
-    else:
+    elif part_str.startswith("EP2") or part_str.startswith("10C"):
       SYN_TOOL = QUARTUS
-    print("Assuming",SYN_TOOL.__name__, "for synthesizing part:",part_str)   
+    else:
+      SYN_TOOL = DIAMOND
+    print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
 
 
 # These are the parameters that describe how multiple pipelines are timed
@@ -1224,6 +1227,14 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     ext = ".xdc"
   elif SYN_TOOL is QUARTUS:
     ext = ".sdc"
+  elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL=="lse":
+    ext = ".ldc"
+  elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL=="synplify":
+    ext = ".sdc"
+  else:
+    # Sufjan Stevens - Video Game
+    print("Add constraints file ext for syn tool",SYN_TOOL.__name__)
+    sys.exit(-1)
     
   clock_name_to_mhz = dict()
   if inst_name:
@@ -1260,7 +1271,24 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     if SYN_TOOL is VIVADO:
       f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
     elif SYN_TOOL is QUARTUS:
-      f.write("set_clock_groups -asynchronous -group [get_clocks *] -group [get_clocks *]")
+      # Ignored set_clock_groups at clocks.sdc(3): The clock clk_100p0 was found in more than one -group argument.
+      # Uh do the hard way?
+      clk_sets = set()
+      for clock_name1 in clock_name_to_mhz:
+        for clock_name2 in clock_name_to_mhz:
+          if clock_name1 != clock_name2:
+            clk_set = frozenset([clock_name1,clock_name2])
+            if clk_set not in clk_sets:
+              f.write("set_clock_groups -asynchronous -group [get_clocks " + clock_name1 + "] -group [get_clocks " + clock_name2 + "]")
+              clk_sets.add(clk_set)
+    elif SYN_TOOL is DIAMOND:
+      #f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]")
+      # ^ is wrong, makes 200mhx system clock?
+      pass # rely on clock cross path detection error in timing report
+    else:
+      print("What syn too for async clocks?")
+      sys.exit(-1)
+  
   
   f.close()
   return out_filepath
@@ -2175,10 +2203,16 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         
       # And make coarse adjustmant
       print("Making coarse adjustment and trying again...")
-      # Which main funcs show up in timing report?
-      main_funcs = set()
-      for path_report in list(sweep_state.timing_report.path_reports.values()):
-        main_funcs = main_funcs.union( GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
+      # If only one main func then dont need to even read timing report
+      # Blegh hacky for now?...
+      if len(parser_state.main_mhz) > 1:
+        # Which main funcs show up in timing report?
+        main_funcs = set()
+        for path_report in list(sweep_state.timing_report.path_reports.values()):
+          main_funcs = main_funcs.union( GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
+      else:
+        main_funcs = set(parser_state.main_mhz.keys())
+        
       for main_func in main_funcs:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         #print("main_func_logic.func_name",main_func_logic.func_name)
@@ -2191,6 +2225,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
           # Reset adjustments
           for stage in range(0, main_func_to_coarse_latency[main_func] + 1):
             sweep_state.func_sweep_state[main_func].stages_adjusted_this_latency[stage] = 0
+        
           
   return sweep_state
 
@@ -3017,17 +3052,13 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
     
   
   # Top not shared
-  top_entity_name = None
+  top_entity_name = VHDL.GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name)
   if inst_name:
     Logic = parser_state.LogicInstLookupTable[inst_name]
     output_directory = GET_OUTPUT_DIRECTORY(Logic)
-    top_entity_name = VHDL.GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
     files_txt += output_directory + "/" + top_entity_name + VHDL.VHDL_FILE_EXT + " "
   else:
-    # Hash for multi main is just hash of main pipes
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
     # Entity and file name
-    top_entity_name = "top" + hash_ext
     filename = top_entity_name + VHDL.VHDL_FILE_EXT
     files_txt += SYN_OUTPUT_DIRECTORY + "/top/" +  filename + " "
     

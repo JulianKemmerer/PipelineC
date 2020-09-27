@@ -60,6 +60,7 @@ class PathReport:
     self.path_group = None # Clock name?
     self.netlist_resources = set() # Set of strings
     self.start_reg_name = None
+    self.end_reg_name = None
     
     prev_line = None
     in_netlist_resources = False
@@ -78,7 +79,6 @@ class PathReport:
       if tok1 in line:
         toks = list(filter(None, line.split(" ")))
         self.source_ns_per_clock = float(toks[2])
-        #print("Edge",self.latch_edge_time_ns)
         
       # CLOCK NAME / PATH GROUP?
       tok1 = "Launch Clock :"
@@ -302,9 +302,8 @@ project_close
 ''')
     f.close()    
 
-    # Execute vivado sourcing the tcl
+    # Execute the command
     syn_imp_bash_cmd = "bash " + sh_file
-    
     print("Running:", sh_path)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")

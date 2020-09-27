@@ -23,7 +23,6 @@ ENV_VIVADO_DIR = os.environ.get('XILINX_VIVADO')
 if ENV_VIVADO_DIR:
   VIVADO_DIR = ENV_VIVADO_DIR
 else:
-  #VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2018.2"
   VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"

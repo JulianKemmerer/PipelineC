@@ -162,7 +162,7 @@ def preprocess_text(text, cpp_path='cpp'):
 def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   # Kill pid after 
   process = subprocess.Popen(cmd_str, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd)
-  output_text = str(process.stdout.read().decode("utf-8"))
+  output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
   # For some reason vivado likes to stay alive? Be sure to kill?
   os.kill(process.pid, signal.SIGTERM)
   process.wait()

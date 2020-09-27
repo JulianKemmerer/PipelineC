@@ -7,26 +7,25 @@
 //#include "examples/arty/src/uart/uart_loopback_msg.c"
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
+//#include "examples/fir.c"
+
+// xc7a35ticsg324-1l    Arty
+// xcvu9p-flgb2104-2-i  AWS F1
+// xc7v2000tfhg1761-2   Virtex 7
+// EP2AGX45CU17I3       Arria II GX
+// 10CL120ZF780I8G      Cyclone 10 LP
+// 10M50SCE144I7G       Max 10
+// LFE5U-85F-6BG381C    ECP5U
+#pragma PART "LFE5U-85F-6BG381C"
 
 /*
 #include "uintN_t.h"
 #pragma MAIN_MHZ main 1000.0
-#pragma PART "xc7v2000tfhg1761-2"
 float main(float x, float y)
 {
   return x + y;
 }
 */
-
-
-// xc7a35ticsg324-1l = Arty
-// xcvu9p-flgb2104-2-i = AWS F1
-// xc7vx1140t-1flg1930c = Virtex 7
-// EP2AGX45CU17I3 Arria II GX
-// 10CL120ZF780I8G Cyclone 10 LP
-// 10M50SCE144I7G Max 10
-
-#pragma PART "xc7a35ticsg324-1l" 
 
 #pragma MAIN_MHZ fast 300.0
 #pragma MAIN_MHZ slow 100.0

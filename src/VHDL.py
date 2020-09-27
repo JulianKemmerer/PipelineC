@@ -130,6 +130,8 @@ signal clk_cross_write : clk_cross_write_t;
   # Dont touch IO
   if not is_final_top:
     text += "attribute dont_touch : string;\n"
+    text += "attribute keep : string;\n"
+    text += "attribute syn_keep : boolean;\n"
     # IO
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -141,6 +143,8 @@ signal clk_cross_write : clk_cross_write_t;
         if not is_final_top:
           # Dont touch
           text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+          text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is true;\n'''
         
       text += "\n"
       
@@ -152,6 +156,8 @@ signal clk_cross_write : clk_cross_write_t;
         if not is_final_top:
           # Dont touch
           text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is true;\n'''
     text += "\n"
   
   
@@ -376,6 +382,8 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   # Dont touch IO
   if not is_final_top:
     rv += "attribute dont_touch : string;\n"
+    rv += "attribute keep : string;\n"
+    rv += "attribute syn_keep : boolean;\n"
   
   # The inputs regs of the logic
   for input_name in Logic.inputs:
@@ -385,6 +393,8 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     if not is_final_top:
       # Dont touch
       rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+      rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is true;\n'''
     
   rv += "\n"
   
@@ -396,6 +406,8 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     if not is_final_top:
       # Dont touch
       rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+      rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is true;\n'''
 
   rv += "\n"
   
@@ -2326,13 +2338,19 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name
       text +=  "      " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
     
   return text
-  
-  
-def GET_TOP_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
-  LogicInstLookupTable = parser_state.LogicInstLookupTable
-  timing_params = TimingParamsLookupTable[inst_name]
-  return C_TO_LOGIC.LEAF_NAME(inst_name, do_submodule_split=True) + "_" +  str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state) + "_top"
-  
+
+def GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name=None):
+  if inst_name:
+    Logic = parser_state.LogicInstLookupTable[inst_name]
+    top_entity_name = GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
+  else:
+    # Hash for multi main is just hash of main pipes
+    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+    # Entity and file name
+    top_entity_name = "top" + hash_ext
+    
+  return top_entity_name
+
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
 def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
   # Sanity check?
