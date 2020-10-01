@@ -70,7 +70,7 @@ print(" Seems like extra luts in N cycle comparator for sure")
 print(" Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b")
 print(" Const SR/SL as vhdl funcs instead of modules..thought this was done...")
 print(" Add Quartus fine grain sweep support and better generated final files")
-
+print(" Progate constants through constant bit manip, ex. uint32_uint1_31")
 
 print("================== Parsing C Code to Logical Hierarchy ================================")
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)

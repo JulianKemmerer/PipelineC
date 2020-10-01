@@ -4417,6 +4417,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     
   # Global functions cannot optimize away
   is_global_func = False
+  func_logic = None
   if func_base_name in parser_state.FuncLogicLookupTable:
     func_logic = parser_state.FuncLogicLookupTable[func_base_name]
     is_global_func = (len(func_logic.global_wires) + len(func_logic.volatile_global_wires) > 0) or func_logic.uses_globals
@@ -4548,8 +4549,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       else:
         print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
         sys.exit(-1)
-    
-    
+    elif (func_logic is not None) and SW_LIB.IS_BIT_MANIP(func_logic):
+      # TODO
+      return None    
     # CASTING
     elif func_base_name == CAST_FUNC_NAME_PREFIX and not base_name_is_name :
       in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
@@ -4591,7 +4593,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       print(" ",func_inst_name, end=' ')
       print(" ",func_base_name, func_c_ast_node.coord)
       #print(0/0)
-      #sys.exit(-1)
+      sys.exit(-1)
       #print const_input_wires
       return None
     
