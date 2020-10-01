@@ -4515,33 +4515,20 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
   /*
   UNROLL THIS
   remainder := 0                     
-  for i := n - 1 .. 0 do  -- Where left is number of bits in left
-    remainder := remainder << 1           -- Left-shift remainder by 1 bit
-    remainder(0) := left(i)          -- Set the least-significant bit of remainder equal to bit i of the numerator
+  for i := n - 1 .. 0 do          -- Where left is number of bits in left
+    remainder := remainder << 1   -- Left-shift remainder by 1 bit
+    remainder(0) := left(i)       -- Set the least-significant bit of remainder equal to bit i of the numerator
     if remainder >= right then
-    remainder := remainder - right
-    output(i) := 1
+      remainder := remainder - right
+      output(i) := 1
     end
   end 
   */
   '''
   
-  
-  
   for i in range(max_input_width-1, -1,-1):
     text += '''
   // Bit ''' + str(i) + '''
-  /*
-    remainder := remainder << 1           -- Left-shift remainder by 1 bit
-    remainder(0) := left(i)          -- Set the least-significant bit of remainder equal to bit i of the numerator
-    if remainder >= right then
-    remainder := remainder - right
-    output(i) := 1
-    end
-  */
-  
-  // << 1           // Left-shift remainder by 1 bit
-  // Set shift left and set the least-significant bit of remainder equal to bit i of the numerator
   new_remainder0 = ''' + resized_prefix + '''_''' + str(i) + '''_''' + str(i) + '''(left);
   remainder = ''' + resized_prefix + '''_uint1(remainder, new_remainder0);       
   if(remainder >= right)
@@ -4549,13 +4536,7 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
     remainder = remainder - right;
     // Set output(i)=1
     output = ''' + output_prefix + '''_uint1_''' + str(i) + '''(output, 1);
-  }
-  else
-  {
-    remainder = remainder; // No change
-    output = output; // No change
-  }
-'''
+  }'''
 
   text += '''
   return output;
