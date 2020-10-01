@@ -4494,7 +4494,7 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
-// ''' + str(left_width) + '''b / ''' + str(right_width) + '''b mult
+// ''' + str(left_width) + '''b / ''' + str(right_width) + '''b div
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Resize
@@ -4514,10 +4514,14 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
 
   /*
   UNROLL THIS
-  remainder := 0                     
-  for i := n - 1 .. 0 do          -- Where left is number of bits in left
-    remainder := remainder << 1   -- Left-shift remainder by 1 bit
-    remainder(0) := left(i)       -- Set the least-significant bit of remainder equal to bit i of the numerator
+  remainder := 0
+  -- Where n is number of bits in left           
+  for i := n - 1 .. 0 do     
+    -- Left-shift remainder by 1 bit     
+    remainder := remainder << 1
+    -- Set the least-significant bit of remainder
+    -- equal to bit i of the numerator
+    remainder(0) := left(i)       
     if remainder >= right then
       remainder := remainder - right
       output(i) := 1
