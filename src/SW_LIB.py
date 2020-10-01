@@ -2670,11 +2670,11 @@ def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
     print("GET_BIN_OP_MOD_C_CODE Only mod between float for now!")
     sys.exit(-1)
   
-def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir):
+def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
-    return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir)
+    return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
   elif VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
     return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
@@ -4476,7 +4476,7 @@ P[15] P[14] P[13] P[12] P[11] P[10]  P[9]  P[8]  P[7]  P[6]  P[5]  P[4]  P[3]  P
 # 128 LLs in own code
 # 192 lls as VHDL
 # TODO: Is this bad/broken? test edge cases
-def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir):  
+def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state):  
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
@@ -4561,7 +4561,7 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir):
   return output;
 }'''
   
-  #print text
+  #print(text)
   #sys.exit(-1)
   
   return text 

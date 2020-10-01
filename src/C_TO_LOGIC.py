@@ -1347,7 +1347,7 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
     elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
-      c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir)
+      c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state)
     elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir)
     elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
@@ -4585,12 +4585,13 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # If func has no inputs and is not global then must be const
     # similar to above cant propogate consts through compound types yet?
     elif len(input_drivers) == 0:
-      return None    
+      return None
     else:
       print("Warning: Not reducing constant function call:")
-      print(func_inst_name, end=' ')
-      print(func_base_name, func_c_ast_node.coord)
-      sys.exit(-1)
+      print(" ",func_inst_name, end=' ')
+      print(" ",func_base_name, func_c_ast_node.coord)
+      #print(0/0)
+      #sys.exit(-1)
       #print const_input_wires
       return None
     
