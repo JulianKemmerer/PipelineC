@@ -1,3 +1,12 @@
+// xc7a35ticsg324-1l    Artix 7 (Arty)
+// xcvu9p-flgb2104-2-i  Virtex Ultrascale Plus (AWS F1)
+// xc7v2000tfhg1761-2   Virtex 7
+// EP2AGX45CU17I3       Arria II GX
+// 10CL120ZF780I8G      Cyclone 10 LP
+// 10M50SCE144I7G       Max 10
+// LFE5U-85F-6BG381C    ECP5U
+#pragma PART "xc7a35ticsg324-1l"
+
 //#include "examples/aws-fpga-dma/loopback.c"
 //#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
@@ -8,25 +17,18 @@
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
-
-// xc7a35ticsg324-1l    Arty
-// xcvu9p-flgb2104-2-i  AWS F1
-// xc7v2000tfhg1761-2   Virtex 7
-// EP2AGX45CU17I3       Arria II GX
-// 10CL120ZF780I8G      Cyclone 10 LP
-// 10M50SCE144I7G       Max 10
-// LFE5U-85F-6BG381C    ECP5U
-#pragma PART "LFE5U-85F-6BG381C"
+#include "examples/arty/src/ddr3/mig_app.c"
 
 /*
 #include "uintN_t.h"
 #pragma MAIN_MHZ main 1000.0
-float main(float x, float y)
+uint32_t main(uint32_t x, uint32_t y)
 {
-  return x + y;
+  return x/y;
 }
 */
 
+/*
 #pragma MAIN_MHZ fast 300.0
 #pragma MAIN_MHZ slow 100.0
 
@@ -78,4 +80,4 @@ void slow()
   // Send data into fast domain
   slow_to_fast_WRITE(to_fast_array);
 }
-
+*/

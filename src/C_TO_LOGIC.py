@@ -1490,6 +1490,9 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     return C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.Cast:
     return C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
+  elif type(c_ast_node) == c_ast.EmptyStatement:
+    print("Unecessary empty statement - extra ';' ?", c_ast_node.coord)
+    sys.exit(-1)
   else:
     #start here
     print("Animal Collective - The Purple Bottle")
@@ -6442,8 +6445,8 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     if read_main_func is None or write_main_func is None:
-      print("Problem finding main functions for",var_name,"clock crossing read write:", read_containing_func,write_containing_func)
-      print("Missing a #pragma MAIN_MHZ ?")
+      print("Problem finding main functions for",var_name,"clock crossing: read, write:", read_containing_func,",",write_containing_func)
+      print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
       
     read_mhz = parser_state.main_mhz[read_main_func]

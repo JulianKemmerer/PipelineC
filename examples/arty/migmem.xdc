@@ -1,3 +1,4 @@
+# https://github.com/ZipCPU/openarty/blob/master/migmem.xdc
 # A list of memory associated pins, suitable for ingesting into Xilinx's
 # Memory Interface Generator.
 
@@ -42,8 +43,8 @@ set_property IOSTANDARD SSTL135 [get_ports {ddr3_ba[2]}]
 set_property PACKAGE_PIN M4 [get_ports ddr3_cas_n]
 set_property IOSTANDARD SSTL135 [get_ports ddr3_cas_n]
 # Clock lines
-set_property PACKAGE_PIN U9 [get_ports {ddr3_ck_p[0]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_ck_p[0]}]
+set_property PACKAGE_PIN U9 [get_ports {ddr3_ck_p[0]}]
 set_property PACKAGE_PIN V9 [get_ports {ddr3_ck_n[0]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_ck_n[0]}]
 #
@@ -90,19 +91,17 @@ set_property IOSTANDARD SSTL135 [get_ports {ddr3_dq[14]}]
 set_property PACKAGE_PIN R3 [get_ports {ddr3_dq[15]}]
 set_property IOSTANDARD SSTL135 [get_ports {ddr3_dq[15]}]
 # DQS
-set_property PACKAGE_PIN N1 [get_ports {ddr3_dqs_n[0]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_dqs_n[0]}]
-set_property PACKAGE_PIN V2 [get_ports {ddr3_dqs_n[1]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_dqs_n[1]}]
 set_property PACKAGE_PIN N2 [get_ports {ddr3_dqs_p[0]}]
+set_property PACKAGE_PIN N1 [get_ports {ddr3_dqs_n[0]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_dqs_p[0]}]
 set_property PACKAGE_PIN U2 [get_ports {ddr3_dqs_p[1]}]
+set_property PACKAGE_PIN V2 [get_ports {ddr3_dqs_n[1]}]
 set_property IOSTANDARD DIFF_SSTL135 [get_ports {ddr3_dqs_p[1]}]
+
 set_property PACKAGE_PIN R5 [get_ports {ddr3_odt[0]}]
 set_property IOSTANDARD SSTL135 [get_ports {ddr3_odt[0]}]
-
-set_property PACKAGE_PIN R5 [get_ports { ddr3_odt[0]}]
-set_property IOSTANDARD SSTL135 [get_ports { ddr3_odt[0]}]
 set_property PACKAGE_PIN P3 [get_ports ddr3_ras_n]
 set_property IOSTANDARD SSTL135 [get_ports ddr3_ras_n]
 set_property PACKAGE_PIN K6 [get_ports ddr3_reset_n]
@@ -111,5 +110,6 @@ set_property PACKAGE_PIN P5 [get_ports ddr3_we_n]
 set_property IOSTANDARD SSTL135 [get_ports ddr3_we_n]
 #Internal VREF
 set_property INTERNAL_VREF 0.675 [get_iobanks 34]
+
 
 
