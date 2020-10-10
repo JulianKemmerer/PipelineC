@@ -5134,7 +5134,7 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail=True)
   if driven_c_type_str is not None:
     # Most unary ops use the type of the driven wire
-    if c_ast_unary_op_str == "!":
+    if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
       output_c_type = driven_c_type_str
     else:
       print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
@@ -6451,6 +6451,21 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       
     read_mhz = parser_state.main_mhz[read_main_func]
     write_mhz = parser_state.main_mhz[write_main_func]
+    
+    # Infer freqs to match if possible
+    if read_mhz is None and write_mhz is None:
+      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_containing_func,",",write_containing_func)
+      print("Missing or incorrect #pragma MAIN_MHZ ?")
+      sys.exit(-1)
+    elif read_mhz is None and write_mhz is not None:
+      print("Matching clock domain for",read_containing_func,"to clock domain for",write_containing_func,write_mhz,"MHz")
+      read_mhz = write_mhz
+      parser_state.main_mhz[read_main_func] = read_mhz      
+    elif read_mhz is not None and write_mhz is None:
+      print("Matching clock domain for",write_containing_func,"to clock domain for",read_containing_func,read_mhz,"MHz")
+      write_mhz = read_mhz
+      parser_state.main_mhz[write_main_func] = write_mhz
+    
     ratio = 0
     write_size = 0
     read_size = 0
@@ -6673,27 +6688,46 @@ def APPEND_PRAGMA_INFO(parser_state):
   
   # Loop over all pragmas
   for pragma in pragmas:
+    toks = pragma.string.split(" ")
+    name = toks[0]
+    
+    # MAIN (None MHz)
+    if name=="MAIN":
+      main_func = toks[1]
+      mhz = None
+      parser_state.main_mhz[main_func] = mhz
+    
     # MAIN_MHZ
-    if pragma.string.startswith("MAIN_MHZ"):
+    if name=="MAIN_MHZ":
       toks = pragma.string.split(" ")
       main_func = toks[1]
-      mhz = float(toks[2])
-      parser_state.main_mhz[main_func] = mhz
+      mhz_tok = toks[2]
+      # Allow float MHz or name of another main func
+      try:
+          mhz = float(mhz_tok)
+          parser_state.main_mhz[main_func] = mhz
+      except ValueError:
+          #"Not a float"
+          if mhz_tok in parser_state.main_mhz:
+            parser_state.main_mhz[main_func] = parser_state.main_mhz[mhz_tok]
+          else:
+            print("Error in MAIN_MHZ:",main_func, mhz_tok)
+            sys.exit(-1)
   
     # MAIN_MARK_DEBUG
-    if pragma.string.startswith("MAIN_MARK_DEBUG"):
+    if name=="MAIN_MARK_DEBUG":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.main_marked_debug.add(main_func)
       
     # FUNC_WIRES
-    if pragma.string.startswith("FUNC_WIRES"):
+    if name=="FUNC_WIRES":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.func_marked_wires.add(main_func)
   
     # PART
-    if pragma.string.startswith("PART"):
+    if name=="PART":
       toks = pragma.string.split(" ")
       part = toks[1].strip('"').strip()
       #print("part",part)

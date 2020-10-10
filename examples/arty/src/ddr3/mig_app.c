@@ -40,7 +40,7 @@ xil_mig_addr_t test_addr;
 test_data_t test_data;
 
 // The memory test process, same clock as generated memory interface
-MAIN_MHZ(app,XIL_MIG_MHZ)
+#pragma MAIN_MHZ app xil_mig_module
 void app()
 {
   // Status leds indicate state

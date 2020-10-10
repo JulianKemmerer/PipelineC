@@ -1,3 +1,4 @@
+#pragma once
 // Functions for global 'wires'
 // These are really clock crossing macros, 
 // but a clock crossing between the same clock domain is just a wire

@@ -17,7 +17,8 @@
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
-#include "examples/arty/src/ddr3/mig_app.c"
+#include "examples/arty/src/blink.c"
+//#include "examples/arty/src/ddr3/mig_app.c"
 
 /*
 #include "uintN_t.h"

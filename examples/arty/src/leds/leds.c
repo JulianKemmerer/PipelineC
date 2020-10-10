@@ -8,9 +8,9 @@ uint4_t leds;
 #include "uint4_t_array_N_t.h"
 #include "leds_clock_crossing.h"
 
-// Declares leds_module as a module with top level ports
+// Declares leds_module as a module with top level ports, no set clock frequency
 // Return value is wire out to LEDs
-#pragma MAIN_MHZ leds_module 83.33  // Temp same as XIL_MIG_MHZ // UI CLK
+#pragma MAIN leds_module
 uint4_t leds_module()
 {
   // Drive the output port with the global wire

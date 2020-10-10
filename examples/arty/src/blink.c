@@ -1,23 +1,16 @@
-// Use the switches to control LED blink rate
-
+// 'App' that use the switches to control LED blink rate
+#include "wire.h"
 #include "uintN_t.h"
 
-// Each main function is a clock domain
-// Only one clock in the design for now 'sys_clk' @ 100MHz
-#pragma MAIN_MHZ sys_clk_main 100.0
-#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
+// Board IO's have their own modules (top level ports done for you)
+// that expose virtual, globally visible, ports/signals
+#include "leds/leds.c"
+#include "switches/switches.c"
 
-// Make structs that wrap up the inputs and outputs
-typedef struct sys_clk_main_inputs_t
-{
-	// The switches
-	uint4_t sw;
-} sys_clk_main_inputs_t;
-typedef struct sys_clk_main_outputs_t
-{
-	// The LEDs
-	uint1_t led[4];
-} sys_clk_main_outputs_t;
+// Each main function is a clock domain
+// Only one clock in the design for now
+#pragma MAIN_MHZ app 100.0
+#pragma PART "xc7a35ticsg324-1l" // Arty
 
 // Blinking means turn on LED for some amount of time, and then turn off
 // How much time?
@@ -29,28 +22,26 @@ typedef struct sys_clk_main_outputs_t
 // We need to count up to whatever sw*BLINK_CLK_CYCLES equals
 uint28_t counter; // Inits to zero
 // And we need to remember if the LEDs are on or not - so we know what to do next
-uint1_t leds_on;
+uint4_t leds_on;
 
 // The sys_clk_main function
-sys_clk_main_outputs_t sys_clk_main(sys_clk_main_inputs_t inputs)
+void app()
 {
+    // Read switches input (i.e. like a function argument)
+    uint4_t sw;
+    WIRE_READ(uint4_t, sw, switches) // sw (local wire) = switches (global wire)
+    
     // Do what counters do, increment
     counter = counter + 1;
 
     // If the counter equals or greater then
-    // time to toggle the led and reset counter
-    if(counter >= (inputs.sw * BLINK_CLK_CYCLES))
+    // time to toggle the leds and reset counter
+    if(counter >= (sw * BLINK_CLK_CYCLES))
     {
-        leds_on = !leds_on;
+        leds_on = ~leds_on;
         counter = 0;
     }
 
-    // Drive output leds (all 4)
-    sys_clk_main_outputs_t outputs;
-    outputs.led[0] = leds_on;
-    outputs.led[1] = leds_on;
-    outputs.led[2] = leds_on;
-    outputs.led[3] = leds_on;
-
-    return outputs;
+    // Drive output leds (all 4) (i.e. like a function return value)
+    WIRE_WRITE(uint4_t, leds, leds_on) // leds (global wire) = leds_on (local wire)
 }
