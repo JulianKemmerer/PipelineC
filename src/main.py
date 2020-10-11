@@ -21,11 +21,9 @@ print('''
 ''')
 
 print("TODO:")
-print(" Add Yosys/nextpnr support")
-print(" Allow no clock freq specified, any compatible, modules? - leds for example?")
-print(" Rust AST? rustc -Z ast-json, traverse the json?")
 print(" Static locals == globals as an option, better for scope AND globals cant be used by multiple funcs right now so...")
 print(" ^ static locals inside {} with #pragma global or something? infer submodule ports into and out of {}, etc")
+print(" Rust AST? rustc -Z ast-json, traverse the json?")
 print(" Document pragmas and make main mhz allow pointing at existing func name instead of float")
 print(" Do a better Arty7 example - hobby more likely to try something new?")
 print(" Do a simple RISCV? cpu? But avoid just doing RTL clone?")

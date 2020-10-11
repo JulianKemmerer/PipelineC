@@ -149,7 +149,8 @@ signal switches_wire : unsigned(3 downto 0);
 -- LEDs
 signal leds_wire : unsigned(3 downto 0);
 -- UART
-signal uart_txd_in_r, uart_txd_in_rr : std_logic;
+signal uart_data_in : unsigned(0 downto 0);
+signal uart_data_out : unsigned(0 downto 0);
 -- DDR3
 --signal mig_to_app : xil_mig_to_app_t;
 --signal app_to_mig : xil_app_to_mig_t;
@@ -244,15 +245,12 @@ ddr_sys_rst_n <= '0' when (rst or not ddr_clks_ready) else '1';
 -- Commented out wires as necessary
 process(all) begin
     -- LEDs
-    led <= std_logic_vector(leds_wire);   
-    
+    led <= std_logic_vector(leds_wire);       
     -- Switches
     switches_wire <= unsigned(sw);
-    
     -- UART
-    --sys_clk_main_inputs.uart_txd_in(0) <= uart_txd_in_rr;
-    --uart_rxd_out <= sys_clk_main_outputs.uart_rxd_out(0);
-
+    uart_data_in(0) <= uart_txd_in;
+    uart_rxd_out <= uart_data_out(0);
     -- DDR3
     --  app_addr <= std_logic_vector(app_to_mig.addr);    --              : in    std_logic_vector(27 downto 0);
     --  app_cmd  <= std_logic_vector(app_to_mig.cmd);     --            : in    std_logic_vector(2 downto 0);
@@ -285,12 +283,16 @@ end process;
 -- The PipelineC generated entity
 top_inst : entity work.top port map (
     -- Main function clocks
-    clk_100p0 => clk_100,
+    clk_25p0 => clk_25,
+    --clk_100p0 => clk_100,
     -- Each main funciton's inputs and output
     -- LEDs
     leds_module_return_output => leds_wire,
     -- Switches
-    switches_module_sw => switches_wire
+    --switches_module_sw => switches_wire
+    -- UART
+    uart_module_data_in => uart_data_in,
+    uart_module_return_output => uart_data_out
     -- DDR3
     --  xil_mig_module_mig_to_app => mig_to_app,
     --  xil_mig_module_return_output => app_to_mig

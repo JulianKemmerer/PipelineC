@@ -3,24 +3,7 @@
 #pragma once
 
 #include "uintN_t.h"
-
-#define UART_CLK_MHZ 25.0
-#define UART_CLKS_PER_SEC (UART_CLK_MHZ*1000000.0)
-#define SEC_PER_UART_CLK (1.0/UART_CLKS_PER_SEC)
-
-#define UART_BAUD 115200
-#define UART_WORD_BITS 8
-#define uart_word_t uint8_t
-#define uart_bit_count_t uint4_t
-#define uart_word_from_bits uint1_array8_le // PipelineC built in func
-#define UART_SEC_PER_BIT (1.0/UART_BAUD)
-#define UART_CLKS_PER_BIT_FLOAT (UART_SEC_PER_BIT/SEC_PER_UART_CLK)
-#define UART_CLKS_PER_BIT ((uart_clk_count_t)UART_CLKS_PER_BIT_FLOAT)
-#define UART_CLKS_PER_BIT_DIV2 ((uart_clk_count_t)(UART_CLKS_PER_BIT_FLOAT/2.0))
-#define uart_clk_count_t uint16_t
-#define UART_IDLE 1
-#define UART_START 0
-#define UART_STOP UART_IDLE
+#include "uart.c"
 
 // Convert framed async serial data to sync data+valid word stream
 // rule of thumb name "_s" 'stream' if has .valid and .data
@@ -31,6 +14,19 @@ typedef struct uart_mac_s
 }uart_mac_s;
 
 // RX side
+// Globally visible ports / wires
+// Inputs
+uint1_t uart_rx_mac_out_ready;
+// Outputs
+uart_mac_s uart_rx_mac_word_out;
+uint1_t uart_rx_mac_overflow;
+// This should be in a macro somehow TODO \/
+#include "uint1_t_array_N_t.h"
+#include "uart_mac_s_array_N_t.h"
+#include "uart_rx_mac_out_ready_clock_crossing.h"
+#include "uart_rx_mac_word_out_clock_crossing.h"
+#include "uart_rx_mac_overflow_clock_crossing.h"
+
 // Deserialize eight bits into one 8b byte
 #include "deserializer.h"
 deserializer(uart_deserializer, uint1_t, UART_WORD_BITS) 
@@ -44,16 +40,22 @@ typedef enum uart_rx_mac_state_t
 uart_rx_mac_state_t uart_rx_mac_state;
 uart_clk_count_t uart_rx_clk_counter;
 uart_bit_count_t uart_rx_bit_counter;
-// Output type
-typedef struct uart_rx_mac_o_t
+
+// RX logic
+#pragma MAIN uart_rx_mac
+void uart_rx_mac()
 {
+  // Read uart data_in input port
+  uint1_t data_in;
+  WIRE_READ(uint1_t, data_in, uart_data_in)
+  
+  // Read output ready input port
+  uint1_t out_ready;
+  WIRE_READ(uint1_t, out_ready, uart_rx_mac_out_ready)
+  
+  // Output wires
   uart_mac_s word_out;
   uint1_t overflow;
-}uart_rx_mac_o_t;
-// RX logic
-uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
-{
-  uart_rx_mac_o_t output;
 
   // Sampling bits from the async serial data frame
   uint1_t data_sample = 0;
@@ -111,14 +113,28 @@ uart_rx_mac_o_t uart_rx_mac(uint1_t data_in, uint1_t out_ready)
   
   // Input 1 bit 8 times to get to get 1 byte out
   uart_deserializer_o_t deser = uart_deserializer(data_sample, data_sample_valid, out_ready);
-  output.word_out.data = uart_word_from_bits(deser.out_data);
-  output.word_out.valid = deser.out_data_valid;
-  output.overflow = data_sample_valid & !deser.in_data_ready;
+  word_out.data = uart_word_from_bits(deser.out_data);
+  word_out.valid = deser.out_data_valid;
+  overflow = data_sample_valid & !deser.in_data_ready;
   
-  return output;
+  // Drive output port
+  WIRE_WRITE(uart_mac_s, uart_rx_mac_word_out, word_out) //uart_rx_mac_word_out = word_out
+  WIRE_WRITE(uint1_t, uart_rx_mac_overflow, overflow) // uart_rx_mac_overflow = overflow
 }
 
 // TX side
+// Globally visible ports / wires
+// Inputs
+
+uart_mac_s uart_tx_mac_word_in;
+// Outputs
+uint1_t uart_tx_mac_in_ready;
+// This should be in a macro somehow TODO \/
+#include "uint1_t_array_N_t.h"
+#include "uart_mac_s_array_N_t.h"
+#include "uart_tx_mac_word_in_clock_crossing.h"
+#include "uart_tx_mac_in_ready_clock_crossing.h"
+
 // Slight clock differences between RX and TX sides can occur.
 // Do a hacky off by one fewer clock cycles to ensure TX bandwidth
 // is always slighty greater than RX bandwidth to avoid overflow
@@ -137,19 +153,17 @@ typedef enum uart_tx_mac_state_t
 uart_tx_mac_state_t uart_tx_mac_state;
 uart_clk_count_t uart_tx_clk_counter;
 uart_bit_count_t uart_tx_bit_counter;
-// Output type
-typedef struct uart_tx_mac_o_t
-{
-  uint1_t word_in_ready;
-  uint1_t data_out;
-}uart_tx_mac_o_t;
 // TX logic
-uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
+#pragma MAIN uart_tx_mac
+void uart_tx_mac()
 {
+  // Read input port
+  uart_mac_s word_in;
+  WIRE_READ(uart_mac_s, word_in, uart_tx_mac_word_in)
+ 
   // Default no output
-  uart_tx_mac_o_t output;
-  output.word_in_ready = 0;
-  output.data_out = UART_IDLE; // UART high==idle
+  uint1_t word_in_ready = 0;
+  uint1_t data_out = UART_IDLE; // UART high==idle
   uint32_t i = 0;
   
   // Calculate condition for shifting buffer/next bit each bit period
@@ -173,7 +187,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
     ser_in_data[i] = word_in.data >> i;
   }
   uart_serializer_o_t ser = uart_serializer(ser_in_data, word_in.valid, ser_out_data_ready);
-  output.word_in_ready = ser.in_data_ready;
+  word_in_ready = ser.in_data_ready;
   uint1_t tx_bit = ser.out_data;
   uint1_t tx_bit_valid = ser.out_data_valid;
   
@@ -192,7 +206,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   if(uart_tx_mac_state==SEND_START)
   {
     // Output start bit for one bit period
-    output.data_out = UART_START;
+    data_out = UART_START;
     uart_tx_clk_counter += 1;
     if(uart_tx_clk_counter >= (UART_CLKS_PER_BIT-UART_TX_CHEAT_CYCLES))
     {
@@ -205,7 +219,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   else if(uart_tx_mac_state==TRANSMIT)
   {
     // Output tx_bit from serializer for one bit period
-    output.data_out = tx_bit;
+    data_out = tx_bit;
     uart_tx_clk_counter += 1;
     if(do_next_bit_stuff)
     {
@@ -224,7 +238,7 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
   else if(uart_tx_mac_state==SEND_STOP)
   {
     // Output stop bit for one bit period
-    output.data_out = UART_STOP;
+    data_out = UART_STOP;
     uart_tx_clk_counter += 1;
     if(uart_tx_clk_counter>=(UART_CLKS_PER_BIT-UART_TX_CHEAT_CYCLES))
     {
@@ -233,6 +247,8 @@ uart_tx_mac_o_t uart_tx_mac(uart_mac_s word_in)
     }
   }
   
-  return output;
+  // Write output ports
+  WIRE_WRITE(uint1_t, uart_tx_mac_in_ready, word_in_ready)
+  WIRE_WRITE(uint1_t, uart_data_out, data_out)
 }
 

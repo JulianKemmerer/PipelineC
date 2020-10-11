@@ -1747,7 +1747,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
   # Regular globals
   # If has same name as global and hasnt been declared as (local) variable already
-  if (maybe_global_var in parser_state.global_info):
+  if (maybe_global_var in parser_state.global_info) and (maybe_global_var not in parser_state.existing_logic.variable_names):
     # Copy info into existing_logic
     parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.global_info[maybe_global_var].type_name
 
@@ -1763,7 +1763,7 @@ def MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(maybe_global_var, parser_state):
     
   # Volatile globals
   # If has same name as global and hasnt been declared as (local) variable already
-  if (maybe_global_var in parser_state.volatile_global_info):
+  if (maybe_global_var in parser_state.volatile_global_info) and (maybe_global_var not in parser_state.existing_logic.variable_names):
     # Copy info into existing_logic
     parser_state.existing_logic.wire_to_c_type[maybe_global_var] = parser_state.volatile_global_info[maybe_global_var].type_name
     
@@ -6415,6 +6415,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         var_names.append(var_name)
         
   # Find and read and write main funcs
+  var_to_rw_funcs = dict()
   for var_name in var_names:
     read_func_name = var_name + "_READ"
     write_func_name = var_name + "_WRITE"
@@ -6448,23 +6449,38 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       print("Problem finding main functions for",var_name,"clock crossing: read, write:", read_containing_func,",",write_containing_func)
       print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
-      
+     
+    var_to_rw_funcs[var_name] = (read_main_func,write_main_func)
+    
+    
+  # Do infer loop slow thing for now
+  inferring = True
+  while inferring:
+    inferring = False
+    for var_name in var_to_rw_funcs:
+      read_main_func,write_main_func = var_to_rw_funcs[var_name]
+      read_mhz = parser_state.main_mhz[read_main_func]
+      write_mhz = parser_state.main_mhz[write_main_func]
+      # Infer freqs to match if possible
+      if read_mhz is None and write_mhz is not None:
+        print("Matching clock domain for",read_main_func,"to clock domain for",write_main_func,write_mhz,"MHz")
+        read_mhz = write_mhz
+        parser_state.main_mhz[read_main_func] = read_mhz
+        inferring = True
+      elif read_mhz is not None and write_mhz is None:
+        print("Matching clock domain for",write_main_func,"to clock domain for",read_main_func,read_mhz,"MHz")
+        write_mhz = read_mhz
+        parser_state.main_mhz[write_main_func] = write_mhz
+        inferring = True
+    
+  for var_name in var_to_rw_funcs:
+    read_main_func,write_main_func = var_to_rw_funcs[var_name]
     read_mhz = parser_state.main_mhz[read_main_func]
     write_mhz = parser_state.main_mhz[write_main_func]
-    
-    # Infer freqs to match if possible
     if read_mhz is None and write_mhz is None:
-      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_containing_func,",",write_containing_func)
+      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
       print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
-    elif read_mhz is None and write_mhz is not None:
-      print("Matching clock domain for",read_containing_func,"to clock domain for",write_containing_func,write_mhz,"MHz")
-      read_mhz = write_mhz
-      parser_state.main_mhz[read_main_func] = read_mhz      
-    elif read_mhz is not None and write_mhz is None:
-      print("Matching clock domain for",write_containing_func,"to clock domain for",read_containing_func,read_mhz,"MHz")
-      write_mhz = read_mhz
-      parser_state.main_mhz[write_main_func] = write_mhz
     
     ratio = 0
     write_size = 0
