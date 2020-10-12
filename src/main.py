@@ -21,7 +21,6 @@ print('''
 ''')
 
 print("TODO:")
-print(" Write pipeline map files for each module")
 print(" Improve coarse grain after initial guess")
 print(" Document hier with func calls vs global ports (include auto pipelined comb logic blob)")
 print(" Document fundamental time v.s space trade off (sum example)")

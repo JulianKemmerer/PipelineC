@@ -2817,6 +2817,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   print("Writing clock cross defintions as parsed from C code...")
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   
+  print("Writing pipeline map files for each function...")
+  for logic_func_name in parser_state.FuncLogicLookupTable:
+    logic = parser_state.FuncLogicLookupTable[logic_func_name]
+   
+  
   print("Synthesizing as combinatorial logic to get total logic delay...")
   print("")
   
@@ -2900,24 +2905,25 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     for logic_func_name in parallel_func_names:
       # Get logic
       logic = parser_state.FuncLogicLookupTable[logic_func_name]
-      
       # Any inst will do
       inst_name = None
-      if logic_func_name in parser_state.FuncToInstances:
-        inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
+      if logic.func_name in parser_state.FuncToInstances:
+        inst_name = list(parser_state.FuncToInstances[logic.func_name])[0]
       if inst_name is None:
         #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
         continue
-      
-      # Impossible goal for timing since just want path delay
-      clock_mhz = INF_MHZ 
-      print("Synthesizing function:",logic.func_name)
-      # Print pipeline map before syn results
-      if (len(logic.submodule_instances) > 0) and not logic.is_vhdl_text_module:
+      if len(logic.submodule_instances) > 0:
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
-        print(zero_clk_pipeline_map)
-        print("")
-    
+        zero_clk_pipeline_map_str = str(zero_clk_pipeline_map)
+        out_dir = GET_OUTPUT_DIRECTORY(logic)
+        if not os.path.exists(out_dir):
+          os.makedirs(out_dir) 
+        out_path = out_dir + "/pipeline_map.log"
+        f=open(out_path,'w')
+        f.write(zero_clk_pipeline_map_str)
+        f.close()
+      print("Synthesizing function:",logic.func_name)
+      
     # Start parallel syn for parallel_func_names
     func_name_to_async_result = dict()
     for logic_func_name in parallel_func_names:

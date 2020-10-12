@@ -14,7 +14,7 @@ uint4_t switches;
 uint4_t switches_input_regs[2]; // Good practice to double reg inputs
 void switches_module(uint4_t sw)
 {
-  // Double register input signal - TODO macros
+  // Double register input signal
   uint4_t sw_registered;
   CDC2(uint4_t, sw_cdc, sw_registered, sw)
   
