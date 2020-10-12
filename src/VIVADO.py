@@ -40,13 +40,10 @@ def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
     self_offset = int(toks[0].replace("[",""))
     return self_offset
   
-  elif "[global_regs]" in reg_name:
+  elif "[state_regs]" in reg_name:
     # Global regs are always in relative stage 0
-    return 0
-  elif "[volatile_global_regs]" in reg_name:
     # Volatile global regs are always in relative stage 0???
-    return 0
-    
+    return 0    
   else:
     print("GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name)
     sys.exit(-1)
@@ -64,7 +61,7 @@ def GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, parser_st
   when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
   
   # Global funcs are always 0 clock and thus offset 0
-  if parser_state.LogicInstLookupTable[inst].uses_globals:
+  if parser_state.LogicInstLookupTable[inst].uses_nonvolatile_state_regs:
     self_offset = 0
   else:
     # Do normal check
@@ -107,6 +104,7 @@ def GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state):
   write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
   return write_main_func
 
+'''
 # [possible,stage,indices]
 def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, parser_state, multimain_timing_params):
   LogicLookupTable = parser_state.LogicInstLookupTable
@@ -133,11 +131,11 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
   end_names += end_aliases
   
   
-  '''
-  timing_params = TimingParamsLookupTable[inst_name]
-  total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  last_stage = total_latency
-  '''
+  
+  #timing_params = TimingParamsLookupTable[inst_name]
+  #total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  #last_stage = total_latency
+  
   
   
   possible_main_funcs = set()
@@ -254,7 +252,7 @@ def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, 
     main_func = list(possible_main_funcs)[0]
   
   return main_func, stage_range
-  
+'''
   
 class ParsedTimingReport:
   def __init__(self, syn_output):
@@ -729,13 +727,6 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
   
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):
-  
-  # Hard rule for now, functions with globals must be zero clk
-  if total_latency > 0 and len(Logic.global_wires) > 0:
-    print("Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency)
-    sys.exit(-1)
-    
-  
   # Timing params for this logic
   timing_params = TimingParamsLookupTable[inst_name]
   
@@ -819,11 +810,6 @@ def REG_NAME_IS_OUTPUT_REG(reg_name):
 def REG_NAME_IS_IO_REG(reg_name):
   # IO wont have vivado submodule markers
   return "/" not in reg_name
-  
-  #return not REG_NAME_IS_SUBMODULE(reg_name) and not REG_NAME_IS_SELF(reg_name)
-  #return not("_registers_r_reg[submodules]" in reg_name) and not("_registers_r_reg[self]" in reg_name) and not("[global_regs]" in reg_name)
-
-
 
 def GET_RAW_HDL_SUBMODULE_LATENCY_INDEX_FROM_REG_NAME(reg_name, logic):
   # Break apart using brackets
@@ -886,12 +872,8 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
   # Get matching submoduel isnt, dont care about var names after self or globals
   if "[self]" in reg_name:
     reg_name = reg_name.split("[self]")[0]
-  if "[global_regs]" in reg_name:
-    #print "DEBUG: Found global reg:", reg_name
-    reg_name = reg_name.split("[global_regs]")[0]
-  if "[volatile_global_regs]" in reg_name:
-    #print "DEBUG: Found volatile global reg:", reg_name
-    reg_name = reg_name.split("[volatile_global_regs]")[0]
+  if "[state_regs]" in reg_name:
+    reg_name = reg_name.split("[state_regs]")[0]
   # Also remove reg 
   reg_name = reg_name.replace("/registers_r_reg","")
   

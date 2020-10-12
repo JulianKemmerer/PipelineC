@@ -163,10 +163,6 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
   # Single inst
   if inst_name:
     Logic = parser_state.LogicInstLookupTable[inst_name]
-    # Hard rule for now, functions with globals must be zero clk
-    if total_latency > 0 and len(Logic.global_wires) > 0:
-      print("Can't synthesize atomic global function '", inst_name, "' with latency = ", total_latency)
-      sys.exit(-1)
     
     # Timing params for this logic
     timing_params = multimain_timing_params.TimingParamsLookupTable[inst_name]

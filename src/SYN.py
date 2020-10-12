@@ -449,8 +449,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   
   # Some wires are driven to start with
   RECORD_DRIVEN_BY(None, logic.inputs)
-  RECORD_DRIVEN_BY(None, logic.global_wires)
-  RECORD_DRIVEN_BY(None, logic.volatile_global_wires)
+  RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   # Also "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
     #print "wire=",wire
@@ -485,26 +484,30 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       if print_debug:
         print("Output driven ", output, "<=",wires_driven_by_so_far[output])
     # ALl globals driven
-    for global_wire in logic.global_wires:
-      if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
+    for state_reg in logic.state_regs:
+      if logic.state_regs[state_reg].is_volatile == False:
+        global_wire = state_reg
+        if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
+          if print_debug:
+            print("Pipeline not done global.",global_wire)
+          return False
         if print_debug:
-          print("Pipeline not done global.",global_wire)
-        return False
-      if print_debug:
-        print("Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire])
+          print("Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire])
     # ALl voltatile globals driven
     # Some volatiles are read only - ex. valid indicator bit
     # And thus are never driven
     # Allow a volatile global wire not to be driven if logic says it is undriven 
-    for volatile_global_wire in logic.volatile_global_wires:
-      if volatile_global_wire in logic.wire_driven_by:
-        # Has a driving wire so must be driven for func to be done
-        if (volatile_global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[volatile_global_wire]==None):
-          if print_debug:
-            print("Pipeline not done volatile global.",volatile_global_wire)
-          return False
-      if print_debug:
-        print("Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire])
+    for state_reg in logic.state_regs:
+      if logic.state_regs[state_reg].is_volatile:
+        volatile_global_wire = state_reg
+        if volatile_global_wire in logic.wire_driven_by:
+          # Has a driving wire so must be driven for func to be done
+          if (volatile_global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[volatile_global_wire]==None):
+            if print_debug:
+              print("Pipeline not done volatile global.",volatile_global_wire)
+            return False
+        if print_debug:
+          print("Volatile driven ", volatile_global_wire, "<=",wires_driven_by_so_far[volatile_global_wire])
     
     # All other wires driven?
     for wire in logic.wires:
@@ -583,7 +586,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             
               # Add driven wire to wires driven so far
               # Record driving this wire, at this logic level offset
-              if (driven_wire in wires_driven_by_so_far) and (wires_driven_by_so_far[driven_wire] is not None):#  (driven_wire not in logic.global_wires) and (driven_wire not in logic.volatile_global_wires):
+              if (driven_wire in wires_driven_by_so_far) and (wires_driven_by_so_far[driven_wire] is not None):
                 # Already handled this wire
                 continue
               RECORD_DRIVEN_BY(driving_wire, driven_wire)
@@ -915,7 +918,11 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # the output is always driven in the last stage / stage zero
     # But for volatile globals the return value might be driven before
     # all of the other logic driving the volatiles is done
-    if len(logic.volatile_global_wires) <= 0:
+    num_volatiles = 0
+    for state_reg in logic.state_regs:
+      if logic.state_regs[state_reg].is_volatile:
+        num_volatiles += 1
+    if num_volatiles == 0:
       # Sanity check that output is driven in last stage
       my_total_latency = stage_num - 1
       if PIPELINE_DONE() and (my_total_latency!= est_total_latency):
@@ -992,7 +999,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   TimingParamsLookupTable[inst_name] = timing_params
   
   # Check for globals
-  if logic.uses_globals:
+  if logic.uses_nonvolatile_state_regs:
     # Can't slice globals, return index of bad slice
     if print_debug:
       print("Can't slice, uses globals")
@@ -1117,7 +1124,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
         submodule_func_name = logic.submodule_instances[submodule_inst]
         submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
         containing_logic = logic
-        #print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_globals
+        #print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_nonvolatile_state_regs
         submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
         start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[submodule_inst]
@@ -2116,7 +2123,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         if mult > 1.0:
           # Divide up into that many clocks as a starting guess
           # If doesnt have global wires
-          if not main_func_logic.uses_globals:
+          if not main_func_logic.uses_nonvolatile_state_regs:
             clks = int(mult) - 1
             main_func_to_coarse_latency[main_func] = clks
       
@@ -2138,7 +2145,6 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       target_mhz = parser_state.main_mhz[main_func]
-      print(main_func, ": currently is",main_func_to_coarse_latency[main_func],"clocks latency...")
       # Sanity check on resolution
       if not main_func_logic.is_vhdl_text_module:
         # Sanity check cant more clocks than delay units
@@ -2151,7 +2157,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_coarse_latency[main_func])
       # Update slice step
       sweep_state.func_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(main_func_to_coarse_latency[main_func]+1))  
-      print(main_func,"current slices:", best_guess_slices)
+      print(main_func,":",main_func_to_coarse_latency[main_func],"clocks latency, sliced as",best_guess_slices)
       # If making slices then make sure the slices dont go through global logic
       if len(best_guess_slices) > 0:
         print(" ...rounding away from globals...")
@@ -2203,6 +2209,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         
       # And make coarse adjustmant
       print("Making coarse adjustment and trying again...")
+      made_adj = False
       # If only one main func then dont need to even read timing report
       # Blegh hacky for now?...
       if len(parser_state.main_mhz) > 1:
@@ -2215,17 +2222,17 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         
       for main_func in main_funcs:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-        #print("main_func_logic.func_name",main_func_logic.func_name)
-        #print("main_func_logic.global_wires",main_func_logic.global_wires)
-        #print("main_func_logic.uses_globals",main_func_logic.uses_globals)
-        #print("=")
-        #if len(main_func_logic.global_wires) == 0:
-        if not main_func_logic.uses_globals:
+        if not main_func_logic.uses_nonvolatile_state_regs:
           main_func_to_coarse_latency[main_func] = main_func_to_coarse_latency[main_func] + 1
+          made_adj = True
           # Reset adjustments
           for stage in range(0, main_func_to_coarse_latency[main_func] + 1):
             sweep_state.func_sweep_state[main_func].stages_adjusted_this_latency[stage] = 0
-        
+      
+      # Stuck?
+      if not made_adj:
+        print("Unable to make further adjustments. Failed to meet timing.")
+        sys.exit(-1)
           
   return sweep_state
 
@@ -2962,8 +2969,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       print(logic_func_name, "Path delay (ns):", path_report.path_delay_ns, "=",mhz, "MHz")
       print("")
       # Record worst global
-      #if len(logic.global_wires) > 0:
-      if logic.uses_globals:
+      if logic.uses_nonvolatile_state_regs:
         if mhz < min_mhz:
           min_mhz_func_name = logic.func_name
           min_mhz = mhz

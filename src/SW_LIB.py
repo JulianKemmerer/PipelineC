@@ -25,7 +25,7 @@ GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T
 # Find generated logic and apply additional 'parsed' information
 def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic):
   if IS_CLOCK_CROSSING(func_logic):
-    func_logic.uses_globals = True
+    func_logic.uses_nonvolatile_state_regs = True
   
   return func_logic
 
@@ -46,10 +46,8 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
     ratio = int(ratio)
     
     c_type = None
-    if var_name in parser_state.global_info:
-      c_type = parser_state.global_info[var_name].type_name
-    if var_name in parser_state.volatile_global_info:
-      c_type = parser_state.volatile_global_info[var_name].type_name
+    if var_name in parser_state.global_state_regs:
+      c_type = parser_state.global_state_regs[var_name].type_name
     write_in_t = c_type + "_array_" + str(write_size) + "_t"
     read_out_t = c_type + "_array_" + str(read_size) + "_t"
     
@@ -762,7 +760,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       var_name = ram_sp_rf_func_name.replace("_"+ram_type,"")
       #print "var_name",var_name
       # Lookup type, should be global, and array
-      c_type = parser_state.global_info[var_name].type_name
+      c_type = parser_state.global_state_regs[var_name].type_name
       if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
         print("Ram function on non array?",ram_sp_rf_func_name)
         sys.exit(-1)
@@ -851,7 +849,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       #print "RAM GLOBAL:",global_name
       #print func_logic.func_name
       parser_state_copy.existing_logic = func_logic
-      func_logic = C_TO_LOGIC.MAYBE_GLOBAL_VAR_INFO_TO_LOGIC(global_name, parser_state_copy)
+      func_logic = C_TO_LOGIC.MAYBE_STATE_REG_INFO_TO_LOGIC(global_name, parser_state_copy)
       FuncLogicLookupTable[func_name] = func_logic
       #print FuncLogicLookupTable[func_name].global_wires
         

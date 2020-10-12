@@ -27,15 +27,13 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
   return C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state)
 
 # Could be volatile global too
-def GLOBAL_WIRE_TO_VHDL_INIT_STR(wire, logic, parser_state):
+def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # Does this wire have an init?
   leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
   c_type = logic.wire_to_c_type[wire]
   init = None
-  if leaf in parser_state.global_info:
-    init = parser_state.global_info[leaf].init
-  elif leaf in parser_state.volatile_global_info:
-    init = parser_state.volatile_global_info[leaf].init
+  if leaf in logic.state_regs:
+    init = logic.state_regs[leaf].init
     
   if type(init) == int:
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
@@ -642,11 +640,8 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
     CLK_RATIO = str(clk_ratio)
     CLK_RATIO_MINUS1 = str(clk_ratio - 1)
     
-    if var_name in parser_state.global_info:
-      c_type = parser_state.global_info[var_name].type_name
-    if var_name in parser_state.volatile_global_info:
-      c_type = parser_state.volatile_global_info[var_name].type_name
-    
+    if var_name in parser_state.global_state_regs:
+      c_type = parser_state.global_state_regs[var_name].type_name    
     data_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) 
     
     in_t = c_type + "_array_" + str(write_size) + "_t"
@@ -1253,7 +1248,7 @@ def LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTabl
 def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   # Types of regs: self, global, volatile global
   needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  return needs_self_regs or len(Logic.global_wires) > 0 or len(Logic.volatile_global_wires) > 0
+  return needs_self_regs or len(Logic.state_regs) > 0
   
 def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     # Logic should have exactly one __vhdl__ func submodule to get text from
@@ -1321,9 +1316,9 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
         continue
 
       # Skip globals too
-      if wire_name in Logic.global_wires:
-        continue
       # Dont skip volatile globals, they are like regular wires   
+      if wire_name in Logic.state_regs and not Logic.state_regs[wire_name].is_volatile:
+        continue      
       
       # Skip VHDL input wires 
       if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(wire_name, Logic, parser_state):
@@ -1351,37 +1346,19 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
 type register_pipeline_t is array(0 to LATENCY) of variables_t;
   '''
   
-    
-  # GLOBALS
-  if len(Logic.global_wires) > 0:
+  # State registers
+  if len(Logic.state_regs) > 0:
     rv += '''
--- Type holding all global registers
-type global_registers_t is record'''
+-- Type holding all state registers
+type state_registers_t is record'''
     # Each func instance gets records
     rv += '''
-  -- Global vars\n'''
-    #print "Logic.global_wires",Logic.global_wires
-    for global_wire in Logic.global_wires:
-      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
-      vhdl_name = WIRE_TO_VHDL_NAME(global_wire, Logic)
+  -- State reg vars\n'''
+    for state_reg in Logic.state_regs:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+      vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
       rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
-    rv += "end record;\n"
-    
-  # VOLATILE GLOBALS
-  if len(Logic.volatile_global_wires) > 0:
-    rv += '''
--- Type holding all volatile global registers
-type volatile_global_registers_t is record'''
-    # Each func instance gets records
-    rv += '''
-  -- Volatile global vars\n'''
-    for volatile_global_wire in Logic.volatile_global_wires:
-      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(volatile_global_wire, Logic, parser_state)
-      vhdl_name = WIRE_TO_VHDL_NAME(volatile_global_wire, Logic)
-      rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
-    rv += "end record;\n"
-    
-    
+    rv += "end record;\n"    
     
   # ALL REGISTERS
   if needs_regs:
@@ -1392,14 +1369,10 @@ type volatile_global_registers_t is record'''
     if wrote_variables_t and needs_self_regs:
       rv += '''
     self : register_pipeline_t;'''
-    # Global regs
-    if len(Logic.global_wires) > 0:
+    # State regs
+    if len(Logic.state_regs) > 0:
       rv += '''
-    global_regs : global_registers_t;'''
-    # Volatile global regs
-    if len(Logic.volatile_global_wires) > 0:
-      rv += '''
-    volatile_global_regs : volatile_global_registers_t;'''
+    state_regs : state_registers_t;'''
     # End
     rv += ''' 
   end record;
@@ -1413,12 +1386,8 @@ type volatile_global_registers_t is record'''
   begin
   '''
     # Do each global var
-    for global_wire in Logic.global_wires:
-      rv += " rv.global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(global_wire, Logic, parser_state) + ";\n"
-    # Volatile globals too?
-    for volatile_global_wire in Logic.volatile_global_wires:
-      rv += " rv.volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := " + GLOBAL_WIRE_TO_VHDL_INIT_STR(volatile_global_wire, Logic, parser_state) + ";\n"
-    
+    for state_reg in Logic.state_regs:
+      rv += " rv.state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := " + STATE_REG_TO_VHDL_INIT_STR(state_reg, Logic, parser_state) + ";\n"    
     rv += '''
     return rv;
   end function;\n
@@ -1785,17 +1754,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   variable write_self_regs : register_pipeline_t;
 ''' 
   
-  # Global regs
-  if len(Logic.global_wires) > 0:
-    rv += " " + "-- Global registers read once per clock\n"
-    rv += " " + "variable read_global_regs : global_registers_t;\n"
-    rv += " " + "variable write_global_regs : global_registers_t;\n"
-  # Volatile global regs
-  if len(Logic.volatile_global_wires) > 0:
-    rv += " " + "-- Volatile global registers read once per clock\n"
-    rv += " " + "variable read_volatile_global_regs : volatile_global_registers_t;\n"
-    rv += " " + "variable write_volatile_global_regs : volatile_global_registers_t;\n"
-  
+  # State regs
+  if len(Logic.state_regs) > 0:
+    rv += " " + "-- State registers read once per clock\n"
+    rv += " " + "variable read_state_regs : state_registers_t;\n"
+    rv += " " + "variable write_state_regs : state_registers_t;\n"  
   
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
@@ -1811,22 +1774,13 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   
   
   # Globals
-  if len(Logic.global_wires) > 0:
+  if len(Logic.state_regs) > 0:
     rv += '''
-  -- GLOBAL REGS
-  -- Default read global regs once per clock
-  read_global_regs := registers_r.global_regs;
-  -- Default write contents of global regs
-  write_global_regs := read_global_regs;
-'''
-  # Volatile globals
-  if len(Logic.volatile_global_wires) > 0:
-    rv += '''
-  -- VOLATILE GLOBAL REGS
-  -- Default read volatile global regs once per clock
-  read_volatile_global_regs := registers_r.volatile_global_regs;
-  -- Default write contents of volatile global regs
-  write_volatile_global_regs := read_volatile_global_regs;
+  -- STATE REGS
+  -- Default read regs once per clock
+  read_state_regs := registers_r.state_regs;
+  -- Default write contents of regs
+  write_state_regs := read_state_regs;
 '''
   
   rv += " -- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
@@ -1834,27 +1788,20 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += " " + "for STAGE in 0 to LATENCY loop\n"
   rv += " " + " " + "-- Input to first stage are inputs to function\n"
   rv += " " + " " + "if STAGE=0 then\n"
-  rv += " " + " " + " " + "-- Mux in inputs\n"
-  for input_wire in Logic.inputs:
-    rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
   
-  ## mux global regs into wires
-  #if len(Logic.global_wires) > 0:
-  # rv += " " + " " + " " + "-- Mux in globals\n"
-  # for global_wire in Logic.global_wires:
-  #   rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := write_global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + ";\n"
-      
+  if len(Logic.inputs) > 0:
+    rv += " " + " " + " " + "-- Mux in inputs\n"
+    for input_wire in Logic.inputs:
+      rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
   
-  # Also mux volatile global regs into wires
-  if len(Logic.volatile_global_wires) > 0:
-    rv += " " + " " + " " + "-- Mux in volatile globals\n"
-    for volatile_global_wire in Logic.volatile_global_wires:
-      rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
+  # Also mux volatile global regs into wire - act like regular wire
+  for state_reg in Logic.state_regs:
+    if Logic.state_regs[state_reg].is_volatile:
+      rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + ";\n"
       
   rv += " " + " " + "else\n"
   rv += " " + " " + " " + "-- Default read from previous stage\n"
   rv += " " + " " + " " + "read_pipe := " + "read_self_regs(STAGE-1);\n"
-  #rv += "  " + " " + " " + "read_pipe := " + "write_self_regs(STAGE-1);\n"
   rv += " " + " " + "end if;\n"
   rv += " " + " " + "-- Default write contents of previous stage\n"
   rv += " " + " " + "write_pipe := read_pipe;\n"
@@ -1867,14 +1814,13 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += " " + " " + "write_self_regs(STAGE) := write_pipe;\n"
   rv += " " + "end loop;\n"
   rv += "\n"
-  #if len(Logic.global_wires) > 0:
-  # rv += " " + "-- Last stage of pipeline global wires write to function global regs\n"
-  # for global_wire in Logic.global_wires:
-  #   rv += " " + "write_global_regs." + WIRE_TO_VHDL_NAME(global_wire, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(global_wire, Logic) + ";\n"
-  if len(Logic.volatile_global_wires) > 0:
-    rv += " " + "-- Last stage of pipeline volatile global wires write to function volatile global regs\n"
-    for volatile_global_wire in Logic.volatile_global_wires:
-      rv += " " + "write_volatile_global_regs." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(volatile_global_wire, Logic) + ";\n"
+
+  # -- Last stage of pipeline volatile global wires write to function volatile global regs
+  rv += " " + "-- Drive volatiles from last state\n"
+  for state_reg in Logic.state_regs:
+    if Logic.state_regs[state_reg].is_volatile:
+      rv += " " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(state_reg, Logic) + ";\n"
+    
   rv += "\n"  
   rv += " " + "-- Drive registers and outputs\n"
   
@@ -1884,12 +1830,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
     
   if needs_self_regs:
     rv += " " + "registers.self <= write_self_regs;\n"
-  #   Globals
-  if len(Logic.global_wires) > 0:
-    rv += " " + "registers.global_regs <= write_global_regs;\n"
-  #   Volatile globals
-  if len(Logic.volatile_global_wires) > 0:
-    rv += " " + "registers.volatile_global_regs <= write_volatile_global_regs;\n"
+  #   State regs
+  if len(Logic.state_regs) > 0:
+    rv += " " + "registers.state_regs <= write_state_regs;\n"
     
   # Add wait statement if nothing in sensitivity list for simulation?
   if process_sens_list == "":
@@ -2123,9 +2066,10 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
         RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
     
     
-    
+  # State regs?
+  
   # GLOBAL?
-  elif driving_wire_to_handle in logic.global_wires:
+  elif driving_wire_to_handle in logic.state_regs and not logic.state_regs[driving_wire_to_handle].is_volatile:
     #print "DRIVING WIRE GLOBAL"            
     # Globals are special since can contain backwards logic, ex.
     #
@@ -2135,13 +2079,16 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
     #    start of func input wire -> end of func driving wire -> global_reg
     # Also could think about it sort of like of bidir port?
     # BLAH hope this is right. Vote for Bernie Sanders.
-    # To clarify whats going on, force use of read_global_regs
+    # To clarify whats going on, force use of read_state_regs
     #   This is correct to do for other special
     #   'only used as read' wires like inputs, but not required since those
     #   other wires dont have this same looping backwards behavior
-    RHS = "read_global_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
   
+    RHS = "read_state_regs." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+    
   # Volatile globals are like regular wires
+  #elif
+  
   else:
     # Otherwise use regular wire connection
     RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
@@ -2155,11 +2102,14 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
     LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
 
   # GLOBAL?
-  elif driven_wire_to_handle in logic.global_wires:
+  elif driven_wire_to_handle in logic.state_regs and not logic.state_regs[driven_wire_to_handle].is_volatile:
     #print "DRIVING WIRE GLOBAL"            
     # Use write side as expected, RHS is special case using read side
-    LHS = "write_global_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
+    LHS = "write_state_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
+  
   # Volatile globals are like regular wires
+  #elif
+  
   else:
     # Otherwise use regular wire connection
     LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
