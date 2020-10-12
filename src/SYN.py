@@ -2106,7 +2106,8 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
 
 # Return SWEEP STATE for DO_FINE_THROUGHPUT_SWEEP someday again...
 # Of Montreal - The Party's Crashing Us
-def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True): #, skip_fine_sweep=False):
+# Starting guess really only saves 1 extra syn run for dup multimain top
+def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True, do_incremental_guesses=True): #, skip_fine_sweep=False):
   # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
   # Dont even bother running multimain top as combinatorial logic
   main_func_to_coarse_latency = dict()
@@ -2157,14 +2158,14 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(main_func_to_coarse_latency[main_func])
       # Update slice step
       sweep_state.func_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(main_func_to_coarse_latency[main_func]+1))  
-      print(main_func,":",main_func_to_coarse_latency[main_func],"clocks latency, sliced as",best_guess_slices)
       # If making slices then make sure the slices dont go through global logic
       if len(best_guess_slices) > 0:
-        print(" ...rounding away from globals...")
+        #print(" ...rounding away from globals...")
         inst_name = main_func
         sweep_state.curr_main_func = main_func
         best_guess_slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(best_guess_slices, parser_state, sweep_state)
-        print(" ...rounded slices:", best_guess_slices)
+        #print(" ...rounded slices:", best_guess_slices)
+      print(main_func,":",main_func_to_coarse_latency[main_func],"clocks latency, sliced coarsely...")
       # Do slicing and writing VHDL
       sweep_state.multimain_timing_params.REBUILD_FROM_MAIN_SLICES(best_guess_slices, main_func, parser_state)
     
@@ -2210,25 +2211,56 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       # And make coarse adjustmant
       print("Making coarse adjustment and trying again...")
       made_adj = False
+      # Get timing report info
       # If only one main func then dont need to even read timing report
       # Blegh hacky for now?...
+      main_func_to_path_reports = dict()
       if len(parser_state.main_mhz) > 1:
         # Which main funcs show up in timing report?
-        main_funcs = set()
         for path_report in list(sweep_state.timing_report.path_reports.values()):
-          main_funcs = main_funcs.union( GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state) )
+          main_funcs = GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state)
+          for main_func in main_funcs:
+            if main_func not in main_func_to_path_reports:
+              main_func_to_path_reports[main_func] = []
+            main_func_to_path_reports[main_func].append(path_report)
       else:
-        main_funcs = set(parser_state.main_mhz.keys())
+        main_func_to_path_reports[list(parser_state.main_mhz.keys())[0]] = [list(sweep_state.timing_report.path_reports.values())[0]]
         
-      for main_func in main_funcs:
+      # Make adjustment for each main func
+      for main_func in main_func_to_path_reports:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+        main_func_path_reports = main_func_to_path_reports[main_func]
         if not main_func_logic.uses_nonvolatile_state_regs:
-          main_func_to_coarse_latency[main_func] = main_func_to_coarse_latency[main_func] + 1
-          made_adj = True
+          # DO incremental guesses based on time report results
+          if do_incremental_guesses:
+            # What max path delay is associated with this func?
+            max_path_delay = 0.0
+            for path_report in main_func_path_reports:
+              if path_report.path_delay_ns > max_path_delay:
+                max_path_delay = path_report.path_delay_ns
+            # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
+            total_delay = max_path_delay * (main_func_to_coarse_latency[main_func] + 1)
+            # How many slices for that delay to meet timing
+            target_mhz = parser_state.main_mhz[main_func]
+            fake_one_clk_mhz = 1000.0 / total_delay
+            mult = target_mhz / fake_one_clk_mhz
+            if mult > 1.0:
+              # Divide up into that many clocks
+              clks = int(mult) - 1
+              # If very close to goal suggestion might be same clocks, still increment
+              if main_func_to_coarse_latency[main_func] == clks:
+                clks += 1
+              main_func_to_coarse_latency[main_func] = clks
+              made_adj = True
+          else:
+            # No guess, dumb increment by 1
+            main_func_to_coarse_latency[main_func] += 1
+            made_adj = True
+          
           # Reset adjustments
           for stage in range(0, main_func_to_coarse_latency[main_func] + 1):
             sweep_state.func_sweep_state[main_func].stages_adjusted_this_latency[stage] = 0
-      
+              
       # Stuck?
       if not made_adj:
         print("Unable to make further adjustments. Failed to meet timing.")
@@ -2795,10 +2827,6 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
   return None 
   
 def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
-  # Parallelized
-  NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
-  my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
-  
   # Make sure synthesis tool is set
   PART_SET_TOOL(parser_state.part)
   
@@ -2925,6 +2953,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       print("Synthesizing function:",logic.func_name)
       
     # Start parallel syn for parallel_func_names
+    # Parallelized
+    NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
+    my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
     func_name_to_async_result = dict()
     for logic_func_name in parallel_func_names:
       # Get logic
