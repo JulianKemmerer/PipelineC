@@ -1704,7 +1704,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 
-def MAYBE_STATE_REG_INFO_TO_LOGIC(maybe_state_reg_var, parser_state):
+def MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(maybe_state_reg_var, parser_state):
   # Regular globals
   # If has same name as global and hasnt been declared as (local) variable already
   if (maybe_state_reg_var in parser_state.global_state_regs) and (maybe_state_reg_var not in parser_state.existing_logic.variable_names):
@@ -1747,7 +1747,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   
   #### GLOBALS \/
   # This is the first place we should see a global reference in terms of this function/logic
-  parser_state.existing_logic = MAYBE_STATE_REG_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
+  parser_state.existing_logic = MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(lhs_orig_var_name, parser_state)
   
   # Sanity check
   if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
@@ -3073,7 +3073,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   base_var_name = ref_toks[0]
   
   # This is the first place we could see a global reference in terms of this function/logic
-  parser_state.existing_logic = MAYBE_STATE_REG_INFO_TO_LOGIC(base_var_name, parser_state)
+  parser_state.existing_logic = MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(base_var_name, parser_state)
   
   # What type is this reference?
   c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state)
@@ -3652,92 +3652,46 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
   parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
        
   return parser_state.existing_logic
+ 
+def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, state_reg_var, c_type):
+  # Like a global variable 
+  state_reg_info = StateRegInfo()
+  state_reg_info.name = state_reg_var
+  state_reg_info.type_name = c_type
+  state_reg_info.init = c_ast_static_decl.init
+  state_reg_info.is_volatile = 'volatile' in c_ast_static_decl.quals
+  state_reg_info.is_static = True
   
-# Regular local array decal
-def C_AST_ARRAYDECL_TO_LOGIC(c_ast_array_decl, prepend_text, parser_state):
-  existing_logic = parser_state.existing_logic
-  # All we need is wire name right now
-  rv = Logic()
-  if not(existing_logic is None):
-    rv = existing_logic
-  
-  #c_ast_array_decl.show()
-  name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl)
-  #print "elem_type",elem_type
-  #print "dim",dim
-  
-  #casthelp(c_ast_array_decl.type.declname)
-  #print c_ast_array_decl.type.declname.children()
-  
-  
-  wire_name = name
-  #print "DECL", wire_name
-  
-  #sys.exit(-1)
-  #casthelp(c_ast_decl)
-  #casthelp(c_ast_decl.init)
-  #sys.exit(-1)
-  rv.wires.add(wire_name)
-  rv.wire_to_c_type[wire_name] = elem_type + "[" + str(dim) + "]"
-  ## Orig wire var here too
-  
-  # This is a variable declaration
-  rv.variable_names.add(wire_name)
-  #print "Append array", wire_name
-  
-  # If has init value then is also assignment
-  #if not(c_ast_array_decl.init is None):
-  # print "No array declarations with intialziations yet..."
-  # casthelp(c_ast_array_decl)
-  # sys.exit(-1)
-  
-  # Variable should have no assignments to it at time of declaration
-  # A repeated declaration is the same as clearing assignments
-  if wire_name in parser_state.existing_logic.wire_aliases_over_time:
-    parser_state.existing_logic.wire_aliases_over_time[wire_name] = []
+  # Copy info into existing_logic
+  parser_state.existing_logic.state_regs[state_reg_var] = state_reg_info 
+  # Record using non vol state
+  if not state_reg_info.is_volatile:
+    parser_state.existing_logic.uses_nonvolatile_state_regs = True
     
-  # Update parser state since merged in existing logic earlier
-  parser_state.existing_logic = rv
-  
-  return rv
-
+  return parser_state.existing_logic
+    
 def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   if type(c_ast_decl.type) == c_ast.ArrayDecl:
-    return C_AST_ARRAYDECL_TO_LOGIC(c_ast_decl.type, prepend_text, parser_state)
+    c_ast_array_decl = c_ast_decl.type
+    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl)
+    wire_name = name
+    c_type = elem_type + "[" + str(dim) + "]"
+    parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
   elif type(c_ast_decl.type) == c_ast.TypeDecl:
-    return C_AST_TYPEDECL_TO_LOGIC(c_ast_decl.type, prepend_text, parser_state, c_ast_decl)
+    c_ast_typedecl = c_ast_decl.type
+    wire_name = c_ast_decl.name
+    c_type = c_ast_typedecl.type.names[0]
+    parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
   else:
     print("C_AST_DECL_TO_LOGIC",c_ast_decl.type)
     sys.exit(-1)
   
-
-# Regular local variable declaration
-def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c_ast_decl):
-  existing_logic = parser_state.existing_logic
-  # Only encountered as variable decl right now
-  # All we need is wire name right now
-  rv = Logic()
-  if not(existing_logic is None):
-    rv = existing_logic
-  
-  # Dont use prepend text for decl since cant decl twice?
-  # TODO check this if it does work and I forget about it
-  #prepend_text+
-  wire_name = parent_c_ast_decl.name
-    
-  #casthelp(parent_c_ast_decl)
-  #casthelp(parent_c_ast_decl.init)
-  #sys.exit(-1)
-  c_type = c_ast_typedecl.type.names[0]
-  #print "c_type",c_type
-  #sys.exit(-1)
-  rv.wires.add(wire_name)
-  rv.wire_to_c_type[wire_name] = c_type
-  # Orig wire var here too
-  
   # This is a variable declaration
-  rv.variable_names.add(wire_name)
-  #print "APPEND2",wire_name
+  parser_state.existing_logic.wires.add(wire_name)
+  parser_state.existing_logic.variable_names.add(wire_name)
+  
+  if 'static' in c_ast_decl.storage:
+    return C_AST_STATIC_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state, wire_name, c_type)
   
   # Variable should have no assignments to it at time of declaration
   # A repeated declaration is the same as clearing assignments
@@ -3745,21 +3699,18 @@ def C_AST_TYPEDECL_TO_LOGIC(c_ast_typedecl, prepend_text, parser_state, parent_c
     parser_state.existing_logic.wire_aliases_over_time[wire_name] = []
   
   # If has init value then is also assignment
-  if not(parent_c_ast_decl.init is None):
+  if c_ast_decl.init is not None:
     # Dont support struct init here yet
-    if type(parent_c_ast_decl.init) == c_ast.InitList:
-      print(parent_c_ast_decl.init)
-      print("Dont support local variable struct init statement yet...", parent_c_ast_decl.init.coord)
+    if type(c_ast_decl.init) == c_ast.InitList:
+      #print(c_ast_decl.init)
+      print("Dont support local variable struct/array init statement yet...", c_ast_decl.init.coord)
       sys.exit(-1)
     
     #print parent_c_ast_decl.init
     lhs_ref_toks = (wire_name,)
-    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_typedecl, parent_c_ast_decl.init, parser_state, prepend_text, None)
-    
-  # Update parser state since merged in exsiting logic earlier
-  parser_state.existing_logic = rv
+    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
   
-  return rv
+  return parser_state.existing_logic
 
   
 def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
@@ -4010,7 +3961,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   #print "==== IF",file_coord_str,"======="
   for var_name in merge_var_names:    
     # Might be first place to see globals... is this getting out of hand?
-    parser_state.existing_logic = MAYBE_STATE_REG_INFO_TO_LOGIC(var_name, parser_state)
+    parser_state.existing_logic = MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(var_name, parser_state)
     
     #print "var_name",var_name
     # vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
@@ -4083,7 +4034,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     for ref_toks in all_ref_toks_set:
       # Might be first place to see globals... is this getting out of hand?
       var_name = ref_toks[0]      
-      parser_state.existing_logic = MAYBE_STATE_REG_INFO_TO_LOGIC(var_name, parser_state)
+      parser_state.existing_logic = MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(var_name, parser_state)
       
       # Get c type of ref
       c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_node, parser_state)
@@ -6209,7 +6160,7 @@ def PARSE_FILE(c_filename):
           continue
         func2_logic = parser_state.FuncLogicLookupTable[func_name2]
         for func1_state_reg in func1_logic.state_regs:
-          if func1_state_reg in func2_logic.state_regs:
+          if func1_state_reg in func2_logic.state_regs and func1_state_reg in parser_state.global_state_regs:
             print("Heyo can't use global state regs in more than one function!")
             print(func1_state_reg, "used in", func_name1, "and", func_name2)
             sys.exit(-1)
@@ -6230,10 +6181,9 @@ def PARSE_FILE(c_filename):
 # Global list of these in parser_state + lists per function in logic for locally delclared
 class StateRegInfo:
   def __init__(self):
-    #self.used_in_funcs=set() #todo?
     self.name = None
     self.type_name = None
-    self.init = None
+    self.init = None # c ast node
     self.is_volatile = False
     self.is_static = False
 
@@ -6246,16 +6196,7 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
     state_reg_info.name = str(global_decl.name)
     c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(global_decl)
     state_reg_info.type_name = c_type
-    
-    # Handle initialization
-    if global_decl.init is not None:
-      # Only handle simple one node constant init right now?
-      if type(global_decl.init) == c_ast.Constant:
-        state_reg_info.init = int(global_decl.init.value)
-      else:
-        print(global_decl.init)
-        print("Only simple integer constant initializations right now:",global_decl.coord)
-        sys.exit(-1)
+    state_reg_info.init = global_decl.init
         
     # Save flags
     if 'volatile' in global_decl.quals:

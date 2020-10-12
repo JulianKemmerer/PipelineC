@@ -15,9 +15,8 @@ uint4_t switches_input_regs[2]; // Good practice to double reg inputs
 void switches_module(uint4_t sw)
 {
   // Double register input signal - TODO macros
-  uint4_t sw_registered = switches_input_regs[1];
-  switches_input_regs[1] = switches_input_regs[0];
-  switches_input_regs[0] = sw;
+  uint4_t sw_registered;
+  CDC2(uint4_t, sw_cdc, sw_registered, sw)
   
   // Drive the output port with input
   WIRE_WRITE(uint4_t, switches, sw_registered) // switches = sw_registered

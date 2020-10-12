@@ -849,7 +849,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       #print "RAM GLOBAL:",global_name
       #print func_logic.func_name
       parser_state_copy.existing_logic = func_logic
-      func_logic = C_TO_LOGIC.MAYBE_STATE_REG_INFO_TO_LOGIC(global_name, parser_state_copy)
+      func_logic = C_TO_LOGIC.MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(global_name, parser_state_copy)
       FuncLogicLookupTable[func_name] = func_logic
       #print FuncLogicLookupTable[func_name].global_wires
         

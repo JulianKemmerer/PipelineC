@@ -1,3 +1,5 @@
+#include "cdc.h"
+
 #define UART_CLK_MHZ 25.0
 #define UART_CLKS_PER_SEC (UART_CLK_MHZ*1000000.0)
 #define SEC_PER_UART_CLK (1.0/UART_CLKS_PER_SEC)
@@ -26,13 +28,13 @@ uint1_t uart_data_out;
 
 // Delcare as top level module io and connect to internal wires
 MAIN_MHZ(uart_module,UART_CLK_MHZ)
-uint1_t uart_module_data_in_regs[2];
+
 uint1_t uart_module(uint1_t data_in)
 {
   // Double register async input signal
-  uint1_t data_in_registered = uart_module_data_in_regs[1];
-  uart_module_data_in_regs[1] = uart_module_data_in_regs[0];
-  uart_module_data_in_regs[0] = data_in;
+  uint1_t data_in_registered;
+  CDC2(uint1_t, in_cdc, data_in_registered, data_in)
+  
   // Connect to ports  
   WIRE_WRITE(uint1_t, uart_data_in, data_in_registered)
   uint1_t data_out;

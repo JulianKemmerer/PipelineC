@@ -5,6 +5,7 @@ import copy
 import math
 import math
 import hashlib
+from pycparser import c_ast
 
 import C_TO_LOGIC
 import SW_LIB
@@ -35,20 +36,25 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
     
-  if type(init) == int:
+  if type(init) == c_ast.Constant:
+    val = int(init.value)
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
     if WIRES_ARE_UINT_N([wire], logic) :
-      return "to_unsigned(" + str(init) + "," + str(width) + ")"
+      return "to_unsigned(" + str(val) + "," + str(width) + ")"
     elif WIRES_ARE_INT_N([wire], logic):
-      return "to_signed(" + str(init) + "," + str(width) + ")"
+      return "to_signed(" + str(val) + "," + str(width) + ")"
     else:
       print("What type of int blah?")
       sys.exit(-1)
-
-    return 
+      
   # If not use null
-  else:
+  elif init is None:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+  else:
+    print("Invalid initializer for state variable:", wire, "in func",logic.func_name)
+    print(init)
+    print("Only simple integers for now...")
+    sys.exit(-1)
     
 def CLK_MHZ_STR(mhz):
   return str(mhz).replace(".","p")
@@ -1816,7 +1822,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += "\n"
 
   # -- Last stage of pipeline volatile global wires write to function volatile global regs
-  rv += " " + "-- Drive volatiles from last state\n"
+  rv += " " + "-- Drive volatiles from last stage\n"
   for state_reg in Logic.state_regs:
     if Logic.state_regs[state_reg].is_volatile:
       rv += " " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(state_reg, Logic) + ";\n"
