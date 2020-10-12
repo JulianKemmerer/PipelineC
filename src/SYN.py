@@ -2136,6 +2136,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
   # until mhz goals met
   last_loop = False
   main_to_last_non_passing_latency = dict()
+  main_to_last_latency_increase = dict()
   while True:
     # Reset to zero clock
     sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
@@ -2202,12 +2203,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       #last_loop = True
       #for main_func in parser_state.main_mhz:
       # sweep_state.func_sweep_state[main_func].total_latency = main_to_last_non_passing_latency[main_func]
-    else:
-      # No save non passing latency
-      for main_func in parser_state.main_mhz:
-        # Save non passing latency
-        main_to_last_non_passing_latency[main_func] = main_func_to_coarse_latency[main_func]
-        
+    else: 
       # And make coarse adjustmant
       print("Making coarse adjustment and trying again...")
       made_adj = False
@@ -2250,11 +2246,24 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
               # If very close to goal suggestion might be same clocks, still increment
               if main_func_to_coarse_latency[main_func] == clks:
                 clks += 1
-              main_func_to_coarse_latency[main_func] = clks
+              # Calc diff in latency change, should be getting smaller
+              clk_inc = clks - main_func_to_coarse_latency[main_func]
               made_adj = True
+              if main_func in main_to_last_latency_increase and clk_inc >= main_to_last_latency_increase[main_func]:
+                # Clip to last inc size - 1, minus one to always be narrowing down
+                clk_inc = main_to_last_latency_increase[main_func] - 1
+                if clk_inc <= 0:
+                  clk_inc = 1
+                clks = main_func_to_coarse_latency[main_func] + clk_inc
+              main_to_last_non_passing_latency[main_func] = main_func_to_coarse_latency[main_func]
+              main_func_to_coarse_latency[main_func] = clks
+              main_to_last_latency_increase[main_func] = clk_inc
           else:
             # No guess, dumb increment by 1
+            # Save non passing latency
+            main_to_last_non_passing_latency[main_func] = main_func_to_coarse_latency[main_func]
             main_func_to_coarse_latency[main_func] += 1
+            main_to_last_latency_increase[main_func] = 1
             made_adj = True
           
           # Reset adjustments
