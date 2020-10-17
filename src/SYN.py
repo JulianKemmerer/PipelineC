@@ -2179,7 +2179,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       path_report = sweep_state.timing_report.path_reports[clock_group]
       curr_mhz = 1000.0 / path_report.path_delay_ns
       actual_mhz = 1000.0 / path_report.source_ns_per_clock
-      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz)
+      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz, "(", path_report.path_delay_ns, "ns)")
       if curr_mhz < actual_mhz:
         timing_met = False
       if curr_mhz < fmax:
@@ -2853,11 +2853,6 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
   print("Writing clock cross defintions as parsed from C code...")
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
-  
-  print("Writing pipeline map files for each function...")
-  for logic_func_name in parser_state.FuncLogicLookupTable:
-    logic = parser_state.FuncLogicLookupTable[logic_func_name]
-   
   
   print("Synthesizing as combinatorial logic to get total logic delay...")
   print("")

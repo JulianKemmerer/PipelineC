@@ -2114,12 +2114,26 @@ def C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepe
   # I think I am seeing the promise land 
   # of compiler optimizations and the beauty of pycparser again
   op = None
-  if c_ast_assignment.op == "^=":
+  if c_ast_assignment.op == "+=":
+    op="+"
+  elif c_ast_assignment.op == "-=":
+    op="-"
+  elif c_ast_assignment.op == "*=":
+    op="*"
+  elif c_ast_assignment.op == "/=":
+    op="/"
+  elif c_ast_assignment.op == "%=":
+    op="%"  
+  elif c_ast_assignment.op == "<<=":
+    op="<<"  
+  elif c_ast_assignment.op == ">>=":
+    op=">>"
+  elif c_ast_assignment.op == "&=":
+    op="&"
+  elif c_ast_assignment.op == "^=":
     op='^'
   elif c_ast_assignment.op == "|=":
     op="|"
-  elif c_ast_assignment.op == "+=":
-    op="+"
     
   if op is not None:
     fake_bin_op_rhs = c_ast.BinaryOp(op,left=c_ast_assignment.lvalue, right=c_ast_assignment.rvalue)
