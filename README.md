@@ -33,12 +33,12 @@ A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3
 
 _A hardware description languge centered around pipelining_
 
-* Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Elminate the practice of hand-pipelining logic = not portable (relies on operating frequency and part).
+* Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 * Compose complex portable designs consisting of multiple pipelines and controlling state machines.
-* Can start by cloning existing VHDL/Verilog designs as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
-* Familiar C function syntax that eliminates many of HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
+* Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
+* Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
 
-The fundamental design elements are state machine, pipelines, interconnects (wires,cdc,fifos,etc).
+The fundamental design elements are state machine, pipelines, and interconnects (wires,cdc,fifos,etc).
 
 By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs do not need to be rewritten for each new target device / operating frequency. The hope is to build shared, high performance, device agnostic, hardware designs described in a somewhat familiar C language look.
 
