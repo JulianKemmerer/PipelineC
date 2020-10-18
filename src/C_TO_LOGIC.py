@@ -6257,14 +6257,25 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     read_func_names.append(read_func_call.strip("(").strip())
   
   # Find pairs that are global or volatile global vars
+  all_var_names = set()
+  for func_name in (write_func_names+read_func_names):
+    if func_name.endswith("_WRITE"):
+      all_var_names.add(func_name.replace("_WRITE",""))
+    if func_name.endswith("_READ"):
+      all_var_names.add(func_name.replace("_READ",""))
   var_names = []
-  for write_func_name in write_func_names:
-    var_name = write_func_name.replace("_WRITE","")
-    read_func_name = var_name + "_READ"
-    if read_func_name in read_func_names:
-      if var_name in parser_state.global_state_regs:
-        var_names.append(var_name)
-        
+  for var_name in all_var_names:
+    if var_name in parser_state.global_state_regs:
+      read_func_name = var_name + "_READ"
+      write_func_name = var_name + "_WRITE"
+      if read_func_name not in read_func_names:
+        print("Missing clock cross read function:",read_func_name)
+        sys.exit(-1)
+      if write_func_name not in write_func_names:
+        print("Missing clock cross write function:",write_func_name)
+        sys.exit(-1)
+      var_names.append(var_name)       
+  
   # Find and read and write main funcs
   var_to_rw_funcs = dict()
   for var_name in var_names:

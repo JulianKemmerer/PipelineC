@@ -252,50 +252,57 @@ process(all) begin
     uart_data_in(0) <= uart_txd_in;
     uart_rxd_out <= uart_data_out(0);
     -- DDR3
-    --  app_addr <= std_logic_vector(app_to_mig.addr);    --              : in    std_logic_vector(27 downto 0);
-    --  app_cmd  <= std_logic_vector(app_to_mig.cmd);     --            : in    std_logic_vector(2 downto 0);
-    --  app_en  <= std_logic(app_to_mig.en(0));        --          : in    std_logic;
+    --  app_addr <= std_logic_vector(app_to_mig.addr);
+    --  app_cmd  <= std_logic_vector(app_to_mig.cmd);
+    --  app_en  <= std_logic(app_to_mig.en(0));
     --  for byte_i in 0 to app_wdf_mask'length-1 loop
 	--  	app_wdf_data(((byte_i+1)*8)-1 downto (byte_i*8)) <= std_logic_vector(app_to_mig.wdf_data(byte_i));
 	--  end loop;
-    --  app_wdf_end  <= std_logic(app_to_mig.wdf_end(0));     --        : in    std_logic;
+    --  app_wdf_end  <= std_logic(app_to_mig.wdf_end(0));
     --  for byte_i in 0 to app_wdf_mask'length-1 loop
 	--  	app_wdf_mask(byte_i) <= std_logic(app_to_mig.wdf_mask(byte_i)(0));
 	--  end loop;
-    --  app_wdf_wren <= std_logic(app_to_mig.wdf_wren(0));     --        : in    std_logic;
+    --  app_wdf_wren <= std_logic(app_to_mig.wdf_wren(0));
     --  for byte_i in 0 to app_wdf_mask'length-1 loop
     --      mig_to_app.rd_data(byte_i) <= unsigned(app_rd_data(((byte_i+1)*8)-1 downto (byte_i*8)));
 	--  end loop;
-    --  mig_to_app.rd_data_end(0) <= app_rd_data_end; --           : out   std_logic;
-    --  mig_to_app.rd_data_valid(0) <= app_rd_data_valid; --         : out   std_logic;
-    --  mig_to_app.rdy(0) <= app_rdy; --                   : out   std_logic;
-    --  mig_to_app.wdf_rdy(0) <= app_wdf_rdy; --               : out   std_logic;
-    --  app_sr_req   <= std_logic(app_to_mig.sr_req(0));   --          : in    std_logic;
-    --  app_ref_req  <= std_logic(app_to_mig.ref_req(0));   --          : in    std_logic;
-    --  app_zq_req   <= std_logic(app_to_mig.zq_req(0));    --         : in    std_logic;
-    --  mig_to_app.sr_active(0) <= app_sr_active;--             : out   std_logic;
-    --  mig_to_app.ref_ack(0) <= app_ref_ack; --               : out   std_logic;
-    --  mig_to_app.zq_ack(0)  <= app_zq_ack; --                : out   std_logic;
-    --  mig_to_app.ui_clk_sync_rst(0) <= ui_clk_sync_rst;--           : out   std_logic;
-    --  mig_to_app.init_calib_complete(0) <= init_calib_complete; --       : out   std_logic;
+    --  mig_to_app.rd_data_end(0) <= app_rd_data_end; 
+    --  mig_to_app.rd_data_valid(0) <= app_rd_data_valid;
+    --  mig_to_app.rdy(0) <= app_rdy;
+    --  mig_to_app.wdf_rdy(0) <= app_wdf_rdy;
+    --  app_sr_req   <= std_logic(app_to_mig.sr_req(0));
+    --  app_ref_req  <= std_logic(app_to_mig.ref_req(0));
+    --  app_zq_req   <= std_logic(app_to_mig.zq_req(0));
+    --  mig_to_app.sr_active(0) <= app_sr_active;
+    --  mig_to_app.ref_ack(0) <= app_ref_ack;
+    --  mig_to_app.zq_ack(0)  <= app_zq_ack;
+    --  mig_to_app.ui_clk_sync_rst(0) <= ui_clk_sync_rst;
+    --  mig_to_app.init_calib_complete(0) <= init_calib_complete;
 end process;
     
 -- The PipelineC generated entity
 top_inst : entity work.top port map (
     -- Main function clocks
     clk_25p0 => clk_25,
-    --clk_100p0 => clk_100,
+    clk_100p0 => clk_100,
     -- Each main funciton's inputs and output
     -- LEDs
-    leds_module_return_output => leds_wire,
+    led0_module_return_output(0) => leds_wire(0),
+    led1_module_return_output(0) => leds_wire(1),
+    led2_module_return_output(0) => leds_wire(2),
+    led3_module_return_output(0) => leds_wire(3),
     -- Switches
     --switches_module_sw => switches_wire
     -- UART
-    uart_module_data_in => uart_data_in,
-    uart_module_return_output => uart_data_out
+    --uart_module_data_in => uart_data_in,
+    --uart_module_return_output => uart_data_out
     -- DDR3
     --  xil_mig_module_mig_to_app => mig_to_app,
     --  xil_mig_module_return_output => app_to_mig
+    
+    -- Clock cross test
+    fast_reset(0) => rst,
+    slow_reset(0) => rst
 );
 
 end arch;
