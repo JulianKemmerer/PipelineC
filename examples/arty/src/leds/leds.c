@@ -3,7 +3,7 @@
 #include "uintN_t.h"
 
 // Individual four leds 0-3
-#include "leds0_3.c"
+#include "led0_3.c"
 
 // Globally visible port/wire name
 uint4_t leds; 
@@ -13,8 +13,8 @@ uint4_t leds;
 
 // Declares leds_module as a module with top level ports, no set clock frequency
 // Return value is wire out to LEDs
-#pragma MAIN leds
-leds()
+#pragma MAIN leds_module
+void leds_module()
 {
   // Read uint4 port wire
   uint4_t leds_wire;

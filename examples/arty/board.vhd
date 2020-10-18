@@ -284,7 +284,10 @@ end process;
 top_inst : entity work.top port map (
     -- Main function clocks
     clk_25p0 => clk_25,
-    clk_100p0 => clk_100,
+    --clk_50p0 => clk_50,
+    --clk_100p0 => clk_100,
+    --clk_200p0 => clk_200,
+    --clk_400p0 => clk_400,    
     -- Each main funciton's inputs and output
     -- LEDs
     led0_module_return_output(0) => leds_wire(0),
@@ -294,15 +297,11 @@ top_inst : entity work.top port map (
     -- Switches
     --switches_module_sw => switches_wire
     -- UART
-    --uart_module_data_in => uart_data_in,
-    --uart_module_return_output => uart_data_out
+    uart_module_data_in => uart_data_in,
+    uart_module_return_output => uart_data_out
     -- DDR3
     --  xil_mig_module_mig_to_app => mig_to_app,
     --  xil_mig_module_return_output => app_to_mig
-    
-    -- Clock cross test
-    fast_reset(0) => rst,
-    slow_reset(0) => rst
 );
 
 end arch;
