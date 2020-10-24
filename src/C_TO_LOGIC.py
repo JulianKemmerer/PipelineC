@@ -5913,6 +5913,8 @@ def WRITE_PARSER_STATE_CACHE(parser_state, c_filename):
     
   # Write file
   filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
+  if not os.path.exists(os.path.dirname(filepath)):
+    os.makedirs(os.path.dirname(filepath)) 
   with open(filepath, 'wb') as output:
     pickle.dump(parser_state, output, pickle.HIGHEST_PROTOCOL)
 

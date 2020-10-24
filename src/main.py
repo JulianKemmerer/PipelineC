@@ -8,9 +8,6 @@ import C_TO_LOGIC
 import SYN
 import MODELSIM
 
-# All code must be in single main.c for now
-c_file = "main.c"
-
 print('''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
 ██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
@@ -24,7 +21,6 @@ print("TODO:")
 print(" Test int ratio clk cross in hw, do clock crossing for non-integer ratio + async clock crossings")
 print(" Make a chipscope+virtual io debug thing, w/ pass through regular streaming uart io?")
 print(" ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc")
-print(" Allow file other than main.c w/ command line - 'pipelinec' should be easy...")
 print(" Rust AST? rustc -Z ast-json, traverse the json?")
 print(" Document pragmas and make main mhz allow pointing at existing func name instead of float")
 print(" Reorg global logic detection/rounding from bottom up instead of trying multiple times to slice from top down.")
@@ -75,8 +71,13 @@ print(" Add Quartus fine grain sweep support and better generated final files")
 print(" Progate constants through constant bit manip, ex. uint32_uint1_31")
 print(" Redo old code to use for loops instead of generated code (ex. float div)")
 print(" Document fundamental time v.s space trade off (sum example?)")
+print(" Better command line name? - 'pipelinec'? ...")
 
 print("================== Parsing C Code to Logical Hierarchy ================================")
+c_file = "main.c"
+if len(sys.argv) == 2:
+  # Assume first and only arg is c_file
+  c_file = sys.argv[1]
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
 print("================== Adding Timing Information from Synthesis Tool ================================")
