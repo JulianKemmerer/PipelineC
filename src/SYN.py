@@ -3090,9 +3090,9 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
   if inst_name:
     # Does inst need clk cross?
     Logic = parser_state.LogicInstLookupTable[inst_name]
-    needs_clk_cross_read = VHDL.LOGIC_NEEDS_CLOCK_CROSS_READ(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_write = VHDL.LOGIC_NEEDS_CLOCK_CROSS_WRITE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_t = needs_clk_cross_read or needs_clk_cross_write
+    needs_clk_cross_to_module = VHDL.LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_module_to_clk_cross = VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_clk_cross_t = needs_clk_cross_to_module or needs_module_to_clk_cross
   if needs_clk_cross_t:
     # Clock crossing record
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL.VHDL_PKG_EXT + " "

@@ -36,33 +36,68 @@ def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_
   
 def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state): 
   # Write two funcs in a header for each var
-  for var_name in parser_state.clk_cross_var_name_to_write_read_sizes:
-    write_size,read_size = parser_state.clk_cross_var_name_to_write_read_sizes[var_name]
+  for var_name in parser_state.clk_cross_var_info:
+    write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
+    write_func_name, read_func_name = parser_state.clk_cross_var_info[var_name].write_read_funcs
+    flow_control = parser_state.clk_cross_var_info[var_name].flow_control
     ratio = 0
     if write_size > read_size:
       ratio = write_size/read_size
     else:
       ratio = read_size/write_size
     ratio = int(ratio)
-    
-    c_type = None
-    if var_name in parser_state.global_state_regs:
-      c_type = parser_state.global_state_regs[var_name].type_name
-    write_in_t = c_type + "_array_" + str(write_size) + "_t"
-    read_out_t = c_type + "_array_" + str(read_size) + "_t"
-    
     text = "#pragma once\n"
-    text += '#include "' + c_type + '_array_N_t.h"\n'
+    text += '#include "uintN_t.h"\n'
     text += '#define ' + var_name + "_RATIO " + str(ratio) + "\n"
-    text += '#define ' + var_name + "_write_t " + write_in_t + "\n"
-    text += '#define ' + var_name + "_read_t " + read_out_t + "\n"
+    
+    if flow_control:
+      # Flow control
+      c_type = parser_state.global_state_regs[var_name].type_name
+      # Needs to be a 1 dim array for now
+      elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      if len(dims) > 1:
+        print("Only single dim in flow control crossing!", var_name)
+        sys.exit(0)
+      fifo_depth = dims[0]
+      c_type = elem_t
+      write_in_t = c_type + "[" + str(write_size) + "]"
+      read_out_t = c_type + "[" + str(read_size) + "]"
+         
+      # Define read and write structs
+      write_out_t = var_name + "_write_t"
+      text += '''typedef struct ''' + write_out_t + '''
+{
+'''
+      text += "uint1_t ready;\n"
+      text += "}" + write_out_t + ''';
+'''     
+      read_out_t = var_name + "_read_t"
+      text += '''typedef struct ''' + read_out_t + '''
+{
+'''
+      text += c_type + " data[" + str(read_size) + "]" + ";\n"
+      text += "uint1_t valid;\n"
+      text += "}" + read_out_t + ''';
+'''
+    else:
+      # No flow control, arrays
+      c_type = None
+      if var_name in parser_state.global_state_regs:
+        c_type = parser_state.global_state_regs[var_name].type_name
+      write_out_t = "void"
+      write_in_t = c_type + "_array_" + str(write_size) + "_t"
+      read_out_t = c_type + "_array_" + str(read_size) + "_t"
+      text += '#include "' + c_type + '_array_N_t.h"\n'
+      text += '#define ' + var_name + "_write_t " + write_in_t + "\n"
+      text += '#define ' + var_name + "_read_t " + read_out_t + "\n"
     
     text += '''
 // Clock cross write
 '''
-    write_out_t = "void"
-    
-    text += write_out_t + ''' ''' + var_name + "_WRITE(" + write_in_t + " in_data)"
+    if flow_control:
+      text += write_out_t + ''' ''' + write_func_name + "(" + c_type + " write_data[" + str(write_size) + "], uint1_t write_enable)"
+    else:
+      text += write_out_t + ''' ''' + write_func_name + "(" + write_in_t + " in_data)"
     text += '''
 {
   // TODO
@@ -73,8 +108,11 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
 // Clock cross read
 '''
     
-    read_in_t = "void"
-    text += read_out_t + ''' ''' + var_name + "_READ()"
+    if flow_control:
+      text += read_out_t + ''' ''' + read_func_name + "(uint1_t read_enable)"
+    else:
+      read_in_t = "void"
+      text += read_out_t + ''' ''' + read_func_name + "()"
     text += '''
 {
   // TODO

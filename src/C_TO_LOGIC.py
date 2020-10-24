@@ -1719,7 +1719,7 @@ def MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(maybe_state_reg_var, parser_state):
     
   # Sanity check not using clock cross globals?
   # TODO: for other things like brams declared but not directly used?
-  if maybe_state_reg_var in parser_state.clk_cross_var_name_to_write_read_main_funcs:
+  if maybe_state_reg_var in parser_state.clk_cross_var_info:
     print("Looks like you are using a clock crossing variable '", maybe_state_reg_var, "' directly instead of with READ and WRITE functions?")
     sys.exit(-1) 
 
@@ -5862,9 +5862,7 @@ class ParserState:
     self.part = None
     
     # Clock crossing info
-    # Clock crossing read/write func to clock cross var name
-    self.clk_cross_var_name_to_write_read_main_funcs = dict() # dict[var_name]= (write_main_func, read_main_func)
-    self.clk_cross_var_name_to_write_read_sizes = dict() # dict[var_name] = (write size,read size)
+    self.clk_cross_var_info = dict() # var name -> clk cross var info
 
   def DEEPCOPY(self):
     # Fuck me how many times will I get caught with objects getting copied incorrectly?
@@ -5895,8 +5893,8 @@ class ParserState:
     
     rv.main_mhz = dict(self.main_mhz)
     rv.func_marked_wires = set(self.func_marked_wires)
-    rv.clk_cross_var_name_to_write_read_main_funcs = dict(self.clk_cross_var_name_to_write_read_main_funcs)
-    rv.clk_cross_var_name_to_write_read_sizes = dict(self.clk_cross_var_name_to_write_read_sizes)
+    
+    self.clk_cross_var_info = dict(self.clk_cross_var_info)
     
     return rv
     
@@ -6243,45 +6241,65 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
         parser_state.struct_to_field_type_dict[c_type] = field_type_dict
         
   return parser_state
+  
+  
+class ClkCrossVarInfo():
+  def __init__(self):
+    self.write_read_main_funcs = (None,None)
+    self.write_read_sizes = (None,None)
+    self.write_read_funcs = (None,None)
+    self.flow_control = False
         
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state): 
   # Regex search c_text for pair of write and read funcs
+  write_func_calls = []
   r="\w+" + "_WRITE" + "\s?\("
-  write_func_calls = SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+  write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+  r="\w+" + "_WRITE_[0-9]+" + "\s?\("
+  write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
   write_func_names = []
   for write_func_call in write_func_calls:
     write_func_names.append(write_func_call.strip("(").strip())
+  read_func_calls = []
   r="\w+" + "_READ" + "\s?\("
-  read_func_calls = SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+  read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+  r="\w+" + "_READ_[0-9]+" + "\s?\("
+  read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
   read_func_names = []
   for read_func_call in read_func_calls:
     read_func_names.append(read_func_call.strip("(").strip())
   
   # Find pairs that are global or volatile global vars
+  var_to_read_func = dict()
+  var_to_write_func = dict()
   all_var_names = set()
   for func_name in (write_func_names+read_func_names):
-    if func_name.endswith("_WRITE"):
-      all_var_names.add(func_name.replace("_WRITE",""))
-    if func_name.endswith("_READ"):
-      all_var_names.add(func_name.replace("_READ",""))
+    if "_WRITE" in func_name:
+      var_name = func_name.split("_WRITE")[0]
+      all_var_names.add(var_name)
+      var_to_write_func[var_name] = func_name
+    if "_READ" in func_name:
+      var_name = func_name.split("_READ")[0]
+      all_var_names.add(var_name)
+      var_to_read_func[var_name] = func_name
   var_names = []
   for var_name in all_var_names:
     if var_name in parser_state.global_state_regs:
-      read_func_name = var_name + "_READ"
-      write_func_name = var_name + "_WRITE"
-      if read_func_name not in read_func_names:
-        print("Missing clock cross read function:",read_func_name)
+      if var_name not in var_to_read_func:
+        print("Missing clock cross read function for clock crossing named:",var_name)
         sys.exit(-1)
-      if write_func_name not in write_func_names:
-        print("Missing clock cross write function:",write_func_name)
-        sys.exit(-1)
-      var_names.append(var_name)       
+      if var_name not in var_to_write_func:
+        print("Missing clock cross write function for clock crossing named:",var_name)
+        sys.exit(-1) 
+      read_func_name = var_to_read_func[var_name]
+      write_func_name = var_to_write_func[var_name]
+      var_names.append(var_name)      
   
   # Find and read and write main funcs
-  var_to_rw_funcs = dict()
+  var_to_rw_main_funcs = dict()
   for var_name in var_names:
-    read_func_name = var_name + "_READ"
-    write_func_name = var_name + "_WRITE"
+    read_func_name = var_to_read_func[var_name]
+    write_func_name = var_to_write_func[var_name]
     read_containing_func = None
     write_containing_func = None
     # Search for container
@@ -6313,15 +6331,15 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
      
-    var_to_rw_funcs[var_name] = (read_main_func,write_main_func)
+    var_to_rw_main_funcs[var_name] = (read_main_func,write_main_func)
     
     
   # Do infer loop slow thing for now
   inferring = True
   while inferring:
     inferring = False
-    for var_name in var_to_rw_funcs:
-      read_main_func,write_main_func = var_to_rw_funcs[var_name]
+    for var_name in var_to_rw_main_funcs:
+      read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
       read_mhz = parser_state.main_mhz[read_main_func]
       write_mhz = parser_state.main_mhz[write_main_func]
       # Infer freqs to match if possible
@@ -6336,8 +6354,8 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         parser_state.main_mhz[write_main_func] = write_mhz
         inferring = True
     
-  for var_name in var_to_rw_funcs:
-    read_main_func,write_main_func = var_to_rw_funcs[var_name]
+  for var_name in var_to_rw_main_funcs:
+    read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
     read_mhz = parser_state.main_mhz[read_main_func]
     write_mhz = parser_state.main_mhz[write_main_func]
     if read_mhz is None and write_mhz is None:
@@ -6345,34 +6363,48 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
     
-    ratio = 0
-    write_size = 0
-    read_size = 0
-    if write_mhz > read_mhz:
-      # Write side is faster
-      ratio = int(math.ceil(write_mhz/read_mhz))
-      write_size = 1
-      read_size = ratio
+    # Async fifo with flow control uses sized READ and WRITE
+    flow_control = False
+    read_func_name = var_to_read_func[var_name]
+    write_func_name = var_to_write_func[var_name]
+    if not read_func_name.endswith("_READ") or not write_func_name.endswith("_WRITE"):
+      # Async sized read and write
+      read_size = int(read_func_name.split("_READ_")[1])
+      write_size = int(write_func_name.split("_WRITE_")[1])
+      flow_control = True
     else:
-      # Read side is faster
-      ratio = int(math.ceil(read_mhz/write_mhz))
-      read_size = 1
-      write_size = ratio
-      
-    # Check that non volatile crosses are identical freq
-    if var_name in parser_state.global_state_regs and not parser_state.global_state_regs[var_name].is_volatile:
-      if ratio != 1.0:
-        print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_main_func,"to",read_main_func,write_mhz,"MHz ->", read_mhz, "MHz")
-        sys.exit(-1)
+      # Sync or async not user sized read and write
+      ratio = 0
+      write_size = 0
+      read_size = 0
+      if write_mhz > read_mhz:
+        # Write side is faster
+        ratio = int(math.ceil(write_mhz/read_mhz))
+        write_size = 1
+        read_size = ratio
+      else:
+        # Read side is faster
+        ratio = int(math.ceil(read_mhz/write_mhz))
+        read_size = 1
+        write_size = ratio
+        
+      # Check that non volatile crosses are identical freq
+      if var_name in parser_state.global_state_regs and not parser_state.global_state_regs[var_name].is_volatile:
+        if ratio != 1.0:
+          print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_func_name,"(",write_main_func,")","to",read_func_name,"(",read_main_func,")",write_mhz,"MHz ->", read_mhz, "MHz")
+          sys.exit(-1)
     
     # Record
-    parser_state.clk_cross_var_name_to_write_read_main_funcs[var_name] = (write_main_func,read_main_func)
-    parser_state.clk_cross_var_name_to_write_read_sizes[var_name] = (write_size, read_size)
+    parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()
+    parser_state.clk_cross_var_info[var_name].flow_control = flow_control
+    parser_state.clk_cross_var_info[var_name].write_read_funcs = (write_func_name,read_func_name)
+    parser_state.clk_cross_var_info[var_name].write_read_main_funcs = (write_main_func,read_main_func)
+    parser_state.clk_cross_var_info[var_name].write_read_sizes = (write_size, read_size)
   
 
   '''
   # Loop over all funcs and get instances 
-  clk_cross_readst_containing_inst_set = set()
+  clk_cross_to_modulest_containing_inst_set = set()
   for func_name in parser_state.FuncLogicLookupTable:
     logic = parser_state.FuncLogicLookupTable[func_name]
     if not SW_LIB.IS_CLOCK_CROSSING(logic):
@@ -6394,7 +6426,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       print "More than one continer func instance for clock crossing instance?", func_name, insts
       sys.exit(-1)
     containing_inst = list(containing_insts)[0]
-    clk_cross_readst_containing_inst_set.add((inst_name,containing_inst))
+    clk_cross_to_modulest_containing_inst_set.add((inst_name,containing_inst))
     '''   
 
   return parser_state
