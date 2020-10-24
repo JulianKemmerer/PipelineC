@@ -1,6 +1,7 @@
 #pragma once
 #include "wire.h"
 #include "uintN_t.h"
+#include "cdc.h"
 
 // Globally visible port/wire name
 uint4_t switches; 
