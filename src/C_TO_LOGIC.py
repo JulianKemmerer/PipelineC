@@ -6550,8 +6550,8 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
   if func_name in parser_state.main_mhz:
     # Main never gets prepend text
     if containing_logic_inst_name != "":
-      print("Wtf main never has container?",containing_logic_inst_name)
-      sys.exit(-1) 
+      print("Woah there, are you calling a top level main funciton from within another funciton!?",func_name,containing_logic_inst_name)
+      sys.exit(-1)
     # Override
     new_inst_name_prepend_text = ""
   
