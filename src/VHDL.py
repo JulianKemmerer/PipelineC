@@ -654,8 +654,8 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
       if SYN.SYN_TOOL is not VIVADO:
         print("Async fifos are only implemented for Xilinx parts, TODO!", var_name)
         sys.exit(-1)
-      if write_size != 1 or read_size != 1:
-        print("Only read and write sizes of 1 element for async fifos for now, TODO!", var_name)
+      if write_size != read_size:
+        print("Only equal read and write sizes for async fifos for now, TODO!", var_name)
         sys.exit(-1) 
  
     if not flow_control:
@@ -680,9 +680,6 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
       out_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(out_t, parser_state)
     else:
       # With flow control
-      if write_size != 1 or read_size != 1:
-        print("TODO: Other flow control async wr rd sizes!",var_name)
-        sys.exit(0)
       array_type = parser_state.global_state_regs[var_name].type_name
       c_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
       if len(dims) > 1:
