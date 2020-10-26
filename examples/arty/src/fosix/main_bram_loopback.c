@@ -7,7 +7,6 @@
  * $ head -c 16384 < /dev/urandom > /tmp/in
 */
 #include "compiler.h"
-#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
 
 #include "fosix.c" // FPGA POSIX?
 

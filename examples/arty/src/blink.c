@@ -1,6 +1,6 @@
 // 'App' that use the switches to control LED blink rate
-#include "wire.h"
-#include "uintN_t.h"
+#include "wire.h"     // Macros for reading/writing global wires
+#include "uintN_t.h"  // uintN_t types for any N
 
 // Board IO's have their own modules (top level ports done for you)
 // that expose virtual, globally visible, ports/signals
@@ -10,7 +10,6 @@
 // Each main function is a clock domain
 // Only one clock in the design for now
 #pragma MAIN_MHZ app 100.0
-#pragma PART "xc7a35ticsg324-1l" // Arty
 
 // Blinking means turn on LED for some amount of time, and then turn off
 // How much time?

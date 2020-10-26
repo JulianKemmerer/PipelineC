@@ -2,7 +2,6 @@
 // Only one clock in the design for now 'sys_clk' @ 100MHz
 #define SYS_CLK_MHZ 100.0
 #pragma MAIN_MHZ sys_clk_main 100.0
-#pragma PART "xc7a35ticsg324-1l" // xc7a35ticsg324-1l = Arty, xcvu9p-flgb2104-2-i = AWS F1
 
 // Logic to receive and transmit uart messages
 #include "../uart/uart_msg.c"
