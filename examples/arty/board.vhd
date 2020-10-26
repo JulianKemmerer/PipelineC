@@ -58,9 +58,11 @@ port
 end component;
 
 -- DDR clocks based off of the board's CLK100MHZ
-signal ddr_sys_clk : std_logic;
+signal ddr_sys_clk : std_logic; -- 166.66MHz 
+signal clk_166p66 : std_logic;
 signal ddr_clks_ready: std_logic;
 signal ddr_sys_rst_n : std_logic;
+signal ddr_sys_rst : std_logic;
 component ddr_clks_sys_clk_100
 port
  (
@@ -92,7 +94,8 @@ signal app_zq_req                :     std_logic;
 signal app_sr_active             :    std_logic;
 signal app_ref_ack               :    std_logic;
 signal app_zq_ack                :    std_logic;
-signal ui_clk                    :    std_logic;
+signal ui_clk                    :    std_logic; -- 83.33MHz 
+signal clk_83p33                 :    std_logic;
 signal ui_clk_sync_rst           :    std_logic;
 signal init_calib_complete       :    std_logic;
 component ddr3_0
@@ -184,12 +187,14 @@ rst <= not clks_ready;
 -- DDR clocks based off of the board's CLK100MHZ 
 ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
    port map ( 
-   ddr_sys_clk => ddr_sys_clk,
+   ddr_sys_clk => ddr_sys_clk, -- 166.66MHz 
    locked => ddr_clks_ready,
    sys_clk_100 => sys_clk_100
  );
+clk_166p66 <= ddr_sys_clk;
 -- Hold in reset until clocks are ready
-ddr_sys_rst_n <= '0' when (rst or not ddr_clks_ready) else '1';
+ddr_sys_rst <= rst or not ddr_clks_ready;
+ddr_sys_rst_n <= not ddr_sys_rst;
  
 -- The board's DDR3 controller
 --  ddr3_0_inst : ddr3_0
@@ -229,16 +234,16 @@ ddr_sys_rst_n <= '0' when (rst or not ddr_clks_ready) else '1';
 --         app_sr_active                  => app_sr_active,
 --         app_ref_ack                    => app_ref_ack,
 --         app_zq_ack                     => app_zq_ack,
---         ui_clk                         => ui_clk,
+--         ui_clk                         => ui_clk, -- 83.33MHz
 --         ui_clk_sync_rst                => ui_clk_sync_rst,
 --         app_wdf_mask                   => app_wdf_mask,
 --         -- System Clock Ports
---         sys_clk_i                      => ddr_sys_clk,
+--         sys_clk_i                      => ddr_sys_clk, -- 166.66MHz 
 --         -- Reference Clock Ports
 --         clk_ref_i                      => clk_200, -- Ref always 200MHz
 --         sys_rst                        => ddr_sys_rst_n -- ACTIVE LOW - PORT NAME IS INCORRECT
 --      );
-
+-- clk_83p33 <= ui_clk;
 
 -- Un/pack IO struct types to/from flattened SLV board pins
 -- TODO Code gen this...
@@ -285,23 +290,34 @@ top_inst : entity work.top port map (
     -- Main function clocks
     clk_25p0 => clk_25,
     --clk_50p0 => clk_50,
+    --clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
+    clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
-    --clk_400p0 => clk_400,    
+    --clk_400p0 => clk_400,
+        
     -- Each main funciton's inputs and output
+    
     -- LEDs
     led0_module_return_output(0) => leds_wire(0),
     led1_module_return_output(0) => leds_wire(1),
     led2_module_return_output(0) => leds_wire(2),
     led3_module_return_output(0) => leds_wire(3),
+    
     -- Switches
     --switches_module_sw => switches_wire
+    
     -- UART
-    uart_module_data_in => uart_data_in,
-    uart_module_return_output => uart_data_out
+    --uart_module_data_in => uart_data_in,
+    --uart_module_return_output => uart_data_out
+    
     -- DDR3
     --  xil_mig_module_mig_to_app => mig_to_app,
     --  xil_mig_module_return_output => app_to_mig
+    
+    -- Add other design IO signals here
+    slow_reset(0) => rst,
+    fast_reset(0) => ddr_sys_rst
 );
 
 end arch;

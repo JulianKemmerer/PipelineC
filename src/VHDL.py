@@ -526,7 +526,7 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
     
   return int(c_type_str.replace("uint","").replace("int","").replace("_t",""))
   
-def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str):
+def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
   if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
     return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
   elif c_type_str == "float":
@@ -537,9 +537,11 @@ def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str):
     bits = int(math.ceil(math.log(num_ids,2)))
     return bits 
   else:
-    print("Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str)
-    print(0/0)
-    sys.exit(-1)   
+    if not allow_fail:
+      print("Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str)
+      print(0/0)
+      sys.exit(-1)
+    return None
   
   
 def C_TYPE_IS_UINT_N(type_str):
@@ -647,6 +649,15 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
     write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
  
+    # TODO OTHER SIZES
+    if flow_control:
+      if SYN.SYN_TOOL is not VIVADO:
+        print("Async fifos are only implemented for Xilinx parts, TODO!", var_name)
+        sys.exit(-1)
+      if write_size != 1 or read_size != 1:
+        print("Only read and write sizes of 1 element for async fifos for now, TODO!", var_name)
+        sys.exit(-1) 
+ 
     if not flow_control:
       if write_size >= read_size:
         clk_ratio = write_size / read_size
@@ -669,8 +680,18 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
       out_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(out_t, parser_state)
     else:
       # With flow control
+      if write_size != 1 or read_size != 1:
+        print("TODO: Other flow control async wr rd sizes!",var_name)
+        sys.exit(0)
       array_type = parser_state.global_state_regs[var_name].type_name
       c_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+      if len(dims) > 1:
+        print("More than 1 dim for async flow control!?",var_name)
+        sys.exit(-1)
+      depth = dims[0]
+      if depth < 16:
+        depth = 16
+        print("WARNING:",var_name,"async fifo depth increased to minimum allowed =", depth)
       in_t = c_type + "[" + str(write_size) + "]"
       in_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(in_t, parser_state)
       out_t = c_type + "[" + str(read_size) + "]"
@@ -681,6 +702,12 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use ieee.numeric_std.all;
 use work.c_structs_pkg.all; -- User types
+'''
+    
+    if flow_control:
+      text += '''
+library xpm;
+use xpm.vcomponents.all;
 '''
     
     text += '''
@@ -723,10 +750,16 @@ use work.c_structs_pkg.all; -- User types
       '''
       
     if flow_control:
-      #TODO signals for xpm hookup
-      #? skip and move on, come back
       text += '''
-      signal xpm_signals : std_logic;
+      signal full : std_logic;
+      signal wr_rst_busy : std_logic;
+      signal rd_rst_busy : std_logic;
+      signal ready : std_logic;
+      signal valid : std_logic;
+      signal fifo_rd_enable : std_logic;
+      signal fifo_wr_en : std_logic;
+      signal din_slv : std_logic_vector((''' + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(in_t,parser_state) + ''')-1 downto 0);
+      signal dout_slv : std_logic_vector((''' + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(out_t,parser_state) + ''')-1 downto 0);
       '''      
     # Need some regs
     elif write_size != read_size:
@@ -763,11 +796,133 @@ use work.c_structs_pkg.all; -- User types
     text+='''
     begin
     '''
+    
+    to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(in_vhdl_t)
+    from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(out_vhdl_t)
 
     # Flow control is async fifo
     if flow_control:
       text += '''
-      -- TODO XPM PROCESS
+      
+fifo_wr_en <= wr_en(0) and not wr_rst_busy;
+wr_out.ready(0) <= not full and not wr_rst_busy;
+din_slv <= ''' + to_slv_toks[0] + '''wr_data''' + to_slv_toks[1] + ''';
+
+fifo_rd_enable <= rd_enable(0) and not rd_rst_busy;
+rd_out.valid(0) <= valid and not rd_rst_busy;
+rd_out.data <= ''' + from_slv_toks[0] + '''dout_slv''' + from_slv_toks[1] + ''';
+      
+-- xpm_fifo_async: Asynchronous FIFO
+-- Xilinx Parameterized Macro, version 2019.1
+xpm_fifo_async_inst : xpm_fifo_async
+generic map (
+  CDC_SYNC_STAGES => 2, -- DECIMAL
+  DOUT_RESET_VALUE => "0", -- String
+  ECC_MODE => "no_ecc", -- String
+  FIFO_MEMORY_TYPE => "auto", -- String
+  FIFO_READ_LATENCY => 0, -- DECIMAL
+  FIFO_WRITE_DEPTH => ''' + str(depth) + ''', -- DECIMAL
+  FULL_RESET_VALUE => 0, -- DECIMAL
+  PROG_EMPTY_THRESH => 10, -- DECIMAL
+  PROG_FULL_THRESH => 10, -- DECIMAL
+  RD_DATA_COUNT_WIDTH => 1, -- DECIMAL
+  READ_DATA_WIDTH => ''' + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(out_t, parser_state) + ''', -- DECIMAL , READ_DATA_WIDTH should be equal to
+                   -- WRITE_DATA_WIDTH if FIFO_MEMORY_TYPE is set to "auto"
+  READ_MODE => "fwft", -- String
+  RELATED_CLOCKS => 0, -- DECIMAL
+  SIM_ASSERT_CHK => 0, -- DECIMAL; 0=disable simulation messages, 1=enable simulation messages
+  USE_ADV_FEATURES => "1000", -- String
+                      -- Setting USE_ADV_FEATURES[12] to 1 enables data_valid flag;
+                      -- 1<<12 = 4096 = 0x1000
+  WAKEUP_TIME => 0, -- DECIMAL
+  WRITE_DATA_WIDTH => ''' + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(in_t,parser_state) + ''', -- DECIMAL
+  WR_DATA_COUNT_WIDTH => 1 -- DECIMAL
+)
+port map (
+  --almost_empty => almost_empty, -- 1-bit output: Almost Empty : When asserted, this signal indicates that
+  -- only one more read can be performed before the FIFO goes to empty.
+  --almost_full => almost_full, -- 1-bit output: Almost Full: When asserted, this signal indicates that
+  -- only one more write can be performed before the FIFO is full.
+  
+  data_valid => valid, -- 1-bit output: Read Data Valid: When asserted, this signal indicates
+  -- that valid data is available on the output bus (dout).
+  
+  --dbiterr => dbiterr, -- 1-bit output: Double Bit Error: Indicates that the ECC decoder
+  -- detected a double-bit error and data in the FIFO core is corrupted.
+  
+  dout => dout_slv, -- READ_DATA_WIDTH-bit output: Read Data: The output data bus is driven
+  -- when reading the FIFO
+  
+  --empty => empty, -- 1-bit output: Empty Flag: When asserted, this signal indicates that
+  -- the FIFO is empty. Read requests are ignored when the FIFO is empty,
+  -- initiating a read while empty is not destructive to the FIFO.
+  full => full, -- 1-bit output: Full Flag: When asserted, this signal indicates that the
+  -- FIFO is full. Write requests are ignored when the FIFO is full,
+  -- initiating a write when the FIFO is full is not destructive to the
+  -- contents of the FIFO.
+  --overflow => overflow, -- 1-bit output: Overflow: This signal indicates that a write request
+  -- (wren) during the prior clock cycle was rejected, because the FIFO is
+  -- full. Overflowing the FIFO is not destructive to the contents of the
+  -- FIFO.
+  --prog_empty => prog_empty, -- 1-bit output: Programmable Empty: This signal is asserted when the
+  -- number of words in the FIFO is less than or equal to the programmable
+  -- empty threshold value. It is de-asserted when the number of words in
+  -- the FIFO exceeds the programmable empty threshold value.
+  --prog_full => prog_full, -- 1-bit output: Programmable Full: This signal is asserted when the
+  -- number of words in the FIFO is greater than or equal to the
+  -- programmable full threshold value. It is de-asserted when the number
+  -- of words in the FIFO is less than the programmable full threshold
+  -- value.
+  --rd_data_count => rd_data_count, -- RD_DATA_COUNT_WIDTH-bit output: Read Data Count: This bus indicates
+  -- the number of words read from the FIFO.
+  
+  rd_rst_busy => rd_rst_busy, -- 1-bit output: Read Reset Busy: Active-High indicator that the FIFO
+  -- read domain is currently in a reset state.
+  
+  --sbiterr => sbiterr, -- 1-bit output: Single Bit Error: Indicates that the ECC decoder
+  -- detected and fixed a single-bit error.
+  --underflow => underflow, -- 1-bit output: Underflow: Indicates that the read request (rd_en)
+  -- during the previous clock cycle was rejected because the FIFO is
+  -- empty. Under flowing the FIFO is not destructive to the FIFO.
+  --wr_ack => wr_ack, -- 1-bit output: Write Acknowledge: This signal indicates that a write
+  -- request (wr_en) during the prior clock cycle is succeeded.
+  --wr_data_count => wr_data_count, -- WR_DATA_COUNT_WIDTH-bit output: Write Data Count: This bus indicates
+  -- the number of words written into the FIFO.
+  
+  wr_rst_busy => wr_rst_busy, -- 1-bit output: Write Reset Busy: Active-High indicator that the FIFO
+  -- write domain is currently in a reset state.
+  
+  din => din_slv, -- WRITE_DATA_WIDTH-bit input: Write Data: The input data bus used when
+  -- writing the FIFO.
+  
+  injectdbiterr => '0', -- 1-bit input: Double Bit Error Injection: Injects a double bit error if
+  -- the ECC feature is used on block RAMs or UltraRAM macros.
+  injectsbiterr => '0', -- 1-bit input: Single Bit Error Injection: Injects a single bit error if
+  -- the ECC feature is used on block RAMs or UltraRAM macros.
+  
+  rd_clk => out_clk, -- 1-bit input: Read clock: Used for read operation. rd_clk must be a
+  -- free running clock.
+  
+  rd_en => fifo_rd_enable, -- 1-bit input: Read Enable: If the FIFO is not empty, asserting this
+  -- signal causes data (on dout) to be read from the FIFO. Must be held
+  -- active-low when rd_rst_busy is active high.
+  
+  rst => '0', -- 1-bit input: Reset: Must be synchronous to wr_clk. The clock(s) can be
+  -- unstable at the time of applying reset, but reset must be released
+  -- only after the clock(s) is/are stable.
+  
+  sleep => '0', -- 1-bit input: Dynamic power saving: If sleep is High, the memory/fifo
+  -- block is in power saving mode.
+  
+  wr_clk => in_clk, -- 1-bit input: Write clock: Used for write operation. wr_clk must be a
+  -- free running clock.
+  
+  wr_en => fifo_wr_en -- 1-bit input: Write Enable: If the FIFO is not full, asserting this
+  -- signal causes data (on din) to be written to the FIFO. Must be held     
+  -- active-low when rst or wr_rst_busy is active high.
+  
+);
+-- End of xpm_fifo_async_inst instantiation     
 '''
 
     # Write > read means slow->fast
@@ -1066,6 +1221,7 @@ end clk_cross_t_pkg;
 def WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state):
   
   text = ""
+  pkg_body_text = ""
   
   text += '''
 library IEEE;
@@ -1096,7 +1252,7 @@ package c_structs_pkg is
     done = True
   
   
-    ######## ENUMS
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~   ENUMS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
     # Enum types
     for enum_name in list(parser_state.enum_to_ids_dict.keys()):    
       if enum_name not in types_written:
@@ -1117,7 +1273,7 @@ package c_structs_pkg is
   '''
 
   
-    ########## ARRAYS
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~   ARRAYS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
     # C arrays are multidimensional and single element type
     # Find all array types - need to do this since array types are not (right now) 
     # declared/typedef individually like structs
@@ -1162,11 +1318,65 @@ package c_structs_pkg is
           for inner_type_dim in inner_type_dims:
             inner_type += "[" + str(inner_type_dim) + "]"
           inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
+          # Type def
           line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
           text += line
-  
+          # SLV LEN
+          elem_size_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(elem_type,parser_state)
+          text += '''constant ''' + new_vhdl_type + '''_SLV_LEN : integer := ''' + elem_size_str + ''' * ''' + str(new_dims[0]) + ''';\n'''
+          # type_to_slv
+          func_decl_text = ""
+          func_decl_text += '''
+      function ''' + new_vhdl_type + '''_to_slv(data : ''' + new_vhdl_type + ''') return std_logic_vector'''
+          func_body_text = ""
+          func_body_text += ''' is
+        variable rv : std_logic_vector('''+new_vhdl_type+'''_SLV_LEN-1 downto 0);
+        variable pos : integer := 0;
+      begin
+    '''
+          vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
+          to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(inner_vhdl_type)
+          for i in range(0, new_dims[0]):
+            func_body_text += '''
+            rv((pos+'''+vhdl_slv_len_str+''')-1 downto pos) := ''' + to_slv_toks[0] + "data(" + str(i) + ")" + to_slv_toks[1] + ''';
+            pos := pos + '''+vhdl_slv_len_str+''';
+    '''          
+          func_body_text += '''
+          return rv;
+      end function;
+    '''
+          text += func_decl_text + ";\n"
+          pkg_body_text += func_decl_text + func_body_text
+          
+          
+          # slv to type
+          func_decl_text = ""
+          func_decl_text += '''
+      function slv_to_''' + new_vhdl_type + '''(data : std_logic_vector) return ''' + new_vhdl_type
+          func_body_text = ""
+          func_body_text += ''' is
+        variable rv : ''' + new_vhdl_type + ''';
+        variable pos : integer := 0;
+      begin
+    '''
+          vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
+          from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(inner_vhdl_type)
+          for i in range(0, new_dims[0]):
+            func_body_text += '''
+            rv(''' + str(i) + ''') := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
+            pos := pos + '''+vhdl_slv_len_str+''';
+    '''
+          func_body_text += '''
+          return rv;
+      end function;
+    '''
+          text += func_decl_text + ";\n"
+          pkg_body_text += func_decl_text + func_body_text
+          
+          
+          
 
-    ######## STRUCTS
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~   STRUCTS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
     for struct_name in parser_state.struct_to_field_type_dict:
       #print "STRUCT",struct_name, struct_name in types_written
       # When to stop?
@@ -1220,16 +1430,89 @@ package c_structs_pkg is
   );
   '''
       
-      
-    
-  ######################
-  # End dumb while loop       
+      # SLV LENGTH
+      text += '''
+  constant ''' + struct_name + '''_SLV_LEN : integer := (
+  '''
+      for field in field_type_dict:
+        c_type = field_type_dict[field]
+        slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
+        text += slv_len_str + "+"
+      text = text.strip("+")
+      text += '''
+  );
+  '''
   
-
+      # type_to_slv
+      func_decl_text = ""
+      func_decl_text += '''
+  function ''' + struct_name + '''_to_slv(data : ''' + struct_name + ''') return std_logic_vector'''
+      func_body_text = ""
+      func_body_text += ''' is
+    variable rv : std_logic_vector('''+struct_name+'''_SLV_LEN-1 downto 0);
+    variable pos : integer := 0;
+  begin
+'''
+      for field in field_type_dict:
+        c_type = field_type_dict[field]
+        vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
+        vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
+        to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(vhdl_type)
+        func_body_text += '''
+        rv((pos+'''+vhdl_slv_len_str+''')-1 downto pos) := ''' + to_slv_toks[0] + "data." + field + to_slv_toks[1] + ''';
+        pos := pos + '''+vhdl_slv_len_str+''';
+'''
+      func_body_text += '''
+      return rv;
+  end function;
+'''
+      text += func_decl_text + ";\n"
+      pkg_body_text += func_decl_text + func_body_text
+      
+      
+      # slv to type
+      func_decl_text = ""
+      func_decl_text += '''
+  function slv_to_''' + struct_name + '''(data : std_logic_vector) return ''' + struct_name
+      func_body_text = ""
+      func_body_text += ''' is
+    variable rv : ''' + struct_name + ''';
+    variable pos : integer := 0;
+  begin
+'''
+      for field in field_type_dict:
+        c_type = field_type_dict[field]
+        vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
+        vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
+        from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(vhdl_type)
+        func_body_text += '''
+        rv.''' + field + ''' := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
+        pos := pos + '''+vhdl_slv_len_str+''';
+'''
+      func_body_text += '''
+      return rv;
+  end function;
+'''
+      text += func_decl_text + ";\n"
+      pkg_body_text += func_decl_text + func_body_text
+      
+      
+      
+      
+       
+  
+  ######################
+  # End dumb while loop  
   text += '''
 end c_structs_pkg;
-'''
+'''  
   
+  if pkg_body_text != "":
+    text += "package body c_structs_pkg is\n"
+    text += pkg_body_text
+    text += "end package body c_structs_pkg;\n"
+  
+
   if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
     os.makedirs(SYN.SYN_OUTPUT_DIRECTORY) 
   
@@ -1239,6 +1522,26 @@ end c_structs_pkg;
   f=open(path,"w")
   f.write(text)
   f.close()
+  
+# Sufjan Stevens - Adlai Stevenson
+# Similar to TYPE_RESOLVE_ASSIGNMENT_RHS
+def VHDL_TYPE_TO_SLV_TOKS(vhdl_type):
+  if vhdl_type.startswith("std_logic_vector"):
+    return ["",""]
+  elif vhdl_type.startswith("unsigned") or vhdl_type.startswith("signed"):
+    return ["std_logic_vector(",")"]
+  else:
+    return [vhdl_type + "_to_slv(",")"]
+    
+def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type):
+  if vhdl_type.startswith("std_logic_vector"):
+    return ["",""]
+  elif vhdl_type.startswith("unsigned"):
+    return ["unsigned(",")"] 
+  elif vhdl_type.startswith("signed"):
+    return ["signed(",")"]
+  else:
+    return ["slv_to_" + vhdl_type + "(",")"]
 
 def LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state):
   # Look for clock cross submodule ending in _READ() implying input 
@@ -2414,7 +2717,20 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
     #print 0/0
     sys.exit(-1)
 
-
+def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
+  width = GET_WIDTH_FROM_C_TYPE_STR(parser_state,c_type_str,allow_fail=True)
+  if width is not None:
+    return str(width)
+  if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    return c_type_str + "_SLV_LEN"
+  elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+    vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state)
+    return vhdl_type + "_SLV_LEN"
+  else:
+    print("Unknown VHDL slv len str for C type: '" + c_type_str + "'")
+    sys.exit(-1)
+    
+    
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
   # Check for int types
   if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str) or (c_type_str == C_TO_LOGIC.BOOL_C_TYPE) or (c_type_str =="float"):

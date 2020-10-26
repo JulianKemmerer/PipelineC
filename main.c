@@ -17,9 +17,10 @@
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
 //#include "examples/arty/src/blink.c"
-#include "examples/arty/src/uart/uart_loopback_msg.c"
+//#include "examples/arty/src/uart/uart_loopback_msg.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/clock_crossing.c"
+#include "examples/async_clock_crossing.c"
 
 /*
 #include "uintN_t.h"

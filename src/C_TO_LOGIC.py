@@ -4490,7 +4490,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif len(input_drivers) == 0:
       return None
     else:
-      print("Warning: Not reducing constant function call:")
+      print("WARNING: Not reducing constant function call:")
       print(" ",func_inst_name, end=' ')
       print(" ",func_base_name, func_c_ast_node.coord)
       #print(0/0)
@@ -6402,7 +6402,6 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     parser_state.clk_cross_var_info[var_name].write_read_funcs = (write_func_name,read_func_name)
     parser_state.clk_cross_var_info[var_name].write_read_main_funcs = (write_main_func,read_main_func)
     parser_state.clk_cross_var_info[var_name].write_read_sizes = (write_size, read_size)
-  
 
   '''
   # Loop over all funcs and get instances 
