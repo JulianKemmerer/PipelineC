@@ -19,6 +19,7 @@ import SYN
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 CONST_PREFIX="CONST_"
+CLOCK_ENABLE_NAME="CLOCK_ENABLE"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
 BIN_OP_LOGIC_NAME_PREFIX="BIN_OP"
@@ -342,6 +343,7 @@ class Logic:
     self.containing_funcs = set()
     self.variable_names=set() # Unordered set original variable names  
     self.wires=set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
+    self.clock_enable_wires = [] # Over time, nesting ifs create more entries in list
     self.inputs=[] # Ordered list of inputs ["a","b"] 
     self.outputs=[] # Ordered list of outputs ["return"]
     self.state_regs = dict() # name -> state reg info
@@ -390,6 +392,11 @@ class Logic:
     
     # Save C code text for later
     self.c_code_text = None
+    
+    # Init constant clock enable stuff
+    self.wires.add(CLOCK_ENABLE_NAME)
+    self.clock_enable_wires.append(CLOCK_ENABLE_NAME)
+    self.wire_to_c_type[CLOCK_ENABLE_NAME] = BOOL_C_TYPE
   
   
   # Help!
@@ -421,6 +428,7 @@ class Logic:
     rv.containing_funcs = set(self.containing_funcs)
     rv.ref_submodule_instance_to_input_port_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_input_port_driven_ref_toks)
     rv.ref_submodule_instance_to_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_ref_toks)
+    rv.clock_enable_wires = self.clock_enable_wires[:]
     
     return rv
     
@@ -665,6 +673,13 @@ class Logic:
       self.c_code_text = self.c_code_text
     else:
       self.c_code_text = logic_b.c_code_text
+      
+    # Clock enables need to be equal
+    if self.clock_enable_wires != logic_b.clock_enable_wires:
+      print("Mismatch clock enable wires merging parallel logic!")
+      print(self.clock_enable_wires)
+      print(logic_b.clock_enable_wires)
+      sys.exit(-1)      
     
     return None
       
@@ -808,6 +823,8 @@ class Logic:
       return True
     if wire in self.inputs:
       return True
+    if wire == CLOCK_ENABLE_NAME:
+      return True
     if wire in self.state_regs and self.state_regs[wire].is_volatile:
       return True
     # Only output ports are allowed to not to be driven by something
@@ -842,11 +859,13 @@ class Logic:
       return True
     if wire in self.inputs:
       return True
+    if wire == CLOCK_ENABLE_NAME:
+      return True
     if wire in self.outputs:
       return True
     if wire in self.state_regs:
       return True
-    # Only input ports are allowed to not drive anything
+    # Only clock enable and input ports are allowed to not drive anything
     if (SUBMODULE_MARKER in wire):
       toks = wire.split(SUBMODULE_MARKER)
       submodule_inst = toks[0]
@@ -867,8 +886,10 @@ class Logic:
         sys.exit(-1)
       submodule_logic = FuncLogicLookupTable[submodule_func_name]
       port_name = toks[1]
-      if port_name in submodule_logic.inputs:
+      if port_name == CLOCK_ENABLE_NAME:
         return True
+      if port_name in submodule_logic.inputs:
+        return True      
         
     return False
     
@@ -876,6 +897,8 @@ class Logic:
     if wire in self.variable_names:
       return True
     if wire in self.inputs:
+      return True
+    if wire == CLOCK_ENABLE_NAME:
       return True
     if wire in self.outputs:
       return True
@@ -3871,11 +3894,6 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # One submodule MUX instance per variable contains in the if at this location
   # Name comes from location in file
   file_coord_str = C_AST_NODE_COORD_STR(c_ast_node)
-    
-  # Helpful check for now
-  #if len(c_ast_node.children()) < 3:
-  # print "All ifs must have else statements for now."
-  # sys.exit(-1)
   
   # Port names from c_ast
   
@@ -3932,6 +3950,70 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     
     
   #~~~~~~ NOT A CONSTANT MUX ~~~~~~~~~~ \/
+  # Why are port names not constant and instead derived from child names?
+  mux_true_port_name = c_ast_node.children()[1][0]
+  mux_false_port_name = "iffalse" # Will this work?
+  if len(c_ast_node.children()) >= 3:
+    mux_false_port_name = c_ast_node.children()[2][0]
+  
+  # Create TRUE and FALSE branch clock enable muxes
+  func_base_name = MUX_LOGIC_NAME
+  base_name_is_name = False # Append types
+  most_recent_clk_en_wire = parser_state.existing_logic.clock_enable_wires[-1]
+  zero_wire = BUILD_CONST_WIRE(str(0), c_ast_node)
+  parser_state.existing_logic.wire_to_c_type[zero_wire]=BOOL_C_TYPE
+  input_port_names = []
+  input_port_names.append(mux_cond_port_name)
+  input_port_names.append(mux_true_port_name)
+  input_port_names.append(mux_false_port_name)
+  input_driver_types = []
+  input_driver_types.append(BOOL_C_TYPE)
+  input_driver_types.append(BOOL_C_TYPE)
+  input_driver_types.append(BOOL_C_TYPE)
+  # TRUE
+  #  mux cond true means clock enable should be on the true mux input
+  input_drivers = []
+  input_drivers.append(mux_intermediate_cond_wire_wo_var_name) # Cond Wire
+  input_drivers.append(most_recent_clk_en_wire) # true value is clock enable
+  input_drivers.append(zero_wire) # false value is zero
+  # New clock enable wire to be used in TRUE branch
+  true_clock_enable_prepend_text = prepend_text + "TRUE_" + CLOCK_ENABLE_NAME + "_"
+  true_clock_enable_wire_name = true_clock_enable_prepend_text + "_" + file_coord_str
+  output_driven_wire_names = []
+  output_driven_wire_names.append(true_clock_enable_wire_name)  
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+    true_clock_enable_prepend_text,
+    c_ast_node.iftrue,
+    func_base_name,
+    base_name_is_name,
+    input_drivers, # Wires or C ast nodes
+    input_driver_types, # Might be none if not known
+    input_port_names, # Port names on submodule
+    output_driven_wire_names,
+    parser_state)
+  # FALSE
+  false_clock_enable_prepend_text = prepend_text + "FALSE_" + CLOCK_ENABLE_NAME + "_"
+  false_clock_enable_wire_name = false_clock_enable_prepend_text + "_" + file_coord_str
+  if len(c_ast_node.children()) >= 3:
+    #  mux cond false means clock enable should be on the false mux input
+    input_drivers = []
+    input_drivers.append(mux_intermediate_cond_wire_wo_var_name) # Cond Wire
+    input_drivers.append(zero_wire) # true value is zero
+    input_drivers.append(most_recent_clk_en_wire) # false value is clock enable
+    # New clock enable wire to be used in TRUE branch
+    output_driven_wire_names = []
+    output_driven_wire_names.append(false_clock_enable_wire_name)  
+    parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+      false_clock_enable_prepend_text,
+      c_ast_node.iffalse,
+      func_base_name,
+      base_name_is_name,
+      input_drivers, # Wires or C ast nodes
+      input_driver_types, # Might be none if not known
+      input_port_names, # Port names on submodule
+      output_driven_wire_names,
+      parser_state)
+  
   
   # Get true/false logic
   # Add prepend text to seperate the two branches into paralel combinational logic
@@ -3943,25 +4025,21 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Should be able to get away with only deep copying existing_logic
   parser_state_for_true = copy.copy(parser_state)
   parser_state_for_true.existing_logic = parser_state.existing_logic.DEEPCOPY()
-  #
   # Should be able to get away with only deep copying existing_logic
   parser_state_for_false = copy.copy(parser_state)
   parser_state_for_false.existing_logic = parser_state.existing_logic.DEEPCOPY()
-
-
-  mux_true_port_name = c_ast_node.children()[1][0]
+  
+  # TRUE BRANCH
+  parser_state_for_true.existing_logic.clock_enable_wires.append(true_clock_enable_wire_name)
   true_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iftrue, driven_wire_names, prepend_text_true, parser_state_for_true)
   #
   if len(c_ast_node.children()) >= 3:
-    # Do false branch
-    mux_false_port_name = c_ast_node.children()[2][0]
+    # FALSE BRANCH
+    parser_state_for_false.existing_logic.clock_enable_wires.append(false_clock_enable_wire_name)
     false_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text_false, parser_state_for_false)
-    
   else:
     # No false branch false logic if identical to existing logic
     false_logic = parser_state.existing_logic.DEEPCOPY()
-    mux_false_port_name = "iffalse" # Will this work?
-    
   
   # Var names cant be mixed type per C spec
   merge_var_names = true_logic.variable_names | false_logic.variable_names
@@ -4167,6 +4245,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Shared comb mergeable wire aliases over time
   true_logic.wire_aliases_over_time = new_true_false_logic_wire_aliases_over_time
   false_logic.wire_aliases_over_time = new_true_false_logic_wire_aliases_over_time
+  # Pop off last elements of each branches not mergeable clock enables
+  del true_logic.clock_enable_wires[-1]
+  if len(c_ast_node.children()) >= 3:
+    del false_logic.clock_enable_wires[-1]
   # Merge the true and false logic as parallel COMB logic since aliases over time fixed above
   true_logic.MERGE_COMB_LOGIC(false_logic)
   true_false_merged = true_logic
@@ -4674,6 +4756,15 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   parser_state.existing_logic.submodule_instances[func_inst_name] = func_name
   # C ast node
   parser_state.existing_logic.submodule_instance_to_c_ast_node[func_inst_name]=func_c_ast_node
+  
+  # Connect clock enable for this func if needed
+  if func_name in parser_state.FuncLogicLookupTable:
+    func_def_logic_object = parser_state.FuncLogicLookupTable[func_name]
+    if LOGIC_NEEDS_CLOCK_ENABLE(func_def_logic_object, parser_state):
+      ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
+      func_ce_wire = func_inst_name+SUBMODULE_MARKER+CLOCK_ENABLE_NAME
+      #print(func_ce_wire,"<=",ce_driver_wire)
+      parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, func_c_ast_node)  
 
   # Record all input port names for this submodule
   # This might not be needed but not thinking about that now
@@ -4743,6 +4834,30 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   
   return parser_state.existing_logic
     
+
+def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
+  # Look for clock cross submodule ending in _READ() implying input 
+  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs
+  
+  if SW_LIB.IS_CLOCK_CROSSING(logic):
+    var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
+    clk_cross_info = parser_state.clk_cross_var_info[var]
+    i_need = clk_cross_info.flow_control
+  
+  # Check submodules too
+  needs = i_need
+  if needs:
+    return True
+  for inst in logic.submodule_instances:
+    submodule_logic_name = logic.submodule_instances[inst]
+    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock enable
+    if submodule_logic_name in parser_state.FuncLogicLookupTable:
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
+      if needs:
+        return True
+    
+  return needs
 
 def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name):
   # Build func name
@@ -4877,7 +4992,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   func_c_ast_node = c_ast_func_call
   func_base_name = func_name # Is C name so unique
   base_name_is_name = True
-  func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     prepend_text,
     func_c_ast_node,
     func_base_name,
@@ -4888,10 +5003,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     driven_wire_names,
     parser_state)
   
-  # Update state
-  parser_state.existing_logic = func_logic
-  
-  return func_logic
+  return parser_state.existing_logic
   
 def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
   # Need to evaluate input node/type first
@@ -6277,11 +6389,11 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   all_var_names = set()
   for func_name in (write_func_names+read_func_names):
     if "_WRITE" in func_name:
-      var_name = func_name.split("_WRITE")[0]
+      var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name) 
       all_var_names.add(var_name)
       var_to_write_func[var_name] = func_name
     if "_READ" in func_name:
-      var_name = func_name.split("_READ")[0]
+      var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name) 
       all_var_names.add(var_name)
       var_to_read_func[var_name] = func_name
   var_names = []
@@ -6431,6 +6543,14 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     '''   
 
   return parser_state
+  
+def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
+  if "_READ" in func_name:
+    var_name = func_name.split("_READ")[0]
+  elif "_WRITE" in func_name: 
+    var_name = func_name.split("_WRITE")[0]
+    
+  return var_name
 
 def GET_ENUM_IDS_DICT(c_file_ast):
   # Read in file with C parser and get function def nodes

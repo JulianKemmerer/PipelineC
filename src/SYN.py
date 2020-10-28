@@ -449,6 +449,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   
   # Some wires are driven to start with
   RECORD_DRIVEN_BY(None, logic.inputs)
+  RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   # Also "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
@@ -660,21 +661,33 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         
         if not already_fully_driven and not incorrect_stage_for_submodule:
           submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-          # Check each input
+          
+          # Check submodule signals that need to be driven before submodule can be used
+          # CLOCK ENABLE + INPUTS
           submodule_has_all_inputs_driven = True
           submodule_input_port_driving_wires = []
-          for input_port_name in submodule_logic.inputs:
-            driving_wire = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst,input_port_name)
-            submodule_input_port_driving_wires.append(driving_wire)
-            if driving_wire not in wires_driven_by_so_far:
+          # Check clock enable
+          if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+            #print "logic.func_name", logic.func_name
+            ce_wire = submodule_inst+ C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            ce_driving_wire = logic.wire_driven_by[ce_wire]
+            submodule_input_port_driving_wires.append(ce_driving_wire)
+            if ce_driving_wire not in wires_driven_by_so_far:
               submodule_has_all_inputs_driven = False
-              if bad_inf_loop:
-                print("!! " + submodule_inst + " input wire " + input_port_name + " not driven yet")
-                #print " is driven by", driving_wire
-                #print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
-                #print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
-                #C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_by_so_far)
-              break
+          # Check each input
+          if submodule_has_all_inputs_driven:
+            for input_port_name in submodule_logic.inputs:
+              driving_wire = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst,input_port_name)
+              submodule_input_port_driving_wires.append(driving_wire)
+              if driving_wire not in wires_driven_by_so_far:
+                submodule_has_all_inputs_driven = False
+                if bad_inf_loop:
+                  print("!! " + submodule_inst + " input wire " + input_port_name + " not driven yet")
+                  #print " is driven by", driving_wire
+                  #print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
+                  #print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
+                  #C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_by_so_far)
+                break
           
           # If all inputs are driven
           if submodule_has_all_inputs_driven: 

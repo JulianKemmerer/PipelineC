@@ -1,3 +1,7 @@
+// Similar to clock_crossing.c except that instread of 
+// data width ratioed clock crossing stream,
+// this used same size read and write ports on an async fifo
+
 #include "compiler.h"
 #include "wire.h"
 #include "arty/src/leds/led0_3.c"
@@ -7,7 +11,7 @@
 
 #include "uintN_t.h"
 
-#define data_t uint32_t
+#define data_t uint8_t
 #define DATAS_PER_ITER 2
 #define fast_to_slow_WRITE_N fast_to_slow_WRITE_2
 #define slow_to_fast_READ_N slow_to_fast_READ_2

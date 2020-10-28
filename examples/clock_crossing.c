@@ -55,7 +55,7 @@ void fast(uint1_t reset)
     led = 0;
   }
   WIRE_WRITE(uint1_t, led0, led)
-  WIRE_WRITE(uint1_t, led1, 1)
+  WIRE_WRITE(uint1_t, led1, !reset)
   
   // Send a test pattern into slow
   static uint64_t test_data = 0;
@@ -74,7 +74,6 @@ void fast(uint1_t reset)
   fast_to_slow_write_t to_slow_array;
   to_slow_array.data[0] = to_slow;
   fast_to_slow_WRITE(to_slow_array);
-  
   
   // Receive test pattern from slow
   static uint64_t expected = 0;
@@ -112,7 +111,7 @@ void slow(uint1_t reset)
     led = 0;
   }
   WIRE_WRITE(uint1_t, led2, led)
-  WIRE_WRITE(uint1_t, led3, 1)
+  WIRE_WRITE(uint1_t, led3, !reset)
   
   // Send test pattern into fast
   static uint64_t test_data = 0;
