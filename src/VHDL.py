@@ -291,7 +291,7 @@ begin
       sys.exit(-1)
     read_func_inst = list(read_func_insts)[0]
     read_func_logic = parser_state.LogicInstLookupTable[read_func_inst]
-    read_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
     # Start with main func then apply hier instances
     read_text = read_main
     for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
@@ -1566,43 +1566,45 @@ def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type):
     return ["slv_to_" + vhdl_type + "(",")"]
 
 def LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state):
-  # Look for clock cross submodule ending in _READ() implying input 
-  i_need_clk_cross_to_moduleput = SW_LIB.IS_CLOCK_CROSSING(Logic) and "_READ" in Logic.func_name
-  
-  # Check submodules too
-  needs_clk_cross_to_module = i_need_clk_cross_to_moduleput
-  if needs_clk_cross_to_module:
-    return True
+  # Submodules determine if logic needs port    
+  needs_clk_cross_to_module = False
   for inst in Logic.submodule_instances:
     submodule_logic_name = Logic.submodule_instances[inst]
-    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+        var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+        clk_cross_info = parser_state.clk_cross_var_info[var_name]
+        needs_clk_cross_to_module = needs_clk_cross_to_module or ("_READ" in submodule_logic_name) or clk_cross_info.flow_control
+      if needs_clk_cross_to_module:
+        return True
+      # Then check sub-sub modules
       needs_clk_cross_to_module = needs_clk_cross_to_module or LOGIC_NEEDS_CLK_CROSS_TO_MODULE(submodule_logic, parser_state)
       if needs_clk_cross_to_module:
         return True
-    
+        
   return needs_clk_cross_to_module
-  
+
 def LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state):
-  # Look for clock cross submodule ending in _WRITE() implying output 
-  i_need_module_to_clk_crossput = SW_LIB.IS_CLOCK_CROSSING(Logic) and "_WRITE" in Logic.func_name
-  
-  # Check submodules too
-  needs_module_to_clk_cross = i_need_module_to_clk_crossput
-  if needs_module_to_clk_cross:
-    return True
+  # Submodules determine if logic needs port    
+  needs_module_to_clk_cross = False
   for inst in Logic.submodule_instances:
     submodule_logic_name = Logic.submodule_instances[inst]
-    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock crosing?
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+        var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+        clk_cross_info = parser_state.clk_cross_var_info[var_name]
+        needs_module_to_clk_cross = needs_module_to_clk_cross or ("_WRITE" in submodule_logic_name) or clk_cross_info.flow_control
+      if needs_module_to_clk_cross:
+        return True
+      # Then check sub-sub modules
       needs_module_to_clk_cross = needs_module_to_clk_cross or LOGIC_NEEDS_MODULE_TO_CLK_CROSS(submodule_logic, parser_state)
       if needs_module_to_clk_cross:
         return True
     
   return needs_module_to_clk_cross
-  
+
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)

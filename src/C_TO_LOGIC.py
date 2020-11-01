@@ -5572,9 +5572,9 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
     # INSERT CAST FUNCTION if needed
     #print c_ast_id.coord
     if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
-      print("Looks like wire'",driving_wire,"'isn't declared?")
-      print(C_AST_NODE_COORD_STR(c_ast_node))
-      print(0/0)
+      print("Looks like wire'",driving_wire,"'isn't declared? Doing weird stuff with types/enums maybe?")
+      print(c_ast_node.coord)
+      #print(0/0)
       sys.exit(-1)
     rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
     for driven_wire_name in driven_wire_names:
@@ -6507,6 +6507,16 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         if ratio != 1.0:
           print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_func_name,"(",write_main_func,")","to",read_func_name,"(",read_main_func,")",write_mhz,"MHz ->", read_mhz, "MHz")
           sys.exit(-1)
+          
+      # For now check that volatile crossings are integer ratios (assumed synch / same clock src)
+      if write_mhz >= read_mhz:
+        clk_ratio = write_mhz / read_mhz
+      else:
+        clk_ratio = read_mhz / write_mhz
+      if int(clk_ratio) != clk_ratio:
+        print("TODO: Volatile non integer ratio clock crossings like:",write_func_name,write_mhz,"MHz","->",read_func_name,read_mhz,"MHz")
+        sys.exit(-1)
+      
     
     # Record
     parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()
