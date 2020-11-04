@@ -4,6 +4,7 @@
 #include "uintN_t.h"
 
 #define UART_MSG_SIZE 256
+#define UART_MSG_SIZE_MULT(x) ((x)<<8)
 typedef struct uart_msg_t
 {
   uint8_t data[UART_MSG_SIZE];

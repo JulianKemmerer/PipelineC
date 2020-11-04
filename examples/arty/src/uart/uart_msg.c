@@ -23,7 +23,7 @@ uart_msg_s uart_rx_msg_out;
 deserializer(uart_rx_msg_deserializer, uint8_t, UART_MSG_SIZE) // macro
 
 // Receive logic
-#pragma MAIN uart_rx_msg
+#pragma MAIN_MHZ uart_rx_msg uart_rx_mac // Match freq of MAC module
 void uart_rx_msg()
 {
   // Read global/virtual input ports
@@ -62,7 +62,7 @@ uint1_t uart_tx_msg_in_ready;
 serializer(uart_tx_msg_serializer, uint8_t, UART_MSG_SIZE) // macro
 
 // Transmit logic
-#pragma MAIN uart_tx_msg
+#pragma MAIN_MHZ uart_tx_msg uart_tx_mac // Match freq of MAC module
 void uart_tx_msg()
 {
   // Read global/virtual input ports

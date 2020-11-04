@@ -26,8 +26,8 @@ entity board is
     ddr3_cas_n    : out   std_logic;
     ddr3_we_n     : out   std_logic;
     ddr3_reset_n  : out   std_logic;
-    --ddr3_ck_p     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
-    --ddr3_ck_n     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
+    ddr3_ck_p     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
+    ddr3_ck_n     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
     ddr3_cke      : out   std_logic_vector(0 downto 0);
     ddr3_cs_n     : out   std_logic_vector(0 downto 0);
     ddr3_dm       : out   std_logic_vector(1 downto 0);
@@ -155,8 +155,8 @@ signal leds_wire : unsigned(3 downto 0);
 signal uart_data_in : unsigned(0 downto 0);
 signal uart_data_out : unsigned(0 downto 0);
 -- DDR3
---signal mig_to_app : xil_mig_to_app_t;
---signal app_to_mig : xil_app_to_mig_t;
+signal mig_to_app : xil_mig_to_app_t;
+signal app_to_mig : xil_app_to_mig_t;
 
 begin
 
@@ -197,53 +197,53 @@ ddr_sys_rst <= rst or not ddr_clks_ready;
 ddr_sys_rst_n <= not ddr_sys_rst;
  
 -- The board's DDR3 controller
---  ddr3_0_inst : ddr3_0
---      port map (
---         -- Memory interface ports
---         ddr3_addr                      => ddr3_addr,
---         ddr3_ba                        => ddr3_ba,
---         ddr3_cas_n                     => ddr3_cas_n,
---         ddr3_ck_n                      => ddr3_ck_n,
---         ddr3_ck_p                      => ddr3_ck_p,
---         ddr3_cke                       => ddr3_cke,
---         ddr3_ras_n                     => ddr3_ras_n,
---         ddr3_reset_n                   => ddr3_reset_n,
---         ddr3_we_n                      => ddr3_we_n,
---         ddr3_dq                        => ddr3_dq,
---         ddr3_dqs_n                     => ddr3_dqs_n,
---         ddr3_dqs_p                     => ddr3_dqs_p,
---         init_calib_complete            => init_calib_complete,
---  	   ddr3_cs_n                      => ddr3_cs_n,
---         ddr3_dm                        => ddr3_dm,
---         ddr3_odt                       => ddr3_odt,
---         -- Application interface ports
---         app_addr                       => app_addr,
---         app_cmd                        => app_cmd,
---         app_en                         => app_en,
---         app_wdf_data                   => app_wdf_data,
---         app_wdf_end                    => app_wdf_end,
---         app_wdf_wren                   => app_wdf_wren,
---         app_rd_data                    => app_rd_data,
---         app_rd_data_end                => app_rd_data_end,
---         app_rd_data_valid              => app_rd_data_valid,
---         app_rdy                        => app_rdy,
---         app_wdf_rdy                    => app_wdf_rdy,
---         app_sr_req                     => app_sr_req,
---         app_ref_req                    => app_ref_req,
---         app_zq_req                     => app_zq_req,
---         app_sr_active                  => app_sr_active,
---         app_ref_ack                    => app_ref_ack,
---         app_zq_ack                     => app_zq_ack,
---         ui_clk                         => ui_clk, -- 83.33MHz
---         ui_clk_sync_rst                => ui_clk_sync_rst,
---         app_wdf_mask                   => app_wdf_mask,
---         -- System Clock Ports
---         sys_clk_i                      => ddr_sys_clk, -- 166.66MHz 
---         -- Reference Clock Ports
---         clk_ref_i                      => clk_200, -- Ref always 200MHz
---         sys_rst                        => ddr_sys_rst_n -- ACTIVE LOW - PORT NAME IS INCORRECT
---      );
--- clk_83p33 <= ui_clk;
+ ddr3_0_inst : ddr3_0
+     port map (
+        -- Memory interface ports
+        ddr3_addr                      => ddr3_addr,
+        ddr3_ba                        => ddr3_ba,
+        ddr3_cas_n                     => ddr3_cas_n,
+        ddr3_ck_n                      => ddr3_ck_n,
+        ddr3_ck_p                      => ddr3_ck_p,
+        ddr3_cke                       => ddr3_cke,
+        ddr3_ras_n                     => ddr3_ras_n,
+        ddr3_reset_n                   => ddr3_reset_n,
+        ddr3_we_n                      => ddr3_we_n,
+        ddr3_dq                        => ddr3_dq,
+        ddr3_dqs_n                     => ddr3_dqs_n,
+        ddr3_dqs_p                     => ddr3_dqs_p,
+        init_calib_complete            => init_calib_complete,
+ 	   ddr3_cs_n                      => ddr3_cs_n,
+        ddr3_dm                        => ddr3_dm,
+        ddr3_odt                       => ddr3_odt,
+        -- Application interface ports
+        app_addr                       => app_addr,
+        app_cmd                        => app_cmd,
+        app_en                         => app_en,
+        app_wdf_data                   => app_wdf_data,
+        app_wdf_end                    => app_wdf_end,
+        app_wdf_wren                   => app_wdf_wren,
+        app_rd_data                    => app_rd_data,
+        app_rd_data_end                => app_rd_data_end,
+        app_rd_data_valid              => app_rd_data_valid,
+        app_rdy                        => app_rdy,
+        app_wdf_rdy                    => app_wdf_rdy,
+        app_sr_req                     => app_sr_req,
+        app_ref_req                    => app_ref_req,
+        app_zq_req                     => app_zq_req,
+        app_sr_active                  => app_sr_active,
+        app_ref_ack                    => app_ref_ack,
+        app_zq_ack                     => app_zq_ack,
+        ui_clk                         => ui_clk, -- 83.33MHz
+        ui_clk_sync_rst                => ui_clk_sync_rst,
+        app_wdf_mask                   => app_wdf_mask,
+        -- System Clock Ports
+        sys_clk_i                      => ddr_sys_clk, -- 166.66MHz 
+        -- Reference Clock Ports
+        clk_ref_i                      => clk_200, -- Ref always 200MHz
+        sys_rst                        => ddr_sys_rst_n -- ACTIVE LOW - PORT NAME IS INCORRECT
+     );
+clk_83p33 <= ui_clk;
 
 -- Un/pack IO struct types to/from flattened SLV board pins
 -- TODO Code gen this...
@@ -257,46 +257,51 @@ process(all) begin
     uart_data_in(0) <= uart_txd_in;
     uart_rxd_out <= uart_data_out(0);
     -- DDR3
-    --  app_addr <= std_logic_vector(app_to_mig.addr);
-    --  app_cmd  <= std_logic_vector(app_to_mig.cmd);
-    --  app_en  <= std_logic(app_to_mig.en(0));
-    --  for byte_i in 0 to app_wdf_mask'length-1 loop
-	--  	app_wdf_data(((byte_i+1)*8)-1 downto (byte_i*8)) <= std_logic_vector(app_to_mig.wdf_data(byte_i));
-	--  end loop;
-    --  app_wdf_end  <= std_logic(app_to_mig.wdf_end(0));
-    --  for byte_i in 0 to app_wdf_mask'length-1 loop
-	--  	app_wdf_mask(byte_i) <= std_logic(app_to_mig.wdf_mask(byte_i)(0));
-	--  end loop;
-    --  app_wdf_wren <= std_logic(app_to_mig.wdf_wren(0));
-    --  for byte_i in 0 to app_wdf_mask'length-1 loop
-    --      mig_to_app.rd_data(byte_i) <= unsigned(app_rd_data(((byte_i+1)*8)-1 downto (byte_i*8)));
-	--  end loop;
-    --  mig_to_app.rd_data_end(0) <= app_rd_data_end; 
-    --  mig_to_app.rd_data_valid(0) <= app_rd_data_valid;
-    --  mig_to_app.rdy(0) <= app_rdy;
-    --  mig_to_app.wdf_rdy(0) <= app_wdf_rdy;
-    --  app_sr_req   <= std_logic(app_to_mig.sr_req(0));
-    --  app_ref_req  <= std_logic(app_to_mig.ref_req(0));
-    --  app_zq_req   <= std_logic(app_to_mig.zq_req(0));
-    --  mig_to_app.sr_active(0) <= app_sr_active;
-    --  mig_to_app.ref_ack(0) <= app_ref_ack;
-    --  mig_to_app.zq_ack(0)  <= app_zq_ack;
-    --  mig_to_app.ui_clk_sync_rst(0) <= ui_clk_sync_rst;
-    --  mig_to_app.init_calib_complete(0) <= init_calib_complete;
+    app_addr <= std_logic_vector(app_to_mig.addr);
+    app_cmd  <= std_logic_vector(app_to_mig.cmd);
+    app_en  <= std_logic(app_to_mig.en(0));
+    for byte_i in 0 to app_wdf_mask'length-1 loop
+		app_wdf_data(((byte_i+1)*8)-1 downto (byte_i*8)) <= std_logic_vector(app_to_mig.wdf_data(byte_i));
+	end loop;
+    app_wdf_end  <= std_logic(app_to_mig.wdf_end(0));
+    for byte_i in 0 to app_wdf_mask'length-1 loop
+		app_wdf_mask(byte_i) <= std_logic(app_to_mig.wdf_mask(byte_i)(0));
+	end loop;
+    app_wdf_wren <= std_logic(app_to_mig.wdf_wren(0));
+    for byte_i in 0 to app_wdf_mask'length-1 loop
+        mig_to_app.rd_data(byte_i) <= unsigned(app_rd_data(((byte_i+1)*8)-1 downto (byte_i*8)));
+	end loop;
+    mig_to_app.rd_data_end(0) <= app_rd_data_end; 
+    mig_to_app.rd_data_valid(0) <= app_rd_data_valid;
+    mig_to_app.rdy(0) <= app_rdy;
+    mig_to_app.wdf_rdy(0) <= app_wdf_rdy;
+    app_sr_req   <= std_logic(app_to_mig.sr_req(0));
+    app_ref_req  <= std_logic(app_to_mig.ref_req(0));
+    app_zq_req   <= std_logic(app_to_mig.zq_req(0));
+    mig_to_app.sr_active(0) <= app_sr_active;
+    mig_to_app.ref_ack(0) <= app_ref_ack;
+    mig_to_app.zq_ack(0)  <= app_zq_ack;
+    mig_to_app.ui_clk_sync_rst(0) <= ui_clk_sync_rst;
+    mig_to_app.init_calib_complete(0) <= init_calib_complete;
 end process;
     
 -- The PipelineC generated entity
-top_inst : entity work.top port map (
+top_inst : entity work.top port map (    
+    -- Add other design IO signals here
+    --slow_reset(0) => rst,
+    --fast_reset(0) => ddr_sys_rst
+    app_tieoff_return_output => open,
+    
     -- Main function clocks
     clk_25p0 => clk_25,
     --clk_50p0 => clk_50,
-    --clk_83p33 => clk_83p33,
+    clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
-    clk_166p66 => clk_166p66,
+    --clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
     --clk_400p0 => clk_400,
         
-    -- Each main funciton's inputs and output
+    -- Each main funciton's inputs and outputs
     
     -- LEDs
     led0_module_return_output(0) => leds_wire(0),
@@ -308,16 +313,12 @@ top_inst : entity work.top port map (
     --switches_module_sw => switches_wire
     
     -- UART
-    --uart_module_data_in => uart_data_in,
-    --uart_module_return_output => uart_data_out
+    uart_module_data_in => uart_data_in,
+    uart_module_return_output => uart_data_out,
     
     -- DDR3
-    --  xil_mig_module_mig_to_app => mig_to_app,
-    --  xil_mig_module_return_output => app_to_mig
-    
-    -- Add other design IO signals here
-    slow_reset(0) => rst,
-    fast_reset(0) => ddr_sys_rst
+    xil_mig_module_mig_to_app => mig_to_app,
+    xil_mig_module_return_output => app_to_mig
 );
 
 end arch;

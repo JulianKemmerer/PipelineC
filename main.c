@@ -7,6 +7,7 @@
 // LFE5U-85F-6BG381C    ECP5U
 #pragma PART "xc7a35ticsg324-1l"
 
+// Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
 //#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
@@ -16,23 +17,12 @@
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
-//#include "examples/arty/src/blink.c"
 //#include "examples/arty/src/uart/uart_loopback_msg.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
+//#include "examples/arty/src/blink.c"
 //#include "examples/clock_crossing.c"
-#include "examples/async_clock_crossing.c"
+//#include "examples/async_clock_crossing.c"
+#include "examples/arty/src/uart_ddr3_loopback/app.c"
 
-/*
-#include "uintN_t.h"
-#pragma MAIN_MHZ main 200.0
-uint32_t main(uint32_t x[128])
-{
-  uint32_t sum = 0;
-  uint32_t i;
-  for(i=0;i<128;i+=1)
-  {
-    sum += x[i];
-  }
-  return sum;
-}
-*/
+
+

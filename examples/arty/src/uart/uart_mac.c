@@ -19,7 +19,7 @@ typedef struct uart_mac_s
 uint1_t uart_rx_mac_out_ready;
 // Outputs
 uart_mac_s uart_rx_mac_word_out;
-uint1_t uart_rx_mac_overflow;
+volatile uint1_t uart_rx_mac_overflow; // Volatile since is not part of cycle-by-cycle signaling, can read by another process with latency,datapath width adjustments
 // This should be in a macro somehow TODO \/
 #include "uint1_t_array_N_t.h"
 #include "uart_mac_s_array_N_t.h"
@@ -38,7 +38,7 @@ typedef enum uart_rx_mac_state_t
   WAIT_START,
   RECEIVE
 }uart_rx_mac_state_t;
-#pragma MAIN uart_rx_mac
+#pragma MAIN_MHZ uart_rx_mac uart_module // Match freq of uart module
 void uart_rx_mac()
 {
   // Static locals (like global vars)
@@ -118,9 +118,16 @@ void uart_rx_mac()
   word_out.valid = deser.out_data_valid;
   overflow = data_sample_valid & !deser.in_data_ready;
   
-  // Drive output port
+  // Drive output ports
   WIRE_WRITE(uart_mac_s, uart_rx_mac_word_out, word_out) //uart_rx_mac_word_out = word_out
-  WIRE_WRITE(uint1_t, uart_rx_mac_overflow, overflow) // uart_rx_mac_overflow = overflow
+  // Volatile, wider width overflow port // uart_rx_mac_overflow = overflow
+  uart_rx_mac_overflow_write_t overflow_data;
+  uint32_t i;
+  for(i=0;i<uart_rx_mac_overflow_RATIO;i+=1)
+  {
+    overflow_data.data[i] = overflow;
+  }
+  uart_rx_mac_overflow_WRITE(overflow_data);
 }
 
 // TX side
@@ -151,7 +158,7 @@ typedef enum uart_tx_mac_state_t
   TRANSMIT,
   SEND_STOP
 }uart_tx_mac_state_t;
-#pragma MAIN uart_tx_mac
+#pragma MAIN_MHZ uart_tx_mac uart_module // Match freq of uart module
 void uart_tx_mac()
 {
   // Static locals (like global vars)
