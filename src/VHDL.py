@@ -2255,8 +2255,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   # Register the combinatorial registers signal
   if needs_regs:
     rv += "registers_r <= registers when rising_edge(clk)"
-    #if needs_clk_en:
-    #  rv += " and CLOCK_ENABLE(0)='1'"
+    if needs_clk_en:
+      rv += " and CLOCK_ENABLE(0)='1'"
     rv += ";\n"
     
   return rv
