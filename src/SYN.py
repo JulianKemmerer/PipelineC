@@ -2286,6 +2286,18 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       # Stuck?
       if not made_adj:
         print("Unable to make further adjustments. Failed to meet timing.")
+        # Print some help
+        for clock_group in sweep_state.timing_report.path_reports:
+          path_report = sweep_state.timing_report.path_reports[clock_group]
+          curr_mhz = 1000.0 / path_report.path_delay_ns
+          actual_mhz = 1000.0 / path_report.source_ns_per_clock
+          if curr_mhz < actual_mhz:
+            print("")
+            print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz)
+            print("Problem computation path:")
+            print("START: ", path_report.start_reg_name,"=>")
+            print(" ~", path_report.path_delay_ns, "ns of logic ~")
+            print("END: =>",path_report.end_reg_name) 
         sys.exit(-1)
           
   return sweep_state

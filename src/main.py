@@ -18,6 +18,7 @@ print('''
 ''')
 
 print("TODO:")
+print(" Make disconnected read side of clock cross ok, ok to leave out ports disconnected")
 print(" Make sure local statics 'clock crossing' same module flow control wires work - they need to for flow control in modules to not be burdensome - bleh #includes in funcs or wtf?")
 print(" Continue completing clock crossing features, tool support")
 print(" Make a chipscope+virtual io debug thing, w/ pass through regular streaming uart io?")
