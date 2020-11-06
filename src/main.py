@@ -18,11 +18,10 @@ print('''
 ''')
 
 print("TODO:")
-print(" Make disconnected read side of clock cross ok, ok to leave out ports disconnected")
 print(" Make sure local statics 'clock crossing' same module flow control wires work - they need to for flow control in modules to not be burdensome - bleh #includes in funcs or wtf?")
-print(" Continue completing clock crossing features, tool support")
 print(" Make a chipscope+virtual io debug thing, w/ pass through regular streaming uart io?")
 print(" ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc")
+print(" Continue completing clock crossing features, tool support")
 print(" Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force")
 print(" Rust AST? rustc -Z ast-json, traverse the json?")
 print(" Document pragmas and make main mhz allow pointing at existing func name instead of float")

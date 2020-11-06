@@ -6399,21 +6399,23 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   var_names = []
   for var_name in all_var_names:
     if var_name in parser_state.global_state_regs:
-      if var_name not in var_to_read_func:
-        print("Missing clock cross read function for clock crossing named:",var_name)
-        sys.exit(-1)
       if var_name not in var_to_write_func:
         print("Missing clock cross write function for clock crossing named:",var_name)
-        sys.exit(-1) 
-      read_func_name = var_to_read_func[var_name]
-      write_func_name = var_to_write_func[var_name]
-      var_names.append(var_name)      
+        sys.exit(-1)
+      # Make up a read func if needed (unconnected output)
+      if var_name not in var_to_read_func:
+        var_to_read_func[var_name] = var_to_write_func[var_name].replace("_WRITE","_READ")
+      var_names.append(var_name)    
   
   # Find and read and write main funcs
   var_to_rw_main_funcs = dict()
   for var_name in var_names:
-    read_func_name = var_to_read_func[var_name]
-    write_func_name = var_to_write_func[var_name]
+    read_func_name = None
+    if var_name in var_to_read_func:
+      read_func_name = var_to_read_func[var_name]
+    write_func_name = None
+    if var_name in var_to_write_func:
+      write_func_name = var_to_write_func[var_name]
     read_containing_func = None
     write_containing_func = None
     # Search for container
@@ -6440,11 +6442,10 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Recursively lookup main_func
     read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
-    if read_main_func is None or write_main_func is None:
-      print("Problem finding main functions for",var_name,"clock crossing: read, write:", read_containing_func,",",write_containing_func)
+    if write_main_func is None:
+      print("Problem finding main functions for",var_name,"clock crossing: write, read:", write_containing_func,",",read_containing_func)
       print("Missing or incorrect #pragma MAIN_MHZ ?")
       sys.exit(-1)
-     
     var_to_rw_main_funcs[var_name] = (read_main_func,write_main_func)
     
     
@@ -6454,28 +6455,45 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     inferring = False
     for var_name in var_to_rw_main_funcs:
       read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
-      read_mhz = parser_state.main_mhz[read_main_func]
-      write_mhz = parser_state.main_mhz[write_main_func]
+      if read_main_func is None or write_main_func is None:
+        continue
+      read_func_name = var_to_read_func[var_name]
+      write_func_name = var_to_write_func[var_name]
+      read_mhz = None
+      if read_main_func in parser_state.main_mhz:
+        read_mhz = parser_state.main_mhz[read_main_func]
+      write_mhz = None
+      if write_main_func in parser_state.main_mhz:
+        write_mhz = parser_state.main_mhz[write_main_func]
       # Infer freqs to match if possible
       if read_mhz is None and write_mhz is not None:
-        print("Matching clock domain for",read_main_func,"to clock domain for",write_main_func,write_mhz,"MHz")
+        print("Matching clock domain for",read_main_func,"(",read_func_name,")","to clock domain for",write_func_name, "(",write_main_func,"@",write_mhz,"MHz)")
         read_mhz = write_mhz
         parser_state.main_mhz[read_main_func] = read_mhz
         inferring = True
       elif read_mhz is not None and write_mhz is None:
-        print("Matching clock domain for",write_main_func,"to clock domain for",read_main_func,read_mhz,"MHz")
+        print("Matching clock domain for",write_main_func,"(",write_func_name,")","to clock domain for",read_func_name, "(", read_main_func,"@",read_mhz,"MHz)")
         write_mhz = read_mhz
         parser_state.main_mhz[write_main_func] = write_mhz
         inferring = True
     
-  for var_name in var_to_rw_main_funcs:
-    read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
-    read_mhz = parser_state.main_mhz[read_main_func]
-    write_mhz = parser_state.main_mhz[write_main_func]
+  for var_name in var_names:
+    # Get main funcs and mhz
+    read_main_func,write_main_func = None,None
+    read_mhz,write_mhz = None,None
+    if var_name in var_to_rw_main_funcs:
+      read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
+      if read_main_func is not None:
+        read_mhz = parser_state.main_mhz[read_main_func]
+      write_mhz = parser_state.main_mhz[write_main_func]
+    # Match mhz for disconnected read side
+    if write_mhz is not None and read_mhz is None:
+      read_mhz = write_mhz
+    # Sanity check
     if read_mhz is None and write_mhz is None:
-      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
-      print("Missing or incorrect #pragma MAIN_MHZ ?")
-      sys.exit(-1)
+        print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
+        print("Missing or incorrect #pragma MAIN_MHZ ?")
+        sys.exit(-1)
     
     # Async fifo with flow control uses sized READ and WRITE
     flow_control = False

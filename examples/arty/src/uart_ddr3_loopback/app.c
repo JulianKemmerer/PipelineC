@@ -227,25 +227,3 @@ void app()
   // Drive wires into memory controller
   WIRE_WRITE(xil_app_to_mig_t, xil_app_to_mig, to_mem)  
 }
-
-
-// Separate leds module for now since some clock cross types still TODO
-#pragma MAIN app_tieoff
-uint1_t app_tieoff()
-{
-  // Input port: overflow flag from the uart rx mac
-  uint1_t rx_overflow;
-  WIRE_READ(uint1_t, rx_overflow, uart_rx_mac_overflow)
-  
-  // Registers
-  static uint1_t overflow;
-  
-  // Drive leds
-  //WIRE_WRITE(uint1_t, led3, !overflow)
-  uint1_t rv = overflow;
-  
-  // Record overflow in register
-  overflow |= rx_overflow; // sticky or equals
-  
-  return rv;
-}

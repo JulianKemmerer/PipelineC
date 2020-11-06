@@ -260,7 +260,10 @@ begin
     write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
     write_main, read_main = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
     write_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[write_main])
-    read_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[read_main])
+    # Defaults for disconnected read side
+    read_mhz_str = write_mhz_str
+    if read_main is not None:
+      read_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[read_main])
     
     # Find the full inst name for write and read func instances
     # (should only be one instance), and break into toks
@@ -284,50 +287,51 @@ begin
     write_text += "." + write_func
     
     # Read
-    read_func_inst = None
-    read_func_insts = parser_state.FuncToInstances[read_func]
-    if len(read_func_insts) > 1:
-      print("More than one use of", read_func)
-      sys.exit(-1)
-    read_func_inst = list(read_func_insts)[0]
-    read_func_logic = parser_state.LogicInstLookupTable[read_func_inst]
-    read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-    # Start with main func then apply hier instances
-    read_text = read_main
-    for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
-      read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
-      read_text += "." + read_func_inst_str
-    read_text += "." + read_func
+    # Do not even write instance if done have read side func
+    if read_func in parser_state.FuncToInstances:
+      read_func_insts = parser_state.FuncToInstances[read_func]
+      if len(read_func_insts) > 1:
+        print("More than one use of", read_func)
+        sys.exit(-1)
+      read_func_inst = list(read_func_insts)[0]
+      read_func_logic = parser_state.FuncLogicLookupTable[read_func]
+      read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+      # Start with main func then apply hier instances
+      read_text = read_main
+      for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
+        read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+        read_text += "." + read_func_inst_str
+      read_text += "." + read_func
     
-    text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
-    (
-'''
-    # Clk in input
-    text += "clk_" + write_mhz_str + ",\n"
-    # Clk in enable
-    if flow_control:
-      text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
-    # Clk cross in data from pipeline output
-    for input_port in write_func_logic.inputs:
-      text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
-    for output_port in write_func_logic.outputs:
-      text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
-    # Clk out input
-    text += "clk_" + read_mhz_str + ",\n"
-    # Clk out enable
-    if flow_control:
-      text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
-    # Clk cross out data to pipeline input
-    for input_port in read_func_logic.inputs:
-      text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
-    for output_port in read_func_logic.outputs:
-      text += "clk_cross_to_module." + read_text + "_" + output_port + ",\n"
-      
-    text = text.strip("\n").strip(",")
-      
-    text += '''
-    );
-'''
+      text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
+      (
+  '''
+      # Clk in input
+      text += "clk_" + write_mhz_str + ",\n"
+      # Clk in enable
+      if flow_control:
+        text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+      # Clk cross in data from pipeline output
+      for input_port in write_func_logic.inputs:
+        text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
+      for output_port in write_func_logic.outputs:
+        text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
+      # Clk out input
+      text += "clk_" + read_mhz_str + ",\n"
+      # Clk out enable
+      if flow_control:
+        text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+      # Clk cross out data to pipeline input
+      for input_port in read_func_logic.inputs:
+        text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
+      for output_port in read_func_logic.outputs:
+        text += "clk_cross_to_module." + read_text + "_" + output_port + ",\n"
+        
+      text = text.strip("\n").strip(",")
+        
+      text += '''
+      );
+  '''
   
   text += '''
 end arch;
