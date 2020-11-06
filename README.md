@@ -15,14 +15,13 @@ Get started by reading the [wiki](https://github.com/JulianKemmerer/PipelineC/wi
 
 A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3) as an additional language construct/compiler feature.
 
-1. Not actually regular C. But mostly compileable by gcc for doing basic functional verification/'simulation'.
+1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But mostly compileable by gcc for doing basic functional verification/'simulation'.
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
 2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and somewhat human readable VHDL. Hooks exist for inserting raw VHDL / black boxes.
-3. If a computation can be written as a pure function without side effects (i.e. no global variables) then it will be autopipelined. 
+3. If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no global/static variables) then it will be autopipelined. 
    Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208)
    and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). 
    Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/) and the [DFiantHDL language](https://dfianthdl.github.io/) as well.
-
 
 # What is PipelineC not?
 
