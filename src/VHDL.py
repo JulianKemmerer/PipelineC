@@ -1744,14 +1744,26 @@ type register_pipeline_t is array(0 to LATENCY) of variables_t;
     rv += '''
 -- Type holding all state registers
 type state_registers_t is record'''
-    # Each func instance gets records
     rv += '''
   -- State reg vars\n'''
     for state_reg in Logic.state_regs:
       vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
       vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
       rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
-    rv += "end record;\n"    
+    rv += "end record;\n"
+    
+  # Feedback wires
+  if len(Logic.feedback_vars) > 0:
+    rv += '''
+-- Type holding all locally declared (feedback) wires of the func 
+type feedback_vars_t is record'''
+    rv += '''
+  -- Feedback vars\n'''
+    for feedback_var in Logic.feedback_vars:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(feedback_var, Logic, parser_state)
+      vhdl_name = WIRE_TO_VHDL_NAME(feedback_var, Logic)
+      rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+    rv += "end record;\n"
     
   # ALL REGISTERS
   if needs_regs:
@@ -1798,6 +1810,9 @@ type state_registers_t is record'''
       rv += "attribute mark_debug : string;\n"
       rv += '''attribute mark_debug of registers_r : signal is "true";\n'''
     rv += "\n"
+
+  if len(Logic.feedback_vars) > 0:
+    rv += "signal " + "feedback_vars : feedback_vars_t;\n"
 
   # Signals for submodule ports
   rv += '''-- Each function instance gets signals\n'''
@@ -2109,6 +2124,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
     for input_wire in Logic.inputs:
       vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
       process_sens_list += " " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
+  if len(Logic.feedback_vars) > 0:
+    process_sens_list += " -- Feedback vars\n"
+    process_sens_list += " " + "feedback_vars,\n"
   if needs_regs:
     process_sens_list += " -- Registers\n"
     process_sens_list += " " + "registers_r,\n"
@@ -2483,7 +2501,11 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
       else:
         RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
     
-    
+  
+  # Feedback vars wires
+  elif driving_wire_to_handle in logic.feedback_vars:
+    RHS = "feedback_vars." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+  
   # State regs?
   
   # GLOBAL?
@@ -2518,6 +2540,10 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
   # SUBMODULE PORT?
   if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire_to_handle, logic):
     LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
+
+  # FEEDBACK WIRE?
+  elif driven_wire_to_handle in logic.feedback_vars:
+    LHS = "feedback_vars." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
 
   # GLOBAL?
   elif driven_wire_to_handle in logic.state_regs and not logic.state_regs[driven_wire_to_handle].is_volatile:

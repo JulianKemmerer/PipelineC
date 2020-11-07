@@ -16,6 +16,8 @@ import VHDL
 import SW_LIB
 import SYN
 
+TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, False for debug
+
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 CONST_PREFIX="CONST_"
@@ -344,6 +346,7 @@ class Logic:
     self.variable_names=set() # Unordered set original variable names  
     self.wires=set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
     self.clock_enable_wires = [] # Over time, nesting ifs create more entries in list
+    self.feedback_vars = set() # Vars pragmad to be combinatorial feedback wires
     self.inputs=[] # Ordered list of inputs ["a","b"] 
     self.outputs=[] # Ordered list of outputs ["return"]
     self.state_regs = dict() # name -> state reg info
@@ -408,6 +411,7 @@ class Logic:
     rv.inputs = self.inputs[:] #["a","b"]
     rv.outputs = self.outputs[:] #["return"]
     rv.state_regs = dict(self.state_regs) #self.DEEPCOPY_DICT_COPY(self.state_regs)
+    rv.feedback_vars = set(self.feedback_vars)
     rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
     rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
     rv.c_ast_node = copy.copy(self.c_ast_node)
@@ -542,6 +546,7 @@ class Logic:
     self.wires = self.wires | logic_b.wires
     self.state_regs = UNIQUE_KEY_DICT_MERGE(self.state_regs, logic_b.state_regs)
     self.variable_names = self.variable_names | logic_b.variable_names
+    self.feedback_vars = self.feedback_vars | logic_b.feedback_vars
     
     # I/O order matters - check that
     # If one is empty then thats fine
@@ -904,6 +909,8 @@ class Logic:
       return True
     if wire in self.state_regs:
       return True
+    if wire in self.feedback_vars:
+      return True
       
     # THIS SEEMS WRONG?
     # NEED TO BE ABLE TO COLLAPSE/TRIM SUBMODULES?
@@ -1057,8 +1064,8 @@ class Logic:
 
     return None
     
-    
-    
+  def CAN_BE_SLICED(self):
+    return not self.uses_nonvolatile_state_regs and len(self.feedback_vars)==0
       
   def SHOW(self):
     # Make adjency matrix out of all wires and submodule isnts and own 'wire'/node in network
@@ -1482,6 +1489,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     return C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.Cast:
     return C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
+  elif type(c_ast_node) == c_ast.Pragma:
+    return C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.EmptyStatement:
     print("Unecessary empty statement - extra ';' ?", c_ast_node.coord)
     sys.exit(-1)
@@ -1493,6 +1502,17 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     #casthelp(c_ast_node)
     #print "driven_wire_names=",driven_wire_names
     sys.exit(-1)
+    
+def C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+  toks = c_ast_node.string.split(" ")
+  
+  # FEEDBACK WIRES
+  if toks[0] == "FEEDBACK":
+    var_name = toks[1]
+    parser_state.existing_logic.feedback_vars.add(var_name)
+    #print(c_ast_node)
+  
+  return parser_state.existing_logic
   
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
   # Check for double return
@@ -1521,6 +1541,12 @@ def CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_node):
     ref_toks = (state_reg,)
     connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [state_reg], prepend_text, parser_state)
     parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)
+    
+  # Tie feedback wires to var like state regs
+  for feedback_var in parser_state.existing_logic.feedback_vars:
+    ref_toks = (feedback_var,)
+    connect_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, [feedback_var], prepend_text, parser_state)
+    parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)  
     
   return parser_state.existing_logic
 
@@ -3117,10 +3143,12 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   
   # Use base var (NOT ORIG WIRE SINCE structs) to look up alias list
   driving_aliases_over_time = []
-  # Base variable is only driven if an input, global, volatile global, or in wire driven by
+  # Some wires are special and are already considered driven
+  #  ex. input, global, volatile global, or in wire driven by
   if ( (base_var_name in parser_state.existing_logic.inputs) or
        (base_var_name in parser_state.existing_logic.state_regs) or
-       (base_var_name in parser_state.existing_logic.wire_driven_by) ):
+       (base_var_name in parser_state.existing_logic.wire_driven_by) or
+       (base_var_name in parser_state.existing_logic.feedback_vars) ):
     driving_aliases_over_time += [base_var_name]
   aliases_over_time = []
   if base_var_name in parser_state.existing_logic.wire_aliases_over_time:
@@ -4895,7 +4923,7 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend
   # One vhdl text func call marks logic - hello future me?
   parser_state.existing_logic.is_vhdl_text_module = True
   
-  # Mark as using globals, need to assume like needs_clk
+  # Mark as using globals, cant be sliced
   parser_state.existing_logic.uses_nonvolatile_state_regs = True
   
   func_name = str(c_ast_func_call.name.name)
@@ -6274,10 +6302,11 @@ def PARSE_FILE(c_filename):
     
     #print "Skipping user code trimming for debug..."
     # Remove excess user code
-    print("Doing obvious logic trimming/collapsing...")
-    for main_func in list(parser_state.main_mhz.keys()):
-      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-      parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
+    if TRIM_COLLAPSE_LOGIC:
+      print("Doing obvious logic trimming/collapsing...")
+      for main_func in list(parser_state.main_mhz.keys()):
+        main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
         
     # Check for double use of globals+volatiles the dumb way to print useful info
     for func_name1 in parser_state.FuncLogicLookupTable:

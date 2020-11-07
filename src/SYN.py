@@ -451,6 +451,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, logic.inputs)
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
+  RECORD_DRIVEN_BY(None, logic.feedback_vars)
   # Also "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
     #print "wire=",wire
@@ -484,6 +485,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         return False
       if print_debug:
         print("Output driven ", output, "<=",wires_driven_by_so_far[output])
+    # Feedback wires
+    for feedback_var in logic.feedback_vars:
+      if (feedback_var not in wires_driven_by_so_far) or (wires_driven_by_so_far[feedback_var]==None):
+        if print_debug:
+          print("Pipeline not done feedback var.",feedback_var)
+        return False
+      if print_debug:
+        print("Feedback var driven ", feedback_var, "<=",wires_driven_by_so_far[feedback_var])  
     # ALl globals driven
     for state_reg in logic.state_regs:
       if logic.state_regs[state_reg].is_volatile == False:
@@ -621,7 +630,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               #print "driving_wire, driven_wire",driving_wire, driven_wire
               # Need VHDL conversions for this type assignment?
               TYPE_RESOLVED_RHS = VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state)
-              submodule_level_text += " " + " " + " " + LHS + " := " + TYPE_RESOLVED_RHS + ";" + "\n" # + " -- " + driven_wire + " <= " + driving_wire + 
+              
+              # Typical wires using := assignment, but feedback wires need <=
+              ass_op = ":="
+              if driven_wire in logic.feedback_vars:
+                ass_op = "<="
+              submodule_level_text += " " + " " + " " + LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n" # + " -- " + driven_wire + " <= " + driving_wire + 
                 
                 
         wires_to_follow=next_wires_to_follow[:]
@@ -1011,11 +1025,11 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   # Write into timing params dict, almost certainly unecessary
   TimingParamsLookupTable[inst_name] = timing_params
   
-  # Check for globals
-  if logic.uses_nonvolatile_state_regs:
+  # Check if can slice
+  if not logic.CAN_BE_SLICED():
     # Can't slice globals, return index of bad slice
     if print_debug:
-      print("Can't slice, uses globals")
+      print("Can't slice")
     return slice_index
   
   # Double check slice
@@ -1137,7 +1151,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
         submodule_func_name = logic.submodule_instances[submodule_inst]
         submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
         containing_logic = logic
-        #print "SLICING containing_logic.func_name",containing_logic.func_name, containing_logic.uses_nonvolatile_state_regs
+        
         submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
         start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[submodule_inst]
@@ -2137,7 +2151,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         if mult > 1.0:
           # Divide up into that many clocks as a starting guess
           # If doesnt have global wires
-          if not main_func_logic.uses_nonvolatile_state_regs:
+          if main_func_logic.CAN_BE_SLICED():
             clks = int(mult) - 1
             main_func_to_coarse_latency[main_func] = clks
       
@@ -2239,7 +2253,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       for main_func in main_func_to_path_reports:
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         main_func_path_reports = main_func_to_path_reports[main_func]
-        if not main_func_logic.uses_nonvolatile_state_regs:
+        if main_func_logic.CAN_BE_SLICED():
           # DO incremental guesses based on time report results
           if do_incremental_guesses:
             # What max path delay is associated with this func?
@@ -3034,8 +3048,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       # Syn results are delay and clock 
       print(logic_func_name, "Path delay (ns):", path_report.path_delay_ns, "=",mhz, "MHz")
       print("")
-      # Record worst global
-      if logic.uses_nonvolatile_state_regs:
+      # Record worst non slicable logic
+      if not logic.CAN_BE_SLICED():
         if mhz < min_mhz:
           min_mhz_func_name = logic.func_name
           min_mhz = mhz

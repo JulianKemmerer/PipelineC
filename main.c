@@ -22,7 +22,30 @@
 //#include "examples/arty/src/blink.c"
 //#include "examples/clock_crossing.c"
 //#include "examples/async_clock_crossing.c"
-#include "examples/arty/src/uart_ddr3_loopback/app.c"
+//#include "examples/arty/src/uart_ddr3_loopback/app.c"
+
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 100.0
+
+uint32_t main(uint32_t x, uint32_t y)
+{
+  uint32_t x_feedback;
+  #pragma FEEDBACK x_feedback
+  
+  // This doesnt make sense/comple unless FEEDBACK pragma'd
+  // x_feedback has not been assigned a value
+  uint32_t x_looped_back = x_feedback;
+  
+  // This last assignment to x_feedback is what 
+  // shows up as the first x_feedback read value
+  x_feedback = x + 1;
+  
+  return x_looped_back + y;
+}
+
+
+
+
 
 
 
