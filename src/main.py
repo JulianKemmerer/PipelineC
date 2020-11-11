@@ -20,6 +20,7 @@ print('''
 print("TODO:")
 print(" Make a chipscope+virtual io debug thing, w/ pass through regular streaming uart io?")
 print(" ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc")
+print(" Make MAIN_MHZ allow not yet defined funcs for mhz values later")
 print(" Continue completing clock crossing features, tool support")
 print(" Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force")
 print(" Rust AST? rustc -Z ast-json, traverse the json?")

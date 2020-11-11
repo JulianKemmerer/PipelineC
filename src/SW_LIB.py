@@ -58,6 +58,9 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state):
       if len(dims) > 1:
         print("Only single dim in flow control crossing!", var_name)
         sys.exit(0)
+      if len(dims) < 1:
+        print("No async fifo depth provided for var?:",var_name)
+        sys.exit(-1)
       fifo_depth = dims[0]
       c_type = elem_t
       write_in_t = c_type + "[" + str(write_size) + "]"

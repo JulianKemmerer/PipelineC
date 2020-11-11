@@ -2874,6 +2874,7 @@ def C_TYPE_IS_STRUCT(c_type_str, parser_state):
   return (c_type_str in parser_state.struct_to_field_type_dict) or SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type_str, parser_state)
   
 def C_TYPE_IS_ENUM(c_type_str, parser_state):
+  #print("parser_state.enum_to_ids_dict",parser_state.enum_to_ids_dict)
   return c_type_str in parser_state.enum_to_ids_dict
   
 def C_TYPE_IS_ARRAY(c_type):
@@ -3738,7 +3739,7 @@ def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, st
 def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   if type(c_ast_decl.type) == c_ast.ArrayDecl:
     c_ast_array_decl = c_ast_decl.type
-    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl)
+    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl, parser_state)
     wire_name = name
     c_type = elem_type + "[" + str(dim) + "]"
     parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
@@ -5086,9 +5087,13 @@ def C_TYPE_SIZE(c_type, parser_state, allow_fail=False):
     byte_size = int(math.ceil(float(bit_width)/float(8)))
   elif c_type == "float":
     return 4
+  elif C_TYPE_IS_ENUM(c_type,parser_state):
+    bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,c_type)
+    byte_size = int(math.ceil(float(bit_width)/float(8)))
   else:
     if not allow_fail:
       print("How to sizeof",c_type, "???")
+      print(0/0)
       sys.exit(-1)
     byte_size = -1
   
@@ -5102,10 +5107,6 @@ def C_AST_SIZEOF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_sta
   value_str = str(size)
   is_negated = False
   return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
-  
-  
-  
-  
   
 def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, parser_state):
   # What op?
@@ -5706,7 +5707,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
   
 # int x[2]     returns "x", "int", 2
 # int x[2][2]  returns "x", "int[2]", 2
-def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
+def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
   #casthelp(array_decl)
   #print 
   #sys.exit(-1)
@@ -5716,7 +5717,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
   dims = []
   while len(children)>1 and children[1][0]=='dim':
     # Get the dimension with dummies
-    dummy_parser_state = ParserState()
+    dummy_parser_state = parser_state.DEEPCOPY() #ParserState() # too slow?
     dummy_parser_state.existing_logic = Logic()
     dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
     dummy_wire = "ARRAY_DECL_DIM"
@@ -5753,11 +5754,11 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl):
   
   
   
-def C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl):
+def C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl, parser_state):
   # Need to get array type differently 
   #print "param decl or global?",param_decl
   if type(param_decl.type) == c_ast.ArrayDecl:
-    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(param_decl.type)
+    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(param_decl.type, parser_state)
     array_type = elem_type + "[" + str(dim) + "]"
     #print "array_type",array_type
     return array_type     
@@ -5804,7 +5805,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       parser_state.existing_logic.wires.add(input_wire_name)
       parser_state.existing_logic.variable_names.add(input_wire_name)
       #print "Append input", input_wire_name
-      c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl)
+      c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl, parser_state)
       parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
   
   
@@ -6026,13 +6027,14 @@ class ParserState:
     
     rv.struct_to_field_type_dict = dict(self.struct_to_field_type_dict)
     rv.enum_to_ids_dict = dict(self.enum_to_ids_dict)
-    rv.state_regs = dict(self.state_regs)
+    rv.global_state_regs = dict(self.global_state_regs)
     
     rv.func_name_to_calls = dict(self.func_name_to_calls)
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
     
     rv.main_mhz = dict(self.main_mhz)
     rv.func_marked_wires = set(self.func_marked_wires)
+    rv.part = self.part
     
     self.clk_cross_var_info = dict(self.clk_cross_var_info)
     
@@ -6201,12 +6203,12 @@ def PARSE_FILE(c_filename):
         parse_state = APPEND_PRAGMA_INFO(parser_state)
         # Parse definitions first before code structure
         print("Parsing non-function definitions...")
-        # Get the parsed struct def info
-        parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast)
-        # Get global state regs (global regs, volatile globals) info
-        parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
         # Get the parsed enum info
         parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
+        # Get the parsed struct def info
+        parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
+        # Get global state regs (global regs, volatile globals) info
+        parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
         # Build primative map of function use
         parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
         # Elborate what the clock crossings look like
@@ -6350,7 +6352,7 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
   for global_decl in global_decls:
     state_reg_info = StateRegInfo()
     state_reg_info.name = str(global_decl.name)
-    c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(global_decl)
+    c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(global_decl, parser_state)
     state_reg_info.type_name = c_type
     state_reg_info.init = global_decl.init
         
@@ -6639,12 +6641,12 @@ def GET_ENUM_IDS_DICT(c_file_ast):
       if struct_def.name is None:
         sys.exit(-1)
       '''
-  #print rv
+  #print(rv)
   #sys.exit(-1)
   return rv
 
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
-def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast):
+def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
   # Read in file with C parser and get function def nodes
   rv = dict()
   struct_defs = GET_C_AST_STRUCT_DEFS(c_file_ast)
@@ -6668,7 +6670,7 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast):
       # Assume type decl  
       field_name = str(child.name)
       if type(child.type) == c_ast.ArrayDecl:
-        field_name, base_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(child.type)
+        field_name, base_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(child.type, parser_state)
         #dim = int(child.type.dim.value)
         #base_type = child.type.type.type.names[0]
         type_name = base_type + "[" + str(dim) + "]"  
