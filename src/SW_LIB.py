@@ -230,10 +230,11 @@ def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text):
     toks = byte_type.split("_bytes_t")
     elem_t = toks[0]
     
-    # Dummy typedef for now to fool c parser?? oh plz help
+    # Dummy typedefs for now to fool c parser?? oh plz help - double up on some help wassup
     text = "#pragma once\n"
     text += '''
-typedef uint8_t ''' + byte_type + ''';
+typedef uint8_t ''' + byte_type + '''; // DUMMY
+#define ''' + elem_t + "_size_t" + ''' uint32_t // DUMMY
 '''
 
     # Write file
