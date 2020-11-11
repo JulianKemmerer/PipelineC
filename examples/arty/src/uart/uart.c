@@ -1,3 +1,4 @@
+#include "compiler.h"
 #include "cdc.h"
 
 #define UART_CLK_MHZ 25.0
