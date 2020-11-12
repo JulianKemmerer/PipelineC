@@ -3942,7 +3942,11 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     #print("const_driving_wire",const_driving_wire)
     # ONLY USE ONE BRANCH AND RETURN
     const_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic,parser_state)
-    const_cond_val = int(const_val_str)
+    try:
+      const_cond_val = int(const_val_str)
+    except:
+      print("Something weird with constant use in if at:",c_ast_node.coord)
+      sys.exit(-1)
     driven_wire_names = [] # The compand branch doesnt drive anything
     # Remove cond wire
     parser_state.existing_logic.wires.remove(mux_intermediate_cond_wire_wo_var_name)
@@ -4432,7 +4436,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   func_logic = None
   if func_base_name in parser_state.FuncLogicLookupTable:
     func_logic = parser_state.FuncLogicLookupTable[func_base_name]
-    is_global_func = len(func_logic.state_regs) > 0
+    is_global_func = len(func_logic.state_regs) > 0 or func_logic.uses_nonvolatile_state_regs
   if is_global_func:
     return None
       
@@ -4602,11 +4606,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       return None
     else:
       print("WARNING: Not reducing constant function call:")
-      print(" ",func_inst_name, end=' ')
-      print(" ",func_base_name, func_c_ast_node.coord)
-      #print(0/0)
+      print(func_inst_name, end=' ')
+      print(func_base_name, func_c_ast_node.coord)
       sys.exit(-1)
-      #print const_input_wires
       return None
     
     # Going to replace with constant
@@ -5244,6 +5246,9 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     c_ast_op_str = BIN_OP_SR_NAME
   elif c_ast_bin_op_str == "%":
     c_ast_op_str = BIN_OP_MOD_NAME
+  elif c_ast_bin_op_str == "&&" or c_ast_bin_op_str == "||":
+    print("No bool types, use bitwise operators, &,|, etc..", c_ast_binary_op.coord)
+    sys.exit(-1)
   else:
     print("BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?")
     sys.exit(-1)
@@ -6189,7 +6194,6 @@ def PARSE_FILE(c_filename):
       if post_preprocess_gen:
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
-        #print "preprocessed_c_text",preprocessed_c_text
         # Code gen based purely on preprocessed C text
         SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
         

@@ -273,6 +273,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     # define a size_t for iterating over as many bytes 
     size_t_width = int(math.ceil(math.log(size,2))) + 1
     size_t = "uint" + str(size_t_width) + "_t"
+    text += "#define " + type_t+"_SIZE" + " " + str(size) + "\n"
     text += "#define " + type_t+"_size_t" + " " + size_t + "\n"
     func_name = type_t + "_to_bytes"
     
@@ -355,6 +356,25 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
       rv.data[2] = float_23_16(x);
       rv.data[3] = float_31_24(x);
       '''
+    elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+      # How many bytes
+      width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+      typeprefix = "uint" + str(width)
+      int_type =  typeprefix + "_t"
+      # Convert to uint
+      text += int_type + " int_val = x;\n"
+      # Copy uint logic from above
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      while high_i < width:
+        text += "rv.data[" + str(byte_i) + "] = " + typeprefix + "_" + str(high_i) + "_" + str(low_i) + "(int_val);\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        text += "rv.data[" + str(byte_i) + "] = " + typeprefix + "_" + str(width-1) + "_" + str(low_i) + "(int_val);\n"
+      
     else:
       print("to bytes for type:", type_t)
       sys.exit(-1)
@@ -458,6 +478,29 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     // Convert uint32_t to float
     rv = float_uint32(val_unsigned);
       '''
+      
+    elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+      # How many bytes
+      width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+      typeprefix = "uint" + str(width)
+      int_type =  typeprefix + "_t"
+      # Convert to uint like uint case
+      text += int_type + " int_val;\n"
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      text += "int_val = 0;\n"
+      while high_i < width:
+        text += "int_val = " + typeprefix + "_uint8_" + str(low_i) + "(int_val, bytes.data[" + str(byte_i) + "]);\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        rem = width - low_i
+        remprefix = "uint"+str(rem)
+        text += "int_val = " + typeprefix + "_" + remprefix + "_" + str(low_i) + "(int_val, bytes.data[" + str(byte_i) + "]);\n"
+      # And then convert uint to enum
+      text += "rv = int_val;\n"
     else:
       print("bytes to for type:", type_t)
       #sys.exit(-1)
@@ -481,6 +524,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     
     # Fully generate a good header file for this type
     text = "#pragma once\n"
+    text += "#define " + type_t+"_SIZE" + " " + str(size) + "\n"
     
     # #define the _bytes_t to be the uint8_t_array_N_t type
     size = C_TO_LOGIC.C_TYPE_SIZE(type_t, parser_state, allow_fail=True)
@@ -552,6 +596,25 @@ void ''' + type_t + "_to_bytes(" + type_t + '''* x, uint8_t* bytes)
     elif type_t == "float":
       text += '''memcpy(bytes, x, 4);
 '''
+    elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+      # How many bytes
+      num_bytes = C_TO_LOGIC.C_TYPE_SIZE(type_t, parser_state)
+      width = 8*num_bytes
+      typeprefix = "uint" + str(width)
+      int_type =  typeprefix + "_t"
+      text += int_type + " int_val = *x;\n"
+      # Convert to uint like uint case
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      while high_i < width:
+        text += "bytes[" + str(byte_i) + "] = (uint8_t)(int_val>>" + str(low_i) + ");\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        print("Non byte bit width enum to sw bytes??",width,type_t)
+        sys.exit(-1)
     else:
       print("to sw bytes for type:", type_t)
       sys.exit(-1)
@@ -625,6 +688,28 @@ void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
     elif type_t == "float":
       text += '''memcpy(x, bytes, 4);
 '''
+    elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+      # How many bytes
+      num_bytes = C_TO_LOGIC.C_TYPE_SIZE(type_t, parser_state)
+      width = 8*num_bytes
+      typeprefix = "uint" + str(width)
+      int_type =  typeprefix + "_t"
+      # Convert to uint like uint case
+      text += int_type + " int_val;\n"
+      low_i = 0
+      high_i = 7
+      byte_i = 0
+      text += "int_val = 0;\n"
+      while high_i < width:
+        text += "int_val |= (((" + int_type + ")bytes[" + str(byte_i) + "])<<"+ str(low_i) + ");\n"
+        low_i = low_i + 8
+        high_i = high_i + 8
+        byte_i = byte_i + 1
+      if low_i < width:
+        print("Non byte bit width enum from sw bytes??",width,type_t)
+        sys.exit(-1)
+      # Then convert to enum
+      text += "*x = (" + type_t + ")int_val;\n"
     else:
       print("to type from sw bytes, type:", type_t)
       sys.exit(-1)

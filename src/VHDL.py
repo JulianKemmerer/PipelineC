@@ -814,8 +814,8 @@ use xpm.vcomponents.all;
     begin
     '''
     
-    to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(in_vhdl_t)
-    from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(out_vhdl_t)
+    to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(in_vhdl_t, parser_state)
+    from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(out_vhdl_t, parser_state)
 
     # Flow control is async fifo
     if flow_control:
@@ -1361,7 +1361,7 @@ package c_structs_pkg is
       begin
     '''
           vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
-          to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(inner_vhdl_type)
+          to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(inner_vhdl_type, parser_state)
           for i in range(0, new_dims[0]):
             func_body_text += '''
             rv((pos+'''+vhdl_slv_len_str+''')-1 downto pos) := ''' + to_slv_toks[0] + "data(" + str(i) + ")" + to_slv_toks[1] + ''';
@@ -1386,7 +1386,7 @@ package c_structs_pkg is
       begin
     '''
           vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
-          from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(inner_vhdl_type)
+          from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(inner_vhdl_type, parser_state)
           for i in range(0, new_dims[0]):
             func_body_text += '''
             rv(''' + str(i) + ''') := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
@@ -1483,7 +1483,7 @@ package c_structs_pkg is
         c_type = field_type_dict[field]
         vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
         vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
-        to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(vhdl_type)
+        to_slv_toks = VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state)
         func_body_text += '''
         rv((pos+'''+vhdl_slv_len_str+''')-1 downto pos) := ''' + to_slv_toks[0] + "data." + field + to_slv_toks[1] + ''';
         pos := pos + '''+vhdl_slv_len_str+''';
@@ -1510,7 +1510,7 @@ package c_structs_pkg is
         c_type = field_type_dict[field]
         vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
         vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
-        from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(vhdl_type)
+        from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state)
         func_body_text += '''
         rv.''' + field + ''' := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
         pos := pos + '''+vhdl_slv_len_str+''';
@@ -1551,21 +1551,29 @@ end c_structs_pkg;
   
 # Sufjan Stevens - Adlai Stevenson
 # Similar to TYPE_RESOLVE_ASSIGNMENT_RHS
-def VHDL_TYPE_TO_SLV_TOKS(vhdl_type):
+def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
   if vhdl_type.startswith("std_logic_vector"):
     return ["",""]
   elif vhdl_type.startswith("unsigned") or vhdl_type.startswith("signed"):
     return ["std_logic_vector(",")"]
+  elif vhdl_type in parser_state.enum_to_ids_dict: # same name as c type hacky
+    num_ids = len(parser_state.enum_to_ids_dict[vhdl_type])
+    width = int(math.ceil(math.log(num_ids,2)))
+    return ["std_logic_vector(to_unsigned(" + vhdl_type + "'pos(" , ") ," + str(width) + "))"]
   else:
     return [vhdl_type + "_to_slv(",")"]
     
-def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type):
+def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
   if vhdl_type.startswith("std_logic_vector"):
     return ["",""]
   elif vhdl_type.startswith("unsigned"):
     return ["unsigned(",")"] 
   elif vhdl_type.startswith("signed"):
     return ["signed(",")"]
+  elif vhdl_type in parser_state.enum_to_ids_dict: # same name as c type hacky
+    num_ids = len(parser_state.enum_to_ids_dict[vhdl_type])
+    width = int(math.ceil(math.log(num_ids,2)))
+    return [vhdl_type + "'val(to_integer(unsigned(", ")))"]
   else:
     return ["slv_to_" + vhdl_type + "(",")"]
 
