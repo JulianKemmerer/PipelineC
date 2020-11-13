@@ -5070,7 +5070,7 @@ def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
     output_driven_wire_names,
     parser_state)
     
-def C_TYPE_SIZE(c_type, parser_state, allow_fail=False):
+def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
   if C_TYPE_IS_ARRAY(c_type):
     elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
     elem_size = C_TYPE_SIZE(elem_t, parser_state)
@@ -5095,7 +5095,12 @@ def C_TYPE_SIZE(c_type, parser_state, allow_fail=False):
   else:
     if not allow_fail:
       print("How to sizeof",c_type, "???")
-      print(0/0)
+      if c_ast_node:
+        print(c_ast_node)
+        print(c_ast_node.coord)
+      else:
+        print(0/0)
+      #print("parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict)
       sys.exit(-1)
     byte_size = -1
   
@@ -5105,7 +5110,7 @@ def C_AST_SIZEOF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_sta
   # This is weird - todo error check
   c_type_str = c_ast_node.expr.type.type.names[0];
   # Replace with constant
-  size = C_TYPE_SIZE(c_type_str, parser_state)
+  size = C_TYPE_SIZE(c_type_str, parser_state, False, c_ast_node)
   value_str = str(size)
   is_negated = False
   return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
@@ -6194,6 +6199,7 @@ def PARSE_FILE(c_filename):
       if post_preprocess_gen:
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
+        #print(preprocessed_c_text)
         # Code gen based purely on preprocessed C text
         SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
         
@@ -6210,7 +6216,7 @@ def PARSE_FILE(c_filename):
         # Get the parsed enum info
         parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
         # Get the parsed struct def info
-        parser_state.struct_to_field_type_dict = GET_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
+        parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
         # Get global state regs (global regs, volatile globals) info
         parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
         # Build primative map of function use
@@ -6650,9 +6656,8 @@ def GET_ENUM_IDS_DICT(c_file_ast):
   return rv
 
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
-def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
+def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
   # Read in file with C parser and get function def nodes
-  rv = dict()
   struct_defs = GET_C_AST_STRUCT_DEFS(c_file_ast)
   for struct_def in struct_defs:
     if struct_def.name is None:
@@ -6669,7 +6674,7 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
     #casthelp(struct_def)
     struct_name = str(struct_def.name)
     #print "struct_name",struct_name
-    rv[struct_name] = OrderedDict()
+    parser_state.struct_to_field_type_dict[struct_name] = OrderedDict()
     for child in struct_def.decls:
       # Assume type decl  
       field_name = str(child.name)
@@ -6681,9 +6686,9 @@ def GET_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
       else:
         # Non array
         type_name = str(child.children()[0][1].children()[0][1].names[0])
-      rv[struct_name][field_name] = type_name
+      parser_state.struct_to_field_type_dict[struct_name][field_name] = type_name
       
-  return rv
+  return parser_state
   
 
 # This will likely be called multiple times when loading multiple C files
