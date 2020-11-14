@@ -1,20 +1,55 @@
-#include "compiler.h"
-#include "wire.h"
-#include "../leds/leds.c"
-#include "xil_mig.c"
+// Debug probes stuff before the mem test logic begins below
+#include "arrays.h"
+#include "uintN_t.h"
+#include "uint8_t_array_N_t.h"
+#include "uint8_t_bytes_t.h"
 
-// Example memory test that writes a test pattern to DDR
-// and then reads the same data back
+// Needed for clock domain info in probes.c, temp?
+#include "xil_mig.c" 
 
-typedef enum mem_test_state_t
+// Some info from mem test app and generated helpers
+#include "debug.h"
+// Hardware only auto generated helpers for to from bytes
+#include "mem_test_state_t_bytes_t.h"
+#include "mem_test_state_t_array_N_t.h"
+#include "uint32_t_bytes_t.h"
+#include "app_debug_t_bytes_t.h"
+#include "app_debug_t_array_N_t.h"
+
+// Debug probes logic
+#include "../probes/probes.c"
+
+// Debug capture regs logic (wrapper around WIRE_WRITE)
+void app_debug(mem_test_state_t state, xil_mig_addr_t test_addr, uint8_t test_data)
 {
-  WAIT_RESET,
-  WRITES,
-  READ_REQ,
-  READ_RESP,
-  FAILED
-}mem_test_state_t;
-mem_test_state_t mem_test_state;
+  // State regs
+  static app_debug_t debug_data;
+  
+  // Debug probe the debug data
+  WIRE_WRITE(app_debug_t, probe0, debug_data)
+  //uint1_t debug_data_rd_en;
+  //WIRE_READ(uint1_t, debug_data_rd_en, probe0_rd_en)
+  
+  // Shift new data into array to capture multiple samples over time
+  // Want [0] element to be time=0, oldest,first data point
+  // SO put elements in at the top of array and shift down to zero over time
+  uint32_t i;
+  // state
+  ARRAY_SHIFT_DOWN(debug_data.state, DEBUG_SAMPLES,1,i)
+  debug_data.state[DEBUG_SAMPLES-1] = state;
+  // test_addr
+  ARRAY_SHIFT_DOWN(debug_data.test_addr, DEBUG_SAMPLES,1,i)
+  debug_data.test_addr[DEBUG_SAMPLES-1] = test_addr;
+  // test_data
+  ARRAY_SHIFT_DOWN(debug_data.test_data, DEBUG_SAMPLES,1,i)
+  debug_data.test_data[DEBUG_SAMPLES-1] = test_data;
+}
+
+// BEGIN MEM TEST ################ ///////////////////////////   \/
+
+#include "wire.h"
+#include "xil_mig.c"
+#include "../leds/leds.c"
 
 // A single test data unit is the size of one data transfer
 #define TEST_DATA_SIZE XIL_MIG_DATA_SIZE
@@ -35,20 +70,32 @@ test_data_t INIT_TEST_DATA()
   return rv;
 }
 
-// State registers
-xil_mig_addr_t test_addr;
-test_data_t test_data;
+// Example memory test that writes a test pattern to DDR
+// and then reads the same data back
 
 // The memory test process, same clock as generated memory interface
 #pragma MAIN_MHZ app xil_mig_module
 void app()
 {
+  // State registers
+  static mem_test_state_t mem_test_state;
+  static xil_mig_addr_t test_addr;
+  static test_data_t test_data;
+  
   // Status leds indicate state
   uint1_t led[4];
   led[0] = mem_test_state==WAIT_RESET;
   led[1] = mem_test_state==WRITES;
   led[2] = (mem_test_state==READ_REQ) | (mem_test_state==READ_RESP);
   led[3] = (mem_test_state==READ_RESP);
+  
+  // Do more advanced capture logic for probe0 using app_debug func
+  app_debug(mem_test_state, test_addr, test_data.data[0]);
+  
+  // Also probe test data as example
+  WIRE_WRITE(uint8_t, probe1, test_data.data[0])
+  //uint1_t test_data_rd_en;
+  //WIRE_READ(uint1_t, test_data_rd_en, probe1_rd_en)
   
   // Input read outputs wires from memory controller
   xil_mig_to_app_t from_mem;

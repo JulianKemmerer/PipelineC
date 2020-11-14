@@ -274,7 +274,7 @@ process(all) begin
     mig_to_app.rd_data_end(0) <= app_rd_data_end; 
     mig_to_app.rd_data_valid(0) <= app_rd_data_valid;
     mig_to_app.rdy(0) <= app_rdy;
-    mig_to_app.wdf_rdy(0) <= app_wdf_rdy;
+    mig_to_app.wdf_rdy(0) <= app_wdf_rdy; 
     app_sr_req   <= std_logic(app_to_mig.sr_req(0));
     app_ref_req  <= std_logic(app_to_mig.ref_req(0));
     app_zq_req   <= std_logic(app_to_mig.zq_req(0));
@@ -286,12 +286,7 @@ process(all) begin
 end process;
     
 -- The PipelineC generated entity
-top_inst : entity work.top port map (    
-    -- Add other design IO signals here
-    --slow_reset(0) => rst,
-    --fast_reset(0) => ddr_sys_rst
-    app_tieoff_return_output => open,
-    
+top_inst : entity work.top port map (   
     -- Main function clocks
     clk_25p0 => clk_25,
     --clk_50p0 => clk_50,

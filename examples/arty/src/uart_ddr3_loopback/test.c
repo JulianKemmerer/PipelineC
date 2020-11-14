@@ -57,7 +57,7 @@ int main(int argc, char **argv)
 		inputs[i] = input_init(i);
 	}
   
-  // Do the work on the cpy to compare to
+  // Do the work on the cpu to compare to
 	for(int i = 0; i < NUM_MSGS_TEST; i++)
 	{
 		cpu_outputs[i] = inputs[i];
@@ -73,14 +73,14 @@ int main(int argc, char **argv)
   // Write messages to FPGA
 	for(int i = 0; i < NUM_MSGS_TEST; i++)
 	{
-    //printf("Write %d\n",i);
+    if(i%1000==0)printf("Write %d/%d\n",i,NUM_MSGS_TEST);
     msg_write(&(inputs[i]));
 	}
   
   // Read messages from FPGA
 	for(int i = 0; i < NUM_MSGS_TEST; i++)
 	{
-    //printf("Read %d\n",i);
+    if(i%1000==0)printf("Read %d\n",i);
     msg_read(&(fpga_outputs[i]));
 	}
   

@@ -1,3 +1,4 @@
+#pragma once
 // https://www.xilinx.com/support/documentation/ip_documentation/ug586_7Series_MIS.pdf
 // https://forum.digilentinc.com/topic/18555-arty-a7-and-mig/
 // Controller Clock = 3000ps|333.33 MHz
@@ -9,6 +10,9 @@
 #include "compiler.h"
 #include "wire.h"
 #include "uintN_t.h"
+
+// Use debug leds
+#include "../leds/leds.c"
 
 #define XIL_MIG_MHZ 83.33 // UI CLK
 #define xil_mig_addr_t uint28_t

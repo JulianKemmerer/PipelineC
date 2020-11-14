@@ -18,12 +18,13 @@
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
 //#include "examples/arty/src/uart/uart_loopback_msg.c"
-//#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/blink.c"
 //#include "examples/clock_crossing.c"
 //#include "examples/async_clock_crossing.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
+#include "examples/arty/src/ddr3/mig_app.c"
 
+/*
 #include "uintN_t.h"
 #pragma MAIN_MHZ main 100.0
 
@@ -42,7 +43,7 @@ uint32_t main(uint32_t x, uint32_t y)
   
   return x_looped_back + y;
 }
-
+*/
 
 
 
