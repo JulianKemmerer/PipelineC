@@ -12,7 +12,7 @@
 #include "uintN_t.h"
 
 // Use debug leds
-#include "../leds/leds.c"
+#include "../leds/led0_3.c"
 
 #define XIL_MIG_MHZ 83.33 // UI CLK
 #define xil_mig_addr_t uint28_t
