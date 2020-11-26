@@ -20,18 +20,25 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Sanity check signed mult you POS
+Need clock groups / async indicator
+Revive TEMAC example (start eth/ip/udp loopback) and integrate into arty proj
+NEED active pipelining example - Do matrix mult example with eth^
+Do small neural net example? Then work to larger one?
 Come on do sanity check for reserved words
-Make a chipscope+virtual io debug thing, w/ pass through regular streaming uart io?
-^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Make MAIN_MHZ allow not yet defined funcs for mhz values later
+Multiple reads on globals var / global wires? is maybe OK? ordering of global writes and reads a problem?
+Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
+^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
-Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
-Rust AST? rustc -Z ast-json, traverse the json?
-Document pragmas
-Reorg global logic detection/rounding from bottom up instead of trying multiple times to slice from top down.
-Do a simple RISCV? cpu? But avoid just doing RTL clone?
+Try small python ast parsing based example - Pypeline? haha
 Fix bug of not being able to include auto gen headers in auto gend files
+Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
+Document pragmas
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
+^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
+Do a simple RISCV? cpu? But avoid just doing RTL clone?
+Reorg global logic detection/rounding from bottom up instead of trying multiple times to slice from top down.
 Fix fine grain sweep to work again
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
@@ -41,6 +48,7 @@ Check for non global functions that call global functions when evaluating const
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
 Do hacky if generate with pragmas? oh gosh
+Rust AST? rustc -Z ast-json, traverse the json?
 Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Cache/return once true/reorganize into timing params LOGIC_NEEDS_ code?
@@ -59,12 +67,10 @@ Add look ahead for built in functions so cast can be inferred
 Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated...
 Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?
 Pragmas for reset stuff, tag global regs for reset, special clock domain handling stuff with PLL lock and such?
-Allow mix of volatile and non-volatile globals by isolating logic using globals (as is done now by putting in other global func)?
 Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew
 CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
 Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?
 Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])
-Multiple reads on globals from pipelined logic is maybe OK? ordering of global writes and reads a problem?, do at some point...
 Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <func_name>_t {x,y,z}
 Syn each pipeline stage ... this is hard... like slicing zero clock logic 
 Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b

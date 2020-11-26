@@ -5926,10 +5926,23 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       if wire in func_logic.wires: # Changes during iter
         # Look for not special wires that have driving info
         if not func_logic.WIRE_DO_NOT_COLLAPSE(wire) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
-          making_changes = True
           # Get driving info
           driving_wire = func_logic.wire_driven_by[wire]        
           driven_wires = func_logic.wire_drives[wire]
+          # Replacing wire with driving_wire, must have same type dummy
+          types_match = True
+          driving_wire_c_type = func_logic.wire_to_c_type[driving_wire]
+          wire_c_type = func_logic.wire_to_c_type[wire]
+          if driving_wire_c_type != wire_c_type:
+            types_match = False
+          for driven_wire in driven_wires:
+            driven_wire_c_type = func_logic.wire_to_c_type[driven_wire]
+            if driving_wire_c_type != driven_wire_c_type:
+              types_match = False
+          if not types_match:
+            continue          
+          # Do removal
+          making_changes = True          
           # Remove record of this wire driving anything so removal doesnt progate forward, only backwards
           func_logic.wire_drives.pop(wire)
           # Make new connection before ripping up old wire

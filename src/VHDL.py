@@ -2341,12 +2341,9 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
       right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
       left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
       
-      # Dont infer sign extend
+      # Dont infer sign extend - why not past me? Were you smarter? Does this break mult?
       if left_width > right_width:
-        print("What to do about sign extension ? Can't infer if RHS should be sign extended?")
-        print("driven_wire",driven_wire,left_type)
-        print("driving_wire",driving_wire,right_type)
-        sys.exit(-1)
+        resize_toks = ["unsigned(std_logic_vector(resize(", "," + str(left_width) + "),))" ]
       else:     
         # Cast int to slv then to unsigned then resize
         #resize(unsigned(std_logic_vector(x)),31)
