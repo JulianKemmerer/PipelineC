@@ -2343,7 +2343,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
       
       # Dont infer sign extend - why not past me? Were you smarter? Does this break mult?
       if left_width > right_width:
-        resize_toks = ["unsigned(std_logic_vector(resize(", "," + str(left_width) + "),))" ]
+        resize_toks = ["unsigned(std_logic_vector(resize(", "," + str(left_width) + ")))" ]
       else:     
         # Cast int to slv then to unsigned then resize
         #resize(unsigned(std_logic_vector(x)),31)
