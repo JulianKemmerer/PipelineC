@@ -13,7 +13,7 @@ Get started by reading the [wiki](https://github.com/JulianKemmerer/PipelineC/wi
 
 # What is PipelineC?
 
-A C-like(1) hardware description language (HDL)(2) adding automatic pipelining(3) as an additional language construct/compiler feature.
+A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthesis)-like automatic pipelining(3) as a language construct/compiler feature.
 
 1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But mostly compileable by gcc for doing basic functional verification/'simulation'.
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
@@ -36,8 +36,9 @@ _A hardware description languge centered around pipelining_
 * Compose complex portable designs consisting of multiple pipelines and controlling state machines.
 * Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
 * Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
+* Globally visible point-to-point wires/clock crossings and inferred clock enables make composing complex module hierarchies / state machines easier.
 
-The fundamental design elements are state machines, pipelines, and interconnects (wires,cdc,fifos,etc).
+Fundamental design elements are state machines, pipelines, and interconnects (wires,cdc,fifos,etc).
 
 By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs do not need to be rewritten for each new target device / operating frequency. The hope is to build shared, high performance, device agnostic, hardware designs described in a somewhat familiar C language look.
 
