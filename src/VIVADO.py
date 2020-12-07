@@ -720,7 +720,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
       VIVADO_DEFAULT_ARGS + " " + 
       '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
     
-    print("Running:", syn_imp_bash_cmd)
+    print("Running:", syn_imp_bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
 
   return ParsedTimingReport(log_text)
@@ -776,7 +776,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
       VIVADO_DEFAULT_ARGS + " " + 
       '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
     
-    print("Running:", syn_imp_bash_cmd)
+    print("Running:", syn_imp_bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
     
     
