@@ -6,7 +6,7 @@
 // 10M50SCE144I7G        Max 10
 // LFE5U-85F-6BG381C     ECP5U (LSE+Synplify)
 // LFE5UM5G-85F-8BG756C  ECP5U (GHDL+Yosys+NextPNR)
-#pragma PART "LFE5UM5G-85F-8BG756C"
+#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -20,11 +20,17 @@
 //#include "examples/fir.c"
 //#include "examples/arty/src/uart/uart_loopback_msg.c"
 //#include "examples/arty/src/blink.c"
-#include "examples/clock_crossing.c"
+//#include "examples/clock_crossing.c"
 //#include "examples/async_clock_crossing.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/app.c"
+
+#pragma MAIN_MHZ main 400.0
+float main(float x, float y)
+{
+  return x + y;
+}
 
 /*
 #include "uintN_t.h"
