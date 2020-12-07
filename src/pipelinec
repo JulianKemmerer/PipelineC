@@ -79,7 +79,6 @@ Add Quartus fine grain sweep support and better generated final files
 Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
-Better command line name? - 'pipelinec'? ...
 '''
 
 print("================== Parsing C Code to Logical Hierarchy ================================")
