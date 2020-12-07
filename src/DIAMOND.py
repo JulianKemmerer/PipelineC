@@ -7,9 +7,9 @@ import C_TO_LOGIC
 
 DIAMOND_PATH = "/usr/local/diamond/3.11_x64/bin/lin64/diamondc"
 DIAMOND_TOOL = "synplify"  # lse|synplify  
-# If changing tool then need to delete FPGA part path_delay_cache dirs to be re synthesized
-# Might need this to make synplify work on Debian based systems:
-#   https://electronics.stackexchange.com/questions/327527/lattice-icecube2-error-synplify-pro-321
+# * If changing tool then need to delete FPGA part path_delay_cache dirs to be re synthesized
+# * Might need this to make synplify work on Debian based systems:
+#     https://electronics.stackexchange.com/questions/327527/lattice-icecube2-error-synplify-pro-321
     
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):

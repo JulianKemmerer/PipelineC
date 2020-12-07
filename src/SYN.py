@@ -50,7 +50,7 @@ def PART_SET_TOOL(part_str):
     elif part_str.startswith("EP2") or part_str.startswith("10C"):
       SYN_TOOL = QUARTUS
     elif part_str.startswith("LFE5"):
-      SYN_TOOL = OPEN_TOOLS
+      SYN_TOOL = OPEN_TOOLS  # TODO replace with DIAMOND option
     else:
       SYN_TOOL = DIAMOND
     print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
@@ -2848,6 +2848,10 @@ def IS_USER_CODE(logic, parser_state):
   
   return user_code
     
+def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
+  PATH_DELAY_CACHE_DIR="./path_delay_cache/" + str(SYN_TOOL.__name__).lower() + "/" + parser_state.part
+
+  return PATH_DELAY_CACHE_DIR
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
   # Default sanity
@@ -2872,9 +2876,7 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
     print('Ex. #pragma PART "xc7a35ticsg324-1l"')
     sys.exit(-1)
   
-  PATH_DELAY_CACHE_DIR="./path_delay_cache/"+parser_state.part
-  
-  file_path = PATH_DELAY_CACHE_DIR + "/" + key + ".delay"
+  file_path = GET_PATH_DELAY_CACHE_DIR(logic, parser_state) + "/" + key + ".delay"
   
   return file_path
   
@@ -3070,7 +3072,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       # Cache delay syn result if not user code
       if not IS_USER_CODE(logic, parser_state):
         filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
-        PATH_DELAY_CACHE_DIR="./path_delay_cache/"+parser_state.part
+        PATH_DELAY_CACHE_DIR = GET_PATH_DELAY_CACHE_DIR(logic, parser_state)
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
           os.makedirs(PATH_DELAY_CACHE_DIR)         
         f=open(filepath,"w")
