@@ -15,11 +15,12 @@ print('''
 ██╔═══╝ ██║██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
-''')
+''', flush=True)
 
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Check on ghdl fix, and update open tools docs
 Sanity check signed mult you POS
 Need clock groups / async indicator
 Revive TEMAC example (start eth/ip/udp loopback) and integrate into arty proj
@@ -81,25 +82,25 @@ Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 '''
 
-print("================== Parsing C Code to Logical Hierarchy ================================")
+print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 c_file = "main.c"
 if len(sys.argv) == 2:
   # Assume first and only arg is c_file
   c_file = sys.argv[1]
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
-print("================== Adding Timing Information from Synthesis Tool ================================")
+print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
-print("================== Doing Optional Modelsim Debug ================================")
+print("================== Doing Optional Modelsim Debug ================================", flush=True)
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 
-print("================== Beginning Throughput Sweep ================================")
+print("================== Beginning Throughput Sweep ================================", flush=True)
 multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)
 
-print("================== Writing Results of Throughput Sweep ================================")
+print("================== Writing Results of Throughput Sweep ================================", flush=True)
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-print("Done.")
+print("Done.", flush=True)
 
 
 

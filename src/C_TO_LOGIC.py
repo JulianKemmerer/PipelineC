@@ -6225,7 +6225,7 @@ def PARSE_FILE(c_filename):
         # Parse pragmas
         parse_state = APPEND_PRAGMA_INFO(parser_state)
         # Parse definitions first before code structure
-        print("Parsing non-function definitions...")
+        print("Parsing non-function definitions...", flush=True)
         # Get the parsed enum info
         parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
         # Get the parsed struct def info
@@ -6274,7 +6274,7 @@ def PARSE_FILE(c_filename):
     
     
     # Parse the function definitions for code structure
-    print("Parsing function logic...")
+    print("Parsing function logic...", flush=True)
     parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
     # Sanity check main funcs are there
     for main_func in list(parser_state.main_mhz.keys()):
@@ -6296,7 +6296,7 @@ def PARSE_FILE(c_filename):
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
     
     # Elaborate the logic down to raw vhdl modules
-    print("Elaborating pipeline hierarchies down to raw HDL logic...")
+    print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
     for main_func in list(parser_state.main_mhz.keys()):
       adjusted_containing_logic_inst_name=""
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -6311,7 +6311,7 @@ def PARSE_FILE(c_filename):
     
     # Code gen based on fully elaborated logic
     # Write c code
-    print("Writing generated PipelineC code from elaboration to output directories...")
+    print("Writing generated PipelineC code from elaboration to output directories...", flush=True)
     for func_name in parser_state.FuncLogicLookupTable:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       if not(func_logic.c_code_text is None):

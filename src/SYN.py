@@ -2117,7 +2117,7 @@ def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
 # Course then fine - knowhaimsayin
 def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_sweep=False):
   for main_func in parser_state.main_mhz:
-    print("Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func])
+    print("Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func], flush=True)
   
   # Populate timing lookup table as all 0 clk
   ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
@@ -2206,7 +2206,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         sweep_state.curr_main_func = main_func
         best_guess_slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(best_guess_slices, parser_state, sweep_state)
         #print(" ...rounded slices:", best_guess_slices)
-      print(main_func,":",main_func_to_coarse_latency[main_func],"clocks latency, sliced coarsely...")
+      print(main_func,":",main_func_to_coarse_latency[main_func],"clocks latency, sliced coarsely...", flush=True)
       # Do slicing and writing VHDL
       sweep_state.multimain_timing_params.REBUILD_FROM_MAIN_SLICES(best_guess_slices, main_func, parser_state)
     
@@ -2219,7 +2219,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       path_report = sweep_state.timing_report.path_reports[clock_group]
       curr_mhz = 1000.0 / path_report.path_delay_ns
       actual_mhz = 1000.0 / path_report.source_ns_per_clock
-      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz, "(", path_report.path_delay_ns, "ns)")
+      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz, "(", path_report.path_delay_ns, "ns)", flush=True)
       if curr_mhz < actual_mhz:
         timing_met = False
       if curr_mhz < fmax:
@@ -2324,7 +2324,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
             print("Problem computation path:")
             print("START: ", path_report.start_reg_name,"=>")
             print(" ~", path_report.path_delay_ns, "ns of logic ~")
-            print("END: =>",path_report.end_reg_name) 
+            print("END: =>",path_report.end_reg_name, flush=True) 
         sys.exit(-1)
           
   return sweep_state
@@ -2893,11 +2893,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Make sure synthesis tool is set
   PART_SET_TOOL(parser_state.part)
   
-  print("Starting with combinatorial logic...")  
+  print("Starting with combinatorial logic...", flush=True)  
   # initial params are 0 clk latency for all submodules
   TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   
-  print("Writing VHDL files for all functions (as combinatorial logic)...")
+  print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
   WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
   #print "WHY SLO?"
@@ -2909,7 +2909,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   
   print("Synthesizing as combinatorial logic to get total logic delay...")
-  print("")
+  print("", flush=True)
   
   # Record stats on functions with globals - TODO per main func?
   min_mhz = 999999999
@@ -3008,7 +3008,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         f=open(out_path,'w')
         f.write(zero_clk_pipeline_map_str)
         f.close()
-      print("Synthesizing function:",logic.func_name)
+      print("Synthesizing function:",logic.func_name, flush=True)
       
     # Start parallel syn for parallel_func_names
     # Parallelized

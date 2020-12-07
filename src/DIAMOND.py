@@ -108,7 +108,7 @@ prj_strgy set_value -strategy Strategy1 syn_pipelining_retiming=None
 
     # Execute the command
     syn_imp_bash_cmd = DIAMOND_PATH + " " + tcl_path
-    print("Running:", syn_imp_bash_cmd)
+    print("Running:", syn_imp_bash_cmd, flush=True)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     
     f = open(log_path, "r", errors="replace")

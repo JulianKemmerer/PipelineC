@@ -300,7 +300,7 @@ project_close
 
     # Execute the command
     syn_imp_bash_cmd = "bash " + sh_file
-    print("Running:", sh_path)
+    print("Running:", sh_path, flush=True)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")
     log_text = f.read()
