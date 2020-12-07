@@ -19,6 +19,7 @@ import MODELSIM
 import VIVADO
 import QUARTUS
 import DIAMOND
+import OPEN_TOOLS
 
 SYN_TOOL = None # Attempts to figure out from part number
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
@@ -48,6 +49,8 @@ def PART_SET_TOOL(part_str):
       SYN_TOOL = VIVADO
     elif part_str.startswith("EP2") or part_str.startswith("10C"):
       SYN_TOOL = QUARTUS
+    elif part_str.startswith("LFE5"):
+      SYN_TOOL = OPEN_TOOLS
     else:
       SYN_TOOL = DIAMOND
     print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
@@ -1263,8 +1266,10 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     ext = ".sdc"
   elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL=="lse":
     ext = ".ldc"
-  elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL=="synplify":
+  elif (SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL=="synplify"):
     ext = ".sdc"
+  elif SYN_TOOL is OPEN_TOOLS:
+    ext = ".py"
   else:
     # Sufjan Stevens - Video Game
     print("Add constraints file ext for syn tool",SYN_TOOL.__name__)
@@ -1294,34 +1299,42 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
   # Use specified mhz is multimain top
   clock_name_to_mhz,out_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name)  
   f=open(out_filepath,"w")
-  for clock_name in clock_name_to_mhz:
-    clock_mhz = clock_name_to_mhz[clock_name]
-    ns = (1000.0 / clock_mhz)
-    f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
-    
-  # All clock assumed async? Doesnt matter for internal syn
-  # Rely on generated/board provided constraints for real hardware
-  if len(clock_name_to_mhz) > 1:
-    if SYN_TOOL is VIVADO:
-      f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
-    elif SYN_TOOL is QUARTUS:
-      # Ignored set_clock_groups at clocks.sdc(3): The clock clk_100p0 was found in more than one -group argument.
-      # Uh do the hard way?
-      clk_sets = set()
-      for clock_name1 in clock_name_to_mhz:
-        for clock_name2 in clock_name_to_mhz:
-          if clock_name1 != clock_name2:
-            clk_set = frozenset([clock_name1,clock_name2])
-            if clk_set not in clk_sets:
-              f.write("set_clock_groups -asynchronous -group [get_clocks " + clock_name1 + "] -group [get_clocks " + clock_name2 + "]")
-              clk_sets.add(clk_set)
-    elif SYN_TOOL is DIAMOND:
-      #f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]")
-      # ^ is wrong, makes 200mhx system clock?
-      pass # rely on clock cross path detection error in timing report
-    else:
-      print("What syn too for async clocks?")
-      sys.exit(-1)
+  
+  if SYN_TOOL is OPEN_TOOLS:
+    # All clock assumed async in nextpnr constraints
+    for clock_name in clock_name_to_mhz:
+      clock_mhz = clock_name_to_mhz[clock_name]
+      f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n');
+  else:
+    # Standard sdc like constraints
+    for clock_name in clock_name_to_mhz:
+      clock_mhz = clock_name_to_mhz[clock_name]
+      ns = (1000.0 / clock_mhz)
+      f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
+      
+    # All clock assumed async? Doesnt matter for internal syn
+    # Rely on generated/board provided constraints for real hardware
+    if len(clock_name_to_mhz) > 1:
+      if SYN_TOOL is VIVADO:
+        f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n")
+      elif SYN_TOOL is QUARTUS:
+        # Ignored set_clock_groups at clocks.sdc(3): The clock clk_100p0 was found in more than one -group argument.
+        # Uh do the hard way?
+        clk_sets = set()
+        for clock_name1 in clock_name_to_mhz:
+          for clock_name2 in clock_name_to_mhz:
+            if clock_name1 != clock_name2:
+              clk_set = frozenset([clock_name1,clock_name2])
+              if clk_set not in clk_sets:
+                f.write("set_clock_groups -asynchronous -group [get_clocks " + clock_name1 + "] -group [get_clocks " + clock_name2 + "]")
+                clk_sets.add(clk_set)
+      elif SYN_TOOL is DIAMOND:
+        #f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]")
+        # ^ is wrong, makes 200mhx system clock?
+        pass # rely on clock cross path detection error in timing report
+      else:
+        print("What syn too for async clocks?")
+        sys.exit(-1)
   
   
   f.close()
@@ -3120,7 +3133,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
   
   # Clocking crossing if needed
 
-  if not inst_name:
+  if not inst_name and len(parser_state.clk_cross_var_info) > 0:
     # Multimain needs clk cross entities
     # Clock crossing entities
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " " 
