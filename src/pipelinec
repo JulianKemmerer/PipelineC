@@ -20,7 +20,6 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Check on ghdl fix, and update open tools docs
 Sanity check signed mult you POS
 Need clock groups / async indicator
 Revive TEMAC example (start eth/ip/udp loopback) and integrate into arty proj

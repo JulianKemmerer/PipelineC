@@ -30,7 +30,7 @@ A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthes
 
 # Core Features/Benefits
 
-_A hardware description languge centered around pipelining_
+_A hardware description language centered around pipelining_
 
 * Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 * Compose complex portable designs consisting of multiple pipelines and controlling state machines.
@@ -47,6 +47,6 @@ The rules of the puzzle hide/imply hardware concepts. For hardware folks I want 
 
 ```
 Currently Supported Tools (tested on Linux):
-Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond
+Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond, GHDL+Yosys+NextPNR
 Simulation: Modelsim
 ```

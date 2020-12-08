@@ -4,9 +4,9 @@
 // EP2AGX45CU17I3        Arria II GX
 // 10CL120ZF780I8G       Cyclone 10 LP
 // 10M50SCE144I7G        Max 10
-// LFE5U-85F-6BG381C     ECP5U (LSE+Synplify)
-// LFE5UM5G-85F-8BG756C  ECP5U (GHDL+Yosys+NextPNR)
-#pragma PART "xc7a35ticsg324-1l"
+// LFE5U-85F-6BG381C     ECP5U
+// LFE5UM5G-85F-8BG756C  ECP5UM5G
+#pragma PART "LFE5UM5G-85F-8BG756C"
 
 // Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -26,7 +26,7 @@
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/app.c"
 
-#pragma MAIN_MHZ main 400.0
+#pragma MAIN_MHZ main 300.0
 float main(float x, float y)
 {
   return x + y;
