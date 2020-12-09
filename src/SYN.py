@@ -45,11 +45,11 @@ def PART_SET_TOOL(part_str):
       print("Need to set part!")
       print('#pragma PART "EP2AGX45CU17I3"')
       sys.exit(-1)
-    elif part_str.startswith("xc"):
+    elif part_str.lower().startswith("xc"):
       SYN_TOOL = VIVADO
-    elif part_str.startswith("EP2") or part_str.startswith("10C"):
+    elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c"):
       SYN_TOOL = QUARTUS
-    elif part_str.startswith("LFE5"):
+    elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
       SYN_TOOL = OPEN_TOOLS  # TODO replace with DIAMOND option
     else:
       SYN_TOOL = DIAMOND

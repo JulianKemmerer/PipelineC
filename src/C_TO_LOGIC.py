@@ -172,7 +172,7 @@ def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   if process.returncode != 0:
     print("Command failed:",cmd_str)
     print(cmd_str)
-    print(output_text)
+    print(output_text, flush=True)
     sys.exit(-1)
 
   return output_text

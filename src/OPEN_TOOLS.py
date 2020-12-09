@@ -12,39 +12,87 @@ GHDL_PREFIX      = FPGA_TOOLCHAIN_PATH + "/lib/ghdl"
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
-  #Ex. LFE5UM5G-85F-8BG756C
-  toks = part_str.split("-")
-  part = toks[0]
-  size = toks[1]
-  pkg = toks[2]
-  
   opts = ""
-  opts += "--"
-  if part == "LFE5UM":
-    opts += "um-"
-  elif part == "LFE5UM5G":
-    opts += "um5g-"
-  
-  size_num = size.strip("F")
-  opts += size_num + "k "
-  
-  speed_num = pkg[0]
-  opts += "--speed " + speed_num + " "
-  '''
-  --12k                             set device type to LFE5U-12F
-  --25k                             set device type to LFE5U-25F
-  --45k                             set device type to LFE5U-45F
-  --85k                             set device type to LFE5U-85F
-  --um-25k                          set device type to LFE5UM-25F
-  --um-45k                          set device type to LFE5UM-45F
-  --um-85k                          set device type to LFE5UM-85F
-  --um5g-25k                        set device type to LFE5UM5G-25F
-  --um5g-45k                        set device type to LFE5UM5G-45F
-  --um5g-85k                        set device type to LFE5UM5G-85F
-  --package arg                     select device package (defaults to 
-                                    CABGA381)
-  --speed arg                       select device speedgrade (6, 7 or 8)
-  '''
+  if part_str.lower().startswith("lfe5u"):
+    #Ex. LFE5UM5G-85F-8BG756C
+    toks = part_str.split("-")
+    part = toks[0]
+    size = toks[1]
+    pkg = toks[2]
+    '''
+    --12k                             set device type to LFE5U-12F
+    --25k                             set device type to LFE5U-25F
+    --45k                             set device type to LFE5U-45F
+    --85k                             set device type to LFE5U-85F
+    --um-25k                          set device type to LFE5UM-25F
+    --um-45k                          set device type to LFE5UM-45F
+    --um-85k                          set device type to LFE5UM-85F
+    --um5g-25k                        set device type to LFE5UM5G-25F
+    --um5g-45k                        set device type to LFE5UM5G-45F
+    --um5g-85k                        set device type to LFE5UM5G-85F
+    --package arg                     select device package (defaults to 
+                                      CABGA381)
+    --speed arg                       select device speedgrade (6, 7 or 8)
+    '''
+    opts = ""
+    opts += "--"
+    if part == "LFE5UM":
+      opts += "um-"
+    elif part == "LFE5UM5G":
+      opts += "um5g-"
+    
+    size_num = size.strip("F")
+    opts += size_num + "k "
+    
+    speed_num = pkg[0]
+    opts += "--speed " + speed_num + " "
+    opts += "--out-of-context"
+    
+  elif part_str.lower().startswith("ice"):
+    # Ex. ICE40UP5K-SG48
+    toks = part_str.split("-")
+    part = toks[0]
+    pkg = toks[1]
+    '''
+    --lp384                           set device type to iCE40LP384
+    --lp1k                            set device type to iCE40LP1K
+    --lp4k                            set device type to iCE40LP4K
+    --lp8k                            set device type to iCE40LP8K
+    --hx1k                            set device type to iCE40HX1K
+    --hx4k                            set device type to iCE40HX4K
+    --hx8k                            set device type to iCE40HX8K
+    --up3k                            set device type to iCE40UP3K
+    --up5k                            set device type to iCE40UP5K
+    --u1k                             set device type to iCE5LP1K
+    --u2k                             set device type to iCE5LP2K
+    --u4k                             set device type to iCE5LP4K
+    '''
+    if part_str.upper().startswith("ICE40LP384"):   
+      opts += "--lp384"
+    elif part_str.upper().startswith("ICE40LP1K"):  
+      opts += "--lp1k"
+    elif part_str.upper().startswith("ICE40LP4K"):  
+      opts += "--lp4k"
+    elif part_str.upper().startswith("ICE40LP8K"):  
+      opts += "--lp8k"
+    elif part_str.upper().startswith("ICE40HX1K"):  
+      opts += "--hx1k"
+    elif part_str.upper().startswith("ICE40HX4K"):  
+      opts += "--hx4k"
+    elif part_str.upper().startswith("ICE40HX8K"):  
+      opts += "--hx8k"
+    elif part_str.upper().startswith("ICE40UP3K"):  
+      opts += "--up3k"
+    elif part_str.upper().startswith("ICE40UP5K"):  
+      opts += "--up5k"
+    elif part_str.upper().startswith("ICE5LP1K"):   
+      opts += "--u1k"
+    elif part_str.upper().startswith("ICE5LP2K"):   
+      opts += "--u2k"
+    elif part_str.upper().startswith("ICE5LP4K"):   
+      opts += "--u4k"
+      
+    opts += " --pcf-allow-unconstrained"
   
   return opts
     
@@ -231,6 +279,12 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     # Which vhdl files?
     vhdl_files_texts,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
     
+    # Which exe?
+    if parser_state.part.lower().startswith("ice"):
+      exe_ext = "ice40"
+    else:
+      exe_ext = "ecp5"
+    
     # A single shell script build .sh
     sh_file = top_entity_name + ".sh"
     sh_path = output_directory + "/" + sh_file
@@ -241,10 +295,9 @@ export PATH="''' + YOSYS_BIN_PATH + ''':$PATH"
 export PATH="''' + NEXTPNR_BIN_PATH + ''':$PATH"
 export GHDL_PREFIX=''' + GHDL_PREFIX + '''
 # Elab+Syn (json is output)
-yosys $MODULE -p 'ghdl ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_ecp5 -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + '''
+yosys $MODULE -p 'ghdl ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + '''
 # P&R
-nextpnr-ecp5 ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --out-of-context --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
-# P&R
+nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
     ''')
     f.close()
 
