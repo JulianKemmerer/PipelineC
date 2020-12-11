@@ -20,6 +20,10 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Infer dsps somehow - will want to infer based on * operator, 
+^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
+^ and need to make up built in dsp functions for other, MAC, like functions
+^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
 Sanity check signed mult you POS
 Need clock groups / async indicator
 Revive TEMAC example (start eth/ip/udp loopback) and integrate into arty proj
@@ -79,6 +83,7 @@ Add Quartus fine grain sweep support and better generated final files
 Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
+Explore logic level / LUT based optimizations
 '''
 
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
