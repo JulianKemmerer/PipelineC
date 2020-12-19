@@ -6,7 +6,8 @@
 // 10M50SCE144I7G        Max 10
 // LFE5U-85F-6BG381C     ECP5U
 // LFE5UM5G-85F-8BG756C  ECP5UM5G
-#pragma PART "LFE5UM5G-85F-8BG756C"
+// ICE40UP5K-SG48        ICE40UP
+#pragma PART "LFE5U-85F-6BG381C"
 
 // Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -26,19 +27,46 @@
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/app.c"
 
-#pragma MAIN_MHZ main 300.0
-float main(float x, float y)
+#include "primitives/ecp5.c"
+
+#pragma MAIN_MHZ main 500.0
+
+uint36_t main(uint18_t x, uint18_t y)
 {
-  return x + y;
+  return ECP5_MUL18X18(x,y);
 }
 
 /*
-#include "uintN_t.h"
-#pragma MAIN_MHZ main 400.0
-uint64_t y;
-uint64_t main(uint64_t x) //, uint64_t y)
+#define data_t uint18_t
+#define N 4
+#define array_sumN uint18_array_sum4
+
+typedef struct an_array_t
 {
-  y = x + y;
-  return y;
+	data_t a[N][N];
+} an_array_t;
+
+
+an_array_t main(data_t mat1[N][N], data_t mat2[N][N])
+{
+    an_array_t res;
+    
+    uint32_t i;
+    uint32_t j;
+    uint32_t k;
+    for (i = 0; i < N; i = i + 1) 
+    { 
+        for (j = 0; j < N; j = j + 1) 
+        { 
+            data_t res_k[N];
+            for (k = 0; k < N; k = k + 1)
+            {
+                res_k[k] = ECP5_MUL18X18(mat1[i][k], mat2[k][j]); // Drops upper bits of 36b result 
+            }
+            res.a[i][j] =  array_sumN(res_k);
+        } 
+    }
+    
+    return res;
 }
 */

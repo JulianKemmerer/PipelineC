@@ -326,6 +326,7 @@ def DICT_SET_VALUE_MERGE(self_d1,d2):
   return rv   
 
 
+
 class Logic:
   def __init__(self):
     
@@ -6016,6 +6017,8 @@ class ParserState:
     self.existing_logic = None # Temp working copy of current func logic, probably should not be here?
     # Function definitons as logic
     self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
+    # Special primitive funcs
+    self.PrimFuncLogicLookupTable = dict()
     # Elaborated to instances
     self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
     self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
@@ -6035,6 +6038,10 @@ class ParserState:
     rv.FuncLogicLookupTable = dict()
     for fname in self.FuncLogicLookupTable:
       rv.FuncLogicLookupTable[fname] = self.FuncLogicLookupTable[fname].DEEPCOPY()
+      
+    rv.PrimFuncLogicLookupTable = dict()
+    for fname in self.PrimFuncLogicLookupTable:
+      rv.PrimFuncLogicLookupTable[fname] = rv.FuncLogicLookupTable[fname]
 
     rv.LogicInstLookupTable = dict()
     for inst_name in self.LogicInstLookupTable:
@@ -6294,6 +6301,9 @@ def PARSE_FILE(c_filename):
     
     # Need to add array struct for old internal C code parsing?
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
+    
+    # Make sure synthesis tool is set
+    SYN.PART_SET_TOOL(parser_state.part)
     
     # Elaborate the logic down to raw vhdl modules
     print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
@@ -6703,6 +6713,30 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
       
   return parser_state
   
+def BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst_name, parser_state):
+  # Need to have 'from code' defintion of macro func too for now
+  if func_name not in parser_state.FuncLogicLookupTable:
+    print("Primative",func_name,"needs function defintion!")
+    sys.exit(-1)
+  orig_func_logic = parser_state.FuncLogicLookupTable[func_name]
+  
+  # Only copy io, black box otherwise
+  func_logic = Logic()
+  func_logic.func_name = orig_func_logic.func_name
+  func_logic.inputs = orig_func_logic.inputs[:]
+  func_logic.outputs = orig_func_logic.outputs[:]
+  func_logic.c_ast_node = orig_func_logic.c_ast_node
+  for wire in (func_logic.inputs + func_logic.outputs):
+    func_logic.wire_to_c_type[wire] = orig_func_logic.wire_to_c_type[wire]
+  
+  return func_logic
+  
+def FUNC_IS_PRIMITIVE(func_name):
+  # Try to use the tool assume false otherwise
+  try:
+    return SYN.SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
+  except:
+    return False
 
 # This will likely be called multiple times when loading multiple C files
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
@@ -6743,25 +6777,33 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
               
   return FuncLogicLookupTable
   
-      
 def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_state, containing_logic_inst_name="", c_ast_node_when_used=None):
   # Use prepend text to contruct full instance names
   new_inst_name_prepend_text = containing_logic_inst_name + SUBMODULE_MARKER
   if func_name in parser_state.main_mhz:
     # Main never gets prepend text
     if containing_logic_inst_name != "":
-      print("Woah there, are you calling a top level main funciton from within another funciton!?",func_name,containing_logic_inst_name)
+      print("Woah there, are you calling a top level main function from within another funciton!?",func_name,containing_logic_inst_name)
       sys.exit(-1)
     # Override
     new_inst_name_prepend_text = ""
-  
+    
+    
+  # Is this function a hardware/tool specific primative?
+  if FUNC_IS_PRIMITIVE(func_name):
+    if func_name in parser_state.PrimFuncLogicLookupTable:
+      orig_func_logic = parser_state.PrimFuncLogicLookupTable[func_name]
+    else:
+      orig_func_logic = BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst_name, parser_state)
+    # Update FuncLogicLookupTable with this new func logic
+    parser_state.PrimFuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
+    parser_state.FuncLogicLookupTable[orig_func_logic.func_name] = orig_func_logic
   # Is this a function who logic is already known? (Parsed from C code? Or evaluated already?)
-  if func_name in parser_state.FuncLogicLookupTable:
+  elif func_name in parser_state.FuncLogicLookupTable:
     orig_func_logic = parser_state.FuncLogicLookupTable[func_name]
   else:
     # C built in logic (not parsed from function definitions)
     # Build an original instance logic (has instance name but not prepended with full hierarchy yet)
-        
     # Look up containing func logic for this submodule isnt
     containing_func_logic = None
     # Try to use full inst name of containing module

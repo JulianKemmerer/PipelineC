@@ -408,12 +408,19 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     rv += "architecture arch of " + entity_name + "_top is" + "\n"
   else:
     rv += "architecture arch of " + Logic.func_name + " is" + "\n"
-    
+  
   # Dont touch IO
   if not is_final_top:
     rv += "attribute dont_touch : string;\n"
     rv += "attribute keep : string;\n"
     rv += "attribute syn_keep : boolean;\n"
+    
+  # Keep clock?
+  #rv += '''
+  #attribute dont_touch of clk : signal is "true";
+  #attribute keep of clk : signal is "true";
+  #attribute syn_keep of clk : signal is true;
+  #'''
   
   # The inputs regs of the logic
   for input_name in Logic.inputs:
@@ -2029,8 +2036,11 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   else:
     rv += "architecture arch of " + Logic.func_name + " is" + "\n"
     
+  # Tool specific hard macros replace entire arch decl and body
+  if C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name):
+    rv += SYN.SYN_TOOL.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # VHDL func replaces arch decl and body
-  if Logic.is_vhdl_text_module:
+  elif Logic.is_vhdl_text_module:
     rv += GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   else:
     # Get declarations for this arch

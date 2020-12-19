@@ -739,7 +739,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
               submodule_delay = parser_state.LogicInstLookupTable[submodule_inst_name].delay
               if submodule_delay is None:
-                print("What cant do this without delay!")
+                print("What cant do this without delay!",inst_name,submodule_inst_name)
                 sys.exit(-1)
               submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)
               
@@ -2110,6 +2110,17 @@ def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
     toks = netlist_resource.split("/")
     if toks[0] in parser_state.main_mhz:
       main_funcs.add(toks[0])
+    # If in the top level - no '/'? then look for main funcs like a dummy
+    if "/" not in netlist_resource:
+      # Main funcs sorted by len for best match
+      all_main_funcs = reversed(sorted(list(parser_state.main_mhz.keys()), key=len))
+      match_main = None
+      for main_func in all_main_funcs:
+        if netlist_resource.startswith(main_func):
+          match_main = main_func
+          break
+      if match_main:
+        main_funcs.add(match_main)      
       
   return main_funcs
 
@@ -2226,7 +2237,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         target_mhz = parser_state.main_mhz[main_func]
         clk_mhzs.add(target_mhz)
       if len(clk_mhzs) != 1:
-        print("Bad target target mhz for path?", clock_group, clk_mhzs)
+        print("Bad target mhz for path?", clock_group, main_funcs, clk_mhzs, path_report.netlist_resources)
         print("WARNING: Assuming target clock freq from timing report...")
         actual_mhz = 1000.0 / path_report.source_ns_per_clock
         #sys.exit(-1)
@@ -2902,7 +2913,9 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
     
   return None 
   
-def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
+def ADD_PATH_DELAY_TO_LOOKUP(parser_state):  
+  print("Starting with combinatorial logic...", flush=True)
+  
   # Make sure synthesis tool is set
   PART_SET_TOOL(parser_state.part)
   
@@ -3038,6 +3051,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       if inst_name is None:
         #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
         continue
+      if logic != parser_state.LogicInstLookupTable[inst_name]:
+        print("Mismatching logic!?", logic.func_name)
+        sys.exit(-1)
       # Run Syn
       total_latency=0
       my_async_result = my_thread_pool.apply_async(SYN_TOOL.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, total_latency))
