@@ -4527,15 +4527,12 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       elif func_base_name.endswith(BIN_OP_EQ_NAME):
         const_val_str = "1" if lhs_val==rhs_val else "0"
       # Bit operations
-      elif func_base_name.endswith(BIN_OP_SR_NAME): 
+      elif func_base_name.endswith(BIN_OP_SR_NAME) or func_base_name.endswith(BIN_OP_SL_NAME): 
         # SHIFT INT ONLY FOR NOW?
         if not is_ints:
           print("Constant bit operation function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
           sys.exit(-1)
           
-        # Output type is type of LHS
-        c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
-        width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
         # Thanks stackoverflow for twos comp BullSHEEIITITT FUCK ECE 200
         def int2bin(integer, digits):
           if integer >= 0:
@@ -4543,26 +4540,51 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           else:
             return bin(2**digits + integer)[2:]
         # STACKOVERFLOW MY MAN
-        def to_int(bin):
+        def to_int(bin,signed):
           x = int(bin, 2)
-          if bin[0] == '1': # "sign bit", big-endian
-             x -= 2**len(bin)
+          if signed:
+            if bin[0] == '1': # "sign bit", big-endian
+               x -= 2**len(bin)
           return x
         
         # TODO actually use this if
+        
         if func_base_name.endswith(BIN_OP_SR_NAME):
+          # Output type is type of LHS
+          c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
+          width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+          signed = VHDL.C_TYPE_IS_INT_N(c_type)
           # lhs_val >> rhs_val
           lhs_bin_str = int2bin(lhs_val, width)
           fill_bit = "0"
-          if VHDL.C_TYPE_IS_INT_N(c_type):
+          if signed:
             fill_bit = lhs_bin_str[0] # Sign bit
           fill_bits = fill_bit * rhs_val
-          output_bin_str = (fill_bits + lhs_bin_str)[0:width]
-          output_int = to_int(output_bin_str)
+          output_bin_str = (fill_bits + lhs_bin_str)[0:width] # first n
+          output_int = to_int(output_bin_str,signed)
           const_val_str = str(output_int)
+          #print(lhs_bin_str,">>",rhs_val, const_val_str)
+        elif func_base_name.endswith(BIN_OP_SL_NAME):
+          # Int constants are made as wide as possible
+          # ex.
+          # uint32 = 1 << 3;
+          #          ^1b constant , needs be sized to atleast 4 bits
+          lhs_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
+          lhs_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, lhs_type)
+          signed = VHDL.C_TYPE_IS_INT_N(lhs_type)
+          width = lhs_width + rhs_val
+          # lhs_val << rhs_val
+          lhs_bin_str = int2bin(lhs_val, width)
+          fill_bit = "0"
+          fill_bits = fill_bit * rhs_val
+          output_bin_str = (lhs_bin_str + fill_bits)[-width:] # Last n 
+          output_int = to_int(output_bin_str,signed)
+          const_val_str = str(output_int)
+          #print(lhs_bin_str,"<<",rhs_val, const_val_str)
         else:
-          print("Unsupported const bit operation")
+          print("Unsupported const bit operation", func_base_name)
           sys.exit(-1)
+        
       else:
         print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
         sys.exit(-1)
@@ -4924,14 +4946,14 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend
   #casthelp(c_ast_func_call)
   #sys.exit(-1)
   
-  # One vhdl text func call marks logic - hello future me?
+  # One vhdl text func call marks logic - hello future me? well, hello
   parser_state.existing_logic.is_vhdl_text_module = True
   
   # Mark as using globals, cant be sliced
   parser_state.existing_logic.uses_nonvolatile_state_regs = True
   
   func_name = str(c_ast_func_call.name.name)
-  #print "FUNC CALL:",func_name,c_ast_func_call.coord
+  #print("FUNC CALL:",func_name,c_ast_func_call.coord)
   func_base_name = func_name
   func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
   

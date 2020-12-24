@@ -20,6 +20,8 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Antikernel fun?
+Silice fun?
 Infer dsps somehow - will want to infer based on * operator, 
 ^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
 ^ and need to make up built in dsp functions for other, MAC, like functions

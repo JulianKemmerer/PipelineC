@@ -2792,12 +2792,21 @@ def GET_OUTPUT_DIRECTORY(Logic):
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)
+    repo_dir = os.path.dirname(os.path.abspath(sys.argv[0] + "/../"))
+    # # hacky catch files from same dir as script?
+    # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
+    if src_file.startswith(repo_dir):
+      # hacky
+      src_file = src_file.replace(repo_dir + "/src/../","")
+      src_file = src_file.replace(repo_dir,"")
+      
     # hacky catch generated files from output dir already?
     if src_file.startswith(SYN_OUTPUT_DIRECTORY+"/"):
       output_directory = os.path.dirname(src_file)
     else:
       # Otherwise normal
       output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
+      #print("output_directory",output_directory,repo_dir)
     
   return output_directory
   
@@ -3024,7 +3033,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       if inst_name is None:
         #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
         continue
-      if len(logic.submodule_instances) > 0:
+      if len(logic.submodule_instances) > 0 and not logic.is_vhdl_text_module:  # TODO make pipeline map return empty instead of check?
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
         zero_clk_pipeline_map_str = str(zero_clk_pipeline_map)
         out_dir = GET_OUTPUT_DIRECTORY(logic)
@@ -3069,14 +3078,17 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       parsed_timing_report =  my_async_result.get()
       # Sanity should be one path reported
       if len(parsed_timing_report.path_reports) > 1:
-        print("Too many paths reported!",parsed_timing_report.orig_text)
+        print("Too many paths reported!",logic.func_name,parsed_timing_report.orig_text)
+        sys.exit(-1)
+      if len(parsed_timing_report.path_reports) == 0:
+        print("No timing paths reported!",logic.func_name,parsed_timing_report.orig_text)
         sys.exit(-1)
       path_report = list(parsed_timing_report.path_reports.values())[0]
       if path_report.path_delay_ns is None:
-        print("Cannot synthesize for path delay ",logic.func_name)
+        print("Cannot parse synthesized path report for path delay ",logic.func_name)
         print(parsed_timing_report.orig_text)
-        if DO_SYN_FAIL_SIM:
-          MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
+        #if DO_SYN_FAIL_SIM:
+        #  MODELSIM.DO_OPTIONAL_DEBUG(do_debug=True)
         sys.exit(-1)
       mhz = 1000.0 / path_report.path_delay_ns
       logic.delay = int(path_report.path_delay_ns * DELAY_UNIT_MULT)
