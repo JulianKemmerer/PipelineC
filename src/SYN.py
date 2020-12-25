@@ -1344,6 +1344,14 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   is_final_top = True
   VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
   
+  # Black boxes are different in final files
+  for func_name in parser_state.func_marked_blackbox:
+    if func_name in parser_state.FuncToInstances:
+      blackbox_func_logic = parser_state.FuncLogicLookupTable[func_name]
+      for inst_name in parser_state.FuncToInstances[func_name]:
+        bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
+        VHDL.WRITE_LOGIC_ENTITY(inst_name, blackbox_func_logic, bb_out_dir, parser_state, multimain_timing_params.TimingParamsLookupTable, is_final_top)
+  
   # read_vhdl.tcl only for Vivado for now
   if SYN_TOOL is VIVADO:
     # TODO better quartus GUI / tcl scripts support
@@ -2813,6 +2821,9 @@ def GET_OUTPUT_DIRECTORY(Logic):
 def LOGIC_IS_ZERO_DELAY(logic, parser_state):
   if logic.func_name in parser_state.func_marked_wires:
     return True
+  # Black boxes have no known delay to the tool
+  elif logic.func_name in parser_state.func_marked_blackbox:
+    return True    
   elif SW_LIB.IS_BIT_MANIP(logic):
     return True
   elif SW_LIB.IS_CLOCK_CROSSING(logic):

@@ -1066,7 +1066,11 @@ class Logic:
     return None
     
   def CAN_BE_SLICED(self):
-    return not self.uses_nonvolatile_state_regs and len(self.feedback_vars)==0
+    if self.uses_nonvolatile_state_regs:
+      return False
+    if len(self.feedback_vars)>=0:
+      return False
+    return True
       
   def SHOW(self):
     # Make adjency matrix out of all wires and submodule isnts and own 'wire'/node in network
@@ -6048,6 +6052,7 @@ class ParserState:
     # Pragma info
     self.main_mhz = dict() # dict[main_func_name]=mhz
     self.func_marked_wires = set()
+    self.func_marked_blackbox = set()
     self.part = None
     
     # Clock crossing info
@@ -6086,6 +6091,7 @@ class ParserState:
     
     rv.main_mhz = dict(self.main_mhz)
     rv.func_marked_wires = set(self.func_marked_wires)
+    rv.func_marked_blackbox = set(self.func_marked_blackbox)
     rv.part = self.part
     
     self.clk_cross_var_info = dict(self.clk_cross_var_info)
@@ -6902,6 +6908,12 @@ def APPEND_PRAGMA_INFO(parser_state):
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.func_marked_wires.add(main_func)
+
+    # FUNC_BLACKBOX
+    if name=="FUNC_BLACKBOX":
+      toks = pragma.string.split(" ")
+      main_func = toks[1]
+      parser_state.func_marked_blackbox.add(main_func)
   
     # PART
     if name=="PART":

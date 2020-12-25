@@ -133,9 +133,9 @@ signal module_to_clk_cross : module_to_clk_cross_t;
  
   # Dont touch IO
   if not is_final_top:
-    text += "attribute dont_touch : string;\n"
-    text += "attribute keep : string;\n"
     text += "attribute syn_keep : boolean;\n"
+    text += "attribute keep : string;\n"
+    text += "attribute dont_touch : string;\n"    
     # IO
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -146,9 +146,9 @@ signal module_to_clk_cross : module_to_clk_cross_t;
         text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, main_func_logic, parser_state) + ";" + "\n"
         if not is_final_top:
           # Dont touch
-          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
-          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
           text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is true;\n'''
+          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
         
       text += "\n"
       
@@ -159,9 +159,10 @@ signal module_to_clk_cross : module_to_clk_cross_t;
         text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
         if not is_final_top:
           # Dont touch
-          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
-          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
           text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is true;\n'''
+          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          
     text += "\n"
   
   
@@ -344,6 +345,75 @@ end arch;
   f.close()
   
 
+    
+def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+  # Just like top with KEEP's and IO regs only though
+  timing_params = TimingParamsLookupTable[inst_name]
+  latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
+  needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+  needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
+  entity_name = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state)
+    
+  rv = "-- BLACKBOX\n"
+  
+  # Dont touch IO
+  rv += "attribute syn_keep : boolean;\n"
+  rv += "attribute keep : string;\n"
+  rv += "attribute dont_touch : string;\n"
+  
+  
+  # The inputs regs of the logic
+  for input_name in Logic.inputs:
+    # Get type for input
+    vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
+    rv += "signal " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
+    # Dont touch
+    rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is true;\n'''
+    rv += "attribute keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+    rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+    
+    
+  rv += "\n"
+  
+  # Output regs and signals
+  for output_port in Logic.outputs:
+    output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port,Logic,parser_state)
+    rv += "signal " + WIRE_TO_VHDL_NAME(output_port, Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+    # Dont touch
+    rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is true;\n'''
+    rv += "attribute keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+    rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+    
+
+  rv += "\n"
+  
+  rv += "begin" + "\n"
+  
+  # No instance 
+  # IO regs only
+  rv += " " + "-- IO regs\n"
+  rv += " " + "process(clk) is" + "\n"
+  rv += " " + "begin" + "\n"
+  rv += " " + " " + "if rising_edge(clk) then" + "\n"
+  
+  # Register inputs
+  for input_name in Logic.inputs:
+    # Get type for input
+    vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
+    rv += " " + " " + " " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg <= " + WIRE_TO_VHDL_NAME(input_name, Logic) + ";" + "\n"
+    
+  rv += " " + " " + "end if;" + "\n"    
+  rv += " " + "end process;" + "\n"
+  
+  # Connect to top output port
+  for out_wire in Logic.outputs:
+    rv += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) +" <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg;" + "\n"
+  
+  return rv
+
+
 def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable, is_final_top=False): 
   timing_params = TimingParamsLookupTable[inst_name]
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
@@ -411,9 +481,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   
   # Dont touch IO
   if not is_final_top:
-    rv += "attribute dont_touch : string;\n"
-    rv += "attribute keep : string;\n"
     rv += "attribute syn_keep : boolean;\n"
+    rv += "attribute keep : string;\n"
+    rv += "attribute dont_touch : string;\n"
+    
     
   # Keep clock?
   #rv += '''
@@ -429,9 +500,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     rv += "signal " + WIRE_TO_VHDL_NAME(input_name, Logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, Logic, parser_state) + ";" + "\n"
     if not is_final_top:
       # Dont touch
-      rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
-      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
       rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is true;\n'''
+      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+      rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(input_name, Logic) + '''_input_reg : signal is "true";\n'''
+      
     
   rv += "\n"
   
@@ -442,9 +514,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     rv += "signal " + WIRE_TO_VHDL_NAME(output_port, Logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
     if not is_final_top:
       # Dont touch
-      rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
-      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
       rv += "attribute syn_keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is true;\n'''
+      rv += "attribute keep of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+      rv += "attribute dont_touch of " + WIRE_TO_VHDL_NAME(output_port, Logic) + '''_output_reg : signal is "true";\n'''
+      
 
   rv += "\n"
   
@@ -1673,7 +1746,7 @@ def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     text = text.replace('\\' + 'n', '\n')
     #print text
     return text
-
+    
 def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   if SW_LIB.IS_MEM(Logic):
     return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable)
@@ -1947,7 +2020,7 @@ def GET_FLOAT_PKG_INCLUDE_TEXT():
     return ""
 
   
-def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_top=False): 
+def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_files=False): 
   # Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
   if Logic.is_vhdl_func or Logic.is_vhdl_expr:
     print("Why write vhdl func/expr entity?")
@@ -1956,11 +2029,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   
   timing_params = TimingParamsLookupTable[inst_name]
   
-  if not is_final_top:
-    filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
-  else:
-    filename = Logic.func_name + ".vhd"
-    
+  filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
+
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
@@ -1988,10 +2058,9 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
         num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
     rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
   
-  if not is_final_top:
-    rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
-  else:
-    rv += "entity " + Logic.func_name + " is" + "\n"
+  
+  rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+  
   rv += "port(" + "\n"
   
   # Clock?
@@ -2026,18 +2095,17 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   rv = rv.strip("\n").strip(";")
   rv += ");" + "\n"
   
-  if not is_final_top:
-    rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
-  else:
-    rv += "end " + Logic.func_name + ";" + "\n"
+  
+  rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
+  
       
-  if not is_final_top:
-    rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
-  else:
-    rv += "architecture arch of " + Logic.func_name + " is" + "\n"
-    
+  rv += "architecture arch of " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
+  
+  # Blackboxes replaced with io regs only for timing paths, until final files
+  if not is_final_files and Logic.func_name in parser_state.func_marked_blackbox:
+    rv += GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # Tool specific hard macros replace entire arch decl and body
-  if C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name):
+  elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name):
     rv += SYN.SYN_TOOL.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # VHDL func replaces arch decl and body
   elif Logic.is_vhdl_text_module:
