@@ -20,6 +20,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages
 Antikernel fun?
 Silice fun?
 Infer dsps somehow - will want to infer based on * operator, 

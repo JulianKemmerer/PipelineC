@@ -56,8 +56,18 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     print("Only simple integers for now...")
     sys.exit(-1)
     
-def CLK_MHZ_STR(mhz):
-  return str(mhz).replace(".","p")
+def CLK_EXT_STR(main_func, parser_state):
+  text = ""
+  mhz = parser_state.main_mhz[main_func]
+  # Start with mhz
+  text += str(mhz).replace(".","p")
+  
+  # Maybe add clock group
+  group = parser_state.main_clk_group[main_func]
+  if group:
+    text += "_" + group
+    
+  return text
   
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
   text = ""
@@ -86,10 +96,13 @@ port(
 '''
 
   # All the clocks
-  clk_mhzs = sorted(list(set(parser_state.main_mhz.values())))
-  for clk_mhz in clk_mhzs:
-    clk_mhz_str = CLK_MHZ_STR(clk_mhz)
-    text += "clk_" + clk_mhz_str + " : in std_logic;\n"
+  all_clks = set()
+  for main_func in parser_state.main_mhz:
+    clk_ext_str = CLK_EXT_STR(main_func, parser_state)
+    clk_name = "clk_" + clk_ext_str
+    all_clks.add(clk_name)
+  for clk_name in sorted(list(all_clks)):
+    text += clk_name + " : in std_logic;\n"
 
   text += '''
   -- IO for each main func
@@ -176,10 +189,10 @@ begin
     text += " " + "-- IO regs\n"
     
     for main_func in parser_state.main_mhz:
-      clk_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[main_func])
-      text += " " + "process(clk_" + clk_mhz_str + ") is" + "\n"
+      clk_ext_str = CLK_EXT_STR(main_func, parser_state)
+      text += " " + "process(clk_" + clk_ext_str + ") is" + "\n"
       text += " " + "begin" + "\n"
-      text += " " + " " + "if rising_edge(clk_" + clk_mhz_str + ") then" + "\n"
+      text += " " + " " + "if rising_edge(clk_" + clk_ext_str + ") then" + "\n"
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       # Register inputs
       for input_name in main_func_logic.inputs:
@@ -209,7 +222,7 @@ begin
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.FuncLogicLookupTable[main_func]
     main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
-    clk_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[main_func])
+    clk_ext_str = CLK_EXT_STR(main_func, parser_state)
      
     # ENTITY
     main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func];
@@ -222,7 +235,7 @@ begin
     text += new_inst_name + " : entity work." + main_entity_name +" port map (\n"
     # Clock
     if main_needs_clk:
-      text += "clk_" + clk_mhz_str + ",\n"
+      text += "clk_" + clk_ext_str + ",\n"
     # Clock enable
     if main_needs_clk_en:
       text += "to_unsigned(1,1), -- main function always clock enabled\n"
@@ -260,11 +273,11 @@ begin
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
     write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
     write_main, read_main = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
-    write_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[write_main])
+    write_clk_ext_str = CLK_EXT_STR(write_main, parser_state)
     # Defaults for disconnected read side
-    read_mhz_str = write_mhz_str
+    read_clk_ext_str = write_clk_ext_str
     if read_main is not None:
-      read_mhz_str = CLK_MHZ_STR(parser_state.main_mhz[read_main])
+      read_clk_ext_str = CLK_EXT_STR(read_main, parser_state)
     
     # Find the full inst name for write and read func instances
     # (should only be one instance), and break into toks
@@ -308,7 +321,7 @@ begin
       (
   '''
       # Clk in input
-      text += "clk_" + write_mhz_str + ",\n"
+      text += "clk_" + write_clk_ext_str + ",\n"
       # Clk in enable
       if flow_control:
         text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
@@ -318,7 +331,7 @@ begin
       for output_port in write_func_logic.outputs:
         text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
       # Clk out input
-      text += "clk_" + read_mhz_str + ",\n"
+      text += "clk_" + read_clk_ext_str + ",\n"
       # Clk out enable
       if flow_control:
         text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
@@ -1894,7 +1907,7 @@ type feedback_vars_t is record'''
     # Main regs nulled out
     rv += "signal " + "registers_r : registers_t := registers_NULL;\n"
     # Mark debug?
-    if Logic.func_name in parser_state.main_marked_debug:
+    if Logic.func_name in parser_state.func_marked_debug:
       rv += "attribute mark_debug : string;\n"
       rv += '''attribute mark_debug of registers_r : signal is "true";\n'''
     rv += "\n"

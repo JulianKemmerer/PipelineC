@@ -6051,8 +6051,10 @@ class ParserState:
     
     # Pragma info
     self.main_mhz = dict() # dict[main_func_name]=mhz
+    self.main_clk_group = dict() # dict[main_func_name]=clk_group_str
     self.func_marked_wires = set()
     self.func_marked_blackbox = set()
+    self.func_marked_debug = set()
     self.part = None
     
     # Clock crossing info
@@ -6090,6 +6092,7 @@ class ParserState:
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
     
     rv.main_mhz = dict(self.main_mhz)
+    rv.main_clk_group = dict(self.main_clk_group)
     rv.func_marked_wires = set(self.func_marked_wires)
     rv.func_marked_blackbox = set(self.func_marked_blackbox)
     rv.part = self.part
@@ -6552,32 +6555,38 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       read_func_name = var_to_read_func[var_name]
       write_func_name = var_to_write_func[var_name]
       read_mhz = None
+      read_group = parser_state.main_clk_group[read_main_func]
       if read_main_func in parser_state.main_mhz:
         read_mhz = parser_state.main_mhz[read_main_func]
       write_mhz = None
+      write_group = parser_state.main_clk_group[write_main_func]
       if write_main_func in parser_state.main_mhz:
         write_mhz = parser_state.main_mhz[write_main_func]
-      # Infer freqs to match if possible
-      if read_mhz is None and write_mhz is not None:
-        print("Matching clock domain for",read_main_func,"(",read_func_name,")","to clock domain for",write_func_name, "(",write_main_func,"@",write_mhz,"MHz)")
-        read_mhz = write_mhz
-        parser_state.main_mhz[read_main_func] = read_mhz
+      # Infer freqs to match if possible and same groups
+      if read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
+        print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
+        parser_state.main_mhz[read_main_func] = write_mhz
+        parser_state.main_clk_group[read_main_func] = write_group
         inferring = True
-      elif read_mhz is not None and write_mhz is None:
-        print("Matching clock domain for",write_main_func,"(",write_func_name,")","to clock domain for",read_func_name, "(", read_main_func,"@",read_mhz,"MHz)")
-        write_mhz = read_mhz
-        parser_state.main_mhz[write_main_func] = write_mhz
+      elif read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
+        print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
+        parser_state.main_mhz[write_main_func] = read_mhz
+        parser_state.main_clk_group[write_main_func] = read_group
         inferring = True
-    
+  
+  # Then loop to construct each clock crossings info
   for var_name in var_names:
     # Get main funcs and mhz
     read_main_func,write_main_func = None,None
     read_mhz,write_mhz = None,None
+    read_group,write_group = None,None
     if var_name in var_to_rw_main_funcs:
       read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
       if read_main_func is not None:
         read_mhz = parser_state.main_mhz[read_main_func]
+        read_group = parser_state.main_clk_group[read_main_func]
       write_mhz = parser_state.main_mhz[write_main_func]
+      write_group = parser_state.main_clk_group[write_main_func]
     # Match mhz for disconnected read side
     if write_mhz is not None and read_mhz is None:
       read_mhz = write_mhz
@@ -6612,21 +6621,20 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         read_size = 1
         write_size = ratio
         
-      # Check that non volatile crosses are identical freq
+      # Check that non volatile crosses are identical freq+group (same clock)
       if var_name in parser_state.global_state_regs and not parser_state.global_state_regs[var_name].is_volatile:
-        if ratio != 1.0:
-          print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_func_name,"(",write_main_func,")","to",read_func_name,"(",read_main_func,")",write_mhz,"MHz ->", read_mhz, "MHz")
+        if ratio != 1.0 or read_group != write_group:
+          print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_func_name,write_main_func,"@",write_mhz,"MHz",write_group,"->",read_func_name,read_main_func,"@",read_mhz,"MHz",read_group)
           sys.exit(-1)
           
-      # For now check that volatile crossings are integer ratios (assumed synch / same clock src)
+      # Check that volatile crossings are integer ratios and sanme clock group
       if write_mhz >= read_mhz:
         clk_ratio = write_mhz / read_mhz
       else:
         clk_ratio = read_mhz / write_mhz
-      if int(clk_ratio) != clk_ratio:
-        print("TODO: Volatile non integer ratio clock crossings like:",write_func_name,write_mhz,"MHz","->",read_func_name,read_mhz,"MHz")
+      if int(clk_ratio) != clk_ratio or read_group != write_group:
+        print("TODO: Volatile non integer ratio clock crossings like:",write_func_name,write_main_func,write_group,write_mhz,"MHz","->",read_func_name,read_main_func,read_group,read_mhz,"MHz")
         sys.exit(-1)
-      
     
     # Record
     parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()
@@ -6865,10 +6873,6 @@ def APPEND_PRAGMA_INFO(parser_state):
   # Get all pragmas in ast
   pragmas = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Pragma, parser_state)
   
-  # Parse some stuff
-  parser_state.main_mhz = dict() # MAIN_MHZ
-  parser_state.main_marked_debug = set()
-  
   # Loop over all pragmas
   for pragma in pragmas:
     toks = pragma.string.split(" ")
@@ -6877,14 +6881,18 @@ def APPEND_PRAGMA_INFO(parser_state):
     # MAIN (None MHz)
     if name=="MAIN":
       main_func = toks[1]
-      mhz = None
-      parser_state.main_mhz[main_func] = mhz
+      parser_state.main_mhz[main_func] = None
+      parser_state.main_[main_func] = None
     
     # MAIN_MHZ
     if name=="MAIN_MHZ":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       mhz_tok = toks[2]
+      group = None
+      if len(toks) > 3:
+        group = toks[3]
+      parser_state.main_clk_group[main_func] = group
       # Allow float MHz or name of another main func
       try:
           mhz = float(mhz_tok)
@@ -6896,12 +6904,20 @@ def APPEND_PRAGMA_INFO(parser_state):
           else:
             print("Error in MAIN_MHZ:",main_func, mhz_tok)
             sys.exit(-1)
-  
-    # MAIN_MARK_DEBUG
-    if name=="MAIN_MARK_DEBUG":
+            
+    # MAIN_GROUP
+    if name=="MAIN_GROUP":
       toks = pragma.string.split(" ")
       main_func = toks[1]
-      parser_state.main_marked_debug.add(main_func)
+      group = toks[2]
+      parser_state.main_clk_group[main_func] = group
+      parser_state.main_mhz[main_func] = None
+  
+    # FUNC_MARK_DEBUG
+    if name=="FUNC_MARK_DEBUG":
+      toks = pragma.string.split(" ")
+      func = toks[1]
+      parser_state.func_marked_debug.add(func)
       
     # FUNC_WIRES
     if name=="FUNC_WIRES":

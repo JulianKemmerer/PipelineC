@@ -1287,8 +1287,8 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     for main_func in parser_state.main_mhz:
       clock_mhz = parser_state.main_mhz[main_func]
-      clk_mhz_str = VHDL.CLK_MHZ_STR(clock_mhz)
-      clk_name = "clk_" + clk_mhz_str
+      clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
+      clk_name = "clk_" + clk_ext_str
       clock_name_to_mhz[clk_name] = clock_mhz
       
   return clock_name_to_mhz,out_filepath
@@ -2234,24 +2234,30 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
     # Did it meet timing?
     fmax = INF_MHZ
     timing_met = len(sweep_state.timing_report.path_reports) > 0
-    for clock_group in sweep_state.timing_report.path_reports:
-      path_report = sweep_state.timing_report.path_reports[clock_group]
+    for reported_clock_group in sweep_state.timing_report.path_reports:
+      path_report = sweep_state.timing_report.path_reports[reported_clock_group]
       curr_mhz = 1000.0 / path_report.path_delay_ns
       # Oh boy old log files can still be used if target freq changes right?
       # Do a little hackery to get actual target freq right now, not from log
       main_funcs = GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state)
       clk_mhzs = set()
+      clk_groups = set()
       for main_func in main_funcs:
         target_mhz = parser_state.main_mhz[main_func]
+        clk_group = parser_state.main_clk_group[main_func]
         clk_mhzs.add(target_mhz)
-      if len(clk_mhzs) != 1:
-        print("Bad target mhz for path?", clock_group, main_funcs, clk_mhzs, path_report.netlist_resources)
+        clk_groups.add(clk_group)
+      if len(clk_mhzs) != 1 or len(clk_groups) != 1:
+        print("Bad target mhz for path?", main_funcs, clk_mhzs, clk_groups, path_report.netlist_resources)
         print("WARNING: Assuming target clock freq from timing report...")
         actual_mhz = 1000.0 / path_report.source_ns_per_clock
         #sys.exit(-1)
       else:
         actual_mhz = list(clk_mhzs)[0]
-      print("Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz, "(", path_report.path_delay_ns, "ns)", flush=True)
+        actual_group = list(clk_groups)[0]
+        if actual_group is None:
+          actual_group = ""
+      print(actual_group,"Clock Goal (MHz):",actual_mhz,", Current MHz:", curr_mhz, "(", path_report.path_delay_ns, "ns)", flush=True)
       if curr_mhz < actual_mhz:
         timing_met = False
       if curr_mhz < fmax:
@@ -2933,9 +2939,7 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
     
   return None 
   
-def ADD_PATH_DELAY_TO_LOOKUP(parser_state):  
-  print("Starting with combinatorial logic...", flush=True)
-  
+def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Make sure synthesis tool is set
   PART_SET_TOOL(parser_state.part)
   
