@@ -7,7 +7,7 @@
 // LFE5U-85F-6BG381C     ECP5U
 // LFE5UM5G-85F-8BG756C  ECP5UM5G
 // ICE40UP5K-SG48        ICE40UP
-#pragma PART "LFE5U-85F-6BG381C"
+#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -25,32 +25,41 @@
 //#include "examples/async_clock_crossing.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
-//#include "examples/arty/src/eth/app.c"
-
-#include "primitives/ecp5.c"
-
-#pragma MAIN_MHZ main 500.0
-
-uint36_t main(uint18_t x, uint18_t y)
-{
-  return ECP5_MUL18X18(x,y);
-}
+#include "examples/arty/src/eth/app.c"
 
 /*
-#define data_t uint18_t
-#define N 4
-#define array_sumN uint18_array_sum4
+#include "uintN_t.h"
+// Try to reach target fmax
+#pragma MAIN_MHZ main 400.0  
+uint128_t total;
+uint128_t main(uint128_t inc, uint1_t en)
+{
+  if(en)
+  {
+    total += inc;
+  }
+  return total;
+}
+*/
 
+/*
+#include "uintN_t.h"
+// Try to reach target fmax
+#pragma MAIN_MHZ main 400.0  
+// Standard multiplication embarrassingly parallel
+#define data_t int8_t
+#define N 8
+// Built in binary tree array sum function
+#define array_sum int8_array_sum8
+// Array as struct for return
 typedef struct an_array_t
 {
 	data_t a[N][N];
 } an_array_t;
-
-
+// Module with two matricies as input ports and one as output
 an_array_t main(data_t mat1[N][N], data_t mat2[N][N])
 {
     an_array_t res;
-    
     uint32_t i;
     uint32_t j;
     uint32_t k;
@@ -58,12 +67,12 @@ an_array_t main(data_t mat1[N][N], data_t mat2[N][N])
     { 
         for (j = 0; j < N; j = j + 1) 
         { 
-            data_t res_k[N];
+            data_t products[N];
             for (k = 0; k < N; k = k + 1)
             {
-                res_k[k] = ECP5_MUL18X18(mat1[i][k], mat2[k][j]); // Drops upper bits of 36b result 
+                products[k] = mat1[i][k] * mat2[k][j];
             }
-            res.a[i][j] =  array_sumN(res_k);
+            res.a[i][j] = array_sum(products);
         } 
     }
     
