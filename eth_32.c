@@ -209,12 +209,6 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
   static eth32_tx_state_t state;
   static eth_32_tx_t output;
   static axis16_t slice0_tx;
-  static axis16_t slice1_tx;
-  static axis16_t slice2_tx;
-  static axis16_t slice3_tx;
-  static axis16_t slice4_tx;
-  static axis16_t slice5_tx;
-  static axis16_t slice6_tx;
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
   eth.payload.data = bswap_32(eth.payload.data);
@@ -235,28 +229,19 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     output.mac_axis.data = dst_mac_msb;
     output.mac_axis.keep = 15;
     output.mac_axis.last = 0;
-    output.mac_axis.valid = eth.payload.valid;
     
-    // Save payload for later
-    output.frame_ready = mac_ready;
-    axis32_t axis0;
-    axis0 = eth.payload;
-    uint1_t has_lsb_data;
-    has_lsb_data = uint4_1_1(axis0.keep);
-    
-    // Next state if mac ready + wait for start valid
-    if(mac_ready & eth.payload.valid)
-    { 
-      state = DST_MAC_LSB_SRC_MAC_MSB;
-      slice0_tx.data = uint32_31_16(axis0.data);
-      slice1_tx.data = uint32_15_0(axis0.data);
-      slice0_tx.keep = uint4_3_2(axis0.keep);
-      slice1_tx.keep = uint4_1_0(axis0.keep);
-      slice0_tx.last = axis0.last & !has_lsb_data;
-      slice1_tx.last = axis0.last;
-      slice0_tx.valid = axis0.valid;
-      slice1_tx.valid = axis0.valid & has_lsb_data;
-    }   
+    // Wait for valid payload first word to trigger start
+    // not ready for payload yet though
+    if(eth.payload.valid)
+    {
+      // Try to send word
+      output.mac_axis.valid = 1;
+      // Next state if mac was ready
+      if(mac_ready)
+      {
+        state = DST_MAC_LSB_SRC_MAC_MSB;
+      } 
+    }      
   }
   else if(state==DST_MAC_LSB_SRC_MAC_MSB)
   {
@@ -275,25 +260,10 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     output.mac_axis.keep = 15;
     output.mac_axis.last = 0;
     
-    // Save payload for later
-    output.frame_ready = mac_ready;
-    axis32_t axis1;
-    axis1 = eth.payload;
-    uint1_t has_lsb_data;
-    has_lsb_data = uint4_1_1(axis1.keep);
-    
-    // Next state if mac ready
+    // Next state if mac ready, not ready for payload yet though
     if(mac_ready)
     {
       state = SRC_MAC_LSB;
-      slice2_tx.data = uint32_31_16(axis1.data);
-      slice3_tx.data = uint32_15_0(axis1.data);
-      slice2_tx.keep = uint4_3_2(axis1.keep);
-      slice3_tx.keep = uint4_1_0(axis1.keep);
-      slice2_tx.last = axis1.last & !has_lsb_data;
-      slice3_tx.last = axis1.last;
-      slice2_tx.valid = axis1.valid;
-      slice3_tx.valid = axis1.valid & has_lsb_data;
     }
   }
   else if(state==SRC_MAC_LSB)
@@ -307,73 +277,57 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     output.mac_axis.data = src_mac_lsb;
     output.mac_axis.keep = 15;
     output.mac_axis.last = 0;
-    
-    // Save payload for later
-    output.frame_ready = mac_ready;
-    axis32_t axis2;
-    axis2 = eth.payload;    
-    uint1_t has_lsb_data;
-    has_lsb_data = uint4_1_1(axis2.keep);
-    
-    // Next state if mac ready
+
+    // Next state if mac ready,not ready for payload yet though
     if(mac_ready)
     {
       state = LEN_PAYLOAD_MSB_BUFF_INIT;
-      slice4_tx.data = uint32_31_16(axis2.data);
-      slice5_tx.data = uint32_15_0(axis2.data);
-      slice4_tx.keep = uint4_3_2(axis2.keep);
-      slice5_tx.keep = uint4_1_0(axis2.keep);
-      slice4_tx.last = axis2.last & !has_lsb_data;
-      slice5_tx.last = axis2.last;
-      slice4_tx.valid = axis2.valid;
-      slice5_tx.valid = axis2.valid & has_lsb_data;
     }
   }
   else if(state==LEN_PAYLOAD_MSB_BUFF_INIT)
   {
-    // Output length and guarenteed valid slice0_tx data
-    output.mac_axis.valid = 1;
-    output.mac_axis.data = uint16_uint16(eth.header.ethertype, slice0_tx.data); // Uhh ethertype filled in by TEMAC?
-    output.mac_axis.keep = 15;
-    output.mac_axis.last = 0;
+    // Payload into slices
+    axis16_t slice1_tx;
+    uint1_t has_lsb_data = uint4_1_1(eth.payload.keep);
+    slice0_tx.data = uint32_31_16(eth.payload.data);
+    slice1_tx.data = uint32_15_0(eth.payload.data);
+    slice0_tx.keep = uint4_3_2(eth.payload.keep);
+    slice1_tx.keep = uint4_1_0(eth.payload.keep);
+    slice0_tx.last = eth.payload.last & !has_lsb_data;
+    slice1_tx.last = eth.payload.last;
+    slice0_tx.valid = eth.payload.valid;
+    slice1_tx.valid = eth.payload.valid & has_lsb_data;
     
-    // End slices 5 and 6 get payload from this time
-    // Save payload for later
+    // Output length and first two bytes of payload
     output.frame_ready = mac_ready;
-    axis32_t axis3;
-    axis3 = eth.payload;    
-    uint1_t has_lsb_data;
-    has_lsb_data = uint4_1_1(axis3.keep);   
+    output.mac_axis.valid = slice0_tx.valid;
+    output.mac_axis.data = uint16_uint16(eth.header.ethertype, slice0_tx.data);
+    output.mac_axis.keep = slice0_tx.keep;
+    output.mac_axis.last = slice0_tx.last;
     
-    // Next state if mac ready
-    if(mac_ready)
+    // Next state if mac ready for payload
+    if(mac_ready & output.mac_axis.valid)
     {
       // Since output slice0_tx just now shift everything forward by 1
-      // Now slice0_tx is the end part of an full AXIS
-      // So slice1_tx and slice2_tx might be in/valid
       slice0_tx = slice1_tx;
-      slice1_tx = slice2_tx;
-      slice2_tx = slice3_tx;
-      slice3_tx = slice4_tx;
-      slice4_tx = slice5_tx;
-      
-      slice5_tx.data = uint32_31_16(axis3.data);
-      slice6_tx.data = uint32_15_0(axis3.data);
-      slice5_tx.keep = uint4_3_2(axis3.keep);
-      slice6_tx.keep = uint4_1_0(axis3.keep);
-      slice5_tx.last = axis3.last & !has_lsb_data;
-      slice6_tx.last = axis3.last;
-      slice5_tx.valid = axis3.valid;
-      slice6_tx.valid = axis3.valid & has_lsb_data;
-      
-      // Only change state if slice0_tx is valid, 
-      // which it should be guarenteed to be
       state = PAYLOAD; 
     }
   }
   else if(state==PAYLOAD)
   {
-    // Curse, not 32 aligned
+    // Incoming payload into two slices (already have one from before, slice0_tx)
+    axis16_t slice1_tx;
+    axis16_t slice2_tx;
+    uint1_t has_lsb_data = uint4_1_1(eth.payload.keep);
+    slice1_tx.data = uint32_31_16(eth.payload.data);
+    slice2_tx.data = uint32_15_0(eth.payload.data);
+    slice1_tx.keep = uint4_3_2(eth.payload.keep);
+    slice2_tx.keep = uint4_1_0(eth.payload.keep);
+    slice1_tx.last = eth.payload.last & !has_lsb_data;
+    slice2_tx.last = eth.payload.last;
+    slice1_tx.valid = eth.payload.valid;
+    slice2_tx.valid = eth.payload.valid & has_lsb_data;
+    
     // Only change state / output payload
     // if we have 32b of data OR last bit to output in first two slices
     // AND MAC IS READY
@@ -392,13 +346,14 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     // Set output values
     if(has_32b_or_is_last)
     {
+      output.frame_ready = mac_ready;
       // Output is valid
       output.mac_axis.valid = 1;
       // Maybe last 
       output.mac_axis.last = is_last;
-      
       // MSB data is slice0_tx, lsb slice1_tx
       output.mac_axis.data = uint16_uint16(slice0_tx.data,slice1_tx.data);
+      
       // Only keep slice1_tx lsb data if slice1_tx valid          
       uint1_t slice1_keep0;
       slice1_keep0 = uint2_0_0(slice1_tx.keep) & slice1_tx.valid;
@@ -407,71 +362,21 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
       uint2_t slice1_keep;
       slice1_keep = uint1_uint1(slice1_keep1,slice1_keep0);
       output.mac_axis.keep = uint2_uint2(slice0_tx.keep,slice1_keep);
-    }
-    
-    // DO STATE CHANGES / accept input IF MAC READY
-    if(mac_ready)
-    {
-      // Back to idle if this was last
-      if(is_last)
-      {
-        state = DST_MAC_MSB;
-      }
-    
-      // Uh..
-      // uh weird shifting needed?
-      // WEIRD LOGIC but ALWAYS NEED TO SHIFT BY 2 since incoming data
-      // No slices guarenteed valid?      
-      // CASES:
-      //  (00) Neither valid, shift 2
-      //  (11) Both valid, shift 2
-      //  (10) Only 0 valid, 1+2 are invalid (1 known not valid, and since from 32b axis 2 must be invalid too) , shift by 2 differently
-      //  (01) This should never happen ? would be like keep = 0b0011
-      uint1_t slice0_invalid;
-      slice0_invalid = !slice0_tx.valid;
-      uint1_t slice1_invalid;
-      slice1_invalid = !slice1_tx.valid;
-      uint1_t neither_valid;
-      neither_valid = slice0_invalid & slice1_invalid;
-      uint1_t shift2;
-      shift2 = has_32b | neither_valid;
-      uint1_t shift2_diff;
-      shift2_diff = slice0_tx.valid;
-      if(shift2)
-      {
-        // Shift out from 0 by 2
-        slice0_tx = slice2_tx;
-        slice1_tx = slice3_tx;
-        slice2_tx = slice4_tx;
-        slice3_tx = slice5_tx;
-        slice4_tx = slice6_tx;        
-      }
-      else if(shift2_diff)
-      {
-        // Shift out from 1 by 2
-        // SAME slice0_tx
-        slice1_tx = slice3_tx;
-        slice2_tx = slice4_tx;
-        slice3_tx = slice5_tx;
-        slice4_tx = slice6_tx;
-      }
       
-      // New data in slice 5 and 6
-      // Save payload for later
-      output.frame_ready = 1;
-      axis32_t axis4;
-      axis4 = eth.payload;
-      uint1_t has_lsb_data;
-      has_lsb_data = uint4_1_1(axis4.keep);
-      slice5_tx.data = uint32_31_16(axis4.data);
-      slice6_tx.data = uint32_15_0(axis4.data);
-      slice5_tx.keep = uint4_3_2(axis4.keep);
-      slice6_tx.keep = uint4_1_0(axis4.keep);
-      slice5_tx.last = axis4.last & !has_lsb_data;
-      slice6_tx.last = axis4.last;
-      slice5_tx.valid = axis4.valid;
-      slice6_tx.valid = axis4.valid & has_lsb_data;
+      // DO STATE CHANGES / accept input IF MAC READY
+      if(mac_ready)
+      {
+        // Shift by 2 for the two words just sent
+        slice0_tx = slice2_tx;
+        
+        // Back to idle if this was last
+        if(is_last)
+        {
+          state = DST_MAC_MSB;
+        }
+      }
     }
+    // Nothing else needed? Dont get weird shifting cases since using flow control right?
   }
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep

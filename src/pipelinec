@@ -20,7 +20,10 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages
+Do C program loopback of byte array over eth WITH MAC FILTER + write up for arty examples
+NEED active pipelining example - Do matrix mult example with eth^
+Do small neural net example? Then work to larger one?
+Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Antikernel fun?
 Silice fun?
 Infer dsps somehow - will want to infer based on * operator, 
@@ -28,10 +31,6 @@ Infer dsps somehow - will want to infer based on * operator,
 ^ and need to make up built in dsp functions for other, MAC, like functions
 ^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
 Sanity check signed mult you POS
-Need clock groups / async indicator
-Revive TEMAC example (start eth/ip/udp loopback) and integrate into arty proj
-NEED active pipelining example - Do matrix mult example with eth^
-Do small neural net example? Then work to larger one?
 Come on do sanity check for reserved words
 Make MAIN_MHZ allow not yet defined funcs for mhz values later
 Multiple reads on globals var / global wires? is maybe OK? ordering of global writes and reads a problem?
@@ -87,6 +86,7 @@ Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
+Clock enable for same-clock crossing wires implies reg to supply 'default' value, otherwise bypassed if CE=1?
 '''
 
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
