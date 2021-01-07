@@ -194,15 +194,3 @@ void eth_write(uint8_t* payload_buf, size_t payload_size)
 	if (sendto(write_sockfd, sendbuf, tx_len, 0, (struct sockaddr*)&write_socket_address, sizeof(struct sockaddr_ll)) < 0)
 	    printf("Send failed\n");
 }
-
-
-/*
-// Software specific helper functions to convert msg bytes to/from 'work' inputs/outputs
-// TODO gen all includes inside work_*_bytes.h
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/int16_t_bytes_t.h/int16_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/work_inputs_t_bytes_t.h/work_inputs_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/work_outputs_t_bytes_t.h/work_outputs_t_bytes.h"
-
-input_write()
-output_read()
-*/

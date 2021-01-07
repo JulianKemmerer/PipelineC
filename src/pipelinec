@@ -19,9 +19,8 @@ print('''
 
 # No need to scare folks with my big dumb todo list printing...
 '''
-TODO:
-Do C program loopback of byte array over eth WITH MAC FILTER + write up for arty examples
-NEED active pipelining example - Do matrix mult example with eth^
+TODO: 
+NEED active pipelining example - Do matrix mult example with eth + write up for arty examples
 Do small neural net example? Then work to larger one?
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Antikernel fun?
@@ -49,6 +48,7 @@ Fix fine grain sweep to work again
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
+Karatsuba algo for mult - need to recursive gen big mult funcs for differing bit widths
 Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
@@ -87,6 +87,7 @@ Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
 Clock enable for same-clock crossing wires implies reg to supply 'default' value, otherwise bypassed if CE=1?
+Extern keyword for (same-clock?) clock crossings?
 '''
 
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)

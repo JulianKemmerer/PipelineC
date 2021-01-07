@@ -51,7 +51,7 @@ void rx_main()
   uint1_t mac_match = frame.header.dst_mac == FPGA_MAC;
 
   // Write into fifos if mac match
-  uint1_t payload_wr_en = frame.payload.valid & mac_match;
+  uint1_t payload_wr_en = frame.payload.valid & eth_rx_out_ready & mac_match;
   // Only write into headers fifo if starting a packet
   uint1_t header_wr_en = eth_rx.start_of_packet & eth_rx_out_ready & mac_match;
   axis32_t payload_wr_data[1];
@@ -62,7 +62,7 @@ void rx_main()
   loopback_payload_fifo_write_t payload_write = loopback_payload_fifo_WRITE_1(payload_wr_data, payload_wr_en);
   loopback_headers_fifo_write_t header_write = loopback_headers_fifo_WRITE_1(header_wr_data, header_wr_en);
   
-  // Ethrx was ready if payload fifo+header fifo was ready
+  // Eth rx was ready if payload fifo+header fifo was ready
   eth_rx_out_ready = payload_write.ready & header_write.ready; // FEEDBACK
   
   // TODO CONNECT OVERFLOW TO LED
@@ -122,9 +122,9 @@ void tx_main()
   eth_32_tx_t eth_tx = eth_32_tx(frame, eth_tx_out_ready);
   axis32_t axis_tx = eth_tx.mac_axis;
   // Read payload if was ready
-  payload_read_en = eth_tx.frame_ready; // FEEDBACK
+  payload_read_en = eth_tx.frame_ready & frame.payload.valid; // FEEDBACK
   // Ready header if was ready at end of packet
-  header_read_en = eth_tx.frame_ready & axis_tx.last & axis_tx.valid; // FEEDBACK
+  header_read_en = eth_tx.frame_ready & frame.payload.last & frame.payload.valid; // FEEDBACK
     
 	// Convert axis32 to axis8
   axis32_to_axis8_t to_axis8 = axis32_to_axis8(axis_tx, mac_ready);
