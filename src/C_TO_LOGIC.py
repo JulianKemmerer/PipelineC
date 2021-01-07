@@ -15,6 +15,7 @@ from collections import OrderedDict
 import VHDL
 import SW_LIB
 import SYN
+import SW_LIB
 
 TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, False for debug
 
@@ -842,6 +843,7 @@ class Logic:
         print("self.func_name", self.func_name)
         print("wire",wire)
         print("No submodule instance called", submodule_inst)
+        print(self.submodule_instances)
         print(0/0)
         sys.exit(-1)
       # Otherwise proceed checking for outputs
@@ -880,6 +882,7 @@ class Logic:
         print("self.func_name", self.func_name)
         print("wire",wire)
         print("No submodule instance called", submodule_inst)
+        print(self.submodule_instances)
         print(0/0)
         sys.exit(-1)
       # Otherwise proceed checking for inputs
@@ -899,7 +902,7 @@ class Logic:
         
     return False
     
-  def WIRE_DO_NOT_COLLAPSE(self, wire):
+  def WIRE_DO_NOT_COLLAPSE(self, wire, FuncLogicLookupTable):
     if wire in self.variable_names:
       return True
     if wire in self.inputs:
@@ -913,21 +916,33 @@ class Logic:
     if wire in self.feedback_vars:
       return True
       
-    # THIS SEEMS WRONG?
-    # NEED TO BE ABLE TO COLLAPSE/TRIM SUBMODULES?
-    #if (SUBMODULE_MARKER in wire):
+    # WANT TO TRIM SUBMODULES!
+    #if SUBMODULE_MARKER in wire:
     #  return True 
+    # Most submodules are entirely in the same function/clock domain
+    # So it is correct (for now until multi global readers?) to rip up submodule
+    # if reached an output wire
+    # CLOCK CROSSING functions are not this way and have 'used' outputs not see
+    # since the outputs are in another domain
+    if SUBMODULE_MARKER in wire:
+      inst_name = wire.split(SUBMODULE_MARKER)[0]
+      func_name = self.submodule_instances[inst_name]
+      sub_func_logic = FuncLogicLookupTable[func_name]
+      if SW_LIB.IS_CLOCK_CROSSING(sub_func_logic):
+        return True
     
     return False
   
   def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, FuncLogicLookupTable):
-    #print("REMOVE",self.func_name, "  ", wire)
-    #print "DEBUG: Not removing", wire
-    #return None
+    debug = False
     
     # Stop recursion if reached special wire
-    if self.WIRE_DO_NOT_COLLAPSE(wire):
+    if self.WIRE_DO_NOT_COLLAPSE(wire, FuncLogicLookupTable):
+      if debug:
+        print("NOT REMOVE",self.func_name, "  ", wire)
       return
+    if debug:
+      print("REMOVE",self.func_name, "  ", wire)
     
     self.wires.discard(wire)        
     self.wire_to_c_type.pop(wire, None)
@@ -991,10 +1006,14 @@ class Logic:
           if submodule_input_wire in self.wires:
             self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(submodule_input_wire, FuncLogicLookupTable)
         # Finally remove submodule itself
-        self.REMOVE_SUBMODULE(submodule_inst, submodule_logic.inputs)
+        self.REMOVE_SUBMODULE(submodule_inst, submodule_logic.inputs, submodule_logic.outputs)
         
   # Intentionally return None
-  def REMOVE_SUBMODULE(self,submodule_inst, input_port_names):    
+  def REMOVE_SUBMODULE(self,submodule_inst, input_port_names, output_port_names):    
+    debug = False
+    if debug:
+      print("removing  sub", submodule_inst)
+    
     # Remove from list of subs yo
     self.submodule_instances.pop(submodule_inst,None)   
     
@@ -1007,9 +1026,9 @@ class Logic:
       in_wire = submodule_inst + SUBMODULE_MARKER + input_port_name
       io_wires.add(in_wire)
       in_wires.add(in_wire)
-    out_wire = submodule_inst + SUBMODULE_MARKER + RETURN_WIRE_NAME
-    io_wires.add(out_wire)
-    
+    for output_port_name in output_port_names:
+      out_wire = submodule_inst + SUBMODULE_MARKER + output_port_name
+      io_wires.add(out_wire)    
     
     # Fast
     # NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instances.pop(submodule_inst)
@@ -1206,7 +1225,7 @@ def WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
 
 def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst, parser_state): 
   #print "containing_func_logic.func_name, submodule_inst"
-  #print containing_func_logic.func_name, "|", submodule_inst
+  #print(containing_func_logic.func_name, "|", submodule_inst)
   #print "====================================================================================="
   # Construct a fake 'submodule_logic' with correct name, inputs, outputs
   submodule_logic = Logic()
@@ -4641,7 +4660,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # Going to replace with constant
     # Remove old submodule instance
     #print "Replacing:",func_inst_name,"with constant",const_val_str
-    parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names)
+    parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME])
         
     # Connect const wire to output wire and return
     # Do connection using real parser state and logic
@@ -4705,7 +4724,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     
   # Remove old submodule instance
   #print "Replacing:",func_inst_name, "with reduced function", new_func_base_name
-  parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name,input_port_names)
+  parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name,input_port_names, [RETURN_WIRE_NAME])
   
   # And remove the constant wires that were optimized away ?
   #@GAHMAKETHIS PART OF REMOVE SUBMODULE OR WHAT?????
@@ -4764,32 +4783,26 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   # Try to determine output type
   # Should be knowable except for mux, which can be inferred
   # Set type for outputs based on func_name (only base name known right now? base name== func name for parsed C coe) if possible
+  output_type = "void"
+  output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
   if func_base_name in parser_state.FuncLogicLookupTable:
     func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
     if len(func_def_logic_object.outputs) > 0:
       # Get type of output
       output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
-      # Set this type for the output if not set already? # This seems really hacky
-      for output_driven_wire_name in output_driven_wire_names:
-        if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
-          parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
-  
   # Set type for outputs based on output port if possible
-  output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
-  if output_wire_name in parser_state.existing_logic.wire_to_c_type:
+  elif output_wire_name in parser_state.existing_logic.wire_to_c_type:
     output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
-    # Set this type for the driven wires if not set already? # This seems really hacky
-    for output_driven_wire_name in output_driven_wire_names:
-      if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
-        parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
-  
   # Set mux type? Hacky wtf?
-  if func_base_name==MUX_LOGIC_NAME:
-    if output_wire_name not in parser_state.existing_logic.wire_to_c_type:
-      parser_state.existing_logic.wire_to_c_type[output_wire_name] = input_driver_types[1] #[0] is cond for mux
-    
-  #print "func_base_name",func_base_name,"out",parser_state.existing_logic.wire_to_c_type[output_wire_name]
+  elif func_base_name==MUX_LOGIC_NAME:
+    output_type = input_driver_types[1] #[0] is cond for mux
+    parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
   
+  # Set this type for the driven wires if not set already? # This seems really hacky
+  for output_driven_wire_name in output_driven_wire_names:
+    if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
+      parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
+   
   # Is this a constant or reduceable func call?
   const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             prepend_text,
@@ -4806,9 +4819,6 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     
   
   # Build func name
-  output_type = "void"
-  if output_wire_name in parser_state.existing_logic.wire_to_c_type:
-    output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
   func_name = BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name)
   # Sub module inst
   parser_state.existing_logic.submodule_instances[func_inst_name] = func_name
@@ -4882,14 +4892,21 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   ################################# INPUTS DONE ##########################################
   
   # Outputs
-  # Add wire even if below it ends up driving nothing
-  # need this to see the unconnected wire and rip up form there
-  #     ~~~ Akron/Family - Franny/You're Human ~~~
-  parser_state.existing_logic.wires.add(output_wire_name)
-  # Finally connect the output of this operation to each of the driven wires
-  if len(output_driven_wire_names) > 0:
-    parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
-  
+  # Only add output wire if there is one
+  # output_wire_name is made up for trying to get type earlier
+  if output_type != "void":
+    # Add wire even if below it ends up driving nothing
+    # need this to see the unconnected wire and rip up form there
+    #     ~~~ Akron/Family - Franny/You're Human ~~~
+    parser_state.existing_logic.wires.add(output_wire_name)
+    # Finally connect the output of this operation to each of the driven wires
+    if len(output_driven_wire_names) > 0:
+      parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
+  else:
+    if len(output_driven_wire_names) > 0:
+      print("Func with void output but has driven output wires?",output_driven_wire_names)
+      sys.exit(-1)
+    
   return parser_state.existing_logic
     
 
@@ -5640,7 +5657,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
     if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
       print("Looks like wire'",driving_wire,"'isn't declared? Doing weird stuff with types/enums maybe?")
       print(c_ast_node.coord)
-      #print(0/0)
+      print(0/0)
       sys.exit(-1)
     rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
     for driven_wire_name in driven_wire_names:
@@ -5816,7 +5833,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   except:
     pass
     
-  #print "FUNC_DEF",c_ast_funcdef.decl.name
+  #print("FUNC_DEF",c_ast_funcdef.decl.name)
   
   parser_state.existing_logic = Logic()
   # Save the c_ast node
@@ -5828,6 +5845,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
     return_wire_name = RETURN_WIRE_NAME
     parser_state.existing_logic.outputs.append(return_wire_name)
     parser_state.existing_logic.wires.add(return_wire_name)
+    #print("return_type",return_type)
     parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
 
   # First get name of function from the declaration
@@ -5928,18 +5946,21 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
           print(func_logic.func_name, "Removing", wire)
         func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
       else:
-        if debug:
-          print("drives_nothing", drives_nothing)
-          if not drives_nothing:
-            print("Drives:",func_logic.wire_drives[wire])
-          print("must_drive_something",must_drive_something)
+        pass
+        #if debug:
+        #  print(func_logic.func_name,"drives_nothing", drives_nothing, wire)
+        #  if not drives_nothing:
+        #    print(func_logic.func_name,"Drives:",func_logic.wire_drives[wire])
+        #  print(func_logic.func_name,"must_drive_something",must_drive_something, wire)
     else:
       if debug:
-        print(func_logic.func_name, "NOT Removing", wire)
-        print("drives_nothing",drives_nothing)
-        if not drives_nothing:
-          #print(func_logic.wire_drives[wire])
-          print("must_drive_something",must_drive_something)
+        pass
+        #print(func_logic.func_name, "NOT Removing", wire)
+        #print("drives_nothing",drives_nothing)
+        #if not drives_nothing:
+        #  print(func_logic.wire_drives[wire])
+        #  print("must_drive_something",must_drive_something)
+          
       
       
   # Songs: Ohia - Farewell Transmission
@@ -5952,7 +5973,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     for wire in set(func_logic.wires): # Copy for iter
       if wire in func_logic.wires: # Changes during iter
         # Look for not special wires that have driving info
-        if not func_logic.WIRE_DO_NOT_COLLAPSE(wire) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
+        if not func_logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
           # Get driving info
           driving_wire = func_logic.wire_driven_by[wire]        
           driven_wires = func_logic.wire_drives[wire]
