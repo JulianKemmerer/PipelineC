@@ -323,8 +323,7 @@ begin
       # Clk in input
       text += "clk_" + write_clk_ext_str + ",\n"
       # Clk in enable
-      if flow_control:
-        text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+      text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
       # Clk cross in data from pipeline output
       for input_port in write_func_logic.inputs:
         text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
@@ -333,8 +332,7 @@ begin
       # Clk out input
       text += "clk_" + read_clk_ext_str + ",\n"
       # Clk out enable
-      if flow_control:
-        text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+      text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
       # Clk cross out data to pipeline input
       for input_port in read_func_logic.inputs:
         text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
@@ -822,10 +820,10 @@ use xpm.vcomponents.all;
     entity clk_cross_''' + var_name + ''' is
     port(
       in_clk : in std_logic;
+      in_clk_en : in unsigned(0 downto 0);
 '''
     if flow_control:
       text += '''
-      in_clk_en : in unsigned(0 downto 0);
       wr_data : in ''' + in_vhdl_t + ''';
       wr_en : in unsigned(0 downto 0);
       wr_out: out ''' + var_name + '''_write_t;
@@ -836,10 +834,10 @@ use xpm.vcomponents.all;
 '''
     text += '''
       out_clk : in std_logic;
+      out_clk_en : in unsigned(0 downto 0);
 '''
     if flow_control:
       text += '''
-      out_clk_en : in unsigned(0 downto 0);
       rd_enable: in unsigned(0 downto 0);
       rd_out : out ''' + var_name + '''_read_t
 '''
@@ -887,6 +885,7 @@ use xpm.vcomponents.all;
         # Input register in slow domain
         text += '''
         signal i_slow_r : ''' + in_vhdl_t + ''';
+        signal i_slow_valid_r : std_logic := '0';
         '''
       elif write_size < read_size:
         # Write < read means fast->slow 
@@ -899,9 +898,12 @@ use xpm.vcomponents.all;
         
       # N valid bits
       text += '''
-      signal slow_array_valids_r : std_logic_vector(0 to CLK_RATIO_MINUS1);
+      signal slow_array_valids_r : std_logic_vector(0 to CLK_RATIO_MINUS1) := (others => '0');
       '''
-      
+    else:
+      # Same clock domain only need reg for clock enable
+      text += '''
+      signal clock_disabled_value_r : ''' + in_vhdl_t + ''' := ''' + C_TYPE_STR_TO_VHDL_NULL_STR(in_t, parser_state) + ''';'''
     
     text+='''
     begin
@@ -1036,9 +1038,10 @@ port map (
 '''
 
 
-    # BELOW CROSSINGS CANNOT USE CLOCK ENABLES
+    # BELOW CROSSINGS CANNOT USE OUTPUT CLOCK ENABLES
     # - DO NOT HAVE FIFO BUFFERS
-    #  - ARE NOT FLOW CONTROLABLE
+    #  - ARE NOT FLOW CONTROLABLE 
+    # (input clock enables are just extra enable inputs + fine)
 
     # Write > read means slow->fast
     elif write_size > read_size:
@@ -1048,7 +1051,8 @@ port map (
       process(in_clk) is
       begin
       if rising_edge(in_clk) then
-          i_slow_r <= i;
+        i_slow_r <= i;
+        i_slow_valid_r <= in_clk_en(0);
       end if;
       end process;
       
@@ -1073,7 +1077,7 @@ port map (
         -- Incoming slow data registered 
         if fast_clk_counter_r = CLK_RATIO_MINUS1 then
           fast_clk_counter_r <= 0;
-          slow_array_valids_r <= (others => '1');
+          slow_array_valids_r <= (others => i_slow_valid_r);
           slow_array_r <= i_slow_r;
         else
           -- Counter
@@ -1099,7 +1103,7 @@ port map (
           slow_array_valids_r(i) <= slow_array_valids_r(i+1);
         end loop;
         slow_array_r.data(CLK_RATIO_MINUS1) <= i.data(0);
-        slow_array_valids_r(CLK_RATIO_MINUS1) <= '1';        
+        slow_array_valids_r(CLK_RATIO_MINUS1) <= in_clk_en(0);        
         
         -- Counter roll over is slow clk enable logic in fast domain
         if fast_clk_counter_r = CLK_RATIO_MINUS1 then
@@ -1133,8 +1137,24 @@ port map (
       
     elif write_size == read_size:
       text += '''   
-      -- Assume same clock
-      o <= i;'''
+      -- Same clock with clock disabled past value holding reg
+      process(in_clk, in_clk_en) is
+      begin
+        if rising_edge(in_clk) and in_clk_en(0) = '1' then
+          clock_disabled_value_r <= i;
+        end if;
+      end process;
+      
+      -- Mux current in value or past value
+      process(i,in_clk_en,clock_disabled_value_r) is
+      begin
+        if in_clk_en(0) = '1' then
+          o <= i;
+        else
+          o <= clock_disabled_value_r;
+        end if;
+      end process;
+      '''
     
     text += '''    
     end arch;
@@ -1267,9 +1287,8 @@ package clk_cross_t_pkg is
         if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
           var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name) 
           clk_cross_info = parser_state.clk_cross_var_info[var_name]
-          if clk_cross_info.flow_control:
-            c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
-            text += "     " + sub_func + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+          c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
+          text += "     " + sub_func + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
           for input_port in sub_logic.inputs:
             # submodule instance name == Func name for clk cross since single instance?
             #input_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + input_port
@@ -2811,10 +2830,9 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst
   var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic.func_name) 
   clk_cross_info = parser_state.clk_cross_var_info[var_name]
   
-  if clk_cross_info.flow_control:
-    text += "     -- Clock enable" + "\n"
-    ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
-    text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
+  text += "     -- Clock enable" + "\n"
+  ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+  text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
   
   if len(submodule_logic.inputs) > 0:
     text += "     -- Inputs" + "\n"

@@ -4914,11 +4914,6 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
   # Look for clock cross submodule ending in _READ() implying input 
   i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs
   
-  if SW_LIB.IS_CLOCK_CROSSING(logic):
-    var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
-    clk_cross_info = parser_state.clk_cross_var_info[var]
-    i_need = clk_cross_info.flow_control
-  
   # Check submodules too
   needs = i_need
   if needs:
