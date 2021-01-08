@@ -1087,7 +1087,7 @@ class Logic:
   def CAN_BE_SLICED(self):
     if self.uses_nonvolatile_state_regs:
       return False
-    if len(self.feedback_vars)>=0:
+    if len(self.feedback_vars)>0:
       return False
     return True
       

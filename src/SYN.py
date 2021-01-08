@@ -2128,8 +2128,24 @@ def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
           match_main = main_func
           break
       if match_main:
-        main_funcs.add(match_main)      
-      
+        main_funcs.add(match_main)    
+        
+  
+  # If nothing was found try hacky clock cross check?
+  if len(main_funcs)==0:
+    start_inst = path_report.start_reg_name.split("/")[0]
+    end_inst = path_report.end_reg_name.split("/")[0]
+    #print(start_inst,end_inst)
+    if (start_inst in parser_state.clk_cross_var_info) and (end_inst in parser_state.clk_cross_var_info):
+      start_info = parser_state.clk_cross_var_info[start_inst]
+      end_info = parser_state.clk_cross_var_info[end_inst]
+      # Start read and end write must be same main
+      start_write_main, start_read_main = start_info.write_read_main_funcs
+      end_write_main, end_read_main = end_info.write_read_main_funcs
+      #print(start_read_main,end_write_main)
+      if start_read_main == end_write_main:
+        main_funcs.add(start_read_main)
+        
   return main_funcs
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
