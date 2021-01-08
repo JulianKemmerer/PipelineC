@@ -1441,8 +1441,8 @@ package c_structs_pkg is
           line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
           text += line
           # SLV LEN
-          elem_size_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(elem_type,parser_state)
-          text += '''constant ''' + new_vhdl_type + '''_SLV_LEN : integer := ''' + elem_size_str + ''' * ''' + str(new_dims[0]) + ''';\n'''
+          inner_size_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
+          text += '''constant ''' + new_vhdl_type + '''_SLV_LEN : integer := ''' + inner_size_str + ''' * ''' + str(new_dims[0]) + ''';\n'''
           # type_to_slv
           func_decl_text = ""
           func_decl_text += '''
@@ -1473,8 +1473,10 @@ package c_structs_pkg is
           func_decl_text += '''
       function slv_to_''' + new_vhdl_type + '''(data : std_logic_vector) return ''' + new_vhdl_type
           func_body_text = ""
+          # Need intermediate 'downto 0' elem_slv for passing into from_slv func
           func_body_text += ''' is
         variable rv : ''' + new_vhdl_type + ''';
+        variable elem_slv : std_logic_vector(''' + inner_size_str + '''-1 downto 0);
         variable pos : integer := 0;
       begin
     '''
@@ -1482,7 +1484,8 @@ package c_structs_pkg is
           from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(inner_vhdl_type, parser_state)
           for i in range(0, new_dims[0]):
             func_body_text += '''
-            rv(''' + str(i) + ''') := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
+            elem_slv := data((pos+'''+vhdl_slv_len_str+''')-1 downto pos);
+            rv(''' + str(i) + ''') := ''' + from_slv_toks[0] + '''elem_slv''' + from_slv_toks[1] + ''';
             pos := pos + '''+vhdl_slv_len_str+''';
     '''
           func_body_text += '''
@@ -1596,7 +1599,17 @@ package c_structs_pkg is
       func_body_text = ""
       func_body_text += ''' is
     variable rv : ''' + struct_name + ''';
-    variable pos : integer := 0;
+    variable pos : integer := 0;'''
+      # Need intermediate 'downto 0' slv slices for passing into from_slv func for each field
+      for field in field_type_dict:
+        c_type = field_type_dict[field]
+        vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
+        vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
+        from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state)
+        func_body_text += '''
+    variable ''' + field + '''_slv : std_logic_vector(''' + vhdl_slv_len_str + '''-1 downto 0);'''
+      # Rest of func body
+      func_body_text += '''
   begin
 '''
       for field in field_type_dict:
@@ -1605,7 +1618,8 @@ package c_structs_pkg is
         vhdl_slv_len_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type,parser_state)
         from_slv_toks = VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state)
         func_body_text += '''
-        rv.''' + field + ''' := ''' + from_slv_toks[0] + ''' data((pos+'''+vhdl_slv_len_str+''')-1 downto pos)''' + from_slv_toks[1] + ''';
+        ''' + field + '''_slv := data((pos+'''+vhdl_slv_len_str+''')-1 downto pos);
+        rv.''' + field + ''' := ''' + from_slv_toks[0] + field + '''_slv''' + from_slv_toks[1] + ''';
         pos := pos + '''+vhdl_slv_len_str+''';
 '''
       func_body_text += '''

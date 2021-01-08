@@ -11,6 +11,7 @@ import C_TO_LOGIC
 import VHDL
 import SW_LIB
 import SYN
+import VIVADO
 
 #MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim"
 MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
