@@ -19,7 +19,10 @@ print('''
 
 # No need to scare folks with my big dumb todo list printing...
 '''
-TODO: 
+TODO:
+Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
+^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
+Clock enable for same-clock crossing wires implies reg to supply 'default' value, otherwise bypassed if CE=1?
 NEED active pipelining example - Do matrix mult example with eth + write up for arty examples
 Do small neural net example? Then work to larger one?
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
@@ -86,7 +89,6 @@ Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
-Clock enable for same-clock crossing wires implies reg to supply 'default' value, otherwise bypassed if CE=1?
 Extern keyword for (same-clock?) clock crossings?
 '''
 
