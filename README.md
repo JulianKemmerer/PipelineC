@@ -33,6 +33,7 @@ A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthes
 _A hardware description language centered around pipelining_
 
 * Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
+* Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined.
 * Compose complex portable designs consisting of multiple pipelines and controlling state machines.
 * Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
 * Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
