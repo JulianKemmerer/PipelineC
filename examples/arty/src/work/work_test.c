@@ -5,7 +5,10 @@
 #include <time.h>
 #include <sys/time.h>
 #include <pthread.h>
-#define NUM_THREADS 8 // for cpu testing, 2 threads per 4 cores?
+#include <unistd.h> // for close
+
+#define NUM_THREADS 2 // for cpu testing, 2 threads per 4 cores?
+
 // Thanks internet
 double get_wall_time(){
     struct timeval time;
@@ -16,25 +19,20 @@ double get_wall_time(){
     return (double)time.tv_sec + (double)time.tv_usec * .000001;
 }
 
-// Use uart to send/receive messages
-#include "../uart/uart_msg_sw.c"
+// Use eth to inputs and outputs
+#include "../eth/eth_sw.c"
 
 // Definition of work related stuff
 #include "work.h"
 
-// Software specific helper functions to convert msg bytes to/from 'work' inputs/outputs
-// TODO gen all includes inside work_*_bytes.h
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/int16_t_bytes_t.h/int16_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/work_inputs_t_bytes_t.h/work_inputs_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/work_outputs_t_bytes_t.h/work_outputs_t_bytes.h"
+// Helper funcs sending work() data over ethernet
+#include "../eth/eth_work.h"
 
 // Work inputs
 int n = 1;
 work_inputs_t* inputs;
-uart_msg_t* fpga_input_msgs;
 // Work output pairs cpu vs fpga(as msg too)
 work_outputs_t* cpu_outputs;
-uart_msg_t* fpga_output_msgs;
 work_outputs_t* fpga_outputs;
 
 // Thread writing all the input msgs as fast as possible
@@ -43,7 +41,7 @@ void* fpga_writer()
   for(int i = 0; i < n; i++)
   {
     // Write bytes to the FPGA
-    msg_write(&(fpga_input_msgs[i]));
+    input_write(&(inputs[i]));
   }
   pthread_exit(NULL);
 }
@@ -54,9 +52,7 @@ void* fpga_reader()
   for(int i = 0; i < n; i++)
   {
     // Read bytes from the FPGA
-    msg_read(&(fpga_output_msgs[i]));
-    // Convert to work output (probably slow memcpy)
-    bytes_to_work_outputs_t(&(fpga_output_msgs[i].data[0]), &(fpga_outputs[i]));
+    output_read(&(fpga_outputs[i]));
   }
   pthread_exit(NULL);
 }
@@ -142,9 +138,9 @@ void cpu_work()
 int main(int argc, char **argv) 
 {
   // Init msgs to/from FPGA
-  init_msgs();
+  init_eth();
   
-  // Prepare N work inputs, and 2 output pairs (cpu vs fpga)
+  // Prepare N*numthreads works to be done
   if(argc>1)
   {
     char *n_str = argv[1];
@@ -152,21 +148,17 @@ int main(int argc, char **argv)
   }
   n = n * NUM_THREADS;
   
-  int total_bytes = n * UART_MSG_SIZE;
-  printf("n: %d \n", n); 
-  printf("UART_MSG_SIZE: %d \n", UART_MSG_SIZE);
-  printf("Total bytes: %d \n", total_bytes);
-  
   // Prepare work inputs (as msgs too), and 2 output pairs cpu vs fpga(as msg too)
+  printf("n: %d \n", n); 
+  printf("Total tx bytes: %ld \n", n*sizeof(work_inputs_t));
+  printf("Total rx bytes: %ld \n", n*sizeof(work_outputs_t));
+  int total_bytes = n * (sizeof(work_inputs_t) + sizeof(work_outputs_t));
   inputs = (work_inputs_t*)malloc(n*sizeof(work_inputs_t));
-  fpga_input_msgs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
   cpu_outputs = (work_outputs_t*)malloc(n*sizeof(work_outputs_t));
-  fpga_output_msgs = (uart_msg_t*)malloc(n*sizeof(uart_msg_t));
   fpga_outputs = (work_outputs_t*)malloc(n*sizeof(work_outputs_t));
   for(int i = 0; i < n; i++)
   {
     inputs[i] = work_inputs_init(i);
-    work_inputs_t_to_bytes(&(inputs[i]), &(fpga_input_msgs[i].data[0]));
   }
   
   // Time things
@@ -176,8 +168,7 @@ int main(int argc, char **argv)
   // Start time
   t = get_wall_time();
   // Do the work on the cpu
-  float cpu_sum = 0.0;
-  cpu_work(&cpu_sum);
+  cpu_work();
   // End time
   time_taken = get_wall_time() - t; 
   printf("CPU took %f seconds to execute \n", time_taken); 
@@ -190,8 +181,7 @@ int main(int argc, char **argv)
   // Start time
   t = get_wall_time();
   // Do the work on the FPGA
-  float fpga_sum = 0.0;
-  fpga_works(&fpga_sum);
+  fpga_works();
   // End time
   time_taken = get_wall_time() - t; 
   printf("FPGA took %f seconds to execute \n", time_taken);
@@ -215,8 +205,8 @@ int main(int argc, char **argv)
     }
   }
 
-  // Close direct memory access to/from FPGA
-  close_msgs();
+  // Close to/from fpga
+  close_eth();
   
   /* Last thing that main() should do */
   pthread_exit(NULL);   

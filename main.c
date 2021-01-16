@@ -25,7 +25,9 @@
 //#include "examples/async_clock_crossing.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
-#include "examples/arty/src/eth/loopback_app.c"
+//#include "examples/arty/src/eth/loopback_app.c"
+#include "examples/arty/src/eth/work_app.c"
+
 
 /*
 #include "uintN_t.h"

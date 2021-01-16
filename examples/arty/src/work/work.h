@@ -1,7 +1,8 @@
 // This describes the work to be done:
-//  Input data format
-//  Output data format
-//  The actual computation 'work' to be done
+// 	Input data format
+// 	Output data format
+// 	The actual computation 'work' to be done
+// Ideally in PipelineC/C code that can be compiled+checked in software easily.
 #pragma once
 
 // Do work on inputs to form outputs
@@ -77,7 +78,7 @@ work_inputs_t work_inputs_init(int test_num)
   return inputs;
 }
 
-// Helper to compare two output datas
+// Helper to compare two outputs
 int compare_bad(int test_num, work_outputs_t cpu, work_outputs_t fpga)
 {
   int i, j;

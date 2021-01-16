@@ -119,14 +119,18 @@ void close_eth()
 
 void eth_read(uint8_t* payload_buf, size_t* payload_size)
 {
-  int ret, i;
   //printf("listener: Waiting to recvfrom...\n");
+  ssize_t recv_size = BUF_SIZ;
+  if(*payload_size < PAYLOAD_MAX && *payload_size > 0)
+  {
+    recv_size = sizeof(struct ether_header) + *payload_size;
+  }
   uint8_t buf[BUF_SIZ];
   socklen_t address_len = sizeof(read_socket_address);
   ssize_t numbytes = 0;
   while(numbytes == 0)
   {
-    numbytes = recvfrom(read_sockfd, buf, BUF_SIZ, 0, (struct sockaddr*)&read_socket_address, &address_len);
+    numbytes = recvfrom(read_sockfd, buf, recv_size, 0, (struct sockaddr*)&read_socket_address, &address_len);
   }
   if(numbytes == -1)
   {
@@ -135,8 +139,9 @@ void eth_read(uint8_t* payload_buf, size_t* payload_size)
   //printf("listener: got packet %lu bytes\n", numbytes);
 
   /* Header structures */
+  /*
 	struct ether_header *eh = (struct ether_header *) buf;
-  /*printf("SRC MAC: %x:%x:%x:%x:%x:%x\n",
+  printf("SRC MAC: %x:%x:%x:%x:%x:%x\n",
 						eh->ether_shost[0],
 						eh->ether_shost[1],
 						eh->ether_shost[2],
