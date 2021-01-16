@@ -363,6 +363,8 @@ class Logic:
     self.is_vhdl_expr = False
     # Is this logic completely replaced with vhdl module text? (non-pipelineable global func like)
     self.is_vhdl_text_module = False
+    # Is this logic the input or output of a clock crossing?
+    self.is_clock_crossing = False
     
     # Mostly for c built in C functions
     self.submodule_instance_to_c_ast_node = dict()
@@ -421,6 +423,7 @@ class Logic:
     rv.is_vhdl_func = self.is_vhdl_func
     rv.is_vhdl_expr = self.is_vhdl_expr
     rv.is_vhdl_text_module = self.is_vhdl_text_module
+    rv.is_clock_crossing = self.is_clock_crossing
     rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
     rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
     rv.wire_drives = self.DEEPCOPY_DICT_SET(self.wire_drives)
@@ -539,10 +542,13 @@ class Logic:
     else:
       self.is_vhdl_text_module = logic_b.is_vhdl_text_module
       
+    
     # TODO refactor all the above copypasta
       
+    # Dont do the same dumb above code - probably dont need it?
     # Absorb true values of using globals
     self.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs or logic_b.uses_nonvolatile_state_regs
+    self.is_clock_crossing = self.is_clock_crossing or logic_b.is_clock_crossing
     
     # Merge sets
     self.wires = self.wires | logic_b.wires
@@ -928,7 +934,7 @@ class Logic:
       inst_name = wire.split(SUBMODULE_MARKER)[0]
       func_name = self.submodule_instances[inst_name]
       sub_func_logic = FuncLogicLookupTable[func_name]
-      if SW_LIB.IS_CLOCK_CROSSING(sub_func_logic):
+      if sub_func_logic.is_clock_crossing:
         return True
     
     return False
@@ -4908,24 +4914,35 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       sys.exit(-1)
     
   return parser_state.existing_logic
-    
 
+
+_LOGIC_NEEDS_CLOCK_ENABLE_cache = dict()
 def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
+  try:
+    needs = _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name]
+    #print("Got cache!")
+    return needs
+  except:
+    pass
+  
+  # TODO use needs clock too?
   # Look for clock cross submodule ending in _READ() implying input 
-  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs
+  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs or logic.is_clock_crossing
   
   # Check submodules too
   needs = i_need
-  if needs:
-    return True
-  for inst in logic.submodule_instances:
-    submodule_logic_name = logic.submodule_instances[inst]
-    # If not in FuncLogicLookupTable then not parsed from C code, couldnt need clock enable
-    if submodule_logic_name in parser_state.FuncLogicLookupTable:
-      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-      needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
-      if needs:
-        return True
+  
+  if not needs:
+    sub_funcs = set(logic.submodule_instances.values())
+    for submodule_logic_name in sub_funcs:
+      # If not in FuncLogicLookupTable then not parsed from C code (i.e. built in assumed?), couldnt need clock enable
+      if submodule_logic_name in parser_state.FuncLogicLookupTable:
+        submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+        needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
+        if needs:
+          break
+    
+  _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name] = needs
     
   return needs
 
@@ -6003,7 +6020,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       continue
     # Skip clock crossings too
     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-    if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+    if submodule_logic.is_clock_crossing:
       continue   
     
     parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
@@ -6385,7 +6402,7 @@ def PARSE_FILE(c_filename):
     #print "Skipping user code trimming for debug..."
     # Remove excess user code
     if TRIM_COLLAPSE_LOGIC:
-      print("Doing obvious logic trimming/collapsing...")
+      print("Doing obvious logic trimming/collapsing...", flush=True)
       for main_func in list(parser_state.main_mhz.keys()):
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
@@ -6404,7 +6421,7 @@ def PARSE_FILE(c_filename):
             sys.exit(-1)
             
     # Write cache
-    print("Writing cache of parsed information to file...")
+    print("Writing cache of parsed information to file...", flush=True)
     WRITE_PARSER_STATE_CACHE(parser_state, c_filename)
     
     # Clear in memory caches
@@ -6664,7 +6681,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   clk_cross_to_modulest_containing_inst_set = set()
   for func_name in parser_state.FuncLogicLookupTable:
     logic = parser_state.FuncLogicLookupTable[func_name]
-    if not SW_LIB.IS_CLOCK_CROSSING(logic):
+    if not logic.is_clock_crossing:
       continue
     # Should only be one instance:
     insts = parser_state.FuncToInstances[func_name]
@@ -6808,14 +6825,15 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
       print("Function skipped:",func_def.decl.name)
       continue
     else:
-      print("Parsing function:",func_def.decl.name)
+      print("Parsing function:",func_def.decl.name, flush=True)
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
     # Final chance for SW_LIB generated code to do stuff to func logic
-    # Hah wtf this is hacky
+    # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
+    # Bright Eyes - An Attempt to Tip the Scales
     logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
     FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable

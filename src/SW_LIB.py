@@ -24,9 +24,10 @@ GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T
 
 # Find generated logic and apply additional 'parsed' information
 def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic):
-  if IS_CLOCK_CROSSING(func_logic):
+  # Hacky detect+tag clock crossing (TODO change to looking at clock crossing info in parser state?)
+  if str(func_logic.c_ast_node.coord).split(":")[0].endswith("_clock_crossing.h") and not func_logic.is_c_built_in:
+    func_logic.is_clock_crossing = True
     func_logic.uses_nonvolatile_state_regs = True
-  
   return func_logic
 
 def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state):
@@ -784,11 +785,6 @@ def IS_MEM(logic):
 def IS_BIT_MATH(logic):
   rv = str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE) and not logic.is_c_built_in   
   return rv
-  
-def IS_CLOCK_CROSSING(logic):
-  rv = str(logic.c_ast_node.coord).split(":")[0].endswith("_clock_crossing.h") and not logic.is_c_built_in
-  return rv
-
   
 def FUNC_NAME_INCLUDES_TYPES(logic):
   # Currently this is only needed for bitmanip and bit math

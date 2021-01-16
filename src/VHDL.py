@@ -1193,7 +1193,7 @@ package clk_cross_t_pkg is
       read_funcs_written.add(func_name)
     if not LOGIC_NEEDS_MODULE_TO_CLK_CROSS(func_logic, parser_state):
       write_funcs_written.add(func_name)
-    if SW_LIB.IS_CLOCK_CROSSING(func_logic):
+    if func_logic.is_clock_crossing:
       if "_READ" in func_name: 
         read_funcs_written.add(func_name)
       if "_WRITE" in func_name:
@@ -1232,7 +1232,7 @@ package clk_cross_t_pkg is
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+        if sub_logic.is_clock_crossing:
           for output_port in sub_logic.outputs:
             # submodule instance name == Func name for clk cross since single instance?
             #output_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + output_port
@@ -1243,7 +1243,7 @@ package clk_cross_t_pkg is
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+        if sub_logic.is_clock_crossing:
           continue        
         if LOGIC_NEEDS_CLK_CROSS_TO_MODULE(sub_logic, parser_state):
           text += '''
@@ -1284,7 +1284,7 @@ package clk_cross_t_pkg is
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+        if sub_logic.is_clock_crossing:
           var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name) 
           clk_cross_info = parser_state.clk_cross_var_info[var_name]
           c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
@@ -1298,7 +1298,7 @@ package clk_cross_t_pkg is
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-        if SW_LIB.IS_CLOCK_CROSSING(sub_logic):
+        if sub_logic.is_clock_crossing:
           continue  
         if LOGIC_NEEDS_MODULE_TO_CLK_CROSS(sub_logic, parser_state):
           text += '''
@@ -1710,7 +1710,7 @@ def LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state):
     submodule_logic_name = Logic.submodule_instances[inst]
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+      if submodule_logic.is_clock_crossing:
         var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
         clk_cross_info = parser_state.clk_cross_var_info[var_name]
         needs_clk_cross_to_module = needs_clk_cross_to_module or ("_READ" in submodule_logic_name) or clk_cross_info.flow_control
@@ -1730,7 +1730,7 @@ def LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state):
     submodule_logic_name = Logic.submodule_instances[inst]
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
       submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+      if submodule_logic.is_clock_crossing:
         var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
         clk_cross_info = parser_state.clk_cross_var_info[var_name]
         needs_module_to_clk_cross = needs_module_to_clk_cross or ("_WRITE" in submodule_logic_name) or clk_cross_info.flow_control
@@ -1960,7 +1960,7 @@ type feedback_vars_t is record'''
     if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
       continue
     # Skip clock cross
-    if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+    if submodule_logic.is_clock_crossing:
       continue
     
     rv += "-- " + instance_name + "\n"
@@ -2055,11 +2055,11 @@ end function;
   
 def GET_FLOAT_PKG_INCLUDE_TEXT():
   if SYN.SYN_TOOL is VIVADO:
-    return ""
+    #return ""
     return '''
 -- TODO WHAT FLOAT PKG WORKS FOR VHDL 2008?
---library ieee_proposed;
---use ieee_proposed.float_pkg.all;
+library ieee_proposed;
+use ieee_proposed.float_pkg.all;
 --use ieee.float_pkg.all;
 '''
   else:
@@ -2175,7 +2175,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
         if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
           continue 
         # Skip clock crossing
-        if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+        if submodule_logic.is_clock_crossing:
           continue
         
         new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
@@ -2279,7 +2279,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
       if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
         continue
       # Skip clock cross
-      if SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+      if submodule_logic.is_clock_crossing:
         continue
       
       has_submodules_to_print = True        
@@ -2769,7 +2769,7 @@ def GET_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic
     return GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, stage_ordered_submodule_list, stage)
   elif submodule_logic.is_vhdl_func:
     return GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, stage_ordered_submodule_list, stage)
-  elif SW_LIB.IS_CLOCK_CROSSING(submodule_logic):
+  elif submodule_logic.is_clock_crossing:
     return GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
   else:
     return GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)

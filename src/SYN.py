@@ -2848,7 +2848,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
     return True    
   elif SW_LIB.IS_BIT_MANIP(logic):
     return True
-  elif SW_LIB.IS_CLOCK_CROSSING(logic):
+  elif logic.is_clock_crossing:
     return True # For now? How to handle paths through clock cross logic?
   elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
     return True
@@ -2966,15 +2966,15 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
   WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
   
-  #print "WHY SLO?"
+  #print("WHY SLO?")
   #sys.exit(-1)
 
-  print("Writing the constant struct+enum definitions as defined from C code...")
+  print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-  print("Writing clock cross defintions as parsed from C code...")
+  print("Writing clock cross defintions as parsed from C code...", flush=True)
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   
-  print("Synthesizing as combinatorial logic to get total logic delay...")
+  print("Synthesizing as combinatorial logic to get total logic delay...", flush=True)
   print("", flush=True)
   
   # Record stats on functions with globals - TODO per main func?
@@ -3064,6 +3064,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       if inst_name is None:
         #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
         continue
+      print("Synthesizing function:",logic.func_name, flush=True)
       if len(logic.submodule_instances) > 0 and not logic.is_vhdl_text_module:  # TODO make pipeline map return empty instead of check?
         zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state) # use inst_logic since timing params are by inst
         zero_clk_pipeline_map_str = str(zero_clk_pipeline_map)
@@ -3073,8 +3074,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         out_path = out_dir + "/pipeline_map.log"
         f=open(out_path,'w')
         f.write(zero_clk_pipeline_map_str)
-        f.close()
-      print("Synthesizing function:",logic.func_name, flush=True)
+        f.close()      
       
     # Start parallel syn for parallel_func_names
     # Parallelized
@@ -3180,16 +3180,16 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       if logic.is_vhdl_func or logic.is_vhdl_expr or (logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME):
         continue
       # Dont write clock cross funcs
-      if SW_LIB.IS_CLOCK_CROSSING(logic):
+      if logic.is_clock_crossing:
         continue    
+      print("Writing func",func_name,"...", flush=True)
       syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
       if not os.path.exists(syn_out_dir):
         os.makedirs(syn_out_dir)
-      print("Writing func",func_name,"...")
       VHDL.WRITE_LOGIC_ENTITY(inst_name, logic, syn_out_dir, parser_state, ZeroClkTimingParamsLookupTable)
       
   # Include a zero clock multi main top too
-  print("Writing multi main top level files...")
+  print("Writing multi main top level files...", flush=True)
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClkTimingParamsLookupTable;
   is_final_top = True
@@ -3253,7 +3253,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
       if logic_i.is_vhdl_func or logic_i.is_vhdl_expr or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME:
         continue
       # Dont write clock cross
-      if SW_LIB.IS_CLOCK_CROSSING(logic_i):
+      if logic_i.is_clock_crossing:
         continue
       timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
       func_name_slices = (logic_i.func_name,tuple(timing_params_i.slices))

@@ -22,7 +22,6 @@ print('''
 TODO:
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
-Clock enable for same-clock crossing wires implies reg to supply 'default' value, otherwise bypassed if CE=1?
 NEED active pipelining example - Do matrix mult example with eth + write up for arty examples
 Do small neural net example? Then work to larger one?
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
@@ -43,6 +42,7 @@ Try small python ast parsing based example - Pypeline? haha
 Fix bug of not being able to include auto gen headers in auto gend files
 Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 Document pragmas
+File level modules for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
 Do a simple RISCV? cpu? But avoid just doing RTL clone?
@@ -60,7 +60,6 @@ Do hacky if generate with pragmas? oh gosh
 Rust AST? rustc -Z ast-json, traverse the json?
 Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
-Cache/return once true/reorganize into timing params LOGIC_NEEDS_ code?
 Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
 Add constant defintion (struct+array init), use const keyword? #define init expressions? Init becomes like const ref funcs assigning ref toks
@@ -77,6 +76,7 @@ Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var a
 Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?
 Pragmas for reset stuff, tag global regs for reset, special clock domain handling stuff with PLL lock and such?
 Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew
+Allow resource reuse if can 2x,3x,etc clock a pipeline to accomplish the same 1x,II=1 pipeline task (II<1 means down clocking by 2,3, etc?)
 CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
 Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?
 Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])
@@ -84,7 +84,6 @@ Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <fun
 Syn each pipeline stage ... this is hard... like slicing zero clock logic 
 Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b
 Const SR/SL as vhdl funcs instead of modules..thought this was done...
-Add Quartus fine grain sweep support and better generated final files
 Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
