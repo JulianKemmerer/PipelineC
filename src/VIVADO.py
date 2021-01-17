@@ -588,10 +588,12 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv = ""
   
   # Add in VHDL 2008 fixed/float support?
-  rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd\n"
-  rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd]\n"
-  rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd\n"
-  rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd]\n"
+  #rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd\n"
+  #rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd]\n"
+  rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd\n"
+  rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd]\n"
+  #rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd\n"
+  #rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd]\n"
   
   
   # Bah tcl doesnt like brackets in file names
@@ -599,7 +601,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   
   # Single read vhdl line
   files_txt,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
-  rv += "read_vhdl -library work {" + files_txt + "}\n" #-vhdl2008 
+  rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n" #-vhdl2008 
     
   # Write clock xdc and include it
   clk_xdc_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)

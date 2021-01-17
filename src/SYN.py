@@ -1354,12 +1354,13 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   
   # read_vhdl.tcl only for Vivado for now
   if SYN_TOOL is VIVADO:
-    # TODO better quartus GUI / tcl scripts support
+    # TODO better GUI / tcl scripts support for other tools
     # Write read_vhdl.tcl
     tcl = VIVADO.GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
     rv_lines = []
     for line in tcl.split('\n'):
-      if "read_vhdl" in line:
+      # Hacky AF Built To Spill - Kicked It In The Sun
+      if line.startswith("read_vhdl") or line.startswith("add_files") or line.startswith("set_property"):
         rv_lines.append(line)
     
     rv = ""

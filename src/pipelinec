@@ -23,7 +23,7 @@ TODO:
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 NEED active pipelining example - Do matrix mult example with eth + write up for arty examples
-Do small neural net example? Then work to larger one?
+Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Antikernel fun?
 Silice fun?
@@ -31,6 +31,7 @@ Infer dsps somehow - will want to infer based on * operator,
 ^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
 ^ and need to make up built in dsp functions for other, MAC, like functions
 ^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
+Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Sanity check signed mult you POS
 Come on do sanity check for reserved words
 Make MAIN_MHZ allow not yet defined funcs for mhz values later

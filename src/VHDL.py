@@ -2053,14 +2053,15 @@ end function;
   
   return rv
   
-def GET_FLOAT_PKG_INCLUDE_TEXT():
+def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   if SYN.SYN_TOOL is VIVADO:
     #return ""
+    # WHAT FLOAT PKG WORKS FOR VHDL 2008?
     return '''
--- TODO WHAT FLOAT PKG WORKS FOR VHDL 2008?
+--use ieee_proposed.float_pkg.all;
+use ieee.float_pkg.all;
 library ieee_proposed;
-use ieee_proposed.float_pkg.all;
---use ieee.float_pkg.all;
+use ieee_proposed.fixed_pkg.all;
 '''
   else:
     return ""
@@ -2087,7 +2088,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   rv += "library ieee;" + "\n"
   rv += "use ieee.std_logic_1164.all;" + "\n"
   rv += "use ieee.numeric_std.all;" + "\n"
-  rv += GET_FLOAT_PKG_INCLUDE_TEXT()
+  rv += GET_FIXED_FLOAT_PKG_INCLUDE_TEXT()
   # Include C defined structs
   rv += "use work.c_structs_pkg.all;\n"
   # Include clock crossing type
