@@ -1,5 +1,7 @@
 #pragma once
 #include "uintN_t.h"
+#include "serializer.h"
+#include "deserializer.h"
 
 // No generic sizes for now... :(
 // Woah AXIS spec is little endian - who knew?
@@ -219,3 +221,79 @@ axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
   ");
 }
 
+
+/* AXIS32 only right now...*/
+#define axis_to_type(name,axis_bits,out_t) \
+/* Mostly just a deser instance */ \
+type_byte_deserializer(name##_type_byte_deserializer, (axis_bits/8), out_t) \
+typedef struct name##_t \
+{ \
+  out_t data; \
+  uint1_t valid; \
+  uint1_t payload_ready; \
+} name##_t; \
+name##_t name(axis##axis_bits##_t payload, uint1_t output_ready) \
+{ \
+  /* AXIS to byte stream */ \
+  name##_t o; \
+  uint8_t input_data[(axis_bits/8)]; \
+  uint32_t i; \
+  for(i=0;i<(axis_bits/8);i+=1) \
+  { \
+    /* AXIS32 only right now...*/ \
+    input_data[i] = payload.data >> (i*8); \
+  } \
+  /* Deserialize byte stream to type */ \
+  name##_type_byte_deserializer_t to_type = name##_type_byte_deserializer(input_data, payload.valid, output_ready); \
+  o.data = to_type.data; \
+  o.valid = to_type.valid; \
+  o.payload_ready = to_type.in_data_ready; \
+  return o; \
+}
+
+
+/* AXIS32 only right now...*/
+#define type_to_axis(name,in_t,axis_bits) \
+/* Mostly just a ser instance */ \
+type_byte_serializer(name##type_byte_serializer, in_t, (axis_bits/8)) \
+typedef struct name##_t \
+{ \
+  axis##axis_bits##_t payload; \
+  uint1_t input_data_ready; \
+}name##_t; \
+name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
+{ \
+  name##_t o; \
+  \
+  /* Serialize type to byte stream */ \
+  name##type_byte_serializer_t from_type = name##type_byte_serializer(data, valid, output_ready); \
+  o.input_data_ready = from_type.in_data_ready; \
+  \
+  /* Byte stream to axis */ \
+  o.payload.data = 0; \
+  uint32_t i; \
+  for(i=0;i<(axis_bits/8);i+=1) \
+  {  \
+    /* AXIS32 only right now...*/ \
+    uint##axis_bits##_t out_data_bits = from_type.out_data[i]; /* Temp avoid not implemented cast */ \
+    o.payload.data |= (out_data_bits<<(i*8)); \
+  } \
+  o.payload.keep = 0xF; /* AXIS32 only right now...*/ \
+  o.payload.valid = from_type.valid; \
+  o.payload.last = 0; \
+  /* Counter for last assertion */ \
+  static uint32_t last_counter; /* TODO smaller counter? */ \
+  if(o.payload.valid & output_ready) \
+  {\
+    if(last_counter >= (sizeof(in_t)-(axis_bits/8))) \
+    { \
+      o.payload.last = 1; \
+      last_counter = 0; \
+    } \
+    else \
+    { \
+      last_counter = last_counter+(axis_bits/8); \
+    } \
+  } \
+  return o; \
+}

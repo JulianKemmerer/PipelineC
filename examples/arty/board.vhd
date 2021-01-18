@@ -275,7 +275,6 @@ clks_sys_clk_100_inst : clks_sys_clk_100
 rst <= not clks_ready;
 rst_n <= clks_ready;
 
-/*
 -- DDR clocks based off of the board's CLK100MHZ 
 ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
    port map ( 
@@ -287,7 +286,6 @@ clk_166p66 <= ddr_sys_clk;
 -- Hold in reset until clocks are ready
 ddr_sys_rst <= rst or not ddr_clks_ready;
 ddr_sys_rst_n <= not ddr_sys_rst;
-*/
  
 -- The board's DDR3 controller
 --  ddr3_0_inst : ddr3_0

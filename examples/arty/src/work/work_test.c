@@ -149,7 +149,8 @@ int main(int argc, char **argv)
   n = n * NUM_THREADS;
   
   // Prepare work inputs (as msgs too), and 2 output pairs cpu vs fpga(as msg too)
-  printf("n: %d \n", n); 
+  printf("CPU threads: %d\n",NUM_THREADS);
+  printf("n 'work()'s: %d \n", n);
   printf("Total tx bytes: %ld \n", n*sizeof(work_inputs_t));
   printf("Total rx bytes: %ld \n", n*sizeof(work_outputs_t));
   int total_bytes = n * (sizeof(work_inputs_t) + sizeof(work_outputs_t));

@@ -38,6 +38,7 @@ _A hardware description language centered around pipelining_
 * Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
 * Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
 * Globally visible point-to-point wires/clock crossings and inferred clock enables make composing complex module hierarchies / state machines easier.
+* Integrates with software side C easily; helpful built in code gen. (ex. for un/packing structs from de/serialized byte arrays).
 
 Fundamental design elements are state machines, pipelines, and interconnects (wires,cdc,fifos,etc).
 

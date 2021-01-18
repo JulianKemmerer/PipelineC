@@ -1,3 +1,6 @@
+// AXIS is how to stream data
+#include "axis.h"
+
 // Include board media access controller (8b AXIS)
 #include "xil_temac.c"
 
@@ -10,7 +13,7 @@
 // Definition of work to do
 #include "../work/work.h"
 
-// Helper functions to convert uart bytes to/from 'work' inputs/outputs
+// Helper functions to convert bytes to/from 'work' inputs/outputs
 // TODO gen includes all inside work_in|output_t_bytes_t.h
 #include "uint8_t_array_N_t.h" 
 #include "uint8_t_bytes_t.h"
@@ -18,63 +21,18 @@
 #include "work_inputs_t_bytes_t.h"
 #include "work_outputs_t_bytes_t.h"
 
+// FIFO to hold ethernet header during work()
 eth_header_t headers_fifo[2];
 #include "headers_fifo_clock_crossing.h"
 
-#include "deserializer.h"
-#define DESER_IN_SIZE 4
-deserializer_in_to_out(deserializer_to_type_deserializer, uint8_t, DESER_IN_SIZE, sizeof(work_inputs_t))
+// A module to convert axis32 to input type
+axis_to_type(axis_to_input, 32, work_inputs_t) // macro
 
-// MACRO FI THIS in deser.h
-typedef struct type_deserializer_t
-{
-  work_inputs_t data;
-  uint1_t valid;
-  uint1_t in_data_ready;
-}type_deserializer_t;
-type_deserializer_t deserializer_to_type(uint8_t in_data[DESER_IN_SIZE], uint1_t in_data_valid, uint1_t out_data_ready)
-{
-  // Deserialize to byte array
-  type_deserializer_t o;
-  deserializer_to_type_deserializer_t to_type_bytes = deserializer_to_type_deserializer(in_data, in_data_valid, out_data_ready);
-  // Byte array to type
-  work_inputs_t_bytes_t output_bytes;
-  output_bytes.data = to_type_bytes.out_data;
-  o.data = bytes_to_work_inputs_t(output_bytes);
-  o.valid = to_type_bytes.out_data_valid;
-  o.in_data_ready = to_type_bytes.in_data_ready;
-  return o;
-}
-
-// MACRO FI in axis.h
-typedef struct axis_to_input_t
-{
-  work_inputs_t data;
-  uint1_t valid;
-  uint1_t payload_ready;
-}axis_to_input_t;
-axis_to_input_t axis_to_input(axis32_t payload, uint1_t output_ready)
-{
-  // AXIS to byte stream
-  axis_to_input_t o;
-  uint8_t input_data[DESER_IN_SIZE];
-  uint32_t i;
-  for(i=0;i<DESER_IN_SIZE;i+=1)
-  {
-    input_data[i] = payload.data >> (i*8);
-  }
-  // Deserialize byte stream to type
-  type_deserializer_t to_type = deserializer_to_type(input_data, payload.valid, output_ready);
-  o.data = to_type.data;
-  o.valid = to_type.valid;
-  o.payload_ready = to_type.in_data_ready;
-  return o;
-}
-
-
+// FIFO to hold inputs buffered from the AXIS stream
 work_inputs_t inputs_fifo[16];
 #include "inputs_fifo_clock_crossing.h"
 
+// Receive logic
 #pragma MAIN_GROUP rx_main xil_temac_rx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void rx_main()
 {
@@ -121,7 +79,7 @@ void rx_main()
   header_wr_data[0] = frame.header;
   headers_fifo_write_t header_write = headers_fifo_WRITE_1(header_wr_data, header_wr_en);
   
-  // Data deserializer payload into messages which writes into fifo
+  // Data deserializer payload into inputs which writes into fifo
   uint1_t deserializer_output_ready;
   #pragma FEEDBACK deserializer_output_ready
   axis_to_input_t to_input = axis_to_input(frame.payload,deserializer_output_ready);
@@ -148,76 +106,14 @@ void rx_main()
   WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac) // xil_rx_to_temac = to_mac
 }
 
-#include "serializer.h"
-#define SER_OUT_SIZE 4
-serializer_in_to_out(serialize_from_type_serializer, uint8_t, sizeof(work_outputs_t), SER_OUT_SIZE)
+// Module to convert the output type to axis32 
+type_to_axis(output_to_axis,work_outputs_t,32) // macro
 
-// MACRO FI THIS in ser.h
-typedef struct type_serializer_t
-{
-  uint8_t out_data[SER_OUT_SIZE];
-  uint1_t valid;
-  uint1_t in_data_ready;
-}type_serializer_t;
-type_serializer_t serialize_from_type(work_outputs_t in_data, uint1_t in_data_valid, uint1_t out_data_ready)
-{
-  // Convert type to byte array
-  work_outputs_t_bytes_t input_bytes = work_outputs_t_to_bytes(in_data);
-  // Serialize byte array
-  type_serializer_t o;
-  serialize_from_type_serializer_t to_bytes = serialize_from_type_serializer(input_bytes.data, in_data_valid, out_data_ready);
-  o.out_data = to_bytes.out_data;
-  o.valid = to_bytes.out_data_valid;
-  o.in_data_ready = to_bytes.in_data_ready;
-  return o;
-}
-
-// MACRO FI in axis.h
-typedef struct output_to_axis_t
-{
-  axis32_t payload;
-  uint1_t input_data_ready;
-}output_to_axis_t;
-output_to_axis_t output_to_axis(work_outputs_t data, uint1_t valid, uint1_t output_ready)
-{
-  output_to_axis_t o;
-  
-  // Serialize type to byte stream
-  type_serializer_t from_type = serialize_from_type(data, valid, output_ready);
-  o.input_data_ready = from_type.in_data_ready;
-  
-  // Byte stream to axis
-  o.payload.data = 0;
-  uint32_t i;
-  for(i=0;i<SER_OUT_SIZE;i+=1)
-  {
-    uint32_t out_data_32b = from_type.out_data[i]; // Temp avoid not implemented cast
-    o.payload.data |= (out_data_32b<<(i*8));
-  }
-  o.payload.keep = 0xF;
-  o.payload.valid = from_type.valid;
-  o.payload.last = 0;
-  // Counter for last assertion
-  static uint32_t last_counter; // TODO smaller counter?
-  if(o.payload.valid & output_ready)
-  {
-    if(last_counter >= (sizeof(work_outputs_t)-SER_OUT_SIZE))
-    {
-      o.payload.last = 1;
-      last_counter = 0;
-    }
-    else
-    {
-      last_counter = last_counter+SER_OUT_SIZE;
-    }
-  }
-  return o;  
-}
-
-
+// FIFO to hold work outputs as they are streamed out over AXIS
 work_outputs_t outputs_fifo[16];
 #include "outputs_fifo_clock_crossing.h"
 
+// Transmit logic
 #pragma MAIN_GROUP tx_main xil_temac_tx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void tx_main()
 {
@@ -294,7 +190,6 @@ void tx_main()
 }
 
 
-
 // This pipeline does the following:
 //    Reads work inputs from rx fifo
 //    Does work on the work inputs to form the work outputs
@@ -315,65 +210,3 @@ void work_pipeline()
   outputs_fifo_write_t output_write = outputs_fifo_WRITE_1(output_wr_data, input_read.valid);
   // TODO overflow wire+separate state
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
