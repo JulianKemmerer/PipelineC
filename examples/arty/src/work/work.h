@@ -4,6 +4,7 @@
 // 	The actual computation 'work' to be done
 // Ideally in PipelineC/C code that can be compiled+checked in software easily.
 #pragma once
+#include "intN_t.h"
 
 // Do work on inputs to form outputs
 
