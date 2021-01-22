@@ -126,11 +126,11 @@ class ParsedTimingReport:
         clock_to_act_tar_mhz[clk_name] = (actual_mhz, target_mhz)
     
     self.path_reports = dict()   
-    PATH_SPLIT = "Critical path report for clock"
+    PATH_SPLIT = "Info: Critical path report for "
     maybe_path_texts = syn_output.split(PATH_SPLIT)
     path_texts = []
     for path_text in maybe_path_texts:
-      if "ns logic" in path_text:
+      if "ns logic" in path_text and "(posedge -> posedge)" in path_text: # no async paths
         path_report = PathReport(path_text)
         # Set things only parsed once not per report
         path_report.path_delay_ns = 1000.0 / clock_to_act_tar_mhz[path_report.path_group][0]
@@ -174,7 +174,7 @@ class PathReport:
       # Clock name  /path group
       tok1 = "(posedge -> posedge)"
       if tok1 in line:
-        self.path_group = line.split(tok1)[0].strip().strip("'")
+        self.path_group = line.split("'")[1] #.strip().strip("'")
         #print("self.path_group",self.path_group)
         
       # Netlist resources + start and end
