@@ -98,11 +98,15 @@ if len(sys.argv) == 2:
   c_file = sys.argv[1]
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
+print("================== Writing Resulting Logic to File ================================", flush=True)
+C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
+  
 print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
-print("================== Doing Optional Modelsim Debug ================================", flush=True)
-MODELSIM.DO_OPTIONAL_DEBUG(False)
+# TODO uncomment + ask for other simulation support if needed
+#print("================== Doing Optional Modelsim Debug ================================", flush=True)
+#MODELSIM.DO_OPTIONAL_DEBUG(False)
 
 print("================== Beginning Throughput Sweep ================================", flush=True)
 multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)

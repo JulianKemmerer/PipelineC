@@ -42,9 +42,9 @@ def PART_SET_TOOL(part_str):
     # Try to guess synthesis tool based on part number
     # Hacky for now...
     if part_str is None:
-      print("Need to set FPGA part somewhere in the code!")
-      print('Ex. #pragma PART "EP2AGX45CU17I3"')
-      sys.exit(-1)
+      print("Need to set FPGA part somewhere in the code to continue with synthesis tool support!")
+      print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
+      sys.exit(0)
     elif part_str.lower().startswith("xc"):
       SYN_TOOL = VIVADO
     elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c"):
@@ -1374,9 +1374,23 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     # Write file
     out_filename = "read_vhdl.tcl"
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
-    f=open(out_filepath,"w")
-    f.write(rv)
-    f.close()
+    out_text = rv
+  else:
+    # Do generic dump of vhdl files
+    # Which vhdl files?
+    vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
+    # One more rvhdl line for the final entity  with constant name
+    top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
+    vhdl_files_texts += " " + top_file_path
+    out_filename = "vhdl_files.txt"
+    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+    out_text = vhdl_files_texts
+    
+  print("Output VHDL files:", out_filepath)
+  f=open(out_filepath,"w")
+  f.write(out_text)
+  f.close()
+    
 
 def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state):
   # Dont write files if log file exists
@@ -2960,23 +2974,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Make sure synthesis tool is set
   PART_SET_TOOL(parser_state.part)
   
-  print("Starting with combinatorial logic...", flush=True)  
-  # initial params are 0 clk latency for all submodules
-  TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
-  
-  print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
-  WRITE_ALL_ZERO_CLK_VHDL(parser_state, TimingParamsLookupTable)
-  
   #print("WHY SLO?")
   #sys.exit(-1)
-
-  print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
-  VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-  print("Writing clock cross defintions as parsed from C code...", flush=True)
-  VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   
   print("Synthesizing as combinatorial logic to get total logic delay...", flush=True)
   print("", flush=True)
+  TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  multimain_timing_params = MultiMainTimingParams()
+  multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
   
   # Record stats on functions with globals - TODO per main func?
   min_mhz = 999999999
@@ -3193,7 +3198,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
   print("Writing multi main top level files...", flush=True)
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClkTimingParamsLookupTable;
-  is_final_top = True
+  is_final_top = False
   VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
   # And clock cross entities
   VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
@@ -3213,7 +3218,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
     # Clock crossing entities
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " " 
       
-  needs_clk_cross_t = not inst_name # is multimain
+  needs_clk_cross_t = len(parser_state.clk_cross_var_info) > 0 and not inst_name # is multimain
   if inst_name:
     # Does inst need clk cross?
     Logic = parser_state.LogicInstLookupTable[inst_name]

@@ -74,10 +74,13 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
   text += "library ieee;" + "\n"
   text += "use ieee.std_logic_1164.all;" + "\n"
   text += "use ieee.numeric_std.all;" + "\n"
+  
+  
   # Include C defined structs
   text += "use work.c_structs_pkg.all;\n"
   # Include clock cross types
-  text += "use work.clk_cross_t_pkg.all;\n"
+  if len(parser_state.clk_cross_var_info) > 0:
+    text += "use work.clk_cross_t_pkg.all;\n"
   
   # Hash for multi main is just hash of main pipes
   hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
@@ -266,84 +269,85 @@ begin
 
 
   # Clock crossings
-  text += '''
-  -- Instantiate each clock crossing
-'''
-  for var_name in parser_state.clk_cross_var_info:
-    flow_control = parser_state.clk_cross_var_info[var_name].flow_control
-    write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
-    write_main, read_main = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
-    write_clk_ext_str = CLK_EXT_STR(write_main, parser_state)
-    # Defaults for disconnected read side
-    read_clk_ext_str = write_clk_ext_str
-    if read_main is not None:
-      read_clk_ext_str = CLK_EXT_STR(read_main, parser_state)
-    
-    # Find the full inst name for write and read func instances
-    # (should only be one instance), and break into toks
-    
-    # Main func inst name is special case, 
-    #and clock cross wire replace clock cross func inst name last tok
-    # Write
-    write_func_inst = None
-    write_func_insts = parser_state.FuncToInstances[write_func]
-    if len(write_func_insts) > 1:
-      print("More than one use of", write_func)
-      sys.exit(-1)
-    write_func_inst = list(write_func_insts)[0]
-    write_func_logic = parser_state.LogicInstLookupTable[write_func_inst]
-    write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-    # Start with main func then apply hier instances
-    write_text = write_main
-    for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)-1]:
-      write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
-      write_text += "." + write_func_inst_str
-    write_text += "." + write_func
-    
-    # Read
-    # Do not even write instance if done have read side func
-    if read_func in parser_state.FuncToInstances:
-      read_func_insts = parser_state.FuncToInstances[read_func]
-      if len(read_func_insts) > 1:
-        print("More than one use of", read_func)
+  if len(parser_state.clk_cross_var_info) > 0:
+    text += '''
+    -- Instantiate each clock crossing
+  '''
+    for var_name in parser_state.clk_cross_var_info:
+      flow_control = parser_state.clk_cross_var_info[var_name].flow_control
+      write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
+      write_main, read_main = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
+      write_clk_ext_str = CLK_EXT_STR(write_main, parser_state)
+      # Defaults for disconnected read side
+      read_clk_ext_str = write_clk_ext_str
+      if read_main is not None:
+        read_clk_ext_str = CLK_EXT_STR(read_main, parser_state)
+      
+      # Find the full inst name for write and read func instances
+      # (should only be one instance), and break into toks
+      
+      # Main func inst name is special case, 
+      #and clock cross wire replace clock cross func inst name last tok
+      # Write
+      write_func_inst = None
+      write_func_insts = parser_state.FuncToInstances[write_func]
+      if len(write_func_insts) > 1:
+        print("More than one use of", write_func)
         sys.exit(-1)
-      read_func_inst = list(read_func_insts)[0]
-      read_func_logic = parser_state.FuncLogicLookupTable[read_func]
-      read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+      write_func_inst = list(write_func_insts)[0]
+      write_func_logic = parser_state.LogicInstLookupTable[write_func_inst]
+      write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
       # Start with main func then apply hier instances
-      read_text = read_main
-      for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
-        read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
-        read_text += "." + read_func_inst_str
-      read_text += "." + read_func
-    
-      text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
-      (
-  '''
-      # Clk in input
-      text += "clk_" + write_clk_ext_str + ",\n"
-      # Clk in enable
-      text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
-      # Clk cross in data from pipeline output
-      for input_port in write_func_logic.inputs:
-        text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
-      for output_port in write_func_logic.outputs:
-        text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
-      # Clk out input
-      text += "clk_" + read_clk_ext_str + ",\n"
-      # Clk out enable
-      text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
-      # Clk cross out data to pipeline input
-      for input_port in read_func_logic.inputs:
-        text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
-      for output_port in read_func_logic.outputs:
-        text += "clk_cross_to_module." + read_text + "_" + output_port + ",\n"
-        
-      text = text.strip("\n").strip(",")
-        
-      text += '''
-      );
-  '''
+      write_text = write_main
+      for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)-1]:
+        write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+        write_text += "." + write_func_inst_str
+      write_text += "." + write_func
+      
+      # Read
+      # Do not even write instance if done have read side func
+      if read_func in parser_state.FuncToInstances:
+        read_func_insts = parser_state.FuncToInstances[read_func]
+        if len(read_func_insts) > 1:
+          print("More than one use of", read_func)
+          sys.exit(-1)
+        read_func_inst = list(read_func_insts)[0]
+        read_func_logic = parser_state.FuncLogicLookupTable[read_func]
+        read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+        # Start with main func then apply hier instances
+        read_text = read_main
+        for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)-1]:
+          read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+          read_text += "." + read_func_inst_str
+        read_text += "." + read_func
+      
+        text += var_name + ''' : entity work.clk_cross_''' + var_name + ''' port map
+        (
+    '''
+        # Clk in input
+        text += "clk_" + write_clk_ext_str + ",\n"
+        # Clk in enable
+        text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+        # Clk cross in data from pipeline output
+        for input_port in write_func_logic.inputs:
+          text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
+        for output_port in write_func_logic.outputs:
+          text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
+        # Clk out input
+        text += "clk_" + read_clk_ext_str + ",\n"
+        # Clk out enable
+        text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+        # Clk cross out data to pipeline input
+        for input_port in read_func_logic.inputs:
+          text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
+        for output_port in read_func_logic.outputs:
+          text += "clk_cross_to_module." + read_text + "_" + output_port + ",\n"
+          
+        text = text.strip("\n").strip(",")
+          
+        text += '''
+        );
+    '''
   
   text += '''
 end arch;
@@ -751,9 +755,9 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsL
   
   
 def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
+  if len(parser_state.clk_cross_var_info) <= 0:
+    return
   text = ""
-  
-
   for var_name in parser_state.clk_cross_var_info:
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
     write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
@@ -1171,6 +1175,8 @@ port map (
 
 
 def WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state):
+  if len(parser_state.clk_cross_var_info) <= 0:
+    return
   text = ""
   text += '''
 library IEEE;

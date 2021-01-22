@@ -6366,9 +6366,6 @@ def PARSE_FILE(c_filename):
     # Need to add array struct for old internal C code parsing?
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
     
-    # Make sure synthesis tool is set
-    SYN.PART_SET_TOOL(parser_state.part)
-    
     # Elaborate the logic down to raw vhdl modules
     print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
     for main_func in list(parser_state.main_mhz.keys()):
@@ -6432,6 +6429,21 @@ def PARSE_FILE(c_filename):
   except c_parser.ParseError as pe:
     print("PARSE_FILE pycparser says you messed up here:",pe)
     sys.exit(-1)
+    
+    
+def WRITE_0CLK_FINAL_FILES(parser_state):
+  print("Starting with combinatorial logic...", flush=True)  
+  ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  multimain_timing_params = SYN.MultiMainTimingParams()
+  multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
+  print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
+  SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
+  print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
+  VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
+  print("Writing clock cross defintions as parsed from C code...", flush=True)
+  VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
+  print("Writing finalized comb. logic files...", flush=True)
+  SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
     
 # Global list of these in parser_state + lists per function in logic for locally delclared
 class StateRegInfo:
