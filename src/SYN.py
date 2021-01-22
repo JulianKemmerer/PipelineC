@@ -42,8 +42,8 @@ def PART_SET_TOOL(part_str):
     # Try to guess synthesis tool based on part number
     # Hacky for now...
     if part_str is None:
-      print("Need to set part!")
-      print('#pragma PART "EP2AGX45CU17I3"')
+      print("Need to set FPGA part somewhere in the code!")
+      print('Ex. #pragma PART "EP2AGX45CU17I3"')
       sys.exit(-1)
     elif part_str.lower().startswith("xc"):
       SYN_TOOL = VIVADO

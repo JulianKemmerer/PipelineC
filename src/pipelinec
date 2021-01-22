@@ -90,7 +90,7 @@ Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
 Extern keyword for (same-clock?) clock crossings?
 '''
-
+print("Output directory: ", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 c_file = "main.c"
 if len(sys.argv) == 2:
@@ -110,10 +110,4 @@ multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)
 print("================== Writing Results of Throughput Sweep ================================", flush=True)
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
-
-
-
-
-
-
 
