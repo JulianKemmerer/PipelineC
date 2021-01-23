@@ -764,8 +764,10 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
  
     # TODO OTHER SIZES
     if flow_control:
+      SYN.PART_SET_TOOL(parser_state.part)
       if SYN.SYN_TOOL is not VIVADO:
         print("Async fifos are only implemented for Xilinx parts, TODO!", var_name)
+        print(0/0)
         sys.exit(-1)
       if write_size != read_size:
         print("Only equal read and write sizes for async fifos for now, TODO!", var_name)
