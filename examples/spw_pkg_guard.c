@@ -1,6 +1,5 @@
 #include "uintN_t.h"
 
-#pragma MAIN_MHZ spw_pkg_guard 300.0
 typedef enum spw_pkg_guard_state_t
 {
   IDLE,
@@ -17,6 +16,7 @@ typedef struct spw_pkg_guard_o_t
   uint1_t oValid;
   uint1_t oData[DATA_WIDTH];
 } spw_pkg_guard_o_t;
+#pragma MAIN spw_pkg_guard  // Is a single instance top level module with IO ports
 spw_pkg_guard_o_t spw_pkg_guard(uint1_t iReset, uint1_t iHandshake, 
                                 uint1_t iValid, uint1_t iData[DATA_WIDTH], uint1_t iAck)
 {

@@ -2167,7 +2167,13 @@ def GET_MAIN_FUNCS_FROM_PATH_REPORT(path_report, parser_state):
 # Course then fine - knowhaimsayin
 def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_sweep=False):
   for main_func in parser_state.main_mhz:
-    print("Function:",main_func,"Target MHz:",parser_state.main_mhz[main_func], flush=True)
+    mhz = parser_state.main_mhz[main_func]
+    if mhz is None:
+      print("Main Function:",main_func,"does not have a set target frequency. Cannot do pipelining throughput sweep!", flush=True)
+      print("Define frequency with 'MAIN_MHZ' or clock group with 'MAIN_GROUP' pragmas...")
+      sys.exit(-1)
+    else:
+      print("Function:",main_func,"Target MHz:", mhz, flush=True)
   
   # Populate timing lookup table as all 0 clk
   ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)

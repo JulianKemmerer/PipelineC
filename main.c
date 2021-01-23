@@ -7,7 +7,7 @@
 // LFE5U-85F-6BG381C     ECP5U
 // LFE5UM5G-85F-8BG756C  ECP5UM5G
 // ICE40UP5K-SG48        ICE40UP
-//#pragma PART "LFE5U-85F-6BG381C"
+#pragma PART "LFE5U-85F-6BG381C"
 
 // Most recent (and likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"

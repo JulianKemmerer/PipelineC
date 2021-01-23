@@ -6928,7 +6928,7 @@ def APPEND_PRAGMA_INFO(parser_state):
     if name=="MAIN":
       main_func = toks[1]
       parser_state.main_mhz[main_func] = None
-      parser_state.main_[main_func] = None
+      parser_state.main_clk_group[main_func] = None
     
     # MAIN_MHZ
     if name=="MAIN_MHZ":
