@@ -2836,28 +2836,29 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
   f.write(text)
   f.close()
 
-
 def GET_OUTPUT_DIRECTORY(Logic):
   if Logic.is_c_built_in:
     output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)
-    repo_dir = os.path.dirname(os.path.abspath(sys.argv[0] + "/../"))
     # # hacky catch files from same dir as script?
     # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
+    repo_dir = C_TO_LOGIC.REPO_ABS_DIR()
     if src_file.startswith(repo_dir):
       # hacky
       src_file = src_file.replace(repo_dir + "/src/../","")
-      src_file = src_file.replace(repo_dir,"")
-      
+      src_file = src_file.replace(repo_dir + "/","")      
+      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
     # hacky catch generated files from output dir already?
-    if src_file.startswith(SYN_OUTPUT_DIRECTORY+"/"):
+    elif src_file.startswith(SYN_OUTPUT_DIRECTORY+"/"):
       output_directory = os.path.dirname(src_file)
     else:
       # Otherwise normal
-      output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
+      #output_directory = SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
       #print("output_directory",output_directory,repo_dir)
+      # Func uniquely identifies logic so just use that?
+      output_directory = SYN_OUTPUT_DIRECTORY + "/" + Logic.func_name
     
   return output_directory
   
@@ -2936,8 +2937,7 @@ def IS_USER_CODE(logic, parser_state):
   return user_code
     
 def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
-  PATH_DELAY_CACHE_DIR="./path_delay_cache/" + str(SYN_TOOL.__name__).lower() + "/" + parser_state.part
-
+  PATH_DELAY_CACHE_DIR= C_TO_LOGIC.EXE_ABS_DIR() + "/../path_delay_cache/" + str(SYN_TOOL.__name__).lower() + "/" + parser_state.part
   return PATH_DELAY_CACHE_DIR
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
@@ -3090,7 +3090,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       
     # Start parallel syn for parallel_func_names
     # Parallelized
-    NUM_PROCESSES = int(open("num_processes.cfg",'r').readline())
+    NUM_PROCESSES = int(open(C_TO_LOGIC.EXE_ABS_DIR() + "/../num_processes.cfg",'r').readline())
     my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
     func_name_to_async_result = dict()
     for logic_func_name in parallel_func_names:

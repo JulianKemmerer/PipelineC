@@ -92,8 +92,8 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
         if isdir:
           path_list += ["-I" + thing_path]
   # Also include src files in git root dir
-  dir_path = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-  path_list += ["-I" + dir_path+"/../"]        
+  dir_path = REPO_ABS_DIR()
+  path_list += ["-I" + dir_path+"/"]        
   
   #print(path_list)
     
@@ -139,6 +139,9 @@ def preprocess_text(text, cpp_path='cpp'):
     path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
   for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
     path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir]
+  # Also include src files in git root dir
+  dir_path = REPO_ABS_DIR()
+  path_list += ["-I" + dir_path+"/"]
   
   # Finally read from std in
   path_list += ["-"] # TO read from std in
@@ -6054,6 +6057,21 @@ def DEL_ALL_CACHES():
   _C_AST_FUNC_DEF_TO_LOGIC_cache            = dict()
   _GET_ZERO_CLK_PIPELINE_MAP_cache          = dict()
 
+_EXE_ABS_DIR = None
+def EXE_ABS_DIR():
+  global _EXE_ABS_DIR
+  if _EXE_ABS_DIR:
+    return _EXE_ABS_DIR
+  _EXE_ABS_DIR = os.path.dirname(os.path.realpath(__file__))
+  return _EXE_ABS_DIR
+
+_REPO_ABS_DIR = None
+def REPO_ABS_DIR():
+  global _REPO_ABS_DIR
+  if _REPO_ABS_DIR:
+    return _REPO_ABS_DIR
+  _REPO_ABS_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)) + "/../")
+  return _REPO_ABS_DIR
   
 # This class hold all the state obtained by parsing a single C file
 class ParserState:
@@ -6136,7 +6154,8 @@ class ParserState:
     
 
 def GET_PARSER_STATE_CACHE_FILEPATH(c_filename):
-  key = c_filename 
+  # Only one file parsed for now so identify with basename and not full path
+  key = os.path.basename(c_filename) 
   output_directory = SYN.SYN_OUTPUT_DIRECTORY
   filepath = output_directory + "/" + key + ".parsed"
   return filepath
