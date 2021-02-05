@@ -1,9 +1,3 @@
-# https://github.com/ZipCPU/openarty/blob/master/migmem.xdc
-# A list of memory associated pins, suitable for ingesting into Xilinx's
-# Memory Interface Generator.
-
-## Memory
-
 # Memory address lines
 set_property PACKAGE_PIN R2 [get_ports {ddr3_addr[0]}]
 set_property IOSTANDARD SSTL135 [get_ports {ddr3_addr[0]}]

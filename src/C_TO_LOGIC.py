@@ -2016,7 +2016,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
     func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_assignment.lvalue)
     output_wire_name = func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
     # LHS type is output type too
-    parser_state.existing_logic.wire_to_c_type[output_wire_name] = lhs_dumb_struct_array_type
+    parser_state.existing_logic.wire_to_c_type[output_wire_name] = lhs_struct_array_type
     # Save ref toks for this ref submodule
     parser_state.existing_logic.ref_submodule_instance_to_ref_toks[func_inst_name] = lhs_ref_toks
     
@@ -2131,7 +2131,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
     # SET LHS TYPE
     # Type of alias wire is "larger" sized array type
     #parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_array_type
-    parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_dumb_struct_array_type
+    parser_state.existing_logic.wire_to_c_type[lhs_next_wire_assignment_alias] = lhs_struct_array_type
         
     
     # Save orig var name
