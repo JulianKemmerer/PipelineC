@@ -679,11 +679,13 @@ def C_TYPE_IS_INT_N(type_str):
 # Includes intN and uintN
 def C_TYPES_ARE_INTEGERS(c_types):
   for c_type in c_types:
+    # No dummy, arrays are not ints? You hacky hoe
+    '''
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
       elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
       c_type = elem_type
       #print "c_type",c_type
-    
+    '''
     if not( C_TYPE_IS_INT_N(c_type) or C_TYPE_IS_UINT_N(c_type) ):
       return False
   return True

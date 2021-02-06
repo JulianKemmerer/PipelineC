@@ -5895,8 +5895,8 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       if len(parser_state.existing_logic.submodule_instances) > 0:
         for out_wire in parser_state.existing_logic.outputs:
           if out_wire not in parser_state.existing_logic.wire_driven_by:
-            print("Not all function outputs driven!?", parser_state.existing_logic.func_name, out_wire)
-            print("(undeclared return value type is assumed 'int', declare as void instead)")
+            print("Not all function outputs driven!? No return value for function?", parser_state.existing_logic.func_name, out_wire)
+            print("(undeclared return value type is assumed 'int', explicitly declare as void instead)")
             sys.exit(-1)
             
             
