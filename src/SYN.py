@@ -36,23 +36,29 @@ DELAY_UNIT_MULT = 10.0 # Timing is reported in nanoseconds. Multiplier to conver
 
 
 
-def PART_SET_TOOL(part_str):
+def PART_SET_TOOL(part_str, allow_fail=False):
   global SYN_TOOL
   if SYN_TOOL is None:
     # Try to guess synthesis tool based on part number
     # Hacky for now...
     if part_str is None:
-      print("Need to set FPGA part somewhere in the code to continue with synthesis tool support!")
-      print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
-      sys.exit(0)
-    elif part_str.lower().startswith("xc"):
+      if allow_fail:
+        return
+      else:
+        print("Need to set FPGA part somewhere in the code to continue with synthesis tool support!")
+        print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
+        sys.exit(0)
+      
+    if part_str.lower().startswith("xc"):
       SYN_TOOL = VIVADO
     elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c"):
       SYN_TOOL = QUARTUS
     elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
-      SYN_TOOL = OPEN_TOOLS  # TODO replace with DIAMOND option
+      SYN_TOOL = OPEN_TOOLS  # Can replace with SYN_TOOL = DIAMOND
     else:
-      SYN_TOOL = DIAMOND
+      if not allow_fail:
+        print("No known synthesis tool for FPGA part:",part_str)
+        sys.exit(-1)
     print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
 
 

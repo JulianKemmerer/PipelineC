@@ -2066,10 +2066,7 @@ end function;
   
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   if SYN.SYN_TOOL is VIVADO:
-    #return ""
-    # WHAT FLOAT PKG WORKS FOR VHDL 2008?
     return '''
---use ieee_proposed.float_pkg.all;
 use ieee.float_pkg.all;
 library ieee_proposed;
 use ieee_proposed.fixed_pkg.all;

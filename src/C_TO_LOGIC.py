@@ -6460,7 +6460,8 @@ def PARSE_FILE(c_filename):
     
     
 def WRITE_0CLK_FINAL_FILES(parser_state):
-  print("Starting with combinatorial logic...", flush=True)  
+  print("Starting with combinatorial logic...", flush=True)
+  SYN.PART_SET_TOOL(parser_state.part,allow_fail=True) # Comb logic only might not have tool set
   ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
