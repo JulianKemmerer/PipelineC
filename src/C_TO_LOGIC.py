@@ -5892,15 +5892,19 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   # Connect globals at end of func logic
   parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_funcdef)
   
+  # Final chance for SW_LIB generated code to do stuff to func logic
+  # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
+  # Bright Eyes - An Attempt to Tip the Scales
+  parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(parser_state.existing_logic)
+  
   # Sanity check for return wire
   if parse_body:
-    if not parser_state.existing_logic.is_vhdl_text_module:
-      if len(parser_state.existing_logic.submodule_instances) > 0:
-        for out_wire in parser_state.existing_logic.outputs:
-          if out_wire not in parser_state.existing_logic.wire_driven_by:
-            print("Not all function outputs driven!? No return value for function?", parser_state.existing_logic.func_name, out_wire)
-            print("(undeclared return value type is assumed 'int', explicitly declare as void instead)")
-            sys.exit(-1)
+    if not parser_state.existing_logic.is_vhdl_text_module and not parser_state.existing_logic.is_clock_crossing:
+      for out_wire in parser_state.existing_logic.outputs:
+        if out_wire not in parser_state.existing_logic.wire_driven_by:
+          print("Not all function outputs driven!? No return value for function?", parser_state.existing_logic.func_name, out_wire)
+          print("(undeclared return value type is assumed 'int', explicitly declare as void instead)")
+          sys.exit(-1)
             
             
   # Check for mixing volatile and not
@@ -6864,10 +6868,6 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     driven_wire_names=[]
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
-    # Final chance for SW_LIB generated code to do stuff to func logic
-    # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
-    # Bright Eyes - An Attempt to Tip the Scales
-    logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(logic)
     FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
