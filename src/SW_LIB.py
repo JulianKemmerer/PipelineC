@@ -802,7 +802,68 @@ def FUNC_NAME_INCLUDES_TYPES(logic):
   
   return rv
   
+''' TODO SWITCH OVER TO ONCE NOT DOING REG EX SEARCH FOR CODE GEN, LOOK FOR EXACT FUNC NAME MATCHES
+def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT_new(c_text, parser_state):
+  #print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT\n",c_text)
+  
+  c_file_ast = C_TO_LOGIC.GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, "auto_gen_fake_filename.c")
+  func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_file_ast, c_ast.FuncCall)
+  # get list of function names
+  func_names = set()
+  for func_call_node in func_call_nodes:
+    func_name = str(func_call_node.name.name)
+    # This is called recursively, dont want to get into loop generating code thats been generated
+    if func_name not in parser_state.FuncLogicLookupTable:
+      func_names.add(func_name)
+    
+  #print("func_names",func_names, flush=True)
+  
+  # DONT FORGET TO CHANGE IS_AUTO_GENERATED and FUNC_NAME_INCLUDES_TYPES??
+  lookups = []
+  
+  # BIT manipulation is auto generated
+  bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
+  lookups.append(bit_manip_func_name_logic_lookup)
+  
+  #print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
+  
+  ###### THESE DEPEND ON BIT MANIP #TODO: Depedencies what?
+  bit_math_func_name_logic_lookup = GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
+  lookups.append(bit_math_func_name_logic_lookup)
+  
+  #print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
+  
+  # MEMORY
+  mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
+  lookups.append(mem_func_name_logic_lookup)
+  
+  # Combine lookups
+  rv = dict()
+  for func_name_logic_lookup in lookups:
+    for func_name in func_name_logic_lookup:
+      if not(func_name in rv):
+        rv[func_name] = func_name_logic_lookup[func_name]
+        #print "func_name (func_name_logic_lookup)",func_name
+        #if len(func_name_logic_lookup[func_name].wire_drives) == 0:
+        # print "BAD!"
+        # sys.exit(-1)
+      else:
+        # For now allow if from bit manip
+        #print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
+        if IS_BIT_MANIP(rv[func_name]):
+          pass
+        else:
+          print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT func_name in multiple dicts?", func_name)
+          print("bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup)
+          print("===")
+          print("bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup)
+          sys.exit(-1)
+  
+  return rv 
+'''
+
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, parser_state):
+  #print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT\n",c_text)
   # DONT FORGET TO CHANGE IS_AUTO_GENERATED and FUNC_NAME_INCLUDES_TYPES??
   lookups = []
   
@@ -853,7 +914,6 @@ def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
   return C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state) or C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state) 
   
 
-
 # Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
 # Zero clock cycles just infers RAM primitives implemented in LUTS
 # 1 clock means either input or output registers - should infer bram?
@@ -861,6 +921,11 @@ def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
 # Build more complex multi cycle memory out of these basics - FutureJulian
 # Ex. Start with RAM and per device resources fifo primitives, etc ....memory controllers? Next universe up Julian task
 #   The Flaming Lips - Fight Test
+def GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state): 
+  #TODO dont do string search at all - do 'in' list checks?
+  c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
+  return GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+  
 def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   text = ""
   header_text = '''
@@ -990,6 +1055,11 @@ def GET_MEM_NAME(logic):
   else:
     print("GET_MEM_NAME for func", logic.func_name, "?")
     sys.exit(-1)
+    
+def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
+  #TODO dont do string search at all - do 'in' list checks?
+  c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
+  return GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
 
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   text = ""
@@ -1626,9 +1696,8 @@ typedef uint8_t ''' + result_t + '''; // FUCK
       
       
       
-  #print "BIT_MATH_HEADER_FILE"
-  #print text
-      
+  #print("BIT_MATH_HEADER_FILE")
+  #print(text)
       
       
   if text != "":
@@ -1643,9 +1712,30 @@ typedef uint8_t ''' + result_t + '''; // FUCK
     parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
     parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
     
-    # NEED MANIP in MATH
+    ## NEED MANIP in MATH
+    
+    ''' SWITCH OVER TO ONCE NOT DOING REG EX SEARCH
+    # FUNC NAME BASED
+    preprocessed_text = C_TO_LOGIC.preprocess_text(text)
+    c_file_ast = C_TO_LOGIC.GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_text, "auto_gen_bit_math_fake_filename.c")
+    func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_file_ast, c_ast.FuncCall)
+    # get list of function names
+    func_names = set()
+    for func_call_node in func_call_nodes:
+      func_name = str(func_call_node.name.name)
+      func_names.add(func_name)
+    bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names,parser_state)
+    parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # dict() 
+    '''
+    
+    # C TEXT NAME BASED
     bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(text,parser_state)  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
     parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # dict() 
+    
+    
+    # Try to get all built in? not just manip? Recursive is nice?
+    #print("preprocessed_text",preprocessed_text)
+    #parser_state_copy.FuncLogicLookupTable = GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_text, parser_state_copy) #parser_state??
     
     parse_body = True # BIT MATH IS SW IMPLEMENTATION
     FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
@@ -1664,7 +1754,12 @@ typedef uint8_t ''' + result_t + '''; // FUCK
     # No code, no funcs
     return dict()
 
-
+def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
+  #TODO dont do string search at all - do 'in' list checks?
+  c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
+  #print("manip func_names",func_names, flush=True)
+  return GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+  
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 
   # TODO: Do bit select and bit dup as "const int"?
@@ -1758,8 +1853,8 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     toks = bit_dup_func_name.split("_")
     input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
     mult = int(toks[1])
-    #if mult==0:
-    # continue
+    if mult==0:
+      continue
     result_width = input_bit_width * mult     
     result_t = "uint" + str(result_width) + "_t"
     in_prefix = toks[0]
@@ -1922,8 +2017,8 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Ok had some code, include headers
     text = header_text + text
 
-    #print "BIT_MANIP_HEADER_FILE"
-    #print text
+    #print("BIT_MANIP_HEADER_FILE")
+    #print(text,flush=True)
     
     #Just bit manip for now
     outfile = BIT_MANIP_HEADER_FILE
@@ -2279,7 +2374,6 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
     text += '''typedef uint8_t ''' + base_c_type + "; // FUCK\n"
 
   text += '''
-#include "''' + TYPE_ARRAY_HEADER_FILE + '''"
 
 // Var ref read
 '''
@@ -2562,8 +2656,6 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
     text += '''typedef uint8_t ''' + base_c_type + "; // FUCK\n"
 
   text += '''
-#include "''' + TYPE_ARRAY_HEADER_FILE + '''"
-
 // Var ref assignment\n'''
 
   # FUNC DEF

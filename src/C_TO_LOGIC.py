@@ -1245,7 +1245,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   #print "submodule_inst",submodule_inst
   #print "submodule_logic_name",submodule_logic_name
   submodule_logic.func_name = submodule_logic_name
-  #print "...",submodule_logic.func_name
+  #print("...",submodule_logic.func_name)
   
   # CONST refs are vhdl funcs
   if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
@@ -1405,8 +1405,8 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
     # Use the c code to get the logic
     partially_complete_logic.c_code_text = c_code_text
     
-    #print "c_code_text"
-    #print c_code_text
+    #print("...",partially_complete_logic.func_name,flush=True)
+    #print(c_code_text,flush=True)
     
     # And read logic
     #print "partially_complete_logic.
@@ -1463,7 +1463,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
   func_defs = GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename)
 
   for func_def in func_defs:
-    #print "...func def"
+    #print("...",func_def.decl.name,flush=True)
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
@@ -3957,6 +3957,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Name comes from location in file
   file_coord_str = C_AST_NODE_COORD_STR(c_ast_node)
   
+  #print("IF",file_coord_str, flush=True)
+  
   # Port names from c_ast
   
   # Mux select is driven by intermediate shared wire without variable name
@@ -5034,6 +5036,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
     print(c_ast_func_call.coord)
     #casthelp(c_ast_func_call)
+    #print(0/0)
     sys.exit(-1)
   not_inst_func_logic = FuncLogicLookupTable[func_name]
     
@@ -5848,7 +5851,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   except:
     pass
     
-  #print("FUNC_DEF",c_ast_funcdef.decl.name)
+  #print("FUNC_DEF",c_ast_funcdef.decl.name, flush=True)
   
   parser_state.existing_logic = Logic()
   # Save the c_ast node
@@ -6192,7 +6195,7 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
   for c_ast_func_def in c_ast_func_defs:
     func_name = c_ast_func_def.decl.name
     #print "c_ast_func_def",c_ast_func_def.decl.name
-    func_call_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.FuncCall, parser_state)
+    func_call_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.FuncCall)
     #print "Called",len(func_call_c_ast_nodes)
     for func_call_c_ast_node in func_call_c_ast_nodes:
       called_func_name = func_call_c_ast_node.name.name
@@ -6245,7 +6248,7 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
   return main_func_name_to_calls, main_func_names_to_called_from
 
 
-def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, parser_state, nodes=None):
+def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
   if nodes is None:
     nodes = []
   if type(c_ast_node) == c_ast_type:
@@ -6253,7 +6256,7 @@ def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, parser_state, no
   children_tuples = c_ast_node.children()
   for children_tuple in children_tuples:
     child_node = children_tuple[1]
-    nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(child_node, c_ast_type, parser_state, nodes)
+    nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(child_node, c_ast_type, nodes)
   return nodes
 
 def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called_from, main_funcs):
@@ -6340,7 +6343,6 @@ def PARSE_FILE(c_filename):
       if old_autogen_funclookup:
         # Preprocess the file again to pull in generated code
         preprocessed_c_text = preprocess_file(c_filename)
-        #print "preprocessed_c_text",preprocessed_c_text
         # Get the C AST again to reflect new generated code
         parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
         # Update primative map of function use
@@ -6879,6 +6881,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   return FuncLogicLookupTable
   
 def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_state, containing_logic_inst_name="", c_ast_node_when_used=None):
+  #print("func_name",func_name,flush=True)
   # Use prepend text to contruct full instance names
   new_inst_name_prepend_text = containing_logic_inst_name + SUBMODULE_MARKER
   if func_name in parser_state.main_mhz:
@@ -6936,7 +6939,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
 
 def APPEND_PRAGMA_INFO(parser_state):
   # Get all pragmas in ast
-  pragmas = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Pragma, parser_state)
+  pragmas = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Pragma)
   
   # Loop over all pragmas
   for pragma in pragmas:
@@ -7028,13 +7031,17 @@ def GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename):
     #print "========="
     #print "fake_filename",fake_filename
     #print "preprocessed text",c_text
-    
-    # Hacky because somehow parser.parse() getting filename from cpp output?
-    c_text = c_text.replace("<stdin>",c_filename)
-    parser = c_parser.CParser()
-    ast = parser.parse(c_text,filename=c_filename)
-    #ast.show()
-    return ast
+    try:
+      # Hacky because somehow parser.parse() getting filename from cpp output?
+      c_text = c_text.replace("<stdin>",c_filename)
+      parser = c_parser.CParser()
+      ast = parser.parse(c_text,filename=c_filename)
+      #ast.show()
+      return ast
+    except c_parser.ParseError as pe:
+      print("pycparser says you messed up in the text:",pe)
+      print(c_text)
+      sys.exit(-1)
     
     
 def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
@@ -7051,7 +7058,6 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
     print("pycparser says you messed up here:",pe)
     #casthelp(pe)
     sys.exit(-1)
-  
 
 def GET_C_AST_FUNC_DEFS(c_file_ast):
   #c_file_ast.show()
