@@ -250,11 +250,12 @@ def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
     if key in self_d1:
       v1 = self_d1[key]
       v2 = d2[key]
-      if C_AST_NODE_COORD_STR(v1) != C_AST_NODE_COORD_STR(v2):
+      if not C_AST_NODES_EQUAL(v1,v2):
+        # EW WTF SLOW? if C_AST_NODE_COORD_STR(v1) != C_AST_NODE_COORD_STR(v2):
         print("C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:",self_d1,d2)
         print("key", key)
-        print("v1",C_AST_NODE_COORD_STR(v1))
-        print("v2",C_AST_NODE_COORD_STR(v2))
+        print("v1",v1,C_AST_NODE_COORD_STR(v1))
+        print("v2",v2,C_AST_NODE_COORD_STR(v2))
         print(0/0)
         sys.exit(-1)
   
@@ -647,9 +648,8 @@ class Logic:
     '''
     # C ast must match if set
     if (self.c_ast_node is not None) and (logic_b.c_ast_node is not None):
-      # For now its the same c ast node if its the same coord
-      # If causes problems... abandon then
-      if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
+      if not C_AST_NODES_EQUAL(self.c_ast_node, logic_b.c_ast_node):
+        # EW WTF SLOW? if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
         print("Cannot merge comb logic with mismatching c_ast_node!")
         print(self.func_name)
         print(logic_b.func_name)
@@ -3854,6 +3854,11 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
       
   return rv
 
+def C_AST_NODES_EQUAL(node0,node1):
+  # EW WTF SLOW? C_AST_NODE_COORD_STR(node0) == C_AST_NODE_COORD_STR(node1)
+  #return node0==node1
+  return node0.coord==node1.coord
+
 _C_AST_NODE_COORD_STR_cache = dict()
 def C_AST_NODE_COORD_STR(c_ast_node):
   
@@ -5845,11 +5850,9 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   parser_state.existing_logic = None
 
   # Since no existing logic, can cache entire existing logic here
-  try:
+  if c_ast_funcdef.decl.name in _C_AST_FUNC_DEF_TO_LOGIC_cache:
     parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name]
     return parser_state.existing_logic
-  except:
-    pass
     
   #print("FUNC_DEF",c_ast_funcdef.decl.name, flush=True)
   
@@ -6402,7 +6405,7 @@ def PARSE_FILE(c_filename):
     #from guppy import hpy
     #h = hpy()
     #print h.heap()
-    #print "TEMP STOP"
+    #print("TEMP STOP")
     #sys.exit(-1)
     
     # Code gen based on fully elaborated logic
