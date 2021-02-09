@@ -1528,6 +1528,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
   elif type(c_ast_node) == c_ast.EmptyStatement:
     print("Unecessary empty statement - extra ';' ?", c_ast_node.coord)
     sys.exit(-1)
+  elif type(c_ast_node) == c_ast.TernaryOp:
+    return C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
   else:
     #start here
     print("Animal Collective - The Purple Bottle")
@@ -3943,6 +3945,76 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
     
   return parser_state.existing_logic
   
+def C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
+  # Logic is MUX with SEL, TRUE, and FALSE logic connected
+
+  # MUX output type is the same as inputs (aside from select)
+  # Try to determine types by evaluating input nodes like done for 'IF'
+  func_base_name = MUX_LOGIC_NAME
+  ter_op_cond_input_port_name = c_ast_node.children()[0][0]
+  ter_op_true_input_port_name = c_ast_node.children()[1][0]
+  ter_op_false_input_port_name = c_ast_node.children()[2][0]
+  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
+  ter_op_cond_input = func_inst_name+SUBMODULE_MARKER+ter_op_cond_input_port_name
+  ter_op_true_input = func_inst_name+SUBMODULE_MARKER+ter_op_true_input_port_name
+  ter_op_false_input = func_inst_name+SUBMODULE_MARKER+ter_op_false_input_port_name
+  c_ast_node_to_driven_input_wire_names = OrderedDict()
+  c_ast_node_to_driven_input_wire_names[c_ast_node.cond] = [ter_op_cond_input]
+  c_ast_node_to_driven_input_wire_names[c_ast_node.iftrue] = [ter_op_true_input]
+  c_ast_node_to_driven_input_wire_names[c_ast_node.iffalse] = [ter_op_false_input]
+  # Set types if known since this is a MUX
+  parser_state.existing_logic.wire_to_c_type[ter_op_cond_input] = BOOL_C_TYPE
+  output_type = None
+  for driven_wire_name in driven_wire_names:
+    if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
+      output_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+      break
+  if output_type:
+    parser_state.existing_logic.wire_to_c_type[ter_op_true_input] = output_type
+    parser_state.existing_logic.wire_to_c_type[ter_op_false_input] = output_type
+  input_type = output_type
+  # Evaluate input nodes
+  parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_to_driven_input_wire_names, prepend_text, parser_state)
+  # Try to get types from input nodes if needed
+  if input_type is None:
+    if ter_op_true_input in parser_state.existing_logic.wire_to_c_type:
+      input_type = parser_state.existing_logic.wire_to_c_type[ter_op_true_input]
+    if ter_op_false_input in parser_state.existing_logic.wire_to_c_type:
+      input_type = parser_state.existing_logic.wire_to_c_type[ter_op_false_input]
+  # And get wires driving input ports (since evaluated c ast node already)
+  ter_op_cond_input_driver = parser_state.existing_logic.wire_driven_by[ter_op_cond_input]
+  ter_op_true_input_driver = parser_state.existing_logic.wire_driven_by[ter_op_true_input]
+  ter_op_false_input_driver = parser_state.existing_logic.wire_driven_by[ter_op_false_input]
+
+  # Specify mux instance
+  base_name_is_name = False # Append types
+  input_port_names = []
+  input_port_names.append(ter_op_cond_input_port_name) # cond
+  input_port_names.append(ter_op_true_input_port_name) # true 
+  input_port_names.append(ter_op_false_input_port_name) # false
+  input_driver_types = []
+  input_driver_types.append(BOOL_C_TYPE)
+  input_driver_types.append(input_type)
+  input_driver_types.append(input_type)
+  input_drivers = [] # Wires or C ast nodes
+  input_drivers.append(ter_op_cond_input_driver)
+  input_drivers.append(ter_op_true_input_driver)
+  input_drivers.append(ter_op_false_input_driver) 
+  
+  # Hook up the MUX instance to the logic graph
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+                  prepend_text,
+                  c_ast_node,
+                  func_base_name,
+                  base_name_is_name,
+                  input_drivers, # Wires or C ast nodes
+                  input_driver_types, # Might be none if not known
+                  input_port_names, # Port names on submodule
+                  driven_wire_names,
+                  parser_state)
+                  
+  return parser_state.existing_logic
+  
 def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
   rv = ""
   # For now only deal with constant
@@ -3969,6 +4041,7 @@ def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
 def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):   
   # Each if is just an IF ELSE (no explicit logic for "else if")
   # If logic is MUX with SEL, TRUE, and FALSE logic connected
+  # And a bunch of other jazz to resolve assignments over time after the if
     
   # One submodule MUX instance per variable contains in the if at this location
   # Name comes from location in file
@@ -4825,6 +4898,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   elif func_base_name==MUX_LOGIC_NAME:
     output_type = input_driver_types[1] #[0] is cond for mux
     parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
+  
+  # Sanity check
+  if output_type is None:
+    print("Unknown output type for func",func_base_name,func_c_ast_node.coord)
+    sys.exit(-1)
   
   # Set this type for the driven wires if not set already? # This seems really hacky
   for output_driven_wire_name in output_driven_wire_names:
