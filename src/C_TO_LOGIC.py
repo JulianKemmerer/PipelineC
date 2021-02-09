@@ -3720,6 +3720,17 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
       c_type_str = "int" + str(bits+1) + "_t"
     else:
       c_type_str = "uint" + str(bits) + "_t"
+  elif value_str.startswith("0b"):
+    bin_str = value_str.replace("0b","")
+    bin_str = bin_str.strip("LL").strip("U")
+    value = int(bin_str, 2)
+    bits = value.bit_length()
+    if bits == 0:
+      bits = 1
+    if is_negated:
+      c_type_str = "int" + str(bits+1) + "_t"
+    else:
+      c_type_str = "uint" + str(bits) + "_t"
   elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
     value = float(value_str)
     c_type_str = "float"
@@ -3737,7 +3748,7 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
     c_type_str = "char"
     #print "Char val", value 
   else:
-    print("What type of constant is?", value_str, c_ast_node)
+    print("What type of constant is?", value_str, c_ast_node.coord)
     sys.exit(-1)
   
   if is_negated:
@@ -6755,12 +6766,23 @@ def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
     
   return var_name
 
+_printed_GET_ENUM_IDS_DICT=False
 def GET_ENUM_IDS_DICT(c_file_ast):
   # Read in file with C parser and get function def nodes
   rv = dict()
   enum_defs = GET_C_AST_ENUM_DEFS(c_file_ast)
   for enum_def in enum_defs:
-    #casthelp(enum_def)
+    if enum_def.name is None:
+      global _printed_GET_ENUM_IDS_DICT
+      if not _printed_GET_ENUM_IDS_DICT:
+        print("WARNING: Must use enum_name and enum_alias in enum definitions... for now... Ex.")
+        print('''typedef enum enum_name {
+  STATE0,
+  STATE1
+} enum_alias;''')
+        _printed_GET_ENUM_IDS_DICT = True
+      continue
+    
     #sys.exit(-1)
     enum_name = str(enum_def.name)
     #print "struct_name",struct_name
@@ -6770,7 +6792,7 @@ def GET_ENUM_IDS_DICT(c_file_ast):
     for child in enum_def.values.enumerators:
       if len(child.children()) > 0:
         child.show()
-        print("Don't assign enums values for now OK?")
+        print("Don't assign enums values for now OK?",enum_def.coord)
         sys.exit(-1)     
       
       #sys.exit(-1)
