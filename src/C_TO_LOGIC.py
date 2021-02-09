@@ -1463,7 +1463,8 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, fake_filename, parse
   func_defs = GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename)
 
   for func_def in func_defs:
-    #print("...",func_def.decl.name,flush=True)
+    if parse_body:
+      print("...",func_def.decl.name,flush=True)
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
@@ -7043,8 +7044,8 @@ def GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename):
       #ast.show()
       return ast
     except c_parser.ParseError as pe:
-      print("pycparser says you messed up in the text:",pe)
-      print(c_text)
+      print("pycparser says you messed up:",pe)
+      #print(c_text)
       sys.exit(-1)
     
     
