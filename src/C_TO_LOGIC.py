@@ -3281,6 +3281,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     i = len(driving_aliases_over_time)-2
     while len(remaining_ref_toks_set) > 0:
       if i < 0:
+        '''
         print("Ran out of aliases?@@@@@@@")
         print("func name",parser_state.existing_logic.func_name)
         print("starting ref_toks",ref_toks)
@@ -3293,6 +3294,8 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
         #print "first_driving_alias_c_type",first_driving_alias_c_type
         print("=")
         print("This is either my problem or your code doesnt drive all your local variables...")
+        '''
+        print("It looks like struct/array variable like",ref_toks,"from func", parser_state.existing_logic.func_name, "does not have all struct fields / array indices assigned when read at?",c_ast_ref.coord)
         sys.exit(-1)
         
       alias = driving_aliases_over_time[i]
@@ -3660,12 +3663,27 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
   # Create wire for this constant
   #wire_name =  CONST_PREFIX + str(c_ast_node.type)+ "_"+ str(c_ast_node.value)
   value = str(c_ast_node.name)
+  
   #casthelp(c_ast_node)
   #print "value",value
   #print "==="
   # Hacky use $ for enum only oh sad
   wire_name =  CONST_PREFIX + str(value) + "$" + C_AST_NODE_COORD_STR(c_ast_node)
   
+  # Try to set type based on enum name, might not be possible if multiple matches
+  # Then have to rely on user comparing against known enum type wire
+  enum_type = None
+  enum_name_matches = 0
+  for enum,ids_dict in parser_state.enum_to_ids_dict.items():
+    if value in ids_dict:
+      enum_type = enum
+      enum_name_matches +=1
+  if enum_name_matches == 1:
+    parser_state.existing_logic.wire_to_c_type[wire_name] = enum_type
+    for driven_wire_name in driven_wire_names:
+      if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+        parser_state.existing_logic.wire_to_c_type[driven_wire_name] = enum_type
+          
   # flag to not check types /cast in APPLY_CONNNECT since dontknow exact enum type?
   #is resolved immediately after? boo enums??
   check_types_do_cast=False
@@ -3949,7 +3967,7 @@ def C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parse
   # Logic is MUX with SEL, TRUE, and FALSE logic connected
 
   # MUX output type is the same as inputs (aside from select)
-  # Try to determine types by evaluating input nodes like done for 'IF'
+  # Try to determine types by evaluating input nodes like done for binary ops
   func_base_name = MUX_LOGIC_NAME
   ter_op_cond_input_port_name = c_ast_node.children()[0][0]
   ter_op_true_input_port_name = c_ast_node.children()[1][0]
@@ -5056,7 +5074,8 @@ def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_i
     # Append input types to base name
     for input_driver_type in input_driver_types:
       if input_driver_type is None:
-        print("oh no, now it is")
+        print("Oh no, dont know types building func name instance", func_base_name)
+        #print(0/0)
         sys.exit(-1)
       # Input could be array type with brackets so remove for safe C func name
       types_str += "_" + input_driver_type.replace("[","_").replace("]","")
@@ -5770,7 +5789,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
     if not(driving_wire in parser_state.existing_logic.wire_to_c_type):
       print("Looks like wire'",driving_wire,"'isn't declared? Doing weird stuff with types/enums maybe?")
       print(c_ast_node.coord)
-      print(0/0)
+      #print(0/0)
       sys.exit(-1)
     rhs_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
     for driven_wire_name in driven_wire_names:
@@ -5794,8 +5813,11 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
           and 
            ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
              continue
-        # Enum driving UINT is fine
-        elif VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
+        # Enum driving U/INT is fine
+        elif (VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic)) and WIRE_IS_ENUM(driving_wire, parser_state.existing_logic, parser_state):
+          continue
+        # U/INT driving enum is fine
+        elif WIRE_IS_ENUM(driven_wire_name, parser_state.existing_logic, parser_state) and (VHDL.WIRES_ARE_UINT_N([driving_wire],parser_state.existing_logic) or VHDL.WIRES_ARE_INT_N([driving_wire],parser_state.existing_logic)) :
           continue
         # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
         elif (
@@ -5846,6 +5868,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
           print("RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord)
           print(driven_wire_type, "!=", rhs_type)
           print("Implement nasty casty?") #Fat White Family - Tastes Good With The Money
+          #print(0/0)
           sys.exit(-1)
     
         
