@@ -37,6 +37,9 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
   elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
     wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return wires_decl_text
+  elif logic.func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX):
+    wires_decl_text, package_stages_text = GET_CAST_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+    return wires_decl_text
   else:
     print("GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name,"?",logic.c_ast_node.coord)
     sys.exit(-1)
@@ -65,6 +68,9 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timin
     return package_stages_text
   elif logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME) or logic.func_name.startswith(C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME):
     wires_decl_text, package_stages_text = GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+    return package_stages_text
+  elif logic.func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX):
+    wires_decl_text, package_stages_text = GET_CAST_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
     return package_stages_text
   else:
     print("GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT for", logic.func_name,"?")
@@ -1907,7 +1913,34 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
   
   return wires_decl_text, text
   
-
+def GET_CAST_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+  # ONLY INTS FOR NOW
+  in_type = logic.wire_to_c_type[logic.inputs[0]]
+  in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
+  in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+  in_signed = VHDL.C_TYPE_IS_INT_N(in_type)
+  output_type = logic.wire_to_c_type[logic.outputs[0]]
+  output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  out_signed = VHDL.C_TYPE_IS_INT_N(output_type)
+ 
+  wires_decl_text = '''
+  --variable rhs : ''' + in_vhdl_type + ''';
+  variable return_output : ''' + output_vhdl_type + ''';
+'''
+  text = ""
+  if out_signed:
+    text += '''
+      return_output := signed(std_logic_vector(resize(rhs,'''+str(output_width)+''')));
+    '''
+  else:
+    text += '''
+      return_output := unsigned(std_logic_vector(resize(rhs,'''+str(output_width)+''')));
+    '''
+  text += '''return return_output;'''
+  
+  
+  return wires_decl_text, text
 
 def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable

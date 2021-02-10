@@ -1247,19 +1247,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   submodule_logic.func_name = submodule_logic_name
   #print("...",submodule_logic.func_name)
   
-  # CONST refs are vhdl funcs
-  if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
-    submodule_logic.is_vhdl_func = True
-    # But can also be VHDL expressions if the feeling is right
-    driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[submodule_inst]
-    # Just one input
-    if len(driven_ref_toks_list) == 1:
-      driven_ref_toks = driven_ref_toks_list[0]
-      # Driving the base variable
-      if len(driven_ref_toks) == 1:
-        submodule_logic.is_vhdl_func = False
-        submodule_logic.is_vhdl_expr = True
-  
   # Ports and types are specific to the submodule instance
   # Get data from c ast node
   c_ast_node = containing_func_logic.submodule_instance_to_c_ast_node[submodule_inst]
@@ -1342,7 +1329,24 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   
   # Record output type
   if c_type is not None:
-    submodule_logic.wire_to_c_type[output_port_name]=c_type 
+    submodule_logic.wire_to_c_type[output_port_name]=c_type
+    
+  # Record if vhdl func
+  # CONST refs are vhdl funcs
+  if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
+    submodule_logic.is_vhdl_func = True
+    # But can also be VHDL expressions if the feeling is right
+    driven_ref_toks_list = containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[submodule_inst]
+    # Just one input
+    if len(driven_ref_toks_list) == 1:
+      driven_ref_toks = driven_ref_toks_list[0]
+      # Driving the base variable
+      if len(driven_ref_toks) == 1:
+        submodule_logic.is_vhdl_func = False
+        submodule_logic.is_vhdl_expr = True
+  # Casts of ints are vhdl funcs too
+  if submodule_logic_name.startswith(CAST_FUNC_NAME_PREFIX) and VHDL.C_TYPES_ARE_INTEGERS(input_types+[c_type]):
+    submodule_logic.is_vhdl_func = True
   
   # Also do submodule instances for built in logic that is not raw VHDL
   if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name,input_types): 
@@ -5235,16 +5239,21 @@ def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   output_t = str(c_ast_node.to_type.type.type.names[0])
   parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
   
+  # TODO Sanity dont make submodule doing pass through wire?
+  #if rhs_type != output_t: 
   return C_AST_N_ARG_FUNC_INST_TO_LOGIC(
-    prepend_text,
-    c_ast_node,
-    func_base_name,
-    base_name_is_name,
-    input_drivers,
-    input_driver_types,
-    input_port_names,
-    output_driven_wire_names,
-    parser_state)
+      prepend_text,
+      c_ast_node,
+      func_base_name,
+      base_name_is_name,
+      input_drivers,
+      input_driver_types,
+      input_port_names,
+      output_driven_wire_names,
+      parser_state)
+  #else:
+  #  # Just connect wire BUT HOW - already connected to cast submodule - do rip up?
+  #  APPLY_CONNECT_WIRES_LOGIC(parser_state,
     
 def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
   if C_TYPE_IS_ARRAY(c_type):
@@ -5395,6 +5404,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   c_ast_bin_op_str = str(c_ast_binary_op.op)
   
   # Determine op string to use in func name
+  is_bit_shift = False
   if c_ast_bin_op_str == ">":
     c_ast_op_str = BIN_OP_GT_NAME
   elif c_ast_bin_op_str == ">=":
@@ -5423,8 +5433,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     c_ast_op_str = BIN_OP_XOR_NAME
   elif c_ast_bin_op_str == "<<":
     c_ast_op_str = BIN_OP_SL_NAME
+    is_bit_shift = True
   elif c_ast_bin_op_str == ">>":
     c_ast_op_str = BIN_OP_SR_NAME
+    is_bit_shift = True
   elif c_ast_bin_op_str == "%":
     c_ast_op_str = BIN_OP_MOD_NAME
   elif c_ast_bin_op_str == "&&" or c_ast_bin_op_str == "||":
@@ -5467,14 +5479,11 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   # By now the input wires have been connected - CAST inserted as needed
   # From here on we can only adjust input wires in ways that can be resolved with
   #   VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
-  
-  #@@@@ CANT Resolve missing types SINCE other type could be anything - might not be resolvable in VHDL 0CLK
-  
-  # THIS IS OK SINCE CAN BE RESOLVED IN VHDL 0 CLK CAST
+
   # If types are integers then check signed/unsigned matches
   #   Change type from unsigned to sign by adding bit to type
   #   Never change signed to unsigned dumb
-  if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
+  if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]) and not is_bit_shift:
     left_signed = VHDL.C_TYPE_IS_INT_N(left_type)
     right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
     left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
@@ -5489,7 +5498,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
         left_type = "int" + str(left_width+1) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
   
-  # THIS IS OK SINCE CAN BE RESOLVED IN 0 CLK VHDL CAST
   # Replace ENUM with INT type of input wire so cast happens? :/?
   # Left
   if left_type in parser_state.enum_to_ids_dict:
@@ -5538,8 +5546,19 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   if left_type == 'char':
     left_type = "uint8_t"
   if right_type == 'char':
-    right_type = "uint8_t"  
-  
+    right_type = "uint8_t"
+    
+  # Force bit shifts to have uint RHS
+  if is_bit_shift:
+    # Shift size is limited by width of left input
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    max_shift = left_width
+    shift_bit_width = max_shift.bit_length()
+    # Shift amount is resized
+    resized_prefix = "uint" + str(shift_bit_width)
+    resized_t = resized_prefix + "_t"
+    right_type = resized_t
+    
   # Prepare for N arg inst
   input_drivers = [] # Prefer wires
   left_driver_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]

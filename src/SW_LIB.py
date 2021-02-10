@@ -2821,14 +2821,14 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
   left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
-  if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
-    print("SW defined constant shift right?")
+  if not(right_const_driving_wire is None):
+    print("SW defined constant shift right?",partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
   
-  if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
-    return GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+  if VHDL.WIRES_ARE_INT_N([partially_complete_logic.inputs[0]], partially_complete_logic) or VHDL.WIRES_ARE_UINT_N([partially_complete_logic.inputs[0]], partially_complete_logic):
+    return GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
-    print("GET_BIN_OP_SR_C_CODE Only sr uint for now! DO ARITHMETIC SHIFT for INT")
+    print("GET_BIN_OP_SR_C_CODE what types!?",partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
     
 def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state):
@@ -2840,16 +2840,15 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
   left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
-  if not(left_const_driving_wire is None) or not(right_const_driving_wire is None):
-    print("SW defined constant shift left?")
+  if not(right_const_driving_wire is None):
+    print("SW defined constant shift left?",partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
   
-  if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
-    return GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+  if VHDL.WIRES_ARE_INT_N([partially_complete_logic.inputs[0]], partially_complete_logic) or VHDL.WIRES_ARE_UINT_N([partially_complete_logic.inputs[0]], partially_complete_logic):
+    return GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
-    # DO ARITHMETIC SHIFT for INT LHS
-    print("GET_BIN_OP_SL_C_CODE Only sl uint for now!")
-    sys.exit(-1) 
+    print("GET_BIN_OP_SL_C_CODE what types!?",partially_complete_logic.c_ast_node.coord)
+    sys.exit(-1)
       
 def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
   # If one of inputs is signed int then other input will be bit extended to include positive sign bit
@@ -3956,14 +3955,16 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   return text
   
   
-def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+  left_prefix = left_t.replace("_t","")
+  is_signed = VHDL.C_TYPE_IS_INT_N(left_t)
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
   right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
   output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t) 
-  output_prefix = "uint" + str(output_width)
+  output_prefix = output_t.replace("_t","")
   
   # TODO: FIX THIS
   # SHIFT WIDTH IS TRUNCATED TO 2^log2(math.ceil(math.log(max_shift+1,2))) -1
@@ -3983,6 +3984,7 @@ def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
   text = ""
   
   text += '''
+#include "intN_t.h"  
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
@@ -4006,18 +4008,34 @@ def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
   {
     // Otherwise use N mux
     // right < max_shift , right_max = max_shift-1
-    // Append bits on left and select rv from MSBs
+    // Append sign bits on left and select rv from MSBs
+    uint1_t sign;
+  '''
+  if is_signed:
+    text += '''
+    sign = ''' + left_prefix + '''_''' + str(left_width-1) + '''_''' + str(left_width-1) + '''(left);'''
+  else:
+    text += '''
+    sign = 0;'''
+    
+  text += '''
     rv = ''' + output_prefix + "_mux" + str(max_shift) + "(resized_shift_amount,"
 
   # Array of inputs to mux for each shift
   for shift in range(0, max_shift):
     interm_width = shift+left_width
+    if is_signed:
+      interm_prefix = "int" + str(interm_width)
+    else:
+      interm_prefix = "uint" + str(interm_width)
+      
     if shift == 0:
       text += '''
         left,'''
     else:
+      # Create value left padded with the sign bit , select msbs
       text += '''
-        uint'''+str(interm_width) + '''_''' + str(interm_width-1) + '''_''' + str(interm_width-left_width) + '''( uint''' + str(shift) + '''_uint''' + str(left_width) + '''(0,left) ),'''
+        '''+interm_prefix + '''_''' + str(interm_width-1) + '''_''' + str(interm_width-left_width) + '''( uint''' + str(shift) + '''_uint''' + str(left_width) + '''(uint1_'''+str(shift)+'''(sign),left) ),'''
     
   text = text.strip(",")
   text += '''
@@ -4025,35 +4043,32 @@ def GET_BIN_OP_SR_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
   }
   return rv;
 }'''
-  #print "GET_BIN_OP_SR_UINT_C_CODE text"
-  #print text
-  #sys.exit(-1)
+
+  #if is_signed:
+  #  print("GET_BIN_OP_SR_UINT_C_CODE text")
+  #  print(text)
+  #  sys.exit(-1)
   return text
   
 
 #// 64B  First try 4 LLs  // write_pipe.return_output := write_pipe.left sll  to_integer(right(7 downto 0)); was 3 LLs
 #// 32B also 4 LLs?
 #// 128B 8 LLs
-def GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
   right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
   output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t) 
-  output_prefix = "uint" + str(output_width)
-  
-  # TODO: FIX THIS
-  # SHIFT WIDTH IS TRUNCATED TO 2^log2(math.ceil(math.log(max_shift+1,2))) -1
-  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  
+  output_prefix = output_t.replace("_t","") 
   
   # TODO: Remove 1 LL
   # return x0 << x1;  // First try 4 LLs  // write_pipe.return_output := write_pipe.left sll  to_integer(right(7 downto 0)); was 3 LLs
   
   # Shift size is limited by width of left input
   max_shift = left_width
-  shift_bit_width = int(math.ceil(math.log(max_shift+1,2)))
+  shift_bit_width = max_shift.bit_length()
   # Shift amount is resized
   resized_prefix = "uint" + str(shift_bit_width)
   resized_t = resized_prefix + "_t"
@@ -4061,6 +4076,7 @@ def GET_BIN_OP_SL_UINT_C_CODE(partially_complete_logic, out_dir, containing_func
   text = ""
   
   text += '''
+#include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 

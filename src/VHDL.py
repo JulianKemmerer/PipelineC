@@ -716,6 +716,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
+    ( logic_func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME) )
     ):# or    
     return True
@@ -2483,16 +2484,25 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         #signed(std_logic_vector(resize(x,left_width)))
         resize_toks = ["resize(unsigned(std_logic_vector(", "))," + str(left_width) + ")" ] 
       
-    # ENUM DRIVING UINT is ok
-    elif WIRES_ARE_UINT_N([driven_wire], logic) and (logic.wire_to_c_type[driving_wire] in parser_state.enum_to_ids_dict):
+    # ENUM DRIVING U/INT is ok
+    elif (WIRES_ARE_INT_N([driven_wire], logic) or WIRES_ARE_UINT_N([driven_wire], logic)) and (logic.wire_to_c_type[driving_wire] in parser_state.enum_to_ids_dict):
+      is_signed = WIRES_ARE_INT_N([driven_wire], logic)
       left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
       if right_type in parser_state.enum_to_ids_dict:
         num_ids = len(parser_state.enum_to_ids_dict[right_type])
-        right_width = int(math.ceil(math.log(num_ids,2)))
+        right_width = (num_ids-1).bit_length() #0->numids-1
       else:
-        right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        print("Expected enum type?",driving_wire)
+        sys.exit(-1)
       max_width = max(left_width,right_width)
-      resize_toks = ["to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
+      if is_signed:
+        resize_toks = ["to_signed(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
+      else:
+        resize_toks = ["to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
+    
+    # U/INT driving ENUM is ok
+    elif (logic.wire_to_c_type[driven_wire] in parser_state.enum_to_ids_dict) and (WIRES_ARE_INT_N([driving_wire], logic) or WIRES_ARE_UINT_N([driving_wire], logic)):
+      resize_toks = [left_type + "'val(to_integer(" , "))"]
       
     # Making yourself sad to work around issues you didnt forsee is ok
     elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
@@ -2507,7 +2517,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
       print(driving_wire, right_type)
       print("DRIVING")
       print(driven_wire, left_type)
-      print(0/0)
+      #print(0/0)
       sys.exit(-1)
     
     
@@ -2564,7 +2574,7 @@ def WIRES_ARE_C_TYPE(wires,c_type_str, logic):
 
 def WIRES_ARE_UINT_N(wires, logic):
   for wire in wires:
-    #print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
+    #print("wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire])
     if not C_TYPE_IS_UINT_N(logic.wire_to_c_type[wire]):
       return False
   return True
