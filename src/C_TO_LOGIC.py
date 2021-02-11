@@ -5405,6 +5405,8 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   
   # Determine op string to use in func name
   is_bit_shift = False
+  is_bitwise = False
+  has_bit_growth = False
   if c_ast_bin_op_str == ">":
     c_ast_op_str = BIN_OP_GT_NAME
   elif c_ast_bin_op_str == ">=":
@@ -5415,22 +5417,29 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     c_ast_op_str = BIN_OP_LTE_NAME
   elif c_ast_bin_op_str == "+":
     c_ast_op_str = BIN_OP_PLUS_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "-":
     c_ast_op_str = BIN_OP_MINUS_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "*":
     c_ast_op_str = BIN_OP_MULT_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "/":
     c_ast_op_str = BIN_OP_DIV_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "==":
     c_ast_op_str = BIN_OP_EQ_NAME
   elif c_ast_bin_op_str == "!=":
     c_ast_op_str = BIN_OP_NEQ_NAME
   elif c_ast_bin_op_str == "&":
     c_ast_op_str = BIN_OP_AND_NAME
+    is_bitwise = True
   elif c_ast_bin_op_str == "|":
     c_ast_op_str = BIN_OP_OR_NAME
+    is_bitwise = True
   elif c_ast_bin_op_str == "^":
     c_ast_op_str = BIN_OP_XOR_NAME
+    is_bitwise = True
   elif c_ast_bin_op_str == "<<":
     c_ast_op_str = BIN_OP_SL_NAME
     is_bit_shift = True
@@ -5491,11 +5500,19 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     if left_signed != right_signed:
       if left_signed:
         # Update right
-        right_type = "int" + str(right_width+1) + "_t"
+        # Only need bit growth if doing math, not bit manip stuff
+        if has_bit_growth:
+          right_type = "int" + str(right_width+1) + "_t"
+        else:
+          right_type = "int" + str(right_width) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type 
       if right_signed:
         # Update left
-        left_type = "int" + str(left_width+1) + "_t"
+        # Only need bit growth if doing math, not bit manip stuff
+        if has_bit_growth:
+          left_type = "int" + str(left_width+1) + "_t"
+        else:
+          left_type = "int" + str(left_width) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
   
   # Replace ENUM with INT type of input wire so cast happens? :/?
@@ -5633,18 +5650,23 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
           # Left 
           left_unsigned_width = None
           if VHDL.C_TYPE_IS_INT_N(left_type):
-            left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type) - 1
+            left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+            left_unsigned_width = left_width - 1
             signed = True
           else:
-            left_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+            left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+            left_unsigned_width = left_width
           # Right
           right_unsigned_width = None
           if VHDL. C_TYPE_IS_INT_N(right_type):
-            right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type) - 1
+            right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+            right_unsigned_width = right_width - 1
             signed = True
           else:
-            right_unsigned_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+            right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+            right_unsigned_width = right_width
           # Max?
+          max_width = max(left_width, right_width) 
           max_unsigned_width = max(left_unsigned_width, right_unsigned_width) 
         else:
           print("Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord)
@@ -5715,11 +5737,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
              (c_ast_bin_op_str == "^")
            ):
           # Is sized to max
-          output_unsigned_width = max_unsigned_width
-          output_width = output_unsigned_width
-          if signed:
-            output_width = output_unsigned_width + 1
-          output_c_type = "int"+str(output_width) + "_t"
+          output_c_type = "int"+str(max_width) + "_t"
           if not signed:
             output_c_type = "u" + output_c_type
         # Shifts
