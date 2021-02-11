@@ -235,13 +235,14 @@ begin
     main_needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
     
     new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
+    text += "-- main functions always clock enabled\n"
     text += new_inst_name + " : entity work." + main_entity_name +" port map (\n"
     # Clock
     if main_needs_clk:
       text += "clk_" + clk_ext_str + ",\n"
     # Clock enable
     if main_needs_clk_en:
-      text += "to_unsigned(1,1), -- main function always clock enabled\n"
+      text += "to_unsigned(1,1),\n"
     # Clock cross in
     if main_needs_clk_cross_to_module:
       text += "clk_cross_to_module." + main_func + ",\n"
@@ -564,11 +565,12 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   else:
     # ENTITY
     rv += "-- Instantiate entity\n"
+    rv += "-- Top level funcs always synthesized as clock enabled\n"
     rv += entity_name +" : entity work." + entity_name + " port map (\n"
     if needs_clk:
       rv += "clk,\n"
     if needs_clk_en:
-      rv += "to_unsigned(1,1),-- Top level funcs always synthesized as clock enabled\n"
+      rv += "to_unsigned(1,1),\n"
     # Clock cross as needed
     if needs_clk_cross_to_module:
       rv += " clk_cross_to_module_input_reg,\n"
@@ -2735,9 +2737,9 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
         #print("hex_str",hex_str)
         #sys.exit(0)
         if need_resize:
-          return "resize(" + hex_str + ", " + str(width) + ")" # Extra resize needed
+          return "resize(unsigned'(" + hex_str + "), " + str(width) + ")" # Extra resize needed
         else:
-          return hex_str # No extra resizing needed
+          return "unsigned'("+hex_str+")" # No extra resizing needed
       else:
         return "to_unsigned(" + val_str + ", " + str(width) + ")"
     elif C_TYPE_IS_INT_N(c_type):
