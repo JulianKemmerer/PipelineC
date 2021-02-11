@@ -72,6 +72,7 @@ How to do module instantiation? Does that need to be macro based? #define to set
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
 Expose latencies of each instance as a constant for use in external vhdl package - not for use in pipelinec code
 Fix for vhdl restricted words. Append _restricted?
+Fix to remove useless int casts, ex. uint32->uint32 and do casts of ints as vhdl expr not funcs
 Do auto gen unsigned to array functions now that support array_N_t
 Use gcc array init instead of for loop many const ref tok assignments that are bulky?
 Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?
