@@ -3793,7 +3793,7 @@ def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, st
   state_reg_info = StateRegInfo()
   state_reg_info.name = state_reg_var
   state_reg_info.type_name = c_type
-  state_reg_info.init = c_ast_static_decl.init
+  state_reg_info.init = c_ast_static_decl.init # Static init must be const?
   state_reg_info.is_volatile = 'volatile' in c_ast_static_decl.quals
   state_reg_info.is_static = True
   
@@ -3838,13 +3838,30 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
     # Dont support struct init here yet
     if type(c_ast_decl.init) == c_ast.InitList:
       #print(c_ast_decl.init)
-      print("Dont support local variable struct/array init statement yet...", c_ast_decl.init.coord)
+      print("No support for (non-static) local variable struct/array init statement yet...", c_ast_decl.init.coord)
       sys.exit(-1)
-    
-    #print parent_c_ast_decl.init
-    lhs_ref_toks = (wire_name,)
-    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
-  
+      # For now user must specify all array elements, none assumed 0, not C spec
+      # Has expressions in the list
+      for init_expr in c_ast_decl.init.exprs:
+        # Do multiple for all specified ref toks
+        #C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC
+        # Named init or constant?
+        if type(init_expr) == c_ast.NamedInitializer:
+          pass
+        elif type(init_expr) == c_ast.Constant:
+          pass
+        else:
+          print("Ramona Reborn - Delicate Steve")
+          print("Whosey whats this init?",init_expr, init_expr.coord)
+          sys.exit(0)      
+    elif type(c_ast_decl.init) == c_ast.Constant:
+      # TODO is subset of above?
+      lhs_ref_toks = (wire_name,)
+      parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
+    else:
+      print("What init?",c_ast_decl.init.coord)
+      sys.exit(-1)
+   
   return parser_state.existing_logic
 
   
