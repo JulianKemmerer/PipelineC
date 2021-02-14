@@ -3854,13 +3854,13 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
           print("Ramona Reborn - Delicate Steve")
           print("Whosey whats this init?",init_expr, init_expr.coord)
           sys.exit(0)      
-    elif type(c_ast_decl.init) == c_ast.Constant:
+    else:
+      # Default connect node to single ref toks
       # TODO is subset of above?
       lhs_ref_toks = (wire_name,)
       parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
-    else:
-      print("What init?",c_ast_decl.init.coord)
-      sys.exit(-1)
+      #print("What init?",c_ast_decl.init.coord)
+      #sys.exit(-1)
    
   return parser_state.existing_logic
 

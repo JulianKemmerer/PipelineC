@@ -27,7 +27,7 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
   c_type_str = logic.wire_to_c_type[global_wire]
   return C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state)
 
-# Could be volatile global too
+# Could be volatile state too
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # Does this wire have an init?
   leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
@@ -37,23 +37,75 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     init = logic.state_regs[leaf].init
     
   if type(init) == c_ast.Constant:
-    val = int(init.value)
-    width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-    if WIRES_ARE_UINT_N([wire], logic) :
-      return "to_unsigned(" + str(val) + "," + str(width) + ")"
-    elif WIRES_ARE_INT_N([wire], logic):
-      return "to_signed(" + str(val) + "," + str(width) + ")"
-    else:
-      print("What type of int blah?")
-      sys.exit(-1)
+    return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
+  elif type(init) == c_ast.InitList:
+    # Hey vhdl syntax might make this easy 
+    # ...once I special case a portion of possible AST
+    # Only do for arrays
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      # Only int array
+      elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      if not C_TYPES_ARE_INTEGERS([elem_t]) or len(dims) > 1:
+        print("Only basic init list for ints for now...",init.coord)
+        sys.exit(-1)
+      array_size = dims[0]
       
+      # Construct named index assignments ( 0 => thing, 1 => thing2);
+      #int a[6] = { [1] = v1, v2, [4] = v4 };
+      #is equivalent to
+      #int a[6] = { 0, v1, v2, 0, v4, 0 };
+      index_to_vhdl_str = dict()
+      maybe_used_i = 0
+      for init_expr in init.exprs:
+        # named postion or assumed index?
+        if type(init_expr) == c_ast.NamedInitializer:
+          # Name needs to be a constant integer
+          #print(init_expr.name)
+          name = init_expr.name[0]
+          if name.type == 'int':
+            array_index = int(name.value)
+            maybe_used_i = array_index
+            value_c_ast_node = init_expr.expr
+          else:
+            print("Whats a not int doing in init array?",name,name.coord)
+            sys.exit(-1)
+        elif type(init_expr) == c_ast.Constant:
+          array_index = maybe_used_i
+          value_c_ast_node = init_expr
+        else:
+          print("Whats the whats init?",init_expr,init_expr.coord)
+          sys.exit(-1)
+        # next might not be named
+        maybe_used_i += 1
+        
+        # Handle value at positon
+        if type(value_c_ast_node) == c_ast.Constant:
+          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(str(value_c_ast_node.value), elem_t, parser_state) 
+        else:
+          print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
+          sys.exit(0)
+          
+      # Fill in missing as zero
+      for array_index in range(0,array_size):
+        if array_index not in index_to_vhdl_str:
+          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL('0', elem_t, parser_state);
+      #print(index_to_val_str)
+      
+      # Make vhdl str
+      text = "(\n"
+      for array_index in range(0,array_size):
+        text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
+      text = text.strip('\n').strip(',')
+      text += "\n)"
+      return text   
+    else:
+      print("Only init lists for arrays at the moment...",init.coord)
+      sys.exit(-1)
   # If not use null
   elif init is None:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
   else:
-    print("Invalid initializer for state variable:", wire, "in func",logic.func_name)
-    print(init)
-    print("Only simple integers for now...")
+    print("Unsupported initializer for state variable:", wire, "in func",logic.func_name,init.coord)
     sys.exit(-1)
     
 def CLK_EXT_STR(main_func, parser_state):
@@ -1933,7 +1985,7 @@ type feedback_vars_t is record'''
   
   if needs_regs:
     # Function to null out globals
-    rv += "\n-- Function to null out just global regs\n"
+    rv += "\n-- Function to null out just state regs\n"
     rv += "function registers_NULL return registers_t is\n"
     rv += ''' variable rv : registers_t;
   begin
@@ -2710,71 +2762,73 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
     
   return LHS
 
+
+def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
+  if c_type == 'char':
+    vhdl_char_str = "'" + val_str + "'"
+    if val_str == '\\n':
+      vhdl_char_str = "LF"
+    #HAHA have fun filling this in dummy    
+    return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
+  elif C_TYPE_IS_UINT_N(c_type):
+    width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+    #Hack hacky?
+    # A VHDL integer is defined from range -2147483648 to +2147483647
+    if int(val_str) > 2147483647:
+      #print("wire_name",wire_name)
+      #print("c_type",c_type)
+      #print("width",width)
+      hex_str = str(hex(int(val_str))).replace("0x","")
+      need_resize = len(hex_str)*4 > width
+      hex_str = 'X"' + hex_str + '"'
+      #print("hex_str",hex_str)
+      #sys.exit(0)
+      if need_resize:
+        return "resize(unsigned'(" + hex_str + "), " + str(width) + ")" # Extra resize needed
+      else:
+        return "unsigned'("+hex_str+")" # No extra resizing needed
+    else:
+      return "to_unsigned(" + val_str + ", " + str(width) + ")"
+  elif C_TYPE_IS_INT_N(c_type):
+    width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+    return "to_signed(" + val_str + ", " + str(width) + ")"
+  elif c_type == "float":
+    return "to_slv(to_float(" + val_str + ", 8, 23))"
+  else:
+    # ASSUMING ENUM AAUAUGHGHGHG????
+    #print "wire_name",wire_name
+    toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    toks.reverse()
+    local_name = toks[0]
+    enum_wire = local_name.split("$")[0]
+    if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
+      print("Non const enum constant?",enum_wire)
+      sys.exit(-1)
+    enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
+    #print "local_name",local_name
+    #print "enum_name",enum_name
+    
+    # Sanity check that enum exists?
+    match = False
+    for enum_type in parser_state.enum_to_ids_dict:
+      ids = parser_state.enum_to_ids_dict[enum_type]
+      if enum_name in ids:
+        match = True
+        break
+    if not match:
+      print(parser_state.enum_to_ids_dict)
+      print(enum_name, "doesn't look like an ENUM constant?")
+      sys.exit(-1)
+    
+    return enum_name
+      
 def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state): 
   # If a constant 
   if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
     # Use type to cast value string to type
     c_type =  Logic.wire_to_c_type[wire_name]
     val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
-    
-    if c_type == 'char':
-      vhdl_char_str = "'" + val_str + "'"
-      if val_str == '\\n':
-        vhdl_char_str = "LF"
-      #HAHA have fun filling this in dummy    
-      return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
-    elif C_TYPE_IS_UINT_N(c_type):
-      width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-      #Hack hacky?
-      # A VHDL integer is defined from range -2147483648 to +2147483647
-      if int(val_str) > 2147483647:
-        #print("wire_name",wire_name)
-        #print("c_type",c_type)
-        #print("width",width)
-        hex_str = str(hex(int(val_str))).replace("0x","")
-        need_resize = len(hex_str)*4 > width
-        hex_str = 'X"' + hex_str + '"'
-        #print("hex_str",hex_str)
-        #sys.exit(0)
-        if need_resize:
-          return "resize(unsigned'(" + hex_str + "), " + str(width) + ")" # Extra resize needed
-        else:
-          return "unsigned'("+hex_str+")" # No extra resizing needed
-      else:
-        return "to_unsigned(" + val_str + ", " + str(width) + ")"
-    elif C_TYPE_IS_INT_N(c_type):
-      width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-      return "to_signed(" + val_str + ", " + str(width) + ")"
-    elif c_type == "float":
-      return "to_slv(to_float(" + val_str + ", 8, 23))"
-    else:
-      # ASSUMING ENUM AAUAUGHGHGHG????
-      #print "wire_name",wire_name
-      toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
-      toks.reverse()
-      local_name = toks[0]
-      enum_wire = local_name.split("$")[0]
-      if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
-        print("Non const enum constant?",enum_wire)
-        sys.exit(-1)
-      enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
-      #print "local_name",local_name
-      #print "enum_name",enum_name
-      
-      # Sanity check that enum exists?
-      match = False
-      for enum_type in parser_state.enum_to_ids_dict:
-        ids = parser_state.enum_to_ids_dict[enum_type]
-        if enum_name in ids:
-          match = True
-          break
-      if not match:
-        print(parser_state.enum_to_ids_dict)
-        print(enum_name, "doesn't look like an ENUM constant?")
-        sys.exit(-1)
-      
-      return enum_name
-    
+    return CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name)
   else:
     #print wire_name, "IS NOT CONSTANT"
     return "write_pipe." + WIRE_TO_VHDL_NAME(wire_name, Logic)  
