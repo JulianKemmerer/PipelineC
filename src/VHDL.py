@@ -698,11 +698,9 @@ def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
     return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
   elif c_type_str == "float":
     return 32
-  elif c_type_str in parser_state.enum_to_ids_dict:
-    # Enum type, width is log2(elements)
-    num_ids = len(parser_state.enum_to_ids_dict[c_type_str])
-    bits = int(math.ceil(math.log(num_ids,2)))
-    return bits 
+  elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
+    # Enum type
+    return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(parser_state.enum_info_dict[c_type_str].int_c_type)
   else:
     if not allow_fail:
       print("Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str)
@@ -1458,7 +1456,7 @@ package c_structs_pkg is
   
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~   ENUMS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
     # Enum types
-    for enum_name in list(parser_state.enum_to_ids_dict.keys()):    
+    for enum_name in list(parser_state.enum_info_dict.keys()):    
       if enum_name not in types_written:
         done = False
         types_written.append(enum_name)
@@ -1466,7 +1464,7 @@ package c_structs_pkg is
         text += '''
   type ''' + enum_name + ''' is (
     ''' 
-        ids_list = parser_state.enum_to_ids_dict[enum_name]
+        ids_list = parser_state.enum_info_dict[enum_name].id_to_int_val.keys()
         for field in ids_list:
           text += '''
       ''' + field + ''','''
@@ -1475,6 +1473,49 @@ package c_structs_pkg is
         text += '''
   );
   '''
+        # to integer
+        func_decl_text = ""
+        func_body_text = ""
+        func_decl_text += '''
+function ''' + enum_name + '''_to_integer(e : ''' + enum_name + ''') return integer'''
+        func_body_text += ''' is
+begin
+    
+case(e) is\n'''
+        for id_str,int_val in parser_state.enum_info_dict[enum_name].id_to_int_val.items():
+          func_body_text += '''when ''' + id_str + ''' => return ''' + str(int_val) + ''';\n'''
+        func_body_text += '''
+end case;
+end function;
+    ''' 
+        text += func_decl_text + ";\n"
+        pkg_body_text += func_decl_text + func_body_text
+        
+        # from integer
+        func_decl_text = ""
+        func_body_text = ""
+        func_decl_text += '''
+function ''' + enum_name + '''_from_integer(i : integer) return ''' + enum_name
+        func_body_text += ''' is
+begin
+    
+case(i) is\n'''
+
+        default_id = list(parser_state.enum_info_dict[enum_name].id_to_int_val.keys())[0]
+        for id_str,int_val in parser_state.enum_info_dict[enum_name].id_to_int_val.items():
+          func_body_text += '''when ''' + str(int_val) + ''' => return ''' + id_str + ''';\n'''
+          if int_val == 0:
+            default_id = id_str
+        func_body_text += '''
+when others => assert False; return ''' + default_id + ''';
+end case;
+end function;
+    ''' 
+        text += func_decl_text + ";\n"
+        pkg_body_text += func_decl_text + func_body_text
+        
+         
+    
 
   
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~   ARRAYS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
@@ -1740,34 +1781,6 @@ end c_structs_pkg;
   f=open(path,"w")
   f.write(text)
   f.close()
-  
-# Sufjan Stevens - Adlai Stevenson
-# Similar to TYPE_RESOLVE_ASSIGNMENT_RHS
-def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
-  if vhdl_type.startswith("std_logic_vector"):
-    return ["",""]
-  elif vhdl_type.startswith("unsigned") or vhdl_type.startswith("signed"):
-    return ["std_logic_vector(",")"]
-  elif vhdl_type in parser_state.enum_to_ids_dict: # same name as c type hacky
-    num_ids = len(parser_state.enum_to_ids_dict[vhdl_type])
-    width = int(math.ceil(math.log(num_ids,2)))
-    return ["std_logic_vector(to_unsigned(" + vhdl_type + "'pos(" , ") ," + str(width) + "))"]
-  else:
-    return [vhdl_type + "_to_slv(",")"]
-    
-def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
-  if vhdl_type.startswith("std_logic_vector"):
-    return ["",""]
-  elif vhdl_type.startswith("unsigned"):
-    return ["unsigned(",")"] 
-  elif vhdl_type.startswith("signed"):
-    return ["signed(",")"]
-  elif vhdl_type in parser_state.enum_to_ids_dict: # same name as c type hacky
-    num_ids = len(parser_state.enum_to_ids_dict[vhdl_type])
-    width = int(math.ceil(math.log(num_ids,2)))
-    return [vhdl_type + "'val(to_integer(unsigned(", ")))"]
-  else:
-    return ["slv_to_" + vhdl_type + "(",")"]
 
 def LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state):
   # Submodules determine if logic needs port    
@@ -2479,8 +2492,6 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
     
   return rv
   
-
-      
 # Returns dict[stage_num]=stage_text
 def GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -2496,88 +2507,113 @@ def GET_C_ENTITY_PROCESS_PER_STAGE_TEXT(inst_name, logic, parser_state, TimingPa
   
   return per_stage_text
   
+# Sufjan Stevens - Adlai Stevenson
+# Similar to TYPE_RESOLVE_ASSIGNMENT_RHS
+def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
+  if vhdl_type.startswith("std_logic_vector"):
+    return ["",""]
+  elif vhdl_type.startswith("unsigned") or vhdl_type.startswith("signed"):
+    return ["std_logic_vector(",")"]
+  elif C_TO_LOGIC.C_TYPE_IS_ENUM(vhdl_type, parser_state): # same name as c type hacky
+    width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(parser_state.enum_info_dict[vhdl_type].int_c_type)
+    return ["std_logic_vector(to_unsigned(" + vhdl_type + "_to_integer(" , ") ," + str(width) + "))"]
+  else:
+    return [vhdl_type + "_to_slv(",")"]
+    
+def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
+  if vhdl_type.startswith("std_logic_vector"):
+    return ["",""]
+  elif vhdl_type.startswith("unsigned"):
+    return ["unsigned(",")"] 
+  elif vhdl_type.startswith("signed"):
+    return ["signed(",")"]
+  elif C_TO_LOGIC.C_TYPE_IS_ENUM(vhdl_type, parser_state): # same name as c type hacky
+    return [vhdl_type + "_from_integer(to_integer(unsigned(", ")))"]
+  else:
+    return ["slv_to_" + vhdl_type + "(",")"]
+  
 def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state):
   # Need conversion from right to left?
   right_type = logic.wire_to_c_type[driving_wire]
   #print "driving_wire",driving_wire, right_type
   left_type = logic.wire_to_c_type[driven_wire]
-  if left_type != right_type:
-    # DO VHDL CONVERSION FUNCTIONS
-    resize_toks = []
+  if left_type == right_type:
+    return RHS
     
-    # Combine driving and driven into one list
-    wires_to_check = [driving_wire, driven_wire]
-    # If both are of same type then VHDL resize should work
-    if WIRES_ARE_INT_N(wires_to_check, logic) or  WIRES_ARE_UINT_N(wires_to_check, logic):
-      # Do integer promotion conversion
-      right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-      left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-      # Can resize do smaller, and unsigned to unsigned too?
-      resize_toks = ["resize(", ", " + str(left_width) + ")" ]
-      
-    # Otherwise need to 
-    # UINT driving INT
-    elif WIRES_ARE_INT_N([driven_wire], logic) and WIRES_ARE_UINT_N([driving_wire], logic):
-      right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-      left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-      # Just need to add sign bit
+  # DO VHDL CONVERSION FUNCTIONS
+  resize_toks = []
+  
+  # Combine driving and driven into one list
+  wires_to_check = [driving_wire, driven_wire]
+  # If both are of same type then VHDL resize should work
+  if WIRES_ARE_INT_N(wires_to_check, logic) or  WIRES_ARE_UINT_N(wires_to_check, logic):
+    # Do integer promotion conversion
+    right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    # Can resize do smaller, and unsigned to unsigned too?
+    resize_toks = ["resize(", ", " + str(left_width) + ")" ]
+    
+  # Otherwise need to 
+  # UINT driving INT
+  elif WIRES_ARE_INT_N([driven_wire], logic) and WIRES_ARE_UINT_N([driving_wire], logic):
+    right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    # Just need to add sign bit
+    #signed(std_logic_vector(resize(x,left_width)))
+    resize_toks = ["signed(std_logic_vector(resize(", ", " + str(left_width) + ")))" ]    
+    
+  # INT driving UINT
+  elif WIRES_ARE_UINT_N([driven_wire], logic) and WIRES_ARE_INT_N([driving_wire], logic):
+    right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    
+    # Dont infer sign extend - why not past me? Were you smarter? Does this break mult?
+    if left_width > right_width:
+      resize_toks = ["unsigned(std_logic_vector(resize(", "," + str(left_width) + ")))" ]
+    else:     
+      # Cast int to slv then to unsigned then resize
+      #resize(unsigned(std_logic_vector(x)),31)
       #signed(std_logic_vector(resize(x,left_width)))
-      resize_toks = ["signed(std_logic_vector(resize(", ", " + str(left_width) + ")))" ]    
-      
-    # INT driving UINT
-    elif WIRES_ARE_UINT_N([driven_wire], logic) and WIRES_ARE_INT_N([driving_wire], logic):
-      right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-      left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-      
-      # Dont infer sign extend - why not past me? Were you smarter? Does this break mult?
-      if left_width > right_width:
-        resize_toks = ["unsigned(std_logic_vector(resize(", "," + str(left_width) + ")))" ]
-      else:     
-        # Cast int to slv then to unsigned then resize
-        #resize(unsigned(std_logic_vector(x)),31)
-        #signed(std_logic_vector(resize(x,left_width)))
-        resize_toks = ["resize(unsigned(std_logic_vector(", "))," + str(left_width) + ")" ] 
-      
-    # ENUM DRIVING U/INT is ok
-    elif (WIRES_ARE_INT_N([driven_wire], logic) or WIRES_ARE_UINT_N([driven_wire], logic)) and (logic.wire_to_c_type[driving_wire] in parser_state.enum_to_ids_dict):
-      is_signed = WIRES_ARE_INT_N([driven_wire], logic)
-      left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-      if right_type in parser_state.enum_to_ids_dict:
-        num_ids = len(parser_state.enum_to_ids_dict[right_type])
-        right_width = (num_ids-1).bit_length() #0->numids-1
-      else:
-        print("Expected enum type?",driving_wire)
-        sys.exit(-1)
-      max_width = max(left_width,right_width)
-      if is_signed:
-        resize_toks = ["to_signed(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
-      else:
-        resize_toks = ["to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + ")"]
+      resize_toks = ["resize(unsigned(std_logic_vector(", "))," + str(left_width) + ")" ] 
     
-    # U/INT driving ENUM is ok
-    elif (logic.wire_to_c_type[driven_wire] in parser_state.enum_to_ids_dict) and (WIRES_ARE_INT_N([driving_wire], logic) or WIRES_ARE_UINT_N([driving_wire], logic)):
-      resize_toks = [left_type + "'val(to_integer(" , "))"]
-      
-    # Making yourself sad to work around issues you didnt forsee is ok
-    elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
-      # Assigning to dumb , dumb = (data => value);  -- no others in struct
-      resize_toks = ["(data => ",")"]
-    elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(right_type, parser_state):
-      # Assigning to arry from dumb
-      # array = dumb.data
-      resize_toks = ["",".data"]
+  # ENUM DRIVING U/INT is ok
+  elif (WIRES_ARE_INT_N([driven_wire], logic) or WIRES_ARE_UINT_N([driven_wire], logic)) and C_TO_LOGIC.C_TYPE_IS_ENUM(logic.wire_to_c_type[driving_wire], parser_state):
+    is_signed = WIRES_ARE_INT_N([driven_wire], logic)
+    left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    if C_TO_LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
+      right_width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(parser_state.enum_info_dict[right_type].int_c_type)
     else:
-      print("What cant support this assignment in vhdl?")
-      print(driving_wire, right_type)
-      print("DRIVING")
-      print(driven_wire, left_type)
-      #print(0/0)
+      print("Expected enum type?",driving_wire)
       sys.exit(-1)
+    max_width = max(left_width,right_width)
+    if is_signed:
+      resize_toks = ["to_signed(" + right_type + "_to_integer(" , ") ," + str(max_width) + ")"]
+    else:
+      resize_toks = ["to_unsigned(" + right_type + "_to_integer(" , ") ," + str(max_width) + ")"]
+  
+  # U/INT driving ENUM is ok
+  elif C_TO_LOGIC.C_TYPE_IS_ENUM(logic.wire_to_c_type[driven_wire], parser_state) and (WIRES_ARE_INT_N([driving_wire], logic) or WIRES_ARE_UINT_N([driving_wire], logic)):
+    resize_toks = [left_type + "_from_integer(to_integer(" , "))"]
     
-    
-    # APPPLY CONVERSION
-    RHS = resize_toks[0] + RHS + resize_toks[1] 
-    
+  # Making yourself sad to work around issues you didnt forsee is ok
+  elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
+    # Assigning to dumb , dumb = (data => value);  -- no others in struct
+    resize_toks = ["(data => ",")"]
+  elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(right_type, parser_state):
+    # Assigning to arry from dumb
+    # array = dumb.data
+    resize_toks = ["",".data"]
+  else:
+    print("What cant support this assignment in vhdl?")
+    print(driving_wire, right_type)
+    print("DRIVING")
+    print(driven_wire, left_type)
+    #print(0/0)
+    sys.exit(-1)
+  
+  
+  # APPPLY CONVERSION
+  RHS = resize_toks[0] + RHS + resize_toks[1]
       
   return RHS
 
@@ -2810,13 +2846,13 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     
     # Sanity check that enum exists?
     match = False
-    for enum_type in parser_state.enum_to_ids_dict:
-      ids = parser_state.enum_to_ids_dict[enum_type]
+    for enum_type in parser_state.enum_info_dict:
+      ids = parser_state.enum_info_dict[enum_type].id_to_int_val.keys()
       if enum_name in ids:
         match = True
         break
     if not match:
-      print(parser_state.enum_to_ids_dict)
+      print(parser_state.enum_info_dict)
       print(enum_name, "doesn't look like an ENUM constant?")
       sys.exit(-1)
     

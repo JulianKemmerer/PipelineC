@@ -674,29 +674,14 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
   
   # HACK OH GOD NO dont look up enums
   # Left
-  #if left_type in parser_state.enum_to_ids_dict:
-  # num_ids = len(parser_state.enum_to_ids_dict[left_type])
-  # left_width = int(math.ceil(math.log(num_ids,2)))
-  #else:
   left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
   # Right
-  #if right_type in parser_state.enum_to_ids_dict:
-  # num_ids = len(parser_state.enum_to_ids_dict[right_type])
-  # right_width = int(math.ceil(math.log(num_ids,2)))
-  #else:
   right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     
   max_width = max(left_width,right_width)
     
   # Left
-  #if left_type in parser_state.enum_to_ids_dict:
-  # left_cast_toks = ["std_logic_vector(to_unsigned(" + left_type + "'pos(" , ") ," + str(max_width) + "))"]
-  #else:
   left_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
-  # Right
-  #if right_type in parser_state.enum_to_ids_dict:
-  # right_cast_toks = ["std_logic_vector(to_unsigned(" + right_type + "'pos(" , ") ," + str(max_width) + "))"]
-  #else:
   right_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
 
   

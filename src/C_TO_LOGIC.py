@@ -1284,14 +1284,12 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
       #print logic.wire_driven_by
       driving_wire = containing_func_logic.wire_driven_by[input_wire_name]
       c_type = containing_func_logic.wire_to_c_type[driving_wire]
-      
+    
+    ''' Shouldnt need this here, is handled for general BIN OP?
     # If driving wire c type is enum and this is BIN OP == then replace with input port wire with uint
-    if (c_type in parser_state.enum_to_ids_dict) and (submodule_logic_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)):
-      #print "submodule_logic_name", submodule_logic_name, "BIN_OP_EQ_NAME ENUM"
-      #print "right enum"
-      num_ids = len(parser_state.enum_to_ids_dict[c_type])
-      width = int(math.ceil(math.log(num_ids,2)))
-      c_type = "uint" + str(width) + "_t"
+    if (C_TYPE_IS_ENUM(c_type, parser_state)) and (submodule_logic_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)):
+      c_type = ...
+    '''
     
     # Record input info
     submodule_logic.wire_to_c_type[input_name] = c_type
@@ -2914,8 +2912,7 @@ def C_TYPE_IS_STRUCT(c_type_str, parser_state):
   return (c_type_str in parser_state.struct_to_field_type_dict) or SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type_str, parser_state)
   
 def C_TYPE_IS_ENUM(c_type_str, parser_state):
-  #print("parser_state.enum_to_ids_dict",parser_state.enum_to_ids_dict)
-  return c_type_str in parser_state.enum_to_ids_dict
+  return c_type_str in parser_state.enum_info_dict
   
 def C_TYPE_IS_ARRAY(c_type):
   return "[" in c_type and c_type.endswith("]")
@@ -3611,9 +3608,9 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
   
   #ORIG_WIRE_NAME_TO_ORIG_VAR_NAME
   
-  if (maybe_not_enum_wire in existing_logic.wire_to_c_type) and (existing_logic.wire_to_c_type[maybe_not_enum_wire] in parser_state.enum_to_ids_dict):
+  if (maybe_not_enum_wire in existing_logic.wire_to_c_type) and C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[maybe_not_enum_wire],parser_state):
     return True
-  elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and (existing_logic.wire_to_c_type[maybe_not_enum_wire] not in parser_state.enum_to_ids_dict):
+  elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and not C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[maybe_not_enum_wire], parser_state):
     return False
   elif maybe_not_enum_wire in existing_logic.inputs: 
     return False
@@ -3643,7 +3640,7 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):
   #   output
   #
   # Then must be ENUM 
-  if (base_name in existing_logic.wire_to_c_type) and (existing_logic.wire_to_c_type[base_name] in parser_state.enum_to_ids_dict) and WIRE_IS_CONSTANT(base_name):
+  if (base_name in existing_logic.wire_to_c_type) and C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[base_name], parser_state) and WIRE_IS_CONSTANT(base_name):
     return True
   elif base_name in existing_logic.inputs:
     return False
@@ -3655,8 +3652,8 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):
     return False
   else:
     # Check that is one of the enum consts available at least :(
-    for enum_type in parser_state.enum_to_ids_dict:
-      ids = parser_state.enum_to_ids_dict[enum_type]
+    for enum_type in parser_state.enum_info_dict:
+      ids = parser_state.enum_info_dict[enum_type].id_to_int_val.keys()
       for id_str in ids:
         if id_str == base_name:
           return True
@@ -3678,8 +3675,8 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
   # Then have to rely on user comparing against known enum type wire
   enum_type = None
   enum_name_matches = 0
-  for enum,ids_dict in parser_state.enum_to_ids_dict.items():
-    if value in ids_dict:
+  for enum,enum_info in parser_state.enum_info_dict.items():
+    if value in enum_info.id_to_int_val.keys():
       enum_type = enum
       enum_name_matches +=1
   if enum_name_matches == 1:
@@ -3732,7 +3729,7 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
   
   return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
-def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
   if value_str.startswith("0x"):
     hex_str = value_str.replace("0x","")
     hex_str = hex_str.strip("LL").strip("U")
@@ -3777,15 +3774,16 @@ def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_t
   
   if is_negated:
     value = value * -1
+    
+  return value,c_type_str
+
+def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+  value,c_type_str = CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
   wire_name = BUILD_CONST_WIRE(str(value), c_ast_node)
-  
   if not(c_type_str is None):
     parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
-    
-    
   # Connect the constant to the wire it drives
   parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
-       
   return parser_state.existing_logic
  
 def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, state_reg_var, c_type):
@@ -5423,7 +5421,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   # Determine op string to use in func name
   is_bit_shift = False
   is_bitwise = False
-  has_bit_growth = False
+  has_bit_growth = False # Float not included
   if c_ast_bin_op_str == ">":
     c_ast_op_str = BIN_OP_GT_NAME
   elif c_ast_bin_op_str == ">=":
@@ -5443,7 +5441,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     has_bit_growth = True
   elif c_ast_bin_op_str == "/":
     c_ast_op_str = BIN_OP_DIV_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "==":
     c_ast_op_str = BIN_OP_EQ_NAME
   elif c_ast_bin_op_str == "!=":
@@ -5534,13 +5531,11 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   
   # Replace ENUM with INT type of input wire so cast happens? :/?
   # Left
-  if left_type in parser_state.enum_to_ids_dict:
+  if left_type in parser_state.enum_info_dict:
     #print "left enum"
     # Set BIN OP input wire as UINT
     enum_type = left_type
-    num_ids = len(parser_state.enum_to_ids_dict[enum_type])
-    left_width = int(math.ceil(math.log(num_ids,2)))
-    left_type = "uint" + str(left_width) + "_t"
+    left_type = parser_state.enum_info_dict[enum_type].int_c_type
     # Set driver of input as ENUM
     # This is really only necessary for constant driving wires
     # which wont have known type without this
@@ -5555,12 +5550,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_right_input]
       parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
   # Right
-  if right_type in parser_state.enum_to_ids_dict:
+  if right_type in parser_state.enum_info_dict:
     # Set BIN OP input wire as UINT
     enum_type = right_type
-    num_ids = len(parser_state.enum_to_ids_dict[enum_type])
-    right_width = int(math.ceil(math.log(num_ids,2)))
-    right_type = "uint" + str(right_width) + "_t"
+    right_type = parser_state.enum_info_dict[enum_type].int_c_type
     # Set driver of input as ENUM
     # This is really only necessary for constant driving wires
     # which wont have known type without this
@@ -6264,7 +6257,7 @@ class ParserState:
     self.func_name_to_calls = dict() # dict[func_name] = set(called_func_names)
     self.func_names_to_called_from = dict() # dict[func_name] = set(calling_func_names)
     self.struct_to_field_type_dict = dict()
-    self.enum_to_ids_dict = dict()
+    self.enum_info_dict = dict()
     self.global_state_regs = dict() # name->state reg info
     
     # Parsed from function defintions
@@ -6283,6 +6276,7 @@ class ParserState:
     self.func_marked_wires = set()
     self.func_marked_blackbox = set()
     self.func_marked_debug = set()
+    self.marked_onehot = set()
     self.part = None
     
     # Clock crossing info
@@ -6313,7 +6307,7 @@ class ParserState:
       rv.existing_logic = self.existing_logic.DEEPCOPY()
     
     rv.struct_to_field_type_dict = dict(self.struct_to_field_type_dict)
-    rv.enum_to_ids_dict = dict(self.enum_to_ids_dict)
+    rv.enum_info_dict = dict(self.enum_info_dict)
     rv.global_state_regs = dict(self.global_state_regs)
     
     rv.func_name_to_calls = dict(self.func_name_to_calls)
@@ -6323,6 +6317,7 @@ class ParserState:
     rv.main_clk_group = dict(self.main_clk_group)
     rv.func_marked_wires = set(self.func_marked_wires)
     rv.func_marked_blackbox = set(self.func_marked_blackbox)
+    rv.marked_onehot = set(self.marked_onehot)
     rv.part = self.part
     
     self.clk_cross_var_info = dict(self.clk_cross_var_info)
@@ -6494,7 +6489,7 @@ def PARSE_FILE(c_filename):
         # Parse definitions first before code structure
         print("Parsing non-function definitions...", flush=True)
         # Get the parsed enum info
-        parser_state.enum_to_ids_dict = GET_ENUM_IDS_DICT(parser_state.c_file_ast)
+        parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
         # Get the parsed struct def info
         parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
         # Get global state regs (global regs, volatile globals) info
@@ -6921,49 +6916,99 @@ def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
     
   return var_name
 
-_printed_GET_ENUM_IDS_DICT=False
-def GET_ENUM_IDS_DICT(c_file_ast):
+
+
+class EnumInfo():
+  def __init__(self):
+    self.name = None
+    self.id_to_int_val = OrderedDict()
+    self.int_c_type = None
+
+_printed_GET_ENUM_INFO_DICT=False
+def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
   # Read in file with C parser and get function def nodes
   rv = dict()
   enum_defs = GET_C_AST_ENUM_DEFS(c_file_ast)
   for enum_def in enum_defs:
     if enum_def.name is None:
-      global _printed_GET_ENUM_IDS_DICT
-      if not _printed_GET_ENUM_IDS_DICT:
+      global _printed_GET_ENUM_INFO_DICT
+      if not _printed_GET_ENUM_INFO_DICT:
         print("WARNING: Must use enum_name and enum_alias in enum definitions... for now... Ex.")
         print('''typedef enum enum_name {
   STATE0,
   STATE1
 } enum_alias;''')
-        _printed_GET_ENUM_IDS_DICT = True
+        _printed_GET_ENUM_INFO_DICT = True
       continue
     
     #sys.exit(-1)
+    
     enum_name = str(enum_def.name)
     #print "struct_name",struct_name
-    rv[enum_name] = []
+    rv[enum_name] = EnumInfo()
+    rv[enum_name].name = enum_name
+    is_one_hot = enum_name in parser_state.marked_onehot
+    #print(enum_name)
+    #print(is_one_hot)
     #casthelp(enum_def.values)
     #sys.exit(-1)
+    maybe_enum_index_or_val = 0 # dont mix one hot with specified values
+    def index_to_val(index, one_hot):
+      if not one_hot:
+        return index
+      else:
+        return 1<<index
+    # Calculate max width and if signed
+    max_width = 0
+    signed = False
     for child in enum_def.values.enumerators:
-      if len(child.children()) > 0:
-        child.show()
-        print("Don't assign enums values for now OK?",enum_def.coord)
-        sys.exit(-1)     
-      
-      #sys.exit(-1)
+      # ID
       id_str = str(child.name)
-      #print id_str
-      rv[enum_name].append(id_str)
       
-      '''
-      type_name = str(child.children()[0][1].children()[0][1].names[0])
-      rv[struct_name][field_name] = type_name
+      # Get int value
+      if child.value is None:
+        # Find next unused value
+        val = index_to_val(maybe_enum_index_or_val, is_one_hot)
+        while val in rv[enum_name].id_to_int_val.values():
+          maybe_enum_index_or_val += 1
+          val = index_to_val(maybe_enum_index_or_val, is_one_hot)
+        c_type = "uint" + str(val.bit_length()) + "_t"
+        next_index_or_val = maybe_enum_index_or_val + 1
+      else:
+        if type(child.value) != c_ast.Constant: # Negated values are unary operators
+          print("Only unsigned constants for enum values for now!",child.value.coord)
+          sys.exit(-1)
+        is_negated=False
+        val_str = str(child.value.value)
+        val,c_type = CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, child.value.value, is_negated)
+        next_index_or_val = val + 1
+      rv[enum_name].id_to_int_val[id_str] = val
+      #print(id_str, val)
       
-      if struct_def.name is None:
-        sys.exit(-1)
-      '''
-  #print(rv)
-  #sys.exit(-1)
+      # Accum max width and sign
+      width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+      max_width = max(max_width, width)
+      signed |= VHDL.C_TYPE_IS_INT_N(c_type)
+      
+      # Next value
+      maybe_enum_index_or_val = next_index_or_val
+      
+    # C type for this enum comes from max width
+    rv[enum_name].int_c_type = "int" + str(max_width) + "_t"
+    if not signed:
+      rv[enum_name].int_c_type = "u" + rv[enum_name].int_c_type
+    #print(rv[enum_name].int_c_type)
+    #print("=")
+    
+    
+    # Sanity checks
+    if len(rv[enum_name].id_to_int_val.keys()) != len(set(rv[enum_name].id_to_int_val.keys())):
+      print("Duplicate identifiers in enum", enum_name)
+      sys.exit(-1)
+    if len(rv[enum_name].id_to_int_val.values()) != len(set(rv[enum_name].id_to_int_val.values())):
+      print("Duplicate values in enum", enum_name)
+      sys.exit(-1)
+  
   return rv
 
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
@@ -7191,6 +7236,11 @@ def APPEND_PRAGMA_INFO(parser_state):
         print("Already set part to:",parser_state.part,"!=",part)
         sys.exit(-1)
       parser_state.part = part
+      
+    # ONE_HOT
+    if name=="ONE_HOT":
+      thing = toks[1]
+      parser_state.marked_onehot.add(thing)
   
   
   # Sanity checks
