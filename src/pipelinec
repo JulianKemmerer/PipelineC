@@ -21,7 +21,6 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-C array initalizers - DO OTHERS => to save text!
 Get DK's RISCV emulator simulating+confirm can implement
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Make sure block ram clock enables work

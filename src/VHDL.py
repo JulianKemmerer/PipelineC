@@ -85,18 +85,15 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
           print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
           sys.exit(0)
           
-      # Fill in missing as zero
-      for array_index in range(0,array_size):
-        if array_index not in index_to_vhdl_str:
-          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL('0', elem_t, parser_state);
-      #print(index_to_val_str)
+      # Do not fill in as zeros, use others=>
       
       # Make vhdl str
       text = "(\n"
-      for array_index in range(0,array_size):
+      for array_index in index_to_vhdl_str:
         text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
-      text = text.strip('\n').strip(',')
-      text += "\n)"
+      text += "others => " + CONST_VAL_STR_TO_VHDL("0", elem_t, parser_state) + ")"
+      #text = text.strip('\n').strip(',')
+      #text += "\n)"
       return text   
     else:
       print("Only init lists for arrays at the moment...",init.coord)
@@ -2042,7 +2039,7 @@ type feedback_vars_t is record'''
     if submodule_logic.is_clock_crossing:
       continue
     
-    rv += "-- " + instance_name + "\n"
+    rv += "-- " + inst + "\n"
     # Clock enable
     if submodule_logic_needs_clk_en:
       ce_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
