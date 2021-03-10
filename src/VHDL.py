@@ -750,12 +750,13 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
   # IS RAW VHDL
   if  (
       logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME or
+      logic_func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME) or
       logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_") or
     ( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
-      ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_EQ_NAME)  ) or #and C_TYPES_ARE_INTEGERS(input_c_types)
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_NEQ_NAME)  ) or #and C_TYPES_ARE_INTEGERS(input_c_types)
@@ -1852,6 +1853,30 @@ def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
   return needs_self_regs or len(Logic.state_regs) > 0
   
+def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+  format_string = Logic.c_ast_node.args.exprs[0].value
+  formats = C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_FORMATS(Logic.c_ast_node)
+
+  # Make a vhdl format string working left to right replacing as you go
+  vhdl_format_string = format_string[:]
+  vhdl_format_string = vhdl_format_string.replace('\\n', '"&LF&"')
+  for i,f in enumerate(formats): 
+    vhdl_arg_str = '"&' + f.vhdl_to_string_toks[0] + "arg" + str(i) + f.vhdl_to_string_toks[1] + '&"'
+    vhdl_format_string = vhdl_format_string.replace(f.specifier, vhdl_arg_str, 1)
+  
+  text = ""
+  text += "\nbegin\n"
+  # Process for each arg - 2008 all use ok?
+  text += "-- synthesis translate_off\n"
+  text += "process(all) is \nbegin\n"
+  text += '''
+if CLOCK_ENABLE(0) = '1' then
+  write(output, ''' + vhdl_format_string + ''');
+end if;\n'''
+  text += "end process;\n"
+  text += "-- synthesis translate_on\n"
+  return text
+  
 def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     # Logic should have exactly one __vhdl__ func submodule to get text from
     if len(Logic.submodule_instances) != 1:
@@ -2158,6 +2183,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
     
   rv = ""
+  rv += "library std;\n"
+  rv += "use std.textio.all;\n"
   rv += "library ieee;" + "\n"
   rv += "use ieee.std_logic_1164.all;" + "\n"
   rv += "use ieee.numeric_std.all;" + "\n"
@@ -2230,6 +2257,9 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   # VHDL func replaces arch decl and body
   elif Logic.is_vhdl_text_module:
     rv += GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
+  # Printf another special case woo?
+  elif Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
+    rv += GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   else:
     # Get declarations for this arch
     rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
@@ -2355,14 +2385,16 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
       # Skip clock cross
       if submodule_logic.is_clock_crossing:
         continue
-      
-      has_submodules_to_print = True        
+        
       new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
-      submodule_text += " -- " + new_inst_name + "\n"
-      # Outputs
-      for out_port in submodule_logic.outputs:
-        out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-        submodule_text += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+      if len(submodule_logic.outputs) > 0:
+        has_submodules_to_print = True        
+        submodule_text += " -- " + new_inst_name + "\n"
+        # Outputs
+        for out_port in submodule_logic.outputs:
+          out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+          submodule_text += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+        
   if has_submodules_to_print:
     process_sens_list += submodule_text 
     
@@ -2968,22 +3000,22 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name
   
   # Maybe drive clock enable
   if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
-    text += "     -- Clock enable" + "\n"
+    text += "   -- Clock enable" + "\n"
     ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
-    text += "     " + WIRE_TO_VHDL_NAME(ce_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
+    text += "   " + WIRE_TO_VHDL_NAME(ce_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
     
   # Drive input ports
-  text += "     -- Inputs" + "\n"
+  text += "   -- Inputs" + "\n"
   for input_port in submodule_logic.inputs:
     input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
-    text += "     " + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
+    text += "   " + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
 
   # Only do output connection if zero clk 
   if submodule_latency_from_container_logic == 0:
-    text += "     -- Outputs" + "\n"
+    text += "   -- Outputs" + "\n"
     for output_port in submodule_logic.outputs:
       output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
-      text +=  "      " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
+      text +=  "   " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
     
   return text
 

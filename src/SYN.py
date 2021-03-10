@@ -2886,6 +2886,8 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
     return False # No idea what user has in there
   elif logic.is_vhdl_func or logic.is_vhdl_expr:
     return True
+  elif logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
+    return True
   else:
     # Maybe all submodules are zero delay?
     if len(logic.submodule_instances) > 0:

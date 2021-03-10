@@ -32,6 +32,7 @@ VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
 CAST_FUNC_NAME_PREFIX = "CAST"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
+PRINTF_FUNC_NAME = "printf"
 
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
@@ -1299,7 +1300,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   # Try to get output port type from containing logic
   # Fall back on type of what is driven
   output_port_name = RETURN_WIRE_NAME
-  submodule_logic.outputs.append(RETURN_WIRE_NAME)
   output_wire_name = submodule_inst + SUBMODULE_MARKER + output_port_name
   c_type = None
   if output_wire_name in containing_func_logic.wire_to_c_type:
@@ -1314,8 +1314,12 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
         sys.exit(-1)
       c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
     else:
-      # Fine if vhdl func
-      if submodule_logic.func_name != VHDL_FUNC_NAME:
+      # Fine if vhdl func or other build in stuff like printf?
+      if submodule_logic.func_name == VHDL_FUNC_NAME:
+        pass
+      elif submodule_logic.func_name.startswith(PRINTF_FUNC_NAME):
+        pass
+      else:
         print("containing_func_logic.func_name",containing_func_logic.func_name)
         print("output_wire_name",output_wire_name)
         #print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
@@ -1323,10 +1327,11 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
           print(wire,"=>",containing_func_logic.wire_drives[wire])
         print("Input type to output type mapping assumption for built in submodule output ")
         print(submodule_logic.func_name)
-        sys.exit(-1)   
+        sys.exit(-1)
   
   # Record output type
   if c_type is not None:
+    submodule_logic.outputs.append(output_port_name)
     submodule_logic.wire_to_c_type[output_port_name]=c_type
     
   # Record if vhdl func
@@ -4969,13 +4974,16 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   parser_state.existing_logic.submodule_instance_to_c_ast_node[func_inst_name]=func_c_ast_node
   
   # Connect clock enable for this func if needed
+  # For now can only look up parsed (not built in) functions
+  # OK since up until printf, all built in funcs were pure, no clock enable
   if func_name in parser_state.FuncLogicLookupTable:
     func_def_logic_object = parser_state.FuncLogicLookupTable[func_name]
     if LOGIC_NEEDS_CLOCK_ENABLE(func_def_logic_object, parser_state):
       ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
       func_ce_wire = func_inst_name+SUBMODULE_MARKER+CLOCK_ENABLE_NAME
       #print(func_ce_wire,"<=",ce_driver_wire)
-      parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, func_c_ast_node)  
+      parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+      parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, func_c_ast_node)
 
   # Record all input port names for this submodule
   # This might not be needed but not thinking about that now
@@ -5064,7 +5072,7 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
   
   # TODO use needs clock too?
   # Look for clock cross submodule ending in _READ() implying input 
-  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs or logic.is_clock_crossing
+  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs or logic.is_clock_crossing or logic.func_name.startswith(PRINTF_FUNC_NAME)
   
   # Check submodules too
   needs = i_need
@@ -5111,6 +5119,110 @@ def BUILD_INST_NAME(prepend_text,func_base_name, c_ast_node):
   file_coord_str = C_AST_NODE_COORD_STR(c_ast_node)
   inst_name = prepend_text + func_base_name + "[" + file_coord_str + "]"
   return inst_name
+
+class PrintfFormat:
+  def __init__(self):
+    self.index = None
+    self.specifier = None
+    self.c_type = None
+    self.vhdl_to_string_toks = [None,None]
+    self.base = None
+    
+def PRTINTF_STRING_TO_FORMATS(format_string):
+  rv = []
+  # Parse format string to get types of arguments
+  # Thanks internet, https://stackoverflow.com/questions/30011379/how-can-i-parse-a-c-format-string-in-python
+  import re
+  cfmt='''\
+  (                                  # start of capture group 1
+  %                                  # literal "%"
+  (?:                                # first option
+  (?:[-+0 #]{0,5})                   # optional flags
+  (?:\d+|\*)?                        # width
+  (?:\.(?:\d+|\*))?                  # precision
+  (?:h|l|ll|w|I|I32|I64)?            # size
+  [cCdiouxXeEfgGaAnpsSZ]             # type
+  ) |                                # OR
+  %%)                                # literal "%%"
+  '''
+  format_specifier_tups = tuple((m.start(1), m.group(1)) for m in re.finditer(cfmt, format_string, flags=re.X))
+  for format_specifier_tup in format_specifier_tups:
+    index,format_specifier = format_specifier_tup
+    f = PrintfFormat()
+    f.index = index
+    f.specifier = format_specifier
+    if format_specifier == "%d":
+      f.c_type = "int32_t"
+      f.base = 10
+      f.vhdl_to_string_toks = ["integer'image(to_integer(","))"]
+    elif format_specifier == "%X": # hstring is UPPER CASE
+      f.c_type = "uint32_t"
+      f.base = 16
+      f.vhdl_to_string_toks = ["to_hstring(",")"]
+    else:
+      print("TODO: Unsupported printf format:", format_specifier, c_ast_func_call.coord)
+      sys.exit(-1)
+      
+    rv.append(f)
+
+  return rv
+        
+def C_AST_PRINTF_FUNC_CALL_TO_FORMATS(c_ast_func_call):
+  args = c_ast_func_call.args.exprs
+  str_arg = args[0]
+  format_args = []
+  if len(args) > 1:
+    format_args = args[1:]
+  if str_arg.type != 'string':
+    print("Hey now, simple printfs for now!", c_ast_func_call.coord)
+    sys.exit(-1)
+  format_string = str_arg.value
+  return PRTINTF_STRING_TO_FORMATS(format_string)
+
+def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_text, parser_state):
+  # Heyo variadic functions
+  # Need to construct a function name, like hacky const ref funs
+  # Sanity easily visible const strings
+  formats = C_AST_PRINTF_FUNC_CALL_TO_FORMATS(c_ast_func_call)
+  args = c_ast_func_call.args.exprs
+  str_arg = args[0]
+  format_args = []
+  if len(args) > 1:
+    format_args = args[1:]
+  arg_c_types = []
+  arg_base = []
+  for f in formats:
+    arg_c_types.append(f.c_type)
+    arg_base.append(f.base)
+  # Make up a func call to eval
+  func_base_name = PRINTF_FUNC_NAME + "_" + C_AST_NODE_COORD_STR(c_ast_func_call)
+  base_name_is_name = True # Dont need type into if coord str is enough?
+  input_drivers = format_args
+  input_driver_types = arg_c_types
+  input_port_names = ["arg"+str(i) for i in range(0,len(format_args))]
+  output_driven_wire_names = driven_wire_names # Probably none?
+  # Printf is first built in with clock enable?
+  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+  func_ce_wire = func_inst_name+SUBMODULE_MARKER+CLOCK_ENABLE_NAME
+  parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+  # This is suspiciously stolen from n arg where it doesnt happen since printf is first
+  # built in needing clock enable?
+  # Hey future me - hope things are still kool
+  ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
+  parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, c_ast_func_call)
+  # Then regular narg? Oh come on?
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(prepend_text, 
+                                  c_ast_func_call, 
+                                  func_base_name, 
+                                  base_name_is_name,
+                                  input_drivers,
+                                  input_driver_types,
+                                  input_port_names,
+                                  output_driven_wire_names,
+                                  parser_state)
+  
+  
+  return parser_state.existing_logic
   
 def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   #print c_ast_func_call.coord
@@ -5162,8 +5274,12 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   if not(func_name in FuncLogicLookupTable):
     # Uhh.. lets check for some built in compiler things because
     # stacking complexity without real planning is like totally rad
+    # Dude - rad indeed, lets keep it going with printf
+    # Animal Collective - Sand That Moves
     if func_name == VHDL_FUNC_NAME:
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
+    elif func_name == PRINTF_FUNC_NAME:
+      return C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
       
     # Ok panic
     print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")

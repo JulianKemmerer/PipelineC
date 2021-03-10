@@ -17,7 +17,7 @@ A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthes
 
 1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But mostly compileable by gcc for doing basic functional verification/'simulation'.
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
-2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and somewhat human readable VHDL. Hooks exist for inserting raw VHDL / black boxes.
+2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and human readable+debuggable VHDL. Hooks exist for inserting raw VHDL / existing IP / black boxes.
 3. If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no global/static variables) then it will be autopipelined. 
    Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208)
    and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). 
@@ -30,10 +30,11 @@ A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthes
 
 # Core Features/Benefits
 
-_A hardware description language centered around pipelining_
+_An easy to understand hardware description language centered around pipelining_
 
 * Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 * Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined.
+* Simulate your code in seconds, debug with printf's (ex. tool imports human readable+debuggable VHDL into Modelsim)
 * Compose complex portable designs consisting of multiple pipelines and controlling state machines.
 * Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
 * Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
