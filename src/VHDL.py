@@ -1505,7 +1505,7 @@ case(i) is\n'''
           if int_val == 0:
             default_id = id_str
         func_body_text += '''
-when others => assert False; return ''' + default_id + ''';
+when others => assert False report "integer " & integer'image(i) & " to ''' + enum_name + ''' failed! Returning ''' + default_id + '''." severity ERROR; return ''' + default_id + ''';
 end case;
 end function;
     ''' 

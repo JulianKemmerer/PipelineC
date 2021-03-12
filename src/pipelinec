@@ -99,7 +99,9 @@ Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
 Extern keyword for (same-clock?) clock crossings?
 Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf support?
+Use yosys ltp of primitives in longest topological path for estimates?
 '''
+
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 # TODO real command line opts
@@ -116,6 +118,7 @@ print("================== Writing Resulting Logic to File ======================
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 
 # Set True to start simulation
+# Here is a good point to check basic, single cycle/comb logic functionality before pipelining
 MODELSIM.DO_OPTIONAL_DEBUG(False)
   
 print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
@@ -128,6 +131,6 @@ print("================== Writing Results of Throughput Sweep ==================
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
 
-# Set True to start simulation
+# Set True to start simulation on final VHDL
 MODELSIM.DO_OPTIONAL_DEBUG(False)
 

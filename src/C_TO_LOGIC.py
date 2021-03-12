@@ -5086,6 +5086,9 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
         needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
         if needs:
           break
+      elif submodule_logic_name.startswith(PRINTF_FUNC_NAME):
+        needs = True
+        break
     
   _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name] = needs
     
