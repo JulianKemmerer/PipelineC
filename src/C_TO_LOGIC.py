@@ -4014,15 +4014,23 @@ def C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parse
   if output_type:
     parser_state.existing_logic.wire_to_c_type[ter_op_true_input] = output_type
     parser_state.existing_logic.wire_to_c_type[ter_op_false_input] = output_type
-  input_type = output_type
+  true_input_type = output_type
+  false_input_type = output_type
   # Evaluate input nodes
   parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_to_driven_input_wire_names, prepend_text, parser_state)
+  input_type = output_type
   # Try to get types from input nodes if needed
+  # TYPES MUST MATCH
   if input_type is None:
+    true_input_type = None
     if ter_op_true_input in parser_state.existing_logic.wire_to_c_type:
-      input_type = parser_state.existing_logic.wire_to_c_type[ter_op_true_input]
+      true_input_type = parser_state.existing_logic.wire_to_c_type[ter_op_true_input]
+    false_input_type = None
     if ter_op_false_input in parser_state.existing_logic.wire_to_c_type:
-      input_type = parser_state.existing_logic.wire_to_c_type[ter_op_false_input]
+      false_input_type = parser_state.existing_logic.wire_to_c_type[ter_op_false_input]
+    if ter_op_true_input==false_input_type and false_input_type is not None:
+      input_type = false_input_type
+  
   # And get wires driving input ports (since evaluated c ast node already)
   ter_op_cond_input_driver = parser_state.existing_logic.wire_driven_by[ter_op_cond_input]
   ter_op_true_input_driver = parser_state.existing_logic.wire_driven_by[ter_op_true_input]
@@ -4036,8 +4044,8 @@ def C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parse
   input_port_names.append(ter_op_false_input_port_name) # false
   input_driver_types = []
   input_driver_types.append(BOOL_C_TYPE)
-  input_driver_types.append(input_type)
-  input_driver_types.append(input_type)
+  input_driver_types.append(true_input_type)
+  input_driver_types.append(false_input_type)
   input_drivers = [] # Wires or C ast nodes
   input_drivers.append(ter_op_cond_input_driver)
   input_drivers.append(ter_op_true_input_driver)
@@ -4936,14 +4944,34 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   # Set type for outputs based on output port if possible
   elif output_wire_name in parser_state.existing_logic.wire_to_c_type:
     output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
-  # Set mux type? Hacky wtf?
-  elif func_base_name==MUX_LOGIC_NAME:
+  # Mux Types must match to assume
+  elif func_base_name==MUX_LOGIC_NAME and (input_driver_types[1]==input_driver_types[2]) and input_driver_types[1] is not None:
     output_type = input_driver_types[1] #[0] is cond for mux
     parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
+  # Or muxing integers, take max size
+  elif func_base_name==MUX_LOGIC_NAME and VHDL.C_TYPES_ARE_INTEGERS(input_driver_types[1:3]):
+    #print("output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
+    (signed, left_width, left_unsigned_width, 
+           right_width, right_unsigned_width,
+           max_width, max_unsigned_width) = GET_INTEGER_MAX_SIZE_INFO(input_driver_types[1:3])
+    # Is sized to max
+    output_type = "int"+str(max_width) + "_t"
+    if not signed:
+      output_type = "u" + output_type
+    parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
+    for input_i in range(1,3):
+      input_type = output_type
+      input_driver_types[input_i] = input_type
+      input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_names[input_i]
+      parser_state.existing_logic.wire_to_c_type[input_port_wire] = input_type
+    #print("Mux type",input_type)  
   
   # Sanity check
   if output_type is None:
-    print("Unknown output type for func",func_base_name,func_c_ast_node.coord)
+    print("Unknown output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
+    sys.exit(-1)
+  if None in input_driver_types:
+    print("Unknown input types for func",func_base_name, input_driver_types, func_c_ast_node.coord)
     sys.exit(-1)
   
   # Set this type for the driven wires if not set already? # This seems really hacky
@@ -5528,6 +5556,54 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   
 
   return func_logic
+  
+# Assumes [0] is left, [1] is right
+def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
+  # Signed?
+  signed = False
+  max_width = 0
+  max_unsigned_width = 0
+  left_unsigned_width = None
+  left_width = None
+  right_unsigned_width = None
+  right_width = None
+  for i,c_type in enumerate(c_integer_types):
+    if i==0:
+      # Left 
+      if VHDL.C_TYPE_IS_INT_N(c_type):
+        left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        left_unsigned_width = left_width - 1
+        signed = True
+      else:
+        left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        left_unsigned_width = left_width
+    if i==1:
+      # Right
+      if VHDL.C_TYPE_IS_INT_N(c_type):
+        right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        right_unsigned_width = right_width - 1
+        signed = True
+      else:
+        right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        right_unsigned_width = right_width
+    # Normal >2 args case    
+    unsigned_width = None
+    width = None
+    if VHDL.C_TYPE_IS_INT_N(c_type):
+      width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+      unsigned_width = width - 1
+      signed = True
+    else:
+      width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+      unsigned_width = width
+        
+    # Max?
+    max_width = max(max_width, width) 
+    max_unsigned_width = max(max_unsigned_width, unsigned_width) 
+    
+  return (signed, left_width, left_unsigned_width, 
+           right_width, right_unsigned_width,
+           max_width, max_unsigned_width)
 
 def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, parser_state):
   #print c_ast_binary_op
@@ -5774,29 +5850,9 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       else:
         # Ints only
         if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
-          # Signed?
-          signed = False
-          # Left 
-          left_unsigned_width = None
-          if VHDL.C_TYPE_IS_INT_N(left_type):
-            left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
-            left_unsigned_width = left_width - 1
-            signed = True
-          else:
-            left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
-            left_unsigned_width = left_width
-          # Right
-          right_unsigned_width = None
-          if VHDL. C_TYPE_IS_INT_N(right_type):
-            right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
-            right_unsigned_width = right_width - 1
-            signed = True
-          else:
-            right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
-            right_unsigned_width = right_width
-          # Max?
-          max_width = max(left_width, right_width) 
-          max_unsigned_width = max(left_unsigned_width, right_unsigned_width) 
+          (signed, left_width, left_unsigned_width, 
+           right_width, right_unsigned_width,
+           max_width, max_unsigned_width) = GET_INTEGER_MAX_SIZE_INFO([left_type,right_type])
         else:
           print("Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord)
           sys.exit(-1)
