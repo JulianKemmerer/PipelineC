@@ -1860,6 +1860,7 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
   # Make a vhdl format string working left to right replacing as you go
   vhdl_format_string = format_string[:]
   vhdl_format_string = vhdl_format_string.replace('\\n', '"&LF&"')
+  vhdl_format_string = vhdl_format_string.replace('\\t', '"&HT&"')
   for i,f in enumerate(formats): 
     vhdl_arg_str = '"&' + f.vhdl_to_string_toks[0] + "arg" + str(i) + f.vhdl_to_string_toks[1] + '&"'
     vhdl_format_string = vhdl_format_string.replace(f.specifier, vhdl_arg_str, 1)
@@ -1868,12 +1869,14 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
   text += "\nbegin\n"
   # Process for each arg - 2008 all use ok?
   text += "-- synthesis translate_off\n"
-  text += "process(all) is \nbegin\n"
+  text += "-- Postponed so only prints once?\n"
+  text += "postponed process(all) is \nbegin\n"
   text += '''
 if CLOCK_ENABLE(0) = '1' then
   write(output, ''' + vhdl_format_string + ''');
+  --report ''' + vhdl_format_string + ''';
 end if;\n'''
-  text += "end process;\n"
+  text += "end postponed process;\n"
   text += "-- synthesis translate_on\n"
   return text
   
