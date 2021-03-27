@@ -925,6 +925,18 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
   #TODO dont do string search at all - do 'in' list checks?
   c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
   return GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+ 
+ 
+'''
+ \
+ # elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
+    type_regex = "\w+_" + ram_type + "\(" 
+    p = re.compile(type_regex)
+    ram_sp_rf_func_names = p.findall(c_text)
+    ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
+    for ram_sp_rf_func_name in ram_sp_rf_func_names:
+      ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
+ '''
   
 def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   text = ""
@@ -933,74 +945,87 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 #include "intN_t.h"
   ''' 
   
-  # Regex search c_text
+  # Use primitive mappings of funcs to func calls
+  #parser_state.func_name_to_calls, parser_state.func_names_to_called_from
   
   # _RAM_SP_RF
   single_port_ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2"] # TODO 1 in and out
   for ram_type in single_port_ram_types:
-    # elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
-    type_regex = "\w+_" + ram_type + "\(" 
-    p = re.compile(type_regex)
-    ram_sp_rf_func_names = p.findall(c_text)
-    ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
-    for ram_sp_rf_func_name in ram_sp_rf_func_names:
-      ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
-      var_name = ram_sp_rf_func_name.replace("_"+ram_type,"")
-      #print "var_name",var_name
-      # Lookup type, should be global, and array
-      c_type = parser_state.global_state_regs[var_name].type_name
-      if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-        print("Ram function on non array?",ram_sp_rf_func_name)
-        sys.exit(-1)
-      elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-      # Multiple addresses now folks # Starfucker - Girls Just Want To Have
-      #dim = dims[0]
-      #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-        
-      func_name = var_name + "_" + ram_type
-      text += '''
-// ram_sp_rf
-'''
-      # In case type is actually user type - hacky
-      if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
-        text += '''typedef uint8_t ''' + elem_t + ";\n"
-      text += elem_t + ''' ''' + var_name
-      for dim in dims:
-         text += "[" + str(dim) + "]"
-      text += ";\n"
-      text += elem_t+ " " + func_name + "("
-      for i in range(0,len(dims)):
-        dim = dims[i]
-        addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-        text += addr_t + " addr" + str(i) + ", "
-      text += elem_t + " wd, uint1_t we)" + '''
-{
-  /* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
-  // Dont have a construct for simultaneous read and write??
-  // Uhh hows this?
-  // Write is available next cycle?
-  
-  // DO read
-  ''' + elem_t + ''' read;
-  read = ''' + var_name + '''[addr];
-  
-  // D write
-  ''' + elem_t + ''' data;
-  // Default write current data
-  data = read;
-  if(we)
-  {
-    // Otherwise write new data
-    data = wd;
-  }
-  // Write
-  ''' + var_name + '''[addr] = data;
-  
-  
-  return read;
-  */
-}
-'''
+    for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
+      for called_func_name in called_func_names:
+        if called_func_name.endswith(ram_type):
+          ram_sp_rf_func_name = called_func_name
+          var_name = ram_sp_rf_func_name.replace("_"+ram_type,"")
+          #print "var_name",var_name
+          # Lookup type, should be global/static, and array
+          c_type = None
+          #calling_func_logic = parser_state.FuncLogicLookupTable[calling_func_name]
+          #if var_name in calling_func_logic.state_regs:
+          #  c_type = calling_func_logic.state_regs[var_name].type_name
+          #el
+          if var_name in parser_state.global_state_regs:
+            c_type = parser_state.global_state_regs[var_name].type_name
+          else:
+            print("ASIOASIOJFAISASD")
+            sys.exit(-1)         
+          
+          if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+            print("Ram function on non array?",ram_sp_rf_func_name)
+            sys.exit(-1)
+          elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+          # Multiple addresses now folks # Starfucker - Girls Just Want To Have
+          #dim = dims[0]
+          #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+            
+          # BAAAHH locally typed/unique func name
+          # Mangle name to include calling func
+          #func_name = calling_func_logic + "_" + var_name + "_" + ram_type
+          func_name = var_name + "_" + ram_type
+          
+          text += '''
+    // ram_sp_rf
+    '''
+          # In case type is actually user type - hacky
+          if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
+            text += '''typedef uint8_t ''' + elem_t + ";\n"
+          text += elem_t + ''' ''' + var_name
+          for dim in dims:
+             text += "[" + str(dim) + "]"
+          text += ";\n"
+          text += elem_t+ " " + func_name + "("
+          for i in range(0,len(dims)):
+            dim = dims[i]
+            addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+            text += addr_t + " addr" + str(i) + ", "
+          text += elem_t + " wd, uint1_t we)" + '''
+    {
+      /* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
+      // Dont have a construct for simultaneous read and write??
+      // Uhh hows this?
+      // Write is available next cycle?
+      // Do as __vhdl__ literal?
+      
+      // DO read
+      ''' + elem_t + ''' read;
+      read = ''' + var_name + '''[addr];
+      
+      // D write
+      ''' + elem_t + ''' data;
+      // Default write current data
+      data = read;
+      if(we)
+      {
+        // Otherwise write new data
+        data = wd;
+      }
+      // Write
+      ''' + var_name + '''[addr] = data;
+      
+      
+      return read;
+      */
+    }
+    '''
 
   #print "MEM_HEADER_FILE"
   #print text   
@@ -1040,7 +1065,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
       func_logic = C_TO_LOGIC.MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(global_name, parser_state_copy)
       FuncLogicLookupTable[func_name] = func_logic
       #print FuncLogicLookupTable[func_name].global_wires
-        
+      
     return FuncLogicLookupTable
     
   else:

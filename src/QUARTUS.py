@@ -11,14 +11,16 @@ QUARTUS_PATH = "/media/1TB/Programs/Linux/intelFPGA_lite/20.1/quartus/bin"
 # Dumb
 # SAINT MOTEL - "Daydream/Wetdream/Nightmare"
 def PART_TO_FAMILY(part_str):
-  if part_str == "EP2AGX45CU17I3":
+  if part_str.upper() == "EP2AGX45CU17I3":
     return "Arria II GX"
-  elif part_str == "10CL120ZF780I8G":
+  elif part_str.upper() == "10CL120ZF780I8G":
     return "Cyclone 10 LP"
-  elif part_str == "10M50SCE144I7G":
+  elif part_str.upper() == "5CGXFC9E7F35C8":
+    return "Cyclone"
+  elif part_str.upper() == "10M50SCE144I7G":
     return "MAX 10"
   else:
-    print("What family is part'",part_str,"from? Edit QUARTUS.py.")
+    print("What family is part'",part_str,"from? Edit QUARTUS.py.", flush=True)
     sys.exit(-1)
     
 # Convert Intel style 'node' paths with | and : into 'element' ones with just |
@@ -300,7 +302,7 @@ project_close
 
     # Execute the command
     syn_imp_bash_cmd = "bash " + sh_file
-    print("Running:", sh_path, flush=True)
+    print("Running Quartus:", sh_path, flush=True)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")
     log_text = f.read()

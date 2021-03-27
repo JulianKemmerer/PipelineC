@@ -51,7 +51,7 @@ def PART_SET_TOOL(part_str, allow_fail=False):
       
     if part_str.lower().startswith("xc"):
       SYN_TOOL = VIVADO
-    elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c"):
+    elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
       SYN_TOOL = QUARTUS
     elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
       SYN_TOOL = OPEN_TOOLS  # Can replace with SYN_TOOL = DIAMOND

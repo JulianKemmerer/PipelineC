@@ -21,9 +21,10 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Add printf support for debugging stuff?
+Do write up on one or two optimizations to DKs riscv
 Get DK's RISCV emulator simulating+confirm can implement
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
+Make block ram and other gen single headers and pragmas for in code info?
 Make sure block ram clock enables work
 Fix out dir for bit math and bit manip
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
@@ -76,7 +77,7 @@ Expose latencies of each instance as a constant for use in external vhdl package
 Fix for vhdl restricted words. Append _restricted?
 Fix to remove useless int casts, ex. uint32->uint32 and do casts of ints as vhdl expr not funcs
 Do auto gen unsigned to array functions now that support array_N_t
-Use gcc array init instead of for loop many const ref tok assignments that are bulky?
+CONST REF intern gen code: Use gcc array init instead of for loop many const ref tok assignments that are bulky?
 Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?
 When doing const ref read with many ref toks, make new 'assignment' alias of new reduced wire so future reads of the same const ref can use the single wire
 Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only
@@ -99,7 +100,7 @@ Document fundamental time v.s space trade off (sum example?)
 Explore logic level / LUT based optimizations
 Extern keyword for (same-clock?) clock crossings?
 Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf support?
-Use yosys ltp of primitives in longest topological path for estimates?
+Use yosys ltp of primitives in longest topological path for faster initial estimates?
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
