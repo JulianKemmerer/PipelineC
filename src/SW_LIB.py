@@ -966,7 +966,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           if var_name in parser_state.global_state_regs:
             c_type = parser_state.global_state_regs[var_name].type_name
           else:
-            print("ASIOASIOJFAISASD")
+            print("Unknown RAM prim var", var_name)
             sys.exit(-1)         
           
           if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
