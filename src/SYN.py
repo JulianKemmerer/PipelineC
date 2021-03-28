@@ -2845,6 +2845,12 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
 def GET_OUTPUT_DIRECTORY(Logic):
   if Logic.is_c_built_in:
     output_directory = SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
+  elif SW_LIB.IS_BIT_MANIP(Logic):
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + SW_LIB.BIT_MANIP_HEADER_FILE + "/" + Logic.func_name
+  elif SW_LIB.IS_MEM(Logic):
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + SW_LIB.MEM_HEADER_FILE + "/" + Logic.func_name
+  elif SW_LIB.IS_BIT_MATH(Logic):
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + SW_LIB.BIT_MATH_HEADER_FILE + "/" + Logic.func_name
   else:
     # Use source file if not built in?
     src_file = str(Logic.c_ast_node.coord.file)

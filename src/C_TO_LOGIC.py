@@ -3808,23 +3808,26 @@ def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, st
     
   return parser_state.existing_logic
     
-def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
+def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
   if type(c_ast_decl.type) == c_ast.ArrayDecl:
     c_ast_array_decl = c_ast_decl.type
     name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl, parser_state)
     wire_name = name
     c_type = elem_type + "[" + str(dim) + "]"
-    parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
   elif type(c_ast_decl.type) == c_ast.TypeDecl:
     c_ast_typedecl = c_ast_decl.type
     wire_name = c_ast_decl.name
     c_type = c_ast_typedecl.type.names[0]
-    parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
   else:
-    print("C_AST_DECL_TO_LOGIC",c_ast_decl.type)
+    print("C_AST_DECL_TO_C_TYPE_AND_VAR_NAME",c_ast_decl.type, c_ast_decl.type.coord)
     sys.exit(-1)
-  
+    
+  return c_type,wire_name
+    
+def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
+  c_type,wire_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state)
   # This is a variable declaration
+  parser_state.existing_logic.wire_to_c_type[wire_name] = c_type
   parser_state.existing_logic.wires.add(wire_name)
   parser_state.existing_logic.variable_names.add(wire_name)
   
@@ -5299,26 +5302,41 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend
 def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   FuncLogicLookupTable = parser_state.FuncLogicLookupTable
   func_name = str(c_ast_func_call.name.name)
-  #print "FUNC CALL:",func_name,c_ast_func_call.coord
-  func_base_name = func_name
-  func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
   if not(func_name in FuncLogicLookupTable):
     # Uhh.. lets check for some built in compiler things because
     # stacking complexity without real planning is like totally rad
     # Dude - rad indeed, lets keep it going with printf
+    # Aww can brams get in on this too?
     # Animal Collective - Sand That Moves
     if func_name == VHDL_FUNC_NAME:
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
     elif func_name == PRINTF_FUNC_NAME:
       return C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
-      
-    # Ok panic
-    print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
-    print(c_ast_func_call.coord)
-    #casthelp(c_ast_func_call)
-    #print(0/0)
-    sys.exit(-1)
+    elif SW_LIB.RAM_SP_RF in func_name:
+      # Hacky af remove def of original state reg local (is used by mangled func)
+      local_static_var = func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+      parser_state.existing_logic.state_regs.pop(local_static_var)
+      num_non_vol_left = 0
+      for state_var,state_var_info in parser_state.existing_logic.state_regs.items():
+        if state_var_info.is_volatile:
+          num_non_vol_left += 1
+      if num_non_vol_left == 0:
+        parser_state.existing_logic.uses_nonvolatile_state_regs = False
+      # Mangle to include local func name calling this func
+      func_name = parser_state.existing_logic.func_name + "_" + func_name
+    else:
+      # Ok panic
+      print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
+      print(c_ast_func_call.coord)
+      #casthelp(c_ast_func_call)
+      #print(0/0)
+      sys.exit(-1)
+  
+  # Lookup the parsed C function def
   not_inst_func_logic = FuncLogicLookupTable[func_name]
+  #print "FUNC CALL:",func_name,c_ast_func_call.coord
+  func_base_name = func_name
+  func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
     
   # N input port names named by their arg name
   # Decompose inputs to N ARG FUNCTION
@@ -6164,21 +6182,6 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
   #sys.exit(-1)
   return type_decl.declname, elem_type,dim
   
-  
-  
-def C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl, parser_state):
-  # Need to get array type differently 
-  #print "param decl or global?",param_decl
-  if type(param_decl.type) == c_ast.ArrayDecl:
-    name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(param_decl.type, parser_state)
-    array_type = elem_type + "[" + str(dim) + "]"
-    #print "array_type",array_type
-    return array_type     
-  else:
-    # Non array decl
-    #print "Non array decl", param_decl
-    return param_decl.type.type.names[0]
-  
 _C_AST_FUNC_DEF_TO_LOGIC_cache = dict()
 def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   # Reset state for this func def
@@ -6216,7 +6219,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       parser_state.existing_logic.wires.add(input_wire_name)
       parser_state.existing_logic.variable_names.add(input_wire_name)
       #print "Append input", input_wire_name
-      c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(param_decl, parser_state)
+      c_type,input_var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(param_decl, parser_state)
       parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
   
   
@@ -6421,7 +6424,7 @@ def REPO_ABS_DIR():
 # This class hold all the state obtained by parsing a single C file
 class ParserState:
   def __init__(self):
-    # Parsed from pre-prepreprocessed text
+    # Parsed from pre-prepreprocessed text - dont do this?
     
     # From parsed preprocessed text   
     # The file of parsed C code
@@ -6434,6 +6437,7 @@ class ParserState:
     self.struct_to_field_type_dict = dict()
     self.enum_info_dict = dict()
     self.global_state_regs = dict() # name->state reg info
+    self.func_to_local_state_regs = dict() #funcname-> [state,reg,infos]
     
     # Parsed from function defintions
     self.existing_logic = None # Temp working copy of current func logic, probably should not be here?
@@ -6484,6 +6488,7 @@ class ParserState:
     rv.struct_to_field_type_dict = dict(self.struct_to_field_type_dict)
     rv.enum_info_dict = dict(self.enum_info_dict)
     rv.global_state_regs = dict(self.global_state_regs)
+    rv.func_to_local_state_regs = dict(self.func_to_local_state_regs)
     
     rv.func_name_to_calls = dict(self.func_name_to_calls)
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
@@ -6671,6 +6676,8 @@ def PARSE_FILE(c_filename):
         parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
         # Build primative map of function use
         parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
+        # Get local state reg info
+        parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
         # Elborate what the clock crossings look like
         parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
       
@@ -6827,7 +6834,7 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
   for global_decl in global_decls:
     state_reg_info = StateRegInfo()
     state_reg_info.name = str(global_decl.name)
-    c_type = C_AST_PARAM_DECL_OR_GLOBAL_DEF_TO_C_TYPE(global_decl, parser_state)
+    c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
     state_reg_info.type_name = c_type
     state_reg_info.init = global_decl.init
         
@@ -6839,7 +6846,40 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
     parser_state.global_state_regs[state_reg_info.name] = state_reg_info
       
   return parser_state
-
+  
+def GET_LOCAL_STATE_REG_INFO(parser_state):
+  parser_state.func_to_local_state_regs = dict()
+  
+  # Get all the func defs
+  # And look for statics 
+  
+  # TODO
+  
+  #parser_state.func_name_to_calls = dict()
+  #parser_state.func_names_to_called_from = dict()
+  c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+  for c_ast_func_def in c_ast_func_defs:
+    func_name = c_ast_func_def.decl.name
+    decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.Decl)
+    for decl_c_ast_node in decl_c_ast_nodes:
+      # Looking for state regs
+      if 'static' in decl_c_ast_node.storage:
+        state_reg_info = StateRegInfo()
+        c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(decl_c_ast_node, parser_state)
+        state_reg_info.name = var_name
+        state_reg_info.type_name = c_type
+        state_reg_info.init = decl_c_ast_node.init
+            
+        # Save flags
+        if 'volatile' in decl_c_ast_node.quals:
+          state_reg_info.is_volatile = True
+        
+        # Save info
+        if func_name not in parser_state.func_to_local_state_regs:
+          parser_state.func_to_local_state_regs[func_name] = []
+        parser_state.func_to_local_state_regs[func_name].append(state_reg_info)
+  
+  return parser_state
 
 # Fuck me add struct info for array wrapper
 def APPEND_ARRAY_STRUCT_INFO(parser_state):

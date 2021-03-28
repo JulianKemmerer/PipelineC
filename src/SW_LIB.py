@@ -880,6 +880,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, par
   #print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
   
   # MEMORY
+  # # TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
   mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
   lookups.append(mem_func_name_logic_lookup)
   
@@ -938,6 +939,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
       ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
  '''
   
+# TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
 def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   text = ""
   header_text = '''
@@ -945,13 +947,24 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 #include "intN_t.h"
   ''' 
   
+  
+  
   # Use primitive mappings of funcs to func calls
   #parser_state.func_name_to_calls, parser_state.func_names_to_called_from
-  
+  # Need to indicate that these MEM functions have state registers globals/statics
+  # HACK YHACK CHAKC
+  func_name_to_state_reg_info = dict()
+  func_name_was_global_def = dict()
   # _RAM_SP_RF
   single_port_ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2"] # TODO 1 in and out
   for ram_type in single_port_ram_types:
     for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
+      # Get local static var info for this func
+      local_state_reg_info_dict = dict()     
+      if calling_func_name in parser_state.func_to_local_state_regs:
+        local_state_reg_infos = parser_state.func_to_local_state_regs[calling_func_name]
+        for local_state_reg_info in local_state_reg_infos:
+          local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
       for called_func_name in called_func_names:
         if called_func_name.endswith(ram_type):
           ram_sp_rf_func_name = called_func_name
@@ -959,15 +972,23 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           #print "var_name",var_name
           # Lookup type, should be global/static, and array
           c_type = None
-          #calling_func_logic = parser_state.FuncLogicLookupTable[calling_func_name]
-          #if var_name in calling_func_logic.state_regs:
-          #  c_type = calling_func_logic.state_regs[var_name].type_name
-          #el
-          if var_name in parser_state.global_state_regs:
+          # Local scope first
+          if var_name in local_state_reg_info_dict:
+            c_type = local_state_reg_info_dict[var_name].type_name
+            # BAAAHH locally typed/unique func name
+            # Mangle name to include calling func if local?
+            func_name = calling_func_name + "_" + var_name + "_" + ram_type
+            func_name_to_state_reg_info[func_name] = local_state_reg_info_dict[var_name]
+            func_name_was_global_def[func_name] = False
+          elif var_name in parser_state.global_state_regs:
             c_type = parser_state.global_state_regs[var_name].type_name
+            func_name = var_name + "_" + ram_type
+            func_name_to_state_reg_info[func_name] = parser_state.global_state_regs[var_name]
+            func_name_was_global_def[func_name] = True
           else:
             print("Unknown RAM prim var", var_name)
             sys.exit(-1)         
+          
           
           if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
             print("Ram function on non array?",ram_sp_rf_func_name)
@@ -975,12 +996,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
           # Multiple addresses now folks # Starfucker - Girls Just Want To Have
           #dim = dims[0]
-          #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-            
-          # BAAAHH locally typed/unique func name
-          # Mangle name to include calling func
-          #func_name = calling_func_logic + "_" + var_name + "_" + ram_type
-          func_name = var_name + "_" + ram_type
+          #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"            
           
           text += '''
     // ram_sp_rf
@@ -1034,37 +1050,37 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   if text != "":
     # Ok had some code, include headers
     text = header_text + text
-    
-    
     outfile = MEM_HEADER_FILE
     parser_state_copy = copy.copy(parser_state) # was DEEPCOPY
     # Keep everything except logic stuff
     parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
     parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
     parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
-    
     parse_body = False # MEM DOES NOT HAVE SW IMPLEMENTATION
     FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
-        
-    # Need to indicate that these MEM functions use globals/regs
-    # HACK YHACK CHAKC
+    
+    # Apply hackyness
     for func_name in FuncLogicLookupTable:
       func_logic = FuncLogicLookupTable[func_name]
-      if func_name.endswith("_" + RAM_SP_RF+"_0"):
-        global_name = func_name.split("_" + RAM_SP_RF+"_0")[0]
-      elif func_name.endswith("_" + RAM_SP_RF+"_2"):
-        global_name = func_name.split("_" + RAM_SP_RF+"_2")[0]
-      else:
-        print("What mem func?", func_name)
-        sys.exit(-1)
-      
-      # Add global for this logic
-      #print "RAM GLOBAL:",global_name
-      #print func_logic.func_name
-      parser_state_copy.existing_logic = func_logic
-      func_logic = C_TO_LOGIC.MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(global_name, parser_state_copy)
-      FuncLogicLookupTable[func_name] = func_logic
-      #print FuncLogicLookupTable[func_name].global_wires
+      state_reg_info = func_name_to_state_reg_info[func_name]
+      if func_name_was_global_def[func_name]:
+        # Add global for this logic
+        #print "RAM GLOBAL:",global_name
+        parser_state_copy.existing_logic = func_logic
+        func_logic = C_TO_LOGIC.MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(state_reg_info.name, parser_state_copy)
+        FuncLogicLookupTable[func_name] = func_logic
+      elif not func_name_was_global_def[func_name]:
+        # Copy into local special here similar to MAYBE_GLOBAL^ above
+        # And special removing needing too?
+        # Copy info into existing_logic
+        func_logic.state_regs[state_reg_info.name] = state_reg_info
+        func_logic.wire_to_c_type[state_reg_info.name] = state_reg_info.type_name
+        func_logic.variable_names.add(state_reg_info.name)      
+        # Record using globals
+        if not func_logic.state_regs[state_reg_info.name].is_volatile:
+          func_logic.uses_nonvolatile_state_regs = True
+          #print "rv.func_name",rv.func_name, rv.uses_nonvolatile_state_regs
+        FuncLogicLookupTable[func_name] = func_logic      
       
     return FuncLogicLookupTable
     

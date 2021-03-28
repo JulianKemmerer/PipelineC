@@ -22,11 +22,7 @@ print('''
 '''
 TODO:
 Do write up on one or two optimizations to DKs riscv
-Get DK's RISCV emulator simulating+confirm can implement
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
-Make block ram and other gen single headers and pragmas for in code info?
-Make sure block ram clock enables work
-Fix out dir for bit math and bit manip
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
@@ -101,6 +97,7 @@ Explore logic level / LUT based optimizations
 Extern keyword for (same-clock?) clock crossings?
 Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf support?
 Use yosys ltp of primitives in longest topological path for faster initial estimates?
+General pipelineable with IO regs if used in pure func RAM_SP_RF func
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
