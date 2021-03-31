@@ -55,6 +55,7 @@ Fix fine grain sweep to work again
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
+NO its good - syn like multiplies with common truncation for better timing estimations - ENSURE built in operations have resize() on outputs if user casts down
 Karatsuba algo for mult - need to recursive gen big mult funcs for differing bit widths
 Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
@@ -76,7 +77,6 @@ Do auto gen unsigned to array functions now that support array_N_t
 CONST REF intern gen code: Use gcc array init instead of for loop many const ref tok assignments that are bulky?
 Add timing info via syn top level without flatten, then report timing on each module? No IO regs so will paths make sense? / doesnt work for combinatorial logic? Hah syn weird top level with _top version of everything?
 When doing const ref read with many ref toks, make new 'assignment' alias of new reduced wire so future reads of the same const ref can use the single wire
-Yo dummy dont make built in operations have resize() on outputs, output determined by inputs only
 Add look ahead for built in functions so cast can be inferred
 Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated...
 Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?
@@ -98,6 +98,7 @@ Extern keyword for (same-clock?) clock crossings?
 Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf support?
 Use yosys ltp of primitives in longest topological path for faster initial estimates?
 General pipelineable with IO regs if used in pure func RAM_SP_RF func
+Optimize away static consts that look like regs w init values - allow local init of 'const' vars?
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

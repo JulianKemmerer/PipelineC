@@ -2832,6 +2832,15 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 
 
 def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
+  is_negated = val_str.startswith("-")
+  val_str = val_str.strip("-")
+  value_num,unused_c_type_str = C_TO_LOGIC.CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, parser_state.existing_logic.c_ast_node, is_negated)
+  # c_type_str is small gen'd type based on constant literal
+  # c_type is what ever...user?...upper level intended and already knows - use that
+  #if c_type_str != c_type:
+  #  print("Oh no!",val_str, c_type_str, c_type, parser_state.existing_logic.c_ast_node.coord)
+  #  sys.exit(-1)
+  
   if c_type == 'char':
     vhdl_char_str = "'" + val_str + "'"
     if val_str == '\\n':
@@ -2842,11 +2851,11 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
     #Hack hacky?
     # A VHDL integer is defined from range -2147483648 to +2147483647
-    if int(val_str) > 2147483647:
+    if value_num > 2147483647:
       #print("wire_name",wire_name)
       #print("c_type",c_type)
       #print("width",width)
-      hex_str = str(hex(int(val_str))).replace("0x","")
+      hex_str = str(hex(value_num)).replace("0x","")
       need_resize = len(hex_str)*4 > width
       hex_str = 'X"' + hex_str + '"'
       #print("hex_str",hex_str)
@@ -2856,10 +2865,10 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
       else:
         return "unsigned'("+hex_str+")" # No extra resizing needed
     else:
-      return "to_unsigned(" + val_str + ", " + str(width) + ")"
+      return "to_unsigned(" + str(value_num) + ", " + str(width) + ")"
   elif C_TYPE_IS_INT_N(c_type):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-    return "to_signed(" + val_str + ", " + str(width) + ")"
+    return "to_signed(" + str(value_num) + ", " + str(width) + ")"
   elif c_type == "float":
     return "to_slv(to_float(" + val_str + ", 8, 23))"
   else:

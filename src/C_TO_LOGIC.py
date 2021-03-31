@@ -3734,29 +3734,58 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
   
   return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
+def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
+  if int_lit.upper().endswith("UZZ"):
+    return "size_t"
+  elif int_lit.upper().endswith("Z"):
+    return "size_t"
+  elif int_lit.upper().endswith("ULL"):
+    return "uint64_t"
+  elif int_lit.upper().endswith("LL"):
+    return "int64_t"
+  elif int_lit.upper().endswith("UL"):
+    return "uint32_t"
+  elif int_lit.upper().endswith("L"):
+    return "int32_t"
+  else:
+    return None
+
+def STRIP_INT_LIT_SUFF(int_lit):
+  return int_lit.strip("LL").strip("U").strip("L")
+
 def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
   if value_str.startswith("0x"):
     hex_str = value_str.replace("0x","")
-    hex_str = hex_str.strip("LL").strip("U")
+    suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(hex_str)
+    c_type_str = None
+    if suff_c_type:
+      c_type_str = suff_c_type
+    hex_str = STRIP_INT_LIT_SUFF(hex_str)
     value = int(hex_str, 16)
-    bits = value.bit_length()
-    if bits == 0:
-      bits = 1
-    if is_negated:
-      c_type_str = "int" + str(bits+1) + "_t"
-    else:
-      c_type_str = "uint" + str(bits) + "_t"
+    if not c_type_str:  
+      bits = value.bit_length()
+      if bits == 0:
+        bits = 1
+      if is_negated:
+        c_type_str = "int" + str(bits+1) + "_t"
+      else:
+        c_type_str = "uint" + str(bits) + "_t"
   elif value_str.startswith("0b"):
     bin_str = value_str.replace("0b","")
-    bin_str = bin_str.strip("LL").strip("U")
+    suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(bin_str)
+    c_type_str = None
+    if suff_c_type:
+      c_type_str = suff_c_type
+    bin_str = STRIP_INT_LIT_SUFF(bin_str)
     value = int(bin_str, 2)
-    bits = value.bit_length()
-    if bits == 0:
-      bits = 1
-    if is_negated:
-      c_type_str = "int" + str(bits+1) + "_t"
-    else:
-      c_type_str = "uint" + str(bits) + "_t"
+    if not c_type_str:
+      bits = value.bit_length()
+      if bits == 0:
+        bits = 1
+      if is_negated:
+        c_type_str = "int" + str(bits+1) + "_t"
+      else:
+        c_type_str = "uint" + str(bits) + "_t"
   elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
     value = float(value_str)
     c_type_str = "float"
@@ -4685,6 +4714,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           const_val_str = str(lhs_val-rhs_val)
       elif func_base_name.endswith(BIN_OP_OR_NAME):
           const_val_str = str(lhs_val|rhs_val)
+      elif func_base_name.endswith(BIN_OP_AND_NAME):
+          const_val_str = str(lhs_val&rhs_val)         
       elif func_base_name.endswith(BIN_OP_MULT_NAME):
           const_val_str = str(lhs_val*rhs_val)
       elif func_base_name.endswith(BIN_OP_DIV_NAME):
@@ -4693,6 +4724,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           const_val_str = str(int(lhs_val/rhs_val))
         else:
           const_val_str = str(lhs_val/rhs_val)
+      elif func_base_name.endswith(BIN_OP_MOD_NAME):
+        const_val_str = str(lhs_val%rhs_val)
       elif func_base_name.endswith(BIN_OP_LT_NAME):
         const_val_str = "1" if lhs_val<rhs_val else "0"
       elif func_base_name.endswith(BIN_OP_LTE_NAME):
@@ -4723,8 +4756,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             if bin[0] == '1': # "sign bit", big-endian
                x -= 2**len(bin)
           return x
-        
-        # TODO actually use this if
         
         if func_base_name.endswith(BIN_OP_SR_NAME):
           # Output type is type of LHS
@@ -5927,6 +5958,17 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
           # Signed or not, output width does not increase
           # Is based on LHS type
           output_unsigned_width = left_unsigned_width
+          output_width = output_unsigned_width
+          if signed:
+            output_width = output_unsigned_width + 1
+          output_c_type = "int"+str(output_width) + "_t"
+          if not signed:
+            output_c_type = "u" + output_c_type
+        # MOD
+        elif c_ast_bin_op_str == "%":
+          # Can only be as large as RHS
+          # Signed or not, output width does not increase
+          output_unsigned_width = right_unsigned_width
           output_width = output_unsigned_width
           if signed:
             output_width = output_unsigned_width + 1
