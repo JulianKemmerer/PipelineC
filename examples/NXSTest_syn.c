@@ -484,7 +484,7 @@ void DumpVerilogStyle(void *data, int len)
 }
 */
 
-#pragma MAIN_MHZ DoNXSTest 400.0 // Timing goal
+#pragma MAIN_MHZ DoNXSTest 800.0 // Timing goal
 // Two input port u64 arrays, and one u64 output
 uint64_t DoNXSTest(uint64_t State[27], uint64_t Key[17])
 {
