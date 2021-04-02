@@ -35,6 +35,34 @@
 #include "examples/NXSTest_syn.c"
 
 /*
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 1000.0
+float main(float x, float y)
+{
+  return x + y;
+}*/
+/*
+uint32_t main(uint32_t x, uint32_t y)
+{
+  return x / y;
+}
+*/
+
+/*
+uint32_t main(uint8_t addr, uint32_t wr_data, uint1_t wr_en)
+{
+  static uint32_t my_array[256];
+  uint32_t rd_data = my_array[addr];
+  if(wr_en)
+  {
+    my_array[addr] = wr_data;
+  }
+  return rd_data;
+}
+*/
+
+
+/*
 uint8_t the_ram[128];
  main()
 {

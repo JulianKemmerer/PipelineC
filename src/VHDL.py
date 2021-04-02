@@ -376,8 +376,9 @@ begin
     '''
         # Clk in input
         text += "clk_" + write_clk_ext_str + ",\n"
-        # Clk in enable
-        text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
+          # Clk in enable
+          text += "module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
         # Clk cross in data from pipeline output
         for input_port in write_func_logic.inputs:
           text += "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
@@ -385,8 +386,9 @@ begin
           text += "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
         # Clk out input
         text += "clk_" + read_clk_ext_str + ",\n"
-        # Clk out enable
-        text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+          # Clk out enable
+          text += "module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
         # Clk cross out data to pipeline input
         for input_port in read_func_logic.inputs:
           text += "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
@@ -814,7 +816,23 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
   for var_name in parser_state.clk_cross_var_info:
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
     write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
- 
+    write_func,read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
+    
+    '''write_func_insts = parser_state.FuncToInstances[write_func_name]
+    if len(write_func_insts) > 1:
+      print("More than one use of", write_func)
+      sys.exit(-1)
+    write_func_inst = list(write_func_insts)[0]
+    write_func_logic = parser_state.LogicInstLookupTable[write_func_inst]'''
+    write_func_logic = parser_state.FuncLogicLookupTable[write_func]
+    '''read_func_insts = parser_state.FuncToInstances[read_func]
+    if len(read_func_insts) > 1:
+      print("More than one use of", read_func)
+      sys.exit(-1)
+    read_func_inst = list(read_func_insts)[0]
+    '''
+    read_func_logic = parser_state.FuncLogicLookupTable[read_func]
+    
     # TODO OTHER SIZES
     if flow_control:
       if SYN.SYN_TOOL is None:
@@ -880,6 +898,9 @@ use xpm.vcomponents.all;
     entity clk_cross_''' + var_name + ''' is
     port(
       in_clk : in std_logic;
+'''
+    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
+      text += '''
       in_clk_en : in unsigned(0 downto 0);
 '''
     if flow_control:
@@ -894,6 +915,9 @@ use xpm.vcomponents.all;
 '''
     text += '''
       out_clk : in std_logic;
+'''
+    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+      text += '''
       out_clk_en : in unsigned(0 downto 0);
 '''
     if flow_control:
@@ -1347,10 +1371,11 @@ package clk_cross_t_pkg is
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
         if sub_logic.is_clock_crossing:
-          var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name) 
-          clk_cross_info = parser_state.clk_cross_var_info[var_name]
-          c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
-          text += "     " + sub_func + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+          if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+            c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
+            text += "     " + sub_func + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+          #var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name) 
+          #clk_cross_info = parser_state.clk_cross_var_info[var_name]
           for input_port in sub_logic.inputs:
             # submodule instance name == Func name for clk cross since single instance?
             #input_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + input_port
@@ -2834,7 +2859,38 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   is_negated = val_str.startswith("-")
   val_str = val_str.strip("-")
-  value_num,unused_c_type_str = C_TO_LOGIC.CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, parser_state.existing_logic.c_ast_node, is_negated)
+  if C_TO_LOGIC.C_TYPE_IS_ENUM(c_type, parser_state):
+    '''
+    toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    toks.reverse()
+    local_name = toks[0]
+    enum_wire = local_name.split("$")[0]
+    if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
+      print("Non const enum constant?",enum_wire)
+      sys.exit(-1)
+    enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
+    '''
+    enum_name = val_str
+    #print "local_name",local_name
+    #print "enum_name",enum_name
+    
+    '''
+    # Sanity check that enum exists?
+    match = False
+    for enum_type in parser_state.enum_info_dict:
+      ids = parser_state.enum_info_dict[enum_type].id_to_int_val.keys()
+      if enum_name in ids:
+        match = True
+        break
+    if not match:
+      print(parser_state.enum_info_dict)
+      print(enum_name, "doesn't look like an ENUM constant?")
+      sys.exit(-1)
+    '''
+    return enum_name
+  
+  #print("CONST_VAL_STR_TO_VHDL val_str",val_str)
+  value_num, unused_c_type_str = C_TO_LOGIC.CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, parser_state.existing_logic.c_ast_node, is_negated)
   # c_type_str is small gen'd type based on constant literal
   # c_type is what ever...user?...upper level intended and already knows - use that
   #if c_type_str != c_type:
@@ -2872,32 +2928,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   elif c_type == "float":
     return "to_slv(to_float(" + val_str + ", 8, 23))"
   else:
-    # ASSUMING ENUM AAUAUGHGHGHG????
-    #print "wire_name",wire_name
-    toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
-    toks.reverse()
-    local_name = toks[0]
-    enum_wire = local_name.split("$")[0]
-    if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
-      print("Non const enum constant?",enum_wire)
-      sys.exit(-1)
-    enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
-    #print "local_name",local_name
-    #print "enum_name",enum_name
-    
-    # Sanity check that enum exists?
-    match = False
-    for enum_type in parser_state.enum_info_dict:
-      ids = parser_state.enum_info_dict[enum_type].id_to_int_val.keys()
-      if enum_name in ids:
-        match = True
-        break
-    if not match:
-      print(parser_state.enum_info_dict)
-      print(enum_name, "doesn't look like an ENUM constant?")
-      sys.exit(-1)
-    
-    return enum_name
+    print("How to give const",val_str,"gen VHDL?")
+    sys.exit(-1) 
       
 def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state): 
   # If a constant 
@@ -2982,10 +3014,11 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst
   var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic.func_name) 
   clk_cross_info = parser_state.clk_cross_var_info[var_name]
   
-  text += "     -- Clock enable" + "\n"
-  ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
-  text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
-  
+  if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+    text += "     -- Clock enable" + "\n"
+    ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+    text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
+    
   if len(submodule_logic.inputs) > 0:
     text += "     -- Inputs" + "\n"
   for input_port in submodule_logic.inputs:

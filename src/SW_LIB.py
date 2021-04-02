@@ -27,6 +27,7 @@ def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic):
   # Hacky detect+tag clock crossing (TODO change to looking at clock crossing info in parser state?)
   if str(func_logic.c_ast_node.coord).split(":")[0].endswith("_clock_crossing.h") and not func_logic.is_c_built_in:
     func_logic.is_clock_crossing = True
+    # Hacky marking clk cross func read+write as not able to be pipelined
     func_logic.uses_nonvolatile_state_regs = True
   return func_logic
 

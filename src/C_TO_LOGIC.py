@@ -22,6 +22,7 @@ TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, Fal
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 CONST_PREFIX="CONST_"
+ENUM_CONST_MARKER = "$"
 CLOCK_ENABLE_NAME="CLOCK_ENABLE"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
@@ -3144,9 +3145,6 @@ def C_AST_ID_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
   
   #print c_ast_node
   #print "is_enum_const",is_enum_const
-  
-  
-  
   if is_enum_const:
     return C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_state)
   else:
@@ -3612,22 +3610,24 @@ def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
   # Then must be ENUM
   
   #ORIG_WIRE_NAME_TO_ORIG_VAR_NAME
-  
-  if (maybe_not_enum_wire in existing_logic.wire_to_c_type) and C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[maybe_not_enum_wire],parser_state):
+  if ENUM_CONST_MARKER in maybe_not_enum_wire:
+    return True
+  elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[maybe_not_enum_wire],parser_state):
     return True
   elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and not C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[maybe_not_enum_wire], parser_state):
     return False
-  elif maybe_not_enum_wire in existing_logic.inputs: 
-    return False
-  elif (maybe_not_enum_wire in existing_logic.state_regs):
-    return False
-  elif maybe_not_enum_wire in existing_logic.variable_names:
-    return False
-  elif maybe_not_enum_wire in existing_logic.outputs:
-    return False
+  #elif maybe_not_enum_wire in existing_logic.inputs: 
+  #  return False
+  #elif (maybe_not_enum_wire in existing_logic.state_regs):
+  #  return False
+  #elif maybe_not_enum_wire in existing_logic.variable_names:
+  #  return False
+  #elif maybe_not_enum_wire in existing_logic.outputs:
+  #  return False
   else:
-    print("ENUM:",maybe_not_enum_wire)
-    return True
+    print("Unknown maybe ENUM?:",maybe_not_enum_wire)
+    sys.exit(-1)
+    #return True
 
 
 def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state): 
@@ -3674,7 +3674,8 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
   #print "value",value
   #print "==="
   # Hacky use $ for enum only oh sad
-  wire_name =  CONST_PREFIX + str(value) + "$" + C_AST_NODE_COORD_STR(c_ast_node)
+  # Um how did this work before?
+  wire_name =  CONST_PREFIX + str(value) + ENUM_CONST_MARKER + C_AST_NODE_COORD_STR(c_ast_node)
   
   # Try to set type based on enum name, might not be possible if multiple matches
   # Then have to rely on user comparing against known enum type wire
@@ -3708,16 +3709,20 @@ def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
   last_tok = toks[len(toks)-1]
   local_name = last_tok 
   
-  # What type of const
   # Strip off CONST_
   stripped_wire_name = local_name
   if local_name.startswith(CONST_PREFIX):
     stripped_wire_name = local_name[len(CONST_PREFIX):]
-  #print "stripped_wire_name",stripped_wire_name
-  # Split on under
-  toks = stripped_wire_name.split("_")
   
-  ami_digit = toks[0]
+  # CANT SPLIT ON UNDER DUMMY - ENUMS ARE CONSTs too
+  if ENUM_CONST_MARKER in stripped_wire_name:
+    ami_digit = stripped_wire_name.split(ENUM_CONST_MARKER)[0]
+  else:
+    # OK now can do dumb splitting    
+    toks = stripped_wire_name.split("_")
+    ami_digit = toks[0]
+  
+  #print("const wire:",wire_name,"valuestr:",ami_digit)
 
   return ami_digit
   
@@ -3803,7 +3808,7 @@ def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False)
     c_type_str = "char"
     #print "Char val", value 
   else:
-    print("What type of constant is?", value_str, c_ast_node.coord)
+    print("What type of constant is?", value_str)
     sys.exit(-1)
   
   if is_negated:
@@ -3812,8 +3817,9 @@ def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False)
   return value,c_type_str
 
 def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+  wire_name = BUILD_CONST_WIRE(value_str, c_ast_node)
   value,c_type_str = CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
-  wire_name = BUILD_CONST_WIRE(str(value), c_ast_node)
+  
   if not(c_type_str is None):
     parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
   # Connect the constant to the wire it drives
@@ -5132,9 +5138,17 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
   except:
     pass
   
-  # TODO use needs clock too?
-  # Look for clock cross submodule ending in _READ() implying input 
-  i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs or logic.is_clock_crossing or logic.func_name.startswith(PRINTF_FUNC_NAME)
+  # Only async/flow control clock crossings (need clock enable to work with their write and read enable side fifos)
+  # or WRITE side on wires that will default hold value
+  # Almost covered by LOGIC_NEEDS_MODULE_TO_CLK_CROSS but thats for submodules
+  if logic.is_clock_crossing:
+    #i_need = VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(logic, parser_state)
+    clk_cross_var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
+    clk_cross_info = parser_state.clk_cross_var_info[clk_cross_var]
+    i_need = ("_WRITE" in logic.func_name) or clk_cross_info.flow_control
+  else:
+    # TODO use needs clock too?
+    i_need = len(logic.state_regs) > 0 or logic.uses_nonvolatile_state_regs or logic.func_name.startswith(PRINTF_FUNC_NAME)
   
   # Check submodules too
   needs = i_need
@@ -5153,7 +5167,7 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
         break
     
   _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name] = needs
-    
+  
   return needs
 
 def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name):

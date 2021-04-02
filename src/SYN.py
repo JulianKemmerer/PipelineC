@@ -1244,11 +1244,24 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   for current_slice_i in current_slices:
     #print "  current_slice_i:",current_slice_i
     skip_boundary_slice = False
-    TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, current_slice_i, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files,rounding_so_fuck_it)
+    write_files_in_loop = False
+    TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, current_slice_i, parser_state, TimingParamsLookupTable, skip_boundary_slice, write_files_in_loop,rounding_so_fuck_it)
     # Might be bad slice
     if type(TimingParamsLookupTable) is int:
       return TimingParamsLookupTable
   
+  if write_files:
+    # Do one final dumb loop over all timing params that arent zero clocks?
+    # because write_files_in_loop = False above
+    for inst_name_to_wr in TimingParamsLookupTable:
+      wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
+      wr_timing_params = TimingParamsLookupTable[inst_name_to_wr]
+      if len(wr_timing_params.slices) > 0:
+        wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
+        if not os.path.exists(wr_syn_out_dir):
+          os.makedirs(wr_syn_out_dir)    
+        VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, TimingParamsLookupTable)
+      
   # Sanity check
   if not rounding_so_fuck_it:
     est_total_latency = len(current_slices)
@@ -1441,9 +1454,6 @@ class SweepState:
     self.curr_main_func = None
     self.func_sweep_state = dict() # dict[main_func_name] = LogicSweepState
     self.timing_params_to_mhz = dict() # dict[multimain_timing_params]=mhz
-    
-  def SEEN_TIMING_PARAMS(self, multimain_timing_params):
-    todo
     
     
 def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params):
