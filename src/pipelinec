@@ -99,6 +99,7 @@ Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf
 Use yosys ltp of primitives in longest topological path for faster initial estimates?
 General pipelineable with IO regs if used in pure func RAM_SP_RF func
 Optimize away static consts that look like regs w init values - allow local init of 'const' vars?
+Explore vivado's retiming option - thought it was on by default...
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

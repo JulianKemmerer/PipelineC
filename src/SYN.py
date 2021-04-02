@@ -28,12 +28,12 @@ DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
 INF_MHZ = 1000 # Impossible timing goal
+MAX_CLK_INC_RATIO = 1.25 # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
 SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
 MAX_STAGE_ADJUSTMENT = 2 # Uhh 2 should probably be fine? Maybe fixed bug 20 seems whack? 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
 SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 DELAY_UNIT_MULT = 10.0 # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
-
 
 
 def PART_SET_TOOL(part_str, allow_fail=False):
@@ -1451,14 +1451,14 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
   cached_sweep_state = GET_MOST_RECENT_CACHED_SWEEP_STATE()
   sweep_state = None
   if not(cached_sweep_state is None):
-    print("Using cached most recent sweep state...")
+    print("Using cached most recent sweep state...", flush=True)
     sweep_state = cached_sweep_state
   else:
-    print("Starting with blank sweep state...")
+    print("Starting with blank sweep state...", flush=True)
     sweep_state = SweepState()
     # Set defaults
     sweep_state.multimain_timing_params = multimain_timing_params
-    print("...determining slicing information for each main function...")
+    print("...determining slicing information for each main function...", flush=True)
     for func_name in parser_state.main_mhz:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       sweep_state.func_sweep_state[func_name] = LogicSweepState()
@@ -2182,6 +2182,7 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
       print("Function:",main_func,"Target MHz:", mhz, flush=True)
   
   # Populate timing lookup table as all 0 clk
+  print("Setting all instances to comb. logic to start...", flush=True)
   ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
@@ -2197,6 +2198,8 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   
   # Maybe skip coarse grain
   #if not sweep_state.fine_grain_sweep and not skip_coarse_sweep:
+  
+  print("Starting coarse sweep...", flush=True)
   sweep_state = DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state)#, skip_fine_sweep)
   
   # Maybe skip fine grain
@@ -2241,9 +2244,11 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
   main_to_last_latency_increase = dict()
   while True:
     # Reset to zero clock
+    #print("Setting all instances to comb. logic to start...",flush=True)
     sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
     
     # Do slicing
+    print("Slicing up pipeline stages...",flush=True)
     # For each main set the slices in timing params and then rebuild
     done = False
     for main_func in parser_state.main_mhz:
@@ -2273,6 +2278,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
       sweep_state.multimain_timing_params.REBUILD_FROM_MAIN_SLICES(best_guess_slices, main_func, parser_state)
     
     # Run syn on multi main top
+    print("Running syn w slices...",flush=True)
     sweep_state.timing_report = DO_SYN_FROM_TIMING_PARAMS(sweep_state.multimain_timing_params, parser_state)
     # Did it meet timing?
     fmax = INF_MHZ
@@ -2364,21 +2370,30 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
             if mult > 1.0:
               # Divide up into that many clocks
               clks = int(mult) - 1
+              print("Timing report suggests",clks,"clocks...")
+              # If very far off, or at very low local min, suggested step can be too large
+              inc_ratio = clks / main_func_to_coarse_latency[main_func]
+              
+              if inc_ratio > MAX_CLK_INC_RATIO:
+                clks = int(MAX_CLK_INC_RATIO*main_func_to_coarse_latency[main_func])
+                print("Clipped for smaller jump up to",clks,"clocks...")
               # If very close to goal suggestion might be same clocks, still increment
               if main_func_to_coarse_latency[main_func] == clks:
-                clks += 1
+                clks += 1 
               # Calc diff in latency change, should be getting smaller
               clk_inc = clks - main_func_to_coarse_latency[main_func]
-              made_adj = True
               if main_func in main_to_last_latency_increase and clk_inc >= main_to_last_latency_increase[main_func]:
                 # Clip to last inc size - 1, minus one to always be narrowing down
                 clk_inc = main_to_last_latency_increase[main_func] - 1
                 if clk_inc <= 0:
                   clk_inc = 1
                 clks = main_func_to_coarse_latency[main_func] + clk_inc
+                print("Clipped for decreasing jump size to",clks,"clocks...")
+              # Record
               main_to_last_non_passing_latency[main_func] = main_func_to_coarse_latency[main_func]
               main_func_to_coarse_latency[main_func] = clks
               main_to_last_latency_increase[main_func] = clk_inc
+              made_adj = True
           else:
             # No guess, dumb increment by 1
             # Save non passing latency
