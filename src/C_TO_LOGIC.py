@@ -3730,6 +3730,7 @@ def BUILD_CONST_WIRE(value_str, c_ast_node):
   return CONST_PREFIX + value_str + "_" + C_AST_NODE_COORD_STR(c_ast_node)
 
 # Const jsut makes wire with CONST name
+# C ast constants are not enum id constants
 def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False): 
   # Since constants are constants... dont add prepend text or line location info
   # Create wire for this constant
@@ -3737,7 +3738,7 @@ def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_
   value_str = c_ast_node.value
   #print "value_str",value_str
   
-  return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
+  return NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
 def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
   if int_lit.upper().endswith("UZZ"):
@@ -3758,7 +3759,7 @@ def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
 def STRIP_INT_LIT_SUFF(int_lit):
   return int_lit.strip("LL").strip("U").strip("L")
 
-def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
+def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
   if value_str.startswith("0x"):
     hex_str = value_str.replace("0x","")
     suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(hex_str)
@@ -3816,10 +3817,9 @@ def CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False)
     
   return value,c_type_str
 
-def CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
   wire_name = BUILD_CONST_WIRE(value_str, c_ast_node)
-  value,c_type_str = CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
-  
+  value,c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
   if not(c_type_str is None):
     parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
   # Connect the constant to the wire it drives
@@ -4859,7 +4859,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     if const_val_str.startswith("-"):
       const_val_str = const_val_str.lstrip("-")
       is_negated = True
-    parser_state.existing_logic = CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated)
+    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated)
     
     
     return parser_state.existing_logic
@@ -5523,7 +5523,7 @@ def C_AST_SIZEOF_TO_LOGIC(c_ast_node,driven_wire_names, prepend_text, parser_sta
   size = C_TYPE_SIZE(c_type_str, parser_state, False, c_ast_node)
   value_str = str(size)
   is_negated = False
-  return CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
+  return NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
   
 def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, parser_state):
   # What op?
@@ -7251,7 +7251,7 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
           sys.exit(-1)
         is_negated=False
         val_str = str(child.value.value)
-        val,c_type = CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, child.value.value, is_negated)
+        val,c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, child.value.value, is_negated)
         next_index_or_val = val + 1
       rv[enum_name].id_to_int_val[id_str] = val
       #print(id_str, val)
