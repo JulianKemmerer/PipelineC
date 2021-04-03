@@ -1986,6 +1986,12 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     elif toks[0] == "bswap":
       # Byte swap
       return GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    elif toks[0].startswith("rotl"):
+      # Rotate left
+      return GET_ROTL_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    elif toks[0].startswith("rotr"):
+      # Rotate right
+      return GET_ROTR_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     # Bit concat or bit duplicate?
     elif toks[1].isdigit():
       # Duplicate
@@ -2335,3 +2341,62 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
   text += "return return_output;"
 
   return wires_decl_text, text
+  
+def GET_ROTL_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  LogicInstLookupTable = parser_state.LogicInstLookupTable
+  # TODO check for ints only?
+  # ONLY INTS FOR NOW
+  x_type = logic.wire_to_c_type[logic.inputs[0]]
+  x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
+  x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+  # Rotate amount
+  rot_amount = int(logic.func_name.split("_")[1])
+  out_width = x_width
+  out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
+  
+  wires_decl_text = '''
+  --variable x : ''' + x_vhdl_type + ''';
+  variable return_output : ''' + out_vhdl_type + ''';
+'''
+
+  # Rotate must always be zero clock
+  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+    print("Cannot do a rotate left in multple clocks!?")
+    sys.exit(-1)
+    
+  text = '''
+    return_output := x rol ''' + str(rot_amount) + ''';
+    return return_output;
+'''
+
+  return wires_decl_text, text
+  
+def GET_ROTR_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  LogicInstLookupTable = parser_state.LogicInstLookupTable
+  # TODO check for ints only?
+  # ONLY INTS FOR NOW
+  x_type = logic.wire_to_c_type[logic.inputs[0]]
+  x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
+  x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+  # Rotate amount
+  rot_amount = int(logic.func_name.split("_")[1])
+  out_width = x_width
+  out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
+  
+  wires_decl_text = '''
+  --variable x : ''' + x_vhdl_type + ''';
+  variable return_output : ''' + out_vhdl_type + ''';
+'''
+
+  # Rotate must always be zero clock
+  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+    print("Cannot do a rotate right in multple clocks!?")
+    sys.exit(-1)
+    
+  text = '''
+    return_output := x ror ''' + str(rot_amount) + ''';
+    return return_output;
+'''
+
+  return wires_decl_text, text
+  

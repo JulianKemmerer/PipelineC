@@ -1910,6 +1910,57 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 }
 '''
 
+
+  # Rotate left
+  # Parse to list of width toks
+  rotl_func_names = []
+  p = re.compile('[^_]rotl[0-9]+_[0-9]+\s?\(')
+  rotl_func_names = p.findall(c_text)
+  rotl_func_names = list(set(rotl_func_names))
+  for rotl_func_name in rotl_func_names:
+    rotl_func_name = rotl_func_name.strip("(").strip()
+    #print("rotl_func_name",rotl_func_name)
+    toks = rotl_func_name.split("_")
+    in_prefix = "uint" + toks[0].replace("rotl","")
+    in_t = in_prefix + "_t"
+    input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+    rot_amount = int(toks[1])
+    result_width = input_bit_width     
+    result_t = "uint" + str(result_width) + "_t"
+    func_name = "rotl" + str(input_bit_width) + "_" + str(rot_amount)
+    text += '''
+// BIT ROTL
+''' + result_t + " " + func_name +"("+ in_t + ''' x)
+{
+  //TODO
+}
+'''
+
+  # Rotate right
+  # Parse to list of width toks
+  rotr_func_names = []
+  p = re.compile('[^_]rotr[0-9]+_[0-9]+\s?\(')
+  rotr_func_names = p.findall(c_text)
+  rotr_func_names = list(set(rotr_func_names))
+  for rotr_func_name in rotr_func_names:
+    rotr_func_name = rotr_func_name.strip("(").strip()
+    #print("rotr_func_name",rotr_func_name)
+    toks = rotr_func_name.split("_")
+    in_prefix = "uint" + toks[0].replace("rotr","")
+    in_t = in_prefix + "_t"
+    input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+    rot_amount = int(toks[1])
+    result_width = input_bit_width     
+    result_t = "uint" + str(result_width) + "_t"
+    func_name = "rotr" + str(input_bit_width) + "_" + str(rot_amount)
+    text += '''
+// BIT ROTR
+''' + result_t + " " + func_name +"("+ in_t + ''' x)
+{
+  //TODO
+}
+'''
+
   # Constant index assignment with N bits
   # Otherwise large slv is like ram lookup
   # Parse to list of width toks
