@@ -32,7 +32,42 @@
 //#include "examples/spw_pkg_guard.c"
 //#include "examples/arty/src/mnist/neural_network_fsm.c"
 //#include "examples/littleriscy/riscv.c"
-#include "examples/NXSTest_syn.c"
+#include "examples/NexusProofOfWork/NXSTest_syn.c"
+
+/*
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 800.0
+uint64_t main(uint32_t x, uint32_t y)
+{
+  return x * y;
+}
+*/
+
+/*#pragma PART "xc7a35ticsg324-1l"
+uint7_t main(uint6_t x, uint6_t y, uint1_t c)
+{
+  __vhdl__("\n\
+  begin \n\
+     return_output <= ('0'&x) + ('0'&y) + c;\n\
+  ");
+  // uint1 = (ns): 1.654 = 604.5949214026602 MHz
+  // uint2 = (ns): 1.726 = 579.3742757821552 MHz
+  // uint3 = (ns): 2.303 = 434.2162396873643 MHz
+  // uint4 = (ns): 2.31 = 432.9004329004329 MHz
+  // uint5 = (ns): 2.894 = 345.5425017277125 MHz (LUT3=1 LUT5=2)
+  // uint6 = (ns): 2.25699 = 443.0660168365087 MHz (CARRY4=2 LUT2=1)
+  // uint7 = (ns): 2.283 = 438.02014892685065 MHz
+  // uint8 = (ns): 2.332 = 428.81646655231566 MHz
+  // uint9 = (ns): 2.258 = 442.8697962798937 MHz
+  // uint10 = (ns): 2.371 = 421.76296921130324 MHz
+  // uint11 = (ns): 2.397002 = 417.18815185648725 MHz
+  // uint12 = (ns): 2.4459999999999997 = 408.83074407195426 MHz
+  // uint13 = (ns): 2.372 = 421.5851602023609 MHz
+  // uint14 = (ns): 2.4850000000000003 = 402.41448692152915 MHz
+  // uint15 = (ns): 2.511 = 398.24771007566704 MHz
+  // uint16 = (ns): 2.56 = 390.625 MHz
+  //return x + y + c;
+}*/
 
 /*
 #include "uintN_t.h"
@@ -40,11 +75,6 @@
 float main(float x, float y)
 {
   return x + y;
-}*/
-/*
-uint32_t main(uint32_t x, uint32_t y)
-{
-  return x / y;
 }
 */
 
@@ -144,15 +174,6 @@ float main(float x, float y)
 }
 
 */
-/*
-#include "intN_t.h"
-#include "uintN_t.h"
-#pragma MAIN_MHZ main 200.0
-uint32_t main(uint32_t x, uint32_t y)
-{
-  return x / y;
-}
-*/
 
 /*
 #include "intN_t.h"
@@ -208,3 +229,33 @@ an_array_t main(data_t mat1[N][N], data_t mat2[N][N])
     return res;
 }
 */
+
+
+
+    // uint1 = (ns): 1.654 = 604.5949214026602 MHz
+  // uint2 = (ns): 1.726 = 579.3742757821552 MHz
+  //uint6 = (ns): 2.25699 = 443.0660168365087 MHz   LUT6?
+  // uint9 = (ns): 2.258 = 442.8697962798937 MHz
+  // uint7 = (ns): 2.283 = 438.02014892685065 MHz
+  // uint3 = (ns): 2.303 = 434.2162396873643 MHz
+  // uint4 = (ns): 2.31 = 432.9004329004329 MHz
+  // uint8 = (ns): 2.332 = 428.81646655231566 MHz
+  // uint10 = (ns): 2.371 = 421.76296921130324 MHz
+  // uint13 = (ns): 2.372 = 421.5851602023609 MHz
+  // uint11 = (ns): 2.397002 = 417.18815185648725 MHz
+  // uint12 = (ns): 2.4459999999999997 = 408.83074407195426 MHz
+  // uint14 = (ns): 2.4850000000000003 = 402.41448692152915 MHz
+  // uint15 = (ns): 2.511 = 398.24771007566704 MHz
+  // uint16 = (ns): 2.56 = 390.625 MHz
+  // uint5 = (ns): 2.894 = 345.5425017277125 MHz
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  

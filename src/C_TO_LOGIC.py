@@ -3760,6 +3760,7 @@ def STRIP_INT_LIT_SUFF(int_lit):
   return int_lit.strip("LL").strip("U").strip("L")
 
 def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
+  value_str_no_suff = STRIP_INT_LIT_SUFF(value_str)
   if value_str.startswith("0x"):
     hex_str = value_str.replace("0x","")
     suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(hex_str)
@@ -3792,22 +3793,27 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
         c_type_str = "int" + str(bits+1) + "_t"
       else:
         c_type_str = "uint" + str(bits) + "_t"
-  elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
-    value = float(value_str)
-    c_type_str = "float"
-  elif value_str.isdigit():
+  elif value_str_no_suff.isdigit():
+    suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(value_str)
+    value_str = value_str_no_suff
     value = int(value_str)
-    bits = value.bit_length()
-    if bits == 0:
-      bits = 1
-    if is_negated:
-      c_type_str = "int" + str(bits+1) + "_t"
+    if suff_c_type:
+      c_type_str = suff_c_type
     else:
-      c_type_str = "uint" + str(bits) + "_t"
+      bits = value.bit_length()
+      if bits == 0:
+        bits = 1
+      if is_negated:
+        c_type_str = "int" + str(bits+1) + "_t"
+      else:
+        c_type_str = "uint" + str(bits) + "_t"
   elif type(c_ast_node) == c_ast.Constant and c_ast_node.type=='char':
     value = value_str.strip("'")
     c_type_str = "char"
-    #print "Char val", value 
+    #print "Char val", value
+  elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
+    value = float(value_str)
+    c_type_str = "float"
   else:
     print("What type of constant is?", value_str)
     sys.exit(-1)

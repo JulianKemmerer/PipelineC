@@ -351,9 +351,11 @@ uint64_t DoNXSTest(uint64_t *State, uint64_t *Key, uint64_t Nonce)
 	
 	printf("State before Skein block:\n");
 	DumpQwords(P, 16);
+	DumpVerilogStyle(P, 128);
 	
 	printf("Key before Skein block:\n");
 	DumpQwords(Key, 16);
+	DumpVerilogStyle(P, 128);
 	
 	SkeinRoundTest(P, Key, Type);
 	
@@ -414,8 +416,8 @@ int main()
 	memcpy(State, NXSTestHeader, 216);
 	
 	printf("Block input (after midstate, the remainder of the data to be hashed):\n");
-	DumpQwords(State + 128, 11);
-	DumpVerilogStyle(State + 128, 88);
+	DumpQwords(State + 128, 10);
+	DumpVerilogStyle(State + 128, 80);
 	
 	NXSMidstate(Key, State);
 	
@@ -431,14 +433,15 @@ int main()
 	//memset(State + 80, 0x00, 128 - 80);
 	
 	printf("Test vector input:\n");
-	DumpQwords(State, 16);
+	DumpQwords(State + 16, 16);
 	DumpVerilogStyle(State, 128);
 
 	printf("Test key input:\n");
 	DumpQwords(Key, 17);
 	DumpVerilogStyle(Key, 136);
 	
-	uint64_t res = DoNXSTest(State, Key, (0x00000001FCAFC045));
+	//0x00000001FCAFC045
+	uint64_t res = DoNXSTest(State, Key, 0x00000001FCAFC045ULL);
 	
 	printf("Output qword: 0x%016llX\n", res);
 	

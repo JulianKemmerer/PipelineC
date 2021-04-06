@@ -21,7 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Do write up on NXS - try not allowing add/sub bits per stage <4 since carry4 if vivado, try retiming?
+Do write up on NXS - TRY W/ state[16] INSTEAD [27], try not allowing add/sub bits per stage <4 since carry4 if vivado, try retiming, try completely unrolled?
 Do write up on one or two optimizations to DKs riscv
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
@@ -50,7 +50,6 @@ Document pragmas
 File level modules? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
-Do a simple RISCV? cpu? But avoid just doing RTL clone?
 Reorg global logic detection/rounding from bottom up instead of trying multiple times to slice from top down.
 Fix fine grain sweep to work again
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?

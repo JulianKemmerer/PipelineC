@@ -110,9 +110,9 @@ SkeinMix8WConsts(SkeinMix8Odd3, 47, 49, 27, 58, 37, 48, 53, 56)
 
 typedef struct State_t
 {
-  uint64_t State[27];
+  uint64_t State[16];
 }State_t;
-State_t SkeinEvenRound(uint64_t p[27])
+State_t SkeinEvenRound(uint64_t p[16])
 {
   uint64_t pv0[8];
   uint64_t pv1[8];
@@ -150,7 +150,7 @@ State_t SkeinEvenRound(uint64_t p[27])
   return rv;
 }
 
-State_t SkeinOddRound(uint64_t p[27])
+State_t SkeinOddRound(uint64_t p[16])
 {
   uint64_t pv0[8];
   uint64_t pv1[8];
@@ -188,21 +188,20 @@ State_t SkeinOddRound(uint64_t p[27])
   return rv;
 }
 
+// MAKE Skein innner loop its own func?
+
 typedef struct SkeinRoundTest_t{
-  uint64_t State[27];
+  uint64_t State[16];
   uint64_t Key[17];
 }SkeinRoundTest_t;
 #define SkeinRoundTestWType(SkeinRoundTestName, T0, T1, T2) \
-SkeinRoundTest_t SkeinRoundTestName(uint64_t State[27], uint64_t Key[17])\
+SkeinRoundTest_t SkeinRoundTestName(uint64_t State[16], uint64_t Key[17])\
 { \
   uint64_t T[3]; \
   T[0] = T0; \
   T[1] = T1; \
   T[2] = T2; \
   \
-  /* memcpy(StateBak, State, 128); */ \
-  uint64_t StateBak[16]; \
-  ARRAY_COPY(StateBak, State, 16) \
   uint32_t i; \
   for(i = 0; i < 20; i += 2)\
   {\
@@ -427,39 +426,59 @@ keccackf_t keccakf(uint64_t st[25]) //uint64_t KeccakState[25]
 
 #pragma MAIN_MHZ DoNXSTest 850.0 // Timing goal
 // Two input port u64 arrays, and one u64 output
-uint64_t DoNXSTest(uint64_t State[27], uint64_t Key[17])
+uint64_t DoNXSTest(uint64_t State[26], uint64_t Key[17])
 {
-  // T constants inside func
-  SkeinRoundTest_t srt = SkeinRoundTest0(State, Key); 
-  State = srt.State;
-  Key = srt.Key;
+  uint64_t Nonce = 0x00000001FCAFC045ULL;
+  uint64_t P[16];
   
-  //memcpy(Key, State, 128); // Key[127:0] = State[127:0]
-  ARRAY_COPY(Key, State, 16)
-  //memset(State, 0x00, 128);  
-  ARRAY_SET(State, 0x00, 16)
-   
-  Key[16] = SKEIN_KS_PARITY;
+  // loads low 8 qwords
+  //memcpy(P, State + 16, 64);
   uint32_t i;
-  for(i = 0; i < 16; i+=1) Key[16] ^= Key[i];
+  for(i = 0; i < 8; i+=1) P[i] = State[i+2];
+  
+  P[8] = State[24];
+	P[9] = State[25];
+	P[10] = Nonce;
+  
+  for(i = 11; i < 16; i+=1) P[i] = 0ULL;
   
   // T constants inside func
-  SkeinRoundTest_t srt = SkeinRoundTest1(State, Key);
-  State = srt.State;
+  SkeinRoundTest_t srt = SkeinRoundTest0(P, Key); 
+  P = srt.State;
   Key = srt.Key;
   
-  //printf("Result after full Nexus second block process:\n");
+  for(i = 0; i < 8; i+=1) Key[i] = P[i] ^ State[16 + i];
   
+  Key[8] = P[8] ^ State[24];
+	Key[9] = P[9] ^ State[25];
+	Key[10] = P[10] ^ Nonce;
+	
+	for(i = 11; i < 16; i+=1) Key[i] = P[i];
+  
+  // Clear P, the state argument to the final block is zero.
+	//memset(P, 0x00, 128);
+  ARRAY_SET(P, 0x00, 16)
+  Key[16] = SKEIN_KS_PARITY;
+  for(i = 0; i < 16; i+=1) Key[16] ^= Key[i];
+
+  // T constants inside func
+  SkeinRoundTest_t srt = SkeinRoundTest1(P, Key);
+  P = srt.State;
+  Key = srt.Key;
+
   uint64_t KeccakState[25];
   // memset(KeccakState, 0x00, 200);
   ARRAY_SET(KeccakState, 0x00, 25)
-  // memcpy(KeccakState, State, 72);
-  ARRAY_COPY(KeccakState, State, 9) 
+  // Copying qwords 0 - 8 (inclusive, so 9 qwords).
+	// Note this is technically an XOR operation, just
+	// with zero in this instance.
+  // memcpy(KeccakState, P, 72);
+  ARRAY_COPY(KeccakState, P, 9) 
   
   keccackf_t k = keccakf(KeccakState);
   KeccakState = k.st;
   
-  for(i = 0; i < 7; i+=1) KeccakState[i] ^= State[i + 9];
+  for(i = 0; i < 7; i+=1) KeccakState[i] ^= P[i + 9];
 
   KeccakState[7] ^= 0x0000000000000005ULL;
   KeccakState[8] ^= 0x8000000000000000ULL;
