@@ -470,8 +470,8 @@ uint64_t DoNXSTest(uint64_t State[26], uint64_t Key[17])
   // memset(KeccakState, 0x00, 200);
   ARRAY_SET(KeccakState, 0x00, 25)
   // Copying qwords 0 - 8 (inclusive, so 9 qwords).
-	// Note this is technically an XOR operation, just
-	// with zero in this instance.
+  // Note this is technically an XOR operation, just
+  // with zero in this instance.
   // memcpy(KeccakState, P, 72);
   ARRAY_COPY(KeccakState, P, 9) 
   
