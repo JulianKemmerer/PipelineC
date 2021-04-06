@@ -21,7 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Do write up on NXS - TRY W/ state[16] INSTEAD [27], try not allowing add/sub bits per stage <4 since carry4 if vivado, try retiming, try completely unrolled?
+Do write up on NXS - TRY W/ state[16] INSTEAD [27], try retiming, try completely unrolled?
 Do write up on one or two optimizations to DKs riscv
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
@@ -101,6 +101,7 @@ General pipelineable with IO regs if used in pure func RAM_SP_RF func
 Optimize away static consts that look like regs w init values - allow local init of 'const' vars?
 Explore vivado's retiming option - thought it was on by default... it isnt because it seem beneficial <20% of the time?
 Fix not to write empty vhdl io reg processes for void() mains for clock cross ports noly
+Try not allowing add/sub of certain slow bits per stage -> need to syn all the adders and prioritize
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
