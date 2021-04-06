@@ -2912,7 +2912,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
       #print("c_type",c_type)
       #print("width",width)
       hex_str = str(hex(value_num)).replace("0x","")
-      need_resize = len(hex_str)*4 > width
+      need_resize = len(hex_str)*4 != width
       hex_str = 'X"' + hex_str + '"'
       #print("hex_str",hex_str)
       #sys.exit(0)
