@@ -1,6 +1,7 @@
 #include "uintN_t.h"  // uintN_t types for any N
 
-#pragma PART "xc7a35ticsg324-1l"
+// Install+configure synthesis tool then specify part here
+// #pragma PART "xc7a35ticsg324-1l" 
 
 // Count to 200000000 iterations * 5ns each = 1sec
 uint28_t counter;
@@ -8,7 +9,7 @@ uint28_t counter;
 // LED on off state
 uint1_t led;
 
-// 'Called' every 5ns (200MHz)
+// 'Called'/'Executing' every 5ns (200MHz)
 #pragma MAIN_MHZ blink 200.0
 uint1_t blink()
 {
