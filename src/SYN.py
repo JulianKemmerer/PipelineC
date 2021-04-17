@@ -205,11 +205,6 @@ class TimingParams:
       print("WTF adding a slice and has latency cache?",self.calcd_total_latency)
       print(0/0)
       sys.exit(-1)
-    
-  def SET_RAW_HDL_SLICE(self, slice_index, slice_point):
-    self.slices[slice_index]=slice_point
-    self.slices = sorted(self.slices)
-    self.INVALIDATE_CACHE()
   
   '''
   # Returns if add was success
@@ -2218,6 +2213,37 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   # return DO_FINE_THROUGHPUT_SWEEP(parser_state, sweep_state)
   #else:
   return sweep_state.multimain_timing_params
+  
+# Not because it is easy, but because we thought it would be easy
+  
+# Inside out timing params
+# Kinda like "make all adds N cycles" 
+# But starts from first module where any slice approaches timing goal
+# Middle out coarseness?
+def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
+  # types of latency:
+  # slices - 
+  #         which for raw hdl can be optimized, 
+  #         for generic comb logic is abstract slicing of delay composed of raw hdl submodules
+  # None -  'Slicing upwards' is confusing and not necessary since dont ~need that info? Just calculate latency
+  #         Is whats left over from walk up hierarchy
+  # NEED TO make timing params accept None slices and do calculated pipeline map latency calculation
+  '''
+  Find all the bottom, no submodule nodes
+  Ex. 10ns clock P
+  Start with bottom of tree lowest level hierachy nodes
+  nodes = [leafs]
+
+  if module_delay < P: # Or P/2 or something
+    1 or more of these modules can fit a a clock
+    proceed up hierarchy to container module inst, add to nodes iterating upwards on
+  else:
+    <1 of these modules can fit in a clock 
+    slice all modules inst of this func to fit into a clock downwards  
+    Dodging globals here too?TODO?
+  '''
+  pass
+  
 
 # Return SWEEP STATE for DO_FINE_THROUGHPUT_SWEEP someday again...
 # Of Montreal - The Party's Crashing Us
