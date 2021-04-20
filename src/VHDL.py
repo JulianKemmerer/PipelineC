@@ -3077,7 +3077,7 @@ def GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name=None):
   return top_entity_name
 
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help
-def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est_total_latency=None):
+def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
   # Sanity check?
   if Logic.is_vhdl_func or Logic.is_vhdl_expr:
     print("Why entity for vhdl func?")
@@ -3085,9 +3085,7 @@ def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state, est
     sys.exit(-1)
   
   timing_params = TimingParamsLookupTable[inst_name]
-  latency = est_total_latency
-  if latency is None:
-    latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   return Logic.func_name + "_" +  str(latency) + "CLK" + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
 
 def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):

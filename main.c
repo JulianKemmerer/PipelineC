@@ -16,7 +16,6 @@
 //#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
 //#include "examples/fosix/bram_loopback.c"
-//#include "examples/keccak.pc"
 //#include "examples/arty/src/uart/uart_loopback_no_fc.c"
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
@@ -33,12 +32,17 @@
 //#include "examples/arty/src/mnist/neural_network_fsm.c"
 //#include "examples/littleriscy/riscv.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
-#include "examples/NexusProofOfWork/NXSTest_syn_inlined.c"
+//#include "examples/NexusProofOfWork/NXSTest_syn_inlined.c"
 
+#pragma MAIN_MHZ main 2000.0
+float main(float x, float y)
+{
+  return x+y;
+}
 
 //#include "uintN_t.h"
 // Given timing data
-//#pragma MAIN_MHZ main 800.0
+//#pragma MAIN_MHZ main 250.0   // ~Between 61 and 109
 /*
 Pipeline Map:
 \/ Delay units

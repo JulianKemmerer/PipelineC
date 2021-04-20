@@ -4559,7 +4559,19 @@ def GET_CONTAINER_INST(inst_name):
   # Construct container from full inst name
   toks = inst_name.split(SUBMODULE_MARKER)
   container = SUBMODULE_MARKER.join(toks[0:len(toks)-1])
+  if container == inst_name:
+    return None
+  if container == "":
+    return None
   return container
+  
+def RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state):
+  container = GET_CONTAINER_INST(inst_name)
+  if container is None:
+    # Top level 
+    return inst_name
+  else:
+    return RECURSIVE_FIND_MAIN_FUNC_FROM_INST(container, parser_state)
   
 # For things that look like
 # Get the last token (leaf) token when splitting by "/" and sub marker
