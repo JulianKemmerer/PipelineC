@@ -21,6 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Fix shifts in FP operators to check for shfiting more than number of bits
 Antikernel fun?
 Do write up on NXS - try retiming, try area opt setting
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
