@@ -2291,8 +2291,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
   
   # Have a fake target scaler 
   # One scaler for all clocks?
-  target_clock_sweep_mult_inc = 0.005
-  target_clock_sweep_mult = target_clock_sweep_mult_inc #1.0  # Temp start at ~zero for testing
+  target_clock_sweep_mult_inc = 0.05
+  target_clock_sweep_mult = 1.0
   # TODO multi main one scaler per MAIN clock domain in timing report like COARSE SWEEP does
   
   timing_met = False

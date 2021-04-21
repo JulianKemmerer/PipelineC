@@ -31,15 +31,16 @@
 //#include "examples/spw_pkg_guard.c"
 //#include "examples/arty/src/mnist/neural_network_fsm.c"
 //#include "examples/littleriscy/riscv.c"
-//#include "examples/NexusProofOfWork/NXSTest_syn.c"
+#include "examples/NexusProofOfWork/NXSTest_syn.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn_inlined.c"
 
-#pragma MAIN_MHZ main 2000.0
+/*
+#pragma MAIN_MHZ main 1000.0
 float main(float x, float y)
 {
   return x+y;
 }
-
+*/
 //#include "uintN_t.h"
 // Given timing data
 //#pragma MAIN_MHZ main 250.0   // ~Between 61 and 109
