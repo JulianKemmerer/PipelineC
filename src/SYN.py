@@ -126,8 +126,7 @@ class TimingParams:
     self.logic = logic
     self.inst_name = inst_name
     
-    # TODO
-    # Can this module be sliced through at all top down?
+    # Can this module be sliced through at all top down? TODO globals
     self.can_be_sliced = True
     # Have the current params (slices) been fixed, 
     self.params_are_fixed = False
@@ -1011,24 +1010,31 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     
   return rv
   
-# TODO make hash ext only reflect raw hdl slices
-'''
-def BUILD_HASH_EXT(inst_name, Logic, TimingParamsLookupTable, parser_state):
-  timing_params = TimingParamsLookupTable[inst_name]
-  # How to encode params as str?
-  s = ""
-  # Just slices for now
-  s += str(timing_params.slices)
-  # And submodule hashes
-  for submodule in sorted(Logic.submodule_instances): # MUST BE SORTED FOR CONSISTENT ORDER!
-    sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule
-    sub_logic = parser_state.LogicInstLookupTable[sub_inst]
-    s += BUILD_HASH_EXT(sub_inst, sub_logic, TimingParamsLookupTable, parser_state)
-  hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
+def RECURSIVE_GET_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state):
+  rv = tuple()
+  if len(Logic.submodule_instances) > 0:
+    # Not raw hdl, slices dont guarentee describe pipeline structure
+    for submodule in sorted(Logic.submodule_instances): # MUST BE SORTED FOR CONSISTENT ORDER!
+      sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule
+      sub_logic = parser_state.LogicInstLookupTable[sub_inst]
+      rv += (RECURSIVE_GET_NO_SUBMODULE_SLICES(sub_inst, sub_logic, TimingParamsLookupTable, parser_state),)
+  else:
+    # Raw HDL
+    timing_params = TimingParamsLookupTable[inst_name]
+    rv += (tuple(timing_params.slices),)
     
-  return hash_ext
-'''
+  return rv
+  
+  
+# Hash ext only reflect raw hdl slices (better would be raw hdl bits per stage)
 def BUILD_HASH_EXT(inst_name, Logic, TimingParamsLookupTable, parser_state):
+  slices_tup = RECURSIVE_GET_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
+  s = str(slices_tup)
+  hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?    
+  return hash_ext
+
+
+def BUILD_HASH_EXT_old(inst_name, Logic, TimingParamsLookupTable, parser_state):
   top_level_str = ""
   timing_params = TimingParamsLookupTable[inst_name]
   if not timing_params.params_are_fixed:
@@ -2332,7 +2338,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         #print("main_func",main_func)
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         target_mhz = parser_state.main_mhz[main_func] * target_clock_sweep_mult
-        #print("target_mhz",target_mhz)
         target_path_delay_ns = 1000.0 / target_mhz
         #func_delay_for_slice_mult = 2.0
         #if func_path_delay_ns >= (target_path_delay_ns): # *func_delay_for_slice_mult):
@@ -2342,19 +2347,23 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         # Does module need slicing? in half could produce a 1 long segment still
         # So in 3 produces a 2/3 long segment - would slicing that or better be useful?
         mult = 0
-        #if target_path_delay_ns <= ((2.0/3.0)*func_path_delay_ns): # under slice smaller modules?
+        
         #if target_path_delay_ns <= (1.5*func_path_delay_ns):  # over use smaller modules?
+        #if target_path_delay_ns <= ((2.0/3.0)*func_path_delay_ns): # under slice smaller modules?
+        #if target_path_delay_ns <= (0.5*func_path_delay_ns):
         #if target_path_delay_ns <= (2.0*func_path_delay_ns):  # over over use smaller modules?
         if target_path_delay_ns <= func_path_delay_ns:
           # How many multiples are we away from the goal
           #mult = int(func_path_delay_ns / (target_path_delay_ns/2.0))
           #mult = int(math.ceil(func_path_delay_ns / (target_path_delay_ns/2.0)))
-          mult = int(math.ceil(func_path_delay_ns / target_path_delay_ns))
+          #mult = int(math.ceil(func_path_delay_ns / target_path_delay_ns))
+          mult = int(func_path_delay_ns / target_path_delay_ns)
+          #mult = int(math.floor(func_path_delay_ns / target_path_delay_ns))+1
+          #mult = int(func_path_delay_ns / target_path_delay_ns) + 1
           
         # Do slicing or skip up to next hierarchy level?
         if mult > 1: # Re-writing diffent 0clk verisons doesnt work since only write !=0 clock files below
           # Slice func instance down from here
-          print("func_inst",func_inst)
           # Divide up into that many clocks as a starting guess
           # If doesnt have global wires
           if func_logic.CAN_BE_SLICED():
@@ -2372,32 +2381,32 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               print("Can't syn when slicing through globals mid out!")
               sys.exit(-1)
               
-            # Applying the best guess slices downwards in hier might not end with the same latency as intended
-            # Since lower level guessing locks in place slices, see below, stopping re-slicing, dropping slices 'from above'
-            # Relates to otherwise needing slicing upwards from the previous guess
-            # If this module contains any fixed in place slices then it cant claim to have its own slices as if from this point down 
+            # If this module contains any fixed in place slices then it cant claim to have its own slices as if from this point down
+            # Relates to otherwise needing slicing upwards from the previous guess?
+            require_all_unfixed_subs = True
             has_fixed_param_subs = False
-            for local_sub_inst in func_logic.submodule_instances:
-              sub_inst_name = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst 
-              sub_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[sub_inst_name]
-              if sub_timing_params.params_are_fixed:
-                has_fixed_param_subs = True
-                break
-            if has_fixed_param_subs:
-              print("best_guess_slices",best_guess_slices)
+            if require_all_unfixed_subs:
+              for local_sub_inst in func_logic.submodule_instances:
+                sub_inst_name = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst 
+                sub_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[sub_inst_name]
+                if sub_timing_params.params_are_fixed:
+                  has_fixed_param_subs = True
+                  break
+            if require_all_unfixed_subs and has_fixed_param_subs:
+              #print("best_guess_slices",best_guess_slices)
               # Shouldnt need erasing since now clear submodules below before going down for reslicing
               # Erase this modules best guess slicing as it is not 'real'
               #func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
               #func_inst_timing_params.slices = None
               #func_inst_timing_params.INVALIDATE_CACHE()
               #sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
+              pass
             else:
-              # Lock these slices in place to not be sliced through fro the top down?
-              # idk man?
+              # Lock these slices in place to not be sliced through from the top down
               func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
               func_inst_timing_params.params_are_fixed = True
               sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
-              print("slices",func_inst_timing_params.slices)
+              #print(func_inst,"  ",func_inst_timing_params.slices)
           else:
             print("Can't syn when slicing through globals mid out2!")
             sys.exit(-1)
@@ -2405,6 +2414,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         else:
           #print("Is not large enough to alone influence meeting timing. func delay ns", func_path_delay_ns)
           # Set this module to be zero clocks
+          if func_inst_timing_params.params_are_fixed:
+            print("What fixed params for small mod?")
+            sys.exit(-1)
           func_inst_timing_params.slices = []
           func_inst_timing_params.INVALIDATE_CACHE()
           sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
@@ -2478,7 +2490,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     else: 
       # And make adjustment
       target_clock_sweep_mult += target_clock_sweep_mult_inc
-      print("target_clock_sweep_mult now",target_clock_sweep_mult)
+      #print("target_clock_sweep_mult now",target_clock_sweep_mult)
   
 
 # Return SWEEP STATE for DO_FINE_THROUGHPUT_SWEEP someday again...
