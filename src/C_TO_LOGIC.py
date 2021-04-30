@@ -6524,8 +6524,8 @@ class ParserState:
     self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
     
     # Pragma info
-    self.main_mhz = dict() # dict[main_func_name]=mhz
-    self.main_clk_group = dict() # dict[main_func_name]=clk_group_str
+    self.main_mhz = dict() # dict[main_inst_name]=mhz # Any inst name can be used
+    self.main_clk_group = dict() # dict[main_inst_name]=clk_group_str
     self.func_marked_wires = set()
     self.func_marked_blackbox = set()
     self.func_marked_debug = set()

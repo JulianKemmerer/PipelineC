@@ -161,7 +161,7 @@ port(
 '''
   # IO
   for main_func in parser_state.main_mhz:
-    main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+    main_func_logic = parser_state.LogicInstLookupTable[main_func]
     # Inputs
     for input_port in main_func_logic.inputs:
       c_type = main_func_logic.wire_to_c_type[input_port]
@@ -185,7 +185,7 @@ architecture arch of ''' + entity_name + ''' is
   # Clock cross wires
   has_clk_cross = False
   for main_func in parser_state.main_mhz:
-    main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+    main_func_logic = parser_state.LogicInstLookupTable[main_func]
     if LOGIC_NEEDS_CLK_CROSS_TO_MODULE(main_func_logic,parser_state) or LOGIC_NEEDS_MODULE_TO_CLK_CROSS(main_func_logic,parser_state):
       has_clk_cross = True
       break
@@ -203,7 +203,7 @@ signal module_to_clk_cross : module_to_clk_cross_t;
     text += "attribute dont_touch : string;\n"    
     # IO
     for main_func in parser_state.main_mhz:
-      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+      main_func_logic = parser_state.LogicInstLookupTable[main_func]
       # The inputs regs of the logic
       for input_name in main_func_logic.inputs:
         # Get type for input
@@ -245,7 +245,7 @@ begin
       text += " " + "process(clk_" + clk_ext_str + ") is" + "\n"
       text += " " + "begin" + "\n"
       text += " " + " " + "if rising_edge(clk_" + clk_ext_str + ") then" + "\n"
-      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+      main_func_logic = parser_state.LogicInstLookupTable[main_func]
       # Register inputs
       for input_name in main_func_logic.inputs:
         # Get type for input
@@ -262,7 +262,7 @@ begin
   # Output wire connection
   if not is_final_top:
     for main_func in parser_state.main_mhz:
-      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+      main_func_logic = parser_state.LogicInstLookupTable[main_func]
       # Connect to top output port
       for out_wire in main_func_logic.outputs:
         text += " " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + " <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg;" + "\n"
@@ -272,7 +272,7 @@ begin
 '''
   # Main instances
   for main_func in parser_state.main_mhz:
-    main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+    main_func_logic = parser_state.LogicInstLookupTable[main_func]
     main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
     clk_ext_str = CLK_EXT_STR(main_func, parser_state)
      
@@ -2211,6 +2211,9 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
     
   rv = ""
+  rv += "-- Timing params:\n"
+  rv += "-- Fixed?: "+str(timing_params.params_are_fixed)+"\n"
+  rv += "-- Slices: "+str(timing_params.slices)+"\n"
   rv += "library std;\n"
   rv += "use std.textio.all;\n"
   rv += "library ieee;" + "\n"

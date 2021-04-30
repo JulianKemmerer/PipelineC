@@ -728,7 +728,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
   return ParsedTimingReport(log_text)
   
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext = None, use_existing_log_file = True):
   # Timing params for this logic
   timing_params = TimingParamsLookupTable[inst_name]
   
@@ -744,6 +744,8 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   # Set log path
   if hash_ext is None:
     hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+  if total_latency is None:
+    total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   log_path = output_directory + "/vivado" + "_" +  str(total_latency) + "CLK" + hash_ext + ".log"
   #vivado -mode batch -source <your_Tcl_script>
       
