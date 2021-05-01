@@ -2269,7 +2269,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
   # Cache the multiple coarse runs
   coarse_slices_cache = dict()
   printed_slices_cache = set()
-  def coarse_cache_key(logic, target_mhz):
+  def cache_key_func(logic, target_mhz):
     key=(logic.func_name,target_mhz)
     return key
   
@@ -2286,8 +2286,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
   # keep trying harder with best guess slices
   best_guess_sweep_mult = 1.0
   best_guess_sweep_mult_inc = 0.1
-  timing_met = False
-  
+  timing_met = False # TODO replace with sweep state met timing
   
   # Outer loop for this sweep
   while not timing_met:
@@ -2336,55 +2335,26 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
           # Each instance of func might be under different MAIN clock
           main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
-          #print("main_func",main_func)
           main_func_logic = parser_state.FuncLogicLookupTable[main_func]
           target_mhz = parser_state.main_mhz[main_func]
           coarse_target_mhz = target_mhz * coarse_sweep_mult
           target_path_delay_ns = 1000.0 / target_mhz
-          #fake_target_path_delay_ns = 1000.0 / fake_target_mhz
-          #func_delay_for_slice_mult = 2.0
-          #if func_path_delay_ns >= (target_path_delay_ns): # *func_delay_for_slice_mult):
-          # Dividing a module in N 
-          # can produce in sequence, a two can produce 2*(1/N) long segment
-          #new_path_ns = 2*(old_path_ns/N)
-          # Does module need slicing? in half could produce a 1 long segment still
-          # So in 3 produces a 2/3 long segment - would slicing that or better be useful?
-
           # Cached coarse sweep?
-          cache_key = coarse_cache_key(func_logic, coarse_target_mhz)
+          cache_key = cache_key_func(func_logic, coarse_target_mhz)
 
+          # Is is module large enough in delay to slice?
           try_to_slice = False
-          #if target_path_delay_ns <= (1.5*func_path_delay_ns):  # over use smaller modules?
-          #if target_path_delay_ns <= ((2.0/3.0)*func_path_delay_ns): # under slice smaller modules?
-          #if target_path_delay_ns <= (0.5*func_path_delay_ns):
-          #if target_path_delay_ns <= func_path_delay_ns:
           if target_path_delay_ns <= (hier_sweep_mult*func_path_delay_ns):
-            # How many multiples are we away from the goal
-            #mult = int(func_path_delay_ns / (target_path_delay_ns/2.0))
-            #mult = int(math.ceil(func_path_delay_ns / (target_path_delay_ns/2.0)))
-            #mult = int(math.ceil(func_path_delay_ns / target_path_delay_ns))
-            # mult = int(func_path_delay_ns / target_path_delay_ns)
-            #mult = int(math.floor(func_path_delay_ns / target_path_delay_ns))+1
-            #mult = int(func_path_delay_ns / target_path_delay_ns) + 1
             try_to_slice = True
           else:
             if func_path_delay_ns > 0.0:
               if target_path_delay_ns/func_path_delay_ns < smallest_not_sliced_hier_mult:
                 smallest_not_sliced_hier_mult = target_path_delay_ns/func_path_delay_ns
             
-          # Do slicing or skip up to next hierarchy level?
-          if try_to_slice: 
-            # Slice func instance down from here
-            # Divide up into that many clocks as a starting guess
-            # If doesnt have global wires
-            if not func_logic.CAN_BE_SLICED():
-              print("Can't syn when slicing through globals mid out2!")
-              sys.exit(-1)
-            # Assume no globals from here
-            
-            if cache_key not in printed_slices_cache:
-              print("Slicing",func_logic.func_name)
-            # If this module contains any fixed in place slices then it cant claim to have its own slices as if from this point down
+          # Do slicing or skip up to next hierarchy level
+          if try_to_slice and func_logic.CAN_BE_SLICED():  
+            # If this module contains any fixed in place slices then
+            # cant claim to have its own slices as if from this point down
             # Relates to otherwise needing slicing upwards from the previous guess?
             require_all_unfixed_subs = True
             has_fixed_param_subs = False
@@ -2395,27 +2365,39 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 if sub_timing_params.params_are_fixed:
                   has_fixed_param_subs = True
                   break
+                  
             # Use best guess if module already has fixed slices
             use_best_guess_slices = has_fixed_param_subs
-            
             if use_best_guess_slices:
+              if cache_key not in printed_slices_cache:
+                print("Best guess slicing:",func_logic.func_name,", mult =", best_guess_sweep_mult)
               mult = int(math.ceil((func_path_delay_ns*best_guess_sweep_mult) / target_path_delay_ns))
               clks = mult - 1
-              #if clks > 0: # Re-writing diffent 0clk verisons doesnt work since only write !=0 clock files below
               slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
+              # Update slice step
+              sweep_state.inst_sweep_state[main_func].slice_step = 1.0/((SLICE_STEPS_BETWEEN_REGS+1)*(clks+1))  
+              # If making slices then make sure the slices dont go through global logic
+              if len(slices) > 0:
+                #print(" ...rounding away from globals...")
+                sweep_state.curr_main_inst = main_func
+                slices = ROUND_SLICES_AWAY_FROM_GLOBAL_LOGIC(slices, parser_state, sweep_state)
+                #print(" ...rounded slices:", best_guess_slices)
               if cache_key not in printed_slices_cache:
                 print("Best guess slices:",slices)
-            elif cache_key in coarse_slices_cache:
-              slices = coarse_slices_cache[cache_key]
-              if cache_key not in printed_slices_cache:
-                print("Cached slices:",slices)
             elif (func_path_delay_ns*coarse_sweep_mult) / target_path_delay_ns <= 1.0: #func_path_delay_ns < target_path_delay_ns:
-              # Do single clock with io regs
+              # Do single clock with io regs "coarse grain" 
               slices = [0.0, 1.0]
               if cache_key not in printed_slices_cache:
-                print("Sliced w/ IO regs:",slices)
+                print("Sliced w/ IO regs:",func_logic.func_name,", mult =", coarse_sweep_mult, slices)
+            elif cache_key in coarse_slices_cache:
+              # Try cache of coarse grain before trying for real
+              slices = coarse_slices_cache[cache_key]
+              if cache_key not in printed_slices_cache:
+                print("Cached coarse grain slices:",func_logic.func_name,", target MHz =", coarse_target_mhz, slices)
             else:
               # Do a coarse sweep for this submodule without fixed param submodules
+              if cache_key not in printed_slices_cache:
+                print("Coarse grain sweep slicing",func_logic.func_name,", target MHz =",coarse_target_mhz)
               # Set up multimain top with single main
               parser_state_sub = copy.copy(parser_state)
               parser_state_sub.main_mhz = dict()
@@ -2462,18 +2444,18 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
                 func_inst, func_logic, slices, parser_state, 
                 sweep_state.multimain_timing_params.TimingParamsLookupTable, write_files) )
-              
-            # TimingParamsLookupTable == None 
-            # means these slices go through global code
+             
+            # Best guess and DO_COARSE_THROUGHPUT_SWEEP does rounding, if returns none then really failed
             if type(sweep_state.multimain_timing_params.TimingParamsLookupTable) is not dict:
-              print("Can't syn when slicing through globals mid out!")
+              print("Coarse sweep slicing failing to produce valid timing params. Globals?")
               sys.exit(-1)
             # sET PRINT Cche - yup
             if cache_key not in printed_slices_cache:
               printed_slices_cache.add(cache_key)
-              
+             
+            # Lock these slices in palce?
             if not(require_all_unfixed_subs and has_fixed_param_subs):
-              # Lock these slices in place to not be sliced through from the top down
+              # Not be sliced through from the top down in the future
               func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
               func_inst_timing_params.params_are_fixed = True
               sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
