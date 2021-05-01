@@ -21,10 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Fix None total latency est in tools
-Change middle out sweep to do better thna guess slices at at first module that doesnt meet timing - do coarse sweep, then add io regs too after
-^ Then rebuild as doing now with slices progating down from top main
-^ how to remove excess io regs?
+Fix None total latency est in other tools syn methods
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Do write up on NXS - try retiming, try area opt setting
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
@@ -34,7 +31,9 @@ Do MNIST example with minmal resource usage and then scale up. Even smallest sin
 Do write up on one or two optimizations to DKs riscv
 Aetherling style re/unrolling of logic into different timings/util
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
+Parallelize sweeps better
 Fix fine grain sweep to work again after coarse/middle out sweep
+Do CASE statements
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
@@ -42,7 +41,6 @@ Infer dsps somehow - will want to infer based on * operator,
 ^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
 ^ and need to make up built in dsp functions for other, MAC, like functions
 ^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
-Do CASE statements
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
 Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Sanity check signed mult you POS
@@ -110,6 +108,8 @@ Explore Vivado's retiming option - thought it was on by default... it isnt becau
 Explore Vivado's report_pipeline_analysis instead of following timing reports
 Fix not to write empty vhdl io reg processes for void() mains for clock cross ports only
 Try not allowing add/sub of certain slow bits per stage -> need to syn all the adders and prioritize
+How to remove excess io regs from middle out sweep?
+Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

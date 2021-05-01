@@ -243,18 +243,8 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable):
   for logic_inst_name in LogicInstLookupTable: 
     logic_i = LogicInstLookupTable[logic_inst_name]
     timing_params_i = TimingParams(logic_inst_name, logic_i)
-    timing_params_i.slices = [] # ZERO CLOCK
-    # Dont need to invalidate cache
     ZeroClockTimingParamsLookupTable[logic_inst_name] = timing_params_i
   return ZeroClockTimingParamsLookupTable
-  
-def GET_EMPTY_TIMING_PARAMS_LOOKUP(LogicInstLookupTable): 
-  TimingParamsLookupTable = dict()
-  for logic_inst_name in LogicInstLookupTable: 
-    logic_i = LogicInstLookupTable[logic_inst_name]
-    timing_params_i = TimingParams(logic_inst_name, logic_i)
-    TimingParamsLookupTable[logic_inst_name] = timing_params_i
-  return TimingParamsLookupTable
       
 
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
@@ -554,7 +544,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   # WHILE LOOP FOR MULTI STAGE/CLK
   while not PIPELINE_DONE():      
     # Print stuff and set debug if obviously wrong
-    if stage_num >= 500:
+    if stage_num >= 5000:
       print("Something is wrong here, past hard coded limit probably...")
       print("inst_name", inst_name)
       bad_inf_loop = True
@@ -1266,7 +1256,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   return TimingParamsLookupTable
   
 # Does not change fixed params
-def RECURSIVE_SET_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable):
+def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable):
   # Get timing params for this logic
   timing_params = TimingParamsLookupTable[inst_name]
   if not timing_params.params_are_fixed:
@@ -1277,7 +1267,7 @@ def RECURSIVE_SET_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLo
     logic = parser_state.LogicInstLookupTable[inst_name]
     for local_sub_inst in logic.submodule_instances:
       sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
-      TimingParamsLookupTable = RECURSIVE_SET_ZERO_CLK_TIMING_PARAMS(sub_inst, parser_state, TimingParamsLookupTable)
+      TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(sub_inst, parser_state, TimingParamsLookupTable)
     
   TimingParamsLookupTable[inst_name] = timing_params
       
@@ -1287,10 +1277,10 @@ def RECURSIVE_SET_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLo
 def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, TimingParamsLookupTable=None, write_files=True, rounding_so_fuck_it=False):
   # Reset to initial empty timing params if nothing to start with
   if TimingParamsLookupTable is None or TimingParamsLookupTable==dict():
-    TimingParamsLookupTable = GET_EMPTY_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+    TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
   else:
     # Reset timing params to empty all submodules instances of this inst since reslicing
-    TimingParamsLookupTable = RECURSIVE_SET_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable)
+    TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable)
   
   # Do slice to main logic for each slice
   for current_slice_i in current_slices:
@@ -2266,74 +2256,52 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   return sweep_state.multimain_timing_params
   
 # Not because it is easy, but because we thought it would be easy
-  
-  
-# TODO - want to preserve lower level slicing - even if not fixed?
-# How to do without building map of where lower level slicing didnt slice - what remains at this hier level to be slices through
-# Next sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
 
-  
+# Do I like Joe Walsh?
+
+
 # Inside out timing params
-# Kinda like "make all adds N cycles" 
+# Kinda like "make all adds N cycles" as in original thinking
 # But starts from first module where any slice approaches timing goal
 # Middle out coarseness?
+# Modules can be locked/fixed in place and not sliced from above less accurately
 def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
-  # types of latency:
-  # slices - 
-  #         which for raw hdl can be optimized, 
-  #         for generic comb logic is abstract slicing of delay composed of raw hdl submodules
-  # None -  'Slicing upwards' is confusing and not necessary since dont ~need that info? Just calculate latency
-  #         Is whats left over from walk up hierarchy
-  # ???Maybe allow 'artificial' slices downwards into presliced areas if not changing latnecy?
-  '''
-  Find all the bottom, no submodule nodes
-  Ex. 10ns clock P
-  Start with bottom of tree lowest level hierachy nodes
-  nodes = [leafs]
-
-  if module_delay < P: # Or P/2 or something
-    1 or more of these modules can fit a a clock
-    proceed up hierarchy to container module inst, add to nodes iterating upwards on
-  else:
-    <1 of these modules can fit in a clock 
-    slice all modules inst of this func to fit into a clock downwards  
-    Dodging globals here too?TODO?
-  '''
-  
   # Cache the multiple coarse runs
   coarse_slices_cache = dict()
   printed_slices_cache = set()
   def coarse_cache_key(logic, target_mhz):
     key=(logic.func_name,target_mhz)
     return key
-      
-  # Have a fake target scaler 
-  # One scaler for all clocks?
-  #hier_sweep_mult_inc = 0.1
-  hier_sweep_mult = 0.0 # Try coarse sweep from top level and move down
   
-  # TODO multi main one scaler per MAIN clock domain in timing report like COARSE SWEEP does
-  #TODO make best guess per main and start off where last was max if >1 ?
-  # DONT NEED ->inst here is main and main has fixed target MHz -Cache InstSweepState's using coarse key?
-  best_guess_sweep_mult = 1.0
-  best_guess_sweep_mult_inc = 0.1
-  
+  # Middle out sweep uses synthesis runs of smaller modules
+  # How far down the hierarchy?
+  hier_sweep_mult = 0.0 # Try coarse sweep from top level 0.0 and move down
+  # Increment by find the next level down of not yet sliced modules
+  INF_HIER_MULT = 999999.9
+  smallest_not_sliced_hier_mult = INF_HIER_MULT
+  # Sweep use of the coarse sweep at middle levels to produce modules that meet more than the timing requirement
   coarse_sweep_mult = 1.0
   coarse_sweep_mult_inc = 0.1
-  
+  # Otherwise from top level coarsely - like original coarse sweep
+  # keep trying harder with best guess slices
+  best_guess_sweep_mult = 1.0
+  best_guess_sweep_mult_inc = 0.1
   timing_met = False
-  got_timing_params_from_walking_tree = False
+  
+  
+  # Outer loop for this sweep
   while not timing_met:
+    # Repeatedly walk up the hierarchy trying to slice
+    # can fail because cant meet timing on some submodule at this timing goal
+    got_timing_params_from_walking_tree = False
     while not got_timing_params_from_walking_tree:
       got_timing_params_from_walking_tree = True
       printed_slices_cache = set() # Print each time trying to walk tree for slicing
-      print("Starting from empty timing params...")
+      smallest_not_sliced_hier_mult = INF_HIER_MULT # TODO PER INST
+      print("Starting from zero clk timing params...")
       # Reset to empty
-      sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_EMPTY_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+      sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
       current_insts = set()
-      INF_HIER_MULT = 999999.9
-      smallest_not_sliced_hier_mult = INF_HIER_MULT
-      
       # Get all funcs without submodules (bottom of hierarchy)
       for func_name,func_logic in parser_state.FuncLogicLookupTable.items():
         if len(func_logic.submodule_instances) <= 0:
@@ -2459,7 +2427,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               main_max_allowed_latency_mult = dict()
               main_max_allowed_latency_mult[func_inst] = 10  # MAGIC?
               # Why not do middle out again? All the way down? Because complicated?weird do later
-              sweep_state_sub = DO_COARSE_THROUGHPUT_SWEEP(parser_state_sub, sweep_state_sub, do_starting_guess=True, do_incremental_guesses=True, main_inst_max_allowed_latency_mult=main_max_allowed_latency_mult, force_init_guess_gte1=False)
+              sweep_state_sub = DO_COARSE_THROUGHPUT_SWEEP(parser_state_sub, sweep_state_sub, do_starting_guess=True, do_incremental_guesses=True, main_inst_max_allowed_latency_mult=main_max_allowed_latency_mult)
               if not sweep_state_sub.met_timing:
                 # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
                 print("Failed to meet timing, trying to pipeline smaller modules...")
@@ -2504,25 +2472,16 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             if cache_key not in printed_slices_cache:
               printed_slices_cache.add(cache_key)
               
-            if require_all_unfixed_subs and has_fixed_param_subs:
-              #print("best_guess_slices",best_guess_slices)
-              # Shouldnt need erasing since now clear submodules below before going down for reslicing
-              # Erase this modules best guess slicing as it is not 'real'
-              #func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
-              #func_inst_timing_params.slices = None
-              #func_inst_timing_params.INVALIDATE_CACHE()
-              #sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
-              pass
-            else:
+            if not(require_all_unfixed_subs and has_fixed_param_subs):
               # Lock these slices in place to not be sliced through from the top down
               func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
               func_inst_timing_params.params_are_fixed = True
               sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
               #print(func_inst,"  ",func_inst_timing_params.slices)
 
-            # Do not continue upwards in container logic 
+            # Do not continue upwards in container logic since did slicing at this middle level
           else:
-            #print("Is not large enough to alone influence meeting timing. func delay ns", func_path_delay_ns)
+            # Module is not large enough to alone influence meeting timing as configured
             # Set this module to be zero clocks
             if func_inst_timing_params.params_are_fixed:
               print("What fixed params for small mod?")
@@ -2530,16 +2489,15 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             func_inst_timing_params.slices = []
             func_inst_timing_params.INVALIDATE_CACHE()
             sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
-            # Add the container instance to list to iterate
+            # Add the container instance to list to iterate on, slice from further up
             container_inst = C_TO_LOGIC.GET_CONTAINER_INST(func_inst)
-            #print("container_inst",container_inst)
             if container_inst is not None:
               next_current_insts.add(container_inst)
         
         current_insts = next_current_insts
+      #}END WHILE LOOP WALKING TREE
       
-      #END WHILE LOOP WALKING TREE
-    # END WHILE LOOP REPEATEDLY walking tree for params      
+    #}END WHILE LOOP REPEATEDLY walking tree for params      
     got_timing_params_from_walking_tree = False # For next loop
     
     # Do one final dumb loop over all timing params that arent zero clocks?
@@ -2620,7 +2578,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     if timing_met:
       # Yes, ok run one more time at last non passing latency
       print("Met timing...")
-      sys.exit(0)
+      return sweep_state
     else: 
       # No, make adjustment
       if best_guess_sweep_mult >= 2.5: # 2.0 magic?
@@ -2640,10 +2598,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         best_guess_sweep_mult += best_guess_sweep_mult_inc
         print("Best guess sweep multiplier:",best_guess_sweep_mult)
 
-# Return SWEEP STATE for DO_FINE_THROUGHPUT_SWEEP someday again...
+# Return SWEEP STATE for MIDDLE out or DO_FINE_THROUGHPUT_SWEEP someday again...
 # Of Montreal - The Party's Crashing Us
 # Starting guess really only saves 1 extra syn run for dup multimain top
-def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True, do_incremental_guesses=True, main_inst_max_allowed_latency_mult=dict(), force_init_guess_gte1=False): #, skip_fine_sweep=False):  
+def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True, do_incremental_guesses=True, main_inst_max_allowed_latency_mult=dict()):
   # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
   # Dont even bother running multimain top as combinatorial logic
   main_inst_to_coarse_latency = dict()
@@ -2660,9 +2618,6 @@ def DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, do_starting_guess=True
         #curr_mhz = 1000.0 / path_delay_ns
         # How many multiples are we away from the goal
         mult = path_delay_ns / target_path_delay_ns
-        if force_init_guess_gte1:
-          if mult < 2.0:
-            mult = 2.0 # So mult-1 ==1
         if mult > 1.0:
           # Divide up into that many clocks as a starting guess
           # If doesnt have global wires
