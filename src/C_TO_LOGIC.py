@@ -1100,6 +1100,15 @@ class Logic:
       return False
     if len(self.feedback_vars)>0:
       return False
+    if self.is_vhdl_func:
+      return False
+    if self.is_vhdl_expr:
+      return False
+    if self.is_vhdl_text_module:
+      return False
+    if self.is_clock_crossing:
+      return False
+      
     return True
       
   def SHOW(self):

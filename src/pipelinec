@@ -23,17 +23,18 @@ print('''
 TODO:
 Fix None total latency est in other tools syn methods
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
-Do write up on NXS - try retiming, try area opt setting
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
 ^ Reorg global logic detection/rounding from bottom up (when timing goal is within the scope of a single modules delay)(instead of trying multiple times to slice from top down)
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do write up on one or two optimizations to DKs riscv
+Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
 Parallelize sweeps better
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
+Try to beat Wolfs Nexus results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
@@ -67,7 +68,6 @@ Check for non global functions that call global functions when evaluating const
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
 Do hacky if generate with pragmas? oh gosh
-Rust AST? rustc -Z ast-json, traverse the json?
 Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
