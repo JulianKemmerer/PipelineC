@@ -1538,8 +1538,8 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
         target_path_delay_ns = 1000.0 / target_mhz
         hier_sweep_mult = target_path_delay_ns/func_path_delay_ns
         # Dont bother making from the top level if need more than 100 slices?
-        if hier_sweep_mult < 0.01: # MAGIC?
-          hier_sweep_mult = 0.01
+        if hier_sweep_mult < 0.02: # MAGIC?
+          hier_sweep_mult = 0.02
         sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
         print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
         
