@@ -1530,7 +1530,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
       target_mhz = parser_state.main_mhz[main_inst_name]
       target_path_delay_ns = 1000.0 / target_mhz
       sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
-      if delay > 0.0:
+      if delay > 0.0 and func_logic.CAN_BE_SLICED():
         sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
         hier_sweep_mult = target_path_delay_ns/func_path_delay_ns
         # Dont bother making from the top level if need more than 50 slices?
@@ -2474,10 +2474,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           else:
             # Module is not large enough to alone influence meeting timing as configured
             # Set this module to be zero clocks
-            if len(func_inst_timing_params.slices) > 0:
-              func_inst_timing_params.slices = []
-              func_inst_timing_params.INVALIDATE_CACHE()
-              sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
+            #if len(func_inst_timing_params.slices) > 0:
+            func_inst_timing_params.slices = []
+            func_inst_timing_params.INVALIDATE_CACHE()
+            sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
             # Add the container instance to list to iterate on, slice from further up
             container_inst = C_TO_LOGIC.GET_CONTAINER_INST(func_inst)
             if container_inst is not None:
