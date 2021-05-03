@@ -1520,28 +1520,23 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
     for main_inst_name in parser_state.main_mhz:
       func_logic = parser_state.LogicInstLookupTable[main_inst_name]
       sweep_state.inst_sweep_state[main_inst_name] = InstSweepState()
-      # Get get pipeline map of vhdl text module?
-      if func_logic.is_vhdl_text_module:
-        continue
-      # Skip raw hdl
-      if len(func_logic.submodule_instances) <= 0:
-        continue
       # Any instance will do 
-      inst_name = main_inst_name #list(parser_state.FuncToInstances[func_name])[0]
+      inst_name = main_inst_name
       # Only need slicing if has delay?
       delay = parser_state.LogicInstLookupTable[main_inst_name].delay
+      # Init hier sweep mult to be top level
+      func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+      target_mhz = parser_state.main_mhz[main_inst_name]
+      target_path_delay_ns = 1000.0 / target_mhz
+      sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
       if delay > 0.0:
         sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
-        # Init hier sweep mult to be top level
-        func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
-        target_mhz = parser_state.main_mhz[main_inst_name]
-        target_path_delay_ns = 1000.0 / target_mhz
         hier_sweep_mult = target_path_delay_ns/func_path_delay_ns
-        # Dont bother making from the top level if need more than 100 slices?
+        # Dont bother making from the top level if need more than 50 slices?
         if hier_sweep_mult < 0.02: # MAGIC?
           hier_sweep_mult = 0.02
         sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
-        print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
+        #print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
         
   return sweep_state
   
@@ -2320,7 +2315,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       
       # Get all funcs without submodules (bottom of hierarchy)
       for func_name,func_logic in parser_state.FuncLogicLookupTable.items():
-        if len(func_logic.submodule_instances) <= 0:
+        # No submodule and needs to have delay
+        if len(func_logic.submodule_instances) <= 0 and func_logic.delay is not None:
           # Uh some funcs arent used?
           func_insts = set()
           if func_name in parser_state.FuncToInstances:
@@ -2346,7 +2342,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             #print("not all subs")
             next_current_insts.add(func_inst)
             continue
-            
           # Does this funcs delay suggest pipeline regs?
           func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
           func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
@@ -3694,7 +3689,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
   else:
     inst_names = set(parser_state.main_mhz.keys())
   
-  func_name_slices_so_far = set() # of (func_name,slices_timing_params_hash) tuples
+  entities_so_far = set() 
   while len(inst_names) > 0:
     next_inst_names = set()
     for inst_name_i in inst_names:
@@ -3706,13 +3701,10 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
       # Dont write clock cross
       if logic_i.is_clock_crossing:
         continue
-      timing_params_i = multimain_timing_params.TimingParamsLookupTable[inst_name_i]
-      slices_hash_ext = timing_params_i.GET_HASH_EXT(multimain_timing_params.TimingParamsLookupTable, parser_state)
-      func_name_slices = (logic_i.func_name,slices_hash_ext)
-      if func_name_slices not in func_name_slices_so_far:
-        func_name_slices_so_far.add(func_name_slices)
+      entity_filename = VHDL.GET_ENTITY_NAME(inst_name_i, logic_i,multimain_timing_params.TimingParamsLookupTable, parser_state) + ".vhd" 
+      if entity_filename not in entities_so_far:
+        entities_so_far.add(entity_filename)
         # Include entity file for this functions slice variant
-        entity_filename = VHDL.GET_ENTITY_NAME(inst_name_i, logic_i,multimain_timing_params.TimingParamsLookupTable, parser_state) + ".vhd" 
         syn_output_directory = GET_OUTPUT_DIRECTORY(logic_i)
         files_txt += syn_output_directory + "/" + entity_filename + " "
 
