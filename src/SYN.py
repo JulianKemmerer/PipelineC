@@ -2305,8 +2305,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     # Repeatedly walk up the hierarchy trying to slice
     # can fail because cant meet timing on some submodule at this timing goal
     got_timing_params_from_walking_tree = False
-    while not got_timing_params_from_walking_tree:
+    keep_try_for_timing_params = True
+    while keep_try_for_timing_params:
       got_timing_params_from_walking_tree = True
+      keep_try_for_timing_params = False
       printed_slices_cache = set() # Print each time trying to walk tree for slicing
       print("Starting from zero clk timing params...", flush=True)
       # Reset to empty start for this tree walk
@@ -2424,8 +2426,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               if not sweep_state_sub_met_timing:
                 # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
                 print(func_logic.func_name,"failed to meet timing, trying to pipeline smaller modules...")
-                # Done in this loop
-                got_timing_params_from_walking_tree = False 
+                # Done in this loop, try again
+                got_timing_params_from_walking_tree = False
+                keep_try_for_timing_params = True
                 next_current_insts = set()
                 # If at smallest module then done trying to get params too
                 if sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult != INF_HIER_MULT:
@@ -2434,11 +2437,13 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
                   print(main_func, "hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                 else:
-                  print("No smaller submodules to pipeline, trying to pipeline larger modules to higher fmax to compensate...")
-                  sweep_state.inst_sweep_state[main_func].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
-                  sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
-                  sweep_state.inst_sweep_state[main_func].coarse_sweep_mult += sweep_state.inst_sweep_state[main_func].coarse_sweep_mult_inc
-                  print(main_func, "coarse grain sweep multiplier:",sweep_state.inst_sweep_state[main_func].coarse_sweep_mult)
+                  # Unless no more modules left?
+                  print("No smaller submodules to pipeline...")#, trying to pipeline larger modules to higher fmax to compensate...")
+                  #sweep_state.inst_sweep_state[main_func].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
+                  #sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
+                  #sweep_state.inst_sweep_state[main_func].coarse_sweep_mult += sweep_state.inst_sweep_state[main_func].coarse_sweep_mult_inc
+                  #print(main_func, "coarse grain sweep multiplier:",sweep_state.inst_sweep_state[main_func].coarse_sweep_mult)
+                  keep_try_for_timing_params = False
                 break 
               # Assummed met timing if here
               # Add IO regs to timing
@@ -2495,9 +2500,13 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         current_insts = next_current_insts
       #}END WHILE LOOP WALKING TREE
       
-    #}END WHILE LOOP REPEATEDLY walking tree for params    
-    got_timing_params_from_walking_tree = False # For next loop
+    #}END WHILE LOOP REPEATEDLY walking tree for params
     
+    # Quit if cant slice submodules to meet timing / no params from walking tree
+    if not got_timing_params_from_walking_tree:
+      print("Failed to make even smallest submodules meet timing? Impossible timing goals?")
+      sys.exit(-1)
+      
     # Do one final dumb loop over all timing params that arent zero clocks?
     # because write_files_in_loop = False above
     for inst_name_to_wr in sweep_state.multimain_timing_params.TimingParamsLookupTable:
