@@ -285,7 +285,7 @@ begin
     
     new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
     text += "-- main functions always clock enabled\n"
-    text += new_inst_name + " : entity work." + main_entity_name +" port map (\n"
+    text += main_entity_name + " : entity work." + main_entity_name +" port map (\n"
     # Clock
     if main_needs_clk:
       text += "clk_" + clk_ext_str + ",\n"
