@@ -110,6 +110,7 @@ Fix not to write empty vhdl io reg processes for void() mains for clock cross po
 Try not allowing add/sub of certain slow bits per stage -> need to syn all the adders and prioritize
 How to remove excess io regs from middle out sweep?
 Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
+Have multiple paths reported per clock domain/main func
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
