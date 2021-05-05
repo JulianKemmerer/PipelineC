@@ -2438,6 +2438,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     sweep_state.inst_sweep_state[main_func].hier_sweep_mult = sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult
                     print(main_func,"hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
+                  sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                 else:
                   # Unless no more modules left?
                   print("No smaller submodules to pipeline...")
@@ -2580,15 +2581,22 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 1.5: # MAGIC?
                   sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
+                  sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult += sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc
                   print("Coarse synthesis sweep multiplier:",sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult)
                   made_adj = True
                 else:
                   print_path = True
               else:
-                sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult
+                # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
+                if sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult == sweep_state.inst_sweep_state[main_func].hier_sweep_mult:
+                  sweep_state.inst_sweep_state[main_func].hier_sweep_mult += 0.01
+                  print("Nudging hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
+                else:
+                  sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult
+                  print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
+                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                 made_adj = True
             else:
               if not better_mhz:
