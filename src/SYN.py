@@ -1481,7 +1481,7 @@ class InstSweepState:
     # Increment by find the next level down of not yet sliced modules
     self.smallest_not_sliced_hier_mult = INF_HIER_MULT
     # Sweep use of the coarse sweep at middle levels to produce modules that meet more than the timing requirement
-    self.coarse_sweep_mult = 1.0
+    self.coarse_sweep_mult = 1.15 # Saw as bad as 15 percent loss just from adding io regs slices #1.05 min? # 1.0 doesnt make sense need margin since logic will be with logic/routing delay etc
     self.coarse_sweep_mult_inc = 0.1
     # Otherwise from top level coarsely - like original coarse sweep
     # keep trying harder with best guess slices
@@ -2573,7 +2573,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         if not main_met_timing:
           print_path = False
           if main_func_logic.CAN_BE_SLICED():
-            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 2.5: # 2.0 magic?
+            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 15.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
               print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline smaller modules...")
               if sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult>=INF_HIER_MULT:
@@ -2602,7 +2602,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               if not better_mhz:
                 # Same or worse timing result
                 print("Same or worse timing result. Increasing best guess step size...")
-                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc += 0.1 # Plus 10%? Magic?
+                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult #*=1.1 #+= 0.1 # Plus 10%? Magic?
                 print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
               sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
               print("Trying a little harder with next best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
@@ -2777,7 +2777,6 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                 clks = sweep_state.inst_sweep_state[main_inst].coarse_latency + 1 
               # Calc diff in latency change
               clk_inc = clks - sweep_state.inst_sweep_state[main_inst].coarse_latency
-              '''
               # Should be getting smaller
               if sweep_state.inst_sweep_state[main_inst].last_latency_increase is not None and clk_inc >= sweep_state.inst_sweep_state[main_inst].last_latency_increase:
                 # Clip to last inc size - 1, minus one to always be narrowing down
@@ -2786,7 +2785,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                   clk_inc = 1
                 clks = sweep_state.inst_sweep_state[main_inst].coarse_latency + clk_inc
                 print("Clipped for decreasing jump size to",clks,"clocks...")
-              '''
+              
               # Record
               sweep_state.inst_sweep_state[main_inst].last_non_passing_latency = sweep_state.inst_sweep_state[main_inst].coarse_latency
               sweep_state.inst_sweep_state[main_inst].coarse_latency = clks
