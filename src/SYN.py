@@ -2412,7 +2412,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               sweep_state_sub.curr_main_inst = func_inst
               # Need way to stop coarse sweep if sweeping at this level of hierarchy wont work
               main_stops_at_n_worse_result = dict()
-              main_stops_at_n_worse_result[func_inst] = 1 # MAGIC?  6 is max hardest try min=1
+              main_stops_at_n_worse_result[func_inst] = 3 # MAGIC?  6 is max hardest try min=2, maybe min=1?
               main_max_allowed_latency_mult = dict()
               main_max_allowed_latency_mult[func_inst] = 15  # MAGIC?  15 is max hardest try, min 2? Maybe min=1?
               # Why not do middle out again? All the way down? Because complicated?weird do later
@@ -2563,13 +2563,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           best_mhz_this_latency = sweep_state.inst_sweep_state[main_inst].latency_to_mhz[latency]
         better_mhz = curr_mhz > best_mhz_so_far
         better_latency = curr_mhz > best_mhz_this_latency
-        if not better_mhz:
-          # Same or worse timing result
-          print("Same or worse timing result. Increasing best guess step size...")
-          sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc += 0.1 # Plus 10%? Magic?
-          print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
+        # Log result
         if better_mhz or better_latency:
-          # Log result
           sweep_state.inst_sweep_state[main_inst].mhz_to_latency[curr_mhz] = latency
           sweep_state.inst_sweep_state[main_inst].latency_to_mhz[latency] = curr_mhz
 
@@ -2596,6 +2591,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 made_adj = True
             else:
+              if not better_mhz:
+                # Same or worse timing result
+                print("Same or worse timing result. Increasing best guess step size...")
+                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc += 0.1 # Plus 10%? Magic?
+                print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
               sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
               print("Trying a little harder with next best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
