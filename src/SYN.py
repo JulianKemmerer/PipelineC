@@ -1481,7 +1481,7 @@ class InstSweepState:
     # Increment by find the next level down of not yet sliced modules
     self.smallest_not_sliced_hier_mult = INF_HIER_MULT
     # Sweep use of the coarse sweep at middle levels to produce modules that meet more than the timing requirement
-    self.coarse_sweep_mult = 1.15 # Saw as bad as 15 percent loss just from adding io regs slices #1.05 min? # 1.0 doesnt make sense need margin since logic will be with logic/routing delay etc
+    self.coarse_sweep_mult = 1.0 #1.15 # Saw as bad as 15 percent loss just from adding io regs slices #1.05 min? # 1.0 doesnt make sense need margin since logic will be with logic/routing delay etc
     self.coarse_sweep_mult_inc = 0.1
     # Otherwise from top level coarsely - like original coarse sweep
     # keep trying harder with best guess slices
@@ -2575,19 +2575,17 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           if main_func_logic.CAN_BE_SLICED():
             if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 15.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
-              print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline smaller modules...")
-              if sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult>=INF_HIER_MULT:
-                print("No smaller submodules to pipeline, trying to pipeline larger modules to higher fmax to compensate...")
-                if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 1.5: # MAGIC?
-                  sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
+              print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
+              if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 1.5: # MAGIC?
+                  #sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult += sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc
                   print("Coarse synthesis sweep multiplier:",sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult)
                   made_adj = True
-                else:
-                  print_path = True
-              else:
+              elif sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult!=INF_HIER_MULT:
+                print("Trying to pipeline smaller modules instead...")
+                # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
                 # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
                 if sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult == sweep_state.inst_sweep_state[main_func].hier_sweep_mult:
                   sweep_state.inst_sweep_state[main_func].hier_sweep_mult += 0.01
@@ -2597,7 +2595,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
+                sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0 #1.15
+                sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 made_adj = True
+              else:
+                print_path = True
             else:
               if not better_mhz:
                 # Same or worse timing result
