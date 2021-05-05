@@ -1255,11 +1255,6 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
       os.makedirs(syn_out_dir)    
     VHDL.WRITE_LOGIC_ENTITY(inst_name, logic, syn_out_dir, parser_state, TimingParamsLookupTable)
   
-
-  # Check latency here too  
-  timing_params = TimingParamsLookupTable[inst_name]
-  total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) 
-  
   return TimingParamsLookupTable
   
 # Does not change fixed params
@@ -2325,7 +2320,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           func_insts = []
           if func_name in parser_state.FuncToInstances:
             func_insts = parser_state.FuncToInstances[func_name]
-          current_insts += func_insts
+          current_insts += list(sorted(set(func_insts)))
       print("Starting from bottom of hierarchy...", flush=True)
       
       # Do this not recursive up the multi main hier tree walk
@@ -2344,7 +2339,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           if current_insts_includes_subs:
             # Try again later when no more submodules to handle
             #print("not all subs")
-            next_current_insts.append(func_inst)
+            if func_inst not in next_current_insts:
+              next_current_insts.append(func_inst)
             continue
           # Does this funcs delay suggest pipeline regs?
           func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
@@ -2366,6 +2362,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             if func_path_delay_ns > 0.0:
               if target_path_delay_ns/func_path_delay_ns < sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult:
                 sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult = target_path_delay_ns/func_path_delay_ns
+                #print("Not sliced",func_logic.func_name,sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult)
             
           # Do slicing or skip up to next hierarchy level
           if try_to_slice and func_logic.CAN_BE_SLICED():  
@@ -2414,10 +2411,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               sweep_state_sub = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state_sub, MultiMainTimingParams())
               sweep_state_sub.curr_main_inst = func_inst
               # Need way to stop coarse sweep if sweeping at this level of hierarchy wont work
-              main_max_allowed_latency_mult = dict()
-              main_max_allowed_latency_mult[func_inst] = 10  # MAGIC?
               main_stops_at_n_worse_result = dict()
-              main_stops_at_n_worse_result[func_inst] = 1 # MAGIC? 
+              main_stops_at_n_worse_result[func_inst] = 1 # MAGIC?  6 is max hardest try min=1
+              main_max_allowed_latency_mult = dict()
+              main_max_allowed_latency_mult[func_inst] = 15  # MAGIC?  15 is max hardest try, min 2? Maybe min=1?
               # Why not do middle out again? All the way down? Because complicated?weird do later
               sweep_state_sub_met_timing, sub_main_inst_to_slices = DO_COARSE_THROUGHPUT_SWEEP(
                 parser_state_sub, sweep_state_sub, do_starting_guess=True, do_incremental_guesses=True, 
@@ -2425,26 +2422,28 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 main_inst_stops_at_n_worse_result=main_stops_at_n_worse_result)
               if not sweep_state_sub_met_timing:
                 # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
-                print(func_logic.func_name,"failed to meet timing, trying to pipeline smaller modules...")
                 # Done in this loop, try again
                 got_timing_params_from_walking_tree = False
-                keep_try_for_timing_params = True
-                next_current_insts = []
+                print(func_logic.func_name, "failed to meet timing, trying to pipeline smaller modules...")
                 # If at smallest module then done trying to get params too
                 if sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult != INF_HIER_MULT:
+                  keep_try_for_timing_params = True
                   # Increase mult to start at next delay unit down
-                  sweep_state.inst_sweep_state[main_func].hier_sweep_mult = sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult
+                  # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
+                  if sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult == sweep_state.inst_sweep_state[main_func].hier_sweep_mult:
+                    sweep_state.inst_sweep_state[main_func].hier_sweep_mult += 0.01
+                    print(main_func,"nudging hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
+                  else:
+                    # Normal case
+                    sweep_state.inst_sweep_state[main_func].hier_sweep_mult = sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult
+                    print(main_func,"hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
-                  print(main_func, "hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                 else:
                   # Unless no more modules left?
-                  print("No smaller submodules to pipeline...")#, trying to pipeline larger modules to higher fmax to compensate...")
-                  #sweep_state.inst_sweep_state[main_func].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
-                  #sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
-                  #sweep_state.inst_sweep_state[main_func].coarse_sweep_mult += sweep_state.inst_sweep_state[main_func].coarse_sweep_mult_inc
-                  #print(main_func, "coarse grain sweep multiplier:",sweep_state.inst_sweep_state[main_func].coarse_sweep_mult)
+                  print("No smaller submodules to pipeline...")
                   keep_try_for_timing_params = False
-                break 
+                next_current_insts = []
+                break
               # Assummed met timing if here
               # Add IO regs to timing
               syn_proven_slices = sub_main_inst_to_slices[func_inst]
@@ -2495,11 +2494,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               # And if container can be sliced
               container_func_logic = parser_state.LogicInstLookupTable[container_inst]
               if container_func_logic.CAN_BE_SLICED():
-                next_current_insts.append(container_inst)
+                if container_inst not in next_current_insts:
+                  next_current_insts.append(container_inst)
         
         current_insts = next_current_insts
       #}END WHILE LOOP WALKING TREE
-      
     #}END WHILE LOOP REPEATEDLY walking tree for params
     
     # Quit if cant slice submodules to meet timing / no params from walking tree
@@ -2722,6 +2721,8 @@ def DO_COARSE_THROUGHPUT_SWEEP(
           # Log return val best result fmax
           best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(sweep_state.inst_sweep_state[main_inst].coarse_latency)
           main_inst_to_slices[main_inst] = best_guess_slices
+          # Reset count of bad tries
+          sweep_state.inst_sweep_state[main_inst].worse_or_same_tries_count = 0
         else:
           # Same or worse timing result
           sweep_state.inst_sweep_state[main_inst].worse_or_same_tries_count += 1

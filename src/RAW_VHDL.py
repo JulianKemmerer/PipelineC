@@ -316,7 +316,7 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
@@ -510,7 +510,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
@@ -583,7 +583,7 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
@@ -658,7 +658,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
