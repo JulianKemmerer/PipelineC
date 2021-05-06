@@ -2381,6 +2381,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   has_fixed_param_subs = True
                   break
                   
+            #@TODO MODIFY TO HAVE optional coarse grain and fix in place ALWAYS, coarse grain even with fix slices under, like best guess from hereish
+            #checking timing all the way up hierarchy with synthesis essentially - REMOVE ADDING IO REGS THEN?
+            
             # Use best guess if module already has fixed slices
             use_best_guess_slices = has_fixed_param_subs
             if use_best_guess_slices:
@@ -2439,6 +2442,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     print(main_func,"hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
+                  sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0 #1.15
+                  sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 else:
                   # Unless no more modules left?
                   print("No smaller submodules to pipeline...")
