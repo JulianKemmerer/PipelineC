@@ -1486,7 +1486,7 @@ class InstSweepState:
     # Otherwise from top level coarsely - like original coarse sweep
     # keep trying harder with best guess slices
     self.best_guess_sweep_mult = 1.0
-    self.best_guess_sweep_mult_inc = 0.1
+    #self.best_guess_sweep_mult_inc = 0.1
     
 
 # SweepState for the entire multimain top
@@ -2381,6 +2381,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   has_fixed_param_subs = True
                   break
                   
+            # Scale allowed values by multiple of expected slicing, few slices is very uneven allow lots of mistakes, large comb logic allow fewer,1
             #@TODO MODIFY TO HAVE optional coarse grain and fix in place ALWAYS, coarse grain even with fix slices under, like best guess from hereish
             #checking timing all the way up hierarchy with synthesis essentially - REMOVE ADDING IO REGS THEN?
             
@@ -2441,7 +2442,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     sweep_state.inst_sweep_state[main_func].hier_sweep_mult = sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult
                     print(main_func,"hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
-                  sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
+                  #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0 #1.15
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 else:
@@ -2578,13 +2579,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         if not main_met_timing:
           print_path = False
           if main_func_logic.CAN_BE_SLICED():
-            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 15.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
+            #if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 15.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
+            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*1.1) > 20.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
               print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
-              if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 1.5: # MAGIC?
+              if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 2.0: # 1.5: # MAGIC?
                   #sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.02,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                  sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
+                  #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult += sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc
                   print("Coarse synthesis sweep multiplier:",sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult)
                   made_adj = True
@@ -2599,7 +2601,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult
                   print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
+                #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                 sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0 #1.15
                 sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 made_adj = True
@@ -2608,10 +2610,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             else:
               if not better_mhz:
                 # Same or worse timing result
-                print("Same or worse timing result. Increasing best guess step size...")
-                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult #*=1.1 #+= 0.1 # Plus 10%? Magic?
-                print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
-              sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
+                print("Same or worse timing result. Increasing best guess ...")
+                #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult #*=1.1 #+= 0.1 # Plus 10%? Magic?
+                #print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
+              #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
+              sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 1.1 # 10 %
               print("Trying a little harder with next best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
           else:

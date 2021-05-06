@@ -424,7 +424,7 @@ keccackf_t keccakf(uint64_t st[25]) //uint64_t KeccakState[25]
     return rv;
 }
 
-#pragma MAIN_MHZ DoNXSTest 850.0 // Timing goal
+#pragma MAIN_MHZ DoNXSTest 845.0 // Timing goal
 // Two input port u64 arrays, and one u64 output
 uint64_t DoNXSTest(uint64_t State[26], uint64_t Key[17])
 {
