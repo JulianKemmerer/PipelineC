@@ -1481,7 +1481,7 @@ class InstSweepState:
     # Increment by find the next level down of not yet sliced modules
     self.smallest_not_sliced_hier_mult = INF_HIER_MULT
     # Sweep use of the coarse sweep at middle levels to produce modules that meet more than the timing requirement
-    self.coarse_sweep_mult = 1.15 # Saw as bad as 15 percent loss just from adding io regs slices #1.05 min? # 1.0 doesnt make sense need margin since logic will be with logic/routing delay etc
+    self.coarse_sweep_mult = 1.0 # Saw as bad as 15 percent loss just from adding io regs slices #1.05 min? # 1.0 doesnt make sense need margin since logic will be with logic/routing delay etc
     self.coarse_sweep_mult_inc = 0.1
     # Otherwise from top level coarsely - like original coarse sweep
     # keep trying harder with best guess slices
@@ -2443,7 +2443,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     print(main_func,"hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_func].hier_sweep_mult)
                   sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
                   #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
-                  sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.15
+                  sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 else:
                   # Unless no more modules left?
@@ -2602,7 +2602,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
                 #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
-                sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.15
+                sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0
                 sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 made_adj = True
               else:
@@ -2617,7 +2617,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               else:
                 #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 1.2 # 20%
-                print("Trying a little harder with next best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
+              print("Best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
           else:
             print_path = True
