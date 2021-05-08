@@ -2388,8 +2388,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             # Use best guess if module already has fixed slices
             use_best_guess_slices = has_fixed_param_subs
             if use_best_guess_slices:
-              mult = int(math.ceil((func_path_delay_ns*sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult) / target_path_delay_ns))
-              clks = mult - 1
+              clks = int(math.ceil((func_path_delay_ns*sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult) / target_path_delay_ns)) - 1
               slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
               if cache_key not in printed_slices_cache:
                 print("Best guess slicing:",func_logic.func_name,", mult =", sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult, slices, flush=True)
@@ -2415,10 +2414,20 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               sweep_state_sub = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state_sub, MultiMainTimingParams())
               sweep_state_sub.curr_main_inst = func_inst
               # Need way to stop coarse sweep if sweeping at this level of hierarchy wont work
+              # Number of tries should be more for smaller modules with more uneven slicing landscape
+              # Most tries is like 6?
+              MAX_N_WORSE_RESULTS = 6
+              # Which should used for modules where inital guess says ~1clk slicing
+              coarse_sweep_initial_clks = int(math.ceil((func_path_delay_ns*sweep_state.inst_sweep_state[main_func].coarse_sweep_mult) / target_path_delay_ns)) - 1
+              allowed_worse_results = int(MAX_N_WORSE_RESULTS/coarse_sweep_initial_clks)
+              if allowed_worse_results == 0:
+                allowed_worse_results = 1
+              print("Allowed worse results in coarse sweep:",allowed_worse_results)
               main_stops_at_n_worse_result = dict()
-              main_stops_at_n_worse_result[func_inst] = 1 # MAGIC?  6 is max hardest try min=2, maybe min=1?
+              main_stops_at_n_worse_result[func_inst] = allowed_worse_results # # MAGIC?  6 is max hardest try min=2, maybe min=1?
+              # Sanity way off in the weeds check
               main_max_allowed_latency_mult = dict()
-              main_max_allowed_latency_mult[func_inst] = 15  # MAGIC?  15 is max hardest try, min 2? Maybe min=1?
+              main_max_allowed_latency_mult[func_inst] = 15 # MAGIC?  15 is max hardest try,10 is reasonable min 2? Maybe min=1?
               # Why not do middle out again? All the way down? Because complicated?weird do later
               sweep_state_sub_met_timing, sub_main_inst_to_slices = DO_COARSE_THROUGHPUT_SWEEP(
                 parser_state_sub, sweep_state_sub, do_starting_guess=True, do_incremental_guesses=True, 
@@ -2582,11 +2591,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             #if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult+sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc) > 15.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
             if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*1.2) > 20.0: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
-              print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline all modules to higher fmax to compensate...") 
-              if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 2.0: # 1.5: # MAGIC?
+              print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
+              if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc) <= 2.0: #1.5: # MAGIC?
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                  #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
-                  sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.5,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
+                  #sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.5,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult += sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc
                   print("Coarse synthesis sweep multiplier:",sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult)
                   made_adj = True
@@ -2601,7 +2609,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult
                   print("Hierarchy sweep multiplier:",sweep_state.inst_sweep_state[main_inst].hier_sweep_mult)
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1
                 sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult = 1.0
                 sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult_inc = 0.1
                 made_adj = True
@@ -2612,10 +2619,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 # Same or worse timing result
                 print("Same or worse timing result. Increasing best guess by alot...")
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 2.0
-                #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc = 0.1*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult #*=1.1 #+= 0.1 # Plus 10%? Magic?
-                #print("Best guess sweep increment:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc)
               else:
-                #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult += sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult_inc
                 sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 1.2 # 20%
               print("Best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
