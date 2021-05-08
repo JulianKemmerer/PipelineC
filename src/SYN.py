@@ -2590,7 +2590,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         if not main_met_timing:
           print_path = False
           if main_func_logic.CAN_BE_SLICED():
-            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*1.2) > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
+            best_guess_sweep_mult_inc = 1.2 # 20% default
+            if not better_mhz:
+              best_guess_sweep_mult_inc = 2.0 # Big double jump
+            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*best_guess_sweep_mult_inc) > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
               print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
               if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+COARSE_SWEEP_MULT_INC) <= COARSE_SWEEP_MULT_MAX: #1.5: # MAGIC?
@@ -2614,12 +2617,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               else:
                 print_path = True
             else:
-              if not better_mhz:
-                # Same or worse timing result
-                print("Same or worse timing result. Increasing best guess by alot...")
-                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 2.0
-              else:
-                sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= 1.2 # 20%
+              sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= best_guess_sweep_mult_inc
               print("Best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
           else:

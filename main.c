@@ -1,3 +1,4 @@
+// Full part string examples:
 // xc7a35ticsg324-1l     Artix 7 (Arty)
 // xcvu9p-flgb2104-2-i   Virtex Ultrascale Plus (AWS F1)
 // xcvu33p-fsvh2104-2L-e Virtex Ultrascale Plus
@@ -20,19 +21,25 @@
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/fir.c"
-//#include "examples/arty/src/uart/uart_loopback_msg.c"
-//#include "examples/arty/src/blink.c"
-//#include "examples/clock_crossing.c"
-//#include "examples/async_clock_crossing.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/loopback_app.c"
-//#include "examples/arty/src/eth/work_app.c"
-//#include "examples/spw_pkg_guard.c"
 //#include "examples/arty/src/mnist/neural_network_fsm.c"
+//#include "examples/arty/src/uart/uart_loopback_msg.c"
+//#include "examples/arty/src/blink.c"
+//#include "examples/async_clock_crossing.c"
+//#include "examples/clock_crossing.c"
 //#include "examples/littleriscy/riscv.c"
-#include "examples/NexusProofOfWork/NXSTest_syn.c"
-//#include "examples/NexusProofOfWork/NXSTest_syn_inlined.c"
+//#include "examples/arty/src/eth/work_app.c"
+//#include "examples/blink.c"
+//#include "examples/NexusProofOfWork/NXSTest_syn.c"
+
+
+#pragma MAIN_MHZ main 950.0
+float main(float x, float y)
+{
+  return x+y;
+}
 
 
 /*
