@@ -29,8 +29,9 @@ DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
 MAX_N_WORSE_RESULTS = 6
 MAX_ALLOWED_LATENCY_MULT = 15
+HIER_SWEEP_MULT_MIN = 0.5
 HIER_SWEEP_MULT_INC = 0.01
-COARSE_SWEEP_MULT_INC = 0.1
+COARSE_SWEEP_MULT_INC = 0.01
 BEST_GUESS_MUL_MAX = 20.0
 COARSE_SWEEP_MULT_MAX = 2.0
 INF_MHZ = 1000 # Impossible timing goal
@@ -1536,7 +1537,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
       if delay > 0.0 and func_logic.CAN_BE_SLICED():
         sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
         # Dont bother making from the top level if need more than 50 slices? # MAGIC?
-        hier_sweep_mult = max(0.5, target_path_delay_ns/func_path_delay_ns) # 0.5 for nexus?
+        hier_sweep_mult = max(HIER_SWEEP_MULT_MIN, target_path_delay_ns/func_path_delay_ns) # 0.5 for nexus?
         sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
         #print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
         
@@ -2594,7 +2595,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
               if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+COARSE_SWEEP_MULT_INC) <= COARSE_SWEEP_MULT_MAX: #1.5: # MAGIC?
                   sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = 1.0
-                  #sweep_state.inst_sweep_state[main_inst].hier_sweep_mult = max(0.5,target_path_delay_ns/(float(main_func_logic.delay)/DELAY_UNIT_MULT))
                   sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult += COARSE_SWEEP_MULT_INC
                   print("Coarse synthesis sweep multiplier:",sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult)
                   made_adj = True
