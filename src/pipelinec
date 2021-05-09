@@ -23,6 +23,7 @@ print('''
 TODO:
 Do better IO regs instead of 0.0,1.0 slicing - test if is problem, seems like it
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
+Fix shifts in FP operators to check for shfiting more than number of bits
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
 ^ Reorg global logic detection/rounding from bottom up (when timing goal is within the scope of a single modules delay)(instead of trying multiple times to slice from top down)
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
