@@ -21,18 +21,24 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Do better IO regs instead of 0.0,1.0 slicing - test if is problem, seems like it
+Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
-Antikernel fun?
-Do write up on NXS - try retiming, try area opt setting
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
 ^ Reorg global logic detection/rounding from bottom up (when timing goal is within the scope of a single modules delay)(instead of trying multiple times to slice from top down)
+Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do write up on one or two optimizations to DKs riscv
+Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
+Aetherling style re/unrolling of logic into different timings/util
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
+Parallelize sweeps better - aws support?
+Fix fine grain sweep to work again after coarse/middle out sweep
+Do CASE statements
+Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
-Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
 Infer dsps somehow - will want to infer based on * operator, 
 ^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
 ^ and need to make up built in dsp functions for other, MAC, like functions
@@ -43,6 +49,7 @@ Sanity check signed mult you POS
 Come on do sanity check for reserved words
 Make MAIN_MHZ allow not yet defined funcs for mhz values later
 Multiple reads on globals var / global wires? is maybe OK? ordering of global writes and reads a problem?
+Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
@@ -53,7 +60,6 @@ Document pragmas
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
-Fix fine grain sweep to work again
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
@@ -64,7 +70,6 @@ Check for non global functions that call global functions when evaluating const
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
 Do hacky if generate with pragmas? oh gosh
-Rust AST? rustc -Z ast-json, traverse the json?
 Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
@@ -105,6 +110,9 @@ Explore Vivado's retiming option - thought it was on by default... it isnt becau
 Explore Vivado's report_pipeline_analysis instead of following timing reports
 Fix not to write empty vhdl io reg processes for void() mains for clock cross ports only
 Try not allowing add/sub of certain slow bits per stage -> need to syn all the adders and prioritize
+How to remove excess io regs from middle out sweep?
+Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
+Have multiple paths reported per clock domain/main func
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

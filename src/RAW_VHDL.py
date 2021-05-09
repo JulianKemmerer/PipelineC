@@ -316,12 +316,12 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
     # Depends on position of middle slice
-    middle_index = latency/2
+    middle_index = int(latency/2)
     middle_slice = timing_params.slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
@@ -510,12 +510,12 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
     # Depends on position of middle slice
-    middle_index = latency/2
+    middle_index = int(latency/2)
     middle_slice = timing_params.slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
@@ -583,12 +583,12 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
     # Depends on position of middle slice
-    middle_index = latency/2
+    middle_index = int(latency/2)
     middle_slice = timing_params.slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
@@ -658,12 +658,12 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
     # Ex. 4 | | | |
     #      0 1 2 3 4
     # Jsut put in middle stage
-    stage_for_1ll = latency/2
+    stage_for_1ll = int(latency/2)
   else:
     # Odd, ex 5:  | | | | |
     #                 ^
     # Depends on position of middle slice
-    middle_index = latency/2
+    middle_index = int(latency/2)
     middle_slice = timing_params.slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index

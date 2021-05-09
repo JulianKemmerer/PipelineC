@@ -176,6 +176,8 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     # Set log path
     if hash_ext is None:
       hash_ext = timing_params.GET_HASH_EXT(multimain_timing_params.TimingParamsLookupTable, parser_state)
+    if total_latency is None:
+      total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     entity_file_ext = "_" +  str(total_latency) + "CLK" + hash_ext
     log_file_name = "quartus" + entity_file_ext + ".log"
   else:

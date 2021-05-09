@@ -1100,6 +1100,15 @@ class Logic:
       return False
     if len(self.feedback_vars)>0:
       return False
+    if self.is_vhdl_func:
+      return False
+    if self.is_vhdl_expr:
+      return False
+    if self.is_vhdl_text_module:
+      return False
+    if self.is_clock_crossing:
+      return False
+      
     return True
       
   def SHOW(self):
@@ -4559,7 +4568,19 @@ def GET_CONTAINER_INST(inst_name):
   # Construct container from full inst name
   toks = inst_name.split(SUBMODULE_MARKER)
   container = SUBMODULE_MARKER.join(toks[0:len(toks)-1])
+  if container == inst_name:
+    return None
+  if container == "":
+    return None
   return container
+  
+def RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state):
+  container = GET_CONTAINER_INST(inst_name)
+  if container is None:
+    # Top level 
+    return inst_name
+  else:
+    return RECURSIVE_FIND_MAIN_FUNC_FROM_INST(container, parser_state)
   
 # For things that look like
 # Get the last token (leaf) token when splitting by "/" and sub marker
@@ -6512,8 +6533,8 @@ class ParserState:
     self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
     
     # Pragma info
-    self.main_mhz = dict() # dict[main_func_name]=mhz
-    self.main_clk_group = dict() # dict[main_func_name]=clk_group_str
+    self.main_mhz = dict() # dict[main_inst_name]=mhz # Any inst name can be used
+    self.main_clk_group = dict() # dict[main_inst_name]=clk_group_str
     self.func_marked_wires = set()
     self.func_marked_blackbox = set()
     self.func_marked_debug = set()
