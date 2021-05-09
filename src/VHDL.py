@@ -204,16 +204,17 @@ signal module_to_clk_cross : module_to_clk_cross_t;
     # IO
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.LogicInstLookupTable[main_func]
+      main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
       # The inputs regs of the logic
       for input_name in main_func_logic.inputs:
         # Get type for input
         vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,main_func_logic,parser_state)
-        text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, main_func_logic, parser_state) + ";" + "\n"
+        text += "signal " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg : " + vhdl_type_str + " := " + WIRE_TO_VHDL_NULL_STR(input_name, main_func_logic, parser_state) + ";" + "\n"
         if not is_final_top:
           # Dont touch
-          text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is true;\n'''
-          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
-          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+          text += "attribute syn_keep of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is true;\n'''
+          text += "attribute keep of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
+          text += "attribute dont_touch of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + '''_input_reg : signal is "true";\n'''
         
       text += "\n"
       
@@ -221,12 +222,12 @@ signal module_to_clk_cross : module_to_clk_cross_t;
       for output_port in main_func_logic.outputs:
         output_vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port,main_func_logic,parser_state)
         text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output : " + output_vhdl_type_str + ";" + "\n"
-        text += "signal " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
+        text += "signal " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + "_output_reg : " + output_vhdl_type_str + ";" + "\n"
         if not is_final_top:
           # Dont touch
-          text += "attribute syn_keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is true;\n'''
-          text += "attribute keep of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
-          text += "attribute dont_touch of " + main_func + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          text += "attribute syn_keep of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is true;\n'''
+          text += "attribute keep of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
+          text += "attribute dont_touch of " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(output_port, main_func_logic) + '''_output_reg : signal is "true";\n'''
           
     text += "\n"
   
@@ -246,15 +247,16 @@ begin
       text += " " + "begin" + "\n"
       text += " " + " " + "if rising_edge(clk_" + clk_ext_str + ") then" + "\n"
       main_func_logic = parser_state.LogicInstLookupTable[main_func]
+      main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
       # Register inputs
       for input_name in main_func_logic.inputs:
         # Get type for input
         vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,main_func_logic,parser_state)
-        text += " " + " " + " " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + ";" + "\n"
+        text += " " + " " + " " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + "_input_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(input_name, main_func_logic) + ";" + "\n"
         
       # Output regs 
       for out_wire in main_func_logic.outputs:
-        text += " " + " " + " " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output;" + "\n"
+        text += " " + " " + " " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output;" + "\n"
       
       text += " " + " " + "end if;" + "\n"    
       text += " " + "end process;" + "\n"
@@ -263,9 +265,10 @@ begin
   if not is_final_top:
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.LogicInstLookupTable[main_func]
+      main_entity_name = GET_ENTITY_NAME(main_func, main_func_logic,multimain_timing_params.TimingParamsLookupTable, parser_state)
       # Connect to top output port
       for out_wire in main_func_logic.outputs:
-        text += " " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + " <= " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg;" + "\n"
+        text += " " + main_func + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + " <= " + main_entity_name + "_" + WIRE_TO_VHDL_NAME(out_wire, main_func_logic) + "_output_reg;" + "\n"
 
   text += '''
 -- Instantiate each main
@@ -300,7 +303,7 @@ begin
       text += "module_to_clk_cross." + main_func + ",\n"
     # Inputs
     for in_port in main_func_logic.inputs:
-      in_wire = main_func + "_" + in_port
+      in_wire = main_entity_name + "_" + in_port
       text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic) 
       if not is_final_top: 
         text += "_input_reg"

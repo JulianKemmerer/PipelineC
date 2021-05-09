@@ -22,6 +22,10 @@ print('''
 '''
 TODO:
 Do better IO regs instead of 0.0,1.0 slicing - test if is problem, seems like it
+Do all-mults(possible)-are-dsps mode 'inferring' for '*'
+^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
+^ and need to make up built in dsp functions for other, MAC, like functions
+^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
 ^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
@@ -31,7 +35,6 @@ Do MNIST example with minmal resource usage and then scale up. Even smallest sin
 Do write up on one or two optimizations to DKs riscv
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
-Do all-mults(possible)-are-dsps mode 'inferring' for '*'
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
@@ -39,10 +42,6 @@ Nexus try to beat Wolfs results. try retiming, try area opt setting, target iden
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
-Infer dsps somehow - will want to infer based on * operator, 
-^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
-^ and need to make up built in dsp functions for other, MAC, like functions
-^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
 Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Sanity check signed mult you POS
