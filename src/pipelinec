@@ -32,7 +32,7 @@ Do write up on one or two optimizations to DKs riscv
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
-Parallelize sweeps better
+Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
 Try to beat Wolfs Nexus results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
@@ -49,6 +49,7 @@ Sanity check signed mult you POS
 Come on do sanity check for reserved words
 Make MAIN_MHZ allow not yet defined funcs for mhz values later
 Multiple reads on globals var / global wires? is maybe OK? ordering of global writes and reads a problem?
+Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
