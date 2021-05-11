@@ -21,15 +21,12 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Do better IO regs instead of 0.0,1.0 slicing - test if is problem, seems like it
 Do all-mults(possible)-are-dsps mode 'inferring' for '*'
 ^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
 ^ and need to make up built in dsp functions for other, MAC, like functions
 ^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
-^Do initial guess based on first components larger enough to require a slice,  smallest delay component?(rebuilding from bottom?)
-^ Reorg global logic detection/rounding from bottom up (when timing goal is within the scope of a single modules delay)(instead of trying multiple times to slice from top down)
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do write up on one or two optimizations to DKs riscv
@@ -112,6 +109,7 @@ Try not allowing add/sub of certain slow bits per stage -> need to syn all the a
 How to remove excess io regs from middle out sweep?
 Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
 Have multiple paths reported per clock domain/main func
+No good? reason to combine variable latency array of regs for pipelining and state regs in same record - flat, human like, easier to read (maybe ok since those regs arent IO?)
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

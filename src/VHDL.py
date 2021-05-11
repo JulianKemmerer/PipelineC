@@ -1872,14 +1872,15 @@ def LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTabl
   # Only need self regs if latency >0 clocks
   timing_params = TimingParamsLookupTable[inst_name]
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  i_need_self_regs = latency>0
-  
-  return i_need_self_regs
+  if timing_params._has_input_regs:
+    latency -= 1
+  if timing_params._has_output_regs:
+    latency -= 1
+  return latency>0
   
 def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
-  # Types of regs: self, global, volatile global
-  needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  return needs_self_regs or len(Logic.state_regs) > 0
+  timing_params = TimingParamsLookupTable[inst_name]
+  return timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) > 0 or len(Logic.state_regs) > 0
   
 def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   format_string = Logic.c_ast_node.args.exprs[0].value
@@ -1933,7 +1934,12 @@ def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     
 def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  pipeline_latency = total_latency
+  if timing_params._has_input_regs:
+    pipeline_latency -= 1
+  if timing_params._has_output_regs:
+    pipeline_latency -= 1
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
   needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
@@ -1944,8 +1950,8 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
   rv += "-- Types and such\n"
   rv += "-- Declarations\n"
   
-  # Declare total latency for Logic
-  rv += "constant LATENCY : integer := " + str(latency) + ";\n"
+  # Declare latency for just the pipeline portion of logic, not io regs
+  rv += "constant PIPELINE_LATENCY : integer := " + str(pipeline_latency) + ";\n"
   
   # Type for wires/variables
   varables_t_pre = ""
@@ -1998,11 +2004,33 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
     rv += "end record;\n"
   
   
+  # Input registers
+  if timing_params._has_input_regs:
+    rv += '''
+-- Type holding all input registers
+type input_registers_t is record\n'''
+    for input_port in Logic.inputs:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_port, Logic, parser_state)
+      vhdl_name = WIRE_TO_VHDL_NAME(input_port, Logic)
+      rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+    rv += "end record;\n"
+    
+  # Output registers
+  if timing_params._has_output_regs:
+    rv += '''
+-- Type holding all output registers
+type output_registers_t is record\n'''
+    for output_port in Logic.outputs:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port, Logic, parser_state)
+      vhdl_name = WIRE_TO_VHDL_NAME(output_port, Logic)
+      rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+    rv += "end record;\n"
   
+  # Pipeline variables
   if wrote_variables_t:
     rv += '''
 -- Type for this modules register pipeline
-type register_pipeline_t is array(0 to LATENCY) of variables_t;
+type register_pipeline_t is array(0 to PIPELINE_LATENCY) of variables_t;
   '''
   
   # State registers
@@ -2044,18 +2072,34 @@ type feedback_vars_t is record'''
     if len(Logic.state_regs) > 0:
       rv += '''
     state_regs : state_registers_t;'''
+    # Input regs
+    if timing_params._has_input_regs:
+      rv += '''
+    input_regs : input_registers_t;'''
+    # Output regs
+    if timing_params._has_output_regs:
+      rv += '''
+    output_regs : output_registers_t;'''
     # End
     rv += ''' 
   end record;
   '''
   
   if needs_regs:
-    # Function to null out globals
-    rv += "\n-- Function to null out just state regs\n"
+    # Function to null out globals (not internal self pipeline regs since those need flushing)
+    rv += "\n-- Function to null out regs \n"
     rv += "function registers_NULL return registers_t is\n"
     rv += ''' variable rv : registers_t;
   begin
   '''
+    # Input regs
+    if timing_params._has_input_regs:
+      for input_port in Logic.inputs:
+        rv += " rv.input_regs." + WIRE_TO_VHDL_NAME(input_port, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(input_port, Logic, parser_state) + ";\n"
+    # Output regs
+    if timing_params._has_output_regs:
+      for output_port in Logic.outputs:
+        rv += " rv.output_regs." + WIRE_TO_VHDL_NAME(output_port, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(output_port, Logic, parser_state) + ";\n"
     # Do each global var
     for state_reg in Logic.state_regs:
       rv += " rv.state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := " + STATE_REG_TO_VHDL_INIT_STR(state_reg, Logic, parser_state) + ";\n"    
@@ -2215,8 +2259,10 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     
   rv = ""
   rv += "-- Timing params:\n"
-  rv += "-- Fixed?: "+str(timing_params.params_are_fixed)+"\n"
-  rv += "-- Slices: "+str(timing_params.slices)+"\n"
+  rv += "--   Fixed?: "+str(timing_params.params_are_fixed)+"\n"
+  rv += "--   Pipeline Slices: "+str(timing_params._slices)+"\n"
+  rv += "--   Input regs?: "+str(timing_params._has_input_regs)+"\n"
+  rv += "--   Output regs?: "+str(timing_params._has_output_regs)+"\n"
   rv += "library std;\n"
   rv += "use std.textio.all;\n"
   rv += "library ieee;" + "\n"
@@ -2375,13 +2421,13 @@ def GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTa
 
 def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   # Comb Logic pipeline
+  timing_params = TimingParamsLookupTable[inst_name]
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
   needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_self_regs = LOGIC_NEEDS_SELF_REGS(inst_name,Logic, parser_state, TimingParamsLookupTable)
   needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
   #needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
-  
   rv = ""
   rv += "\n"
   rv += " -- Combinatorial process for pipeline stages\n"
@@ -2464,6 +2510,12 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
   
+  # Input regs
+  if timing_params._has_input_regs:
+    rv += " -- Input regs\n"
+    for input_port in Logic.inputs:
+      rv += ''' registers.input_regs.''' + WIRE_TO_VHDL_NAME(input_port, Logic) + ''' <= ''' + WIRE_TO_VHDL_NAME(input_port, Logic) + ''';\n'''
+  
   if needs_self_regs:
     # Self regs
     rv += '''
@@ -2486,7 +2538,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   
   rv += " -- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
   rv += " -- LATENCY=0 is combinational Logic\n"
-  rv += " " + "for STAGE in 0 to LATENCY loop\n"
+  rv += " " + "for STAGE in 0 to PIPELINE_LATENCY loop\n"
   rv += " " + " " + "-- Input to first stage are inputs to function\n"
   rv += " " + " " + "if STAGE=0 then\n"
   
@@ -2497,8 +2549,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   if len(Logic.inputs) > 0:
     rv += " " + " " + " " + "-- Mux in inputs\n"
     for input_wire in Logic.inputs:
-      rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
-  
+      if timing_params._has_input_regs:
+        rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := registers_r.input_regs." + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
+      else:
+        rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"      
+    
   # Also mux volatile global regs into wire - act like regular wire
   for state_reg in Logic.state_regs:
     if Logic.state_regs[state_reg].is_volatile:
@@ -2519,25 +2574,30 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += " " + " " + "write_self_regs(STAGE) := write_pipe;\n"
   rv += " " + "end loop;\n"
   rv += "\n"
-
-  # -- Last stage of pipeline volatile global wires write to function volatile global regs
-  rv += " " + "-- Drive volatiles from last stage\n"
-  for state_reg in Logic.state_regs:
-    if Logic.state_regs[state_reg].is_volatile:
-      rv += " " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(state_reg, Logic) + ";\n"
-    
   rv += "\n"  
   rv += " " + "-- Drive registers and outputs\n"
   
-  for output_wire in Logic.outputs:
-    rv += " " + "-- Last stage of pipeline return wire to entity return port\n"
-    rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "write_self_regs(LATENCY)." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
+  # -- Last stage of pipeline volatile global wires write to function volatile global regs
+  for state_reg in Logic.state_regs:
+    if Logic.state_regs[state_reg].is_volatile:
+      rv += " " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := write_self_regs(PIPELINE_LATENCY)." + WIRE_TO_VHDL_NAME(state_reg, Logic) + "; -- Volatile\n"
     
-  if needs_self_regs:
-    rv += " " + "registers.self <= write_self_regs;\n"
-  #   State regs
+  # State regs
   if len(Logic.state_regs) > 0:
     rv += " " + "registers.state_regs <= write_state_regs;\n"
+  
+  # Self regs
+  if needs_self_regs:
+    rv += " " + "registers.self <= write_self_regs;\n"
+    
+  # Outputs
+  if len(Logic.outputs) > 0:
+    rv += " " + "-- Last stage of pipeline return wire to return port/reg\n"
+    for output_wire in Logic.outputs:
+      if timing_params._has_output_regs:
+        rv += " " + "registers.output_regs." + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "write_self_regs(PIPELINE_LATENCY)." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
+      else:
+        rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "write_self_regs(PIPELINE_LATENCY)." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
     
   # Add wait statement if nothing in sensitivity list for simulation?
   if process_sens_list == "":
@@ -2548,11 +2608,17 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   
   # Register the combinatorial registers signal
   if needs_regs:
-    rv += "registers_r <= registers when rising_edge(clk)"
+    rv += " registers_r <= registers when rising_edge(clk)"
     if needs_clk_en:
       rv += " and CLOCK_ENABLE(0)='1'"
     rv += ";\n"
     
+  # Connect registers_r.output_regs. to output port
+  if timing_params._has_output_regs:
+    rv += " -- Output regs\n"
+    for output_wire in Logic.outputs:
+        rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "registers_r.output_regs." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
+  
   return rv
   
 # Returns dict[stage_num]=stage_text

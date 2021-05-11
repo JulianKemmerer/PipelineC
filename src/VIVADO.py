@@ -27,232 +27,6 @@ else:
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 VIVADO_DEFAULT_ARGS = "-mode batch" 
-
-def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
-  # Parse the self offset from the reg names
-  # main_registers_r_reg     [self]      [0][MUX_rv_main_c_46_iftrue][17]/D
-  # main_registers_r_reg[submodules][BIN_OP_DIV_main_c_20_registers]    [self]      [1][BIN_OP_MINUS_BIN_OP_DIV_main_c_20_c_571_right][12]/C
-  # Offset should be first tok after self str
-  if "[self]" in reg_name:
-    halves = reg_name.split("[self]")
-    second_half = halves[1]
-    toks = second_half.split("]")
-    self_offset = int(toks[0].replace("[",""))
-    return self_offset
-  
-  elif "[state_regs]" in reg_name:
-    # Global regs are always in relative stage 0
-    # Volatile global regs are always in relative stage 0???
-    return 0    
-  else:
-    print("GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name)
-    sys.exit(-1)
-    
-
-def GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, parser_state, multimain_timing_params):  
-  # Get submodule inst
-  inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state)
-  
-  # Get main func for the inst
-  main_func = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]
-  main_func_logic = parser_state.LogicInstLookupTable[main_func]
-  
-  # Get stage indices
-  when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
-  
-  # Global funcs are always 0 clock and thus offset 0
-  if parser_state.LogicInstLookupTable[inst].uses_nonvolatile_state_regs:
-    self_offset = 0
-  else:
-    # Do normal check
-    self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
-  abs_stage = when_used + self_offset
-  return main_func, inst, abs_stage
-  
-# Dont have submodule "/" marker to work with so need to be dumb
-def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
-  # Silly loop over all main funcs for now -dumb
-  # Know io regs start with func name
-  rv_main_func = ""
-  for main_func in parser_state.main_mhz:
-    if reg_name.startswith(main_func) and len(main_func) > len(rv_main_func):
-      rv_main_func = main_func
-  
-  if rv_main_func == "":
-    print("No matching main func for io reg",reg_name)
-    sys.exit(-1)
-    
-  return rv_main_func
-  
-
-# DO have submodule "/" marker to work with
-def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
-  main_func = reg_name.split("/")[0]
-  if main_func not in parser_state.main_mhz:
-    print("Bad main from reg?",reg_name)
-    sys.exit(-1)
-  
-  return main_func
-  
-def GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state):
-  clk_cross_var_name = start_name.split("/")[0]
-  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
-  return read_main_func
-    
-def GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state):
-  clk_cross_var_name = end_name.split("/")[0]
-  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
-  return write_main_func
-
-'''
-# [possible,stage,indices]
-def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, parser_state, multimain_timing_params):
-  LogicLookupTable = parser_state.LogicInstLookupTable
-  
-  start_reg_name = parsed_timing_report.start_reg_name
-  end_reg_name = parsed_timing_report.end_reg_name
-  
-  #print "PATH:", start_reg_name, "=>", end_reg_name
-  
-  # all possible reg paths considering renaming
-  # Start names
-  start_names = [start_reg_name]
-  start_aliases = []
-  if start_reg_name in parsed_timing_report.reg_merged_with:
-    start_aliases = parsed_timing_report.reg_merged_with[start_reg_name]
-  start_names += start_aliases
-  
-  # all possible reg paths considering renaming
-  # end names
-  end_names = [end_reg_name]
-  end_aliases = []
-  if end_reg_name in parsed_timing_report.reg_merged_with:
-    end_aliases = parsed_timing_report.reg_merged_with[end_reg_name]
-  end_names += end_aliases
-  
-  
-  
-  #timing_params = TimingParamsLookupTable[inst_name]
-  #total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  #last_stage = total_latency
-  
-  
-  
-  possible_main_funcs = set()
-  possible_stages_indices = []  
-  # Loop over all possible start end pairs
-  for start_name in start_names:
-    for end_name in end_names:
-      # Check this path
-      if REG_NAME_IS_CLOCK_CROSSING(start_name, parser_state):
-        possible_stages_indices.append(0)
-        possible_main_funcs.add(GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state))      
-      elif REG_NAME_IS_CLOCK_CROSSING(end_name, parser_state):
-        last_stage = total_latency
-        possible_stages_indices.append(last_stage)
-        possible_main_funcs.add(GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state))
-      elif REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
-        print(" Path to and from register IO regs in top...")
-        possible_stages_indices.append(0)
-        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
-        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state))
-      elif REG_NAME_IS_INPUT_REG(start_name) and not(REG_NAME_IS_OUTPUT_REG(end_name)):
-        print(" Path from input register to pipeline logic...")
-        #start_stage = 0
-        possible_stages_indices.append(0)
-        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
-      elif not(REG_NAME_IS_INPUT_REG(start_name)) and REG_NAME_IS_OUTPUT_REG(end_name):
-        print(" Path from pipeline logic to output register...")
-        main_func = GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state)
-        timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
-        total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
-        last_stage = total_latency
-        possible_main_funcs.add(main_func)
-        possible_stages_indices.append(last_stage)
-        
-      elif REG_NAME_IS_OUTPUT_REG(start_name):
-        print(" Path is loop from global register acting as output register from last stage?")
-        print(" Is this normal?")
-        sys.exit(-1)
-        
-      elif REG_NAME_IS_INPUT_REG(end_name):
-        # Ending at input reg must be global combinatorial loop in first stage
-        print(" Path is loop from global register acting as input reg in first stage?")
-        print(" Is this normal?")
-        sys.exit(-1)
-      else:
-        # Start
-        start_main_func, start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(start_name, parser_state, multimain_timing_params)
-        # End
-        end_main_func, end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(end_name, parser_state, multimain_timing_params)
-              
-              
-        # Clock cross
-        if start_main_func != end_main_func:
-          print("TODO: How to improve clock crossing paths?")
-          print("Cross from", start_main_func, "to", end_main_func)
-          print("For now assuming start main func...")
-          
-        main_func = start_main_func
-        timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
-        total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
-        last_stage = total_latency
-        possible_main_funcs.add(main_func)      
-              
-        # Expect a one stage length path
-        if found_end_reg_abs_index - found_start_reg_abs_index != 1:
-          # Not normal path?
-          print(" Unclear stages from register names...")
-          print(" Start?:",found_start_reg_abs_index, start_name)
-          print("   ", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
-          print(" End?:",found_end_reg_abs_index, end_name)
-          print("   ", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
-          
-          # Global regs do not have self offset so hard to know exact offset
-          # Prefer if one end of the path isnt a global
-          if "global_regs]" not in start_name and  "global_regs]" in end_name:
-            # Prefer start reg
-            possible_stages_indices.append(found_start_reg_abs_index+1) # Reg0 starts stage 1
-          elif "global_regs]" in start_name and  "global_regs]" not in end_name:
-            # Prefer end reg
-            possible_stages_indices.append(found_end_reg_abs_index) # Reg1 ends stage 1
-          else:
-            # Do dumb inclusive range plus +1 before and after if globals?
-            # Uh... totally guessing now?
-            print("Really unclear regs?")
-            guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
-            guessed_end_reg_abs_index = max(found_start_reg_abs_index+1,found_end_reg_abs_index) # +1 since corresponding end index from start index is plus 1
-            # Stage range bounds
-            min_bound = guessed_start_reg_abs_index+1
-            max_bound = guessed_end_reg_abs_index+1
-
-            # PLus 1 before and after if globals in the mix?
-            if "global_regs]" in start_name:
-              min_bound = max(0, min_bound-1)
-            if "global_regs]" in end_name:
-              max_bound = min(last_stage+1, max_bound+1)
-            stage_range = list(range(min_bound, max_bound))
-            for stage in stage_range:
-              possible_stages_indices.append(stage)     
-              
-              
-            #print "possible_stages_indices",possible_stages_indices
-            #print "TEMP UNCLEAR STOP"
-            #sys.exit(-1)
-        else:
-          # Normal 1 stage path
-          possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
-  
-  
-  # Get real range accounting for duplcates from renamed/merged regs
-  stage_range = sorted(list(set(possible_stages_indices)))
-  
-  main_func = None
-  if len(possible_main_funcs) == 1:
-    main_func = list(possible_main_funcs)[0]
-  
-  return main_func, stage_range
-'''
   
 class ParsedTimingReport:
   def __init__(self, syn_output):
@@ -787,6 +561,233 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   
   return ParsedTimingReport(log_text)
   
+'''
+def GET_SELF_OFFSET_FROM_REG_NAME(reg_name):
+  # Parse the self offset from the reg names
+  # main_registers_r_reg     [self]      [0][MUX_rv_main_c_46_iftrue][17]/D
+  # main_registers_r_reg[submodules][BIN_OP_DIV_main_c_20_registers]    [self]      [1][BIN_OP_MINUS_BIN_OP_DIV_main_c_20_c_571_right][12]/C
+  # Offset should be first tok after self str
+  if "[self]" in reg_name:
+    halves = reg_name.split("[self]")
+    second_half = halves[1]
+    toks = second_half.split("]")
+    self_offset = int(toks[0].replace("[",""))
+    return self_offset
+  
+  elif "[state_regs]" in reg_name:
+    # Global regs are always in relative stage 0
+    # Volatile global regs are always in relative stage 0???
+    return 0    
+  else:
+    print("GET_SELF_OFFSET_FROM_REG_NAME no self, no global, no volatile globals",reg_name)
+    sys.exit(-1)
+    
+def GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(reg_name, parser_state, multimain_timing_params):  
+  # Get submodule inst
+  inst = GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state)
+  
+  # Get main func for the inst
+  main_func = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]
+  main_func_logic = parser_state.LogicInstLookupTable[main_func]
+  
+  # Get stage indices
+  when_used = SYN.GET_ABS_SUBMODULE_STAGE_WHEN_USED(inst, main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
+  
+  # Global funcs are always 0 clock and thus offset 0
+  if parser_state.LogicInstLookupTable[inst].uses_nonvolatile_state_regs:
+    self_offset = 0
+  else:
+    # Do normal check
+    self_offset = GET_SELF_OFFSET_FROM_REG_NAME(reg_name)
+  abs_stage = when_used + self_offset
+  return main_func, inst, abs_stage
+
+
+
+# Dont have submodule "/" marker to work with so need to be dumb
+def GET_MAIN_FUNC_FROM_IO_REG(reg_name, parser_state):
+  # Silly loop over all main funcs for now -dumb
+  # Know io regs start with func name
+  rv_main_func = ""
+  for main_func in parser_state.main_mhz:
+    if reg_name.startswith(main_func) and len(main_func) > len(rv_main_func):
+      rv_main_func = main_func
+  
+  if rv_main_func == "":
+    print("No matching main func for io reg",reg_name)
+    sys.exit(-1)
+    
+  return rv_main_func
+
+
+# DO have submodule "/" marker to work with
+def GET_MAIN_FUNC_FROM_NON_REG(reg_name, parser_state):
+  main_func = reg_name.split("/")[0]
+  if main_func not in parser_state.main_mhz:
+    print("Bad main from reg?",reg_name)
+    sys.exit(-1)
+  
+  return main_func
+  
+def GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state):
+  clk_cross_var_name = start_name.split("/")[0]
+  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
+  return read_main_func
+    
+def GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state):
+  clk_cross_var_name = end_name.split("/")[0]
+  write_main_func, read_main_func = parser_state.clk_cross_var_name_to_write_read_main_funcs[clk_cross_var_name]
+  return write_main_func
+
+
+# [possible,stage,indices]
+def FIND_MAIN_FUNC_AND_ABS_STAGE_RANGE_FROM_TIMING_REPORT(parsed_timing_report, parser_state, multimain_timing_params):
+  LogicLookupTable = parser_state.LogicInstLookupTable
+  
+  start_reg_name = parsed_timing_report.start_reg_name
+  end_reg_name = parsed_timing_report.end_reg_name
+  
+  #print "PATH:", start_reg_name, "=>", end_reg_name
+  
+  # all possible reg paths considering renaming
+  # Start names
+  start_names = [start_reg_name]
+  start_aliases = []
+  if start_reg_name in parsed_timing_report.reg_merged_with:
+    start_aliases = parsed_timing_report.reg_merged_with[start_reg_name]
+  start_names += start_aliases
+  
+  # all possible reg paths considering renaming
+  # end names
+  end_names = [end_reg_name]
+  end_aliases = []
+  if end_reg_name in parsed_timing_report.reg_merged_with:
+    end_aliases = parsed_timing_report.reg_merged_with[end_reg_name]
+  end_names += end_aliases
+  
+  
+  
+  #timing_params = TimingParamsLookupTable[inst_name]
+  #total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  #last_stage = total_latency
+  
+  
+  
+  possible_main_funcs = set()
+  possible_stages_indices = []  
+  # Loop over all possible start end pairs
+  for start_name in start_names:
+    for end_name in end_names:
+      # Check this path
+      if REG_NAME_IS_CLOCK_CROSSING(start_name, parser_state):
+        possible_stages_indices.append(0)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_START_CLK_CROSS_REG(start_name, parser_state))      
+      elif REG_NAME_IS_CLOCK_CROSSING(end_name, parser_state):
+        last_stage = total_latency
+        possible_stages_indices.append(last_stage)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_END_CLK_CROSS_REG(end_name, parser_state))
+      elif REG_NAME_IS_INPUT_REG(start_name) and REG_NAME_IS_OUTPUT_REG(end_name):
+        print(" Path to and from register IO regs in top...")
+        possible_stages_indices.append(0)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state))
+      elif REG_NAME_IS_INPUT_REG(start_name) and not(REG_NAME_IS_OUTPUT_REG(end_name)):
+        print(" Path from input register to pipeline logic...")
+        #start_stage = 0
+        possible_stages_indices.append(0)
+        possible_main_funcs.add(GET_MAIN_FUNC_FROM_IO_REG(start_name, parser_state))
+      elif not(REG_NAME_IS_INPUT_REG(start_name)) and REG_NAME_IS_OUTPUT_REG(end_name):
+        print(" Path from pipeline logic to output register...")
+        main_func = GET_MAIN_FUNC_FROM_IO_REG(end_name, parser_state)
+        timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
+        total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
+        last_stage = total_latency
+        possible_main_funcs.add(main_func)
+        possible_stages_indices.append(last_stage)
+        
+      elif REG_NAME_IS_OUTPUT_REG(start_name):
+        print(" Path is loop from global register acting as output register from last stage?")
+        print(" Is this normal?")
+        sys.exit(-1)
+        
+      elif REG_NAME_IS_INPUT_REG(end_name):
+        # Ending at input reg must be global combinatorial loop in first stage
+        print(" Path is loop from global register acting as input reg in first stage?")
+        print(" Is this normal?")
+        sys.exit(-1)
+      else:
+        # Start
+        start_main_func, start_inst, found_start_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(start_name, parser_state, multimain_timing_params)
+        # End
+        end_main_func, end_inst, found_end_reg_abs_index = GET_MOST_MATCHING_MAIN_FUNC_LOGIC_INST_AND_ABS_REG_INDEX(end_name, parser_state, multimain_timing_params)
+              
+              
+        # Clock cross
+        if start_main_func != end_main_func:
+          print("TODO: How to improve clock crossing paths?")
+          print("Cross from", start_main_func, "to", end_main_func)
+          print("For now assuming start main func...")
+          
+        main_func = start_main_func
+        timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
+        total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
+        last_stage = total_latency
+        possible_main_funcs.add(main_func)      
+              
+        # Expect a one stage length path
+        if found_end_reg_abs_index - found_start_reg_abs_index != 1:
+          # Not normal path?
+          print(" Unclear stages from register names...")
+          print(" Start?:",found_start_reg_abs_index, start_name)
+          print("   ", start_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
+          print(" End?:",found_end_reg_abs_index, end_name)
+          print("   ", end_inst.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/"))
+          
+          # Global regs do not have self offset so hard to know exact offset
+          # Prefer if one end of the path isnt a global
+          if "global_regs]" not in start_name and  "global_regs]" in end_name:
+            # Prefer start reg
+            possible_stages_indices.append(found_start_reg_abs_index+1) # Reg0 starts stage 1
+          elif "global_regs]" in start_name and  "global_regs]" not in end_name:
+            # Prefer end reg
+            possible_stages_indices.append(found_end_reg_abs_index) # Reg1 ends stage 1
+          else:
+            # Do dumb inclusive range plus +1 before and after if globals?
+            # Uh... totally guessing now?
+            print("Really unclear regs?")
+            guessed_start_reg_abs_index = min(found_start_reg_abs_index,found_end_reg_abs_index-1) # -1 since corresponding start index from end index is minus 1 
+            guessed_end_reg_abs_index = max(found_start_reg_abs_index+1,found_end_reg_abs_index) # +1 since corresponding end index from start index is plus 1
+            # Stage range bounds
+            min_bound = guessed_start_reg_abs_index+1
+            max_bound = guessed_end_reg_abs_index+1
+
+            # PLus 1 before and after if globals in the mix?
+            if "global_regs]" in start_name:
+              min_bound = max(0, min_bound-1)
+            if "global_regs]" in end_name:
+              max_bound = min(last_stage+1, max_bound+1)
+            stage_range = list(range(min_bound, max_bound))
+            for stage in stage_range:
+              possible_stages_indices.append(stage)     
+              
+              
+            #print "possible_stages_indices",possible_stages_indices
+            #print "TEMP UNCLEAR STOP"
+            #sys.exit(-1)
+        else:
+          # Normal 1 stage path
+          possible_stages_indices.append(found_start_reg_abs_index+1) # +1 since reg0 means stage 1 path
+  
+  
+  # Get real range accounting for duplcates from renamed/merged regs
+  stage_range = sorted(list(set(possible_stages_indices)))
+  
+  main_func = None
+  if len(possible_main_funcs) == 1:
+    main_func = list(possible_main_funcs)[0]
+  
+  return main_func, stage_range
+
 def REG_NAME_IS_CLOCK_CROSSING(reg_name,parser_state):
   if "/" in reg_name:
     top_inst_name = reg_name.split("/")[0]
@@ -866,7 +867,8 @@ def GET_INST_NAME_ADJUSTED_REG_NAME(reg_name):
   new_reg_name = constructed_reg_name.replace("__","_").strip("_")
   
   return new_reg_name
-  
+
+
 # Get deepest in hierarchy possible match , msot specfic match
 def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
   #print("DEBUG: REG:", reg_name)
@@ -938,3 +940,5 @@ def GET_MOST_MATCHING_LOGIC_INST_FROM_REG_NAME(reg_name, parser_state):
   #print("DEBUG: INST:", max_match_submodule_inst)
   
   return max_match_submodule_inst
+  
+'''

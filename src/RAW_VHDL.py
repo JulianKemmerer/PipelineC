@@ -294,7 +294,7 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 
   # MAx clocks is input reg and output reg
   #max_clocks = 2
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state)
+  latency = len(timing_params._slices)
   num_stages = latency + 1
   # Which stage gets the 1 LL ?
   stage_for_1ll = None
@@ -304,7 +304,7 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Rely on percent
     stage_for_1ll = 0
     # If slice is to left logic is on right
-    if timing_params.slices[0] < 0.5:
+    if timing_params._slices[0] < 0.5:
       stage_for_1ll = 1 
   elif latency == 2:
     # INput reg and output reg logic in middle
@@ -322,7 +322,7 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     #                 ^
     # Depends on position of middle slice
     middle_index = int(latency/2)
-    middle_slice = timing_params.slices[middle_index]
+    middle_slice = timing_params._slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
     if middle_slice < 0.5:
@@ -488,7 +488,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
 
   # MAx clocks is input reg and output reg
   #max_clocks = 2
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state)
+  latency = len(timing_params._slices)
   num_stages = latency + 1
   # Which stage gets the 1 LL ?
   stage_for_1ll = None
@@ -498,7 +498,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
     # Rely on percent
     stage_for_1ll = 0
     # If slice is to left logic is on right
-    if timing_params.slices[0] < 0.5:
+    if timing_params._slices[0] < 0.5:
       stage_for_1ll = 1 
   elif latency == 2:
     # INput reg and output reg logic in middle
@@ -516,7 +516,7 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logi
     #                 ^
     # Depends on position of middle slice
     middle_index = int(latency/2)
-    middle_slice = timing_params.slices[middle_index]
+    middle_slice = timing_params._slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
     if middle_slice < 0.5:
@@ -561,7 +561,7 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
 
   # MAx clocks is input reg and output reg
   #max_clocks = 2
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state)
+  latency = len(timing_params._slices)
   num_stages = latency + 1
   # Which stage gets the 1 LL ?
   stage_for_1ll = None
@@ -571,7 +571,7 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     # Rely on percent
     stage_for_1ll = 0
     # If slice is to left logic is on right
-    if timing_params.slices[0] < 0.5:
+    if timing_params._slices[0] < 0.5:
       stage_for_1ll = 1 
   elif latency == 2:
     # INput reg and output reg logic in middle
@@ -589,7 +589,7 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic,
     #                 ^
     # Depends on position of middle slice
     middle_index = int(latency/2)
-    middle_slice = timing_params.slices[middle_index]
+    middle_slice = timing_params._slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
     if middle_slice < 0.5:
@@ -636,7 +636,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
 
   # MAx clocks is input reg and output reg
   #max_clocks = 2
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state)
+  latency = len(timing_params._slices)
   num_stages = latency + 1
   # Which stage gets the 1 LL ?
   stage_for_1ll = None
@@ -646,7 +646,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
     # Rely on percent
     stage_for_1ll = 0
     # If slice is to left logic is on right
-    if timing_params.slices[0] < 0.5:
+    if timing_params._slices[0] < 0.5:
       stage_for_1ll = 1 
   elif latency == 2:
     # INput reg and output reg logic in middle
@@ -664,7 +664,7 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
     #                 ^
     # Depends on position of middle slice
     middle_index = int(latency/2)
-    middle_slice = timing_params.slices[middle_index]
+    middle_slice = timing_params._slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
     if middle_slice < 0.5:
@@ -722,7 +722,7 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
       
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params) 
 
   # Write loops to do operation
@@ -824,7 +824,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
   
   
@@ -940,7 +940,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
 
   # Write loops to do operation
@@ -1044,7 +1044,7 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
   removed_percent = 0.0
   adj_percents = []
   # This does for >= 1clks
-  for raw_hdl_slice in timing_params.slices:
+  for raw_hdl_slice in timing_params._slices:
     adj_percent = raw_hdl_slice - removed_percent
     adj_percents.append(adj_percent)
     removed_percent += adj_percent
@@ -1141,7 +1141,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
       
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
   #print "num_stages",num_stages
   #print "bits_per_stage_dict",bits_per_stage_dict
@@ -1275,7 +1275,7 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
   
   
@@ -1454,14 +1454,14 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
   width = max_width
   unsigned_width = width-1 # sign bit 
   max_clocks = unsigned_width
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > max_clocks:
-    print("Cannot do a c built in int binary op GT operation of",compare_width, "bits in", timing_params.GET_TOTAL_LATENCY(parser_state),  "clocks!")
+  if len(timing_params._slices) > max_clocks:
+    print("Cannot do a c built in int binary op GT operation of",compare_width, "bits in", len(timing_params._slices),  "clocks!")
     sys.exit(-1) # Eventually fix
   
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   
   
     
@@ -1569,7 +1569,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1  
+  num_stages = len(timing_params._slices) + 1  
   bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(unsigned_width, timing_params)
   
   # Write loops to do operation
@@ -1668,7 +1668,7 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   
   
     
@@ -1774,7 +1774,7 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
     
   # How many bits per stage?
   # 0th stage is combinatorial logic
-  num_stages = timing_params.GET_TOTAL_LATENCY(parser_state) + 1
+  num_stages = len(timing_params._slices) + 1
   
   
     
@@ -1871,7 +1871,7 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
   
   # MAx clocks is input reg and output reg
   #max_clocks = 2
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state)
+  latency = len(timing_params._slices)
   num_stages = latency + 1
   # Which stage gets the 1 LL ?
   stage_for_1ll = None
@@ -1881,7 +1881,7 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
     # Rely on percent
     stage_for_1ll = 0
     # If slice is to left logic is on right
-    if timing_params.slices[0] < 0.5:
+    if timing_params._slices[0] < 0.5:
       stage_for_1ll = 1 
   elif latency == 2:
     # INput reg and output reg logic in middle
@@ -1899,7 +1899,7 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser
     #                 ^
     # Depends on position of middle slice
     middle_index = int(latency/2)
-    middle_slice = timing_params.slices[middle_index]
+    middle_slice = timing_params._slices[middle_index]
     # If slice is to left, logic is on right
     stage_for_1ll = middle_index
     if middle_slice < 0.5:
@@ -2021,7 +2021,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 '''
 
   # Float constrcut must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a float UINT32 construct concat in multiple clocks!?")
     sys.exit(-1)
     
@@ -2056,7 +2056,7 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, p
 '''
 
   # Float constrcut must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a float construct concat in multiple clocks!?")
     sys.exit(-1)
     
@@ -2087,7 +2087,7 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_sta
 '''
 
   # Bit concat must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a bit concat in multiple clocks!?")
     sys.exit(-1)
     
@@ -2116,7 +2116,7 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 '''
 
   # Byte swap must be zero clocks
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a byte swap in multiple clocks!?")
     sys.exit(-1)
     
@@ -2160,7 +2160,7 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_par
 '''
 
   # Bit assign must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a bit assign in multiple clocks!?")
     sys.exit(-1)
     
@@ -2220,7 +2220,7 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
 '''
 
   # Const shift must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a const shift in multiple clocks!?")
     sys.exit(-1)
       
@@ -2252,7 +2252,7 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
 '''
 
   # Bit slice must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a bit slice in multiple clocks!?")
     sys.exit(-1)
     
@@ -2290,7 +2290,7 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, par
 '''
 
   # Bit slice must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do array to unsigned in multiple clocks!?")
     sys.exit(-1)
   
@@ -2328,7 +2328,7 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params
 '''
 
   # Bit slice must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a bit dup in multiple clocks!?")
     sys.exit(-1)
     
@@ -2360,7 +2360,7 @@ def GET_ROTL_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, ti
 '''
 
   # Rotate must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a rotate left in multple clocks!?")
     sys.exit(-1)
     
@@ -2389,7 +2389,7 @@ def GET_ROTR_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, ti
 '''
 
   # Rotate must always be zero clock
-  if timing_params.GET_TOTAL_LATENCY(parser_state) > 0:
+  if len(timing_params._slices) > 0:
     print("Cannot do a rotate right in multple clocks!?")
     sys.exit(-1)
     

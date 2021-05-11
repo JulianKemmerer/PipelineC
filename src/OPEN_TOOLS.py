@@ -333,6 +333,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
   in_reg = "NONE"
   pipe_reg = "NONE"
   out_reg = "NONE"
+  # TODO UPDATE TO USE timing_params._has regs flags
   # 0 slices = comb
   if len(timing_params.slices) == 0:
     pass
