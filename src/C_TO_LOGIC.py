@@ -1031,20 +1031,24 @@ class Logic:
     # Make list of wires that look like
     #   submodule_inst + SUBMODULE_MARKER
     # SHOULD ONLY BE INPUT AND OUTPUT WIRES + submodule name
+    # AND CLOCK EN TOO!
     io_wires = set()
     in_wires = set()
+    out_wires = set()
+    ce_wire = submodule_inst + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
+    io_wires.add(ce_wire)
     for input_port_name in input_port_names:
       in_wire = submodule_inst + SUBMODULE_MARKER + input_port_name
       io_wires.add(in_wire)
       in_wires.add(in_wire)
     for output_port_name in output_port_names:
       out_wire = submodule_inst + SUBMODULE_MARKER + output_port_name
-      io_wires.add(out_wire)    
+      io_wires.add(out_wire) 
+      out_wires.add(out_wire) 
     
     # Fast
-    # NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instances.pop(submodule_inst)
-    # NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instance_to_c_ast_node.pop(submodule_inst)
-    # NOT DONE UNTIL AFTER TRY GET LOGIC self.submodule_instance_to_input_port_names.pop(submodule_inst, None)
+    self.submodule_instance_to_c_ast_node.pop(submodule_inst, None) # NOT DONE UNTIL AFTER TRY GET LOGIC  needed?
+    self.submodule_instance_to_input_port_names.pop(submodule_inst, None) # NOT DONE UNTIL AFTER TRY GET LOGIC  needed?
     self.ref_submodule_instance_to_input_port_driven_ref_toks.pop(submodule_inst, None)
     self.ref_submodule_instance_to_ref_toks.pop(submodule_inst, None)
     
@@ -1062,21 +1066,21 @@ class Logic:
     
     # WIRE_DRIVES
     # Only output port can drive something
-    # HOWEVER # NOT DONE UNTIL AFTER TRY GET LOGIC
-    '''
-    io_wire = out_wire
-    # Output wire drives stuff
-    driven_wires = self.wire_drives[io_wire]
-    # Remove opposite direction here
-    for driven_wire in driven_wires:
-      self.wire_driven_by.pop(driven_wire)
-    # Then remove original direction
-    self.wire_drives.pop(io_wire)
-    '''
+    # NOT DONE UNTIL AFTER TRY GET LOGIC needed?
+    for out_wire in out_wires:
+      # Output wire drives stuff
+      driven_wires = []
+      if out_wire in self.wire_drives:
+        driven_wires = self.wire_drives[out_wire]
+      # Remove opposite direction here
+      for driven_wire in driven_wires:
+        self.wire_driven_by.pop(driven_wire)
+      # Then remove original direction
+      self.wire_drives.pop(out_wire, None)
     
     # WIRE DRIVEN BY
-    # Only inputs 
-    for in_wire in in_wires:
+    # Only inputs (and CE wire)
+    for in_wire in list(in_wires)+[ce_wire]:
       # IO wire is driven by thing
       if in_wire in self.wire_driven_by:
         driving_wire = self.wire_driven_by[in_wire]
@@ -1094,6 +1098,19 @@ class Logic:
     # Shouldnt need to remove wire aliases since submodule connnections dont make assignment aliases?
 
     return None
+  
+  
+  def COPY_SUBMODULE_INFO(self, new_inst, old_inst):
+    if old_inst in self.submodule_instances:
+      self.submodule_instances[new_inst] = self.submodule_instances[old_inst]
+    if old_inst in self.submodule_instance_to_c_ast_node:
+      self.submodule_instance_to_c_ast_node[new_inst] = self.submodule_instance_to_c_ast_node[old_inst]
+    if old_inst in self.submodule_instance_to_input_port_names:
+      self.submodule_instance_to_input_port_names[new_inst] = self.submodule_instance_to_input_port_names[old_inst]
+    if old_inst in self.ref_submodule_instance_to_input_port_driven_ref_toks:
+      self.ref_submodule_instance_to_input_port_driven_ref_toks[new_inst] = self.ref_submodule_instance_to_input_port_driven_ref_toks[old_inst]
+    if old_inst in self.ref_submodule_instance_to_ref_toks:
+      self.ref_submodule_instance_to_ref_toks[new_inst] = self.ref_submodule_instance_to_ref_toks[old_inst]
     
   def CAN_BE_SLICED(self):
     if self.uses_nonvolatile_state_regs:
@@ -6372,7 +6389,7 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
   print(text)
   return start
   
-def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
+def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
   parser_state.existing_logic = func_logic
   # Some code creates logic that will optimize away
   # But actually the amount of generated VHDL can be too much
@@ -6444,9 +6461,124 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
           # Totally remove old wire
           func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
           #break # Needed?  Wanted?
-        
-        
-  # Do for each submodule too
+   
+   
+  # Detect duplicate submodules
+  # Clock enable makes thing complicated - todo make neater future me
+  #   Bill Withers - Lean on Me 
+  # dict[ tuple(func name, in_port, driver, wires) ] = [list,of,matching,insts]
+  # Do repeatedly unitl no more opts?
+  making_changes = True
+  while making_changes:
+    making_changes = False
+    
+    submodule_dups = dict()
+    for submodule_inst in func_logic.submodule_instances:
+      submodule_func_name = func_logic.submodule_instances[submodule_inst]
+      # Skip printf
+      if submodule_func_name == PRINTF_FUNC_NAME:
+        continue
+      if submodule_func_name not in parser_state.FuncLogicLookupTable:
+        continue
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+      # Make id tup
+      # Name
+      id_tup = (submodule_logic.func_name,)
+      # Clock enable
+       # Make ce connection
+      if LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+        sub_ce_wire = submodule_inst + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
+        driver_of_ce = func_logic.wire_driven_by[sub_ce_wire]
+        id_tup += (driver_of_ce,)
+      # Inputs
+      for sub_input_port in submodule_logic.inputs:
+        sub_input_wire = submodule_inst + SUBMODULE_MARKER + sub_input_port
+        driver_of_input = func_logic.wire_driven_by[sub_input_wire]
+        id_tup += (driver_of_input,)
+      # Record
+      if id_tup not in submodule_dups:
+        submodule_dups[id_tup] = []
+      submodule_dups[id_tup].append(submodule_inst)
+    # Collapse all duplicates (more than 1 inst per id tup)
+    for id_tup,insts in submodule_dups.items():
+      sub_func_name = id_tup[0]
+      tup_idx = 1
+      sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+      if len(insts) <= 1:
+        continue
+      #print(insts)
+      # Have instances to collapse
+      # Create new inst
+      # Mangle me some name
+      # Special case loops easy to identify since have same coord?
+      c_ast_nodes = set()
+      for sub_inst in insts:
+        c_ast_nodes.add(func_logic.submodule_instance_to_c_ast_node[sub_inst])
+      if len(c_ast_nodes) == 1: # TODO what does this look like otherwise?
+        the_c_ast_node = list(c_ast_nodes)[0]
+        new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node)
+      else:
+        the_c_ast_node = None
+        file_coord_strs = ""
+        for c_ast_node in c_ast_nodes:
+          file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
+        new_sub_inst_name = sub_func_logic.func_name + file_coord_strs
+      #print("replacing with",new_sub_inst_name)
+      
+      # Copy the submodule information from one of the identical insts to this
+      func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, insts[0])
+      
+      # Wire new inst ce+inputs with known identical drivers
+      # Make ce connection
+      if LOGIC_NEEDS_CLOCK_ENABLE(sub_func_logic, parser_state):
+        new_ce_wire = new_sub_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
+        func_logic.wire_to_c_type[new_ce_wire] = sub_func_logic.wire_to_c_type[CLOCK_ENABLE_NAME]
+        driver_of_ce = id_tup[tup_idx]
+        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_ce, [new_ce_wire], None, the_c_ast_node)
+        tup_idx += 1
+      for input_port in sub_func_logic.inputs:
+        new_input_port_wire = new_sub_inst_name + SUBMODULE_MARKER + input_port
+        func_logic.wire_to_c_type[new_input_port_wire] = sub_func_logic.wire_to_c_type[input_port]
+        driver_of_input = id_tup[tup_idx]
+        tup_idx += 1
+        # Make input connection
+        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_input, [new_input_port_wire], None, the_c_ast_node)
+      
+      # Wire new inst outputs to all outputs
+      # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
+      sub_out_port_to_driven_wires = dict()
+      for output_port in sub_func_logic.outputs:
+        for sub_inst in insts:
+          sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
+          wires_driven_by_sub_output = func_logic.wire_drives[sub_inst_output]
+          if output_port not in sub_out_port_to_driven_wires:
+            sub_out_port_to_driven_wires[output_port] = set()
+          sub_out_port_to_driven_wires[output_port] |= set(wires_driven_by_sub_output)
+      
+      # Remove all duplicate insts - ripping up outputs we just recorded
+      for sub_inst in insts:
+        submodule_func_name = func_logic.submodule_instances[sub_inst]
+        sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+        func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs)
+        global_sub_inst_name = inst_name + SUBMODULE_MARKER + sub_inst
+        parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
+      
+      # Use info on now ripped up outputs to rewire outputs
+      for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
+        new_inst_output = new_sub_inst_name + SUBMODULE_MARKER + sub_out_port
+        func_logic.wire_to_c_type[new_inst_output] = sub_func_logic.wire_to_c_type[sub_out_port]
+        #print("new_inst_output",new_inst_output)
+        #print("drives",driven_wires)
+        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, new_inst_output, list(driven_wires), None, the_c_ast_node)
+        #for driven_wire in driven_wires:
+        #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
+      
+      # And record the new global instance
+      global_new_sub_inst_name = inst_name + SUBMODULE_MARKER + new_sub_inst_name
+      parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic   
+      making_changes = True
+  
+  # Finally do recursively for each submodule too
   for submodule_inst in func_logic.submodule_instances:
     submodule_func_name = func_logic.submodule_instances[submodule_inst]
     # Skip vhdl
@@ -6455,9 +6587,9 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     # Skip clock crossings too
     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
     if submodule_logic.is_clock_crossing:
-      continue   
-    
-    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
+      continue
+    sub_inst_name = inst_name + SUBMODULE_MARKER + submodule_inst
+    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(sub_inst_name, submodule_logic, parser_state)
     
   return parser_state
   
@@ -6820,7 +6952,20 @@ def PARSE_FILE(c_filename):
     
     # Need to add array struct for old internal C code parsing?
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
-    
+        
+    # Check for double use of globals+volatiles the dumb way to print useful info
+    for func_name1 in parser_state.FuncLogicLookupTable:
+      func1_logic = parser_state.FuncLogicLookupTable[func_name1]
+      for func_name2 in parser_state.FuncLogicLookupTable:
+        if func_name2 == func_name1:
+          continue
+        func2_logic = parser_state.FuncLogicLookupTable[func_name2]
+        for func1_state_reg in func1_logic.state_regs:
+          if func1_state_reg in func2_logic.state_regs and func1_state_reg in parser_state.global_state_regs:
+            print("Heyo can't use global state regs in more than one function!")
+            print(func1_state_reg, "used in", func_name1, "and", func_name2)
+            sys.exit(-1)
+            
     # Elaborate the logic down to raw vhdl modules
     print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
     for main_func in list(parser_state.main_mhz.keys()):
@@ -6828,13 +6973,14 @@ def PARSE_FILE(c_filename):
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       c_ast_node_when_used = parser_state.FuncLogicLookupTable[main_func].c_ast_node
       parser_state = RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(main_func, main_func, parser_state, adjusted_containing_logic_inst_name, c_ast_node_when_used)
-      
-    #from guppy import hpy
-    #h = hpy()
-    #print h.heap()
-    #print("TEMP STOP")
-    #sys.exit(-1)
     
+    # Remove excess user code
+    if TRIM_COLLAPSE_LOGIC:
+      print("Doing obvious logic trimming/collapsing...", flush=True)
+      for main_func in list(parser_state.main_mhz.keys()):
+        main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic.func_name,main_func_logic, parser_state)
+        
     # Code gen based on fully elaborated logic
     # Write c code
     print("Writing generated PipelineC code from elaboration to output directories...", flush=True)
@@ -6850,27 +6996,6 @@ def PARSE_FILE(c_filename):
         f=open(outpath,"w")
         f.write(func_logic.c_code_text)
         f.close() 
-    
-    #print "Skipping user code trimming for debug..."
-    # Remove excess user code
-    if TRIM_COLLAPSE_LOGIC:
-      print("Doing obvious logic trimming/collapsing...", flush=True)
-      for main_func in list(parser_state.main_mhz.keys()):
-        main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
-        
-    # Check for double use of globals+volatiles the dumb way to print useful info
-    for func_name1 in parser_state.FuncLogicLookupTable:
-      func1_logic = parser_state.FuncLogicLookupTable[func_name1]
-      for func_name2 in parser_state.FuncLogicLookupTable:
-        if func_name2 == func_name1:
-          continue
-        func2_logic = parser_state.FuncLogicLookupTable[func_name2]
-        for func1_state_reg in func1_logic.state_regs:
-          if func1_state_reg in func2_logic.state_regs and func1_state_reg in parser_state.global_state_regs:
-            print("Heyo can't use global state regs in more than one function!")
-            print(func1_state_reg, "used in", func_name1, "and", func_name2)
-            sys.exit(-1)
             
     # Write cache
     print("Writing cache of parsed information to file...", flush=True)
