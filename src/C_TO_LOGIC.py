@@ -6562,6 +6562,10 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
         func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs)
         global_sub_inst_name = inst_name + SUBMODULE_MARKER + sub_inst
         parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
+        all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
+        all_insts_of_sub.remove(global_sub_inst_name)
+        parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
+        
       
       # Use info on now ripped up outputs to rewire outputs
       for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
@@ -6575,7 +6579,8 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
       
       # And record the new global instance
       global_new_sub_inst_name = inst_name + SUBMODULE_MARKER + new_sub_inst_name
-      parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic   
+      parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
+      parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
       making_changes = True
   
   # Finally do recursively for each submodule too
