@@ -944,11 +944,11 @@ class Logic:
     
     return False
   
-  def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, FuncLogicLookupTable):
+  def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, parser_state):
     debug = False
     
     # Stop recursion if reached special wire
-    if self.WIRE_DO_NOT_COLLAPSE(wire, FuncLogicLookupTable):
+    if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable):
       if debug:
         print("NOT REMOVE",self.func_name, "  ", wire)
       return
@@ -970,7 +970,7 @@ class Logic:
         self.wire_drives[driving_wire] = all_driven_wires
       else:
         # Driving wire no longer drives anything, recurse to delete it too
-        self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driving_wire, FuncLogicLookupTable)
+        self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driving_wire, parser_state)
         #self.wire_drives.pop(driving_wire)
         
       # Remove record of wire being driven by driving-wire
@@ -982,7 +982,7 @@ class Logic:
       self.wire_drives.pop(wire, None)
       # And remove all the driven wires too
       for driven_wire in driven_wires:
-        self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driven_wire, FuncLogicLookupTable)
+        self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driven_wire, parser_state)
         
     # Is this wire a submodule port?
     if SUBMODULE_MARKER in wire:
@@ -992,7 +992,7 @@ class Logic:
         sys.exit(-1)
       submodule_inst = toks[0]
       submodule_func_name = self.submodule_instances[submodule_inst]
-      submodule_logic = FuncLogicLookupTable[submodule_func_name]
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
       
       # Skip ripping up vhdl text submodules modules
       if submodule_func_name == VHDL_FUNC_NAME:
@@ -1015,18 +1015,18 @@ class Logic:
         for in_port in submodule_logic.inputs:
           submodule_input_wire = submodule_inst + SUBMODULE_MARKER + in_port
           if submodule_input_wire in self.wires:
-            self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(submodule_input_wire, FuncLogicLookupTable)
+            self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(submodule_input_wire, parser_state)
         # Finally remove submodule itself
-        self.REMOVE_SUBMODULE(submodule_inst, submodule_logic.inputs, submodule_logic.outputs)
+        self.REMOVE_SUBMODULE(submodule_inst, submodule_logic.inputs, submodule_logic.outputs, parser_state)
         
   # Intentionally return None
-  def REMOVE_SUBMODULE(self,submodule_inst, input_port_names, output_port_names):    
+  def REMOVE_SUBMODULE(self, submodule_inst, input_port_names, output_port_names, parser_state):    
     debug = False
     if debug:
       print("removing  sub", submodule_inst)
     
     # Remove from list of subs yo
-    self.submodule_instances.pop(submodule_inst,None)   
+    submodule_func_name = self.submodule_instances.pop(submodule_inst, None)   
     
     # Make list of wires that look like
     #   submodule_inst + SUBMODULE_MARKER
@@ -1096,7 +1096,22 @@ class Logic:
     
 
     # Shouldnt need to remove wire aliases since submodule connnections dont make assignment aliases?
-
+    
+    # Global instance removal:
+    if submodule_func_name is not None:
+      all_insts_of_this_logic = []
+      if self.func_name in parser_state.FuncToInstances:
+        all_insts_of_this_logic = parser_state.FuncToInstances[self.func_name]
+        for global_inst in all_insts_of_this_logic:
+          global_sub_inst_name = global_inst + SUBMODULE_MARKER + submodule_inst
+          parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
+          all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
+          all_insts_of_sub.remove(global_sub_inst_name)
+          if len(all_insts_of_sub) > 0:
+            parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
+          else:
+            parser_state.FuncToInstances.pop(submodule_func_name)
+   
     return None
   
   
@@ -4041,7 +4056,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
     
     # Now that constant condition evaluated
     # Remove dummy COND wire and anything driving it / driven by it?
-    parser_state.existing_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(COND_DUMMY, parser_state.FuncLogicLookupTable)
+    parser_state.existing_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(COND_DUMMY, parser_state)
     
     # If the condition is true, do an iteration of the body statement
     # Otherwise stop loop
@@ -4895,7 +4910,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # Going to replace with constant
     # Remove old submodule instance
     #print "Replacing:",func_inst_name,"with constant",const_val_str
-    parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME])
+    parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state)
         
     # Connect const wire to output wire and return
     # Do connection using real parser state and logic
@@ -4959,7 +4974,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     
   # Remove old submodule instance
   #print "Replacing:",func_inst_name, "with reduced function", new_func_base_name
-  parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name,input_port_names, [RETURN_WIRE_NAME])
+  parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name,input_port_names, [RETURN_WIRE_NAME], parser_state)
   
   # And remove the constant wires that were optimized away ?
   #@GAHMAKETHIS PART OF REMOVE SUBMODULE OR WHAT?????
@@ -6407,7 +6422,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       if drives_nothing and must_drive_something:
         if debug:
           print(func_logic.func_name, "Removing", wire)
-        func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+        func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state)
       else:
         pass
         #if debug:
@@ -6459,7 +6474,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
           # Make new connection before ripping up old wire
           func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
           # Totally remove old wire
-          func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state.FuncLogicLookupTable)
+          func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state)
           #break # Needed?  Wanted?
    
    
@@ -6560,16 +6575,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         # Local func def removal
         submodule_func_name = func_logic.submodule_instances[sub_inst]
         sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs)
-        # Global instance removal:
-        # This submodule in every instance of the 'current func' needs to be changed
-        all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
-        for global_inst in all_insts_of_container_func:
-          global_sub_inst_name = global_inst + SUBMODULE_MARKER + sub_inst
-          parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
-          all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
-          all_insts_of_sub.remove(global_sub_inst_name)
-          parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
+        func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs, parser_state)
       
       # Use info on now ripped up outputs to rewire outputs
       for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
@@ -6587,6 +6593,8 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         global_new_sub_inst_name = global_inst + SUBMODULE_MARKER + new_sub_inst_name
         #print("global_new_sub_inst_name",global_new_sub_inst_name)
         parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
+        if submodule_func_name not in parser_state.FuncToInstances:
+          parser_state.FuncToInstances[submodule_func_name] = set()
         parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
       making_changes = True
   

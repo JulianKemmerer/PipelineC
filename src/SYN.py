@@ -106,6 +106,10 @@ class MultiMainTimingParams:
     
     # Do sanity pipeline map latency based check
     if do_latency_check:
+      print("Do not check latency this way!")
+      print(0/0)
+      sys.exit(-1)
+      '''
       timing_params = self.TimingParamsLookupTable[main_inst]
       total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, self.TimingParamsLookupTable)
       #print "Latency (clocks):",total_latency
@@ -114,7 +118,7 @@ class MultiMainTimingParams:
         print(" current_slices:",slices)
         print(" total_latency",total_latency)
         sys.exit(-1)
-  
+      '''
   
   def GET_HASH_EXT(self, parser_state):
     # Just hash all the slices #TODO fix to just mains
@@ -250,8 +254,9 @@ class TimingParams:
       sys.exit(-1)
       
   def SET_SLICES(self, value):
-    self._slices = value[:]
-    self.INVALIDATE_CACHE()
+    if value != self._slices:
+      self._slices = value[:]
+      self.INVALIDATE_CACHE()
       
   def SET_HAS_IN_REGS(self, value):
     if value != self._has_input_regs:
@@ -1727,37 +1732,39 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       current_insts = []
       for main_inst in parser_state.main_mhz:
         sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult = INF_HIER_MULT
-      
+      # Keep track of which instances still need submodules to be handled
+      print("Resetting hierarchy progress...")
+      inst_to_remaining_sub_insts = dict()
       # Get all funcs without submodules (bottom of hierarchy)
-      for func_name,func_logic in parser_state.FuncLogicLookupTable.items():
-        # No submodule and needs to have delay
-        if len(func_logic.submodule_instances) <= 0 and func_logic.delay is not None:
-          # Uh some funcs arent used?
-          func_insts = []
-          if func_name in parser_state.FuncToInstances:
-            func_insts = parser_state.FuncToInstances[func_name]
-          current_insts += list(sorted(set(func_insts)))
+      for logic_inst_name,logic_i in parser_state.LogicInstLookupTable.items(): 
+        if len(logic_i.submodule_instances) <= 0 and logic_i.delay is not None:
+          current_insts.append(logic_inst_name)
+        inst_to_remaining_sub_insts[logic_inst_name] = [] #list(logic_i.submodule_instances.keys())
+        for sub_inst_i, sub_func_name_i in logic_i.submodule_instances.items():
+          sub_func_logic_i = parser_state.FuncLogicLookupTable[sub_func_name_i]
+          if sub_func_logic_i.delay is not None:
+            inst_to_remaining_sub_insts[logic_inst_name].append(sub_inst_i)
       print("Starting from bottom of hierarchy...", flush=True)
       
       # Do this not recursive up the multi main hier tree walk
       #Just need to know that no current submoduels are being iterated on
       # then can procedd up tree liek #visited_insts = set()
       while len(current_insts) > 0:
+        #print("current_insts",current_insts[0:max(len(current_insts),10)])
         next_current_insts = []
         for func_inst in current_insts:
-          func_logic = parser_state.LogicInstLookupTable[func_inst]
-          # Have all the submodules of this func been  handled?
-          current_insts_includes_subs = False
-          for current_inst_i in current_insts:
-            if current_inst_i != func_inst and current_inst_i.startswith(func_inst): # Is submodule
-              current_insts_includes_subs = True
-              break
-          if current_insts_includes_subs:
+          # Have all the submodules of this func been handled?
+          if len(inst_to_remaining_sub_insts[func_inst]) > 0:
             # Try again later when no more submodules to handle
-            #print("not all subs")
+            #print("Not all subs", func_inst)
+            #for rem in inst_to_remaining_sub_insts[func_inst]:
+            #  print(" ",rem, flush=True)
             if func_inst not in next_current_insts:
               next_current_insts.append(func_inst)
             continue
+          #print("Slicing:",func_inst)
+          func_logic = parser_state.LogicInstLookupTable[func_inst]
+          container_inst = C_TO_LOGIC.GET_CONTAINER_INST(func_inst)
           # Does this funcs delay suggest pipeline regs?
           func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
           func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
@@ -1796,7 +1803,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 if sub_timing_params.params_are_fixed and sub_logic.delay > 0.0:
                   has_fixed_param_subs = True
                   break
-                  
+            
             # Scale allowed values by multiple of expected slicing, few slices is very uneven allow lots of mistakes, large comb logic allow fewer,1
             #@TODO MODIFY TO HAVE optional coarse grain and fix in place ALWAYS, coarse grain even with fix slices under, like best guess from hereish
             #checking timing all the way up hierarchy with synthesis essentially - REMOVE ADDING IO REGS THEN?
@@ -1915,13 +1922,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             func_inst_timing_params.SET_SLICES([])
             sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
             # Add the container instance to list to iterate on, slice from further up
-            container_inst = C_TO_LOGIC.GET_CONTAINER_INST(func_inst)
+            #print("Func inst not sliced:",func_inst, "container",container_inst)
             if container_inst is not None:
-              # And if container can be sliced
-              container_func_logic = parser_state.LogicInstLookupTable[container_inst]
-              if container_func_logic.CAN_BE_SLICED():
-                if container_inst not in next_current_insts:
-                  next_current_insts.append(container_inst)
+              if container_inst not in next_current_insts:
+                next_current_insts.append(container_inst)
+              # And record this submodule of the container as being handled
+              local_inst = C_TO_LOGIC.LEAF_NAME(func_inst, True)
+              #print(func_inst,"local_inst",local_inst)
+              inst_to_remaining_sub_insts[container_inst].remove(local_inst)
         
         current_insts = next_current_insts
       #}END WHILE LOOP WALKING TREE
@@ -2100,7 +2108,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(sweep_state.inst_sweep_state[main_inst].coarse_latency)
       print(main_logic.func_name,":",sweep_state.inst_sweep_state[main_inst].coarse_latency,"clocks latency, sliced coarsely...", flush=True)
       # Do slicing and writing VHDL
-      sweep_state.multimain_timing_params.REBUILD_FROM_NEW_MAIN_SLICES(best_guess_slices, main_inst, parser_state)
+      sweep_state.multimain_timing_params.REBUILD_FROM_NEW_MAIN_SLICES(best_guess_slices, main_inst, parser_state, False)
     
     # Run syn on multi main top
     print("Running syn w slices...",flush=True)
