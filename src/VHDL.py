@@ -2523,7 +2523,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   -- Default read self regs once per clock
   read_self_regs := registers_r.self;
   -- Default write contents of self regs
-  write_self_regs := read_self_regs;'''
+  write_self_regs := read_self_regs;
+'''
   
   
   # Globals

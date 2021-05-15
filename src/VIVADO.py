@@ -219,6 +219,10 @@ class ParsedTimingReport:
       if "(required time - arrival time)" in path_report_text:
         path_report = PathReport(path_report_text)
         self.path_reports[path_report.path_group] = path_report
+        
+    if len(self.path_reports) == 0:
+      print("Bad synthesis log?:",syn_output)
+      sys.exit(-1)
     
 class PathReport:
   def __init__(self, single_timing_report):    
