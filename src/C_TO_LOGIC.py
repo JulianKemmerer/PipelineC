@@ -6389,7 +6389,7 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
   print(text)
   return start
   
-def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
+def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   parser_state.existing_logic = func_logic
   # Some code creates logic that will optimize away
   # But actually the amount of generated VHDL can be too much
@@ -6500,19 +6500,19 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
         submodule_dups[id_tup] = []
       submodule_dups[id_tup].append(submodule_inst)
     # Collapse all duplicates (more than 1 inst per id tup)
-    for id_tup,insts in submodule_dups.items():
+    for id_tup,dup_insts in submodule_dups.items():
       sub_func_name = id_tup[0]
       tup_idx = 1
       sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-      if len(insts) <= 1:
+      if len(dup_insts) <= 1:
         continue
-      #print(insts)
+      #print(dup_insts)
       # Have instances to collapse
       # Create new inst
       # Mangle me some name
       # Special case loops easy to identify since have same coord?
       c_ast_nodes = set()
-      for sub_inst in insts:
+      for sub_inst in dup_insts:
         c_ast_nodes.add(func_logic.submodule_instance_to_c_ast_node[sub_inst])
       if len(c_ast_nodes) == 1: # TODO what does this look like otherwise?
         the_c_ast_node = list(c_ast_nodes)[0]
@@ -6526,7 +6526,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
       #print("replacing with",new_sub_inst_name)
       
       # Copy the submodule information from one of the identical insts to this
-      func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, insts[0])
+      func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
       
       # Wire new inst ce+inputs with known identical drivers
       # Make ce connection
@@ -6548,7 +6548,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
       # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
       sub_out_port_to_driven_wires = dict()
       for output_port in sub_func_logic.outputs:
-        for sub_inst in insts:
+        for sub_inst in dup_insts:
           sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
           wires_driven_by_sub_output = func_logic.wire_drives[sub_inst_output]
           if output_port not in sub_out_port_to_driven_wires:
@@ -6556,16 +6556,20 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
           sub_out_port_to_driven_wires[output_port] |= set(wires_driven_by_sub_output)
       
       # Remove all duplicate insts - ripping up outputs we just recorded
-      for sub_inst in insts:
+      for sub_inst in dup_insts:
+        # Local func def removal
         submodule_func_name = func_logic.submodule_instances[sub_inst]
         sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
         func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs)
-        global_sub_inst_name = inst_name + SUBMODULE_MARKER + sub_inst
-        parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
-        all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
-        all_insts_of_sub.remove(global_sub_inst_name)
-        parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
-        
+        # Global instance removal:
+        # This submodule in every instance of the 'current func' needs to be changed
+        all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
+        for global_inst in all_insts_of_container_func:
+          global_sub_inst_name = global_inst + SUBMODULE_MARKER + sub_inst
+          parser_state.LogicInstLookupTable.pop(global_sub_inst_name)
+          all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
+          all_insts_of_sub.remove(global_sub_inst_name)
+          parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
       
       # Use info on now ripped up outputs to rewire outputs
       for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
@@ -6577,10 +6581,13 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
         #for driven_wire in driven_wires:
         #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
       
-      # And record the new global instance
-      global_new_sub_inst_name = inst_name + SUBMODULE_MARKER + new_sub_inst_name
-      parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
-      parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
+      # Record new global instance
+      all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
+      for global_inst in all_insts_of_container_func:
+        global_new_sub_inst_name = global_inst + SUBMODULE_MARKER + new_sub_inst_name
+        #print("global_new_sub_inst_name",global_new_sub_inst_name)
+        parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
+        parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
       making_changes = True
   
   # Finally do recursively for each submodule too
@@ -6593,8 +6600,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(inst_name, func_logic, parser_state):
     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
     if submodule_logic.is_clock_crossing:
       continue
-    sub_inst_name = inst_name + SUBMODULE_MARKER + submodule_inst
-    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(sub_inst_name, submodule_logic, parser_state)
+    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
     
   return parser_state
   
@@ -6984,7 +6990,7 @@ def PARSE_FILE(c_filename):
       print("Doing obvious logic trimming/collapsing...", flush=True)
       for main_func in list(parser_state.main_mhz.keys()):
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic.func_name,main_func_logic, parser_state)
+        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
         
     # Code gen based on fully elaborated logic
     # Write c code
