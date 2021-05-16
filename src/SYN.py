@@ -1831,6 +1831,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             elif cache_key in coarse_slices_cache:
               # Try cache of coarse grain before trying for real
               slices = coarse_slices_cache[cache_key]
+              needs_in_regs = True
+              needs_out_regs = True
               if cache_key not in printed_slices_cache:
                 print("Cached coarse grain slicing:",func_logic.func_name,", target MHz =", coarse_target_mhz, slices, flush=True)
             else:
@@ -1977,7 +1979,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       # Could be a clock crossing too right?
       main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, sweep_state.multimain_timing_params)
       if len(main_insts) <= 0:
-        print("No main functions in timing reports!?")
+        print("No main functions in timing report for path group:",reported_clock_group)
+        print(path_report.start_reg_name)
+        print(path_report.end_reg_name)
+        print(path_report.netlist_resources)
+        for main_inst in parser_state.main_mhz:
+          main_logic = parser_state.LogicInstLookupTable[main_inst]
+          main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, sweep_state.multimain_timing_params.TimingParamsLookupTable, parser_state)
+          print(main_vhdl_entity_name)
         sys.exit(-1)
       # Check timing, make adjustments and print info for each main in the timing report
       for main_inst in main_insts:
