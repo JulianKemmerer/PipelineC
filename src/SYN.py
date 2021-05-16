@@ -1735,6 +1735,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       # Keep track of which instances still need submodules to be handled
       print("Resetting hierarchy progress...")
       inst_to_remaining_sub_insts = dict()
+      handled_insts = set()
       # Get all funcs without submodules (bottom of hierarchy)
       for logic_inst_name,logic_i in parser_state.LogicInstLookupTable.items(): 
         if len(logic_i.submodule_instances) <= 0 and logic_i.delay is not None:
@@ -1761,6 +1762,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             #  print(" ",rem, flush=True)
             if func_inst not in next_current_insts:
               next_current_insts.append(func_inst)
+            continue
+          if func_inst in handled_insts: # Shouldnt need?
             continue
           #print("Slicing:",func_inst)
           func_logic = parser_state.LogicInstLookupTable[func_inst]
@@ -1924,12 +1927,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             # Add the container instance to list to iterate on, slice from further up
             #print("Func inst not sliced:",func_inst, "container",container_inst)
             if container_inst is not None:
-              if container_inst not in next_current_insts:
-                next_current_insts.append(container_inst)
-              # And record this submodule of the container as being handled
-              local_inst = C_TO_LOGIC.LEAF_NAME(func_inst, True)
-              #print(func_inst,"local_inst",local_inst)
-              inst_to_remaining_sub_insts[container_inst].remove(local_inst)
+              if container_inst not in next_current_insts and container_inst not in handled_insts:
+                next_current_insts.append(container_inst)                
+          
+          # And record this submodule of the container as being handled
+          handled_insts.add(func_inst)
+          if container_inst is not None:
+            local_inst = C_TO_LOGIC.LEAF_NAME(func_inst, True)
+            inst_to_remaining_sub_insts[container_inst].remove(local_inst)
         
         current_insts = next_current_insts
       #}END WHILE LOOP WALKING TREE
@@ -2106,7 +2111,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
       target_mhz = parser_state.main_mhz[main_inst]
       # Make even slices      
       best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(sweep_state.inst_sweep_state[main_inst].coarse_latency)
-      print(main_logic.func_name,":",sweep_state.inst_sweep_state[main_inst].coarse_latency,"clocks latency, sliced coarsely...", flush=True)
+      print(main_logic.func_name,": sliced coarsely ~=", sweep_state.inst_sweep_state[main_inst].coarse_latency, "clocks latency...", flush=True)
       # Do slicing and writing VHDL
       sweep_state.multimain_timing_params.REBUILD_FROM_NEW_MAIN_SLICES(best_guess_slices, main_inst, parser_state, False)
     
