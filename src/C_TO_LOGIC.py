@@ -2448,9 +2448,12 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   debug = False
   # Only return one level of extra branchs
   # Current c type
-  # Get the C type as evaulated (a,*,b) is like a[0].b
-  c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state)
-  
+  # Get the CONST C type as evaulated (a,*,b) is like a[0].b
+  # (a,b,*) is want the compound a.b, so trim
+  trimmed_ref_toks = TRIM_VAR_REF_TOKS(ref_toks)
+  c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(trimmed_ref_toks, c_ast_ref, parser_state)
+  if debug:
+    print("c_type",c_type)
   # Use this type to do struct and array expansion
   rv = set()
   # Struct?
@@ -2460,7 +2463,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     if debug:
       print("Struct:",field_type_dict)   
     for field in field_type_dict:
-      new_toks = ref_toks[:]
+      new_toks = trimmed_ref_toks[:]
       new_toks += (field,)
       rv.add(new_toks)
       
@@ -2469,19 +2472,23 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     # One dimension at a time works?
     base_elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
     current_dim = dims[0]
+    if debug:
+      print("Array current_dim:",current_dim)
     inner_type = GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(c_type)
     for i in range(0, current_dim):
-      new_toks = ref_toks[:]
+      new_toks = trimmed_ref_toks[:]
       new_toks += (i,)
       rv.add(new_toks)
   else:
-    # Not composite type 
+    # Not composite type
+    if debug:
+      print("Not composite type, no branches")
     # Only branch is self, not included
     rv = set()
     
   # Then expand all variable references
   # rv is based on ref_toks so wont have variable ref toks if ref_toks wasnt
-  if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
+  if not C_AST_REF_TOKS_ARE_CONST(trimmed_ref_toks):
     # Expand know all variable ref toks inrv
     expanded_ref_toks_set = set()
     for ref_toks_i in rv:
@@ -2499,7 +2506,7 @@ _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = dict()
 # Traverse compound types down to individual ref toks to collect all branches
 #  expanding variable refs along the way
 def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
-  debug = False 
+  debug = False
   
   # Try for cache
   if parser_state.existing_logic.func_name is None:
@@ -2524,7 +2531,7 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
   
   if debug:
     print("All branches:", rv)
-    sys.exit(-1)     
+    #sys.exit(-1)     
       
   # Update cache
   _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache[cache_key] = frozenset(rv)
@@ -3069,7 +3076,9 @@ def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
 _C_AST_REF_TOKS_TO_C_TYPE_cache = dict()
 # "Const" here means variable refs are evaluated x[*] = type of x[0] 
 def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
-  #print "ref_toks",ref_toks
+  debug = False
+  if debug:
+    print("ref_toks",ref_toks)
   # Try to get cache
   # Build key
   ref_toks_str = parser_state.existing_logic.func_name[:]
@@ -3176,6 +3185,9 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
   
   # Write cache 
   _C_AST_REF_TOKS_TO_C_TYPE_cache[cache_key] = current_c_type
+    
+  if debug:
+    print("current_c_type",current_c_type)
       
   return current_c_type
   
@@ -3212,7 +3224,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   
   # FUCK
   debug = False
-  #debug = (parser_state.existing_logic.func_name == "deserializer") and (ref_toks==("msg",))
+  #debug = (parser_state.existing_logic.func_name == "sbox") and (ref_toks[0]=="rom")
   
   # The original variable name is the first tok
   base_var_name = ref_toks[0]
