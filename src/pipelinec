@@ -21,10 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Do all-mults(possible)-are-dsps mode 'inferring' for '*' - WHICH specific FPGA family, have device in mind?
-^ Generally need to have switch between RAW_VHDL implementations (hard macros of complex functions) and C code fabric implementations of those funcs
-^ and need to make up built in dsp functions for other, MAC, like functions
-^ + WITH REAL C code implementations for non-dsp-using-in-fabric (like * not sliced)
+Make path delay cache reflect mult inferr or not style, ex fp ops use * and other "synthesis options"
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
@@ -112,6 +109,8 @@ Have multiple paths reported per clock domain/main func
 No good? reason to combine variable latency array of regs for pipelining and state regs in same record - flat, human like, easier to read (maybe ok since those regs arent IO?)
 Do const func args as generics - ex. const loop vars into func
 Compiler pass to make sequences ex. ORS, into binary trees
+Add auto switch between inferred and fabric mult, etc?
+Do more DSP prim functions ideally with backing fabric c code for if on different device
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

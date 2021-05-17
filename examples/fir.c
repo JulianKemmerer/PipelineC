@@ -1,44 +1,64 @@
 #include "uintN_t.h"
 #pragma MAIN_MHZ fir_main 500.0
-#pragma PART "xc7a35ticsg324-1l"
 
 #define data_t uint16_t
 #define coeff_t uint16_t
 #define FIR_N_TAPS 16
-#define LOG2_FIR_N_TAPS 4 //  log2(FIR_N_TAPS)
+#define LOG2_FIR_N_TAPS 4 // log2(FIR_N_TAPS)
 #define output_t uint36_t // data_width + coeff_width + log2(taps#)
 
-// An array of datas (for shift reg)
-typedef struct data_pipe_t
+// Func to 'static' buffer up the coeffs by shifting into shift reg
+typedef struct coeffs_array_t
 {
-  data_t data[FIR_N_TAPS];
-}data_pipe_t;
-
-// Global func to buffer up N datas (shift reg)
-data_pipe_t data_pipe_reg;
-data_pipe_t data_pipe_func(data_t input)
+  coeff_t data[FIR_N_TAPS];
+}coeffs_array_t;
+coeffs_array_t coeff_config_func(coeff_t coeff, uint1_t wr_en)
 {
-  data_pipe_t rv = data_pipe_reg;
-  uint32_t i;
-  for(i=(FIR_N_TAPS-1); i>0; i=i-1)
+  static coeffs_array_t coeffs;
+  coeffs_array_t rv = coeffs;
+  if(wr_en)
   {
-    data_pipe_reg.data[i] = data_pipe_reg.data[i-1];
+    uint32_t i;
+    for(i=(FIR_N_TAPS-1); i>0; i=i-1)
+    {
+      coeffs.data[i] = coeffs.data[i-1];
+    }
+    coeffs.data[0] = coeff;
   }
-  data_pipe_reg.data[0] = input;
   return rv;
 }
 
-// the FIR filter function
-output_t fir_main(data_t input, coeff_t coeffs[FIR_N_TAPS])
+// Func to 'static' buffer up N samples (shift reg)
+typedef struct sample_window_t
 {
+  data_t data[FIR_N_TAPS];
+}sample_window_t;
+sample_window_t sample_window_func(data_t input)
+{
+  static sample_window_t window;
+  sample_window_t rv = window;
+  uint32_t i;
+  for(i=(FIR_N_TAPS-1); i>0; i=i-1)
+  {
+    window.data[i] = window.data[i-1];
+  }
+  window.data[0] = input;
+  return rv;
+}
+
+// The FIR filter pipeline
+output_t fir_main(data_t input, coeff_t coeff_in, uint1_t coeff_wr_en)
+{
+  // Allow filer coeffs to be config'd by shifting into shift reg
+  coeffs_array_t coeffs = coeff_config_func(coeff_in, coeff_wr_en);
   // buffer up N datas in shift reg
-  data_pipe_t data_pipe = data_pipe_func(input);
+  sample_window_t sample_window = sample_window_func(input);
   
-  // A binary tree of adders is used to sum the results of the multiplies
+  // A binary tree of adders is used to sum the results of the coeff*data multiplies
   // This binary tree has 
   //    FIR_N_TAPS elements at the base
   //    LOG2_FIR_N_TAPS + 1 levels in the tree
-  output_t tree_nodes[LOG2_FIR_N_TAPS+1][FIR_N_TAPS]; // Oversized 2d array, unused elements optimize away
+  output_t tree_nodes[LOG2_FIR_N_TAPS+1][FIR_N_TAPS]; // Oversized 2D array, unused elements optimize away
   // Ex. N=16 
   // Sum N values 'as parallel as possible' using a binary tree 
   //    Level 0: 16 input values  
@@ -52,7 +72,7 @@ output_t fir_main(data_t input, coeff_t coeffs[FIR_N_TAPS])
   uint32_t i;
   for(i=0; i < FIR_N_TAPS; i+=1)
   {
-    tree_nodes[0][i] = data_pipe.data[i] * coeffs[i];
+    tree_nodes[0][i] = sample_window.data[i] * coeffs.data[i];
   }
     
   // Do the summation starting at level 1

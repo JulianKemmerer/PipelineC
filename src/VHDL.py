@@ -750,7 +750,7 @@ def C_TYPES_ARE_TYPE(c_types, the_type):
     if c_type != the_type:
       return False
   return True
-    
+
 def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
   # IS RAW VHDL
   if  (
@@ -759,6 +759,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
       logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_") or
       logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_") or
+      logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME) or
     ( logic_func_name.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or
@@ -777,7 +778,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types):
     return True
   
   # IS NOT RAW VHDL
-  elif (  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")                                                                    or  
+  elif (  logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")                                                                or  
       logic_func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")                                                                or
       logic_func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX + "_")                                                                          or
       logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME)                                          or

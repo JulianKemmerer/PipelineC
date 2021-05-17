@@ -54,6 +54,7 @@ BIN_OP_SL_NAME = "SL"
 BIN_OP_SR_NAME = "SR"
 BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
+BIN_OP_INFERRED_MULT_NAME = "INFERRED_MULT"
 BIN_OP_DIV_NAME = "DIV"
 
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
@@ -3138,7 +3139,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Constant array ref
         # Sanity check
         if not C_TYPE_IS_ARRAY(current_c_type):
-          print("Arrayref tok but not array type?", current_c_type, remaining_toks,c_ast_ref.coord)
+          print("Looks like an array reference but not an array type?", current_c_type, remaining_toks, c_ast_ref.coord)
           sys.exit(-1)
         # Go to next tok      
         remaining_toks = remaining_toks[1:]
@@ -5739,6 +5740,7 @@ def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
            right_width, right_unsigned_width,
            max_width, max_unsigned_width)
 
+MULT_STYLE = "fabric" # "inferred"
 def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, parser_state):
   #print c_ast_binary_op
   #print C_AST_NODE_COORD_STR(c_ast_binary_op)
@@ -5765,7 +5767,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   elif c_ast_bin_op_str == "-":
     c_ast_op_str = BIN_OP_MINUS_NAME
     has_bit_growth = True
-  elif c_ast_bin_op_str == "*":
+  elif c_ast_bin_op_str == "*" and MULT_STYLE == "inferred":
+    c_ast_op_str = BIN_OP_INFERRED_MULT_NAME
+    has_bit_growth = True
+  elif c_ast_bin_op_str == "*" and MULT_STYLE == "fabric":
     c_ast_op_str = BIN_OP_MULT_NAME
     has_bit_growth = True
   elif c_ast_bin_op_str == "/":

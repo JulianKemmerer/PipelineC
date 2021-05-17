@@ -253,6 +253,8 @@ def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, par
     return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
   if str(logic.c_ast_node.op) == "<" or str(logic.c_ast_node.op) == "<=":
     return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params, str(logic.c_ast_node.op))
+  elif str(logic.c_ast_node.op) == "*":
+    return GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
   elif str(logic.c_ast_node.op) == "+":
     return GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
   elif str(logic.c_ast_node.op) == "-":
@@ -1379,9 +1381,78 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
       text += '''   
     elsif STAGE = ''' + str(stage) + ''' then '''
   
-  
-  
+# Inferred mult using * operator - different from in fabric GET_BIN_OP_MULT_C_CODE
+def GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
+  left_type = logic.wire_to_c_type[logic.inputs[0]]
+  left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
+  right_type = logic.wire_to_c_type[logic.inputs[1]]
+  right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
+  output_type = logic.wire_to_c_type[logic.outputs[0]]
+  output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
+  '''
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+  right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+  max_input_width = max(left_width,right_width)
+  '''
+
+  wires_decl_text = '''  
+  left : ''' + left_vhdl_type + ''';
+  right : ''' + right_vhdl_type + ''';
+  return_output : ''' + output_vhdl_type + ''';
+'''
+  # Only have a few options for dsp mult inference it seems
+  # IO regs plus a pipeline reg - cant have pipeline with IO it seems
+  # MAx clocks is input reg and output reg
+  #max_clocks = 2
+  latency = len(timing_params._slices)
+  num_stages = latency + 1
+  # Which stage gets the '*' operator
+  stage_for_op = None
+  if latency == 0:
+    # Comb. mult
+    stage_for_op = 0
+  elif latency == 1:
+    # Rely on percent
+    stage_for_op = 0
+    # If slice is to left logic is on right
+    if timing_params._slices[0] < 0.5:
+      stage_for_op = 1 
+  elif latency == 2:
+    # INput reg and output reg logic in middle
+    # IN stage 1 :  0 | 1 | 2
+    stage_for_op = 1
+  # Mult needs special case 3 to put pipeline reg after always
+  elif latency == 3:
+    # IN stage 1 :  0 | 1 | 2 | 3
+    stage_for_op = 1
+  # Shouldnt need this but can do it
+  elif latency % 2 == 0:
+    # Even
+    # Ex. 4 | | | |
+    #      0 1 2 3 4
+    # Jsut put in middle stage
+    stage_for_op = int(latency/2)
+  else:
+    # Odd, ex 5:  | | | | |
+    #                 ^
+    # Depends on position of middle slice
+    middle_index = int(latency/2)
+    middle_slice = timing_params._slices[middle_index]
+    # If slice is to left, logic is on right
+    stage_for_op = middle_index
+    if middle_slice < 0.5:
+      stage_for_op = middle_index + 1
     
+  text = ""
+  text += '''
+  if STAGE = ''' + str(stage_for_op) + ''' then
+    write_pipe.return_output := write_pipe.left * write_pipe.right;
+  end if;
+  '''
+  
+  return wires_decl_text, text 
+ 
 def GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   # Binary operation between what two types?
