@@ -32,6 +32,7 @@ Aetherling style re/unrolling of logic into different timings/util
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
+Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)

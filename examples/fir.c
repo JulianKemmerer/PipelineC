@@ -1,5 +1,5 @@
 #include "uintN_t.h"
-#pragma MAIN_MHZ fir_main 500.0
+#pragma MAIN_MHZ fir_main 900.0
 
 #define data_t uint16_t
 #define coeff_t uint16_t
@@ -49,7 +49,7 @@ sample_window_t sample_window_func(data_t input)
 // The FIR filter pipeline
 output_t fir_main(data_t input, coeff_t coeff_in, uint1_t coeff_wr_en)
 {
-  // Allow filer coeffs to be config'd by shifting into shift reg
+  // Allow filter coeffs to be config'd by shifting into shift reg
   coeffs_array_t coeffs = coeff_config_func(coeff_in, coeff_wr_en);
   // buffer up N datas in shift reg
   sample_window_t sample_window = sample_window_func(input);
