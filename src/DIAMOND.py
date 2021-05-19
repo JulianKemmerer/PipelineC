@@ -12,7 +12,7 @@ DIAMOND_TOOL = "synplify"  # lse|synplify
 #     https://electronics.stackexchange.com/questions/327527/lattice-icecube2-error-synplify-pro-321
     
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext = None, use_existing_log_file = True):
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
   return SYN_AND_REPORT_TIMING_NEW(parser_state, multimain_timing_params, inst_name, total_latency, hash_ext, use_existing_log_file)

@@ -150,7 +150,7 @@ class PathReport:
     
 
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency, hash_ext = None, use_existing_log_file = True):
+def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext = None, use_existing_log_file = True):
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
   return SYN_AND_REPORT_TIMING_NEW(parser_state, multimain_timing_params, inst_name, total_latency, hash_ext, use_existing_log_file)
@@ -177,7 +177,7 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     if hash_ext is None:
       hash_ext = timing_params.GET_HASH_EXT(multimain_timing_params.TimingParamsLookupTable, parser_state)
     if total_latency is None:
-      total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+      total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
     entity_file_ext = "_" +  str(total_latency) + "CLK" + hash_ext
     log_file_name = "quartus" + entity_file_ext + ".log"
   else:

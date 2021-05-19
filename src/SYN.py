@@ -62,7 +62,12 @@ def PART_SET_TOOL(part_str, allow_fail=False):
     elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
       SYN_TOOL = QUARTUS
     elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
-      SYN_TOOL = OPEN_TOOLS  # Can replace with SYN_TOOL = DIAMOND
+      # Diamond fails to create part for UMG5G part?
+      if "um5g" in part_str.lower():
+        SYN_TOOL = OPEN_TOOLS
+      else:
+        SYN_TOOL = DIAMOND #OPEN_TOOLS # Can replace with SYN_TOOL = DIAMOND
+      
     else:
       if not allow_fail:
         print("No known synthesis tool for FPGA part:",part_str)
@@ -1635,6 +1640,11 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
       if netlist_resource.startswith(main_vhdl_entity_name):
         match_main = main_inst
         break
+      # OPEN_TOOLs reports in lower case
+      if netlist_resource.lower().startswith(main_vhdl_entity_name.lower()):
+        match_main = main_inst
+        break
+        
     if match_main:
       main_insts.add(match_main)
   
