@@ -21,7 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Make path delay cache reflect mult inferr or not style, ex fp ops use * and other "synthesis options"
+Add pragma for mult style per func, need delay cache clear
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
@@ -32,6 +32,7 @@ Aetherling style re/unrolling of logic into different timings/util
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
+Do better LUT syntax - ROMs/BROMs too
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage

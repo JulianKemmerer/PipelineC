@@ -85,8 +85,10 @@ class MultiMainTimingParams:
   def REBUILD_FROM_MAIN_SLICES(self, parser_state):
     # Apply current slices from main funcs 
     # Start from zero clock
+    print("Starting from comb. logic...",flush=True)
     new_TimingParamsLookupTable = dict()
     new_TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+    print("Slicing each main function...",flush=True)
     # Then build from mains
     for main_inst in parser_state.main_mhz:
       main_func_logic = parser_state.LogicInstLookupTable[main_inst]
@@ -1772,6 +1774,13 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             #  print(" ",rem, flush=True)
             if func_inst not in next_current_insts:
               next_current_insts.append(func_inst)
+            # Sanity append the missing submodules to be handled too?
+            # Shouldnt be needed?
+            missing_local_subs = inst_to_remaining_sub_insts[func_inst]
+            for missing_local_sub in missing_local_subs:
+              missing_global_sub = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + missing_local_sub
+              if missing_global_sub not in next_current_insts:
+                next_current_insts.append(missing_global_sub)
             continue
           if func_inst in handled_insts: # Shouldnt need?
             continue
