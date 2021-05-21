@@ -88,7 +88,7 @@ class MultiMainTimingParams:
     print("Starting from comb. logic...",flush=True)
     new_TimingParamsLookupTable = dict()
     new_TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
-    print("Slicing each main function...",flush=True)
+    print("Slicing each function...",flush=True)
     # Then build from mains
     for main_inst in parser_state.main_mhz:
       main_func_logic = parser_state.LogicInstLookupTable[main_inst]
@@ -1750,12 +1750,12 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       handled_insts = set()
       # Get all funcs without submodules (bottom of hierarchy)
       for logic_inst_name,logic_i in parser_state.LogicInstLookupTable.items(): 
-        if len(logic_i.submodule_instances) <= 0 and logic_i.delay is not None:
+        if len(logic_i.submodule_instances) <= 0 and logic_i.delay is not None and logic_i.delay > 0.0:
           current_insts.append(logic_inst_name)
         inst_to_remaining_sub_insts[logic_inst_name] = [] #list(logic_i.submodule_instances.keys())
         for sub_inst_i, sub_func_name_i in logic_i.submodule_instances.items():
           sub_func_logic_i = parser_state.FuncLogicLookupTable[sub_func_name_i]
-          if sub_func_logic_i.delay is not None:
+          if sub_func_logic_i.delay is not None and sub_func_logic_i.delay > 0.0:
             inst_to_remaining_sub_insts[logic_inst_name].append(sub_inst_i)
       print("Starting from bottom of hierarchy...", flush=True)
       
@@ -1781,6 +1781,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               missing_global_sub = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + missing_local_sub
               if missing_global_sub not in next_current_insts:
                 next_current_insts.append(missing_global_sub)
+                if missing_global_sub in handled_insts:
+                  print("About to add missing",missing_global_sub,"but is already handled?")
+                  sys.exit(-1)
             continue
           if func_inst in handled_insts: # Shouldnt need?
             continue
