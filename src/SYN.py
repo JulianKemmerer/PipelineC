@@ -1206,17 +1206,21 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   return TimingParamsLookupTable
   
 # Does not change fixed params
-def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable):
+def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable, override_fixed=False):
   # Get timing params for this logic
   timing_params = TimingParamsLookupTable[inst_name]
-  if not timing_params.params_are_fixed:
+  if not timing_params.params_are_fixed or override_fixed:
     # Set to be zero clk
     timing_params.SET_SLICES([])
+    # Maybe unfix
+    if override_fixed:
+      # Reset value
+      timing_params.params_are_fixed = not timing_params.logic.CAN_BE_SLICED()
     # Repeat down through submodules since not fixed
     logic = parser_state.LogicInstLookupTable[inst_name]
     for local_sub_inst in logic.submodule_instances:
       sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
-      TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(sub_inst, parser_state, TimingParamsLookupTable)
+      TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(sub_inst, parser_state, TimingParamsLookupTable, override_fixed)
     
   TimingParamsLookupTable[inst_name] = timing_params
       
@@ -1720,6 +1724,8 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
 # Middle out coarseness?
 # Modules can be locked/fixed in place and not sliced from above less accurately
 def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
+  debug = False
+  
   # Cache the multiple coarse runs
   coarse_slices_cache = dict()
   printed_slices_cache = set() # hacky indicator of if printed slicing of func yet
@@ -1748,6 +1754,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       print("Resetting hierarchy progress...")
       inst_to_remaining_sub_insts = dict()
       handled_insts = set()
+      
+      #@#NEED TO REDO search for modules at this hierarchy/delay level starting from top and moving down
+      #@Starting from small can run into breaking optimizations that occur at higher levels
+      
       # Get all funcs without submodules (bottom of hierarchy)
       for logic_inst_name,logic_i in parser_state.LogicInstLookupTable.items(): 
         if len(logic_i.submodule_instances) <= 0 and logic_i.delay is not None and logic_i.delay > 0.0:
@@ -1764,28 +1774,32 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       # then can procedd up tree liek #visited_insts = set()
       while len(current_insts) > 0:
         #print("current_insts",current_insts[0:max(len(current_insts),10)])
+        pre_handled_insts_len = len(handled_insts)
         next_current_insts = []
         for func_inst in current_insts:
           # Have all the submodules of this func been handled?
           if len(inst_to_remaining_sub_insts[func_inst]) > 0:
+            if func_inst in handled_insts:
+              print("Handled func with remaining subs?",func_inst)
+              sys.exit(-1) 
             # Try again later when no more submodules to handle
-            #print("Not all subs", func_inst)
-            #for rem in inst_to_remaining_sub_insts[func_inst]:
-            #  print(" ",rem, flush=True)
+            if debug:
+              print("Not all subs", func_inst)
+              for rem in inst_to_remaining_sub_insts[func_inst]:
+                print(" ",rem, flush=True)
             if func_inst not in next_current_insts:
               next_current_insts.append(func_inst)
-            # Sanity append the missing submodules to be handled too?
-            # Shouldnt be needed?
-            missing_local_subs = inst_to_remaining_sub_insts[func_inst]
-            for missing_local_sub in missing_local_subs:
-              missing_global_sub = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + missing_local_sub
-              if missing_global_sub not in next_current_insts:
-                next_current_insts.append(missing_global_sub)
-                if missing_global_sub in handled_insts:
-                  print("About to add missing",missing_global_sub,"but is already handled?")
-                  sys.exit(-1)
+              # Sanity append any missing submodules of container to be handled too?
+              # Shouldnt be needed?
+              missing_local_subs = inst_to_remaining_sub_insts[func_inst]
+              for missing_local_sub in missing_local_subs:
+                missing_global_sub = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + missing_local_sub
+                if missing_global_sub not in next_current_insts and missing_global_sub not in handled_insts:
+                  next_current_insts.append(missing_global_sub)
             continue
           if func_inst in handled_insts: # Shouldnt need?
+            if debug:
+              print("Already handled", func_inst)
             continue
           #print("Slicing:",func_inst)
           func_logic = parser_state.LogicInstLookupTable[func_inst]
@@ -1937,29 +1951,45 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             # Not be sliced through from the top down in the future
             func_inst_timing_params.params_are_fixed = not(require_all_unfixed_subs and has_fixed_param_subs)
             sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
-              
-            # sET PRINT Cche - yup
-            if cache_key not in printed_slices_cache:
-              printed_slices_cache.add(cache_key)
-              
-            # Do not continue upwards in container logic since did slicing at this middle level
           else:
             # Module is not large enough to alone influence meeting timing as configured
             # Set this module to be zero clocks
-            func_inst_timing_params.SET_SLICES([])
+            #func_inst_timing_params.SET_SLICES([])
+            # Since submodules can be be smaller than their component due to optimizations,
+            # can't assume lower level modules havent already been sliced
+            override_fixed = True
+            sweep_state.multimain_timing_params.TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(func_inst, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable, override_fixed)
             sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
-            # Add the container instance to list to iterate on, slice from further up
-            #print("Func inst not sliced:",func_inst, "container",container_inst)
-            if container_inst is not None:
-              if container_inst not in next_current_insts and container_inst not in handled_insts:
-                next_current_insts.append(container_inst)                
+            if cache_key not in printed_slices_cache:
+                print("Comb. logic:",func_logic.func_name, flush=True)
           
-          # And record this submodule of the container as being handled
+          # Add the container instance to list to iterate on, slice from further up
+          if func_inst not in parser_state.main_mhz:
+            if container_inst is None:
+              print("None container for non main:", func_inst)
+              sys.exit(-1)
+            if container_inst not in next_current_insts and container_inst not in handled_insts:
+              next_current_insts.append(container_inst)
+          
+          # Record this submodule of the container as being handled
           handled_insts.add(func_inst)
-          if container_inst is not None:
+          if func_inst not in parser_state.main_mhz:
+            if container_inst is None:
+              print("None container for non main:", func_inst)
+              sys.exit(-1)
             local_inst = C_TO_LOGIC.LEAF_NAME(func_inst, True)
             inst_to_remaining_sub_insts[container_inst].remove(local_inst)
+            
+          # sET PRINT Cche - yup
+          if cache_key not in printed_slices_cache:
+            printed_slices_cache.add(cache_key)
         
+        #if set(next_current_insts) == set(current_insts):
+        if pre_handled_insts_len == len(handled_insts) and len(next_current_insts) > 0:
+          print("Inf loop walking up tree? No modules handled")# ", next_current_insts)
+          if debug:
+            sys.exit(-1)
+          debug = True
         current_insts = next_current_insts
       #}END WHILE LOOP WALKING TREE
     #}END WHILE LOOP REPEATEDLY walking tree for params
