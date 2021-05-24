@@ -37,8 +37,6 @@ COARSE_SWEEP_MULT_MAX = 2.0
 INF_MHZ = 1000 # Impossible timing goal
 INF_HIER_MULT = 999999.9 # Needed?
 MAX_CLK_INC_RATIO = 1.25 # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
-SLICE_MOVEMENT_MULT = 2 # 3 is max/best? Multiplier for how explorative to be in moving slices for better timing
-MAX_STAGE_ADJUSTMENT = 2 # Uhh 2 should probably be fine? Maybe fixed bug 20 seems whack? 20 is max, best? Each stage of the pipeline will be adjusted at most this many times when searching for best timing
 SLICE_EPSILON_MULTIPLIER = 5 # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3 # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 DELAY_UNIT_MULT = 10.0 # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
@@ -62,7 +60,7 @@ def PART_SET_TOOL(part_str, allow_fail=False):
     elif part_str.lower().startswith("ep2") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
       SYN_TOOL = QUARTUS
     elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
-      # Diamond fails to create part for UMG5G part?
+      # Diamond fails to create proj for UMG5G part?
       if "um5g" in part_str.lower():
         SYN_TOOL = OPEN_TOOLS
       else:

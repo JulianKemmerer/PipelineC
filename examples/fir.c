@@ -1,5 +1,6 @@
 #include "uintN_t.h"
-#pragma MAIN_MHZ fir_main 900.0
+#pragma MAIN_MHZ fir_main 800.0
+//#pragma FUNC_MULT_STYLE fir_main fabric
 
 #define data_t uint16_t
 #define coeff_t uint16_t

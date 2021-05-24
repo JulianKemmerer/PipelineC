@@ -20,7 +20,6 @@
 //#include "examples/arty/src/uart/uart_loopback_no_fc.c"
 //#include "examples/arty/src/work/work.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
-//#include "examples/fir.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/loopback_app.c"
@@ -33,13 +32,45 @@
 //#include "examples/arty/src/eth/work_app.c"
 //#include "examples/blink.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
+//#include "examples/aes/aes.c"
+#include "examples/fir.c"
 
-
-#pragma MAIN_MHZ main 950.0
-float main(float x, float y)
-{
-  return x+y;
+/*
+#include "uintN_t.h"
+#pragma MAIN_MHZ mult 800.0
+#pragma FUNC_MULT_STYLE my_func inferred
+uint32_t my_func(uint16_t a, uint16_t b) {
+  return a * b;
 }
+*/
+/*
+#include "arrays.h"
+uint1_t and_xor(uint1_t c_i, uint1_t a_j, uint1_t b_ij){
+  return c_i ^ (a_j & b_ij);
+}
+#pragma MAIN_MHZ clmul 1000.0
+uint128_t clmul(uint1_t a[64], uint1_t b[64]) {
+    uint1_t c[128];
+    ARRAY_SET(c, 0, 128)
+
+    uint32_t i, j;
+    for (i = 0; i < 64; i += 1) {
+        c[i] = a[0] & b[i];
+        for (j = 1; j < i; j += 1) {
+            c[i] = and_xor(c[i], a[j], b[i - j]);
+        }
+    }
+
+    for (i = 64; i < 127; i += 1) {
+        c[i] = 0;
+        for (j = i - 63; j < 63; j += 1) {
+            c[i] = and_xor(c[i], a[j], b[i - j]);
+        }
+    }
+
+    return uint1_array128_be(c);
+}
+*/
 
 
 /*

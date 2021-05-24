@@ -17,12 +17,19 @@ import SW_LIB
 import SYN
 import SW_LIB
 
+# Global default constants for inferring different VHDL implementations of operators
+MULT_STYLE_INFERRED = "inferred"
+MULT_STYLE_FABRIC = "fabric"
+MULT_STYLE = MULT_STYLE_INFERRED
+
+# Debug
 TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, False for debug
 
+# Internal names/keywords
 RETURN_WIRE_NAME = "return_output"
 SUBMODULE_MARKER = "____" # Hacky, need to be something unlikely as wire name
 CONST_PREFIX="CONST_"
-ENUM_CONST_MARKER = "$"
+ENUM_CONST_MARKER = "$" # Hackety hack hack
 CLOCK_ENABLE_NAME="CLOCK_ENABLE"
 MUX_LOGIC_NAME="MUX"
 UNARY_OP_LOGIC_NAME_PREFIX="UNARY_OP"
@@ -34,10 +41,8 @@ CAST_FUNC_NAME_PREFIX = "CAST"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
-
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
-
 # Binary operators
 BIN_OP_GT_NAME = "GT"
 BIN_OP_GTE_NAME = "GTE"
@@ -5740,7 +5745,6 @@ def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
            right_width, right_unsigned_width,
            max_width, max_unsigned_width)
 
-MULT_STYLE = "fabric" # "inferred"
 def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, parser_state):
   #print c_ast_binary_op
   #print C_AST_NODE_COORD_STR(c_ast_binary_op)
@@ -7639,7 +7643,7 @@ def APPEND_PRAGMA_INFO(parser_state):
       parser_state.main_clk_group[main_func] = None
     
     # MAIN_MHZ
-    if name=="MAIN_MHZ":
+    elif name=="MAIN_MHZ":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       mhz_tok = toks[2]
@@ -7660,7 +7664,7 @@ def APPEND_PRAGMA_INFO(parser_state):
             sys.exit(-1)
             
     # MAIN_GROUP
-    if name=="MAIN_GROUP":
+    elif name=="MAIN_GROUP":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       group = toks[2]
@@ -7668,25 +7672,25 @@ def APPEND_PRAGMA_INFO(parser_state):
       parser_state.main_mhz[main_func] = None
   
     # FUNC_MARK_DEBUG
-    if name=="FUNC_MARK_DEBUG":
+    elif name=="FUNC_MARK_DEBUG":
       toks = pragma.string.split(" ")
       func = toks[1]
       parser_state.func_marked_debug.add(func)
       
     # FUNC_WIRES
-    if name=="FUNC_WIRES":
+    elif name=="FUNC_WIRES":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.func_marked_wires.add(main_func)
 
     # FUNC_BLACKBOX
-    if name=="FUNC_BLACKBOX":
+    elif name=="FUNC_BLACKBOX":
       toks = pragma.string.split(" ")
       main_func = toks[1]
       parser_state.func_marked_blackbox.add(main_func)
   
     # PART
-    if name=="PART":
+    elif name=="PART":
       toks = pragma.string.split(" ")
       part = toks[1].strip('"').strip()
       #print("part",part)
@@ -7697,9 +7701,13 @@ def APPEND_PRAGMA_INFO(parser_state):
       parser_state.part = part
       
     # ONE_HOT
-    if name=="ONE_HOT":
+    elif name=="ONE_HOT":
       thing = toks[1]
       parser_state.marked_onehot.add(thing)
+      
+    else:
+      print("Unhandled pragma:", name, pragma.coord)
+      sys.exit(-1)
   
   
   # Sanity checks

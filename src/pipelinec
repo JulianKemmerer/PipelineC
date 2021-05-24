@@ -21,7 +21,6 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Cache GET_ZERO_CLK_TIMING_PARAMS_LOOKUP including latency cached cals of latency+hash
 Add pragma for mult style per func, need delay cache clear
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
