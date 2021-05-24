@@ -7048,9 +7048,9 @@ def PARSE_FILE(c_filename):
     
     
 def WRITE_0CLK_FINAL_FILES(parser_state):
-  print("Starting with combinatorial logic...", flush=True)
+  print("Building map of combinatorial logic...", flush=True)
   SYN.PART_SET_TOOL(parser_state.part,allow_fail=True) # Comb logic only might not have tool set
-  ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
   print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
@@ -7059,7 +7059,7 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
   print("Writing clock cross defintions as parsed from C code...", flush=True)
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
-  print("Writing finalized comb. logic files...", flush=True)
+  print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
     
 # Global list of these in parser_state + lists per function in logic for locally delclared

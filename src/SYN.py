@@ -81,36 +81,7 @@ class MultiMainTimingParams:
     # Pipeline params
     self.TimingParamsLookupTable = dict()
     # TODO some kind of params for clock crossing
-
-  def REBUILD_FROM_MAIN_SLICES(self, parser_state, write_files=True):
-    # Apply current slices from main funcs 
-    # Start from zero clock
-    print("Starting from comb. logic...",flush=True)
-    new_TimingParamsLookupTable = dict()
-    new_TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
-    print("Slicing each function...",flush=True)
-    # Then build from mains
-    for main_inst in parser_state.main_mhz:
-      main_func_logic = parser_state.LogicInstLookupTable[main_inst]
-      main_inst_slices = self.TimingParamsLookupTable[main_inst]._slices
-      new_TimingParamsLookupTable = ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(main_inst, main_func_logic, main_inst_slices, parser_state, new_TimingParamsLookupTable, write_files)
-      # TimingParamsLookupTable == None 
-      # means these slices go through global code
-      if type(new_TimingParamsLookupTable) is not dict:
-        print("Can't syn when slicing through globals!")
-        return None, None, None, None
-    # Use the new params
-    self.TimingParamsLookupTable = new_TimingParamsLookupTable
-  
-  def REBUILD_FROM_NEW_MAIN_SLICES(self, slices, main_inst, parser_state, write_files=True):
-    # Overwrite this main funcs timing params with slices
-    self.TimingParamsLookupTable[main_inst] = TimingParams(main_inst, parser_state.LogicInstLookupTable[main_inst])
-    for slice_i in slices:
-      self.TimingParamsLookupTable[main_inst].ADD_SLICE(slice_i)
-
-    # And rebuild
-    self.REBUILD_FROM_MAIN_SLICES(parser_state, write_files)
-  
+    
   def GET_HASH_EXT(self, parser_state):
     # Just hash all the slices #TODO fix to just mains
     top_level_str = ""
@@ -148,6 +119,12 @@ class TimingParams:
     self.hash_ext = None
     #self.timing_report_stage_range = None
     
+  def DEEPCOPY(self):
+    rv = copy.copy(self)
+    rv._slices = self._slices[:] # COPY
+    # Logic ok to be same obj
+    # All others immut right now
+    return rv
     
   def INVALIDATE_CACHE(self):
     self.calcd_total_latency = None
@@ -236,8 +213,8 @@ class TimingParams:
 
     if not(slice_point in self._slices):
       self._slices.append(slice_point)
-    self._slices = sorted(self._slices)
-    self.INVALIDATE_CACHE()
+      self._slices = sorted(self._slices)
+      self.INVALIDATE_CACHE()
     
     if self.calcd_total_latency is not None:
       print("WTF adding a slice and has latency cache?",self.calcd_total_latency)
@@ -293,17 +270,32 @@ class TimingParams:
     submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
     return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     
-    
-# TODO CACHE THIS TOO!?
-def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(LogicInstLookupTable): 
+
+_GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = dict()
+def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
+  cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
+  if cache_key in _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache:
+    cached_lookup = _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key]
+    rv = dict()
+    for inst_i,params_i in cached_lookup.items():
+      rv[inst_i] = params_i.DEEPCOPY()
+    return rv
+  
   ZeroClockTimingParamsLookupTable = dict()
-  for logic_inst_name in LogicInstLookupTable: 
-    logic_i = LogicInstLookupTable[logic_inst_name]
+  for logic_inst_name in parser_state.LogicInstLookupTable: 
+    logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
     timing_params_i = TimingParams(logic_inst_name, logic_i)
-    # TODO CALC LATENCY HERE SO IS IN CACHE
     ZeroClockTimingParamsLookupTable[logic_inst_name] = timing_params_i
+  
+  # Calc cached params so they are in cache
+  for logic_inst_name in parser_state.LogicInstLookupTable: 
+    logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
+    timing_params_i = TimingParams(logic_inst_name, logic_i)
+    timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroClockTimingParamsLookupTable) 
+    timing_params_i.GET_HASH_EXT(ZeroClockTimingParamsLookupTable, parser_state)
+  
+  _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key] = ZeroClockTimingParamsLookupTable
   return ZeroClockTimingParamsLookupTable
-      
 
 _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
@@ -315,7 +307,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     #print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
     
     # Sanity?
-    if rv.logic.func_name != Logic.func_name:
+    if rv.logic != Logic:
       print("Zero clock cache no mactho")
       sys.exit(-1)
     
@@ -339,7 +331,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
   
   
   # Populate table as all 0 clk
-  ZeroClockLogicInst2TimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  ZeroClockLogicInst2TimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   
   # Get params for this logic
   #print "Logic.func_name",Logic.func_name
@@ -348,8 +340,14 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
   zero_clk_pipeline_map = GET_PIPELINE_MAP(inst_name, Logic, parser_state, ZeroClockLogicInst2TimingParams)
   
   # Only cache if has delay
-  if zero_clk_pipeline_map.logic.delay is not None: 
+  # zero_clk_pipeline_map.logic.delay is not None and  Dont need to check self, only submodules
+  if zero_clk_pipeline_map.zero_clk_max_delay is not None:
     _GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
+  else:
+    # Sanity?
+    if has_delay:
+      print("has delay for subs but did not calc in zero clk map?",zero_clk_pipeline_map.logic.func_name)
+      sys.exit(-1)
   
   return zero_clk_pipeline_map
 
@@ -1067,6 +1065,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
   
   # Get timing params for this logic
   timing_params = TimingParamsLookupTable[inst_name]
+  if timing_params.params_are_fixed:
+    print("Trying to add slice to fixed params?", inst_name)
+    sys.exit(-1)
   # Add slice
   timing_params.ADD_SLICE(new_slice_pos)
   slice_index = timing_params._slices.index(new_slice_pos)
@@ -1103,6 +1104,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(inst_name, logic, new_slice_pos, pa
     # Get the zero clock pipeline map for this logic
     zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(inst_name, logic, parser_state)
     total_delay = zero_clk_pipeline_map.zero_clk_max_delay
+    if total_delay is None:
+      print("No delay for module?",logic.func_name)
+      sys.exit(-1)
     epsilon = SLICE_EPSILON(total_delay)
     
     # Sanity?
@@ -1212,14 +1216,7 @@ def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, T
   return TimingParamsLookupTable
   
 # Returns index of bad slices or working TimingParamsLookupTable
-def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, TimingParamsLookupTable=None, write_files=True, rounding_so_fuck_it=False):
-  # Reset to initial empty timing params if nothing to start with
-  if TimingParamsLookupTable is None or TimingParamsLookupTable==dict():
-    TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
-  else:
-    # Reset timing params to empty all submodules instances of this inst since reslicing
-    TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(inst_name, parser_state, TimingParamsLookupTable)
-  
+def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, logic, current_slices, parser_state, TimingParamsLookupTable, write_files=True, rounding_so_fuck_it=False):
   # Do slice to main logic for each slice
   for current_slice_i in current_slices:
     #print "  current_slice_i:",current_slice_i
@@ -1670,7 +1667,7 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   
   # Populate timing lookup table as all 0 clk
   print("Setting all instances to comb. logic to start...", flush=True)
-  ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
   
@@ -1734,7 +1731,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       printed_slices_cache = set() # Print each time trying to walk tree for slicing
       print("Starting from zero clk timing params...", flush=True)
       # Reset to empty start for this tree walk
-      sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+      sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
       for main_inst in parser_state.main_mhz:
         sweep_state.inst_sweep_state[main_inst].smallest_not_sliced_hier_mult = INF_HIER_MULT
       
@@ -1767,6 +1764,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult = hsm_i
           elif func_logic.CAN_BE_SLICED():
             # Might need pipelining here if no submodules are also large enough pipeline
+            # Invalidate timing param caches similar to how slicing down does
+            func_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
+            func_inst_timing_params.INVALIDATE_CACHE()
             for local_sub_inst in func_logic.submodule_instances:
               sub_inst_name = func_inst + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst 
               sub_logic = parser_state.LogicInstLookupTable[sub_inst_name]
@@ -1779,7 +1779,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                   lowest_level_insts_to_pipeline.discard(func_inst)
                   collecting_modules_to_pipeline = True
                 else:
-                  # Submodule does not neet pipelining
+                  # Submodule does not neet pipelining, record for hier mult step
                   if sub_func_path_delay_ns > 0.0:
                     hsm_i = hier_sweep_mult_func(target_path_delay_ns,sub_func_path_delay_ns)
                     if hsm_i < sweep_state.inst_sweep_state[main_func].smallest_not_sliced_hier_mult:
@@ -1904,7 +1904,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         # Lock these slices in place?
         # Not be sliced through from the top down in the future
         func_inst_timing_params.params_are_fixed = True
-        sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params
+        sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = func_inst_timing_params        
         
         # sET PRINT Cche - yup
         if cache_key not in printed_slices_cache:
@@ -2107,11 +2107,10 @@ def DO_COARSE_THROUGHPUT_SWEEP(
   # until mhz goals met
   while True:
     # Reset to zero clock
-    #print("Setting all instances to comb. logic to start...",flush=True)
-    sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+    print("Starting from comb. logic...",flush=True)
+    sweep_state.multimain_timing_params.TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
     
     # Do slicing
-    print("Slicing up pipeline stages...",flush=True)
     # For each main set the slices in timing params and then rebuild
     done = False
     for main_inst in parser_state.main_mhz:
@@ -2122,7 +2121,27 @@ def DO_COARSE_THROUGHPUT_SWEEP(
       print(main_logic.func_name,": sliced coarsely ~=", sweep_state.inst_sweep_state[main_inst].coarse_latency, "clocks latency...", flush=True)
       # Do slicing and dont write vhdl this way since slow
       write_files = False
-      sweep_state.multimain_timing_params.REBUILD_FROM_NEW_MAIN_SLICES(best_guess_slices, main_inst, parser_state, write_files)
+      
+      # Sanity
+      if len(sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]._slices) !=0:
+        print("Not starting with comb logic for main? sliced already?",sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]._slices)
+        sys.exit(-1)        
+      
+      # Apply slices to main funcs 
+      sweep_state.multimain_timing_params.TimingParamsLookupTable = ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(main_inst, main_logic, best_guess_slices, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable, write_files)
+      # TimingParamsLookupTable == None 
+      # means these slices go through global code
+      if type(sweep_state.multimain_timing_params.TimingParamsLookupTable) is not dict:
+        print("Slicing through globals still an issue?")
+        sys.exit(-1)
+        #print("Can't syn when slicing through globals!")
+        #return None, None, None, None  
+        
+      # SANITY
+      if sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]._slices != best_guess_slices:
+        print("Tried to slice as ",best_guess_slices, "but got",sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]._slices)
+        sys.exit(-1)
+    
     
     # Fast one time loop writing only files that have non default,>0 latency
     print("Updating output files...",flush=True)
@@ -2546,7 +2565,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   
   print("Synthesizing as combinatorial logic to get total logic delay...", flush=True)
   print("", flush=True)
-  TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state.LogicInstLookupTable)
+  TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   multimain_timing_params = MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
   
