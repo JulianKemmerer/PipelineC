@@ -1949,14 +1949,20 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     # Do one final dumb loop over all timing params that arent zero clocks?
     # because write_files_in_loop = False above
     print("Updating output files...",flush=True)
+    entities_written = set()
     for inst_name_to_wr in sweep_state.multimain_timing_params.TimingParamsLookupTable:
       wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
       wr_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[inst_name_to_wr]
       if wr_timing_params.GET_TOTAL_LATENCY(parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable) > 0:
-        wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
-        if not os.path.exists(wr_syn_out_dir):
-          os.makedirs(wr_syn_out_dir)    
-        VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable)
+        entity_name = VHDL.GET_ENTITY_NAME(inst_name_to_wr, wr_logic, sweep_state.multimain_timing_params.TimingParamsLookupTable, parser_state)
+        if entity_name not in entities_written:
+          entities_written.add(entity_name)
+          wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
+          if not os.path.exists(wr_syn_out_dir):
+            os.makedirs(wr_syn_out_dir)
+          wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
+          if not os.path.exists(wr_filename):
+            VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable)
       
     # Run syn on multi main top
     print("Running syn w timing params...",flush=True)
@@ -2145,14 +2151,21 @@ def DO_COARSE_THROUGHPUT_SWEEP(
     
     # Fast one time loop writing only files that have non default,>0 latency
     print("Updating output files...",flush=True)
+    entities_written = set()
     for inst_name_to_wr in sweep_state.multimain_timing_params.TimingParamsLookupTable:
       wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
       wr_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[inst_name_to_wr]
       if wr_timing_params.GET_TOTAL_LATENCY(parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable) > 0:
-        wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
-        if not os.path.exists(wr_syn_out_dir):
-          os.makedirs(wr_syn_out_dir)    
-        VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable)
+        entity_name = VHDL.GET_ENTITY_NAME(inst_name_to_wr, wr_logic, sweep_state.multimain_timing_params.TimingParamsLookupTable, parser_state)
+        if entity_name not in entities_written:
+          entities_written.add(entity_name)
+          wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
+          if not os.path.exists(wr_syn_out_dir):
+            os.makedirs(wr_syn_out_dir)
+          wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
+          if not os.path.exists(wr_filename):
+            VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable)
+          
     
     # Run syn on multi main top
     print("Running syn w slices...",flush=True)
