@@ -21,7 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Add pragma for mult style per func, need delay cache clear
+Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Fix shifts in FP operators to check for shfiting more than number of bits
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
@@ -39,7 +39,6 @@ Need to re-do clock crossings/wires used in pipelineable logic to be like volati
 ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
-Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Sanity check signed mult you POS
 Come on do sanity check for reserved words
 Make MAIN_MHZ allow not yet defined funcs for mhz values later

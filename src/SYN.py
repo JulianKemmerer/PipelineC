@@ -1913,11 +1913,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         continue
         
       # Done pipelining lowest level modules
-      # Apply best guess slicing from main top level (could change to do best guess at first place moving up in hier without fixed params?
+      # Apply best guess slicing from main top level if wasnt fixed by above loop
+      # (could change to do best guess at first place moving up in hier without fixed params?)
       for main_inst in parser_state.main_mhz:
+        main_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]
+        if main_inst_timing_params.params_are_fixed:
+          continue
         main_func_logic = parser_state.LogicInstLookupTable[main_inst]
         main_func_path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
-        main_inst_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]
         target_mhz = parser_state.main_mhz[main_func]
         target_path_delay_ns = 1000.0 / target_mhz
         clks = int(math.ceil((main_func_path_delay_ns*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult) / target_path_delay_ns)) - 1
