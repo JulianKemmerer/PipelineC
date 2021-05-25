@@ -5753,6 +5753,11 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   # Decompose to N arg func
   c_ast_bin_op_str = str(c_ast_binary_op.op)
   
+  # Default to global default mult style
+  local_mult_style = MULT_STYLE
+  if parser_state.existing_logic.func_name in parser_state.func_mult_style:
+    local_mult_style = parser_state.func_mult_style[parser_state.existing_logic.func_name]
+  
   # Determine op string to use in func name
   is_bit_shift = False
   is_bitwise = False
@@ -5771,10 +5776,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   elif c_ast_bin_op_str == "-":
     c_ast_op_str = BIN_OP_MINUS_NAME
     has_bit_growth = True
-  elif c_ast_bin_op_str == "*" and MULT_STYLE == "inferred":
+  elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_INFERRED:
     c_ast_op_str = BIN_OP_INFERRED_MULT_NAME
     has_bit_growth = True
-  elif c_ast_bin_op_str == "*" and MULT_STYLE == "fabric":
+  elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_FABRIC:
     c_ast_op_str = BIN_OP_MULT_NAME
     has_bit_growth = True
   elif c_ast_bin_op_str == "/":
@@ -6707,6 +6712,7 @@ class ParserState:
     # Pragma info
     self.main_mhz = dict() # dict[main_inst_name]=mhz # Any inst name can be used
     self.main_clk_group = dict() # dict[main_inst_name]=clk_group_str
+    self.func_mult_style = dict()
     self.func_marked_wires = set()
     self.func_marked_blackbox = set()
     self.func_marked_debug = set()
@@ -6750,6 +6756,7 @@ class ParserState:
     
     rv.main_mhz = dict(self.main_mhz)
     rv.main_clk_group = dict(self.main_clk_group)
+    rv.func_mult_style = dict(self.func_mult_style)
     rv.func_marked_wires = set(self.func_marked_wires)
     rv.func_marked_blackbox = set(self.func_marked_blackbox)
     rv.marked_onehot = set(self.marked_onehot)
@@ -7670,6 +7677,13 @@ def APPEND_PRAGMA_INFO(parser_state):
       group = toks[2]
       parser_state.main_clk_group[main_func] = group
       parser_state.main_mhz[main_func] = None
+  
+    # FUNC_MULT_STYLE
+    elif name=="FUNC_MULT_STYLE":
+      toks = pragma.string.split(" ")
+      func = toks[1]
+      style = toks[2]
+      parser_state.func_mult_style[func] = style
   
     # FUNC_MARK_DEBUG
     elif name=="FUNC_MARK_DEBUG":
