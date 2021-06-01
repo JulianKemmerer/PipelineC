@@ -21,18 +21,22 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Something with visual output - VGA? Something with audio, little guitar pedal?
+Do better LUT syntax - ROMs/BROMs too
+Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
-Fix shifts in FP operators to check for shfiting more than number of bits
-Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
-Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
-Do write up on one or two optimizations to DKs riscv
+Do const func args as generics - ex. const loop vars into func - how to progate const values
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
+Conditional return via output reg +mux + valid signal
+^ Then use valid signal from return to drive fsm transitions? 
+Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
+Fix shifts in FP operators to check for shfiting more than number of bits
+Do write up on one or two optimizations to DKs riscv
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
-Do better LUT syntax - ROMs/BROMs too
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
@@ -63,13 +67,11 @@ Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
-Do hacky if generate with pragmas? oh gosh
 Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
 Add constant defintion (struct+array init), use const keyword? #define init expressions? Init becomes like const ref funcs assigning ref toks
-How to do module instantiation? Does that need to be macro based? #define to set 'generics'?
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
 Expose latencies of each instance as a constant for use in external vhdl package - not for use in pipelinec code
 Fix for vhdl restricted words. Append _restricted?
@@ -108,7 +110,6 @@ How to remove excess io regs from middle out sweep?
 Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
 Have multiple paths reported per clock domain/main func
 No good? reason to combine variable latency array of regs for pipelining and state regs in same record - flat, human like, easier to read (maybe ok since those regs arent IO?)
-Do const func args as generics - ex. const loop vars into func
 Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device

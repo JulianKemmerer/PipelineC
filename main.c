@@ -35,6 +35,158 @@
 //#include "examples/aes/aes.c"
 #include "examples/fir.c"
 
+
+
+
+
+
+
+// Below is a bunch of recent scratch work - enjoy
+/*
+// What is RETURN? is it a valid/done signal? built in for FSMs
+// ...yeah?
+// Are inputs fixed/registered?
+// Need built in valid and output signals used by tool
+uint8_t main(uint8_t i)
+{
+  __clk++;
+  return i;
+}
+*/
+/*
+// Every expression is a sub fsm of 0 or more cycles?
+// Means adding start and done signals to logic from c code?
+// All local variables could be regs if used across __clk++'s ?
+// Inputs sampled/read in first stage, can be reread in later clocks for new data
+uint8_t main(i)
+{
+  f = foo(i);
+  __clk++;
+  b = bar(f, i); // i value a clock later
+  return b;
+}
+
+typedef enum main_STATE_t{
+ // Number of states depends on by number of clk++ in code?
+ // while loops are sub state machines
+ // functions are sub state machines
+ CLK0, // Entry point? Comb logic from inputs into through CLK0 logic
+ CLK1,
+}main_STATE_t;
+uint8_t main(i)
+{
+  static main_STATE_t main_STATE;
+  uint8_t RETURN_OUTPUT = 0;
+  // All local vars are regs
+  static f, b;
+  
+  if(main_STATE == CLK0)
+  {
+    f = foo(i);
+    // HOW TO KNOW WHEN FOO FSM IS DONE?
+    // RETURN becomes done signal/regs? inputs too?
+    // What is return val here? default zeros?
+  }
+  else if(main_STATE == CLK1)
+  {
+    b = bar(f, i); // i value a clock later
+    RETURN_OUTPUT = b;
+  }
+  
+  return RETURN_OUTPUT;
+}
+
+
+uint8_t main(i)
+{
+  while(i)
+  {
+    f = foo(i);
+    __clk++;
+    b = bar(f, i); // i value a clock later
+    return b;
+  }
+}
+
+
+
+
+// Compiler sees this as a Silice function
+// A big derived fsm
+uint8_t main()
+{
+  uint8_t led;
+  // a 28 bits unsigned integer register
+  uint28_t counter = 0;
+  
+  // How does Silice derive?
+  // "the loop takes exactly one cycle to execute:
+  // we have one increment per cycle at 50 MHz the clock frequency"  
+  while (1) {              // forever
+    // LEDs updated every clock with the 8 most significant bits
+    led = uint28_27_20(counter);
+    counter = counter + 1; // increment counter
+    // If its assumed comb logic unless clocks are inserted
+    // Ex. :=  assign right to left at each rising clock
+    //     ++: wait on clock
+    // How to do that in PipelineC?
+    __clk++; // Or something?
+  }
+  return led;
+}
+
+
+/*
+#include "uintN_t.h"
+//#pragma FUNC_MULT_STYLE mult_tree fabric
+#define N 1024
+#define LOG2_N 10
+#pragma MAIN_MHZ mult_tree 940.0
+uint16_t mult_tree(uint16_t input[N])
+{
+  // A binary tree of ops 
+  // This binary tree has 
+  //    N elements at the base
+  //    LOG2_N + 1 levels in the tree
+  // Oversized 2D array, unused elements optimize away
+  uint16_t tree_nodes[LOG2_N+1][N];
+  // Ex. N=16 
+  // Calculate 'as parallel as possible' using a binary tree 
+  //    Level 0: 16 input values  
+  //    Level 1: 8 ops in parallel 
+  //    Level 2: 4 ops in parallel 
+  //    Level 3: 2 ops in parallel 
+  //    Level 4: 1 final op  
+
+  // The first level of the tree is input values
+  uint32_t i;
+  for(i=0; i < N; i+=1)
+  {
+    tree_nodes[0][i] = input[i];
+  }
+    
+  // Binary tree compuation starting at level 1
+  uint32_t n_ops = N/2; 
+  uint32_t level; 
+  for(level=1; level<(LOG2_N+1); level+=1) 
+  {   
+    // Parallel ops  
+    for(i=0; i<n_ops; i+=1)  
+    { 
+      tree_nodes[level][i] = tree_nodes[level-1][i*2] * tree_nodes[level-1][(i*2)+1]; 
+    } 
+      
+    // Each level decreases ops by half  
+    n_ops = n_ops / 2;  
+  } 
+    
+  // Result is last node in tree
+  uint16_t rv = tree_nodes[LOG2_N][0];
+    
+  return rv;
+}
+*/
+
 /*
 #include "uintN_t.h"
 #pragma MAIN_MHZ mult 800.0
