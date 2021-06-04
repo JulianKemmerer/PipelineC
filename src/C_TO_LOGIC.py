@@ -6893,8 +6893,9 @@ def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called
 def PARSE_FILE(c_filename):
   # Do we have a cached parser state?
   cached_parser_state = GET_PARSER_STATE_CACHE(c_filename)
+  filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
   if cached_parser_state is not None:
-    print("Already parsed C code for",c_filename,", using cache...")
+    print("Already parsed C code for",c_filename,", using cache",filepath,"...")
     return cached_parser_state
   
   # Otherwise do for real

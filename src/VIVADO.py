@@ -26,7 +26,8 @@ else:
   VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
-VIVADO_DEFAULT_ARGS = "-mode batch" 
+
+DO_PNR = False # Do full place and route for timing results, if changed, delete path delay cache
   
 class ParsedTimingReport:
   def __init__(self, syn_output):
@@ -428,7 +429,11 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
     flatten_hierarchy_none = " -flatten_hierarchy none"
   
   # SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
-  rv += "synth_design -top " + top_entity_name + " -part " + parser_state.part + flatten_hierarchy_none + retiming + "\n"
+  rv += "synth_design -mode out_of_context -top " + top_entity_name + " -part " + parser_state.part + flatten_hierarchy_none + retiming + "\n"
+  
+  if DO_PNR:
+    rv += "place_design\n"
+    rv += "route_design\n"
   
   # Report clocks
   #rv += "report_clocks" + "\n"
@@ -495,10 +500,10 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
     # Execute vivado sourcing the tcl
     syn_imp_bash_cmd = (
       VIVADO_PATH + " "
-      "-journal " + output_directory + "/vivado.jou" + " " + 
       "-log " + log_path + " " +
-      VIVADO_DEFAULT_ARGS + " " + 
-      '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
+      '-source "' + syn_imp_tcl_filepath + '" ' +
+      "-journal " + output_directory + "/vivado.jou" + " " + 
+      "-mode batch")  # Quotes since I want to keep brackets in inst names
     
     print("Running:", syn_imp_bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
@@ -533,7 +538,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
   # If log file exists dont run syn
   if os.path.exists(log_to_read) and use_existing_log_file:
     #print "SKIPPED:", syn_imp_bash_cmd
-    print("Reading log", log_to_read)
+    print("Reading log", log_to_read,flush=True)
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
@@ -553,16 +558,14 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
     # Execute vivado sourcing the tcl
     syn_imp_bash_cmd = (
       VIVADO_PATH + " "
-      "-journal " + output_directory + "/vivado.jou" + " " + 
       "-log " + log_path + " " +
-      VIVADO_DEFAULT_ARGS + " " + 
-      '-source "' + syn_imp_tcl_filepath + '"' )  # Quotes since I want to keep brackets in inst names
+      '-source "' + syn_imp_tcl_filepath + '" ' + # Quotes since I want to keep brackets in inst names
+      "-journal " + output_directory + "/vivado.jou" + " " +
+      "-mode batch" )
     
     print("Running:", syn_imp_bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
     
-    
-  
   return ParsedTimingReport(log_text)
   
 '''
