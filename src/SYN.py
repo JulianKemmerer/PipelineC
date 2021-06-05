@@ -1925,7 +1925,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         target_path_delay_ns = 1000.0 / target_mhz
         clks = int(math.ceil((main_func_path_delay_ns*sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult) / target_path_delay_ns)) - 1
         if clks <= 0:
-          clks = 0
+          continue 
         slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
         print("Best guess slicing:",main_func_logic.func_name,", mult =", sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult, slices, flush=True)
         write_files = False
