@@ -34,7 +34,7 @@
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
 //#include "examples/aes/aes.c"
 //#include "examples/fir.c"
-#include "examples/arty/src/i2s/i2s_app.c"
+#include "examples/arty/src/i2s/i2s_passthrough app.c"
 
 
 // Below is a bunch of recent scratch work - enjoy
