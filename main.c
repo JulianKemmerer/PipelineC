@@ -10,7 +10,7 @@
 // LFE5U-85F-6BG381C     ECP5U
 // LFE5UM5G-85F-8BG756C  ECP5UM5G
 // ICE40UP5K-SG48        ICE40UP
-#pragma PART "xcvu9p-flgb2104-2-i"
+#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -33,12 +33,8 @@
 //#include "examples/blink.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
 //#include "examples/aes/aes.c"
-#include "examples/fir.c"
-
-
-
-
-
+//#include "examples/fir.c"
+#include "examples/arty/src/i2s/i2s_app.c"
 
 
 // Below is a bunch of recent scratch work - enjoy

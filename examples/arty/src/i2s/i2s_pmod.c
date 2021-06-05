@@ -2,7 +2,7 @@
 #include "wire.h"
 #include "uintN_t.h"
 
-#include "pmod.c"
+#include "../pmod/pmod.c"
 #include "i2s.c"
 
 // Logic to expose PMOD as I2S
