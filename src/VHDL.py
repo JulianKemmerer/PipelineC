@@ -303,10 +303,11 @@ begin
       text += "module_to_clk_cross." + main_func + ",\n"
     # Inputs
     for in_port in main_func_logic.inputs:
-      in_wire = main_entity_name + "_" + in_port
-      text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic) 
-      if not is_final_top: 
-        text += "_input_reg"
+      if is_final_top: 
+        in_wire = main_func  + "_" + in_port
+      else:
+        in_wire = main_entity_name + "_" + in_port + "_input_reg"
+      text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic)
       text += ",\n"
     # Outputs
     for out_port in main_func_logic.outputs:
