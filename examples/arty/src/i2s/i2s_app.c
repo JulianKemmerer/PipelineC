@@ -20,6 +20,9 @@ https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual
   Each of these control signals should be provided to the appropriate pin on both the top and bottom rows of the Pmod I2S2.
   The ADOUT_SDIN pin should be driven by the ADIN_SDOUT signal.
 */
+// This configuration does not exactly match I2S spec, which allows for back to back sample data
+// However, in this case, as seen in Digilent docs, sample data is 
+// padded with trailing zeros for several cycles before the next channel sample begins
 #pragma MAIN_MHZ app 22.579
 #define SCLK_PERIOD_MCLKS 8
 #define LR_PERIOD_SCLKS 64
@@ -102,7 +105,8 @@ i2s_samples_s i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t
         curr_sample_bit_count = 0; // Reset count
         sample_t curr_sample = bits_to_sample(curr_sample_bits);
         // Were these bits L or R data?
-        if(lr==LEFT)
+        // Last LR since last bit LR switched at falling edge for next channel potentially
+        if(last_lr==LEFT) 
         {
           output_reg.samples.l_data = curr_sample;
           l_sample_valid = 1;
@@ -156,7 +160,7 @@ typedef struct i2s_tx_t
   uint1_t samples_ready;
   uint1_t data;
 }i2s_tx_t;
-i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_rising_edge, uint1_t reset_n)
+i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, uint1_t reset_n)
 {
   // Registers
   static i2s_state_t state;
@@ -175,12 +179,13 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_rising_edge, uin
   
   // FSM Logic:
   
-  // Everything occuring relative to sclk rising edges
-  if(sclk_rising_edge)
+  // Everything occuring relative to sclk falling edges
+  if(sclk_falling_edge)
   {
     // Waiting for R->L transition start of I2S frame, left sample data
     if(state==RL_WAIT)
     {
+      output_data_reg = 0; // No out data until next sample
       if((last_lr==RIGHT) & (lr==LEFT))
       {
         // Next SCLK rising edge starts sample bits
@@ -199,6 +204,7 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_rising_edge, uin
     // Waiting for L->R transition start of right sample data
     else if(state==LR_WAIT)
     {
+      output_data_reg = 0; // No out data until next sample
       if((last_lr==LEFT) & (lr==RIGHT))
       {
         // Next SCLK rising edge starts sample bits
@@ -227,9 +233,9 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_rising_edge, uin
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
       {
         curr_sample_bit_count = 0; // Reset count
-        output_data_reg = 0; // No out data until next sample
         // Were these bits L or R data?
-        if(lr==LEFT)
+        // Last LR since last bit LR switched at falling edge for next channel potentially
+        if(last_lr==LEFT)
         {
           l_sample_done = 1;
           // Right sample next
@@ -305,16 +311,16 @@ void app(uint1_t reset_n)
   to_i2s.tx_lrck = lr;
   to_i2s.rx_lrck = lr;
   
-  // SCLK toggling at half period count
+  // SCLK toggling at half period count on MCLK rising edge
   uint1_t sclk_half_toggle = sclk_counter==((SCLK_PERIOD_MCLKS/2)-1);
-  // 0->1 SCLK once per period rising edge
   uint1_t sclk_rising_edge = sclk_half_toggle & (sclk==0);
+  uint1_t sclk_falling_edge = sclk_half_toggle & (sclk==1);
   
   // Receive I2S samples
   i2s_samples_s rx_samples = i2s_rx(from_i2s.rx_data, lr, sclk_rising_edge, reset_n);
   
   // Transmit I2S samples
-  i2s_tx_t tx = i2s_tx(rx_samples, lr, sclk_rising_edge, reset_n);
+  i2s_tx_t tx = i2s_tx(rx_samples, lr, sclk_falling_edge, reset_n);
   to_i2s.tx_data = tx.data;
   
   // Detect overflow if had receive data incoming but transmit wasnt ready
@@ -322,7 +328,7 @@ void app(uint1_t reset_n)
   if(rx_samples.valid & !tx.samples_ready)
   {
     overflow = 1;
-  }  
+  }
   
   // Drive I2S clocking derived from current MCLK domain
   if(sclk_half_toggle)
@@ -337,10 +343,10 @@ void app(uint1_t reset_n)
     sclk_counter += 1;
   }
   
-  // LR toggling happens per SCLK period 
-  if(sclk_rising_edge)
+  // LR counting SCLK falling edges
+  if(sclk_falling_edge)
   {
-    // LR toggling at half period count
+    // LR toggle at half period count 
     if(lr_counter==((LR_PERIOD_SCLKS/2)-1))
     {
       // Do toggle and reset counter
@@ -351,7 +357,7 @@ void app(uint1_t reset_n)
     {
       // No toggle yet, keep counting
       lr_counter += 1;
-    }
+    }  
   }
   
   // Resets
@@ -367,7 +373,3 @@ void app(uint1_t reset_n)
   // Drive the outgoing I2S signals
   write_i2s_pmod(to_i2s);
 }
-
-
-
-
