@@ -188,17 +188,16 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
       output_data_reg = 0; // No out data until next sample
       if((last_lr==RIGHT) & (lr==LEFT))
       {
-        // Next SCLK rising edge starts sample bits
-        state = SAMPLE;
-        // Make sure output reg has value
-        sample_t curr_sample = 0;
+        // Must have valid sample to start I2S frame
         if(input_reg.valid)
         {
-          curr_sample = input_reg.samples.l_data;
+          // Next SCLK falling edge starts sample bits
+          state = SAMPLE;
+          // Make sure output reg has left data
+          UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.l_data)
+          // Data is MSB first, output bit from top of array
+          output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
         }
-        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, curr_sample)
-        // Data is MSB first, output bit from top of array
-        output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
       }
     }
     // Waiting for L->R transition start of right sample data
@@ -207,15 +206,12 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
       output_data_reg = 0; // No out data until next sample
       if((last_lr==LEFT) & (lr==RIGHT))
       {
-        // Next SCLK rising edge starts sample bits
+        // Input samples assumed valid at this point, now done with them, reset
+        input_reg.valid = 0;
+        // Next SCLK falling edge starts sample bits
         state = SAMPLE;
-        // Make sure output reg has value
-        sample_t curr_sample = 0;
-        if(input_reg.valid)
-        {
-          curr_sample = input_reg.samples.r_data;
-        }
-        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, curr_sample)
+        // Make sure output reg has right data
+        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.r_data)
         // Data is MSB first, output bit from top of array
         output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
       }
@@ -251,8 +247,6 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
         // Done outputting both LR samples?
         if(l_sample_done & r_sample_done)
         {
-          // Clear input reg
-          input_reg.valid = 0;
           // Clear individual LR done for next time
           l_sample_done = 0;
           r_sample_done = 0;

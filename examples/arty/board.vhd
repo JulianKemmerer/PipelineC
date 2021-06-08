@@ -500,18 +500,18 @@ top_inst : entity work.top port map (
     --clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
     --clk_150p0 => clk_100,
-    
     --clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
     --clk_400p0 => clk_400,
         
     -- Each main funciton's inputs and outputs
+    app_reset_n(0) => i2s_rst_n,
     
     -- LEDs
-    --led0_module_return_output(0) => leds_wire(0),
-    --led1_module_return_output(0) => leds_wire(1),
-    --led2_module_return_output(0) => leds_wire(2),
-    --led3_module_return_output(0) => leds_wire(3),
+    led0_module_return_output(0) => leds_wire(0),
+    led1_module_return_output(0) => leds_wire(1),
+    led2_module_return_output(0) => leds_wire(2),
+    led3_module_return_output(0) => leds_wire(3),
     
     -- Switches
     --switches_module_sw => switches_wire
