@@ -7720,6 +7720,11 @@ def APPEND_PRAGMA_INFO(parser_state):
       thing = toks[1]
       parser_state.marked_onehot.add(thing)
       
+    # FEEDBACK
+    elif name=="FEEDBACK":
+      # Not handled here, done in func def parsing
+      pass
+    
     else:
       print("Unhandled pragma:", name, pragma.coord)
       sys.exit(-1)
