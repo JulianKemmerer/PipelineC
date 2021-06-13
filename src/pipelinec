@@ -21,6 +21,7 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Make reset module for Arty
 Pmod I2S2: Stereo Audio Input and Output, little guitar pedal? then maybe something with visual output - VGA?
 Do better LUT syntax - ROMs/BROMs too
 Copy libfixmath Q16.16 fixed point look for arbitrary widths?

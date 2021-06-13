@@ -5434,9 +5434,21 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
     elif func_name == PRINTF_FUNC_NAME:
       return C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
-    elif SW_LIB.RAM_SP_RF in func_name:
+    elif "_" + SW_LIB.RAM_SP_RF in func_name:
       # Hacky af remove def of original state reg local (is used by mangled func)
       local_static_var = func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+      parser_state.existing_logic.state_regs.pop(local_static_var)
+      num_non_vol_left = 0
+      for state_var,state_var_info in parser_state.existing_logic.state_regs.items():
+        if state_var_info.is_volatile:
+          num_non_vol_left += 1
+      if num_non_vol_left == 0:
+        parser_state.existing_logic.uses_nonvolatile_state_regs = False
+      # Mangle to include local func name calling this func
+      func_name = parser_state.existing_logic.func_name + "_" + func_name
+    elif "_" + SW_LIB.RAM_DP_RF in func_name:
+      # Hacky af remove def of original state reg local (is used by mangled func)
+      local_static_var = func_name.split("_"+SW_LIB.RAM_DP_RF)[0]
       parser_state.existing_logic.state_regs.pop(local_static_var)
       num_non_vol_left = 0
       for state_var,state_var_info in parser_state.existing_logic.state_regs.items():
@@ -5469,8 +5481,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   # Helpful check
   if c_ast_func_call.args is not None:
     if len(c_ast_func_call.args.exprs) != len(not_inst_func_logic.inputs):
-      print("The function definition for",func_name,"has",len(c_ast_func_call.args.exprs), "arguments.")
-      print("as used at", c_ast_func_call.coord, "it has", len(not_inst_func_logic.inputs), "arguments.")
+      print("The function definition for",func_name,"has",len(not_inst_func_logic.inputs), "arguments.")
+      print("At", c_ast_func_call.coord, "it has", len(c_ast_func_call.args.exprs), "arguments.")
       sys.exit(-1)
   
   # Assume inputs are in arg order

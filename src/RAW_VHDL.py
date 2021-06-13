@@ -79,40 +79,27 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timin
     
 def GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
   if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
-    return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
+    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
-    return GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
+    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
+  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF+"_2"):
+    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
   else:
     print("GET_MEM_ARCH_DECL_TEXT for func", Logic.func_name, "?")
     sys.exit(-1)
       
 def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
   if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
-    return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 0)
+    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
-    return GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, 2)
+    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
+  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF + "_2"):
+    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
   else:
     print("GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?")
     sys.exit(-1)
   
-def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
-  ''' DONT USE SINCE is name pre mangling?
-  #calling_funcs = set()
-  #if Logic.func_name in parser_state.func_names_to_called_from:
-  calling_funcs = parser_state.func_names_to_called_from[Logic.func_name]
-  calling_func = list(calling_funcs)[0]
-  calling_func_logic = parser_stateFuncLogicLookupTable[calling_func]
-  '''
-  '''
-  print("RAM_SP_RF",Logic.containing_funcs)
-  containing_func = list(Logic.containing_funcs)[0]
-  if len(Logic.containing_funcs) != 1:
-    print("RAM used in more than one func?",Logic.containing_funcs,Logic.c_ast_node.coord)
-    sys.exit(-1)
-  name_toks = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)
-  maybe_global_name = name_toks[0]
-  ram_clk_num = name_toks[1].strip("_")
-  '''
+def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, clocks):
   # Func is known to have made it look like is using var?
   var_name = list(Logic.state_regs.keys())[0]
   c_type = Logic.wire_to_c_type[var_name]
@@ -135,10 +122,17 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
   # Combine addr signal
   addr_t = "uint" + str(addr_bits) + "_t"
   addr_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(addr_t,parser_state)
-  rv = '''
+  if sp_dp=="SP":
+    rv = '''
   signal addr : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
 '''
-  
+  else: # DP
+    rv = '''
+  signal addr_w : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
+  signal addr_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
+'''
+    
+    
   # Ram registers but renamed to be single dimension
   num_entries = 2**addr_bits
   unrolled_c_type = elem_type + "[" + str(num_entries) + "]"
@@ -150,30 +144,35 @@ def GET_RAM_SP_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, c
 
   # Include IO regs if needed
   if clocks == 0:
-    rv += '''
-    signal we_and_ce : std_logic;
-    '''
+    #rv += '''
+    #signal we : std_logic;
+    #'''
+    pass
   elif clocks == 2:
-    elem_t = Logic.wire_to_c_type[Logic.inputs[dim_end_index + 1]]
-    elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_t,parser_state)
-    we_t = Logic.wire_to_c_type[Logic.inputs[dim_end_index + 2]]
-    we_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(we_t,parser_state)
-    out_t = Logic.wire_to_c_type[Logic.outputs[0]]
-    out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_t,parser_state)
-    rv += '''
+    out_t = elem_type
+    out_vhdl_type = elem_vhdl_type
+    if sp_dp=="SP":
+      rv += '''
     signal addr_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
-    signal wd_r : ''' + elem_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(elem_t,parser_state) + ''';
-    signal we_and_ce_r : std_logic;
+    '''
+    else: #DP
+      rv += '''
+    signal addr_w_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
+    signal addr_r_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
+    '''
+    rv += '''
+    signal wd_r : ''' + elem_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(elem_type,parser_state) + ''';
+    signal we_r : std_logic;
     signal return_output_r : ''' + out_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(out_t,parser_state) + ''';
 '''
   else:
-    print("Do other clocks for RAMSPRF")
+    print("Do other clocks for RAMRF")
     sys.exit(-1)
 
   return rv
   
     
-def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clocks):
+def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, clocks):
   # Func is known to have made it look like is using var?
   var_name = list(Logic.state_regs.keys())[0]
   c_type = Logic.wire_to_c_type[var_name]
@@ -191,20 +190,30 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
   
   # Know func looks like (addr0_t addr0,...,addrN_t addrN, elem_t wd, uint1_t we)
   # Combine addr signals
-  rv = "    addr <= "
-  for dim_i in range(0, len(dims)):
-    rv += "addr" + str(dim_i) + " & "
-  rv = rv.strip(" ").strip("&")
-  rv += ";\n"
+  rv = ""
+  if sp_dp=="SP":
+    rv += "    addr <= "
+    for dim_i in range(0, len(dims)):
+      rv += "addr" + str(dim_i) + " & "
+    rv = rv.strip(" ").strip("&")
+    rv += ";\n"
+  else: #DP
+    for port_postfix in ["r","w"]:
+      rv += "    addr_" + port_postfix + " <= "
+      for dim_i in range(0, len(dims)):
+        rv += "addr_" + port_postfix + str(dim_i) + " & "
+      rv = rv.strip(" ").strip("&")
+      rv += ";\n"
   
   if clocks == 0:
     rv += '''
-    we_and_ce <= we(0) and CLOCK_ENABLE(0);
     process(clk) is
     begin
       if rising_edge(clk) then
-        if we_and_ce = '1' then
-          ''' + var_name + '''(to_integer(addr)) <= wd; 
+        if CLOCK_ENABLE(0)='1' then
+          if we(0) = '1' then
+            ''' + var_name + '''(to_integer(addr)) <= wd; 
+          end if;
         end if;
       end if;
     end process;
@@ -213,28 +222,58 @@ def GET_RAM_SP_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, clock
 '''
   elif clocks == 2:
     # In and out regs
-    rv += '''
-    process(clk) is
-    begin
-      if rising_edge(clk) then
-        -- Register inputs
-        addr_r <= addr;
-        wd_r <= wd;
-        we_and_ce_r <= we(0) and CLOCK_ENABLE(0);
-        
-        -- Read first
-        return_output_r <= '''  + var_name + '''(to_integer(addr_r));
-        -- RAM logic    
-        if we_and_ce_r = '1' then
-          ''' + var_name + '''(to_integer(addr_r)) <= wd_r; 
+    if sp_dp=="SP":
+      rv += '''
+      process(clk) is
+      begin
+        if rising_edge(clk) then
+          if CLOCK_ENABLE(0)='1' then
+            -- Register inputs
+            addr_r <= addr;
+            wd_r <= wd;
+            we_r <= we(0);
+            
+            -- Read first
+            return_output_r <= '''  + var_name + '''(to_integer(addr_r));
+            -- RAM logic    
+            if we_r = '1' then
+              ''' + var_name + '''(to_integer(addr_r)) <= wd_r; 
+            end if;
+          end if;
         end if;
-      end if;
-    end process;
-    -- Tie output reg to output
-    return_output <= return_output_r;
-'''
+      end process;
+      -- Tie output reg to output
+      return_output <= return_output_r;
+      '''
+    else: # DP
+      rv += '''
+        process(clk)
+        begin
+          if rising_edge(clk) then
+            if CLOCK_ENABLE(0)='1' then
+              -- Register inputs
+              addr_w_r <= addr_w;
+              addr_r_r <= addr_r;
+              wd_r <= wd;
+              we_r <= we(0);
+
+              -- Write port
+              if we_r = '1' then
+                '''  + var_name + '''(to_integer(addr_w_r)) <= wd_r;
+              end if;
+
+              -- Read port
+              return_output_r <= '''  + var_name + '''(to_integer(addr_r_r));
+            end if;
+          end if;
+        end process;
+        -- Tie output reg to output
+        return_output <= return_output_r;
+      '''
+      
+      
   else:
-    print("Do other clocks for RAMSPRF fool") # still a fool
+    print("Do other clocks for RAMRF fool") # still a fool
     sys.exit(-1)
   
   return rv

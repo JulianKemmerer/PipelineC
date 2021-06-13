@@ -16,6 +16,7 @@ BIT_MANIP_HEADER_FILE = "bit_manip.h"
 BIT_MATH_HEADER_FILE = "bit_math.h"
 MEM_HEADER_FILE = "mem.h"
 RAM_SP_RF="RAM_SP_RF"
+RAM_DP_RF="RAM_DP_RF"
 
 CLOCK_CROSS_HEADER = "var_clock_cross.h"
 TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
@@ -802,66 +803,6 @@ def FUNC_NAME_INCLUDES_TYPES(logic):
   rv = rv and not IS_MEM(logic)
   
   return rv
-  
-''' TODO SWITCH OVER TO ONCE NOT DOING REG EX SEARCH FOR CODE GEN, LOOK FOR EXACT FUNC NAME MATCHES
-def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT_new(c_text, parser_state):
-  #print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT\n",c_text)
-  
-  c_file_ast = C_TO_LOGIC.GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, "auto_gen_fake_filename.c")
-  func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_file_ast, c_ast.FuncCall)
-  # get list of function names
-  func_names = set()
-  for func_call_node in func_call_nodes:
-    func_name = str(func_call_node.name.name)
-    # This is called recursively, dont want to get into loop generating code thats been generated
-    if func_name not in parser_state.FuncLogicLookupTable:
-      func_names.add(func_name)
-    
-  #print("func_names",func_names, flush=True)
-  
-  # DONT FORGET TO CHANGE IS_AUTO_GENERATED and FUNC_NAME_INCLUDES_TYPES??
-  lookups = []
-  
-  # BIT manipulation is auto generated
-  bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
-  lookups.append(bit_manip_func_name_logic_lookup)
-  
-  #print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
-  
-  ###### THESE DEPEND ON BIT MANIP #TODO: Depedencies what?
-  bit_math_func_name_logic_lookup = GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
-  lookups.append(bit_math_func_name_logic_lookup)
-  
-  #print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
-  
-  # MEMORY
-  mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state)
-  lookups.append(mem_func_name_logic_lookup)
-  
-  # Combine lookups
-  rv = dict()
-  for func_name_logic_lookup in lookups:
-    for func_name in func_name_logic_lookup:
-      if not(func_name in rv):
-        rv[func_name] = func_name_logic_lookup[func_name]
-        #print "func_name (func_name_logic_lookup)",func_name
-        #if len(func_name_logic_lookup[func_name].wire_drives) == 0:
-        # print "BAD!"
-        # sys.exit(-1)
-      else:
-        # For now allow if from bit manip
-        #print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
-        if IS_BIT_MANIP(rv[func_name]):
-          pass
-        else:
-          print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT func_name in multiple dicts?", func_name)
-          print("bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup)
-          print("===")
-          print("bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup)
-          sys.exit(-1)
-  
-  return rv 
-'''
 
 def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, parser_state):
   #print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT\n",c_text)
@@ -882,7 +823,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(c_text, par
   
   # MEMORY
   # # TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
-  mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+  mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP(parser_state)
   lookups.append(mem_func_name_logic_lookup)
   
   
@@ -923,33 +864,16 @@ def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
 # Build more complex multi cycle memory out of these basics - FutureJulian
 # Ex. Start with RAM and per device resources fifo primitives, etc ....memory controllers? Next universe up Julian task
 #   The Flaming Lips - Fight Test
-def GET_MEM_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state): 
-  #TODO dont do string search at all - do 'in' list checks?
-  c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
-  return GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
- 
- 
-'''
- \
- # elem_t <var>_ram_sp_rf(addr_t addr, elem_t wd, uint1_t we);
-    type_regex = "\w+_" + ram_type + "\(" 
-    p = re.compile(type_regex)
-    ram_sp_rf_func_names = p.findall(c_text)
-    ram_sp_rf_func_names = list(set(ram_sp_rf_func_names))
-    for ram_sp_rf_func_name in ram_sp_rf_func_names:
-      ram_sp_rf_func_name = ram_sp_rf_func_name.strip("(").strip()
- '''
+
   
 # TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
-def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
+def GET_MEM_H_LOGIC_LOOKUP(parser_state):
   text = ""
   header_text = '''
 #include "uintN_t.h"
 #include "intN_t.h"
-  ''' 
-  
-  
-  
+  '''
+
   # Use primitive mappings of funcs to func calls
   #parser_state.func_name_to_calls, parser_state.func_names_to_called_from
   # Need to indicate that these MEM functions have state registers globals/statics
@@ -957,8 +881,9 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   func_name_to_state_reg_info = dict()
   func_name_was_global_def = dict()
   # _RAM_SP_RF
-  single_port_ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2"] # TODO 1 in and out
-  for ram_type in single_port_ram_types:
+  # RAM_DP_RF_RF_2  MORE THAN ONE OUTPUT DATA NEEDS DUMB C STRUCT WRAPPER!!
+  ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2", RAM_DP_RF+"_2"] # TODO 1clk in OR out regs
+  for ram_type in ram_types:
     for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
       # Get local static var info for this func
       local_state_reg_info_dict = dict()     
@@ -968,8 +893,8 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
       for called_func_name in called_func_names:
         if called_func_name.endswith(ram_type):
-          ram_sp_rf_func_name = called_func_name
-          var_name = ram_sp_rf_func_name.replace("_"+ram_type,"")
+          ram_func_name = called_func_name
+          var_name = ram_func_name.replace("_"+ram_type,"")
           #print "var_name",var_name
           # Lookup type, should be global/static, and array
           c_type = None
@@ -992,7 +917,7 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           
           
           if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            print("Ram function on non array?",ram_sp_rf_func_name)
+            print("Ram function on non array?",ram_func_name)
             sys.exit(-1)
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
           # Multiple addresses now folks # Starfucker - Girls Just Want To Have
@@ -1000,52 +925,42 @@ def GET_MEM_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
           #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"            
           
           text += '''
-    // ram_sp_rf
+    // ''' + ram_func_name + '''
     '''
           # In case type is actually user type - hacky
           if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
             text += '''typedef uint8_t ''' + elem_t + ";\n"
+          # Declare global var that matches user
           text += elem_t + ''' ''' + var_name
           for dim in dims:
              text += "[" + str(dim) + "]"
           text += ";\n"
           text += elem_t+ " " + func_name + "("
-          for i in range(0,len(dims)):
-            dim = dims[i]
-            addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-            text += addr_t + " addr" + str(i) + ", "
+          if ram_type.startswith(RAM_SP_RF):
+            for i in range(0,len(dims)):
+              dim = dims[i]
+              addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+              text += addr_t + " addr" + str(i) + ", "
+          elif ram_type.startswith(RAM_DP_RF):
+            for port_postfix in ["r","w"]:
+              for i in range(0,len(dims)):
+                dim = dims[i]
+                addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+                text += addr_t + " addr_" + port_postfix + str(i) + ", "
+          else:
+            print("Unknown ram type:", ram_type)
+            sys.exit(-1)
+          # DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL 
           text += elem_t + " wd, uint1_t we)" + '''
     {
-      /* DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
-      // Dont have a construct for simultaneous read and write??
-      // Uhh hows this?
-      // Write is available next cycle?
-      // Do as __vhdl__ literal?
-      
-      // DO read
-      ''' + elem_t + ''' read;
-      read = ''' + var_name + '''[addr];
-      
-      // D write
-      ''' + elem_t + ''' data;
-      // Default write current data
-      data = read;
-      if(we)
-      {
-        // Otherwise write new data
-        data = wd;
-      }
-      // Write
-      ''' + var_name + '''[addr] = data;
-      
-      
-      return read;
+      /* 
+      // Need C code and VHDL equivalents, do VHDL as __vhdl__ literal?
       */
     }
     '''
 
-  #print "MEM_HEADER_FILE"
-  #print text   
+  #print("MEM_HEADER_FILE")
+  #print(text)   
   #sys.exit(-1)
       
   if text != "":
@@ -1094,6 +1009,8 @@ def GET_MEM_NAME(logic):
     return RAM_SP_RF+"_0"
   elif logic.func_name.endswith("_" + RAM_SP_RF+"_2"):
     return RAM_SP_RF+"_2"
+  elif logic.func_name.endswith("_" + RAM_DP_RF+"_2"):
+    return RAM_DP_RF+"_2"
   else:
     print("GET_MEM_NAME for func", logic.func_name, "?")
     sys.exit(-1)
