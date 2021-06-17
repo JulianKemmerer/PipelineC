@@ -146,5 +146,5 @@ SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
 
 # Set True to start simulation on final VHDL
-MODELSIM.DO_OPTIONAL_DEBUG(True)
+MODELSIM.DO_OPTIONAL_DEBUG(False)
 
