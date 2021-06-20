@@ -62,6 +62,10 @@ BIN_OP_MULT_NAME = "MULT"
 BIN_OP_INFERRED_MULT_NAME = "INFERRED_MULT"
 BIN_OP_DIV_NAME = "DIV"
 
+# Hacky internal names hash large strings into short hex codes, dont need them to be too large
+C_AST_NODE_HASH_LEN = 4
+TEMP_HACKY_C_AST_NODE_ID = False
+
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
 def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
   """ Preprocess a file using cpp.
@@ -1400,7 +1404,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
     submodule_logic.is_vhdl_func = True
   
   # Also do submodule instances for built in logic that is not raw VHDL
-  if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name,input_types): 
+  if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name,input_types, c_type): 
     # IS RAW VHDL
     pass
   # NOT RAW VHDL (assumed to be built from C code then)
@@ -1431,7 +1435,8 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
       c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)  
     elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)  
-    elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
+    elif (partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME) 
+         or partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_INFERRED_MULT_NAME)):
       c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
     elif partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
       c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state)
@@ -4016,8 +4021,15 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
 def C_AST_NODES_EQUAL(node0,node1):
   # EW WTF SLOW? C_AST_NODE_COORD_STR(node0) == C_AST_NODE_COORD_STR(node1)
   #return node0==node1
-  return node0.coord==node1.coord
+  #return node0.coord==node1.coord
+  # Uhhhh cant rely on parser coords?
+  # https://github.com/eliben/pycparser/issues/411?
+  #return node0==node1
+  #return id(node0)==id(node1) #no?
+  return (node0.coord==node1.coord) and (str(node0)==str(node1)) # WTF?
 
+# C AST nodes from different parsing runs, i.e. different object, same looking C code will produce different coordinate strings
+# This is wtf hacky since C_AST_NODES_EQUAL problems too
 _C_AST_NODE_COORD_STR_cache = dict()
 def C_AST_NODE_COORD_STR(c_ast_node):
   
@@ -4033,7 +4045,10 @@ def C_AST_NODE_COORD_STR(c_ast_node):
   
   # pycparser doesnt actually do column numbers right
   # But string representation of node is correct and can be hashed
-  hash_ext = "_" + (hashlib.md5(str(c_ast_node).encode("utf-8")).hexdigest())[0:4] #4 chars enough?
+  str_to_hash = str(c_ast_node) # Doesnt actually identify nodes, nor does coord, see C_AST_NODES_EQUAL
+  if TEMP_HACKY_C_AST_NODE_ID:
+    str_to_hash = str(id(c_ast_node))
+  hash_ext = "_" + (hashlib.md5(str_to_hash.encode("utf-8")).hexdigest())[0:C_AST_NODE_HASH_LEN] #4 chars enough?
   
   file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)+hash_ext
   # Get leaf name (just stem file name of file hierarcy)
@@ -4042,6 +4057,10 @@ def C_AST_NODE_COORD_STR(c_ast_node):
   #file_coord_str = file_coord_str.replace(":","_")
   # Lose readability for sake of having DOTs mean struct ref in wire names
   file_coord_str = file_coord_str.replace(".","_")
+  
+  #if file_coord_str in _C_AST_NODE_COORD_STR_cache.values():
+  #casthelp(c_ast_node) NO PARENT NDOES
+  #print(id(c_ast_node), file_coord_str)
   
   # Save cache
   _C_AST_NODE_COORD_STR_cache[c_ast_node] = file_coord_str
@@ -5315,8 +5334,12 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
       f.c_type = "uint32_t"
       f.base = 16
       f.vhdl_to_string_toks = ["to_hstring(",")"]
+    elif format_specifier == "%f":
+      f.c_type = "float"
+      f.base = None
+      f.vhdl_to_string_toks = ["real'image(to_real(to_float(",")))"]
     else:
-      print("TODO: Unsupported printf format:", format_specifier, c_ast_func_call.coord)
+      print("TODO: Unsupported printf format:", format_specifier)
       sys.exit(-1)
       
     rv.append(f)

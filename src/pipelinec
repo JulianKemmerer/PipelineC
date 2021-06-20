@@ -21,19 +21,23 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Make reset module for Arty
+Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Pmod I2S2: Stereo Audio Input and Output, little guitar pedal? then maybe something with visual output - VGA?
 Do better LUT syntax - ROMs/BROMs too
 Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Do const func args as generics - ex. const loop vars into func - how to progate const values
+CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
+Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Conditional return via output reg +mux + valid signal
 ^ Then use valid signal from return to drive fsm transitions? 
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
-Fix shifts in FP operators to check for shfiting more than number of bits
+FP checks/fixes:
+  Zero special case?
+  Fix shifts in FP operators to check for shfiting more than number of bits
 Do write up on one or two optimizations to DKs riscv
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
@@ -87,7 +91,6 @@ Consider doing constant optimization as second pass (faster than current way of 
 Pragmas for reset stuff, tag global regs for reset, special clock domain handling stuff with PLL lock and such?
 Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew
 Allow resource reuse if can 2x,3x,etc clock a pipeline to accomplish the same 1x,II=1 pipeline task (II<1 means down clocking by 2,3, etc?)
-CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
 Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?
 Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])
 Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <func_name>_t {x,y,z}

@@ -1313,20 +1313,20 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 ''' + result_t + " " + func_name+"("+ in_t + ''' x)
 {
   // First do all the compares in parallel
-  // All zeros yields 0 after shift so - fuck it only check 0-width-1
-  // Also shift of 0 will be assumed if not of the other ORs are set'''
+  '''
       for leading_zeros in range(1, in_width):
         text += '''
   uint1_t leading''' + str(leading_zeros) + ''';
   leading''' + str(leading_zeros) + ''' = ''' + in_prefix + '''_''' + str(in_width-1) + '''_'''+ str(in_width-1-leading_zeros) + '''(x) == 1;
-  
+  // All zeros has has many zeros as width
+  uint1_t leading''' + str(in_width) + ''' = (x==0);
   
   // Mux each one hot into a constant
   // This cant be optimal but better than before for sure
-  // Cant i jsut be happy for a little?'''
+  // Cant I just be happy for a little? maybe later?'''
       # SKIP SUM0 SINCE IS BY DEF 0
       var_2_type = dict()
-      for leading_zeros in range(1, in_width):
+      for leading_zeros in range(1, in_width+1):
         sum_width = int(math.ceil(math.log(leading_zeros+1,2)))
         sum_prefix = "uint" + str(sum_width)
         sum_t = sum_prefix + "_t"
@@ -1344,13 +1344,14 @@ typedef uint8_t ''' + result_t + '''; // FUCK
   }
   '''
   
+      # This binary tree thing is weird?
       # Now do binary tree ORing all these single only one will be set
       # Fuck jsut copy from binary tree for mult
       text += '''
   // Binary tree OR of "sums", can sine only one will be set
 '''
       layer_nodes = []
-      for p in range(1,in_width):
+      for p in range(1,in_width+1):
         layer_nodes.append("sum" + str(p))
         
       layer=0
@@ -2211,16 +2212,26 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
   # Use that to calculate bit width needed
   text += '''
   // Exponent depends on shift
-  ''' + exponent_t + ''' exponent;
-  exponent = ''' + str(input_width) + ''' - shift;
-  // Add bias
-  biased_exponent = exponent + ''' + str(exponent_bias_to_add) + ''';'''
+  // All zeros = leading zeros = width, shift=width+1
+  if(shift == ''' + str(input_width+1) +''')
+  {
+    biased_exponent = 0;
+  }
+  else
+  {
+    // Normal non zero case
+    ''' + exponent_t + ''' exponent;
+    exponent = ''' + str(input_width) + ''' - shift;
+    // Add bias
+    biased_exponent = exponent + ''' + str(exponent_bias_to_add) + ''';
+  }'''
   
   # Construct float to return
   text += '''
   return float_''' + sign_t_prefix + "_" + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
 }'''
 
+  #print(text)
   return text
   
   
@@ -3855,6 +3866,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
   exponent_bias_to_sub = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
   sign_index = 31
@@ -3908,59 +3920,75 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   ''' + sign_t + ''' y_sign;
   y_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
   
-  // Delcare intermediates
-  ''' + aux_t + ''' aux;
-  ''' + aux2_in_t + ''' aux2_x;
-  ''' + aux2_in_t + ''' aux2_y;
-  ''' + aux2_t + ''' aux2;
-  ''' + exponent_bias_t + ''' BIAS;
-  BIAS = ''' + str(exponent_bias_to_sub) + ''';
-  ''' + exponent_sum_t + ''' exponent_sum;
-  
   // Declare the output portions
   ''' + mantissa_t + ''' z_mantissa;
   ''' + exponent_t + ''' z_exponent;
   ''' + sign_t + ''' z_sign;
   
-  // HACKY NOT CHECKING
-  // if (x_exponent=255 or y_exponent=255) then
-  // elsif (x_exponent=0 or y_exponent=0) then 
-  aux2_x = uint1_''' + mantissa_t_prefix + '''(1, x_mantissa);
-  aux2_y = uint1_''' + mantissa_t_prefix + '''(1, y_mantissa);
-  aux2 =  aux2_x * aux2_y;
-  // args in Q23 result in Q46
-  aux = ''' + aux2_t_prefix + '''_''' + str(aux2_width-1) + '''_''' + str(aux2_width-1) + '''(aux2);
-  if(aux) //if(aux == 1)
-  { 
-    // >=2, shift left and add one to exponent
-    // HACKY NO ROUNDING + aux2(23); // with round18
-    z_mantissa = ''' + aux2_t_prefix + '''_''' + str(aux2_width-2) + '''_''' + str(aux2_width - mantissa_width -1) + '''(aux2); 
-  }
-  else
-  { 
-    // HACKY NO ROUNDING + aux2(22); // with rounding
-    z_mantissa = ''' + aux2_t_prefix + '''_''' + str(aux2_width-3) + '''_''' + str(aux2_width - mantissa_width -2) + '''(aux2); 
-  }
-  
-  // calculate exponent in parts 
-  // do sequential unsigned adds and subs to avoid signed numbers for now
-  // X and Y exponent are already 1 bit wider than needed
-  // (0 & x_exponent) + (0 & y_exponent);
-  exponent_sum = x_exponent_wide + y_exponent_wide;
-  exponent_sum = exponent_sum + aux;
-  exponent_sum = exponent_sum - BIAS;
-  
-  // HACKY NOT CHECKING
-  // if (exponent_sum(8)='1') then
-  z_exponent = ''' + exponent_sum_t_prefix + '''_''' + str(exponent_width-1) + '''_0(exponent_sum);
+  // Sign
   z_sign = x_sign ^ y_sign;
+  
+  // Multiplication with infinity = inf
+  if((x_exponent_wide==''' + str(exponent_max) + ''') | (y_exponent_wide==''' + str(exponent_max) + '''))
+  {
+    z_exponent = ''' + str(exponent_max) + ''';
+    z_mantissa = 0;
+  }
+  // Multiplication with zero = zero
+  else if((x_exponent_wide==0) | (y_exponent_wide==0))
+  {
+    z_exponent = 0;
+    z_mantissa = 0;
+    z_sign = 0;
+  }
+  // Normal non zero|inf mult
+  else
+  {
+    // Delcare intermediates
+    ''' + aux_t + ''' aux;
+    ''' + aux2_in_t + ''' aux2_x;
+    ''' + aux2_in_t + ''' aux2_y;
+    ''' + aux2_t + ''' aux2;
+    ''' + exponent_bias_t + ''' BIAS;
+    BIAS = ''' + str(exponent_bias_to_sub) + ''';
+    
+    aux2_x = uint1_''' + mantissa_t_prefix + '''(1, x_mantissa);
+    aux2_y = uint1_''' + mantissa_t_prefix + '''(1, y_mantissa);
+    aux2 =  aux2_x * aux2_y;
+    // args in Q23 result in Q46
+    aux = ''' + aux2_t_prefix + '''_''' + str(aux2_width-1) + '''_''' + str(aux2_width-1) + '''(aux2);
+    if(aux) //if(aux == 1)
+    { 
+      // >=2, shift left and add one to exponent
+      // HACKY NO ROUNDING + aux2(23); // with round18
+      z_mantissa = ''' + aux2_t_prefix + '''_''' + str(aux2_width-2) + '''_''' + str(aux2_width - mantissa_width -1) + '''(aux2); 
+    }
+    else
+    { 
+      // HACKY NO ROUNDING + aux2(22); // with rounding
+      z_mantissa = ''' + aux2_t_prefix + '''_''' + str(aux2_width-3) + '''_''' + str(aux2_width - mantissa_width -2) + '''(aux2); 
+    }
+    
+    // calculate exponent in parts 
+    // do sequential unsigned adds and subs to avoid signed numbers for now
+    // X and Y exponent are already 1 bit wider than needed
+    // (0 & x_exponent) + (0 & y_exponent);
+    ''' + exponent_sum_t + ''' exponent_sum = x_exponent_wide + y_exponent_wide;
+    exponent_sum = exponent_sum + aux;
+    exponent_sum = exponent_sum - BIAS;
+    
+    // HACKY NOT CHECKING
+    // if (exponent_sum(8)='1') then
+    z_exponent = ''' + exponent_sum_t_prefix + '''_''' + str(exponent_width-1) + '''_0(exponent_sum);
+  }
+  
   
   // Assemble output
   return float_uint''' + str(sign_width) + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
 }'''
 
   #print "C CODE"
-  #print text
+  #print(text)
 
   return text
   
