@@ -6079,14 +6079,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
         # MULT
         elif c_ast_bin_op_str == "*":
           # Similar to + but bit growth is more
-          # Ex. int32 * uint32 , result need to hold int3 and int33, thus int34 it is
-          output_unsigned_width = left_unsigned_width + right_unsigned_width
-          output_width = output_unsigned_width
-          if signed:
-            output_width = output_unsigned_width + 1
+          output_width = left_width + right_width
           output_c_type = "int"+str(output_width) + "_t"
           if not signed:
-            output_c_type = "u" + output_c_type     
+            output_c_type = "u" + output_c_type   
         # DIV
         elif c_ast_bin_op_str == "/":
           # Signed or not, output width does not increase
