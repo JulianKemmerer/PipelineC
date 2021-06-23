@@ -2380,6 +2380,7 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
   text = ""
 
   text += '''
+#include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
 '''
@@ -2633,8 +2634,8 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
 }'''
 
 
-  #print "GET_VAR_REF_RD_C_CODE text"
-  #print text
+  #print("GET_VAR_REF_RD_C_CODE text")
+  #print(text)
   #sys.exit(-1)
   
   return text
@@ -2662,6 +2663,7 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
   text = ""
   
   text += '''
+#include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
 '''
