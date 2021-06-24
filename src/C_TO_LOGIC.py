@@ -3790,8 +3790,12 @@ def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
 
   return ami_digit
   
-def BUILD_CONST_WIRE(value_str, c_ast_node):
-  return CONST_PREFIX + value_str + "_" + C_AST_NODE_COORD_STR(c_ast_node)
+def BUILD_CONST_WIRE(value_str, c_ast_node, is_negated=False):
+  rv = CONST_PREFIX 
+  if is_negated:
+    rv += "-"
+  rv += value_str + "_" + C_AST_NODE_COORD_STR(c_ast_node)
+  return rv
 
 # Const jsut makes wire with CONST name
 # C ast constants are not enum id constants
@@ -3888,7 +3892,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
   return value,c_type_str
 
 def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
-  wire_name = BUILD_CONST_WIRE(value_str, c_ast_node)
+  wire_name = BUILD_CONST_WIRE(value_str, c_ast_node, is_negated)
   value,c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
   if not(c_type_str is None):
     parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
