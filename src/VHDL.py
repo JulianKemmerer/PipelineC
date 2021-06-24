@@ -156,9 +156,7 @@ port(
   for clk_name in sorted(list(all_clks)):
     text += clk_name + " : in std_logic;\n"
 
-  text += '''
-  -- IO for each main func
-'''
+  main_func_io_text = ""
   # IO
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.LogicInstLookupTable[main_func]
@@ -166,12 +164,17 @@ port(
     for input_port in main_func_logic.inputs:
       c_type = main_func_logic.wire_to_c_type[input_port]
       vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
-      text += main_func + "_" + input_port + " : in " + vhdl_type + ";\n"
+      main_func_io_text += main_func + "_" + input_port + " : in " + vhdl_type + ";\n"
     # Outputs
     for output_port in main_func_logic.outputs:
       c_type = main_func_logic.wire_to_c_type[output_port]
       vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
-      text += main_func + "_" + output_port + " : out " + vhdl_type + ";\n"
+      main_func_io_text += main_func + "_" + output_port + " : out " + vhdl_type + ";\n"
+  
+  if main_func_io_text != "":
+    text += '''
+  -- IO for each main func
+''' + main_func_io_text
   
   # Remove last two chars
   text = text[0:len(text)-2]
