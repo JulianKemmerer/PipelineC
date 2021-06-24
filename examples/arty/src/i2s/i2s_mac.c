@@ -2,6 +2,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "arrays.h"
+#include "lib/fixed/q0_23.h"
 
 // Logic to send and receive I2S samples via a streaming interface
 
@@ -28,7 +29,7 @@ https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual
 #define LEFT 0
 #define RIGHT 1
 #define SAMPLE_BITWIDTH 24
-#define sample_t int24_t
+#define sample_t q0_23_t
 #define bits_to_sample uint1_array24_le
 
 // I2S stereo sample types
@@ -37,7 +38,7 @@ typedef struct i2s_samples_t
   sample_t l_data;
   sample_t r_data;
 }i2s_samples_t;
-// _s 'stream' of the above data
+// _s 'stream' of the above data w/ valid flag
 typedef struct i2s_samples_s
 {
   i2s_samples_t samples;
@@ -114,7 +115,8 @@ i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samp
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
       {
         // Form the current full sample
-        sample_t curr_sample = bits_to_sample(curr_sample_bits);
+        sample_t curr_sample;
+        curr_sample.qmn = bits_to_sample(curr_sample_bits);
         curr_sample_bit_count = 0; // Reset count
         // Overflow if there is sample still in the output buffer 
         rv.overflow = output_reg.valid;        
@@ -209,7 +211,7 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
           // Next SCLK falling edge starts sample bits
           state = SAMPLE;
           // Make sure output reg has left data
-          UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.l_data)
+          UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.l_data.qmn)
           // Data is MSB first, output bit from top of array
           output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
         }
@@ -226,7 +228,7 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
         // Next SCLK falling edge starts sample bits
         state = SAMPLE;
         // Make sure output reg has right data
-        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.r_data)
+        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.r_data.qmn)
         // Data is MSB first, output bit from top of array
         output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
       }
