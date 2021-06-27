@@ -388,3 +388,67 @@ i2s_mac_t i2s_mac(uint1_t reset_n, uint1_t rx_samples_ready, i2s_samples_s tx_sa
   
   return rv;
 }
+
+// Instantiate the I2S MAC with globally visible + separate RX and TX wires
+
+// RX
+typedef struct i2s_mac_rx_to_app_t
+{
+  i2s_samples_s samples;
+  uint1_t overflow; 
+}i2s_mac_rx_to_app_t;
+typedef struct app_to_i2s_mac_rx_t
+{
+  uint1_t samples_ready;
+  uint1_t reset_n;
+}app_to_i2s_mac_rx_t;
+i2s_mac_rx_to_app_t i2s_mac_rx_to_app;
+app_to_i2s_mac_rx_t app_to_i2s_mac_rx;
+// TX
+typedef struct i2s_mac_tx_to_app_t
+{
+  uint1_t samples_ready;
+}i2s_mac_tx_to_app_t;
+typedef struct app_to_i2s_mac_tx_t
+{
+  i2s_samples_s samples;
+  uint1_t reset_n;
+}app_to_i2s_mac_tx_t;
+// Globally visible ports/wires
+i2s_mac_tx_to_app_t i2s_mac_tx_to_app;
+app_to_i2s_mac_tx_t app_to_i2s_mac_tx;
+// These should be in a macro/autogen somehow TODO \/
+#include "i2s_mac_rx_to_app_t_array_N_t.h"
+#include "i2s_mac_rx_to_app_clock_crossing.h"
+#include "app_to_i2s_mac_rx_t_array_N_t.h"
+#include "app_to_i2s_mac_rx_clock_crossing.h"
+#include "i2s_mac_tx_to_app_t_array_N_t.h"
+#include "i2s_mac_tx_to_app_clock_crossing.h"
+#include "app_to_i2s_mac_tx_t_array_N_t.h"
+#include "app_to_i2s_mac_tx_clock_crossing.h"
+
+// Main func to instantiate i2s_mac connected to global wire ports 
+MAIN_MHZ(i2s_mac_ports, I2S_MCLK_MHZ)
+void i2s_mac_ports()
+{
+  // Signals
+  i2s_mac_rx_to_app_t rx_to_app;
+  app_to_i2s_mac_rx_t app_to_rx;
+  i2s_mac_tx_to_app_t tx_to_app;
+  app_to_i2s_mac_tx_t app_to_tx;
+  
+  // Read global signals from app
+  WIRE_READ(app_to_i2s_mac_rx_t, app_to_rx, app_to_i2s_mac_rx)
+  WIRE_READ(app_to_i2s_mac_tx_t, app_to_tx, app_to_i2s_mac_tx)
+  
+  // Send and receive sample streams using I2S MAC
+  uint1_t reset_n = app_to_tx.reset_n & app_to_rx.reset_n; // Can split reset later
+  i2s_mac_t mac = i2s_mac(reset_n, app_to_rx.samples_ready, app_to_tx.samples);  
+    
+  // Write global signals to app
+  rx_to_app.samples = mac.rx.samples;
+  rx_to_app.overflow = mac.rx.overflow;
+  tx_to_app.samples_ready = mac.tx.samples_ready;
+  WIRE_WRITE(i2s_mac_rx_to_app_t, i2s_mac_rx_to_app, rx_to_app)
+  WIRE_WRITE(i2s_mac_tx_to_app_t, i2s_mac_tx_to_app, tx_to_app)
+}
