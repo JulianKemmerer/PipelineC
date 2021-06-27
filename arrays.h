@@ -43,6 +43,7 @@ for(ARRAY_SHIFT_INTO_BOTTOM_i=0;ARRAY_SHIFT_INTO_BOTTOM_i<IN_SIZE;ARRAY_SHIFT_IN
   dst_array[ARRAY_SHIFT_INTO_BOTTOM_i] = src_array[ARRAY_SHIFT_INTO_BOTTOM_i]; \
 }
 
+// TODO rename - not always bits dummy
 #define ARRAY_SHIFT_BIT_INTO_BOTTOM(array,SIZE,in_bit)\
 ARRAY_SHIFT_UP(array,SIZE,1)\
 array[0] = in_bit;

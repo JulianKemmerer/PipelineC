@@ -514,7 +514,7 @@ top_inst : entity work.top port map (
     led3_module_return_output(0) => leds_wire(3),
     
     -- Switches
-    --switches_module_sw => switches_wire
+    switches_module_sw => switches_wire,
     
     -- UART
     --uart_module_data_in => uart_data_in,

@@ -1,3 +1,4 @@
+#pragma once
 #include "wire.h"
 #include "intN_t.h"
 #include "uintN_t.h"
