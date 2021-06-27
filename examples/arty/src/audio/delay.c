@@ -31,8 +31,8 @@ i2s_samples_s delay(uint1_t reset_n, i2s_samples_s in_samples)
   }
   if(fifo_rd & fifo.data_out_valid)
   {
-    out_samples.samples.l_data = q0_23_add(rv.out_samples.samples.l_data, fifo.data_out.l_data);
-    out_samples.samples.r_data = q0_23_add(rv.out_samples.samples.r_data, fifo.data_out.r_data);
+    out_samples.samples.l_data = q0_23_add(out_samples.samples.l_data, fifo.data_out.l_data);
+    out_samples.samples.r_data = q0_23_add(out_samples.samples.r_data, fifo.data_out.r_data);
   }
   
   if(!reset_n)
