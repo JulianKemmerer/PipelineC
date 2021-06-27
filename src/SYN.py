@@ -1461,7 +1461,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
       if delay > 0.0 and func_logic.CAN_BE_SLICED():
         sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
         # Dont bother making from the top level if need more than 50 slices? # MAGIC?
-        hier_sweep_mult = max(HIER_SWEEP_MULT_MIN, (target_path_delay_ns/func_path_delay_ns) + HIER_SWEEP_MULT_INC) # HIER_SWEEP_MULT_INC since fp rounding stuff?
+        hier_sweep_mult = max(HIER_SWEEP_MULT_MIN, (target_path_delay_ns/func_path_delay_ns) - HIER_SWEEP_MULT_INC) # HIER_SWEEP_MULT_INC since fp rounding stuff?
         sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
         #print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
         
