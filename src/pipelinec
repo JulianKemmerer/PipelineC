@@ -24,7 +24,6 @@ TODO:
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Pmod I2S2: Stereo Audio Input and Output, little guitar pedal? then maybe something with visual output - VGA?
 Do better LUT syntax - ROMs/BROMs too
-Copy libfixmath Q16.16 fixed point look for arbitrary widths?
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Do const func args as generics - ex. const loop vars into func - how to progate const values
@@ -36,8 +35,9 @@ Conditional return via output reg +mux + valid signal
 ^ Then use valid signal from return to drive fsm transitions? 
 Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
 FP checks/fixes:
-  Zero special case?
+  Zero special case (only needed for mult?)
   Fix shifts in FP operators to check for shfiting more than number of bits
+Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
 Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
@@ -117,6 +117,7 @@ No good? reason to combine variable latency array of regs for pipelining and sta
 Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
+Do built in Q number types
 '''
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

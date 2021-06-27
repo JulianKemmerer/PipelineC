@@ -20,10 +20,10 @@
 i2s_samples_s effects_chain(uint1_t reset_n, i2s_samples_s in_samples)
 {
   // Delay effect
-  //i2s_samples_s samples_w_delay = delay(reset_n, in_samples);
+  i2s_samples_s samples_w_delay = delay(reset_n, in_samples);
   
   // Distortion effect
-  i2s_samples_s samples_w_distortion = distortion(in_samples);
+  i2s_samples_s samples_w_distortion = distortion(samples_w_delay); //in_samples);
   
   /*
   static i2s_samples_s test_buff[1024];
