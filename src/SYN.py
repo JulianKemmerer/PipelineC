@@ -429,7 +429,7 @@ class PipelineMap:
 # 
 def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):  
   # RAW HDL doesnt need this
-  if len(logic.submodule_instances) <= 0 and logic.func_name not in parser_state.main_mhz:
+  if len(logic.submodule_instances) <= 0 and logic.is_c_built_in: #logic.func_name not in parser_state.main_mhz:
     print("DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!")
     print(0/0)
     sys.exit(-1)
@@ -1736,7 +1736,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       #@#NEED TO REDO search for modules at this hierarchy/delay level starting from top and moving down
       #@Starting from small can run into breaking optimizations that occur at higher levels
       print("Collecting modules to pipeline...", flush=True)
-      lowest_level_insts_to_pipeline = set(list(parser_state.main_mhz.keys()))
+      lowest_level_insts_to_pipeline = set()
+      for main_inst in parser_state.main_mhz:
+        main_func_logic = parser_state.LogicInstLookupTable[main_inst]
+        if main_func_logic.CAN_BE_SLICED():
+          lowest_level_insts_to_pipeline.add(main_inst)
       # Do this not recursive down the multi main hier tree walk
       # Looking for lowest level submodule large enough to pipeline lowest_level_insts_to_pipeline is lowest_level_insts_to_pipeline       
       collecting_modules_to_pipeline = True
@@ -1772,7 +1776,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 sub_func_path_delay_ns = float(sub_logic.delay) / DELAY_UNIT_MULT
                 if (sweep_state.inst_sweep_state[main_func].hier_sweep_mult*sub_func_path_delay_ns) > target_path_delay_ns:
                   # Submodule DOES need pipelining
-                  lowest_level_insts_to_pipeline.add(sub_inst_name)
+                  if sub_logic.CAN_BE_SLICED():
+                    lowest_level_insts_to_pipeline.add(sub_inst_name)
                   # This current inst is not lowest level sub needing pipelining
                   lowest_level_insts_to_pipeline.discard(func_inst)
                   collecting_modules_to_pipeline = True
