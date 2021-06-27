@@ -10,7 +10,7 @@ OUTPUT_N = 23
 # The function to make a LUT for
 func_name="distortion_mono"
 def f(x):
-  gain = 10.0
+  gain = 15.0
   sign =  1.0
   if x < 0.0:
     sign = -1.0

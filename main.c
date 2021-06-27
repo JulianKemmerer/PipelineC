@@ -35,6 +35,7 @@
 //#include "examples/aes/aes.c"
 //#include "examples/fir.c"
 //#include "examples/arty/src/i2s/i2s_passthrough_app.c"
+//#include "examples/arty/src/audio/distortion.c"
 #include "examples/arty/src/i2s/i2s_app.c"
 
 // Below is a bunch of recent scratch work - enjoy

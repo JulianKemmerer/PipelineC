@@ -63,20 +63,37 @@ void app(uint1_t reset_n)
   // Send RX data through effects chain
   // (as used w/ static state regs in this func, this wont be pipelined)
   i2s_samples_s samples_w_effects = effects_chain(reset_n, mac.rx.samples);
+  
+  // Cut effects volume in half switches
+  uint4_t sw;
+  WIRE_READ(uint4_t, sw, switches)
+  if(uint4_1_1(sw))
+  {
+    samples_w_effects.samples.l_data.qmn = samples_w_effects.samples.l_data.qmn >> 1;
+    samples_w_effects.samples.r_data.qmn = samples_w_effects.samples.r_data.qmn >> 1;
+  }
+  if(uint4_2_2(sw))
+  {
+    samples_w_effects.samples.l_data.qmn = samples_w_effects.samples.l_data.qmn >> 1;
+    samples_w_effects.samples.r_data.qmn = samples_w_effects.samples.r_data.qmn >> 1;
+  }
+  if(uint4_3_3(sw))
+  {
+    samples_w_effects.samples.l_data.qmn = samples_w_effects.samples.l_data.qmn >> 1;
+    samples_w_effects.samples.r_data.qmn = samples_w_effects.samples.r_data.qmn >> 1;
+  }
     
   // Save samples w/without effects for next iter transmit
   // Use switch0 to control, 1=effects on
-  uint4_t sw;
-  WIRE_READ(uint4_t, sw, switches)
   if(uint4_0_0(sw))
   {
-    tx_samples = samples_w_effects;  
+    tx_samples = samples_w_effects;
   }
   else
   {
     tx_samples = mac.rx.samples;
   }
-  
+
   // Reset registers
   if(!reset_n)
   {
