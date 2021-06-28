@@ -64,7 +64,7 @@ BIN_OP_DIV_NAME = "DIV"
 
 # Hacky internal names hash large strings into short hex codes, dont need them to be too large
 C_AST_NODE_HASH_LEN = 4
-TEMP_HACKY_C_AST_NODE_ID = False
+TEMP_HACKY_C_AST_NODE_ID = True
 
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
 def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
@@ -7104,7 +7104,7 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
   print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-  print("Writing clock cross defintions as parsed from C code...", flush=True)
+  print("Writing clock cross definitions as parsed from C code...", flush=True)
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)

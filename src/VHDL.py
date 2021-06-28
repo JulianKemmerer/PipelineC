@@ -810,7 +810,7 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsL
   timing_params = TimingParamsLookupTable[inst_name]
   package_file_text = ""
   # Raw hdl logic is static in the stages code here but coded as generic
-  if len(logic.submodule_instances) <= 0 and logic.func_name not in parser_state.main_mhz:
+  if len(logic.submodule_instances) <= 0 and logic.is_c_built_in:# not in parser_state.main_mhz:
     package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timing_params)
   else:
     package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable)
@@ -1967,7 +1967,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
   varables_t_pre += " -- All of the wires in function\n"
   wrote_variables_t = False
   # Raw HDL functions are done differently
-  if len(Logic.submodule_instances) <= 0 and Logic.func_name not in parser_state.main_mhz:
+  if len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in: # func_name not in parser_state.main_mhz:
     text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, Logic, parser_state, timing_params)
     if text != "":
       rv += varables_t_pre
