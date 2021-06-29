@@ -128,7 +128,7 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
     print("Something went wrong preprocessing:")
     print("File:",filename)
     raise e
-
+  #print(text)
   return text
     
 
@@ -4787,19 +4787,30 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX) and not base_name_is_name:
       lhs_wire = const_input_wires[0]
       rhs_wire = const_input_wires[1]
+      
+      # Constant enums future me?
       # Get values from constants
       lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state.existing_logic, parser_state)
       rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+      lhs_negated = lhs_val_str.startswith('-')
+      rhs_negated = rhs_val_str.startswith('-')
+      lhs_val_str_no_neg = lhs_val_str.strip('-')
+      rhs_val_str_no_neg = rhs_val_str.strip('-')
+      lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(lhs_val_str_no_neg, func_c_ast_node, lhs_negated)
+      rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(rhs_val_str_no_neg, func_c_ast_node, rhs_negated)
+      
       # First check for integer arguments
-      is_ints = True
+      is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
+      '''
       try:
         lhs_val = int(lhs_val_str)
         rhs_val = int(rhs_val_str)
       except:
         is_ints = False
-      
+      '''
       # Then allow for floats
-      is_floats = False
+      is_floats = lhs_c_type=="float" and rhs_c_type=="float"
+      '''
       if not is_ints:
         is_floats = True
         try:
@@ -4807,6 +4818,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           rhs_val = float(rhs_val_str)
         except:
           is_floats = False
+      '''
       
       # Number who?
       if not is_ints and not is_floats:

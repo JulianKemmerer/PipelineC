@@ -1,4 +1,6 @@
 #pragma once
+#include "compiler.h"
+
 // Functions for global 'wires'
 // These are really clock crossing macros, 
 // but a clock crossing between the same clock domain is just a wire
@@ -44,3 +46,45 @@ clk_cross_name##_clk_cross_write_array.data[0] = rhs; \
 clk_cross_name##_WRITE(clk_cross_name##_clk_cross_write_array);
 
 
+// Use global wires to connect up a new main func instance
+
+#define GLOBAL_WIRES_FUNC_DECL(inst_name, out_type, func_name, in_type)\
+/* Global wires connected to instance */ \
+in_type inst_name##_in; \
+out_type inst_name##_out;
+
+// TODO DO NOT REQUIRE TWO MACROS with hack clock crossing gen headers included
+
+#define GLOBAL_WIRES_FUNC_IMPL(inst_name, out_type, func_name, in_type) \
+MAIN(inst_name) \
+void inst_name() \
+{ \
+  /* Read inputs*/ \
+  in_type input; \
+  WIRE_READ(in_type, input, inst_name##_in) \
+  /* Pipelined my_func instance*/ \
+  out_type output = func_name(input); \
+  /* Write outputs*/ \
+  WIRE_WRITE(out_type, inst_name##_out, output) \
+} \
+/* Wrapper helper funcs around corresponding user READ AND WRITE*/ \
+void inst_name##_WRITE(in_type input) \
+{ \
+  WIRE_WRITE(in_type, inst_name##_in, input) \
+} \
+out_type inst_name##_READ() \
+{ \
+  out_type output; \
+  WIRE_READ(out_type, output, inst_name##_out) \
+  return output; \
+} \
+/* TODO READ_N , WRITE_N for wider clock ratios*/
+
+
+/*TODO
+#define GLOBAL_WIRES_FUNC(inst_name, out_type, func_name, in_type) \
+GLOBAL_WIRES_FUNC_DECL(inst_name, out_type, func_name, in_type) \
+#pragma CLOCK_CROSSING inst_name##in
+#pragma CLOCK_CROSSING inst_name##out
+GLOBAL_WIRES_FUNC_IMPL(inst_name, out_type, func_name, in_type) \
+*/

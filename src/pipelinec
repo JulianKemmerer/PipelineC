@@ -21,16 +21,17 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
+Do DVI over HDMI video demo driven from NoC element (instead of VGA)
+  Antikernel fun?
+  Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Check auto pipeline and clock crossing read+write behavior
   Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
-Pmod I2S2: Stereo Audio Input and Output, little guitar pedal? then maybe something with visual output - VGA?
+Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Do better LUT syntax - ROMs/BROMs too
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
-Antikernel fun? Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Do const func args as generics - ex. const loop vars into func - how to progate const values
-CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
+CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - can sometimes if have recent constant assignments/ref toks
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
@@ -62,8 +63,10 @@ Fix bug of not being able to include auto gen headers in auto gend files
 Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 Document pragmas
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
+MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
+volatile static FEEDBACK makes sense just like regular vol static - just removes reg
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
