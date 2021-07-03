@@ -7055,9 +7055,24 @@ def PARSE_FILE(c_filename):
         if func_name2 == func_name1:
           continue
         func2_logic = parser_state.FuncLogicLookupTable[func_name2]
+        
+        # For each state reg
         for func1_state_reg in func1_logic.state_regs:
-          if func1_state_reg in func2_logic.state_regs and func1_state_reg in parser_state.global_state_regs:
-            print("Heyo can't use global state regs in more than one function!")
+          # Name in both funcs?
+          if func1_state_reg not in func2_logic.state_regs:
+            continue
+            
+          # Skip local static defs
+          info1 = func1_logic.state_regs[func1_state_reg]
+          if info1.is_static:
+            continue
+          info2 = func2_logic.state_regs[func1_state_reg]
+          if info2.is_static:
+            continue
+            
+          # Duplicate problem if global
+          if func1_state_reg in parser_state.global_state_regs:
+            print("Heyo can't use global state regs in more than one function! See clock crossings/wires for moving data between main functions.")
             print(func1_state_reg, "used in", func_name1, "and", func_name2)
             sys.exit(-1)
             
