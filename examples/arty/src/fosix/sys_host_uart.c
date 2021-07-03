@@ -37,10 +37,10 @@ void sys_host()
   //
 	// Read ready for output msg flag from tx logic
   uint1_t msg_out_ready;
-  WIRE_READ(uint1_t, msg_out_ready,  uart_tx_msg_msg_in_ready)
+  WIRE_READ(uint1_t, msg_out_ready,  uart_tx_msg_in_ready)
 	// Read message bytes from rx msg logic
   uart_msg_s uart_msg_in;
-  WIRE_READ(uart_msg_s, uart_msg_in, uart_rx_msg_msg_out)
+  WIRE_READ(uart_msg_s, uart_msg_in, uart_rx_msg_out)
   // Convert to fosix type
   fosix_msg_s msg_in = uart_msg_s_to_fosix_msg_s(uart_msg_in);
   // Read proc_to_sys output from fosix router thing
@@ -130,10 +130,10 @@ void sys_host()
   // Write sys_to_proc into fosix router thing
   WIRE_WRITE(fosix_sys_to_proc_t, host_sys_to_proc, sys_to_proc)
   // Write ready for input message indicator into msg rx logic
-  WIRE_WRITE(uint1_t, uart_rx_msg_msg_out_ready, msg_in_ready)
+  WIRE_WRITE(uint1_t, uart_rx_msg_out_ready, msg_in_ready)
   // Write message bytes into TX logic 
   // Convert from fosix type
   uart_msg_s uart_msg_out = fosix_msg_s_to_uart_msg_s(msg_out);
-  WIRE_WRITE(uart_msg_s, uart_tx_msg_msg_in, uart_msg_out)
+  WIRE_WRITE(uart_msg_s, uart_tx_msg_in, uart_msg_out)
 }
 

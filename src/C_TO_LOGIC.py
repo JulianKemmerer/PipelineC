@@ -4808,8 +4808,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       except:
         is_ints = False
       '''
-      # Then allow for floats
-      is_floats = lhs_c_type=="float" and rhs_c_type=="float"
+      # Then allow for floats, if either float then treat boths as floats
+      is_floats = lhs_c_type=="float" or rhs_c_type=="float"
       '''
       if not is_ints:
         is_floats = True
