@@ -6560,6 +6560,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   while making_changes:
     making_changes = False
     
+    # Find duplicates
     submodule_dups = dict()
     for submodule_inst in func_logic.submodule_instances:
       submodule_func_name = func_logic.submodule_instances[submodule_inst]
@@ -6587,89 +6588,98 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       if id_tup not in submodule_dups:
         submodule_dups[id_tup] = []
       submodule_dups[id_tup].append(submodule_inst)
-    # Collapse all duplicates (more than 1 inst per id tup)
-    for id_tup,dup_insts in submodule_dups.items():
-      sub_func_name = id_tup[0]
-      tup_idx = 1
-      sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+    
+    # Filter out "single instances" in duplicates list
+    for id_tup,dup_insts in list(submodule_dups.items()):
       if len(dup_insts) <= 1:
-        continue
-      #print(dup_insts)
-      # Have instances to collapse
-      # Create new inst
-      # Mangle me some name
-      # Special case loops easy to identify since have same coord?
-      c_ast_nodes = set()
+        submodule_dups.pop(id_tup)
+    if len(submodule_dups) <= 0:
+      continue
+      
+    # Since removal of duplicate can rewire potential 'downstream' (and upstream?) connections to other duplicates
+    # Only remove one duplicate per round of collecting id_tups above
+    # Collapse all duplicates (more than 1 inst per id tup)
+    #for id_tup,dup_insts in :
+    id_tup,dup_insts = list(submodule_dups.items())[0]
+    sub_func_name = id_tup[0]
+    tup_idx = 1
+    sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+    #print("duplicates:",dup_insts)
+    # Have instances to collapse
+    # Create new inst
+    # Mangle me some name
+    # Special case loops easy to identify since have same coord?
+    c_ast_nodes = set()
+    for sub_inst in dup_insts:
+      c_ast_nodes.add(func_logic.submodule_instance_to_c_ast_node[sub_inst])
+    if len(c_ast_nodes) == 1: # TODO what does this look like otherwise?
+      the_c_ast_node = list(c_ast_nodes)[0]
+      new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node)
+    else:
+      the_c_ast_node = None
+      file_coord_strs = ""
+      for c_ast_node in c_ast_nodes:
+        file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
+      new_sub_inst_name = sub_func_logic.func_name + file_coord_strs
+    #print("replacing with",new_sub_inst_name)
+    
+    # Copy the submodule information from one of the identical insts to this
+    func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
+    
+    # Wire new inst ce+inputs with known identical drivers
+    # Make ce connection
+    if LOGIC_NEEDS_CLOCK_ENABLE(sub_func_logic, parser_state):
+      new_ce_wire = new_sub_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
+      func_logic.wire_to_c_type[new_ce_wire] = sub_func_logic.wire_to_c_type[CLOCK_ENABLE_NAME]
+      driver_of_ce = id_tup[tup_idx]
+      func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_ce, [new_ce_wire], None, the_c_ast_node)
+      tup_idx += 1
+    for input_port in sub_func_logic.inputs:
+      new_input_port_wire = new_sub_inst_name + SUBMODULE_MARKER + input_port
+      func_logic.wire_to_c_type[new_input_port_wire] = sub_func_logic.wire_to_c_type[input_port]
+      driver_of_input = id_tup[tup_idx]
+      tup_idx += 1
+      # Make input connection
+      func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_input, [new_input_port_wire], None, the_c_ast_node)
+    
+    # Wire new inst outputs to all outputs
+    # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
+    sub_out_port_to_driven_wires = dict()
+    for output_port in sub_func_logic.outputs:
       for sub_inst in dup_insts:
-        c_ast_nodes.add(func_logic.submodule_instance_to_c_ast_node[sub_inst])
-      if len(c_ast_nodes) == 1: # TODO what does this look like otherwise?
-        the_c_ast_node = list(c_ast_nodes)[0]
-        new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node)
-      else:
-        the_c_ast_node = None
-        file_coord_strs = ""
-        for c_ast_node in c_ast_nodes:
-          file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
-        new_sub_inst_name = sub_func_logic.func_name + file_coord_strs
-      #print("replacing with",new_sub_inst_name)
-      
-      # Copy the submodule information from one of the identical insts to this
-      func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
-      
-      # Wire new inst ce+inputs with known identical drivers
-      # Make ce connection
-      if LOGIC_NEEDS_CLOCK_ENABLE(sub_func_logic, parser_state):
-        new_ce_wire = new_sub_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-        func_logic.wire_to_c_type[new_ce_wire] = sub_func_logic.wire_to_c_type[CLOCK_ENABLE_NAME]
-        driver_of_ce = id_tup[tup_idx]
-        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_ce, [new_ce_wire], None, the_c_ast_node)
-        tup_idx += 1
-      for input_port in sub_func_logic.inputs:
-        new_input_port_wire = new_sub_inst_name + SUBMODULE_MARKER + input_port
-        func_logic.wire_to_c_type[new_input_port_wire] = sub_func_logic.wire_to_c_type[input_port]
-        driver_of_input = id_tup[tup_idx]
-        tup_idx += 1
-        # Make input connection
-        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driver_of_input, [new_input_port_wire], None, the_c_ast_node)
-      
-      # Wire new inst outputs to all outputs
-      # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
-      sub_out_port_to_driven_wires = dict()
-      for output_port in sub_func_logic.outputs:
-        for sub_inst in dup_insts:
-          sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
-          wires_driven_by_sub_output = func_logic.wire_drives[sub_inst_output]
-          if output_port not in sub_out_port_to_driven_wires:
-            sub_out_port_to_driven_wires[output_port] = set()
-          sub_out_port_to_driven_wires[output_port] |= set(wires_driven_by_sub_output)
-      
-      # Remove all duplicate insts - ripping up outputs we just recorded
-      for sub_inst in dup_insts:
-        # Local func def removal
-        submodule_func_name = func_logic.submodule_instances[sub_inst]
-        sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs, parser_state)
-      
-      # Use info on now ripped up outputs to rewire outputs
-      for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
-        new_inst_output = new_sub_inst_name + SUBMODULE_MARKER + sub_out_port
-        func_logic.wire_to_c_type[new_inst_output] = sub_func_logic.wire_to_c_type[sub_out_port]
-        #print("new_inst_output",new_inst_output)
-        #print("drives",driven_wires)
-        func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, new_inst_output, list(driven_wires), None, the_c_ast_node)
-        #for driven_wire in driven_wires:
-        #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
-      
-      # Record new global instance
-      all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
-      for global_inst in all_insts_of_container_func:
-        global_new_sub_inst_name = global_inst + SUBMODULE_MARKER + new_sub_inst_name
-        #print("global_new_sub_inst_name",global_new_sub_inst_name)
-        parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
-        if submodule_func_name not in parser_state.FuncToInstances:
-          parser_state.FuncToInstances[submodule_func_name] = set()
-        parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
-      making_changes = True
+        sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
+        wires_driven_by_sub_output = func_logic.wire_drives[sub_inst_output]
+        if output_port not in sub_out_port_to_driven_wires:
+          sub_out_port_to_driven_wires[output_port] = set()
+        sub_out_port_to_driven_wires[output_port] |= set(wires_driven_by_sub_output)
+    
+    # Remove all duplicate insts - ripping up outputs we just recorded
+    for sub_inst in dup_insts:
+      # Local func def removal
+      submodule_func_name = func_logic.submodule_instances[sub_inst]
+      sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+      func_logic.REMOVE_SUBMODULE(sub_inst, sub_func_logic.inputs, sub_func_logic.outputs, parser_state)
+    
+    # Use info on now ripped up outputs to rewire outputs
+    for sub_out_port,driven_wires in sub_out_port_to_driven_wires.items():
+      new_inst_output = new_sub_inst_name + SUBMODULE_MARKER + sub_out_port
+      func_logic.wire_to_c_type[new_inst_output] = sub_func_logic.wire_to_c_type[sub_out_port]
+      #print("new_inst_output",new_inst_output)
+      #print("drives",driven_wires)
+      func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, new_inst_output, list(driven_wires), None, the_c_ast_node)
+      #for driven_wire in driven_wires:
+      #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
+    
+    # Record new global instance
+    all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
+    for global_inst in all_insts_of_container_func:
+      global_new_sub_inst_name = global_inst + SUBMODULE_MARKER + new_sub_inst_name
+      #print("global_new_sub_inst_name",global_new_sub_inst_name)
+      parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
+      if submodule_func_name not in parser_state.FuncToInstances:
+        parser_state.FuncToInstances[submodule_func_name] = set()
+      parser_state.FuncToInstances[submodule_func_name].add(global_new_sub_inst_name)
+    making_changes = True
   
   # Finally do recursively for each submodule too
   for submodule_inst in func_logic.submodule_instances:
