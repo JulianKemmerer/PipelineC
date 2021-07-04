@@ -271,6 +271,7 @@ class TimingParams:
 
 _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = dict()
 def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
+  #print("GET_ZERO_CLK_TIMING_PARAMS_LOOKUP")
   cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
   if cache_key in _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache:
     cached_lookup = _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key]
@@ -457,6 +458,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   is_zero_clk = True
   for local_sub_inst in logic.submodule_instances:
     sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
+    if sub_inst not in TimingParamsLookupTable:
+      print("Missing timing params for instance:",sub_inst)
+      print("has instances:")
+      for inst_i,params_i in TimingParamsLookupTable.items():
+        print(inst_i)
+      print(0/0,flush=True)
+      sys.exit(-1)
     submodule_timing_params = TimingParamsLookupTable[sub_inst]
     submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state,TimingParamsLookupTable)
     if submodule_latency > 0:

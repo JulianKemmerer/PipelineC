@@ -21,8 +21,10 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
-Do DVI over HDMI video demo driven from NoC element (instead of VGA)
-  Antikernel fun?
+First refactor fosix stuff:
+  to use antikernel like packets (still struct, but more compact than fosix types)
+  to use more global wires make code look as simple as possible
+  Do DVI over HDMI video demo driven from NoC element (instead of VGA)
   Put a riscv core (in pipelinec) along side accelerator in pipeline, + host OS on NoC
 Check auto pipeline and clock crossing read+write behavior
   Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage

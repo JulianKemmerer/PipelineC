@@ -7,9 +7,6 @@
 
 // Pull in the logic to send and receive messages
 #include "../uart/uart_msg.c"
-// Marking the main wrappers as main functions
-MAIN_MHZ(uart_rx_msg_main, UART_CLK_MHZ)
-MAIN_MHZ(uart_tx_msg_main, UART_CLK_MHZ)
 
 // Include protocol for how pack and unpack syscalls into messages
 #include "fosix_msg.h"
