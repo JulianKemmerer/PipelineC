@@ -19,7 +19,6 @@
 //#include "examples/fosix/bram_loopback.c"
 //#include "examples/arty/src/uart/uart_loopback_no_fc.c"
 //#include "examples/arty/src/work/work.c"
-//#include "examples/arty/src/fosix/main_bram_loopback.c"
 //#include "examples/arty/src/uart_ddr3_loopback/app.c"
 //#include "examples/arty/src/ddr3/mig_app.c"
 //#include "examples/arty/src/eth/loopback_app.c"
@@ -37,9 +36,12 @@
 //#include "examples/arty/src/i2s/i2s_passthrough_app.c"
 //#include "examples/arty/src/audio/distortion.c"
 //#include "examples/arty/src/i2s/i2s_app.c"
-#include "examples/pipeline_and_fsm.c"
+//#include "examples/pipeline_and_fsm.c"
+#include "examples/arty/src/fosix/main_bram_loopback.c"
 
 // Below is a bunch of recent scratch work - enjoy
+
+
 
 /*
 // What is RETURN? is it a valid/done signal? built in for FSMs

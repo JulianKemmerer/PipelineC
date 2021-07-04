@@ -1,4 +1,5 @@
 // This is the main program to run on the host to act as a fosix sys device
+// gcc host.c -o host -I ../../../../
 
 #include <math.h>
 #include <time.h>
@@ -10,14 +11,31 @@
 #include "../uart/uart_msg_sw.c"
 #include "host_uart.h"
 
+/*
+reset;
+gcc host.c -o host -I ../../../../
+rm /tmp/in;
+rm -f /tmp/out;
+head -c 16384 < /dev/urandom > /tmp/in
+sudo ./host
+hexdump -Cv /tmp/in -n 128
+sudo hexdump -Cv /tmp/out -n 128
+*/
+
 fosix_sys_to_proc_t do_syscall_get_resp(fosix_proc_to_sys_t req, fosix_msg_t msg)
 {
   fosix_sys_to_proc_t resp = POSIX_SYS_TO_PROC_T_NULL();
   if(req.sys_open.req.valid)
   {
     // OPEN
-    //printf("FOSIX: OPEN\n");
-    int fildes = open(req.sys_open.req.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ); // TODO FLAGS
+    // Temp hacky since dont have flags from FPGA
+    // Try to create, will fail if exists
+    int fildes = open(req.sys_open.req.path, O_RDWR|O_CREAT, S_IRUSR | S_IWUSR);
+    if(fildes<0)
+    {
+      // Try again not creating the file
+      fildes = open(req.sys_open.req.path, O_RDWR, S_IRUSR | S_IWUSR);
+    }
     resp.sys_open.resp.fildes = fildes;
     resp.sys_open.resp.valid = 1;
     if(fildes>255 | fildes<0)
@@ -69,7 +87,7 @@ int main(int argc, char **argv)
 	init_msgs();
   
 	// Control loop
-  printf("Beginning FOSIX Host control loop...\n");
+  printf("Beginning FOSIX Host control loop (you should reset FPGA now)...\n");
   int exit = 0;
   while(!exit)
   {

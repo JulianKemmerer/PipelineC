@@ -3,6 +3,7 @@
 // Thanks https://stackoverflow.com/questions/6947413/how-to-open-read-and-write-from-serial-port-in-c
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h> 
 #include <string.h>

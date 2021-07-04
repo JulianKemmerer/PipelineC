@@ -250,13 +250,7 @@ END COMPONENT;
 -- Internal signals
 -- Clocks
 signal sys_clk_100 : std_logic;
--- Switches
-signal switches_wire : unsigned(3 downto 0);
--- LEDs
-signal leds_wire : unsigned(3 downto 0);
--- UART
-signal uart_data_in : unsigned(0 downto 0);
-signal uart_data_out : unsigned(0 downto 0);
+-- Modules with structs as IO
 -- DDR3
 --signal mig_to_app : xil_mig_to_app_t;
 --signal app_to_mig : xil_app_to_mig_t;
@@ -422,17 +416,7 @@ i2s_rst_n <= i2s_clks_ready;
 -- Un/pack IO struct types to/from flattened SLV board pins
 -- TODO Code gen this...
 -- Commented out wires as necessary
-process(all) begin
-    -- LEDs
-    led <= std_logic_vector(leds_wire);  
-         
-    -- Switches
-    switches_wire <= unsigned(sw);
-    
-    -- UART
-    uart_data_in(0) <= uart_txd_in;
-    uart_rxd_out <= uart_data_out(0);
-    
+process(all) begin    
     -- DDR3
     -- app_addr <= std_logic_vector(app_to_mig.addr);
     -- app_cmd  <= std_logic_vector(app_to_mig.cmd);
@@ -493,7 +477,8 @@ end process;
 -- The PipelineC generated entity
 top_inst : entity work.top port map (   
     -- Main function clocks
-    clk_22p579 => clk_22p579,
+    --clk_22p579 => clk_22p579,
+    clk_25p0 => clk_25,
     --clk_25p0_xil_temac_rx => clk_25_eth_rx,
     --clk_25p0_xil_temac_tx => clk_25_eth_tx,
     --clk_50p0 => clk_50,
@@ -504,31 +489,31 @@ top_inst : entity work.top port map (
     --clk_200p0 => clk_200,
     --clk_400p0 => clk_400,
         
-    -- Each main funciton's inputs and outputs
-    app_reset_n(0) => i2s_rst_n,
+    -- Each main function's inputs and outputs
+    --app_reset_n(0) => rst_n, --i2s_rst_n,
     
     -- LEDs
-    led0_module_return_output(0) => leds_wire(0),
-    led1_module_return_output(0) => leds_wire(1),
-    led2_module_return_output(0) => leds_wire(2),
-    led3_module_return_output(0) => leds_wire(3),
+    --led0_module_return_output(0) => leds_wire(0),
+    --led1_module_return_output(0) => leds_wire(1),
+    --led2_module_return_output(0) => leds_wire(2),
+    --led3_module_return_output(0) => leds_wire(3),
     
     -- Switches
-    switches_module_sw => switches_wire,
-    
+    --switches_module_sw => switches_wire,
+
     -- UART
-    --uart_module_data_in => uart_data_in,
-    --uart_module_return_output => uart_data_out,
+    uart_module_data_in(0) => uart_txd_in,
+    uart_module_return_output(0) => uart_rxd_out
     
     -- PMOD
-    --pmod_ja_return_output.ja0(0) => ja(0),
-    pmod_ja_return_output.ja1(0) => ja(1),
-    pmod_ja_return_output.ja2(0) => ja(2),
-    pmod_ja_return_output.ja3(0) => ja(3),
-    --pmod_ja_return_output.ja4(0) => ja(4),
-    pmod_ja_return_output.ja5(0) => ja(5),
-    pmod_ja_return_output.ja6(0) => ja(6),
-    pmod_ja_inputs.ja7(0) => ja(7)
+    ----pmod_ja_return_output.ja0(0) => ja(0),
+    --pmod_ja_return_output.ja1(0) => ja(1),
+    --pmod_ja_return_output.ja2(0) => ja(2),
+    --pmod_ja_return_output.ja3(0) => ja(3),
+    ----pmod_ja_return_output.ja4(0) => ja(4),
+    --pmod_ja_return_output.ja5(0) => ja(5),
+    --pmod_ja_return_output.ja6(0) => ja(6),
+    --pmod_ja_inputs.ja7(0) => ja(7)
     
     -- DDR3
     --xil_mig_module_mig_to_app => mig_to_app,

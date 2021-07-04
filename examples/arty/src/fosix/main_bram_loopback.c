@@ -3,8 +3,14 @@
  reads "/tmp/in" from the host OS into FPGA block ram.
  Then writes "/tmp/out" on the host OS with contents of that block ram.
  "Loopback the file from input to output using BRAM buffer on FPGA"
- * Create a file of on the system:
- * $ head -c 16384 < /dev/urandom > /tmp/in
+reset;
+gcc host.c -o host -I ../../../../
+rm /tmp/in;
+rm -f /tmp/out;
+head -c 16384 < /dev/urandom > /tmp/in
+sudo ./host
+hexdump -Cv /tmp/in -n 128
+sudo hexdump -Cv /tmp/out -n 128
 */
 #include "compiler.h"
 
