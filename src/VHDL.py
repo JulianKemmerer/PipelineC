@@ -2983,6 +2983,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     
   # Chars
   if c_type == 'char':
+    val_str = val_str.strip("'")
     vhdl_char_str = "'" + val_str + "'"
     if val_str == '\\n':
       vhdl_char_str = "LF"
