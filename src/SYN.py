@@ -173,6 +173,13 @@ class TimingParams:
       # Not raw hdl, slices dont guarentee describe pipeline structure
       for submodule in sorted(Logic.submodule_instances): # MUST BE SORTED FOR CONSISTENT ORDER!
         sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule
+        if sub_inst not in parser_state.LogicInstLookupTable:
+          print("Missing inst_name:",sub_inst)
+          print("has instances:")
+          for inst_i,logic_i in parser_state.LogicInstLookupTable.items():
+            print(inst_i)
+          print(0/0,flush=True)
+          sys.exit(-1)
         sub_logic = parser_state.LogicInstLookupTable[sub_inst]
         rv += (self.RECURSIVE_GET_NO_SUBMODULE_SLICES(sub_inst, sub_logic, TimingParamsLookupTable, parser_state),)
     else:

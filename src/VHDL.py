@@ -840,7 +840,10 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
       sys.exit(-1)
     read_func_inst = list(read_func_insts)[0]
     '''
-    read_func_logic = parser_state.FuncLogicLookupTable[read_func]
+    # None read func is disconnected, can assume things hacky
+    read_func_logic = None
+    if read_func in parser_state.FuncLogicLookupTable:
+      read_func_logic = parser_state.FuncLogicLookupTable[read_func]
     
     # TODO OTHER SIZES
     if flow_control:
@@ -925,7 +928,7 @@ use xpm.vcomponents.all;
     text += '''
       out_clk : in std_logic;
 '''
-    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+    if read_func_logic is not None and C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
       text += '''
       out_clk_en : in unsigned(0 downto 0);
 '''

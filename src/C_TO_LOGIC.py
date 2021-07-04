@@ -1117,12 +1117,16 @@ class Logic:
           
           # Collect all inst names starting with the above inst name (all submodules get removed too)
           mod_and_all_subs = set()
+          mod_and_all_subs.add(global_sub_inst_name)
           for inst_name_i in parser_state.LogicInstLookupTable:
-            if inst_name_i.startswith(global_sub_inst_name):
+            if inst_name_i.startswith(global_sub_inst_name+SUBMODULE_MARKER):
               mod_and_all_subs.add(inst_name_i)
           
           # Remove all inst names from global scope
           for inst_to_remove in mod_and_all_subs:
+            # WTF sometimes func isnt in here already? Modest Mouse - Medication
+            if inst_to_remove not in parser_state.LogicInstLookupTable:
+              continue
             inst_func_logic_name = parser_state.LogicInstLookupTable[inst_to_remove].func_name
             parser_state.LogicInstLookupTable.pop(inst_to_remove)
             all_insts_of_sub = parser_state.FuncToInstances[inst_func_logic_name]
@@ -6636,6 +6640,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
       new_sub_inst_name = sub_func_logic.func_name + file_coord_strs
     #print("replacing with",new_sub_inst_name)
+    #print("==")
     
     # Copy the submodule information from one of the identical insts to this
     func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
@@ -6699,18 +6704,23 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         
         # Collect all inst names starting with the above inst name (to get all submodules too)
         mod_and_all_subs = set()
+        mod_and_all_subs.add(global_dup_sub_inst_name)
         for inst_name_i in parser_state.LogicInstLookupTable:
-          if inst_name_i.startswith(global_dup_sub_inst_name):
+          if inst_name_i.startswith(global_dup_sub_inst_name+SUBMODULE_MARKER):
             mod_and_all_subs.add(inst_name_i)
         
         # Rename all inst names in global scope
         for inst_to_rename in mod_and_all_subs:
           inst_func_name = parser_state.LogicInstLookupTable[inst_to_rename].func_name
-          renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name, global_new_sub_inst_name)
+          # Prevent renames from doing weird double copy paste
+          if inst_to_rename == global_dup_sub_inst_name:
+            renamed_inst_name = global_new_sub_inst_name
+          else:
+            renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name+SUBMODULE_MARKER, global_new_sub_inst_name+SUBMODULE_MARKER)
           parser_state.FuncToInstances[inst_func_name].remove(inst_to_rename)
           parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
           parser_state.LogicInstLookupTable[renamed_inst_name] = parser_state.LogicInstLookupTable[inst_to_rename]
-          parser_state.LogicInstLookupTable.pop(inst_to_rename)      
+          parser_state.LogicInstLookupTable.pop(inst_to_rename)
      
         
     making_changes = True
