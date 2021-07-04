@@ -2253,6 +2253,13 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     print(0/0)
     sys.exit(-1)
   
+  if inst_name not in TimingParamsLookupTable:
+    print("Missing timing params for instance:",inst_name)
+    print("has instances:")
+    for inst_i,params_i in TimingParamsLookupTable.items():
+      print(inst_i)
+    print(0/0,flush=True)
+    sys.exit(-1)
   timing_params = TimingParamsLookupTable[inst_name]
   
   filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
@@ -2966,7 +2973,21 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
       print(enum_name, "doesn't look like an ENUM constant?")
       sys.exit(-1)
     '''
+    if is_negated:
+      print("TODO negated enums?")
+      sys.exit(-1)
     return enum_name
+    
+  # Chars
+  if c_type == 'char':
+    vhdl_char_str = "'" + val_str + "'"
+    if val_str == '\\n':
+      vhdl_char_str = "LF"
+    if is_negated:
+      print("TODO negated chars?")
+      sys.exit(-1)
+    #HAHA have fun filling this in dummy    
+    return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
   
   #print("CONST_VAL_STR_TO_VHDL val_str",val_str)
   value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, parser_state.existing_logic.c_ast_node, is_negated)
@@ -2975,14 +2996,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   #if c_type_str != c_type:
   #  print("Oh no!",val_str, c_type_str, c_type, parser_state.existing_logic.c_ast_node.coord)
   #  sys.exit(-1)
-  
-  if c_type == 'char':
-    vhdl_char_str = "'" + val_str + "'"
-    if val_str == '\\n':
-      vhdl_char_str = "LF"
-    #HAHA have fun filling this in dummy    
-    return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
-  elif C_TYPE_IS_UINT_N(c_type):
+
+  if C_TYPE_IS_UINT_N(c_type):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
     #Hack hacky?
     # A VHDL integer is defined from range -2147483648 to +2147483647
@@ -3008,7 +3023,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     return "to_slv(to_float(" + val_str + ", 8, 23))"
   else:
     print("How to give const",val_str,"gen VHDL?")
-    sys.exit(-1) 
+    sys.exit(-1)
       
 def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state): 
   # If a constant 

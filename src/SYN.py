@@ -2802,7 +2802,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
         continue
       # Dont write clock cross funcs
       if logic.is_clock_crossing:
-        continue    
+        continue
       print("Writing func",func_name,"...", flush=True)
       syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
       if not os.path.exists(syn_out_dir):

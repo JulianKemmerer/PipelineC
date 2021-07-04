@@ -1036,7 +1036,7 @@ class Logic:
       print("removing  sub", submodule_inst)
     
     # Remove from list of subs yo
-    submodule_func_name = self.submodule_instances.pop(submodule_inst, None)   
+    self.submodule_instances.pop(submodule_inst, None)  
     
     # Make list of wires that look like
     #   submodule_inst + SUBMODULE_MARKER
@@ -1109,30 +1109,29 @@ class Logic:
     
     # Global instance removal:
     if remove_global:
-      if submodule_func_name is not None:
-        all_insts_of_this_logic = []
-        if self.func_name in parser_state.FuncToInstances:
-          all_insts_of_this_logic = parser_state.FuncToInstances[self.func_name]
-          for global_inst in all_insts_of_this_logic:
-            global_sub_inst_name = global_inst + SUBMODULE_MARKER + submodule_inst
-            
-            # Collect all inst names starting with the above inst name (all submodules get removed too)
-            mod_and_all_subs = set()
-            for inst_name_i in parser_state.LogicInstLookupTable:
-              if inst_name_i.startswith(global_sub_inst_name):
-                mod_and_all_subs.add(inst_name_i)
-            
-            # Remove all inst names from global scope
-            for inst_to_remove in mod_and_all_subs:
-              parser_state.LogicInstLookupTable.pop(inst_to_remove)
-              if submodule_func_name in parser_state.FuncToInstances:
-                all_insts_of_sub = parser_state.FuncToInstances[submodule_func_name]
-                if inst_to_remove in all_insts_of_sub:
-                  all_insts_of_sub.remove(inst_to_remove) # Not all inst shows up?
-                if len(all_insts_of_sub) > 0:
-                  parser_state.FuncToInstances[submodule_func_name] = all_insts_of_sub
-                else:
-                  parser_state.FuncToInstances.pop(submodule_func_name)
+      all_insts_of_this_logic = []
+      if self.func_name in parser_state.FuncToInstances:
+        all_insts_of_this_logic = parser_state.FuncToInstances[self.func_name]
+        for global_inst in all_insts_of_this_logic:
+          global_sub_inst_name = global_inst + SUBMODULE_MARKER + submodule_inst
+          
+          # Collect all inst names starting with the above inst name (all submodules get removed too)
+          mod_and_all_subs = set()
+          for inst_name_i in parser_state.LogicInstLookupTable:
+            if inst_name_i.startswith(global_sub_inst_name):
+              mod_and_all_subs.add(inst_name_i)
+          
+          # Remove all inst names from global scope
+          for inst_to_remove in mod_and_all_subs:
+            inst_func_logic_name = parser_state.LogicInstLookupTable[inst_to_remove].func_name
+            parser_state.LogicInstLookupTable.pop(inst_to_remove)
+            all_insts_of_sub = parser_state.FuncToInstances[inst_func_logic_name]
+            if inst_to_remove in all_insts_of_sub:
+              all_insts_of_sub.remove(inst_to_remove) # Not all inst shows up?
+            if len(all_insts_of_sub) > 0:
+              parser_state.FuncToInstances[inst_func_logic_name] = all_insts_of_sub
+            else:
+              parser_state.FuncToInstances.pop(inst_func_logic_name)
    
     return None
   
@@ -3895,7 +3894,8 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     value = float(value_str)
     c_type_str = "float"
   else:
-    print("What type of constant is?", value_str)
+    print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
+    print(0/0)
     sys.exit(-1)
   
   if is_negated:
