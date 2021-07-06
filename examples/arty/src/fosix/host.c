@@ -28,6 +28,7 @@ fosix_sys_to_proc_t do_syscall_get_resp(fosix_proc_to_sys_t req, fosix_msg_t msg
   if(req.sys_open.req.valid)
   {
     // OPEN
+    //printf("FOSIX: OPEN %s\n",req.sys_open.req.path);
     // Temp hacky since dont have flags from FPGA
     // Try to create, will fail if exists
     int fildes = open(req.sys_open.req.path, O_RDWR|O_CREAT, S_IRUSR | S_IWUSR);

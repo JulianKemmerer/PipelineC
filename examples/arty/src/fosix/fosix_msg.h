@@ -41,13 +41,6 @@ fosix_msg_s FOSIX_MSG_S_NULL()
   return rv;
 }
 
-// Syscall table
-#define syscall_t uint8_t
-#define FOSIX_READ  0
-#define FOSIX_WRITE 1
-#define FOSIX_OPEN  2
-#define FOSIX_CLOSE 3
-#define FOSIX_UNKNOWN 255
 // Byte[0] = Sycall ID
 syscall_t decode_syscall_id(fosix_msg_t msg)
 {

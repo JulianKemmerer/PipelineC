@@ -1,11 +1,145 @@
 #include "compiler.h"
 
+#include "fosix.h"
+
 // System devices?
 // Host OS device hooks (UART based)
 #include "sys_host_uart.c"
 // BRAM system device hooks
 #include "sys_bram.c"
 
+// Syscall helper func
+syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_t num, fosix_fd_t sub_fd, char sub_path[FOSIX_PATH_SIZE], uint8_t sub_in_buf[FOSIX_BUF_SIZE], fosix_size_t sub_in_buf_nbytes)
+{
+  // Default output/reset/null values
+  syscall_func_t o;
+  o.proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
+  o.done = 0;
+  o.sub_fd = sub_fd;
+  o.sub_out_buf = sub_in_buf;
+  o.sub_out_buf_nbytes_ret = 0;
+  
+  // Subroutine state
+  static syscall_state_t sub_state; 
+  
+  if(sub_state==REQ)
+  {
+    // Request
+    if(num==FOSIX_OPEN)
+    {
+      o.proc_to_sys.sys_open.req.path = sub_path;
+      o.proc_to_sys.sys_open.req.valid = 1;
+      // Keep trying to request until finally was ready
+      if(sys_to_proc.sys_open.req_ready)
+      {
+        // Then wait for response
+        sub_state = RESP;
+      }
+    }
+    else if(num==FOSIX_WRITE)
+    {
+      // Request to write
+      o.proc_to_sys.sys_write.req.buf = sub_in_buf;
+      o.proc_to_sys.sys_write.req.nbyte = sub_in_buf_nbytes;
+      o.proc_to_sys.sys_write.req.fildes = sub_fd;
+      o.proc_to_sys.sys_write.req.valid = 1;
+      // Keep trying to request until finally was ready
+      if(sys_to_proc.sys_write.req_ready)
+      {
+        // Then wait for response
+        sub_state = RESP;
+      }
+    }
+    else if(num==FOSIX_READ)
+    {
+      // Request to read
+      o.proc_to_sys.sys_read.req.nbyte = sub_in_buf_nbytes;
+      o.proc_to_sys.sys_read.req.fildes = sub_fd;
+      o.proc_to_sys.sys_read.req.valid = 1;
+      // Keep trying to request until finally was ready
+      if(sys_to_proc.sys_read.req_ready)
+      {
+        // Then wait for response
+        sub_state = RESP;
+      }
+    }
+    else if(num==FOSIX_CLOSE)
+    {
+      // Request to close
+      o.proc_to_sys.sys_close.req.fildes = sub_fd;
+      o.proc_to_sys.sys_close.req.valid = 1;
+      // Keep trying to request until finally was ready
+      if(sys_to_proc.sys_close.req_ready)
+      {
+        // Then wait for response
+        sub_state = RESP;
+      }
+    }
+  }
+  else if(sub_state==RESP)
+  {
+    if(num==FOSIX_OPEN)
+    {
+      // Wait here ready for response
+      o.proc_to_sys.sys_open.resp_ready = 1;
+      // Until we get valid response
+      if(sys_to_proc.sys_open.resp.valid)
+      { 
+        // Return file descriptor
+        o.sub_fd = sys_to_proc.sys_open.resp.fildes;
+        // Signal done, return to start
+        o.done = 1;
+        sub_state = REQ;
+      }
+    }
+    else if(num==FOSIX_WRITE)
+    {
+      // Wait here ready for response
+      o.proc_to_sys.sys_write.resp_ready = 1;
+      // Until we get valid response
+      if(sys_to_proc.sys_write.resp.valid)
+      { 
+        // Save num bytes
+        o.sub_out_buf_nbytes_ret = sys_to_proc.sys_write.resp.nbyte;
+        // Signal done, return to start
+        o.done = 1;
+        sub_state = REQ;
+      }
+    }
+    else if(num==FOSIX_READ)
+    {
+      // Wait here ready for response
+      o.proc_to_sys.sys_read.resp_ready = 1;
+      // Until we get valid response
+      if(sys_to_proc.sys_read.resp.valid)
+      { 
+        // Save num bytes and bytes
+        o.sub_out_buf_nbytes_ret = sys_to_proc.sys_read.resp.nbyte;
+        o.sub_out_buf = sys_to_proc.sys_read.resp.buf;
+        // Signal done, return to start
+        o.done = 1;
+        sub_state = REQ;
+      }
+    }
+    else if(num==FOSIX_CLOSE)
+    {
+      // Wait here ready for response
+      o.proc_to_sys.sys_close.resp_ready = 1;
+      // Until we get valid response
+      if(sys_to_proc.sys_close.resp.valid)
+      { 
+        // Not looking at err code
+        // Signal done, return to start
+        o.done = 1;
+        sub_state = REQ;
+      }
+    }
+  }
+  
+  return o;
+}
+
+// NEED Antikernel like NoC routing instead of using file descriptor numbers
 // Because some external sys picks the file descriptor numbers
 // but on chip resources need their own/pick their own separate file descriptors
 // Create a lookup table that can bypass/make "virtual" file descriptors?
@@ -147,7 +281,7 @@ fosix_proc_to_sys_t main_proc_to_sys;
 #include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "main_proc_to_sys_clock_crossing.h"
 
-// Slow bulky single state machine for now...
+// Slow bulky single state machine 'router' for now...
 // Need to enforce only one system call "in flight" at a time
 // Because otherwise would need more complicated way of 
 // tagging and identifying what responses are to what requests
@@ -472,3 +606,5 @@ void fosix()
   WIRE_WRITE(fosix_sys_to_proc_t, main_sys_to_proc, sys_to_proc_main)
 }
 
+
+// IMplement helper funcs  main_syscall( which uses global wires attached to syscall

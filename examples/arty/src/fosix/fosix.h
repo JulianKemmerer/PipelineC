@@ -8,6 +8,14 @@
 
 #pragma once
 
+// Syscall table
+#define syscall_t uint8_t
+#define FOSIX_READ  0
+#define FOSIX_WRITE 1
+#define FOSIX_OPEN  2
+#define FOSIX_CLOSE 3
+#define FOSIX_UNKNOWN 255
+
 #define fosix_fd_t int32_t
 #define fosix_size_t uint32_t
 #define FOSIX_BUF_SIZE 128
@@ -293,3 +301,32 @@ fosix_sys_to_proc_t sys_to_proc_set_ready(fosix_sys_to_proc_t sys_to_proc)
   sys_to_proc.sys_close.req_ready = 1;
   return sys_to_proc;
 }
+
+typedef struct syscall_io_t
+{
+  // As written, with input and output registers and start+done signals, each syscall takes at least 2 clocks
+  // (could instead use: duplicated instances or share an instance input and output wires need FEEDBACK pragma)
+  uint1_t start; // Start flag (inputs valid)
+  uint1_t done; // Done flag (outputs valid)
+  syscall_t num; // System call number in progress
+  fosix_fd_t fd; // File descriptor for syscall
+  char path[FOSIX_PATH_SIZE]; // Path buf for open()
+  uint8_t buf[FOSIX_BUF_SIZE]; // IO buf for write+read
+  fosix_size_t buf_nbytes; // Input number of bytes
+  fosix_size_t buf_nbytes_ret; // Return count of bytes
+}syscall_io_t;
+
+// Helper FSM for one at a time in flight FOSIX operations
+
+typedef enum syscall_state_t {
+  REQ,
+  RESP
+} syscall_state_t;
+typedef struct syscall_func_t 
+{
+  fosix_proc_to_sys_t proc_to_sys;
+  uint1_t done;
+  fosix_size_t sub_fd;
+  uint8_t sub_out_buf[FOSIX_BUF_SIZE];
+  fosix_size_t sub_out_buf_nbytes_ret;
+}syscall_func_t;

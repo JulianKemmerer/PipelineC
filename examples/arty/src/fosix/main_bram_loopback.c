@@ -50,26 +50,6 @@ fosix_fd_t in_fd; // File descriptor for /tmp/in
 fosix_fd_t out_fd; // File descriptor for /tmp/out
 fosix_fd_t bram_fd; // File descriptor for BRAM
 
-// Subroutine registers for common/repeated functionality
-typedef enum subroutine_state_t {
-  IDLE,
-  OPEN_REQ,
-  OPEN_RESP,
-  WRITE_REQ,
-  WRITE_RESP,
-  READ_REQ,
-  READ_RESP,
-  CLOSE_REQ,
-  CLOSE_RESP,
-  RETURN_STATE
-} subroutine_state_t;
-subroutine_state_t sub_state; // Subroutine state
-state_t sub_return_state; // Primary state machine state to return to
-fosix_fd_t sub_fd; // File descriptor for subroutine
-char sub_path[FOSIX_PATH_SIZE]; // Path buf for open()
-uint8_t sub_io_buf[FOSIX_BUF_SIZE]; // IO buf for write+read
-fosix_size_t sub_io_buf_nbytes; // Input number of bytes
-fosix_size_t sub_io_buf_nbytes_ret; // Return count of bytes
 
 // Some repeated logic would probably benefit from some macros...TODO...
 MAIN_MHZ(main, UART_CLK_MHZ) // Use uart clock for main
@@ -80,11 +60,15 @@ void main()
   WIRE_READ(fosix_sys_to_proc_t, sys_to_proc, main_sys_to_proc)  
   // Default output/reset/null values
   fosix_proc_to_sys_t proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
-  
-  // Control of subroutine state machine from primary state
-  subroutine_state_t sub_start_state = IDLE;
-  
-  //////////////////////////////////////////////////////////////////////
+
+  // Syscall (_PRE/POST MACRO?)
+  // State for using syscalls
+  static syscall_io_t syscall_io_reg;
+  // Syscall IO signaling keeps regs contents
+  syscall_io_t syscall_io = syscall_io_reg;
+  // Other than start bit which auto clears
+  syscall_io.start = 0;
+
   // Primary state machine 
   if(state==RESET)
   {
@@ -94,151 +78,179 @@ void main()
   {
     // Open /dev/stdout (stdout on driver program on host)
     // Subroutine arguments
-    sub_path[0]  = '/';
-    sub_path[1]  = 'd';
-    sub_path[2]  = 'e';
-    sub_path[3]  = 'v';
-    sub_path[4]  = '/';
-    sub_path[5]  = 's';
-    sub_path[6]  = 't';
-    sub_path[7]  = 'd';
-    sub_path[8]  = 'o';
-    sub_path[9]  = 'u';
-    sub_path[10] = 't';
-    sub_path[11] = 0; // Null term
-    sub_start_state = OPEN_REQ;
-    // State to return to from subroutine
-    sub_return_state = PRINT_OPEN_IN;
-    // Subroutine return values
-    stdout_fd = sub_fd; // File descriptor
+    syscall_io.path[0]  = '/';
+    syscall_io.path[1]  = 'd';
+    syscall_io.path[2]  = 'e';
+    syscall_io.path[3]  = 'v';
+    syscall_io.path[4]  = '/';
+    syscall_io.path[5]  = 's';
+    syscall_io.path[6]  = 't';
+    syscall_io.path[7]  = 'd';
+    syscall_io.path[8]  = 'o';
+    syscall_io.path[9]  = 'u';
+    syscall_io.path[10] = 't';
+    syscall_io.path[11] = 0; // Null term
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_OPEN;
+    if(syscall_io.done)
+    {
+      // Syscall return values
+      stdout_fd = syscall_io.fd; // File descriptor
+      // State to return to from syscall
+      state = PRINT_OPEN_IN;
+    }
   }
   else if(state==PRINT_OPEN_IN)
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'O';
-    sub_io_buf[1]  = 'p';
-    sub_io_buf[2]  = 'e';
-    sub_io_buf[3]  = 'n';
-    sub_io_buf[4]  = 'i';
-    sub_io_buf[5]  = 'n';
-    sub_io_buf[6]  = 'g';
-    sub_io_buf[7]  = ' ';
-    sub_io_buf[8]  = 'i';
-    sub_io_buf[9]  = 'n';
-    sub_io_buf[10] = '\n';
-    sub_io_buf_nbytes = 11;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = IN_OPEN;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'O';
+    syscall_io.buf[1]  = 'p';
+    syscall_io.buf[2]  = 'e';
+    syscall_io.buf[3]  = 'n';
+    syscall_io.buf[4]  = 'i';
+    syscall_io.buf[5]  = 'n';
+    syscall_io.buf[6]  = 'g';
+    syscall_io.buf[7]  = ' ';
+    syscall_io.buf[8]  = 'i';
+    syscall_io.buf[9]  = 'n';
+    syscall_io.buf[10] = '\n';
+    syscall_io.buf_nbytes = 11;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = IN_OPEN;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==IN_OPEN)
   {
     // Open /tmp/in on host
     // Subroutine arguments
-    sub_path[0]  = '/';
-    sub_path[1]  = 't';
-    sub_path[2]  = 'm';
-    sub_path[3]  = 'p';
-    sub_path[4]  = '/';
-    sub_path[5]  = 'i';
-    sub_path[6]  = 'n';
-    sub_path[7]  = 0; // Null term
-    sub_start_state = OPEN_REQ;
-    // State to return to from subroutine
-    sub_return_state = PRINT_OPEN_BRAM;
-    // Subroutine return values
-    in_fd = sub_fd; // File descriptor
+    syscall_io.path[0]  = '/';
+    syscall_io.path[1]  = 't';
+    syscall_io.path[2]  = 'm';
+    syscall_io.path[3]  = 'p';
+    syscall_io.path[4]  = '/';
+    syscall_io.path[5]  = 'i';
+    syscall_io.path[6]  = 'n';
+    syscall_io.path[7]  = 0; // Null term
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_OPEN;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = PRINT_OPEN_BRAM;
+      // Syscall return values
+      in_fd = syscall_io.fd; // File descriptor
+    }
   }
   else if(state==PRINT_OPEN_BRAM)
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'O';
-    sub_io_buf[1]  = 'p';
-    sub_io_buf[2]  = 'e';
-    sub_io_buf[3]  = 'n';
-    sub_io_buf[4]  = 'i';
-    sub_io_buf[5]  = 'n';
-    sub_io_buf[6]  = 'g';
-    sub_io_buf[7]  = ' ';
-    sub_io_buf[8]  = 'b';
-    sub_io_buf[9]  = 'r';
-    sub_io_buf[10] = 'a';
-    sub_io_buf[11] = 'm';
-    sub_io_buf[12] = '\n';
-    sub_io_buf[13] = 0; // Null term
-    sub_io_buf_nbytes = 14;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = BRAM_OPEN0;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'O';
+    syscall_io.buf[1]  = 'p';
+    syscall_io.buf[2]  = 'e';
+    syscall_io.buf[3]  = 'n';
+    syscall_io.buf[4]  = 'i';
+    syscall_io.buf[5]  = 'n';
+    syscall_io.buf[6]  = 'g';
+    syscall_io.buf[7]  = ' ';
+    syscall_io.buf[8]  = 'b';
+    syscall_io.buf[9]  = 'r';
+    syscall_io.buf[10] = 'a';
+    syscall_io.buf[11] = 'm';
+    syscall_io.buf[12] = '\n';
+    syscall_io.buf[13] = 0; // Null term
+    syscall_io.buf_nbytes = 14;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = BRAM_OPEN0;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==BRAM_OPEN0 | state==BRAM_OPEN1)
   {
     // Open bram
     // Subroutine arguments
-    sub_path[0]  = 'b';
-    sub_path[1]  = 'r';
-    sub_path[2]  = 'a';
-    sub_path[3]  = 'm';
-    sub_path[4]  = 0; // Null term
-    sub_start_state = OPEN_REQ;
-    // State to return to from subroutine
-    if(state==BRAM_OPEN0)
+    syscall_io.path[0]  = 'b';
+    syscall_io.path[1]  = 'r';
+    syscall_io.path[2]  = 'a';
+    syscall_io.path[3]  = 'm';
+    syscall_io.path[4]  = 0; // Null term
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_OPEN;
+    if(syscall_io.done)
     {
-      sub_return_state = PRINT_READ_IN;
+      // State to return to from syscall
+      if(state==BRAM_OPEN0)
+      {
+        state = PRINT_READ_IN;
+      }
+      else // BRAM_OPEN1
+      {
+        state = PRINT_WRITE_OUT;
+      }
+      // Syscall return values
+      bram_fd = syscall_io.fd; // File descriptor
     }
-    else // BRAM_OPEN1
-    {
-      sub_return_state = PRINT_WRITE_OUT;
-    }
-    // Subroutine return values
-    bram_fd = sub_fd; // File descriptor
   }
   else if(state==PRINT_READ_IN)
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'R';
-    sub_io_buf[1]  = 'e';
-    sub_io_buf[2]  = 'a';
-    sub_io_buf[3]  = 'd';
-    sub_io_buf[4]  = 'i';
-    sub_io_buf[5]  = 'n';
-    sub_io_buf[6]  = 'g';
-    sub_io_buf[7]  = ' ';
-    sub_io_buf[8]  = 'i';
-    sub_io_buf[9]  = 'n';
-    sub_io_buf[10] = '\n';
-    sub_io_buf_nbytes = 11;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = IN_READ;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'R';
+    syscall_io.buf[1]  = 'e';
+    syscall_io.buf[2]  = 'a';
+    syscall_io.buf[3]  = 'd';
+    syscall_io.buf[4]  = 'i';
+    syscall_io.buf[5]  = 'n';
+    syscall_io.buf[6]  = 'g';
+    syscall_io.buf[7]  = ' ';
+    syscall_io.buf[8]  = 'i';
+    syscall_io.buf[9]  = 'n';
+    syscall_io.buf[10] = '\n';
+    syscall_io.buf_nbytes = 11;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = IN_READ;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==IN_READ)
   {
     // Read from the input file
     // Subroutine arguments
-    sub_io_buf_nbytes = BRAM_WIDTH;
-    sub_fd = in_fd;
-    sub_start_state = READ_REQ;
-    // State to return to from subroutine
-    sub_return_state = BRAM_WRITE;
-    // Subroutine return buffer sub_io_buf 
-    // need not be read/modified/saved elsewhere
-    // output from read is input to write next
-    // Can only do since no syscalls dont have BOTH input and output buffers
-    // Save number of bytes to write next
-    num_bytes = sub_io_buf_nbytes_ret;
+    syscall_io.buf_nbytes = BRAM_WIDTH;
+    syscall_io.fd = in_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_READ;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = BRAM_WRITE;
+      // Subroutine return buffer sub_io_buf 
+      // need not be read/modified/saved elsewhere
+      // output from read is input to write next
+      // Can only do since no syscalls dont have BOTH input and output buffers
+      // Save number of bytes to write next
+      num_bytes = syscall_io.buf_nbytes_ret;
+    }
   }
   else if(state==BRAM_WRITE)
   {
@@ -247,13 +259,17 @@ void main()
     {
       // Subroutine arguments
       // sub_io_buf = sub_io_buf; // buf from IN_READ is buf for write too
-      sub_io_buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
-      sub_fd = bram_fd;
-      sub_start_state = WRITE_REQ;
-      // State to return to from subroutine
-      sub_return_state = IN_READ;
-      // Subroutine return values
-      //    not used
+      syscall_io.buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
+      syscall_io.fd = bram_fd;
+      syscall_io.start = 1;
+      syscall_io.num = FOSIX_WRITE;
+      if(syscall_io.done)
+      {
+        // State to return to from syscall
+        state = IN_READ;
+        // Syscall return values
+        //    not used
+      }
     }
     else
     {
@@ -265,95 +281,115 @@ void main()
   {
     // Close BRAM file
     // Subroutine arguments
-    sub_fd = bram_fd;
-    sub_start_state = CLOSE_REQ;
-    // State to return to from subroutine
-    sub_return_state = PRINT_OPEN_OUT;
-    // Subroutine return values
-    //    not used
+    syscall_io.fd = bram_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_CLOSE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = PRINT_OPEN_OUT;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==PRINT_OPEN_OUT)
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'O';
-    sub_io_buf[1]  = 'p';
-    sub_io_buf[2]  = 'e';
-    sub_io_buf[3]  = 'n';
-    sub_io_buf[4]  = 'i';
-    sub_io_buf[5]  = 'n';
-    sub_io_buf[6]  = 'g';
-    sub_io_buf[7]  = ' ';
-    sub_io_buf[8]  = 'o';
-    sub_io_buf[9]  = 'u';
-    sub_io_buf[10] = 't';
-    sub_io_buf[11] = '\n';
-    sub_io_buf_nbytes = 12;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = OUT_OPEN;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'O';
+    syscall_io.buf[1]  = 'p';
+    syscall_io.buf[2]  = 'e';
+    syscall_io.buf[3]  = 'n';
+    syscall_io.buf[4]  = 'i';
+    syscall_io.buf[5]  = 'n';
+    syscall_io.buf[6]  = 'g';
+    syscall_io.buf[7]  = ' ';
+    syscall_io.buf[8]  = 'o';
+    syscall_io.buf[9]  = 'u';
+    syscall_io.buf[10] = 't';
+    syscall_io.buf[11] = '\n';
+    syscall_io.buf_nbytes = 12;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = OUT_OPEN;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==OUT_OPEN)
   {
     // Open /tmp/out on host
     // Subroutine arguments
-    sub_path[0]  = '/';
-    sub_path[1]  = 't';
-    sub_path[2]  = 'm';
-    sub_path[3]  = 'p';
-    sub_path[4]  = '/';
-    sub_path[5]  = 'o';
-    sub_path[6]  = 'u';
-    sub_path[7]  = 't'; 
-    sub_path[8]  = 0; // Null term
-    sub_start_state = OPEN_REQ;
-    // State to return to from subroutine
-    sub_return_state = BRAM_OPEN1;
-    // Subroutine return values
-    out_fd = sub_fd; // File descriptor
+    syscall_io.path[0]  = '/';
+    syscall_io.path[1]  = 't';
+    syscall_io.path[2]  = 'm';
+    syscall_io.path[3]  = 'p';
+    syscall_io.path[4]  = '/';
+    syscall_io.path[5]  = 'o';
+    syscall_io.path[6]  = 'u';
+    syscall_io.path[7]  = 't'; 
+    syscall_io.path[8]  = 0; // Null term
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_OPEN;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = BRAM_OPEN1;
+      // Syscall return values
+      out_fd = syscall_io.fd; // File descriptor
+    }
   }
   else if(state==PRINT_WRITE_OUT)
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'W';
-    sub_io_buf[1]  = 'r';
-    sub_io_buf[2]  = 'i';
-    sub_io_buf[3]  = 't';
-    sub_io_buf[4]  = 'i';
-    sub_io_buf[5]  = 'n';
-    sub_io_buf[6]  = 'g';
-    sub_io_buf[7]  = ' ';
-    sub_io_buf[8]  = 'o';
-    sub_io_buf[9]  = 'u';
-    sub_io_buf[10] = 't';
-    sub_io_buf[11] = '\n';
-    sub_io_buf_nbytes = 12;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = BRAM_READ;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'W';
+    syscall_io.buf[1]  = 'r';
+    syscall_io.buf[2]  = 'i';
+    syscall_io.buf[3]  = 't';
+    syscall_io.buf[4]  = 'i';
+    syscall_io.buf[5]  = 'n';
+    syscall_io.buf[6]  = 'g';
+    syscall_io.buf[7]  = ' ';
+    syscall_io.buf[8]  = 'o';
+    syscall_io.buf[9]  = 'u';
+    syscall_io.buf[10] = 't';
+    syscall_io.buf[11] = '\n';
+    syscall_io.buf_nbytes = 12;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = BRAM_READ;
+      // Syscall return values
+      //    not used
+    }
   }
   else if(state==BRAM_READ)
   {
     // Read from BRAM file
     // Subroutine arguments
-    sub_io_buf_nbytes = BRAM_WIDTH;
-    sub_fd = bram_fd;
-    sub_start_state = READ_REQ;
-    // State to return to from subroutine
-    sub_return_state = OUT_WRITE;
-    // Subroutine return buffer sub_io_buf 
-    // need not be read/modified/saved elsewhere
-    // output from read is input to write next
-    // Can only do since no syscalls dont have BOTH input and output buffers
-    // Save number of bytes to write next
-    num_bytes = sub_io_buf_nbytes_ret;
+    syscall_io.buf_nbytes = BRAM_WIDTH;
+    syscall_io.fd = bram_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_READ;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = OUT_WRITE;
+      // Subroutine return buffer sub_io_buf 
+      // need not be read/modified/saved elsewhere
+      // output from read is input to write next
+      // Can only do since no syscalls dont have BOTH input and output buffers
+      // Save number of bytes to write next
+      num_bytes = syscall_io.buf_nbytes_ret;
+    }
   }
   else if(state==OUT_WRITE)
   {
@@ -362,13 +398,17 @@ void main()
     {
       // Subroutine arguments
       // sub_io_buf = sub_io_buf; // buf from BRAM_READ is buf for write too
-      sub_io_buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
-      sub_fd = out_fd;
-      sub_start_state = WRITE_REQ;
-      // State to return to from subroutine
-      sub_return_state = BRAM_READ;
-      // Subroutine return values
-      //    not used
+      syscall_io.buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
+      syscall_io.fd = out_fd;
+      syscall_io.start = 1;
+      syscall_io.num = FOSIX_WRITE;
+      if(syscall_io.done)
+      {
+        // State to return to from syscall
+        state = BRAM_READ;
+        // Syscall return values
+        //    not used
+      }
     }
     else
     {
@@ -380,136 +420,41 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    sub_io_buf[0]  = 'D';
-    sub_io_buf[1]  = 'o';
-    sub_io_buf[2]  = 'n';
-    sub_io_buf[3]  = 'e';
-    sub_io_buf[4]  = '\n';
-    sub_io_buf_nbytes = 5;
-    sub_fd = stdout_fd;
-    sub_start_state = WRITE_REQ;
-    // State to return to from subroutine
-    sub_return_state = DONE;
-    // Subroutine return values
-    //    not used
+    syscall_io.buf[0]  = 'D';
+    syscall_io.buf[1]  = 'o';
+    syscall_io.buf[2]  = 'n';
+    syscall_io.buf[3]  = 'e';
+    syscall_io.buf[4]  = '\n';
+    syscall_io.buf_nbytes = 5;
+    syscall_io.fd = stdout_fd;
+    syscall_io.start = 1;
+    syscall_io.num = FOSIX_WRITE;
+    if(syscall_io.done)
+    {
+      // State to return to from syscall
+      state = DONE;
+      // Syscall return values
+      //    not used
+    }
   }
   
-  //////////////////////////////////////////////////////////////////////
-  // Subroutine state machine 
-  if(sub_state == IDLE)
+  // System call 'FSM' running when asked to start  _POST MACRO?
+  syscall_io.done = 0; // Auto clear done
+  if(syscall_io_reg.start)
   {
-    // Accept state changes from primary state machine
-    sub_state = sub_start_state;
+    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io_reg.num, syscall_io_reg.fd, syscall_io_reg.path, syscall_io_reg.buf, syscall_io_reg.buf_nbytes);
+    proc_to_sys = sc.proc_to_sys;
+    syscall_io.done = sc.done;
+    syscall_io.fd = sc.sub_fd;
+    syscall_io.buf = sc.sub_out_buf;
+    syscall_io.buf_nbytes_ret = sc.sub_out_buf_nbytes_ret;
   }
-  else if(sub_state == OPEN_REQ)
+  // Ignore start bit if during done time
+  if(syscall_io.done | syscall_io_reg.done)
   {
-    // Request to open
-    proc_to_sys.sys_open.req.path = sub_path;
-    proc_to_sys.sys_open.req.valid = 1;
-    // Keep trying to request until finally was ready
-    if(sys_to_proc.sys_open.req_ready)
-    {
-      // Then wait for response
-      sub_state = OPEN_RESP;
-    }
+    syscall_io.start = 0;
   }
-  else if(sub_state==OPEN_RESP)
-  {
-    // Wait here ready for response
-    proc_to_sys.sys_open.resp_ready = 1;
-    // Until we get valid response
-    if(sys_to_proc.sys_open.resp.valid)
-    { 
-      // Save file descriptor
-      sub_fd = sys_to_proc.sys_open.resp.fildes;
-      // Return to primary state machine
-      sub_state = RETURN_STATE;
-    }
-  }
-  else if(sub_state == WRITE_REQ)
-  {
-    // Request to write
-    proc_to_sys.sys_write.req.buf = sub_io_buf;
-    proc_to_sys.sys_write.req.nbyte = sub_io_buf_nbytes;
-    proc_to_sys.sys_write.req.fildes = sub_fd;
-    proc_to_sys.sys_write.req.valid = 1;
-    // Keep trying to request until finally was ready
-    if(sys_to_proc.sys_write.req_ready)
-    {
-      // Then wait for response
-      sub_state = WRITE_RESP;
-    }
-  }
-  else if(sub_state == WRITE_RESP)
-  {
-    // Wait here ready for response
-    proc_to_sys.sys_write.resp_ready = 1;
-    // Until we get valid response
-    if(sys_to_proc.sys_write.resp.valid)
-    { 
-      // Save num bytes
-      sub_io_buf_nbytes_ret = sys_to_proc.sys_write.resp.nbyte;
-      // Return to primary state machine
-      sub_state = RETURN_STATE;
-    }
-  }
-  else if(sub_state == READ_REQ)
-  {
-    // Request to read
-    proc_to_sys.sys_read.req.nbyte = sub_io_buf_nbytes;
-    proc_to_sys.sys_read.req.fildes = sub_fd;
-    proc_to_sys.sys_read.req.valid = 1;
-    // Keep trying to request until finally was ready
-    if(sys_to_proc.sys_read.req_ready)
-    {
-      // Then wait for response
-      sub_state = READ_RESP;
-    }
-  }
-  else if(sub_state == READ_RESP)
-  {
-    // Wait here ready for response
-    proc_to_sys.sys_read.resp_ready = 1;
-    // Until we get valid response
-    if(sys_to_proc.sys_read.resp.valid)
-    { 
-      // Save num bytes and bytes
-      sub_io_buf_nbytes_ret = sys_to_proc.sys_read.resp.nbyte;
-      sub_io_buf = sys_to_proc.sys_read.resp.buf;
-      // Return to primary state machine
-      sub_state = RETURN_STATE;
-    }
-  }
-  else if(sub_state == CLOSE_REQ)
-  {
-    // Request to close
-    proc_to_sys.sys_close.req.fildes = sub_fd;
-    proc_to_sys.sys_close.req.valid = 1;
-    // Keep trying to request until finally was ready
-    if(sys_to_proc.sys_close.req_ready)
-    {
-      // Then wait for response
-      sub_state = CLOSE_RESP;
-    }
-  }
-  else if(sub_state == CLOSE_RESP)
-  {
-    // Wait here ready for response
-    proc_to_sys.sys_close.resp_ready = 1;
-    // Until we get valid response
-    if(sys_to_proc.sys_close.resp.valid)
-    { 
-      // Not looking at err code
-      // Return to primary state machine
-      sub_state = RETURN_STATE;
-    }
-  }
-  else if(sub_state==RETURN_STATE)
-  {
-    // This state allows primary state machine to get return values
-    state = sub_return_state;
-    sub_state = IDLE;
-  }
+  syscall_io_reg = syscall_io;
   
   /*
   if(rst)
