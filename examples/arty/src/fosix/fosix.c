@@ -9,76 +9,101 @@
 #include "sys_bram.c"
 
 // Syscall helper func
-syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_t num, fosix_fd_t sub_fd, char sub_path[FOSIX_PATH_SIZE], uint8_t sub_in_buf[FOSIX_BUF_SIZE], fosix_size_t sub_in_buf_nbytes)
+typedef struct syscall_io_t
+{
+  // As written, with input and output registers and start+done signals, each syscall takes at least 2 clocks
+  // (could instead use: duplicated instances or share an instance input and output wires need FEEDBACK pragma)
+  uint1_t start; // Start flag (inputs valid)
+  uint1_t done; // Done flag (outputs valid)
+  syscall_t num; // System call number in progress
+  fosix_fd_t fd; // File descriptor for syscall
+  char path[FOSIX_PATH_SIZE]; // Path buf for open()
+  uint8_t buf[FOSIX_BUF_SIZE]; // IO buf for write+read
+  fosix_size_t buf_nbytes; // Input number of bytes
+  fosix_size_t buf_nbytes_ret; // Return count of bytes
+}syscall_io_t;
+
+// Helper FSM for one at a time in flight FOSIX operations
+
+typedef enum syscall_state_t {
+  REQ,
+  RESP
+} syscall_state_t;
+typedef struct syscall_func_t 
+{
+  fosix_proc_to_sys_t proc_to_sys;
+  syscall_io_t syscall_io;
+}syscall_func_t;
+syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscall_io)
 {
   // Default output/reset/null values
   syscall_func_t o;
   o.proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
-  o.done = 0;
-  o.sub_fd = sub_fd;
-  o.sub_out_buf = sub_in_buf;
-  o.sub_out_buf_nbytes_ret = 0;
+  o.syscall_io = syscall_io; // Default pass through
+  // Except done flag
+  o.syscall_io.done = 0;
+  /*o.syscall_io.buf_nbytes_ret = 0;*/
   
   // Subroutine state
-  static syscall_state_t sub_state; 
+  static syscall_state_t state; 
   
-  if(sub_state==REQ)
+  if(state==REQ)
   {
     // Request
-    if(num==FOSIX_OPEN)
+    if(syscall_io.num==FOSIX_OPEN)
     {
-      o.proc_to_sys.sys_open.req.path = sub_path;
+      o.proc_to_sys.sys_open.req.path = syscall_io.path;
       o.proc_to_sys.sys_open.req.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.sys_open.req_ready)
       {
         // Then wait for response
-        sub_state = RESP;
+        state = RESP;
       }
     }
-    else if(num==FOSIX_WRITE)
+    else if(syscall_io.num==FOSIX_WRITE)
     {
       // Request to write
-      o.proc_to_sys.sys_write.req.buf = sub_in_buf;
-      o.proc_to_sys.sys_write.req.nbyte = sub_in_buf_nbytes;
-      o.proc_to_sys.sys_write.req.fildes = sub_fd;
+      o.proc_to_sys.sys_write.req.buf = syscall_io.buf;
+      o.proc_to_sys.sys_write.req.nbyte = syscall_io.buf_nbytes;
+      o.proc_to_sys.sys_write.req.fildes = syscall_io.fd;
       o.proc_to_sys.sys_write.req.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.sys_write.req_ready)
       {
         // Then wait for response
-        sub_state = RESP;
+        state = RESP;
       }
     }
-    else if(num==FOSIX_READ)
+    else if(syscall_io.num==FOSIX_READ)
     {
       // Request to read
-      o.proc_to_sys.sys_read.req.nbyte = sub_in_buf_nbytes;
-      o.proc_to_sys.sys_read.req.fildes = sub_fd;
+      o.proc_to_sys.sys_read.req.nbyte = syscall_io.buf_nbytes;
+      o.proc_to_sys.sys_read.req.fildes = syscall_io.fd;
       o.proc_to_sys.sys_read.req.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.sys_read.req_ready)
       {
         // Then wait for response
-        sub_state = RESP;
+        state = RESP;
       }
     }
-    else if(num==FOSIX_CLOSE)
+    else if(syscall_io.num==FOSIX_CLOSE)
     {
       // Request to close
-      o.proc_to_sys.sys_close.req.fildes = sub_fd;
+      o.proc_to_sys.sys_close.req.fildes = syscall_io.fd;
       o.proc_to_sys.sys_close.req.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.sys_close.req_ready)
       {
         // Then wait for response
-        sub_state = RESP;
+        state = RESP;
       }
     }
   }
-  else if(sub_state==RESP)
+  else if(state==RESP)
   {
-    if(num==FOSIX_OPEN)
+    if(syscall_io.num==FOSIX_OPEN)
     {
       // Wait here ready for response
       o.proc_to_sys.sys_open.resp_ready = 1;
@@ -86,42 +111,42 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_t num, fosi
       if(sys_to_proc.sys_open.resp.valid)
       { 
         // Return file descriptor
-        o.sub_fd = sys_to_proc.sys_open.resp.fildes;
+        o.syscall_io.fd = sys_to_proc.sys_open.resp.fildes;
         // Signal done, return to start
-        o.done = 1;
-        sub_state = REQ;
+        o.syscall_io.done = 1;
+        state = REQ;
       }
     }
-    else if(num==FOSIX_WRITE)
+    else if(syscall_io.num==FOSIX_WRITE)
     {
       // Wait here ready for response
       o.proc_to_sys.sys_write.resp_ready = 1;
       // Until we get valid response
       if(sys_to_proc.sys_write.resp.valid)
       { 
-        // Save num bytes
-        o.sub_out_buf_nbytes_ret = sys_to_proc.sys_write.resp.nbyte;
+        // Save syscall_io.num bytes
+        o.syscall_io.buf_nbytes_ret = sys_to_proc.sys_write.resp.nbyte;
         // Signal done, return to start
-        o.done = 1;
-        sub_state = REQ;
+        o.syscall_io.done = 1;
+        state = REQ;
       }
     }
-    else if(num==FOSIX_READ)
+    else if(syscall_io.num==FOSIX_READ)
     {
       // Wait here ready for response
       o.proc_to_sys.sys_read.resp_ready = 1;
       // Until we get valid response
       if(sys_to_proc.sys_read.resp.valid)
       { 
-        // Save num bytes and bytes
-        o.sub_out_buf_nbytes_ret = sys_to_proc.sys_read.resp.nbyte;
-        o.sub_out_buf = sys_to_proc.sys_read.resp.buf;
+        // Save syscall_io.num bytes and bytes
+        o.syscall_io.buf_nbytes_ret = sys_to_proc.sys_read.resp.nbyte;
+        o.syscall_io.buf = sys_to_proc.sys_read.resp.buf;
         // Signal done, return to start
-        o.done = 1;
-        sub_state = REQ;
+        o.syscall_io.done = 1;
+        state = REQ;
       }
     }
-    else if(num==FOSIX_CLOSE)
+    else if(syscall_io.num==FOSIX_CLOSE)
     {
       // Wait here ready for response
       o.proc_to_sys.sys_close.resp_ready = 1;
@@ -130,8 +155,8 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_t num, fosi
       { 
         // Not looking at err code
         // Signal done, return to start
-        o.done = 1;
-        sub_state = REQ;
+        o.syscall_io.done = 1;
+        state = REQ;
       }
     }
   }

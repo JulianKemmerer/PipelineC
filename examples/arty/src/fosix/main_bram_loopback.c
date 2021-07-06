@@ -442,12 +442,9 @@ void main()
   syscall_io.done = 0; // Auto clear done
   if(syscall_io_reg.start)
   {
-    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io_reg.num, syscall_io_reg.fd, syscall_io_reg.path, syscall_io_reg.buf, syscall_io_reg.buf_nbytes);
+    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io_reg);
     proc_to_sys = sc.proc_to_sys;
-    syscall_io.done = sc.done;
-    syscall_io.fd = sc.sub_fd;
-    syscall_io.buf = sc.sub_out_buf;
-    syscall_io.buf_nbytes_ret = sc.sub_out_buf_nbytes_ret;
+    syscall_io = sc.syscall_io;
   }
   // Ignore start bit if during done time
   if(syscall_io.done | syscall_io_reg.done)
