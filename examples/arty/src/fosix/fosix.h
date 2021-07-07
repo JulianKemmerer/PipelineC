@@ -301,3 +301,29 @@ fosix_sys_to_proc_t sys_to_proc_set_ready(fosix_sys_to_proc_t sys_to_proc)
   sys_to_proc.sys_close.req_ready = 1;
   return sys_to_proc;
 }
+
+// Helper macros
+#define SYSCALL_DECL(name) \
+/* State for using syscalls */ \
+static syscall_io_t name##_reg; \
+/* Syscall IO signaling keeps regs contents */ \
+syscall_io_t name = name##_reg; \
+/* Other than start bit which auto clears*/ \
+name.start = 0;
+
+#define SYSCALL(name, sys_to_proc, proc_to_sys) \
+/* Auto clear done*/ \
+name.done = 0; \
+if(name##_reg.start) \
+{ \
+  syscall_func_t name##_sc = syscall_func(sys_to_proc, name##_reg); \
+  proc_to_sys = name##_sc.proc_to_sys; \
+  name = name##_sc.syscall_io; \
+} \
+/* Ignore start bit if during done time */ \
+if(name.done | name##_reg.done) \
+{ \
+  name.start = 0; \
+} \
+name##_reg = name;
+

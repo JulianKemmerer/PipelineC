@@ -61,13 +61,9 @@ void main()
   // Default output/reset/null values
   fosix_proc_to_sys_t proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
 
-  // Syscall (_PRE/POST MACRO?)
-  // State for using syscalls
-  static syscall_io_t syscall_io_reg;
-  // Syscall IO signaling keeps regs contents
-  syscall_io_t syscall_io = syscall_io_reg;
-  // Other than start bit which auto clears
-  syscall_io.start = 0;
+  // Declare syscall connection wire of type syscall_io_t
+  // Use wire to make system calls from FSM below
+  SYSCALL_DECL(syscall_io)
 
   // Primary state machine 
   if(state==RESET)
@@ -438,20 +434,8 @@ void main()
     }
   }
   
-  // System call 'FSM' running when asked to start  _POST MACRO?
-  syscall_io.done = 0; // Auto clear done
-  if(syscall_io_reg.start)
-  {
-    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io_reg);
-    proc_to_sys = sc.proc_to_sys;
-    syscall_io = sc.syscall_io;
-  }
-  // Ignore start bit if during done time
-  if(syscall_io.done | syscall_io_reg.done)
-  {
-    syscall_io.start = 0;
-  }
-  syscall_io_reg = syscall_io;
+  // System call 'FSM' running when asked to start
+  SYSCALL(syscall_io, sys_to_proc, proc_to_sys)
   
   /*
   if(rst)
