@@ -3890,13 +3890,16 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
         c_type_str = "int" + str(bits+1) + "_t"
       else:
         c_type_str = "uint" + str(bits) + "_t"
-  elif type(c_ast_node) == c_ast.Constant and c_ast_node.type=='char':
+  elif value_str.startswith("'"): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='char':
     value = value_str.strip("'")
     c_type_str = "char"
     #print "Char val", value
   elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
     value = float(value_str)
     c_type_str = "float"
+  elif value_str.startswith('"'): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='string':
+    value = value_str.strip('"')
+    c_type_str = "char[" + str(len(value)) + "]"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
     print(0/0)
@@ -6263,6 +6266,25 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
         # U/INT driving enum is fine
         elif WIRE_IS_ENUM(driven_wire_name, parser_state.existing_logic, parser_state) and (VHDL.WIRES_ARE_UINT_N([driving_wire],parser_state.existing_logic) or VHDL.WIRES_ARE_INT_N([driving_wire],parser_state.existing_logic)) :
           continue
+        # Getting pretty hacky here with this 'internal' / PipelineC specific code
+        # Could do for all...single/multi? dimension int-like(having null/0) arrays?
+        elif C_TYPE_IS_ARRAY(driven_wire_type) and C_TYPE_IS_ARRAY(rhs_type):
+          lhs_elem_t,lhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(driven_wire_type)
+          rhs_elem_t,rhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(rhs_type)
+          # Only chars for now
+          if lhs_elem_t != "char" or rhs_elem_t != "char" or len(lhs_dims)!=1 or len(rhs_dims)!=1:
+            # Unhandled
+            print("Unhandled array assignment: RHS",driving_wire,"drives LHS",driven_wire_name, c_ast_node.coord)
+            sys.exit(-1)
+          elem_t = "char"
+          lhs_size = lhs_dims[0]
+          rhs_size = rhs_dims[0]
+          if rhs_size > lhs_size:
+            # Unhandled
+            print(rhs_type, "string at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
+            sys.exit(-1)
+          # Allow it to be resolved in VHDL
+          continue         
         # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
         elif (
                ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type,parser_state) and (SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(driven_wire_type,parser_state)==rhs_type) )
@@ -6309,7 +6331,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
 
         else:
           # Unhandled
-          print("RHS",driving_wire,"drives",driven_wire_name,"with different types?", c_ast_node.coord)
+          print("RHS",driving_wire,"drives LHS",driven_wire_name,"with different types?", c_ast_node.coord)
           print(driven_wire_type, "!=", rhs_type)
           print("Implement nasty casty?") #Fat White Family - Tastes Good With The Money
           #print(0/0)
