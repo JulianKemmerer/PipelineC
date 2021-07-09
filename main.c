@@ -41,7 +41,44 @@
 
 // Below is a bunch of recent scratch work - enjoy
 
+/*
+#include "uintN_t.h"
+#pragma MAIN_MHZ my_negate_tb 100.0
+#define SIZE 16
+typedef struct my_str_t
+{
+  char chars[SIZE];
+}my_str_t;
+my_str_t my_negate(char yes_no[SIZE])
+{
+  my_str_t rv;
+  rv.chars = "undefined";
+  if(yes_no=="yes")
+  {
+    rv.chars = "no";
+  }
+  else if(yes_no=="no")
+  {
+    rv.chars = "yes";
+  }
+  return rv;
+}
 
+void my_negate_tb()
+{
+  my_str_t inputs[3];
+  inputs[0].chars = "yes";
+  inputs[1].chars = "no";
+  inputs[2].chars = "PipelineC";
+  
+  uint32_t i;
+  for(i=0; i<3; i+=1)
+  {
+    my_str_t input_negated = my_negate(inputs[i].chars);
+    printf("%s negated is %s\n", inputs[i].chars, input_negated.chars);
+  }
+}
+*/
 
 /*
 // What is RETURN? is it a valid/done signal? built in for FSMs

@@ -22,6 +22,7 @@ print('''
 '''
 TODO:
 First refactor fosix stuff:
+  Make syscall syntax one step further with more macros and strlen()
   to use antikernel like packets (still struct, but more compact than fosix types)
   to use more global wires make code look as simple as possible
   Do DVI over HDMI video demo driven from NoC element (instead of VGA)

@@ -699,6 +699,7 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
     
   return int(c_type_str.replace("uint","").replace("int","").replace("_t",""))
   
+# 'Width' is apparently a integer like concept?
 def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
   if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
     return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
@@ -1469,6 +1470,25 @@ use ieee.numeric_std.all;
 package c_structs_pkg is
 '''
   
+  # Byte array type to be sub typed for u8 and char array
+  # TODO for all other array types
+  text += '''
+  type byte_array_t is array (natural range <>) of unsigned(7 downto 0);
+  function to_byte_array(s : string) return byte_array_t;
+  '''
+  
+  # String to byte array func
+  pkg_body_text += '''
+  function to_byte_array(s : string) return byte_array_t is
+    variable rv : byte_array_t(0 to s'length-1);
+  begin
+    for i in 0 to s'length-1 loop
+        -- i+1 since strings start at index 1
+        rv(i) := to_unsigned(character'pos(s(i+1)), 8);
+    end loop;
+    return rv;
+  end function;
+  '''
   
   # Do this stupid dumb loop to resolve dependencies
   # Hacky resolve dependencies
@@ -1599,7 +1619,11 @@ end function;
             inner_type += "[" + str(inner_type_dim) + "]"
           inner_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(inner_type,parser_state)
           # Type def
-          line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
+          # Use subtype if elem is byte - TODO prob need this for more than just byte elements right?
+          if inner_vhdl_type == "unsigned(7 downto 0)":
+            line = "subtype " + new_vhdl_type + " is byte_array_t(0 to " + str(new_dims[0]-1) + ");\n"
+          else:
+            line = "type " + new_vhdl_type + " is array(0 to " + str(new_dims[0]-1) + ") of " + inner_vhdl_type + ";\n"
           text += line
           # SLV LEN
           inner_size_str = C_TYPE_STR_TO_VHDL_SLV_LEN_STR(inner_type,parser_state)
@@ -1891,19 +1915,35 @@ def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
   return timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) > 0 or len(Logic.state_regs) > 0
   
+def C_CONST_STR_TO_VHDL_CONST_STR(c_str):
+  vhdl = c_str[:]
+  vhdl = vhdl.replace('\\n', '"&LF&"')
+  vhdl = vhdl.replace('\\t', '"&HT&"')
+  return vhdl
+  
 def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   format_string = Logic.c_ast_node.args.exprs[0].value
   formats = C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_FORMATS(Logic.c_ast_node)
 
   # Make a vhdl format string working left to right replacing as you go
-  vhdl_format_string = format_string[:]
-  vhdl_format_string = vhdl_format_string.replace('\\n', '"&LF&"')
-  vhdl_format_string = vhdl_format_string.replace('\\t', '"&HT&"')
+  vhdl_format_string = C_CONST_STR_TO_VHDL_CONST_STR(format_string)
   for i,f in enumerate(formats): 
     vhdl_arg_str = '"&' + f.vhdl_to_string_toks[0] + "arg" + str(i) + f.vhdl_to_string_toks[1] + '&"'
     vhdl_format_string = vhdl_format_string.replace(f.specifier, vhdl_arg_str, 1)
   
   text = ""
+  
+  text += '''
+  function to_string(bytes : byte_array_t) return string is
+    variable rv : string(1 to bytes'length) := (others => NUL);
+  begin
+    for i in 0 to bytes'length -1 loop
+      rv(i+1) := character'val(to_integer(bytes(i)));
+    end loop;
+    return rv;
+  end function;
+  '''
+  
   text += "\nbegin\n"
   # Process for each arg - 2008 all use ok?
   text += "-- synthesis translate_off\n"
@@ -2749,8 +2789,25 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     # Assigning to arry from dumb
     # array = dumb.data
     resize_toks = ["",".data"]
+    
+  elif C_TO_LOGIC.C_TYPE_IS_ARRAY(left_type) and C_TO_LOGIC.C_TYPE_IS_ARRAY(right_type):
+    lhs_elem_t,lhs_dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
+    rhs_elem_t,rhs_dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
+    
+    # Only exact type elems for now, allow char uint8
+    if len(lhs_dims)!=1 or len(rhs_dims)!=1 or (lhs_elem_t != rhs_elem_t and not((lhs_elem_t=="char" and rhs_elem_t=="uint8_t") or (rhs_elem_t=="char" and lhs_elem_t=="uint8_t"))):
+      # Unhandled
+      print("Unhandled array assignment vhdl type resolve:", rhs_elem_t, "drives", lhs_elem_t)
+      sys.exit(-1)
+    left_size = lhs_dims[0]
+    right_size = rhs_dims[0]
+    resize_toks = ["",""]
+    if left_size > right_size:
+      resize_toks = ["",""]
+      resize_toks = ["(0 to " + str(right_size-1) + " => ", ", others => " + C_TYPE_STR_TO_VHDL_NULL_STR(lhs_elem_t, parser_state) + ")"]
+      #resize_toks = ["(0 to " + str(right_size-1) + " => ", ", others => to_unsigned(0,8))"]
   else:
-    print("What cant support this assignment in vhdl?")
+    print("Cant support this assignment in vhdl?")
     print(driving_wire, right_type)
     print("DRIVING")
     print(driven_wire, left_type)
@@ -2992,6 +3049,18 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
       sys.exit(-1)
     #HAHA have fun filling this in dummy    
     return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
+    
+    
+  # Strings
+  if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+    elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+    if elem_t != "char" or len(dims)!=1:
+      # Unhandled
+      print("Unhandled array const:",val_str)
+      sys.exit(-1)
+    elem_t = "char"
+    size = dims[0]
+    return "to_byte_array("+C_CONST_STR_TO_VHDL_CONST_STR(val_str)+")"
   
   #print("CONST_VAL_STR_TO_VHDL val_str",val_str)
   value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, None, is_negated)
@@ -3083,12 +3152,12 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(submodule_logic, submodule
   text = ""
   RHS = GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage)
   TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driver_of_input, input_port_wire, parser_state)
-  text +=  "      " + GET_LHS(output_port_wire, logic, parser_state) + " := " + TYPE_RESOLVED_RHS + vhdl_ref_str + ";\n"
+  text +=  "   " + GET_LHS(output_port_wire, logic, parser_state) + " := " + TYPE_RESOLVED_RHS + vhdl_ref_str + ";\n"
     
   return text
   
 def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, stage_ordered_submodule_list, stage):
-  rv = "      "
+  rv = "   "
   # FUNC INSTANCE
   out_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
   rv += GET_LHS(out_wire, logic, parser_state) + " := " + submodule_logic.func_name + "(\n"
@@ -3097,7 +3166,7 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_n
     driver_of_input = logic.wire_driven_by[in_wire]
     RHS = GET_RHS(driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage)
     TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driver_of_input, in_wire, parser_state)
-    rv += "       " + TYPE_RESOLVED_RHS + ",\n"
+    rv += "   " + TYPE_RESOLVED_RHS + ",\n"
   # Remove last two chars
   rv = rv[0:len(rv)-2]
   rv += ");\n"
@@ -3232,8 +3301,32 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
     return vhdl_type + "_SLV_LEN"
   else:
     print("Unknown VHDL slv len str for C type: '" + c_type_str + "'")
-    sys.exit(-1)
-    
+    sys.exit(-1)    
+  
+# Oh boy lets recurse a bunch because otherwise is calculated in vhdl compile time fuck lazy past me
+def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
+  width = GET_WIDTH_FROM_C_TYPE_STR(parser_state,c_type_str,allow_fail=True)
+  if width is not None:
+    return width
+  if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    width = 0
+    field_type_dict = parser_state.struct_to_field_type_dict[c_type_str]
+    for field in field_type_dict:
+      field_c_type = field_type_dict[field]
+      field_width = C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(field_c_type, parser_state)
+      width = width + field_width
+    return width
+  elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+    elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
+    elem_slv_width = C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(elem_type, parser_state)
+    width = elem_slv_width
+    for dim in dims:
+      width = width * dim
+    return width
+  else:
+    print("Unknown VHDL slv len value for C type: '" + c_type_str + "'")
+    sys.exit(-1)   
+
     
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
   # Check for int types

@@ -724,30 +724,32 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, 
     end if;     
   '''
   
-  
-
   return wires_decl_text, text
   
-def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str):
-  LogicInstLookupTable = parser_state.LogicInstLookupTable
-  # ONLY INTS FOR NOW
+def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state, op_str):
+  # Binary operation between what two types?
   left_type = logic.wire_to_c_type[logic.inputs[0]]
   right_type = logic.wire_to_c_type[logic.inputs[1]]
   left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
   right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
   
-  # HACK OH GOD NO dont look up enums
-  # Left
-  left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-  # Right
-  right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+  
+  # Only ints+floats for now, check all inputs
+  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
+    # HACK OH GOD NO dont look up enums
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    max_width = max(left_width,right_width)
+    left_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
+    right_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
+  else:
+    # Some other type, rely on built in to from slv funcs
+    left_width = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(left_type, parser_state)
+    right_width = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(right_type, parser_state)
+    max_width = max(left_width,right_width)
+    left_cast_toks = [left_vhdl_type+"_to_slv(",")"]
+    right_cast_toks = [right_vhdl_type+"_to_slv(",")"]
     
-  max_width = max(left_width,right_width)
-    
-  # Left
-  left_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
-  right_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
-
   
   wires_decl_text = '''
   left_resized : std_logic_vector(''' + str(max_width-1) + ''' downto 0);
@@ -824,15 +826,6 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
       # More stages to go
       text += '''   
     elsif STAGE = ''' + str(stage) + ''' then '''
-
-def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state, op_str):
-  # Binary operation between what two types?
-  # Only ints for now, check all inputs
-  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
-    return GET_BIN_OP_EQ_NEQ_C_BUILT_IN_AS_SLV_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, op_str)
-  else:
-    print("Binary op EQ for ", logic.wire_to_c_type, " as SLV?")
-    sys.exit(-1)
     
 def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   left_type = logic.wire_to_c_type[logic.inputs[0]]

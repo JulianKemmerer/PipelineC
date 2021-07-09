@@ -74,18 +74,7 @@ void main()
   {
     // Open /dev/stdout (stdout on driver program on host)
     // Subroutine arguments
-    syscall_io.path[0]  = '/';
-    syscall_io.path[1]  = 'd';
-    syscall_io.path[2]  = 'e';
-    syscall_io.path[3]  = 'v';
-    syscall_io.path[4]  = '/';
-    syscall_io.path[5]  = 's';
-    syscall_io.path[6]  = 't';
-    syscall_io.path[7]  = 'd';
-    syscall_io.path[8]  = 'o';
-    syscall_io.path[9]  = 'u';
-    syscall_io.path[10] = 't';
-    syscall_io.path[11] = 0; // Null term
+    syscall_io.path = "/dev/stdout";
     syscall_io.start = 1;
     syscall_io.num = FOSIX_OPEN;
     if(syscall_io.done)
@@ -100,18 +89,8 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'O';
-    syscall_io.buf[1]  = 'p';
-    syscall_io.buf[2]  = 'e';
-    syscall_io.buf[3]  = 'n';
-    syscall_io.buf[4]  = 'i';
-    syscall_io.buf[5]  = 'n';
-    syscall_io.buf[6]  = 'g';
-    syscall_io.buf[7]  = ' ';
-    syscall_io.buf[8]  = 'i';
-    syscall_io.buf[9]  = 'n';
-    syscall_io.buf[10] = '\n';
-    syscall_io.buf_nbytes = 11;
+    syscall_io.buf = "Opening /tmp/in\n";
+    syscall_io.buf_nbytes = 17; // w/ null term 
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -127,14 +106,7 @@ void main()
   {
     // Open /tmp/in on host
     // Subroutine arguments
-    syscall_io.path[0]  = '/';
-    syscall_io.path[1]  = 't';
-    syscall_io.path[2]  = 'm';
-    syscall_io.path[3]  = 'p';
-    syscall_io.path[4]  = '/';
-    syscall_io.path[5]  = 'i';
-    syscall_io.path[6]  = 'n';
-    syscall_io.path[7]  = 0; // Null term
+    syscall_io.path = "/tmp/in";
     syscall_io.start = 1;
     syscall_io.num = FOSIX_OPEN;
     if(syscall_io.done)
@@ -149,20 +121,7 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'O';
-    syscall_io.buf[1]  = 'p';
-    syscall_io.buf[2]  = 'e';
-    syscall_io.buf[3]  = 'n';
-    syscall_io.buf[4]  = 'i';
-    syscall_io.buf[5]  = 'n';
-    syscall_io.buf[6]  = 'g';
-    syscall_io.buf[7]  = ' ';
-    syscall_io.buf[8]  = 'b';
-    syscall_io.buf[9]  = 'r';
-    syscall_io.buf[10] = 'a';
-    syscall_io.buf[11] = 'm';
-    syscall_io.buf[12] = '\n';
-    syscall_io.buf[13] = 0; // Null term
+    syscall_io.buf = "Opening bram\n";
     syscall_io.buf_nbytes = 14;
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
@@ -179,11 +138,7 @@ void main()
   {
     // Open bram
     // Subroutine arguments
-    syscall_io.path[0]  = 'b';
-    syscall_io.path[1]  = 'r';
-    syscall_io.path[2]  = 'a';
-    syscall_io.path[3]  = 'm';
-    syscall_io.path[4]  = 0; // Null term
+    syscall_io.path = "bram";
     syscall_io.start = 1;
     syscall_io.num = FOSIX_OPEN;
     if(syscall_io.done)
@@ -205,18 +160,8 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'R';
-    syscall_io.buf[1]  = 'e';
-    syscall_io.buf[2]  = 'a';
-    syscall_io.buf[3]  = 'd';
-    syscall_io.buf[4]  = 'i';
-    syscall_io.buf[5]  = 'n';
-    syscall_io.buf[6]  = 'g';
-    syscall_io.buf[7]  = ' ';
-    syscall_io.buf[8]  = 'i';
-    syscall_io.buf[9]  = 'n';
-    syscall_io.buf[10] = '\n';
-    syscall_io.buf_nbytes = 11;
+    syscall_io.buf = "Reading /tmp/in\n";
+    syscall_io.buf_nbytes = 17; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -292,19 +237,8 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'O';
-    syscall_io.buf[1]  = 'p';
-    syscall_io.buf[2]  = 'e';
-    syscall_io.buf[3]  = 'n';
-    syscall_io.buf[4]  = 'i';
-    syscall_io.buf[5]  = 'n';
-    syscall_io.buf[6]  = 'g';
-    syscall_io.buf[7]  = ' ';
-    syscall_io.buf[8]  = 'o';
-    syscall_io.buf[9]  = 'u';
-    syscall_io.buf[10] = 't';
-    syscall_io.buf[11] = '\n';
-    syscall_io.buf_nbytes = 12;
+    syscall_io.buf = "Opening /tmp/out\n";
+    syscall_io.buf_nbytes = 18; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -320,15 +254,7 @@ void main()
   {
     // Open /tmp/out on host
     // Subroutine arguments
-    syscall_io.path[0]  = '/';
-    syscall_io.path[1]  = 't';
-    syscall_io.path[2]  = 'm';
-    syscall_io.path[3]  = 'p';
-    syscall_io.path[4]  = '/';
-    syscall_io.path[5]  = 'o';
-    syscall_io.path[6]  = 'u';
-    syscall_io.path[7]  = 't'; 
-    syscall_io.path[8]  = 0; // Null term
+    syscall_io.path = "/tmp/out";
     syscall_io.start = 1;
     syscall_io.num = FOSIX_OPEN;
     if(syscall_io.done)
@@ -343,19 +269,8 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'W';
-    syscall_io.buf[1]  = 'r';
-    syscall_io.buf[2]  = 'i';
-    syscall_io.buf[3]  = 't';
-    syscall_io.buf[4]  = 'i';
-    syscall_io.buf[5]  = 'n';
-    syscall_io.buf[6]  = 'g';
-    syscall_io.buf[7]  = ' ';
-    syscall_io.buf[8]  = 'o';
-    syscall_io.buf[9]  = 'u';
-    syscall_io.buf[10] = 't';
-    syscall_io.buf[11] = '\n';
-    syscall_io.buf_nbytes = 12;
+    syscall_io.buf = "Writing /tmp/out\n";
+    syscall_io.buf_nbytes = 18; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -416,12 +331,8 @@ void main()
   {
     // Print debug
     // Subroutine arguments
-    syscall_io.buf[0]  = 'D';
-    syscall_io.buf[1]  = 'o';
-    syscall_io.buf[2]  = 'n';
-    syscall_io.buf[3]  = 'e';
-    syscall_io.buf[4]  = '\n';
-    syscall_io.buf_nbytes = 5;
+    syscall_io.buf = "Done\n";
+    syscall_io.buf_nbytes = 6; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;

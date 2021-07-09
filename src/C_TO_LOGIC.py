@@ -3899,7 +3899,8 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     c_type_str = "float"
   elif value_str.startswith('"'): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='string':
     value = value_str.strip('"')
-    c_type_str = "char[" + str(len(value)) + "]"
+    actual_str = value.replace("\\n",'\n')
+    c_type_str = "char[" + str(len(actual_str)) + "]"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
     print(0/0)
@@ -4973,10 +4974,10 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif len(input_drivers) == 0:
       return None
     else:
-      print("WARNING: Not reducing constant function call:")
+      print("WARNING: Not reducing constant function call:", end=' ')
       print(func_inst_name, end=' ')
       print(func_base_name, func_c_ast_node.coord)
-      sys.exit(-1)
+      #sys.exit(-1)
       return None
     
     # Going to replace with constant
@@ -5211,6 +5212,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # if driven_input_wire_name not in parser_state.existing_logic.wire_to_c_type:
     #   parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
     
+    '''
+    # Sanity check drive of input port wire type makes sense
     if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
       # Set type for this wire by type of wire that drives this
       # Type of driving wire
@@ -5225,6 +5228,9 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           elif VHDL.C_TYPES_ARE_INTEGERS([input_driver_type,driving_wire_c_type]):
             #and VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,driving_wire_c_type) >= VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,input_driver_type) ):
             pass
+          # Allow arrays of same single dim type if driven wire is large enough
+          
+          
           else:
             print("Input index:",i, "(total", len(input_drivers), ")", input_port_names, input_driver_types)
             print("driven_input_wire_name",driven_input_wire_name)
@@ -5235,6 +5241,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             sys.exit(-1)
         #if driven_input_wire_name not in parser_state.existing_logic.wire_to_c_type:
         # parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
+    '''
     
     # SAVE TYPE
     parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = input_driver_type
@@ -5373,6 +5380,11 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
       f.c_type = "float"
       f.base = None
       f.vhdl_to_string_toks = ["real'image(to_real(to_float(",")))"]
+    elif format_specifier == "%s":
+      # Uhhh... some max size for now...todo inspect driving wire type
+      f.c_type = "char[" + str(256) + "]"
+      f.base = None
+      f.vhdl_to_string_toks = ["to_string(",")"]
     else:
       print("TODO: Unsupported printf format:", format_specifier)
       sys.exit(-1)
@@ -5985,8 +5997,10 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   # Dont want bin op ports based on char type or enum types
   if left_type == 'char':
     left_type = "uint8_t"
+    parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
   if right_type == 'char':
     right_type = "uint8_t"
+    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
     
   # Force bit shifts to have uint RHS
   if is_bit_shift:
@@ -5998,7 +6012,29 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     resized_prefix = "uint" + str(shift_bit_width)
     resized_t = resized_prefix + "_t"
     right_type = resized_t
+    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type    
     
+  # Hack in resizing single dim arrays to max size
+  if C_TYPE_IS_ARRAY(left_type) and C_TYPE_IS_ARRAY(right_type):
+    lhs_elem_t,lhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
+    rhs_elem_t,rhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
+    # And swap char arrays to uint8 arrays like char to uint8 swap above
+    # Swapping of char to uint8 is only necessary for compare GT/LT compares
+    # Arrays arent compared iwht LT/GT right now so dont need swap
+    # But ALSO doesnt hurt? and reduces code?
+    if lhs_elem_t == 'char':
+      lhs_elem_t = "uint8_t"
+    if rhs_elem_t == 'char':
+      rhs_elem_t = "uint8_t"
+    # General array enlarging
+    if lhs_elem_t==rhs_elem_t and len(lhs_dims)==1 and len(rhs_dims)==1:
+      max_dim = max(lhs_dims[0],rhs_dims[0])
+      # Set both to max size
+      left_type = lhs_elem_t + "["+str(max_dim)+"]"
+      parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+      right_type = rhs_elem_t + "["+str(max_dim)+"]"
+      parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+      
   # Prepare for N arg inst
   input_drivers = [] # Prefer wires
   left_driver_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
@@ -6256,6 +6292,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
         # 
         # Integer promotion / slash supported truncation in C lets this be OK
         # Chars are essentially uint8_t
+        #if CAST_HANDLED_IN_VHDL(driven_wire_type, rhs_type, parser_state):
         if ( ( VHDL.WIRES_ARE_INT_N([driven_wire_name],parser_state.existing_logic) or VHDL.WIRES_ARE_UINT_N([driven_wire_name],parser_state.existing_logic))
           and 
            ( VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type) )   ):
@@ -6266,25 +6303,25 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
         # U/INT driving enum is fine
         elif WIRE_IS_ENUM(driven_wire_name, parser_state.existing_logic, parser_state) and (VHDL.WIRES_ARE_UINT_N([driving_wire],parser_state.existing_logic) or VHDL.WIRES_ARE_INT_N([driving_wire],parser_state.existing_logic)) :
           continue
+        
         # Getting pretty hacky here with this 'internal' / PipelineC specific code
         # Could do for all...single/multi? dimension int-like(having null/0) arrays?
         elif C_TYPE_IS_ARRAY(driven_wire_type) and C_TYPE_IS_ARRAY(rhs_type):
           lhs_elem_t,lhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(driven_wire_type)
           rhs_elem_t,rhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(rhs_type)
-          # Only chars for now
-          if lhs_elem_t != "char" or rhs_elem_t != "char" or len(lhs_dims)!=1 or len(rhs_dims)!=1:
-            # Unhandled
-            print("Unhandled array assignment: RHS",driving_wire,"drives LHS",driven_wire_name, c_ast_node.coord)
-            sys.exit(-1)
-          elem_t = "char"
+          # Only exact type elems for now, allow char uint8
+          if len(lhs_dims)!=1 or len(rhs_dims)!=1 or (lhs_elem_t != rhs_elem_t and not((lhs_elem_t=="char" and rhs_elem_t=="uint8_t") or (rhs_elem_t=="char" and lhs_elem_t=="uint8_t"))):
+              # Unhandled
+              print("Unhandled array assignment: RHS",driving_wire,"drives LHS",driven_wire_name, c_ast_node.coord)
+              sys.exit(-1)
           lhs_size = lhs_dims[0]
           rhs_size = rhs_dims[0]
           if rhs_size > lhs_size:
             # Unhandled
-            print(rhs_type, "string at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
+            print(rhs_type, "array at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
             sys.exit(-1)
           # Allow it to be resolved in VHDL
-          continue         
+          continue
         # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
         elif (
                ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type,parser_state) and (SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(driven_wire_type,parser_state)==rhs_type) )

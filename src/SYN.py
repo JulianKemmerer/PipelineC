@@ -953,7 +953,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       
       # This ends one submodule level iteration
       # Record text from this iteration
-      submodule_level_prepend_text = "  " + " " + " " + "-- SUBMODULE LEVEL " + str(submodule_level) + "\n"
+      submodule_level_prepend_text = "  " + " " + "-- SUBMODULE LEVEL " + str(submodule_level) + "\n"
       if submodule_level_text != "":
         # Init dict entries
         if stage_num not in rv.per_stage_texts:
