@@ -291,38 +291,45 @@ begin
     
     new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
     text += "-- main functions always clock enabled\n"
-    text += main_entity_name + " : entity work." + main_entity_name +" port map (\n"
+    text += main_entity_name + " : entity work." + main_entity_name +" "
+    port_start_text = "port map (\n"
+    port_text = ""
+    port_text += port_start_text
     # Clock
     if main_needs_clk:
-      text += "clk_" + clk_ext_str + ",\n"
+      port_text += "clk_" + clk_ext_str + ",\n"
     # Clock enable
     if main_needs_clk_en:
-      text += "to_unsigned(1,1),\n"
+      port_text += "to_unsigned(1,1),\n"
     # Clock cross in
     if main_needs_clk_cross_to_module:
-      text += "clk_cross_to_module." + main_func + ",\n"
+      port_text += "clk_cross_to_module." + main_func + ",\n"
     # Clock cross out 
     if main_needs_module_to_clk_cross:
-      text += "module_to_clk_cross." + main_func + ",\n"
+      port_text += "module_to_clk_cross." + main_func + ",\n"
     # Inputs
     for in_port in main_func_logic.inputs:
       if is_final_top: 
         in_wire = main_func  + "_" + in_port
       else:
         in_wire = main_entity_name + "_" + in_port + "_input_reg"
-      text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic)
-      text += ",\n"
+      port_text += WIRE_TO_VHDL_NAME(in_wire, main_func_logic)
+      port_text += ",\n"
     # Outputs
     for out_port in main_func_logic.outputs:
       out_wire = main_func + "_" + out_port
-      text += WIRE_TO_VHDL_NAME(out_wire, main_func_logic)
+      port_text += WIRE_TO_VHDL_NAME(out_wire, main_func_logic)
       if not is_final_top: 
-        text += "_output"
-      text += ",\n"
-       
-    # Remove last two chars
-    text = text[0:len(text)-2]
-    text += ");\n\n"
+        port_text += "_output"
+      port_text += ",\n"
+     
+    if port_text != port_start_text:
+      # Remove last two chars
+      port_text = port_text[0:len(port_text)-2]
+      port_text += ")"
+      text += port_text
+    
+    text += ";\n\n"
 
 
   # Clock crossings
@@ -624,25 +631,32 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     # ENTITY
     rv += "-- Instantiate entity\n"
     rv += "-- Top level funcs always synthesized as clock enabled\n"
-    rv += entity_name +" : entity work." + entity_name + " port map (\n"
+    rv += entity_name +" : entity work." + entity_name + " "
+    port_text = ""
+    port_start_text = "port map (\n"
+    port_text += port_start_text
     if needs_clk:
-      rv += "clk,\n"
+      port_text += "clk,\n"
     if needs_clk_en:
-      rv += "to_unsigned(1,1),\n"
+      port_text += "to_unsigned(1,1),\n"
     # Clock cross as needed
     if needs_clk_cross_to_module:
-      rv += " clk_cross_to_module_input_reg,\n"
+      port_text += " clk_cross_to_module_input_reg,\n"
     if needs_module_to_clk_cross:
-      rv += " module_to_clk_cross_output,\n"
+      port_text += " module_to_clk_cross_output,\n"
     # Inputs from regs
     for in_port in Logic.inputs:
-      rv += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
+      port_text += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
     # Outputs to signal
     for out_port in Logic.outputs:
-      rv += WIRE_TO_VHDL_NAME(out_port, Logic) + "_output" + ",\n"
-    # Remove last two chars
-    rv = rv[0:len(rv)-len(",\n")]
-    rv += ");\n"
+      port_text += WIRE_TO_VHDL_NAME(out_port, Logic) + "_output" + ",\n"
+    
+    if port_text != port_start_text:
+      # Remove last two chars
+      port_text = port_text[0:len(port_text)-len(",\n")]
+      rv += port_text
+      rv += ")"
+    rv += ";\n"
   
   rv += "\n"  
   rv += " " + "-- IO regs\n"
@@ -2344,40 +2358,44 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   
   rv += "entity " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + " is" + "\n"
   
-  rv += "port(" + "\n"
+  
+  port_text = ""
+  port_start_text = "port(" + "\n"
+  port_text += port_start_text
   
   # Clock?
   if needs_clk:
-    rv += " clk : in std_logic;" + "\n"
+    port_text += " clk : in std_logic;" + "\n"
     
   # Clock enable
   if needs_clk_en:
-    rv += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
+    port_text += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
     
   # Clock cross inputs?
   if needs_clk_cross_to_module:
-    rv += " clk_cross_to_module : in " + Logic.func_name + "_clk_cross_to_module_t;" + "\n"
+    port_text += " clk_cross_to_module : in " + Logic.func_name + "_clk_cross_to_module_t;" + "\n"
   
   # Clock cross outputs?
   if needs_module_to_clk_cross:
-    rv += " module_to_clk_cross : out " + Logic.func_name + "_module_to_clk_cross_t;" + "\n"
+    port_text += " module_to_clk_cross : out " + Logic.func_name + "_module_to_clk_cross_t;" + "\n"
     
   # The inputs of the Logic
   for input_name in Logic.inputs:
     # Get type for input
     vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name,Logic,parser_state)
     
-    rv += " " + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
+    port_text += " " + WIRE_TO_VHDL_NAME(input_name, Logic) + " : in " + vhdl_type_str + ";" + "\n"
   
   # Output is type of return wire
   if len(Logic.outputs) > 0:
     for out_port in Logic.outputs:
       vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_port,Logic,parser_state)
-      rv += " " + WIRE_TO_VHDL_NAME(out_port, Logic) + " : out " + vhdl_type_str + ";" + "\n"
+      port_text += " " + WIRE_TO_VHDL_NAME(out_port, Logic) + " : out " + vhdl_type_str + ";" + "\n"
   
-  rv = rv.strip("\n").strip(";")
-  rv += ");" + "\n"
-  
+  if port_text != port_start_text:
+    port_text = port_text.strip("\n").strip(";")
+    port_text += ");" + "\n"
+    rv += port_text
   
   rv += "end " + GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ";" + "\n"
   
@@ -2842,7 +2860,8 @@ def GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParam
     package_file_text += per_stage_text[stage_num]
     
   # End the stages if
-  package_file_text += "  " + " " + "end if;\n"
+  if package_file_text != "":
+    package_file_text += "  " + " " + "end if;\n"
   
   return package_file_text
   

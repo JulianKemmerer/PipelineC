@@ -41,6 +41,7 @@ CAST_FUNC_NAME_PREFIX = "CAST"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
+STRLEN_FUNC_NAME = "strlen"
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
 # Binary operators
@@ -908,6 +909,9 @@ class Logic:
         sys.exit(-1)
       # Otherwise proceed checking for inputs
       submodule_func_name = self.submodule_instances[submodule_inst]
+      # Printf allow output(and outputs) not to not to drive anything
+      if submodule_func_name.startswith(PRINTF_FUNC_NAME):
+        return True      
       if submodule_func_name not in FuncLogicLookupTable:
         print("self.func_name", self.func_name)
         print("wire",wire)
@@ -1006,6 +1010,9 @@ class Logic:
       
       # Skip ripping up vhdl text submodules modules
       if submodule_func_name == VHDL_FUNC_NAME:
+        return
+      # Also skip ripping up printfs
+      if submodule_func_name.startswith(PRINTF_FUNC_NAME):
         return
       
       # Do the output ports drive anything now? 
@@ -3841,7 +3848,13 @@ def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
 
 def STRIP_INT_LIT_SUFF(int_lit):
   return int_lit.strip("LL").strip("U").strip("L")
-
+  
+def C_CONST_STR_TO_STR_VALUE(c_const_str):
+  s = c_const_str[:]
+  s = s.replace("\\n",'\n')
+  s = s.replace("\\t",'\t')
+  return s
+  
 def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
   value_str_no_suff = STRIP_INT_LIT_SUFF(value_str)
   if value_str.startswith("0x"):
@@ -3899,7 +3912,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     c_type_str = "float"
   elif value_str.startswith('"'): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='string':
     value = value_str.strip('"')
-    actual_str = value.replace("\\n",'\n')
+    actual_str = C_CONST_STR_TO_STR_VALUE(value)
     c_type_str = "char[" + str(len(actual_str)) + "]"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
@@ -4966,6 +4979,16 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_val = float(in_val_str)
       out_val = math.sin(in_val)
       const_val_str = str(out_val)
+      
+    # String funcs
+    elif func_base_name.startswith(PRINTF_FUNC_NAME+"_"):
+      return None
+    elif func_base_name.startswith(STRLEN_FUNC_NAME+"_") and base_name_is_name:
+      in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
+      str_val = in_val_str.strip('"')
+      out_val = len(C_CONST_STR_TO_STR_VALUE(str_val))
+      const_val_str = str(out_val)
+      
     # CONST REFs are ok not to reduce for now. I.e CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
     elif func_base_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
       return None
@@ -5106,9 +5129,10 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   # Try to determine output type
   # Should be knowable except for mux, which can be inferred
   # Set type for outputs based on func_name (only base name known right now? base name== func name for parsed C coe) if possible
-  output_type = "void"
+  output_type = None
   output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
   if func_base_name in parser_state.FuncLogicLookupTable:
+    output_type = "void"
     func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
     if len(func_def_logic_object.outputs) > 0:
       # Get type of output
@@ -5136,7 +5160,10 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       input_driver_types[input_i] = input_type
       input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_names[input_i]
       parser_state.existing_logic.wire_to_c_type[input_port_wire] = input_type
-    #print("Mux type",input_type)  
+    #print("Mux type",input_type)
+  # Printf returns void for now
+  elif func_base_name.startswith(PRINTF_FUNC_NAME+"_"):
+    output_type = "void"
   
   # Sanity check
   if output_type is None:
@@ -5436,6 +5463,9 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_
   # Hey future me - hope things are still kool
   ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
   parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, c_ast_func_call)
+  # Set void output for printf DONE IN N ARG FUNC INST BELOW SINCE...dumb?
+  #output_wire = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+  #parser_state.existing_logic.wire_to_c_type[output_wire] = "void"
   # Then regular narg? Oh come on?
   parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(prepend_text, 
                                   c_ast_func_call, 
@@ -5449,6 +5479,51 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_
   
   
   return parser_state.existing_logic
+  
+def C_AST_STRLEN_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
+  # Need to construct a function name, like hacky const ref funcs and printf
+  # Make up a func call to eval
+  func_base_name = STRLEN_FUNC_NAME + "_" + C_AST_NODE_COORD_STR(c_ast_func_call)
+  base_name_is_name = True # Dont need type into if coord str is enough?
+  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+  input_expr_c_ast_node = c_ast_func_call.args.exprs[0]
+  input_port_name = "str"
+  input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+  parser_state.existing_logic = C_AST_NODE_TO_LOGIC(input_expr_c_ast_node, [input_wire_name], prepend_text, parser_state)
+  # Get driver of input and use that type to determine strlen io types
+  driver_of_input = parser_state.existing_logic.wire_driven_by[input_wire_name]
+  input_type = parser_state.existing_logic.wire_to_c_type[driver_of_input]
+  elem_t,dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_type)
+  strlen = dims[0]
+  bitwidth = strlen.bit_length()
+  output_type = "uint" + str(bitwidth) + "_t"
+  output_wire = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+  parser_state.existing_logic.wire_to_c_type[output_wire] = output_type
+    
+  # Then do normal N ARG INST
+  input_drivers = [driver_of_input]
+  input_driver_types = [input_type]
+  input_port_names = [input_port_name]
+  output_driven_wire_names = driven_wire_names
+  # Need special CE handling like printf?
+  func_ce_wire = func_inst_name+SUBMODULE_MARKER+CLOCK_ENABLE_NAME
+  parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+  ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
+  parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, ce_driver_wire,[func_ce_wire], prepend_text, c_ast_func_call)
+  # Then regular narg
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(prepend_text, 
+                                  c_ast_func_call, 
+                                  func_base_name, 
+                                  base_name_is_name,
+                                  input_drivers,
+                                  input_driver_types,
+                                  input_port_names,
+                                  output_driven_wire_names,
+                                  parser_state)
+  
+  
+  return parser_state.existing_logic
+  
   
 def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   #print c_ast_func_call.coord
@@ -5504,6 +5579,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
     elif func_name == PRINTF_FUNC_NAME:
       return C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
+    elif func_name == STRLEN_FUNC_NAME:
+      return C_AST_STRLEN_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
     elif "_" + SW_LIB.RAM_SP_RF in func_name:
       # Hacky af remove def of original state reg local (is used by mangled func)
       local_static_var = func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
@@ -5530,7 +5607,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
       func_name = parser_state.existing_logic.func_name + "_" + func_name
     else:
       # Ok panic
-      print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '", func_name, "' yet. Where does that function come from?")
+      print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '" + func_name + "' yet. Where does that function come from?")
       print(c_ast_func_call.coord)
       #casthelp(c_ast_func_call)
       #print(0/0)

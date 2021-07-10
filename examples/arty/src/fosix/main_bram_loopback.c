@@ -90,7 +90,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Opening /tmp/in\n";
-    syscall_io.buf_nbytes = 17; // w/ null term 
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term 
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -122,7 +122,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Opening bram\n";
-    syscall_io.buf_nbytes = 14;
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term;
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -161,7 +161,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Reading /tmp/in\n";
-    syscall_io.buf_nbytes = 17; // w/ null term
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -238,7 +238,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Opening /tmp/out\n";
-    syscall_io.buf_nbytes = 18; // w/ null term
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -270,7 +270,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Writing /tmp/out\n";
-    syscall_io.buf_nbytes = 18; // w/ null term
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
@@ -332,7 +332,7 @@ void main()
     // Print debug
     // Subroutine arguments
     syscall_io.buf = "Done\n";
-    syscall_io.buf_nbytes = 6; // w/ null term
+    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
     syscall_io.fd = stdout_fd;
     syscall_io.start = 1;
     syscall_io.num = FOSIX_WRITE;
