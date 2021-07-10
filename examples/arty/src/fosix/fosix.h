@@ -327,3 +327,59 @@ if(name.done | name##_reg.done) \
 } \
 name##_reg = name;
 
+#define OPEN_THEN(syscall_io, fd_out, path_in, then) \
+/* Subroutine arguments*/ \
+syscall_io.path = path_in; \
+syscall_io.start = 1; \
+syscall_io.num = FOSIX_OPEN; \
+if(syscall_io.done) \
+{ \
+  /* Syscall return values*/ \
+  fd_out = syscall_io.fd; /* File descriptor*/ \
+  /* State to return to from syscall*/ \
+  then \
+}
+
+#define WRITE_THEN(syscall_io, rv, fd_in, buf_in, count, then) \
+/* Subroutine arguments */ \
+syscall_io.buf = buf_in; \
+syscall_io.buf_nbytes = count; \
+syscall_io.fd = fd_in; \
+syscall_io.start = 1; \
+syscall_io.num = FOSIX_WRITE; \
+if(syscall_io.done) \
+{ \
+  /* Syscall return values */ \
+  rv = syscall_io.buf_nbytes_ret; \
+  /* State to return to from syscall */ \
+  then \
+}
+
+#define STRWRITE_THEN(syscall_io, rv, fd_in, buf_in, then) \
+WRITE_THEN(syscall_io, rv, fd_in, buf_in, strlen(buf_in)+1 /* w/ null term*/, then)
+
+#define READ_THEN(syscall_io, rv, fd_in, buf_out, count, then) \
+/* Subroutine arguments */ \
+syscall_io.buf_nbytes = count; \
+syscall_io.fd = fd_in; \
+syscall_io.start = 1; \
+syscall_io.num = FOSIX_READ; \
+if(syscall_io.done) \
+{ \
+  buf_out = syscall_io.buf; \
+  rv = syscall_io.buf_nbytes_ret; \
+  /* State to return to from syscall */ \
+  then \
+}
+
+#define CLOSE_THEN(syscall_io, rv, fd_in, then) \
+/* Subroutine arguments */ \
+syscall_io.fd = fd_in; \
+syscall_io.start = 1; \
+syscall_io.num = FOSIX_CLOSE; \
+if(syscall_io.done) \
+{ \
+  rv = 0; /* Assume ok for now */ \
+  /* State to return to from syscall */ \
+  then \
+}

@@ -43,13 +43,13 @@ typedef enum state_t {
   PRINT_DONE, // Print info about being done
   DONE // Stays in this state forever (until FPGA bitstream reload)
 } state_t;
+// Stateful global variables
 state_t state;
 fosix_size_t num_bytes; // Temp holder for number of bytes
 fosix_fd_t stdout_fd; // File descriptor for /dev/stdout
 fosix_fd_t in_fd; // File descriptor for /tmp/in
 fosix_fd_t out_fd; // File descriptor for /tmp/out
 fosix_fd_t bram_fd; // File descriptor for BRAM
-
 
 // Some repeated logic would probably benefit from some macros...TODO...
 MAIN_MHZ(main, UART_CLK_MHZ) // Use uart clock for main
@@ -64,297 +64,96 @@ void main()
   // Declare syscall connection wire of type syscall_io_t
   // Use wire to make system calls from FSM below
   SYSCALL_DECL(syscall_io)
+  
+  // Syscall return mostly unused
+  fosix_size_t unused = 0;
 
   // Primary state machine 
-  if(state==RESET)
-  {
+  if(state==RESET){
     state = STDOUT_OPEN;
-  }
-  else if(state==STDOUT_OPEN)
-  {
+  }else if(state==STDOUT_OPEN){
     // Open /dev/stdout (stdout on driver program on host)
-    // Subroutine arguments
-    syscall_io.path = "/dev/stdout";
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_OPEN;
-    if(syscall_io.done)
-    {
-      // Syscall return values
-      stdout_fd = syscall_io.fd; // File descriptor
-      // State to return to from syscall
-      state = PRINT_OPEN_IN;
-    }
-  }
-  else if(state==PRINT_OPEN_IN)
-  {
+    OPEN_THEN(syscall_io, stdout_fd, "/dev/stdout",\
+      state = PRINT_OPEN_IN;)
+  }else if(state==PRINT_OPEN_IN){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Opening /tmp/in\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term 
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = IN_OPEN;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==IN_OPEN)
-  {
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Opening /tmp/in\n",\
+     state = IN_OPEN;)
+  }else if(state==IN_OPEN){
     // Open /tmp/in on host
-    // Subroutine arguments
-    syscall_io.path = "/tmp/in";
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_OPEN;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = PRINT_OPEN_BRAM;
-      // Syscall return values
-      in_fd = syscall_io.fd; // File descriptor
-    }
-  }
-  else if(state==PRINT_OPEN_BRAM)
-  {
+    OPEN_THEN(syscall_io, in_fd, "/tmp/in",\
+      state = PRINT_OPEN_BRAM;)
+  }else if(state==PRINT_OPEN_BRAM){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Opening bram\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term;
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = BRAM_OPEN0;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==BRAM_OPEN0 | state==BRAM_OPEN1)
-  {
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Opening bram\n",\
+      state = BRAM_OPEN0;)
+  }else if(state==BRAM_OPEN0 | state==BRAM_OPEN1){
     // Open bram
-    // Subroutine arguments
-    syscall_io.path = "bram";
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_OPEN;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      if(state==BRAM_OPEN0)
-      {
-        state = PRINT_READ_IN;
-      }
-      else // BRAM_OPEN1
-      {
-        state = PRINT_WRITE_OUT;
-      }
-      // Syscall return values
-      bram_fd = syscall_io.fd; // File descriptor
-    }
-  }
-  else if(state==PRINT_READ_IN)
-  {
+    OPEN_THEN(syscall_io, bram_fd, "bram",\
+      if(state==BRAM_OPEN0){  \
+        state = PRINT_READ_IN;  \
+      } else /* BRAM_OPEN1*/ { \
+        state = PRINT_WRITE_OUT; \
+      })
+  }else if(state==PRINT_READ_IN){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Reading /tmp/in\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = IN_READ;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==IN_READ)
-  {
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Reading /tmp/in\n",\
+      state = IN_READ;)
+  }else if(state==IN_READ){
     // Read from the input file
-    // Subroutine arguments
-    syscall_io.buf_nbytes = BRAM_WIDTH;
-    syscall_io.fd = in_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_READ;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = BRAM_WRITE;
-      // Subroutine return buffer sub_io_buf 
-      // need not be read/modified/saved elsewhere
-      // output from read is input to write next
-      // Can only do since no syscalls dont have BOTH input and output buffers
-      // Save number of bytes to write next
-      num_bytes = syscall_io.buf_nbytes_ret;
-    }
-  }
-  else if(state==BRAM_WRITE)
-  {
+    // Reusing subroutine buffer syscall_io.buf for return
+    // Save number of bytes to write next
+    READ_THEN(syscall_io, num_bytes, in_fd, syscall_io.buf, BRAM_WIDTH,\
+      state = BRAM_WRITE;)
+  }else if(state==BRAM_WRITE){
     // Write to BRAM num_bytes if have bytes to write
-    if(num_bytes > 0)
-    {
-      // Subroutine arguments
-      // sub_io_buf = sub_io_buf; // buf from IN_READ is buf for write too
-      syscall_io.buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
-      syscall_io.fd = bram_fd;
-      syscall_io.start = 1;
-      syscall_io.num = FOSIX_WRITE;
-      if(syscall_io.done)
-      {
-        // State to return to from syscall
-        state = IN_READ;
-        // Syscall return values
-        //    not used
-      }
-    }
-    else
-    {
+    if(num_bytes > 0){
+      WRITE_THEN(syscall_io, unused, bram_fd, syscall_io.buf, num_bytes,\
+        state = IN_READ;)
+    }else{
       // Otherwise time to close BRAM
       state = BRAM_CLOSE;
     }
-  }
-  else if(state==BRAM_CLOSE)
-  {
+  }else if(state==BRAM_CLOSE){
     // Close BRAM file
-    // Subroutine arguments
-    syscall_io.fd = bram_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_CLOSE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = PRINT_OPEN_OUT;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==PRINT_OPEN_OUT)
-  {
+    CLOSE_THEN(syscall_io, unused, bram_fd,\
+      state = PRINT_OPEN_OUT;)
+  }else if(state==PRINT_OPEN_OUT){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Opening /tmp/out\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = OUT_OPEN;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==OUT_OPEN)
-  {
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Opening /tmp/out\n",\
+      state = OUT_OPEN;)
+  }else if(state==OUT_OPEN){
     // Open /tmp/out on host
-    // Subroutine arguments
-    syscall_io.path = "/tmp/out";
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_OPEN;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = BRAM_OPEN1;
-      // Syscall return values
-      out_fd = syscall_io.fd; // File descriptor
-    }
-  }
-  else if(state==PRINT_WRITE_OUT)
-  {
+    OPEN_THEN(syscall_io, out_fd, "/tmp/out",\
+      state = BRAM_OPEN1;)
+  }else if(state==PRINT_WRITE_OUT){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Writing /tmp/out\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = BRAM_READ;
-      // Syscall return values
-      //    not used
-    }
-  }
-  else if(state==BRAM_READ)
-  {
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Writing /tmp/out\n",\
+      state = BRAM_READ;)
+  }else if(state==BRAM_READ){
     // Read from BRAM file
-    // Subroutine arguments
-    syscall_io.buf_nbytes = BRAM_WIDTH;
-    syscall_io.fd = bram_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_READ;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = OUT_WRITE;
-      // Subroutine return buffer sub_io_buf 
-      // need not be read/modified/saved elsewhere
-      // output from read is input to write next
-      // Can only do since no syscalls dont have BOTH input and output buffers
-      // Save number of bytes to write next
-      num_bytes = syscall_io.buf_nbytes_ret;
-    }
-  }
-  else if(state==OUT_WRITE)
-  {
+    // Reusing subroutine buffer syscall_io.buf for return
+    // Save number of bytes to write next
+    READ_THEN(syscall_io, num_bytes, bram_fd, syscall_io.buf, BRAM_WIDTH,\
+      state = OUT_WRITE;)
+  }else if(state==OUT_WRITE){
     // Write to output file if have bytes to write
-    if(num_bytes > 0)
-    {
-      // Subroutine arguments
-      // sub_io_buf = sub_io_buf; // buf from BRAM_READ is buf for write too
-      syscall_io.buf_nbytes = num_bytes; // Bytes returned from read is how many to write now
-      syscall_io.fd = out_fd;
-      syscall_io.start = 1;
-      syscall_io.num = FOSIX_WRITE;
-      if(syscall_io.done)
-      {
-        // State to return to from syscall
-        state = BRAM_READ;
-        // Syscall return values
-        //    not used
-      }
-    }
-    else
-    {
+    if(num_bytes > 0){
+      // buf from BRAM_READ is buf for write too
+      WRITE_THEN(syscall_io, unused, out_fd, syscall_io.buf, num_bytes,\
+        state = BRAM_READ;)
+    }else{
       // Otherwise reached end of reading BRAM data, done
       state = PRINT_DONE;
     }
-  }
-  else if(state==PRINT_DONE)
-  {
+  }else if(state==PRINT_DONE){
     // Print debug
-    // Subroutine arguments
-    syscall_io.buf = "Done\n";
-    syscall_io.buf_nbytes = strlen(syscall_io.buf)+1; // w/ null term
-    syscall_io.fd = stdout_fd;
-    syscall_io.start = 1;
-    syscall_io.num = FOSIX_WRITE;
-    if(syscall_io.done)
-    {
-      // State to return to from syscall
-      state = DONE;
-      // Syscall return values
-      //    not used
-    }
+    STRWRITE_THEN(syscall_io, unused, stdout_fd, "Done\n",\
+      state = DONE;)
   }
   
   // System call 'FSM' running when asked to start
   SYSCALL(syscall_io, sys_to_proc, proc_to_sys)
-  
-  /*
-  if(rst)
-  {
-    state = RESET;
-    sub_state = IDLE;
-  }
-  */
   
   // Write outputs
   WIRE_WRITE(fosix_proc_to_sys_t, main_proc_to_sys, proc_to_sys)
