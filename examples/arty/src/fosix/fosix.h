@@ -16,11 +16,15 @@
 #define FOSIX_CLOSE 3
 #define FOSIX_UNKNOWN 255
 
+// Exchanging the small/est possible messages / buffer sizes
+// syscall id byte
+// S syscall bytes
+// Path is really largest requirement
 #define fosix_fd_t int32_t
 #define fosix_size_t uint32_t
-#define FOSIX_BUF_SIZE 128
-#define FOSIX_LOG2_BUF_SIZE 7
-#define FOSIX_PATH_SIZE 16
+#define FOSIX_BUF_SIZE 32
+#define FOSIX_LOG2_BUF_SIZE 5
+#define FOSIX_PATH_SIZE 32
 
 typedef struct open_req_t
 {
@@ -248,138 +252,4 @@ close_sys_to_proc_t CLOSE_SYS_TO_PROC_T_NULL()
   rv.resp = CLOSE_RESP_T_NULL();
   rv.req_ready = 0;
   return rv;
-}
-
-typedef struct fosix_proc_to_sys_t
-{
-	open_proc_to_sys_t sys_open;
-	write_proc_to_sys_t sys_write;
-  read_proc_to_sys_t sys_read;
-  close_proc_to_sys_t sys_close;
-} fosix_proc_to_sys_t;
-fosix_proc_to_sys_t POSIX_PROC_TO_SYS_T_NULL()
-{
-  fosix_proc_to_sys_t rv;
-  rv.sys_open = OPEN_PROC_TO_SYS_T_NULL();
-  rv.sys_write = WRITE_PROC_TO_SYS_T_NULL();
-  rv.sys_read = READ_PROC_TO_SYS_T_NULL();
-  rv.sys_close = CLOSE_PROC_TO_SYS_T_NULL();
-  return rv;
-}
-
-typedef struct fosix_sys_to_proc_t
-{
-	open_sys_to_proc_t sys_open;
-	write_sys_to_proc_t sys_write;
-  read_sys_to_proc_t sys_read;
-  close_sys_to_proc_t sys_close;
-} fosix_sys_to_proc_t;
-fosix_sys_to_proc_t POSIX_SYS_TO_PROC_T_NULL()
-{
-  fosix_sys_to_proc_t rv;
-  rv.sys_open = OPEN_SYS_TO_PROC_T_NULL();
-  rv.sys_write = WRITE_SYS_TO_PROC_T_NULL();
-  rv.sys_read = READ_SYS_TO_PROC_T_NULL();
-  rv.sys_close = CLOSE_SYS_TO_PROC_T_NULL();
-  return rv;
-}
-
-// Helper funcs for setting certain flags
-fosix_sys_to_proc_t sys_to_proc_clear_ready(fosix_sys_to_proc_t sys_to_proc)
-{
-  sys_to_proc.sys_open.req_ready = 0;
-  sys_to_proc.sys_write.req_ready = 0;
-  sys_to_proc.sys_read.req_ready = 0;
-  sys_to_proc.sys_close.req_ready = 0;
-  return sys_to_proc;
-}
-fosix_sys_to_proc_t sys_to_proc_set_ready(fosix_sys_to_proc_t sys_to_proc)
-{
-  sys_to_proc.sys_open.req_ready = 1;
-  sys_to_proc.sys_write.req_ready = 1;
-  sys_to_proc.sys_read.req_ready = 1;
-  sys_to_proc.sys_close.req_ready = 1;
-  return sys_to_proc;
-}
-
-// Helper macros
-#define SYSCALL_DECL(name) \
-/* State for using syscalls */ \
-static syscall_io_t name##_reg; \
-/* Syscall IO signaling keeps regs contents */ \
-syscall_io_t name = name##_reg; \
-/* Other than start bit which auto clears*/ \
-name.start = 0;
-
-#define SYSCALL(name, sys_to_proc, proc_to_sys) \
-/* Auto clear done*/ \
-name.done = 0; \
-if(name##_reg.start) \
-{ \
-  syscall_func_t name##_sc = syscall_func(sys_to_proc, name##_reg); \
-  proc_to_sys = name##_sc.proc_to_sys; \
-  name = name##_sc.syscall_io; \
-} \
-/* Ignore start bit if during done time */ \
-if(name.done | name##_reg.done) \
-{ \
-  name.start = 0; \
-} \
-name##_reg = name;
-
-#define OPEN_THEN(syscall_io, fd_out, path_in, then) \
-/* Subroutine arguments*/ \
-syscall_io.path = path_in; \
-syscall_io.start = 1; \
-syscall_io.num = FOSIX_OPEN; \
-if(syscall_io.done) \
-{ \
-  /* Syscall return values*/ \
-  fd_out = syscall_io.fd; /* File descriptor*/ \
-  /* State to return to from syscall*/ \
-  then \
-}
-
-#define WRITE_THEN(syscall_io, rv, fd_in, buf_in, count, then) \
-/* Subroutine arguments */ \
-syscall_io.buf = buf_in; \
-syscall_io.buf_nbytes = count; \
-syscall_io.fd = fd_in; \
-syscall_io.start = 1; \
-syscall_io.num = FOSIX_WRITE; \
-if(syscall_io.done) \
-{ \
-  /* Syscall return values */ \
-  rv = syscall_io.buf_nbytes_ret; \
-  /* State to return to from syscall */ \
-  then \
-}
-
-#define STRWRITE_THEN(syscall_io, rv, fd_in, buf_in, then) \
-WRITE_THEN(syscall_io, rv, fd_in, buf_in, strlen(buf_in)+1 /* w/ null term*/, then)
-
-#define READ_THEN(syscall_io, rv, fd_in, buf_out, count, then) \
-/* Subroutine arguments */ \
-syscall_io.buf_nbytes = count; \
-syscall_io.fd = fd_in; \
-syscall_io.start = 1; \
-syscall_io.num = FOSIX_READ; \
-if(syscall_io.done) \
-{ \
-  buf_out = syscall_io.buf; \
-  rv = syscall_io.buf_nbytes_ret; \
-  /* State to return to from syscall */ \
-  then \
-}
-
-#define CLOSE_THEN(syscall_io, rv, fd_in, then) \
-/* Subroutine arguments */ \
-syscall_io.fd = fd_in; \
-syscall_io.start = 1; \
-syscall_io.num = FOSIX_CLOSE; \
-if(syscall_io.done) \
-{ \
-  rv = 0; /* Assume ok for now */ \
-  /* State to return to from syscall */ \
-  then \
 }

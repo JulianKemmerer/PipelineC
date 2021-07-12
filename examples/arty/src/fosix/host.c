@@ -15,16 +15,29 @@
 reset;
 gcc host.c -o host -I ../../../../
 rm /tmp/in;
-rm -f /tmp/out;
+sudo rm -f /tmp/out;
 head -c 16384 < /dev/urandom > /tmp/in
 sudo ./host
-hexdump -Cv /tmp/in -n 128
-sudo hexdump -Cv /tmp/out -n 128
+#hexdump -Cv /tmp/in -n 128
+#sudo hexdump -Cv /tmp/out -n 128
+sudo diff /tmp/in /tmp/out
 */
 
-fosix_sys_to_proc_t do_syscall_get_resp(fosix_proc_to_sys_t req, fosix_msg_t msg)
+fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
 {
-  fosix_sys_to_proc_t resp = POSIX_SYS_TO_PROC_T_NULL();
+  // Implied valid from getting read data
+  fosix_msg_s read_msg;
+  read_msg.data = read_msg_data;
+  read_msg.valid = 1;
+  
+  // Parse incoming request message
+  fosix_proc_to_sys_wires_t req = msg_to_request(read_msg);
+  // Prepare a response
+  fosix_sys_to_proc_wires_t resp;
+  resp.sys_open = OPEN_SYS_TO_PROC_T_NULL();
+  resp.sys_write = WRITE_SYS_TO_PROC_T_NULL();
+  resp.sys_read = READ_SYS_TO_PROC_T_NULL();
+  resp.sys_close = CLOSE_SYS_TO_PROC_T_NULL();
   if(req.sys_open.req.valid)
   {
     // OPEN
@@ -74,9 +87,11 @@ fosix_sys_to_proc_t do_syscall_get_resp(fosix_proc_to_sys_t req, fosix_msg_t msg
   }
   else
   {
-    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(msg));
+    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(read_msg.data));
   }
-  return resp;
+  // Pack up the response into a message
+  fosix_msg_s write_msg = response_to_msg(resp);
+  return write_msg;
 }
 
 // Init + control loop + close
@@ -96,17 +111,15 @@ int main(int argc, char **argv)
     //printf("FOSIX: Reading msg...\n");
     uart_msg_t read_uart_msg;
     msg_read(&read_uart_msg);
+    
+    // Convert to message
     fosix_msg_t read_msg = uart_msg_t_to_fosix_msg_t(read_uart_msg);
     //printf("FOSIX: Read msg...\n");
     
-    // Convert to sys request struct
-    fosix_proc_to_sys_t request = msg_to_request(read_msg);
-    
     // Do the requested syscall and form response
-    fosix_sys_to_proc_t response = do_syscall_get_resp(request, read_msg);
+    fosix_msg_s write_msg = do_syscall_get_resp(read_msg);
     
     // Convert to message
-    fosix_msg_s write_msg = response_to_msg(response);
     uart_msg_s write_uart_msg = fosix_msg_s_to_uart_msg_s(write_msg);
     
     // Write response msg 

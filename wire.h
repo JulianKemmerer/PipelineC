@@ -88,3 +88,7 @@ GLOBAL_WIRES_FUNC_DECL(inst_name, out_type, func_name, in_type) \
 #pragma CLOCK_CROSSING inst_name##out
 GLOBAL_WIRES_FUNC_IMPL(inst_name, out_type, func_name, in_type) \
 */
+
+
+// TODO Do reverse of macro taking global wires and creating wrapper function so user gets can specify easy main()
+

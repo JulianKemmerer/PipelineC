@@ -1,3 +1,5 @@
+// Connect the 'System' device over uart to a host OS
+
 // Host device (UART based)
 #pragma once
 
@@ -20,12 +22,6 @@ fosix_sys_to_proc_t host_sys_to_proc;
 fosix_proc_to_sys_t host_proc_to_sys;
 #include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
 #include "host_proc_to_sys_clock_crossing.h"
-
-// Need to arbitrate valid and ready signals to and from the 
-// appropriate syscalls and messages
-// 1 syscall incoming, 1 syscall outgoing per iteration since only
-// have one msg buffer outgoing, and one msg buffer incoming
-// to/from message logic right now
 
 MAIN_MHZ(sys_host, UART_CLK_MHZ)
 void sys_host()
@@ -51,75 +47,13 @@ void sys_host()
   fosix_msg_s msg_out = FOSIX_MSG_S_NULL();
   //////////////////////////////////////////////////////////////////////
 
-  // PROC_TO_SYS MSG OUTPUT PATH 
-  //
-  // Start off signaling ready to all process requests
-  // if output msg ready
-  if(msg_out_ready)
-  {
-    sys_to_proc = sys_to_proc_set_ready(sys_to_proc);
-    // Find one system call making a request
-    // and invalidate the ready for all other requests
-    // Convert incoming request into dma msg out
-    // OK to have dumb constant priority 
-    // and valid<->ready combinatorial feedback for now
-    if(proc_to_sys.sys_open.req.valid)
-    {
-      sys_to_proc = sys_to_proc_clear_ready(sys_to_proc);
-      sys_to_proc.sys_open.req_ready = 1;
-      msg_out = open_req_to_msg(proc_to_sys.sys_open.req);
-    }
-    else if(proc_to_sys.sys_write.req.valid)
-    {
-      sys_to_proc = sys_to_proc_clear_ready(sys_to_proc);
-      sys_to_proc.sys_write.req_ready = 1;
-      msg_out = write_req_to_msg(proc_to_sys.sys_write.req);
-    }
-    else if(proc_to_sys.sys_read.req.valid)
-    {
-      sys_to_proc = sys_to_proc_clear_ready(sys_to_proc);
-      sys_to_proc.sys_read.req_ready = 1;
-      msg_out = read_req_to_msg(proc_to_sys.sys_read.req);
-    }
-    else if(proc_to_sys.sys_close.req.valid)
-    {
-      sys_to_proc = sys_to_proc_clear_ready(sys_to_proc);
-      sys_to_proc.sys_close.req_ready = 1;
-      msg_out = close_req_to_msg(proc_to_sys.sys_close.req);
-    }
-  }
-  // TODO Break path from msg out ready to msg out valid, unnecessary
+  // PROC_TO_SYS MSG OUTPUT PATH
+  sys_to_proc.proc_to_sys_msg_ready = msg_out_ready;
+  msg_out = proc_to_sys.msg;
   
   // MSG SYS_TO_PROC INPUT PATH 
-  //
-  // Default not ready for msg input
-  msg_in_ready = 0;
-  // Unless the message is for a syscall that is ready
-  // What syscall is the incoming mesage a response to?
-  // OK to have dumb valid<->ready combinatorial feedback for now
-  // Convert incoming msg into response
-  // Only one response will be valid, if any
-  sys_to_proc.sys_open.resp = msg_to_open_resp(msg_in);
-  sys_to_proc.sys_write.resp = msg_to_write_resp(msg_in);
-  sys_to_proc.sys_read.resp = msg_to_read_resp(msg_in);
-  sys_to_proc.sys_close.resp = msg_to_close_resp(msg_in);
-  // and connect flow control
-  if(sys_to_proc.sys_open.resp.valid)
-  {
-    msg_in_ready = proc_to_sys.sys_open.resp_ready;
-  }
-  else if(sys_to_proc.sys_write.resp.valid)
-  {
-    msg_in_ready = proc_to_sys.sys_write.resp_ready;
-  }
-  else if(sys_to_proc.sys_read.resp.valid)
-  {
-    msg_in_ready = proc_to_sys.sys_read.resp_ready;
-  }
-  else if(sys_to_proc.sys_close.resp.valid)
-  {
-    msg_in_ready = proc_to_sys.sys_close.resp_ready;
-  }
+  msg_in_ready = proc_to_sys.sys_to_proc_msg_ready;
+  sys_to_proc.msg = msg_in;
   
   //////////////////////////////////////////////////////////////////////
   // Write driven outputs into other modules

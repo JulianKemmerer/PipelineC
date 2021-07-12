@@ -6,11 +6,12 @@
 reset;
 gcc host.c -o host -I ../../../../
 rm /tmp/in;
-rm -f /tmp/out;
+sudo rm -f /tmp/out;
 head -c 16384 < /dev/urandom > /tmp/in
 sudo ./host
-hexdump -Cv /tmp/in -n 128
-sudo hexdump -Cv /tmp/out -n 128
+#hexdump -Cv /tmp/in -n 128
+#sudo hexdump -Cv /tmp/out -n 128
+sudo diff /tmp/in /tmp/out
 */
 #include "compiler.h"
 
