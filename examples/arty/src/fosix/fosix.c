@@ -205,15 +205,18 @@ if(name.done | name##_reg.done) \
 } \
 name##_reg = name;
 
+
+// Do not modify inputs after start, and do not use outputs until done
+
 #define OPEN_THEN(syscall_io, fd_out, path_in, then) \
 /* Subroutine arguments*/ \
 syscall_io.path = path_in; \
 syscall_io.start = 1; \
 syscall_io.num = FOSIX_OPEN; \
+/* Syscall return values*/ \
+fd_out = syscall_io.fd; /* File descriptor*/ \
 if(syscall_io.done) \
 { \
-  /* Syscall return values*/ \
-  fd_out = syscall_io.fd; /* File descriptor*/ \
   /* State to return to from syscall*/ \
   then \
 }
@@ -225,10 +228,10 @@ syscall_io.buf_nbytes = count; \
 syscall_io.fd = fd_in; \
 syscall_io.start = 1; \
 syscall_io.num = FOSIX_WRITE; \
+/* Syscall return values */ \
+rv = syscall_io.buf_nbytes_ret; \
 if(syscall_io.done) \
 { \
-  /* Syscall return values */ \
-  rv = syscall_io.buf_nbytes_ret; \
   /* State to return to from syscall */ \
   then \
 }
@@ -242,10 +245,11 @@ syscall_io.buf_nbytes = count; \
 syscall_io.fd = fd_in; \
 syscall_io.start = 1; \
 syscall_io.num = FOSIX_READ; \
+/* Syscall return values */ \
+buf_out = syscall_io.buf; \
+rv = syscall_io.buf_nbytes_ret; \
 if(syscall_io.done) \
 { \
-  buf_out = syscall_io.buf; \
-  rv = syscall_io.buf_nbytes_ret; \
   /* State to return to from syscall */ \
   then \
 }
@@ -255,9 +259,10 @@ if(syscall_io.done) \
 syscall_io.fd = fd_in; \
 syscall_io.start = 1; \
 syscall_io.num = FOSIX_CLOSE; \
+/* Syscall return values */ \
+rv = 0; /* Assume ok for now */ \
 if(syscall_io.done) \
 { \
-  rv = 0; /* Assume ok for now */ \
   /* State to return to from syscall */ \
   then \
 }

@@ -37,7 +37,8 @@
 //#include "examples/arty/src/audio/distortion.c"
 //#include "examples/arty/src/i2s/i2s_app.c"
 //#include "examples/pipeline_and_fsm.c"
-#include "examples/arty/src/fosix/main_bram_loopback.c"
+//#include "examples/arty/src/fosix/main_bram_loopback.c"
+#include "examples/arty/src/fosix/main_game.c"
 
 // Below is a bunch of recent scratch work - enjoy
 

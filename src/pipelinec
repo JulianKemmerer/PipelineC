@@ -22,7 +22,7 @@ print('''
 '''
 TODO:
 First refactor fosix stuff:
-  convert over to byte msg port connections (instead of large structs with repeated/parallel bytes)
+  Clean up extra unused per syscall ready signals
   switch over to using generated to from bytes funcs
   to use antikernel like packets (still struct, but more compact than fosix types)
   do demo 1b wide data bus

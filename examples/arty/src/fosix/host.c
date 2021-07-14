@@ -8,21 +8,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+// Code defining msgs to from FPGA
 #include "../uart/uart_msg_sw.c"
 #include "host_uart.h"
 
-/*
-reset;
-gcc host.c -o host -I ../../../../
-rm /tmp/in;
-sudo rm -f /tmp/out;
-head -c 16384 < /dev/urandom > /tmp/in
-sudo ./host
-#hexdump -Cv /tmp/in -n 128
-#sudo hexdump -Cv /tmp/out -n 128
-sudo diff /tmp/in /tmp/out
-*/
-
+// Do the request system call and return response message
 fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
 {
   // Implied valid from getting read data
@@ -41,7 +31,6 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   if(req.sys_open.req.valid)
   {
     // OPEN
-    //printf("FOSIX: OPEN %s\n",req.sys_open.req.path);
     // Temp hacky since dont have flags from FPGA
     // Try to create, will fail if exists
     int fildes = open(req.sys_open.req.path, O_RDWR|O_CREAT, S_IRUSR | S_IWUSR);
@@ -52,6 +41,7 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
     }
     resp.sys_open.resp.fildes = fildes;
     resp.sys_open.resp.valid = 1;
+    //printf("FOSIX: OPEN %s %d\n",req.sys_open.req.path, resp.sys_open.resp.fildes);
     if(fildes>255 | fildes<0)
     {
       printf("File descriptor too large / err %d, %s ...TODO: fix.\n", fildes, req.sys_open.req.path);
@@ -62,7 +52,7 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   else if(req.sys_write.req.valid)
   {
     // WRITE
-    //printf("FOSIX: WRITE\n");
+    //printf("FOSIX: WRITE FD %d\n",req.sys_write.req.fildes);
     resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
     resp.sys_write.resp.valid = 1;
   }
