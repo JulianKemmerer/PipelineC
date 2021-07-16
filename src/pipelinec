@@ -22,7 +22,6 @@ print('''
 '''
 TODO:
 First refactor fosix stuff:
-  Clean up extra unused per syscall ready signals
   switch over to using generated to from bytes funcs
   to use antikernel like packets (still struct, but more compact than fosix types)
   do demo 1b wide data bus

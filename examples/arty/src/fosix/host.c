@@ -21,57 +21,57 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   read_msg.valid = 1;
   
   // Parse incoming request message
-  fosix_proc_to_sys_wires_t req = msg_to_request(read_msg);
+  fosix_parsed_req_msg_t req = msg_to_request(read_msg);
   // Prepare a response
-  fosix_sys_to_proc_wires_t resp;
-  resp.sys_open = OPEN_SYS_TO_PROC_T_NULL();
-  resp.sys_write = WRITE_SYS_TO_PROC_T_NULL();
-  resp.sys_read = READ_SYS_TO_PROC_T_NULL();
-  resp.sys_close = CLOSE_SYS_TO_PROC_T_NULL();
-  if(req.sys_open.req.valid)
+  fosix_parsed_resp_msg_t resp;
+  resp.sys_open = OPEN_RESP_T_NULL();
+  resp.sys_write = WRITE_RESP_T_NULL();
+  resp.sys_read = READ_RESP_T_NULL();
+  resp.sys_close = CLOSE_RESP_T_NULL();
+  if(req.sys_open.valid)
   {
     // OPEN
     // Temp hacky since dont have flags from FPGA
     // Try to create, will fail if exists
-    int fildes = open(req.sys_open.req.path, O_RDWR|O_CREAT, S_IRUSR | S_IWUSR);
+    int fildes = open(req.sys_open.path, O_RDWR|O_CREAT, S_IRUSR | S_IWUSR);
     if(fildes<0)
     {
       // Try again not creating the file
-      fildes = open(req.sys_open.req.path, O_RDWR, S_IRUSR | S_IWUSR);
+      fildes = open(req.sys_open.path, O_RDWR, S_IRUSR | S_IWUSR);
     }
-    resp.sys_open.resp.fildes = fildes;
-    resp.sys_open.resp.valid = 1;
-    //printf("FOSIX: OPEN %s %d\n",req.sys_open.req.path, resp.sys_open.resp.fildes);
+    resp.sys_open.fildes = fildes;
+    resp.sys_open.valid = 1;
+    //printf("FOSIX: OPEN %s %d\n",req.sys_open.path, resp.sys_open.fildes);
     if(fildes>255 | fildes<0)
     {
-      printf("File descriptor too large / err %d, %s ...TODO: fix.\n", fildes, req.sys_open.req.path);
+      printf("File descriptor too large / err %d, %s ...TODO: fix.\n", fildes, req.sys_open.path);
       perror("Failed to open");
       exit(-1);
     }
   }
-  else if(req.sys_write.req.valid)
+  else if(req.sys_write.valid)
   {
     // WRITE
-    //printf("FOSIX: WRITE FD %d\n",req.sys_write.req.fildes);
-    resp.sys_write.resp.nbyte = write(req.sys_write.req.fildes, &(req.sys_write.req.buf[0]), req.sys_write.req.nbyte);
-    resp.sys_write.resp.valid = 1;
+    //printf("FOSIX: WRITE FD %d\n",req.sys_write.fildes);
+    resp.sys_write.nbyte = write(req.sys_write.fildes, &(req.sys_write.buf[0]), req.sys_write.nbyte);
+    resp.sys_write.valid = 1;
   }
-  else if(req.sys_read.req.valid)
+  else if(req.sys_read.valid)
   {
     // READ
-    resp.sys_read.resp.nbyte = read(req.sys_read.req.fildes, &(resp.sys_read.resp.buf[0]), req.sys_read.req.nbyte);
-    //printf("FOSIX: READ fd %d, nbyte %d, rv %d\n", req.sys_read.req.fildes, req.sys_read.req.nbyte, resp.sys_read.resp.nbyte);
-    resp.sys_read.resp.valid = 1;
+    resp.sys_read.nbyte = read(req.sys_read.fildes, &(resp.sys_read.buf[0]), req.sys_read.nbyte);
+    //printf("FOSIX: READ fd %d, nbyte %d, rv %d\n", req.sys_read.fildes, req.sys_read.nbyte, resp.sys_read.nbyte);
+    resp.sys_read.valid = 1;
   }
-  else if(req.sys_close.req.valid)
+  else if(req.sys_close.valid)
   {
     // CLOSE
     //printf("FOSIX: CLOSE\n");
-    resp.sys_close.resp.err = close(req.sys_close.req.fildes);
-    resp.sys_close.resp.valid = 1;
-    if(resp.sys_close.resp.err)
+    resp.sys_close.err = close(req.sys_close.fildes);
+    resp.sys_close.valid = 1;
+    if(resp.sys_close.err)
     {
-      printf("Close err? fd %d\n", req.sys_close.req.fildes);
+      printf("Close err? fd %d\n", req.sys_close.fildes);
       exit(-1);
     }
   }

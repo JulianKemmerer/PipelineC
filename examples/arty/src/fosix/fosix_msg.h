@@ -319,23 +319,19 @@ fosix_msg_s close_resp_to_msg(close_resp_t resp)
   return msg_stream;  
 }
 
-typedef struct fosix_proc_to_sys_wires_t
+typedef struct fosix_parsed_req_msg_t
 {
-	open_proc_to_sys_t sys_open;
-	write_proc_to_sys_t sys_write;
-  read_proc_to_sys_t sys_read;
-  close_proc_to_sys_t sys_close;
-} fosix_proc_to_sys_wires_t;
+	open_req_t sys_open;
+	write_req_t sys_write;
+  read_req_t sys_read;
+  close_req_t sys_close;
+} fosix_parsed_req_msg_t;
 
 typedef struct fosix_proc_to_sys_t
 {
-  /*
-	open_proc_to_sys_t sys_open;
-	write_proc_to_sys_t sys_write;
-  read_proc_to_sys_t sys_read;
-  close_proc_to_sys_t sys_close;*/
-  // Should just be msg?
+  // Message
   fosix_msg_s msg;
+  // And ready signal in opposite direction
   uint1_t sys_to_proc_msg_ready;
 } fosix_proc_to_sys_t;
 fosix_proc_to_sys_t POSIX_PROC_TO_SYS_T_NULL()
@@ -343,30 +339,22 @@ fosix_proc_to_sys_t POSIX_PROC_TO_SYS_T_NULL()
   fosix_proc_to_sys_t rv;
   rv.msg = FOSIX_MSG_S_NULL();
   rv.sys_to_proc_msg_ready = 0;
-  /*rv.sys_open = OPEN_PROC_TO_SYS_T_NULL();
-  rv.sys_write = WRITE_PROC_TO_SYS_T_NULL();
-  rv.sys_read = READ_PROC_TO_SYS_T_NULL();
-  rv.sys_close = CLOSE_PROC_TO_SYS_T_NULL();*/
   return rv;
 }
 
-typedef struct fosix_sys_to_proc_wires_t
+typedef struct fosix_parsed_resp_msg_t
 {
-	open_sys_to_proc_t sys_open;
-	write_sys_to_proc_t sys_write;
-  read_sys_to_proc_t sys_read;
-  close_sys_to_proc_t sys_close;
-} fosix_sys_to_proc_wires_t;
+	open_resp_t sys_open;
+	write_resp_t sys_write;
+  read_resp_t sys_read;
+  close_resp_t sys_close;
+} fosix_parsed_resp_msg_t;
 
 typedef struct fosix_sys_to_proc_t
 {
-  /*
-	open_sys_to_proc_t sys_open;
-	write_sys_to_proc_t sys_write;
-  read_sys_to_proc_t sys_read;
-  close_sys_to_proc_t sys_close;*/
-  // Should just be msg?
-  fosix_msg_s msg;  
+  // Message
+  fosix_msg_s msg;
+  // And ready signal in opposite direction
   uint1_t proc_to_sys_msg_ready;
 } fosix_sys_to_proc_t;
 fosix_sys_to_proc_t POSIX_SYS_TO_PROC_T_NULL()
@@ -374,62 +362,49 @@ fosix_sys_to_proc_t POSIX_SYS_TO_PROC_T_NULL()
   fosix_sys_to_proc_t rv;
   rv.msg = FOSIX_MSG_S_NULL();
   rv.proc_to_sys_msg_ready = 0;
-  /*
-  rv.sys_open = OPEN_SYS_TO_PROC_T_NULL();
-  rv.sys_write = WRITE_SYS_TO_PROC_T_NULL();
-  rv.sys_read = READ_SYS_TO_PROC_T_NULL();
-  rv.sys_close = CLOSE_SYS_TO_PROC_T_NULL();*/
   return rv;
 }
 
-// C2H
-fosix_proc_to_sys_wires_t msg_to_request(fosix_msg_s msg)
+// Process to system request
+fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg)
 {
-  fosix_proc_to_sys_wires_t req;// = POSIX_PROC_TO_SYS_T_NULL();
-  req.sys_open = OPEN_PROC_TO_SYS_T_NULL();
-  req.sys_open.req  = msg_to_open_req(msg);
-  req.sys_write = WRITE_PROC_TO_SYS_T_NULL();
-  req.sys_write.req = msg_to_write_req(msg);
-  req.sys_read  = READ_PROC_TO_SYS_T_NULL();
-  req.sys_read.req = msg_to_read_req(msg);
-  req.sys_close = CLOSE_PROC_TO_SYS_T_NULL();
-  req.sys_close.req = msg_to_close_req(msg);
+  fosix_parsed_req_msg_t req;
+  req.sys_open  = msg_to_open_req(msg);
+  req.sys_write = msg_to_write_req(msg);
+  req.sys_read = msg_to_read_req(msg);
+  req.sys_close = msg_to_close_req(msg);
   return req;  
 }
 
-// H2C
-fosix_msg_s response_to_msg(fosix_sys_to_proc_wires_t resp)
+// System to process response
+fosix_msg_s response_to_msg(fosix_parsed_resp_msg_t resp)
 {
   fosix_msg_s msg_stream = FOSIX_MSG_S_NULL();
-  if(resp.sys_open.resp.valid)
+  if(resp.sys_open.valid)
   {
-    msg_stream = open_resp_to_msg(resp.sys_open.resp);
+    msg_stream = open_resp_to_msg(resp.sys_open);
   }
-  else if(resp.sys_write.resp.valid)
+  else if(resp.sys_write.valid)
   {
-    msg_stream = write_resp_to_msg(resp.sys_write.resp);
+    msg_stream = write_resp_to_msg(resp.sys_write);
   }
-  else if(resp.sys_read.resp.valid)
+  else if(resp.sys_read.valid)
   {
-    msg_stream = read_resp_to_msg(resp.sys_read.resp);
+    msg_stream = read_resp_to_msg(resp.sys_read);
   }
-  else if(resp.sys_close.resp.valid)
+  else if(resp.sys_close.valid)
   {
-    msg_stream = close_resp_to_msg(resp.sys_close.resp);
+    msg_stream = close_resp_to_msg(resp.sys_close);
   }
   return msg_stream;
 }
-fosix_sys_to_proc_wires_t msg_to_response(fosix_msg_s msg)
+fosix_parsed_resp_msg_t msg_to_response(fosix_msg_s msg)
 {
-  fosix_sys_to_proc_wires_t resp;
-  resp.sys_open = OPEN_SYS_TO_PROC_T_NULL();
-  resp.sys_open.resp  = msg_to_open_resp(msg);
-  resp.sys_write = WRITE_SYS_TO_PROC_T_NULL();
-  resp.sys_write.resp = msg_to_write_resp(msg);
-  resp.sys_read  = READ_SYS_TO_PROC_T_NULL();
-  resp.sys_read.resp = msg_to_read_resp(msg);
-  resp.sys_close = CLOSE_SYS_TO_PROC_T_NULL();
-  resp.sys_close.resp = msg_to_close_resp(msg);
+  fosix_parsed_resp_msg_t resp;
+  resp.sys_open  = msg_to_open_resp(msg);
+  resp.sys_write = msg_to_write_resp(msg);
+  resp.sys_read = msg_to_read_resp(msg);
+  resp.sys_close = msg_to_close_resp(msg);
   return resp;
 }
 

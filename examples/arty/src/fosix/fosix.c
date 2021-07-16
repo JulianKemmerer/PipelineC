@@ -25,8 +25,8 @@ typedef struct syscall_io_t
   fosix_size_t buf_nbytes_ret; // Return count of bytes
 }syscall_io_t;
 
-// Helper FSM for one at a time in flight FOSIX operations
-
+// Helper FSM for one at a time in flight
+// make request, then wait for response, FOSIX operations
 typedef enum syscall_state_t {
   REQ,
   RESP
@@ -469,16 +469,16 @@ void fosix()
     // Hard coded devices for now
     // Connect sys device with opposite direction flow control
     // And set state for handling response when it comes
-    fosix_proc_to_sys_wires_t proc_to_sys_wires_main = msg_to_request(proc_to_sys_main.msg);
+    fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys_main.msg);
     
     // OPEN
-    if(proc_to_sys_wires_main.sys_open.req.valid)
+    if(req.sys_open.valid)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
       // BRAM
-      if(proc_to_sys_wires_main.sys_open.req.path=="bram")
+      if(req.sys_open.path=="bram")
       {
-        proc_to_sys_bram.msg = open_req_to_msg(proc_to_sys_wires_main.sys_open.req);
+        proc_to_sys_bram.msg = open_req_to_msg(req.sys_open);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
       }
@@ -486,7 +486,7 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg = open_req_to_msg(proc_to_sys_wires_main.sys_open.req);
+        proc_to_sys_host.msg = open_req_to_msg(req.sys_open);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
       }
@@ -498,20 +498,20 @@ void fosix()
       }
     }
     // WRITE
-    else if(proc_to_sys_wires_main.sys_write.req.valid)
+    else if(req.sys_write.valid)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
       
       // Translate from local file descriptor to sys fd
       // Before connecting to sys proc_to_sys device busses
       // Saving a copy of local fd
-      fosix_fd_t local_fd = proc_to_sys_wires_main.sys_write.req.fildes;
-      proc_to_sys_wires_main.sys_write.req.fildes = translate_fd(proc_to_sys_wires_main.sys_write.req.fildes, fosix_fd_lut);
+      fosix_fd_t local_fd = req.sys_write.fildes;
+      req.sys_write.fildes = translate_fd(req.sys_write.fildes, fosix_fd_lut);
       
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg = write_req_to_msg(proc_to_sys_wires_main.sys_write.req);
+        proc_to_sys_bram.msg = write_req_to_msg(req.sys_write);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
       }
@@ -519,7 +519,7 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg = write_req_to_msg(proc_to_sys_wires_main.sys_write.req);
+        proc_to_sys_host.msg = write_req_to_msg(req.sys_write);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
       }
@@ -531,20 +531,20 @@ void fosix()
       }
     }
     // READ
-    else if(proc_to_sys_wires_main.sys_read.req.valid)
+    else if(req.sys_read.valid)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
       
       // Translate from local file descriptor to sys fd
       // Before connecting to sys proc_to_sys device busses
       // Saving a copy of local fd
-      fosix_fd_t local_fd = proc_to_sys_wires_main.sys_read.req.fildes;
-      proc_to_sys_wires_main.sys_read.req.fildes = translate_fd(proc_to_sys_wires_main.sys_read.req.fildes, fosix_fd_lut);
+      fosix_fd_t local_fd = req.sys_read.fildes;
+      req.sys_read.fildes = translate_fd(req.sys_read.fildes, fosix_fd_lut);
       
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg = read_req_to_msg(proc_to_sys_wires_main.sys_read.req);
+        proc_to_sys_bram.msg = read_req_to_msg(req.sys_read);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
       }
@@ -552,7 +552,7 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg = read_req_to_msg(proc_to_sys_wires_main.sys_read.req);
+        proc_to_sys_host.msg = read_req_to_msg(req.sys_read);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
       }
@@ -564,20 +564,20 @@ void fosix()
       }
     }
     // CLOSE
-    else if(proc_to_sys_wires_main.sys_close.req.valid)
+    else if(req.sys_close.valid)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
       
       // Translate from local file descriptor to sys fd
       // Before connecting to sys proc_to_sys device busses
       // Saving a copy of local fd
-      fosix_fd_t local_fd = proc_to_sys_wires_main.sys_close.req.fildes;
-      proc_to_sys_wires_main.sys_close.req.fildes = translate_fd(proc_to_sys_wires_main.sys_close.req.fildes, fosix_fd_lut);
+      fosix_fd_t local_fd = req.sys_close.fildes;
+      req.sys_close.fildes = translate_fd(req.sys_close.fildes, fosix_fd_lut);
       
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg = close_req_to_msg(proc_to_sys_wires_main.sys_close.req);
+        proc_to_sys_bram.msg = close_req_to_msg(req.sys_close);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
       }
@@ -585,7 +585,7 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg = close_req_to_msg(proc_to_sys_wires_main.sys_close.req);
+        proc_to_sys_host.msg = close_req_to_msg(req.sys_close);
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
       }
@@ -626,24 +626,24 @@ void fosix()
     
     // Wow this managing of file descriptors is f'd
     // Extra work now to convert bytes to wires, modify wire, then back to bytes
-    fosix_sys_to_proc_wires_t sys_to_proc_main_wires = msg_to_response(sys_to_proc_main.msg);
+    fosix_parsed_resp_msg_t resp = msg_to_response(sys_to_proc_main.msg);
     
     // OPEN
     if(in_flight_syscall == FOSIX_OPEN)
     {
       // Move on to waiting for next request 
       // if was valid response when ready seen
-      if(sys_to_proc_main_wires.sys_open.resp.valid & proc_to_sys_main.sys_to_proc_msg_ready)
+      if(resp.sys_open.valid & proc_to_sys_main.sys_to_proc_msg_ready)
       {
         fosix_state = WAIT_REQ;
         // Make updates as needed based on response
         // OPEN file descriptors table update
         // Insert file sys decriptor response into table
         // And give main a local file descriptor
-        fd_lut_update_t fd_lut_update = insert_fd(sys_to_proc_main_wires.sys_open.resp.fildes, in_flight_syscall_dev_is_bram, fosix_fd_lut);
+        fd_lut_update_t fd_lut_update = insert_fd(resp.sys_open.fildes, in_flight_syscall_dev_is_bram, fosix_fd_lut);
         fosix_fd_lut = fd_lut_update.fd_lut;
-        sys_to_proc_main_wires.sys_open.resp.fildes = fd_lut_update.fildes;
-        sys_to_proc_main.msg = open_resp_to_msg(sys_to_proc_main_wires.sys_open.resp);
+        resp.sys_open.fildes = fd_lut_update.fildes;
+        sys_to_proc_main.msg = open_resp_to_msg(resp.sys_open);
       }
     }
     // WRITE
@@ -651,7 +651,7 @@ void fosix()
     {
       // Move on to waiting for next request 
       // if was valid response when ready seen
-      if(sys_to_proc_main_wires.sys_write.resp.valid & proc_to_sys_main.sys_to_proc_msg_ready)
+      if(resp.sys_write.valid & proc_to_sys_main.sys_to_proc_msg_ready)
       {
         fosix_state = WAIT_REQ;
       }
@@ -661,7 +661,7 @@ void fosix()
     {
       // Move on to waiting for next request 
       // if was valid response when ready seen
-      if(sys_to_proc_main_wires.sys_read.resp.valid & proc_to_sys_main.sys_to_proc_msg_ready)
+      if(resp.sys_read.valid & proc_to_sys_main.sys_to_proc_msg_ready)
       {
         fosix_state = WAIT_REQ;
       }
@@ -671,7 +671,7 @@ void fosix()
     {
       // Move on to waiting for next request 
       // if was valid response when ready seen
-      if(sys_to_proc_main_wires.sys_close.resp.valid & proc_to_sys_main.sys_to_proc_msg_ready)
+      if(resp.sys_close.valid & proc_to_sys_main.sys_to_proc_msg_ready)
       {
         fosix_state = WAIT_REQ;
       }

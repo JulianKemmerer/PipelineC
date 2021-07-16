@@ -92,14 +92,14 @@ void sys_bram()
     // Start by signaling ready for requests
     sys_to_proc.proc_to_sys_msg_ready = 1;
     // Parse request
-    fosix_proc_to_sys_wires_t proc_to_sys_wires = msg_to_request(proc_to_sys.msg);
-    if(proc_to_sys_wires.sys_open.req.valid)
+    fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys.msg);
+    if(req.sys_open.valid)
     {
       bram_state = WAIT_OPEN_RESP;
       // OPEN resets read/write pos
       bram_byte_offset = 0;
     }
-    else if(proc_to_sys_wires.sys_write.req.valid)
+    else if(req.sys_write.valid)
     {      
       //If at capacity then dont do anything to BRAM,
       // respond with 0 bytes writen
@@ -112,10 +112,10 @@ void sys_bram()
       {
         // Do write
         // Send inputs into bram module
-        wr_en = proc_to_sys_wires.sys_write.req.nbyte > 0; // TODO NON FOSIX_BUF_SIZE BYTES
+        wr_en = req.sys_write.nbyte > 0; // TODO NON FOSIX_BUF_SIZE BYTES
         addr = bram_byte_offset >> LOG2_BRAM_WIDTH; // / BRAM_WIDTH
-        wr_data.bytes = proc_to_sys_wires.sys_write.req.buf;
-        bram_req_nbyte = proc_to_sys_wires.sys_write.req.nbyte;
+        wr_data.bytes = req.sys_write.buf;
+        bram_req_nbyte = req.sys_write.nbyte;
         valid = 1;
         // Increment pos to reflect bytes
         bram_byte_offset = bram_byte_offset + bram_req_nbyte;
@@ -128,7 +128,7 @@ void sys_bram()
       // Begin waiting for bram delay and user resp ready
       bram_state = WAIT_WRITE_RESP;
     }
-    else if(proc_to_sys_wires.sys_read.req.valid)
+    else if(req.sys_read.valid)
     {
       //If at EOF then dont do anything to BRAM,
       // respond with 0 bytes read
@@ -143,7 +143,7 @@ void sys_bram()
         // Send inputs into bram module
         wr_en = 0;
         addr = bram_byte_offset >> LOG2_BRAM_WIDTH; // / BRAM_WIDTH
-        bram_req_nbyte = proc_to_sys_wires.sys_read.req.nbyte;
+        bram_req_nbyte = req.sys_read.nbyte;
         valid = 1;
         // Increment pos to reflect bytes
         bram_byte_offset = bram_byte_offset + bram_req_nbyte;
@@ -151,7 +151,7 @@ void sys_bram()
       // Begin waiting for bram delay and user resp ready
       bram_state = WAIT_READ_RESP;
     }
-    else if(proc_to_sys_wires.sys_close.req.valid)
+    else if(req.sys_close.valid)
     {
       bram_state = WAIT_CLOSE_RESP;
     }

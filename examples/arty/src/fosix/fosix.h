@@ -1,6 +1,6 @@
 // POSIX-like interfaces for FPGA...FOSIX?
 // System calls requests are made from a process to the system
-// System calls responses are from a the system to a process
+// System calls responses are from the system to a process
 
 // Types, constants, etc for fosix system calls
 #include "uintN_t.h"
@@ -43,19 +43,6 @@ open_req_t OPEN_REQ_T_NULL()
   return rv;
 }
 
-typedef struct open_proc_to_sys_t
-{
-	open_req_t req;
-	uint1_t resp_ready;
-} open_proc_to_sys_t;
-open_proc_to_sys_t OPEN_PROC_TO_SYS_T_NULL()
-{
-  open_proc_to_sys_t rv;
-  rv.req = OPEN_REQ_T_NULL();
-  rv.resp_ready = 0;
-  return rv;
-}
-
 typedef struct open_resp_t
 {
 	fosix_fd_t fildes;
@@ -66,19 +53,6 @@ open_resp_t OPEN_RESP_T_NULL()
   open_resp_t rv;
   rv.fildes = -1;
   rv.valid = 0;
-  return rv;
-}
-
-typedef struct open_sys_to_proc_t
-{
-	open_resp_t resp;
-	uint1_t req_ready;
-} open_sys_to_proc_t;
-open_sys_to_proc_t OPEN_SYS_TO_PROC_T_NULL()
-{
-  open_sys_to_proc_t rv;
-  rv.resp = OPEN_RESP_T_NULL();
-  rv.req_ready = 0;
   return rv;
 }
 
@@ -103,19 +77,6 @@ write_req_t WRITE_REQ_T_NULL()
   return rv;
 }
 
-typedef struct write_proc_to_sys_t
-{
-	write_req_t req;
-	uint1_t resp_ready;
-} write_proc_to_sys_t;
-write_proc_to_sys_t WRITE_PROC_TO_SYS_T_NULL()
-{
-  write_proc_to_sys_t rv;
-  rv.req = WRITE_REQ_T_NULL();
-  rv.resp_ready = 0;
-  return rv;
-}
-
 typedef struct write_resp_t
 {
 	fosix_size_t nbyte;
@@ -126,19 +87,6 @@ write_resp_t WRITE_RESP_T_NULL()
   write_resp_t rv;
   rv.nbyte = 0;
   rv.valid = 0;
-  return rv;
-}
-
-typedef struct write_sys_to_proc_t
-{
-  write_resp_t resp;
-	uint1_t req_ready;
-} write_sys_to_proc_t;
-write_sys_to_proc_t WRITE_SYS_TO_PROC_T_NULL()
-{
-  write_sys_to_proc_t rv;
-  rv.resp = WRITE_RESP_T_NULL();
-  rv.req_ready = 0;
   return rv;
 }
 
@@ -154,19 +102,6 @@ read_req_t READ_REQ_T_NULL()
   rv.fildes = -1;
   rv.nbyte = 0;
   rv.valid = 0;
-  return rv;
-}
-
-typedef struct read_proc_to_sys_t
-{
-	read_req_t req;
-	uint1_t resp_ready;
-} read_proc_to_sys_t;
-read_proc_to_sys_t READ_PROC_TO_SYS_T_NULL()
-{
-  read_proc_to_sys_t rv;
-  rv.req = READ_REQ_T_NULL();
-  rv.resp_ready = 0;
   return rv;
 }
 
@@ -189,19 +124,6 @@ read_resp_t READ_RESP_T_NULL()
   return rv;
 }
 
-typedef struct read_sys_to_proc_t
-{
-  read_resp_t resp;
-	uint1_t req_ready;
-} read_sys_to_proc_t;
-read_sys_to_proc_t READ_SYS_TO_PROC_T_NULL()
-{
-  read_sys_to_proc_t rv;
-  rv.resp = READ_RESP_T_NULL();
-  rv.req_ready = 0;
-  return rv;
-}
-
 typedef struct close_req_t
 {
 	fosix_fd_t fildes;
@@ -215,19 +137,6 @@ close_req_t CLOSE_REQ_T_NULL()
   return rv;
 }
 
-typedef struct close_proc_to_sys_t
-{
-	close_req_t req;
-	uint1_t resp_ready;
-} close_proc_to_sys_t;
-close_proc_to_sys_t CLOSE_PROC_TO_SYS_T_NULL()
-{
-  close_proc_to_sys_t rv;
-  rv.req = CLOSE_REQ_T_NULL();
-  rv.resp_ready = 0;
-  return rv;
-}
-
 typedef struct close_resp_t
 {
 	int32_t err;
@@ -238,18 +147,5 @@ close_resp_t CLOSE_RESP_T_NULL()
   close_resp_t rv;
   rv.err = 0;
   rv.valid = 0;
-  return rv;
-}
-
-typedef struct close_sys_to_proc_t
-{
-	close_resp_t resp;
-	uint1_t req_ready;
-} close_sys_to_proc_t;
-close_sys_to_proc_t CLOSE_SYS_TO_PROC_T_NULL()
-{
-  close_sys_to_proc_t rv;
-  rv.resp = CLOSE_RESP_T_NULL();
-  rv.req_ready = 0;
   return rv;
 }
