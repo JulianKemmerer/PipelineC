@@ -343,10 +343,10 @@ state_t add_key(state_t state, uint128_t key) {
     
     uint32_t i;
     for (i = 0; i < 4; i += 1) {
-        res.words[i][0] = state.words[i][0] ^ (uint8_t) (key >> (i * 4) + 0);
-        res.words[i][1] = state.words[i][1] ^ (uint8_t) (key >> (i * 4) + 8);
-        res.words[i][2] = state.words[i][2] ^ (uint8_t) (key >> (i * 4) + 16);
-        res.words[i][3] = state.words[i][3] ^ (uint8_t) (key >> (i * 4) + 24);
+        res.words[i][0] = state.words[i][0] ^ (uint8_t) (key >> (i * 4 + 0));
+        res.words[i][1] = state.words[i][1] ^ (uint8_t) (key >> (i * 4 + 8));
+        res.words[i][2] = state.words[i][2] ^ (uint8_t) (key >> (i * 4 + 16));
+        res.words[i][3] = state.words[i][3] ^ (uint8_t) (key >> (i * 4 + 24));
     }
     return res;
 }
