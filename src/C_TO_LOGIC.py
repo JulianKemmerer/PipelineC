@@ -964,10 +964,10 @@ class Logic:
     # Stop recursion if reached special wire
     if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable):
       if debug:
-        print("NOT REMOVE",self.func_name, "  ", wire)
+        print("NOT REMOVE",self.func_name, "  ", wire, flush=True)
       return
     if debug:
-      print("REMOVE",self.func_name, "  ", wire)
+      print("REMOVE",self.func_name, "  ", wire, flush=True)
     
     self.wires.discard(wire)        
     self.wire_to_c_type.pop(wire, None)
@@ -1040,7 +1040,7 @@ class Logic:
   def REMOVE_SUBMODULE(self, submodule_inst, input_port_names, output_port_names, parser_state, remove_global=True):    
     debug = False
     if debug:
-      print("removing  sub", submodule_inst)
+      print("removing  sub", submodule_inst, flush=True)
     
     # Remove from list of subs yo
     self.submodule_instances.pop(submodule_inst, None)  
@@ -1121,7 +1121,12 @@ class Logic:
         all_insts_of_this_logic = parser_state.FuncToInstances[self.func_name]
         for global_inst in all_insts_of_this_logic:
           global_sub_inst_name = global_inst + SUBMODULE_MARKER + submodule_inst
+          # Why ya gotta be so mad? Its only game?
+          # Dont do dumb loop collecting submodules with startswith
+          # Do recursive remove instead
+          parser_state = RECURSIVE_REMOVE_GLOBAL_INST(global_sub_inst_name, parser_state)
           
+          '''
           # Collect all inst names starting with the above inst name (all submodules get removed too)
           mod_and_all_subs = set()
           mod_and_all_subs.add(global_sub_inst_name)
@@ -1143,7 +1148,7 @@ class Logic:
               parser_state.FuncToInstances[inst_func_logic_name] = all_insts_of_sub
             else:
               parser_state.FuncToInstances.pop(inst_func_logic_name)
-   
+          '''
     return None
   
   
@@ -1255,6 +1260,31 @@ def make_rev_label_dict(labels):
         l[label] = i
     return l   
 
+
+def RECURSIVE_REMOVE_GLOBAL_INST(inst_to_remove, parser_state):
+  # WTF sometimes func isnt in here already? Modest Mouse - Medication
+  if inst_to_remove not in parser_state.LogicInstLookupTable:
+    return parser_state
+  func_logic = parser_state.LogicInstLookupTable[inst_to_remove]
+  
+  # Do for all submodules first
+  for local_sub_inst in func_logic.submodule_instances:
+    global_sub_inst = inst_to_remove + SUBMODULE_MARKER + local_sub_inst
+    parser_state = RECURSIVE_REMOVE_GLOBAL_INST(global_sub_inst, parser_state)
+  
+  # Then remove current inst
+  inst_func_logic_name = func_logic.func_name
+  parser_state.LogicInstLookupTable.pop(inst_to_remove)
+  all_insts_of_sub = parser_state.FuncToInstances[inst_func_logic_name]
+  if inst_to_remove in all_insts_of_sub:
+    all_insts_of_sub.remove(inst_to_remove) # Not all inst shows up?
+  if len(all_insts_of_sub) > 0:
+    parser_state.FuncToInstances[inst_func_logic_name] = all_insts_of_sub
+  else:
+    parser_state.FuncToInstances.pop(inst_func_logic_name)
+  
+  return parser_state
+    
   
 def WIRE_IS_CONSTANT(wire):
   new_wire = wire

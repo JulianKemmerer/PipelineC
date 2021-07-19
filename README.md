@@ -13,7 +13,7 @@ Get started by reading the [wiki](https://github.com/JulianKemmerer/PipelineC/wi
 
 # What is PipelineC?
 
-A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthesis)-like automatic pipelining(3) as a language construct/compiler feature.
+A C-like(1) hardware description language (HDL)(2) adding high level synthesis(HLS)-like automatic pipelining(3) as a language construct/compiler feature.
 
 1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But mostly compileable by gcc for doing basic functional verification/'simulation'.
    This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
@@ -30,23 +30,23 @@ A C-like(1) hardware description language (HDL)(2) adding HLS(high level synthes
 
 # Core Features/Benefits
 
-_An easy to understand hardware description language centered around pipelining_
+_An easy to understand hardware description language with a powerful autopipelining compiler and growing set of real life hardware design inspired features._
 
-* Automatic pipelining as a feature of the compiler. Basic use of the tool is to generate single pipelines to drop into existing designs. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
-* Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined.
-* Simulate your code in seconds, debug with printf's (ex. tool imports human readable+debuggable VHDL into Modelsim)
-* Compose complex portable designs consisting of multiple pipelines and controlling state machines.
-* Can start by cloning existing VHDL/Verilog designs or including raw VHDL as a starting point - not forced to use automatic pipelining features - a full hardware description language replacement.
-* Familiar C function syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments).
-* Globally visible point-to-point wires/clock crossings and inferred clock enables make composing complex module hierarchies / state machines easier.
-* Integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays).
+* Familiar C syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments, reasoning about the sequential ordering of combinatorial logic).
+* Simulate your code in seconds, debug with printf's (tool imports human readable+debuggable VHDL into Modelsim - can also imagine custom C based simulation is within reach as well)
+* Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined - especially helpful for those new to digital logic design.
+* Integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays when moving data from host<->FPGA).
+* A full hardware description language replacement. Can start by cloning existing VHDL/Verilog designs or including raw VHDL - not forced to use entire language at all times.
+* Globally visible point-to-point wires, multi-rate/width clock domain crossings, inferred clock enable nested FSMs, are just some of the growing list of composability features inspired by real life hardware design requirements/tasks.
+* Automatic pipelining as a feature of the compiler. Basic use of the tool can be to generate single pipelines to drop into existing designs elsewhere. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 
-Fundamental design elements are state machines, pipelines, and interconnects (wires,cdc,fifos,etc).
+Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc).
 
-By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs do not need to be rewritten for each new target device / operating frequency. The hope is to build shared, high performance, device agnostic, hardware designs described in a somewhat familiar C language look.
+By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs do not need to be rewritten for each new target device / operating frequency.
+The hope is to build shared, high performance, device agnostic, hardware designs described in a familiar and powerfully composable C language look.
 
 For software folks I want writing PipelineC to feel like solving a programming puzzle in C, not a whole new paradigm of programming languages.
-The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language.
+The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language (it is my language of choice as an FPGA engineer :) ).
 
 ```
 Currently Supported Tools (tested on Linux):
