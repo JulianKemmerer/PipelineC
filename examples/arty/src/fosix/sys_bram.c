@@ -93,13 +93,13 @@ void sys_bram()
     sys_to_proc.proc_to_sys_msg_ready = 1;
     // Parse request
     fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys.msg);
-    if(req.sys_open.valid)
+    if(req.syscall_num == FOSIX_OPEN)
     {
       bram_state = WAIT_OPEN_RESP;
       // OPEN resets read/write pos
       bram_byte_offset = 0;
     }
-    else if(req.sys_write.valid)
+    else if(req.syscall_num == FOSIX_WRITE)
     {      
       //If at capacity then dont do anything to BRAM,
       // respond with 0 bytes writen
@@ -128,7 +128,7 @@ void sys_bram()
       // Begin waiting for bram delay and user resp ready
       bram_state = WAIT_WRITE_RESP;
     }
-    else if(req.sys_read.valid)
+    else if(req.syscall_num == FOSIX_READ)
     {
       //If at EOF then dont do anything to BRAM,
       // respond with 0 bytes read
@@ -151,7 +151,7 @@ void sys_bram()
       // Begin waiting for bram delay and user resp ready
       bram_state = WAIT_READ_RESP;
     }
-    else if(req.sys_close.valid)
+    else if(req.syscall_num == FOSIX_CLOSE)
     {
       bram_state = WAIT_CLOSE_RESP;
     }
@@ -162,9 +162,9 @@ void sys_bram()
     // Handled in fosix fd lookup table...
     // Just signal valid until ready
     open_resp_t open_resp;
-    open_resp.valid = 1;
     open_resp.fildes = 0;
-    sys_to_proc.msg = open_resp_to_msg(open_resp);
+    sys_to_proc.msg.data = open_resp_to_msg(open_resp);
+    sys_to_proc.msg.valid = 1;
     if(proc_to_sys.sys_to_proc_msg_ready)
     {
       // Next request
@@ -178,9 +178,9 @@ void sys_bram()
     {
       // Output valid response
       write_resp_t write_resp;
-      write_resp.valid = 1;
       write_resp.nbyte = bram_req_nbyte;
-      sys_to_proc.msg = write_resp_to_msg(write_resp);
+      sys_to_proc.msg.data = write_resp_to_msg(write_resp);
+      sys_to_proc.msg.valid = 1;
       // And wait for ready for response
       if(proc_to_sys.sys_to_proc_msg_ready)
       {
@@ -199,10 +199,10 @@ void sys_bram()
     {
       // Output valid response
       read_resp_t read_resp;
-      read_resp.valid = 1;
       read_resp.buf = bram_output.bytes;
       read_resp.nbyte = bram_req_nbyte;
-      sys_to_proc.msg = read_resp_to_msg(read_resp);
+      sys_to_proc.msg.data = read_resp_to_msg(read_resp);
+      sys_to_proc.msg.valid = 1;
       // And wait for ready for response
       if(proc_to_sys.sys_to_proc_msg_ready)
       {
@@ -219,8 +219,8 @@ void sys_bram()
     // Just signal valid until ready, no err
     close_resp_t close_resp;
     close_resp.err = 0;
-    close_resp.valid = 1;
-    sys_to_proc.msg = close_resp_to_msg(close_resp);
+    sys_to_proc.msg.data = close_resp_to_msg(close_resp);
+    sys_to_proc.msg.valid = 1;
     if(proc_to_sys.sys_to_proc_msg_ready)
     {
       // Next request

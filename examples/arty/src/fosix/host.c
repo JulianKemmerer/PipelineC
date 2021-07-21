@@ -24,11 +24,12 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   fosix_parsed_req_msg_t req = msg_to_request(read_msg);
   // Prepare a response
   fosix_parsed_resp_msg_t resp;
+  resp.syscall_num = req.syscall_num;
   resp.sys_open = OPEN_RESP_T_NULL();
   resp.sys_write = WRITE_RESP_T_NULL();
   resp.sys_read = READ_RESP_T_NULL();
   resp.sys_close = CLOSE_RESP_T_NULL();
-  if(req.sys_open.valid)
+  if(req.syscall_num==FOSIX_OPEN)
   {
     // OPEN
     // Temp hacky since dont have flags from FPGA
@@ -40,7 +41,6 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
       fildes = open(req.sys_open.path, O_RDWR, S_IRUSR | S_IWUSR);
     }
     resp.sys_open.fildes = fildes;
-    resp.sys_open.valid = 1;
     //printf("FOSIX: OPEN %s %d\n",req.sys_open.path, resp.sys_open.fildes);
     if(fildes>255 | fildes<0)
     {
@@ -49,26 +49,23 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
       exit(-1);
     }
   }
-  else if(req.sys_write.valid)
+  else if(req.syscall_num==FOSIX_WRITE)
   {
     // WRITE
     //printf("FOSIX: WRITE FD %d\n",req.sys_write.fildes);
     resp.sys_write.nbyte = write(req.sys_write.fildes, &(req.sys_write.buf[0]), req.sys_write.nbyte);
-    resp.sys_write.valid = 1;
   }
-  else if(req.sys_read.valid)
+  else if(req.syscall_num==FOSIX_READ)
   {
     // READ
     resp.sys_read.nbyte = read(req.sys_read.fildes, &(resp.sys_read.buf[0]), req.sys_read.nbyte);
     //printf("FOSIX: READ fd %d, nbyte %d, rv %d\n", req.sys_read.fildes, req.sys_read.nbyte, resp.sys_read.nbyte);
-    resp.sys_read.valid = 1;
   }
-  else if(req.sys_close.valid)
+  else if(req.syscall_num==FOSIX_CLOSE)
   {
     // CLOSE
     //printf("FOSIX: CLOSE\n");
     resp.sys_close.err = close(req.sys_close.fildes);
-    resp.sys_close.valid = 1;
     if(resp.sys_close.err)
     {
       printf("Close err? fd %d\n", req.sys_close.fildes);
@@ -77,10 +74,12 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   }
   else
   {
-    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(read_msg.data));
+    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(read_msg));
   }
   // Pack up the response into a message
-  fosix_msg_s write_msg = response_to_msg(resp);
+  fosix_msg_s write_msg;
+  write_msg.data = response_to_msg(resp);
+  write_msg.valid = resp.syscall_num != FOSIX_UNKNOWN;
   return write_msg;
 }
 

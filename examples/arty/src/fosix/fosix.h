@@ -17,8 +17,8 @@
 #define FOSIX_UNKNOWN 255
 
 // Exchanging the small/est possible messages / buffer sizes
+// followed by syscall specific bytes
 // syscall id byte
-// S syscall bytes
 // Path is really largest requirement
 #define fosix_fd_t int32_t
 #define fosix_size_t uint32_t
@@ -29,7 +29,6 @@
 typedef struct open_req_t
 {
 	char path[FOSIX_PATH_SIZE];
-	uint1_t valid;
 } open_req_t;
 open_req_t OPEN_REQ_T_NULL()
 {
@@ -39,20 +38,17 @@ open_req_t OPEN_REQ_T_NULL()
   {
     rv.path[i] = 0;
   }
-  rv.valid = 0;
   return rv;
 }
 
 typedef struct open_resp_t
 {
 	fosix_fd_t fildes;
-  uint1_t valid;
 } open_resp_t;
 open_resp_t OPEN_RESP_T_NULL()
 {
   open_resp_t rv;
   rv.fildes = -1;
-  rv.valid = 0;
   return rv;
 }
 
@@ -61,7 +57,6 @@ typedef struct write_req_t
 	fosix_fd_t fildes;
 	uint8_t buf[FOSIX_BUF_SIZE];
 	fosix_size_t nbyte;
-	uint1_t valid;
 } write_req_t;
 write_req_t WRITE_REQ_T_NULL()
 {
@@ -73,20 +68,17 @@ write_req_t WRITE_REQ_T_NULL()
     rv.buf[i] = 0;
   }
   rv.nbyte = 0;
-  rv.valid = 0;
   return rv;
 }
 
 typedef struct write_resp_t
 {
 	fosix_size_t nbyte;
-	uint1_t valid;
 } write_resp_t;
 write_resp_t WRITE_RESP_T_NULL()
 {
   write_resp_t rv;
   rv.nbyte = 0;
-  rv.valid = 0;
   return rv;
 }
 
@@ -94,14 +86,12 @@ typedef struct read_req_t
 {
 	fosix_fd_t fildes;
 	fosix_size_t nbyte;
-	uint1_t valid;
 } read_req_t;
 read_req_t READ_REQ_T_NULL()
 {
   read_req_t rv;
   rv.fildes = -1;
   rv.nbyte = 0;
-  rv.valid = 0;
   return rv;
 }
 
@@ -109,7 +99,6 @@ typedef struct read_resp_t
 {
 	fosix_size_t nbyte;
   uint8_t buf[FOSIX_BUF_SIZE];
-	uint1_t valid;
 } read_resp_t;
 read_resp_t READ_RESP_T_NULL()
 {
@@ -120,32 +109,27 @@ read_resp_t READ_RESP_T_NULL()
   {
     rv.buf[i] = 0;
   }
-  rv.valid = 0;
   return rv;
 }
 
 typedef struct close_req_t
 {
 	fosix_fd_t fildes;
-	uint1_t valid;
 } close_req_t;
 close_req_t CLOSE_REQ_T_NULL()
 {
   close_req_t rv;
   rv.fildes = -1;
-  rv.valid = 0;
   return rv;
 }
 
 typedef struct close_resp_t
 {
 	int32_t err;
-  uint1_t valid;
 } close_resp_t;
 close_resp_t CLOSE_RESP_T_NULL()
 {
   close_resp_t rv;
   rv.err = 0;
-  rv.valid = 0;
   return rv;
 }

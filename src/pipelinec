@@ -21,11 +21,14 @@ print('''
 # No need to scare folks with my big dumb todo list printing...
 '''
 TODO:
+Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
+  Hacky sort of const prop across module boundaries? ew?
+  ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
 First refactor fosix stuff:
   switch over to using generated to from bytes funcs
   to use antikernel like packets (still struct, but more compact than fosix types)
   do demo 1b wide data bus
-  ^ something stream based?
+  ^ something stream based + varable length not uart fixed msg size
   to use more global wires make code look as simple as possible
   Do DVI over HDMI video demo driven from NoC element (instead of VGA)
 Only syn modules that are used in modules that need pipelining (will need pipeline map of delay)
