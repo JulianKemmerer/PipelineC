@@ -740,7 +740,6 @@ def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text):
     elem_t = toks[0]
     if elem_t not in text_per_elem_t:
       text_per_elem_t[elem_t] = ""
-    text_per_elem_t[elem_t] += "#pragma once\n"
     
     size_str = toks[1].replace("_t","")   
     text_per_elem_t[elem_t] += '''
@@ -756,7 +755,9 @@ typedef struct ''' + array_type + '''
     if not os.path.exists(out_dir):
       os.makedirs(out_dir)    
     path = out_dir + "/" + elem_t + "_array_N_t.h"
-    open(path,'w').write(text)
+    f = open(path,'w')
+    f.write("#pragma once\n")
+    f.write(text)
 
 # Auto generated functions are defined in bit manip or math
 # Built in functions used in this generated code are not auto generated
