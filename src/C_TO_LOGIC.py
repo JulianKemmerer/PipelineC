@@ -4989,6 +4989,16 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         const_val_str = str(float(in_val_str))
       elif in_t == "float" and VHDL.C_TYPES_ARE_INTEGERS([out_t]) :
         const_val_str = str(int(float(in_val_str)))
+      elif VHDL.C_TYPES_ARE_INTEGERS([in_t, out_t]):
+        (signed, left_width, left_unsigned_width, 
+           right_width, right_unsigned_width,
+           max_width, max_unsigned_width, left_max_val, 
+           left_min_val, right_max_val, right_min_val) = GET_INTEGER_MAX_SIZE_INFO([in_t, out_t])
+        out_val = int(in_val_str)
+        if out_val > left_max_val or out_val < left_min_val:
+          print("How to trim/add bits for cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
+          sys.exit(-1)
+        const_val_str = str(out_val)
       else:
         print("How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
         sys.exit(-1) 
@@ -5179,7 +5189,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     #print("output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
     (signed, left_width, left_unsigned_width, 
            right_width, right_unsigned_width,
-           max_width, max_unsigned_width) = GET_INTEGER_MAX_SIZE_INFO(input_driver_types[1:3])
+           max_width, max_unsigned_width, left_max_val, 
+           left_min_val, right_max_val, right_min_val) = GET_INTEGER_MAX_SIZE_INFO(input_driver_types[1:3])
     # Is sized to max
     output_type = "int"+str(max_width) + "_t"
     if not signed:
@@ -5896,25 +5907,37 @@ def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
   left_width = None
   right_unsigned_width = None
   right_width = None
+  left_max_val = None
+  left_min_val = None
+  right_max_val = None
+  right_min_val = None
   for i,c_type in enumerate(c_integer_types):
     if i==0:
       # Left 
       if VHDL.C_TYPE_IS_INT_N(c_type):
         left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        left_min_val = (pow(2, left_width) / 2) * -1;
+        left_max_val = (pow(2, left_width) / 2) - 1;
         left_unsigned_width = left_width - 1
         signed = True
       else:
         left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
         left_unsigned_width = left_width
+        left_min_val = 0
+        left_max_val = pow(2, left_unsigned_width) - 1;
     if i==1:
       # Right
       if VHDL.C_TYPE_IS_INT_N(c_type):
         right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        right_min_val = (pow(2, right_width) / 2) * -1;
+        right_max_val = (pow(2, right_width) / 2) - 1;
         right_unsigned_width = right_width - 1
         signed = True
       else:
         right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
         right_unsigned_width = right_width
+        right_min_val = 0
+        right_max_val = pow(2, right_unsigned_width) - 1;
     # Normal >2 args case    
     unsigned_width = None
     width = None
@@ -5932,7 +5955,7 @@ def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
     
   return (signed, left_width, left_unsigned_width, 
            right_width, right_unsigned_width,
-           max_width, max_unsigned_width)
+           max_width, max_unsigned_width, left_max_val, left_min_val, right_max_val, right_min_val)
 
 def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, parser_state):
   #print c_ast_binary_op
@@ -6213,7 +6236,8 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
         if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
           (signed, left_width, left_unsigned_width, 
            right_width, right_unsigned_width,
-           max_width, max_unsigned_width) = GET_INTEGER_MAX_SIZE_INFO([left_type,right_type])
+           max_width, max_unsigned_width, left_max_val, 
+           left_min_val, right_max_val, right_min_val) = GET_INTEGER_MAX_SIZE_INFO([left_type,right_type])
         else:
           print("Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord)
           sys.exit(-1)
@@ -6423,10 +6447,12 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
               sys.exit(-1)
           lhs_size = lhs_dims[0]
           rhs_size = rhs_dims[0]
+          '''
           if rhs_size > lhs_size:
             # Unhandled
             print(rhs_type, "array at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
             sys.exit(-1)
+          '''
           # Allow it to be resolved in VHDL
           continue
         # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
