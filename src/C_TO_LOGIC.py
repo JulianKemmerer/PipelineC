@@ -1260,6 +1260,27 @@ def make_rev_label_dict(labels):
         l[label] = i
     return l   
 
+def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
+  # Do for all submodules first
+  func_logic = parser_state.LogicInstLookupTable[inst_to_rename]
+  for local_sub_inst in func_logic.submodule_instances:
+    global_sub_inst = inst_to_rename + SUBMODULE_MARKER + local_sub_inst
+    renamed_global_sub_inst = renamed_inst_name + SUBMODULE_MARKER + local_sub_inst
+    parser_state = RECURSIVE_RENAME_GLOBAL_INST(global_sub_inst, renamed_global_sub_inst, parser_state)
+
+  # Then rename current inst
+  inst_func_name = func_logic.func_name
+  ## Prevent renames from doing weird double copy paste
+  #if inst_to_rename == global_dup_sub_inst_name:
+  #  renamed_inst_name = global_new_sub_inst_name
+  #else:
+  #  renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name+SUBMODULE_MARKER, global_new_sub_inst_name+SUBMODULE_MARKER)
+  parser_state.FuncToInstances[inst_func_name].remove(inst_to_rename)
+  parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
+  parser_state.LogicInstLookupTable[renamed_inst_name] = parser_state.LogicInstLookupTable[inst_to_rename]
+  parser_state.LogicInstLookupTable.pop(inst_to_rename)
+  
+  return parser_state
 
 def RECURSIVE_REMOVE_GLOBAL_INST(inst_to_remove, parser_state):
   # WTF sometimes func isnt in here already? Modest Mouse - Medication
@@ -6879,7 +6900,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       #for driven_wire in driven_wires:
       #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
 
-    # Record+remove global insts by doing process for each global inst of container
+    # Record global insts by doing process for each global inst of container
     all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
     for global_inst in all_insts_of_container_func:
       # Record new glb inst
@@ -6892,8 +6913,13 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       # Rename duplicate global insts (to capture renaming of submoduels too)
       # SHit this is hack af
       for sub_inst in dup_insts:
-        global_dup_sub_inst_name = global_inst + SUBMODULE_MARKER + sub_inst        
+        global_dup_sub_inst_name = global_inst + SUBMODULE_MARKER + sub_inst 
+        # Because the game is hard
+        # Dont do dumb loop collecting submodules with startswith
+        # Do recursive rename instead
+        parser_state = RECURSIVE_RENAME_GLOBAL_INST(global_dup_sub_inst_name, global_new_sub_inst_name, parser_state)      
         
+        '''
         # Collect all inst names starting with the above inst name (to get all submodules too)
         mod_and_all_subs = set()
         mod_and_all_subs.add(global_dup_sub_inst_name)
@@ -6913,6 +6939,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
           parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
           parser_state.LogicInstLookupTable[renamed_inst_name] = parser_state.LogicInstLookupTable[inst_to_rename]
           parser_state.LogicInstLookupTable.pop(inst_to_rename)
+        '''
      
         
     making_changes = True
@@ -7279,10 +7306,7 @@ def PARSE_FILE(c_filename):
     for main_func in list(parser_state.main_mhz.keys()):
       if main_func not in parser_state.FuncLogicLookupTable:
         print("Main function:", main_func, "does not exist?")
-        sys.exit(-1)   
-    
-    #print "WHHY SLO?"
-    #sys.exit(-1)
+        sys.exit(-1)
     
     # Code gen based on pre elborated logic
     # TODO SW_LIB.WRITE_PRE_ELAB_GEN_CODE(preprocessed_c_text, parser_state)
@@ -7336,7 +7360,7 @@ def PARSE_FILE(c_filename):
       for main_func in list(parser_state.main_mhz.keys()):
         main_func_logic = parser_state.FuncLogicLookupTable[main_func]
         parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(main_func_logic, parser_state)
-        
+    
     # Code gen based on fully elaborated logic
     # Write c code
     print("Writing generated PipelineC code from elaboration to output directories...", flush=True)
