@@ -198,6 +198,7 @@ class TimingParams:
     
   # Hash ext only reflect raw hdl slices (better would be raw hdl bits per stage)
   def BUILD_HASH_EXT(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
+    #print("BUILD_HASH_EXT",Logic.func_name, flush=True)
     slices_tup = self.RECURSIVE_GET_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
     s = str(slices_tup) + str(self._has_input_regs) + str(self._has_output_regs)
     hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?    
@@ -275,9 +276,10 @@ class TimingParams:
     submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
     return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     
-
+_GET_ZERO_CLK_HASH_EXT_LOOKUP = dict()
 _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = dict()
 def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
+  # Cached?
   #print("GET_ZERO_CLK_TIMING_PARAMS_LOOKUP")
   cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
   if cache_key in _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache:
@@ -287,6 +289,7 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
       rv[inst_i] = params_i.DEEPCOPY()
     return rv
   
+  # Create empty lookup
   ZeroClockTimingParamsLookupTable = dict()
   for logic_inst_name in parser_state.LogicInstLookupTable: 
     logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
@@ -294,11 +297,22 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
     ZeroClockTimingParamsLookupTable[logic_inst_name] = timing_params_i
   
   # Calc cached params so they are in cache
+  
+  # Set latency as known
+  for logic_inst_name in parser_state.LogicInstLookupTable:
+    timing_params_i = ZeroClockTimingParamsLookupTable[logic_inst_name]
+    # Known latency is 0 here - fake calculating it
+    timing_params_i.calcd_total_latency = 0
+  
+  # Latency knonwn so following hash ext calcs dont need to calc pipeline map for latency
   for logic_inst_name in parser_state.LogicInstLookupTable: 
     logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-    timing_params_i = TimingParams(logic_inst_name, logic_i)
-    timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroClockTimingParamsLookupTable) 
-    timing_params_i.GET_HASH_EXT(ZeroClockTimingParamsLookupTable, parser_state)
+    timing_params_i = ZeroClockTimingParamsLookupTable[logic_inst_name]
+    #timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroClockTimingParamsLookupTable) 
+    if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP:
+      timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP[logic_i.func_name]
+    else:
+      _GET_ZERO_CLK_HASH_EXT_LOOKUP[logic_i.func_name] = timing_params_i.GET_HASH_EXT(ZeroClockTimingParamsLookupTable, parser_state)
   
   _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key] = ZeroClockTimingParamsLookupTable
   return ZeroClockTimingParamsLookupTable
@@ -448,7 +462,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   timing_params = TimingParamsLookupTable[inst_name]
   rv = PipelineMap(logic)
-  
+  #print("Get pipeline map inst_name",inst_name,flush=True)
   # Shouldnt need debug for zero clock? You wish you sad lazy person
   #print_debug = print_debug and (est_total_latency>0)
   if print_debug:
@@ -618,8 +632,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       print("inst_name", inst_name)
       bad_inf_loop = True
       print_debug = True
-      print(0/0)
-      sys.exit(-1)
+      #print(0/0)
+      #sys.exit(-1)
     if est_total_latency is not None:
       if (stage_num >= max_possible_latency_with_extra):
         print("Something is wrong here, infinite loop probably...")
