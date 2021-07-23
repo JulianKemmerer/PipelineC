@@ -275,8 +275,20 @@ class TimingParams:
   def GET_SUBMODULE_LATENCY(self, submodule_inst_name, parser_state, TimingParamsLookupTable):
     submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
     return submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+
+
+def DEL_ALL_CACHES():
+  # Clear all caches after parsing is done
+  global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
+  #global _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache
+  
+  _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache         = dict()
+  #_GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache    = dict()
+  #_GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
+
+
     
-_GET_ZERO_CLK_HASH_EXT_LOOKUP = dict()
+_GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = dict()
 _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = dict()
 def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
   # Cached?
@@ -309,10 +321,10 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
     logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
     timing_params_i = ZeroClockTimingParamsLookupTable[logic_inst_name]
     #timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroClockTimingParamsLookupTable) 
-    if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP:
-      timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP[logic_i.func_name]
+    if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache:
+      timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[logic_i.func_name]
     else:
-      _GET_ZERO_CLK_HASH_EXT_LOOKUP[logic_i.func_name] = timing_params_i.GET_HASH_EXT(ZeroClockTimingParamsLookupTable, parser_state)
+      _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[logic_i.func_name] = timing_params_i.GET_HASH_EXT(ZeroClockTimingParamsLookupTable, parser_state)
   
   _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key] = ZeroClockTimingParamsLookupTable
   return ZeroClockTimingParamsLookupTable

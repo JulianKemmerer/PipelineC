@@ -6683,7 +6683,12 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
   print(text)
   return start
   
+_TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache = set()
 def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
+  # Done already?
+  if func_logic.func_name in _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache:
+    return parser_state
+  
   # First do recursively for each submodule
   for submodule_inst in func_logic.submodule_instances:
     submodule_func_name = func_logic.submodule_instances[submodule_inst]
@@ -6920,6 +6925,10 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         
     making_changes = True
   
+  
+  # Record doing this logic
+  _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache.add(func_logic.func_name)
+  
   return parser_state
   
 
@@ -6935,7 +6944,7 @@ def DEL_ALL_CACHES():
   global _C_AST_REF_TOKS_TO_C_TYPE_cache
   global _C_AST_NODE_COORD_STR_cache
   global _C_AST_FUNC_DEF_TO_LOGIC_cache
-  global _GET_ZERO_CLK_PIPELINE_MAP_cache
+  #global _GET_ZERO_CLK_PIPELINE_MAP_cache
   
   _other_partial_logic_cache                = dict()
   _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache    = dict()
@@ -6947,7 +6956,7 @@ def DEL_ALL_CACHES():
   _C_AST_REF_TOKS_TO_C_TYPE_cache           = dict()
   _C_AST_NODE_COORD_STR_cache               = dict()
   _C_AST_FUNC_DEF_TO_LOGIC_cache            = dict()
-  _GET_ZERO_CLK_PIPELINE_MAP_cache          = dict()
+  #_GET_ZERO_CLK_PIPELINE_MAP_cache          = dict()
 
 _EXE_ABS_DIR = None
 def EXE_ABS_DIR():
@@ -7347,6 +7356,7 @@ def PARSE_FILE(c_filename):
     
     # Clear in memory caches
     DEL_ALL_CACHES()
+    SYN.DEL_ALL_CACHES()
     
     return parser_state
 
