@@ -964,10 +964,10 @@ class Logic:
     # Stop recursion if reached special wire
     if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable):
       if debug:
-        print("NOT REMOVE",self.func_name, "  ", wire, flush=True)
+        print("NOT REMOVE WIRE",self.func_name, "  ", wire, flush=True)
       return
     if debug:
-      print("REMOVE",self.func_name, "  ", wire, flush=True)
+      print("REMOVE WIRE",self.func_name, "  ", wire, flush=True)
     
     self.wires.discard(wire)        
     self.wire_to_c_type.pop(wire, None)
@@ -1040,7 +1040,7 @@ class Logic:
   def REMOVE_SUBMODULE(self, submodule_inst, input_port_names, output_port_names, parser_state, remove_global=True):    
     debug = False
     if debug:
-      print("removing  sub", submodule_inst, flush=True)
+      print("removing sub inst", self.func_name, submodule_inst, flush=True)
     
     # Remove from list of subs yo
     self.submodule_instances.pop(submodule_inst, None)  
@@ -1126,29 +1126,6 @@ class Logic:
           # Do recursive remove instead
           parser_state = RECURSIVE_REMOVE_GLOBAL_INST(global_sub_inst_name, parser_state)
           
-          '''
-          # Collect all inst names starting with the above inst name (all submodules get removed too)
-          mod_and_all_subs = set()
-          mod_and_all_subs.add(global_sub_inst_name)
-          for inst_name_i in parser_state.LogicInstLookupTable:
-            if inst_name_i.startswith(global_sub_inst_name+SUBMODULE_MARKER):
-              mod_and_all_subs.add(inst_name_i)
-          
-          # Remove all inst names from global scope
-          for inst_to_remove in mod_and_all_subs:
-            # WTF sometimes func isnt in here already? Modest Mouse - Medication
-            if inst_to_remove not in parser_state.LogicInstLookupTable:
-              continue
-            inst_func_logic_name = parser_state.LogicInstLookupTable[inst_to_remove].func_name
-            parser_state.LogicInstLookupTable.pop(inst_to_remove)
-            all_insts_of_sub = parser_state.FuncToInstances[inst_func_logic_name]
-            if inst_to_remove in all_insts_of_sub:
-              all_insts_of_sub.remove(inst_to_remove) # Not all inst shows up?
-            if len(all_insts_of_sub) > 0:
-              parser_state.FuncToInstances[inst_func_logic_name] = all_insts_of_sub
-            else:
-              parser_state.FuncToInstances.pop(inst_func_logic_name)
-          '''
     return None
   
   
@@ -6707,6 +6684,20 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
   return start
   
 def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
+  # First do recursively for each submodule
+  for submodule_inst in func_logic.submodule_instances:
+    submodule_func_name = func_logic.submodule_instances[submodule_inst]
+    # Skip vhdl
+    if submodule_func_name == VHDL_FUNC_NAME:
+      continue
+    # Skip clock crossings too
+    submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+    if submodule_logic.is_clock_crossing:
+      continue
+    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
+  
+  debug = False
+  # Then do for self
   parser_state.existing_logic = func_logic
   # Some code creates logic that will optimize away
   # But actually the amount of generated VHDL can be too much
@@ -6717,13 +6708,12 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
   #   Inputs for some faked funcs with no func body need to be saved too
   #   Original variable wires dont drive things because alias will drive instead; int x; x=1;
   for wire in set(func_logic.wires): # Copy for iter 
-    debug = False
     if wire in func_logic.wires: # Changes during iter
       drives_nothing = (wire not in func_logic.wire_drives)
       must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVES(wire, parser_state.FuncLogicLookupTable)
       if drives_nothing and must_drive_something:
         if debug:
-          print(func_logic.func_name, "Removing", wire)
+          print(func_logic.func_name, "drives_nothing and must_drive_something Removing", wire)
         func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state)
       else:
         pass
@@ -6772,6 +6762,9 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
           # Do removal
           making_changes = True          
           # Remove record of this wire driving anything so removal doesnt progate forward, only backwards
+          if debug:
+            print(func_logic.func_name, "unecessary Removing", wire)
+            print(driving_wire,"drives -> ",driven_wires)
           func_logic.wire_drives.pop(wire)
           # Make new connection before ripping up old wire
           func_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wires, None, None)
@@ -6833,7 +6826,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     sub_func_name = id_tup[0]
     tup_idx = 1
     sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-    #print("duplicates:",dup_insts)
+    #print(id_tup,"duplicates:",dup_insts)
     
     # Have instances to collapse
     # Create new inst
@@ -6843,17 +6836,21 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     c_ast_nodes = set()
     for sub_inst in dup_insts:
       c_ast_nodes.add(func_logic.submodule_instance_to_c_ast_node[sub_inst])
+    # Same c ast node or not, need to keep prepend id text
+    # Create hash based on all inst names
+    dup_inst_name_hash = ((hashlib.md5(",".join(dup_insts).encode("utf-8")).hexdigest())[0:4]) # 4 chars enough?
+    dup_postpend_text = "_DUPLICATE_"+dup_inst_name_hash
     if len(c_ast_nodes) == 1: # TODO what does this look like otherwise?
       the_c_ast_node = list(c_ast_nodes)[0]
-      new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node)
+      new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node) + dup_postpend_text
     else:
       the_c_ast_node = None
       file_coord_strs = ""
       for c_ast_node in c_ast_nodes:
         file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
-      new_sub_inst_name = sub_func_logic.func_name + file_coord_strs
+      new_sub_inst_name = sub_func_logic.func_name + file_coord_strs + dup_postpend_text
     #print("replacing with",new_sub_inst_name)
-    #print("==")
+    
     
     # Copy the submodule information from one of the identical insts to this
     func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
@@ -6918,44 +6915,11 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         # Dont do dumb loop collecting submodules with startswith
         # Do recursive rename instead
         parser_state = RECURSIVE_RENAME_GLOBAL_INST(global_dup_sub_inst_name, global_new_sub_inst_name, parser_state)      
-        
-        '''
-        # Collect all inst names starting with the above inst name (to get all submodules too)
-        mod_and_all_subs = set()
-        mod_and_all_subs.add(global_dup_sub_inst_name)
-        for inst_name_i in parser_state.LogicInstLookupTable:
-          if inst_name_i.startswith(global_dup_sub_inst_name+SUBMODULE_MARKER):
-            mod_and_all_subs.add(inst_name_i)
-        
-        # Rename all inst names in global scope
-        for inst_to_rename in mod_and_all_subs:
-          inst_func_name = parser_state.LogicInstLookupTable[inst_to_rename].func_name
-          # Prevent renames from doing weird double copy paste
-          if inst_to_rename == global_dup_sub_inst_name:
-            renamed_inst_name = global_new_sub_inst_name
-          else:
-            renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name+SUBMODULE_MARKER, global_new_sub_inst_name+SUBMODULE_MARKER)
-          parser_state.FuncToInstances[inst_func_name].remove(inst_to_rename)
-          parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
-          parser_state.LogicInstLookupTable[renamed_inst_name] = parser_state.LogicInstLookupTable[inst_to_rename]
-          parser_state.LogicInstLookupTable.pop(inst_to_rename)
-        '''
+    #print("==")
      
         
     making_changes = True
   
-  # Finally do recursively for each submodule too
-  for submodule_inst in func_logic.submodule_instances:
-    submodule_func_name = func_logic.submodule_instances[submodule_inst]
-    # Skip vhdl
-    if submodule_func_name == VHDL_FUNC_NAME:
-      continue
-    # Skip clock crossings too
-    submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-    if submodule_logic.is_clock_crossing:
-      continue
-    parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
-    
   return parser_state
   
 
