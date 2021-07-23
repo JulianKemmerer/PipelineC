@@ -5203,6 +5203,9 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   # Printf returns void for now
   elif func_base_name.startswith(PRINTF_FUNC_NAME+"_"):
     output_type = "void"
+  # __vhdl__ also void
+  elif func_base_name==VHDL_FUNC_NAME:
+    output_type = "void"
   
   # Sanity check
   if output_type is None:
