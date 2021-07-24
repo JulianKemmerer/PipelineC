@@ -1,9 +1,9 @@
 #include "uintN_t.h"
 
 #pragma MAIN_MHZ groestl 500.0
-#define NUM_COLS 16
+
 typedef struct state_t {
-	uint8_t words[8][NUM_COLS];
+	uint8_t words[8][16];
 } state_t;
 
 typedef struct col_t {
@@ -271,6 +271,13 @@ uint8_t sbox(uint8_t x) {
 	return rom[x];
 }
 
+#define GET_COL(ret, state, col) \
+uint32_t GET_COL_j; \
+for (GET_COL_j = 0; GET_COL_j < 8; GET_COL_j += 1) { \
+  ret.words[GET_COL_j] = state.words[GET_COL_j][col]; \
+}
+
+/*
 col_t get_col(state_t state, uint32_t col) {
 	col_t ret;
 	uint32_t j;
@@ -279,6 +286,7 @@ col_t get_col(state_t state, uint32_t col) {
 	}
 	return ret;
 }
+*/
 
 col_t mul2(col_t x) {
 	uint8_t rom[256];
@@ -552,9 +560,27 @@ state_t mix_bytes(state_t state)
 {
 	state_t ret;
 
+  col_t cols[16];
+  GET_COL(cols[0], state, 0)
+  GET_COL(cols[1], state, 1)
+  GET_COL(cols[2], state, 2)
+  GET_COL(cols[3], state, 3)
+  GET_COL(cols[4], state, 4)
+  GET_COL(cols[5], state, 5)
+  GET_COL(cols[6], state, 6)
+  GET_COL(cols[7], state, 7)
+  GET_COL(cols[8], state, 8)
+  GET_COL(cols[9], state, 9)
+  GET_COL(cols[10], state, 10)
+  GET_COL(cols[11], state, 11)
+  GET_COL(cols[12], state, 12)
+  GET_COL(cols[13], state, 13)
+  GET_COL(cols[14], state, 14)
+  GET_COL(cols[15], state, 15)
+  
 	uint32_t i;
-	for (i = 0; i < NUM_COLS; i += 1) {
-		col_t b = get_col(state, i);
+	for (i = 0; i < 16; i += 1) {
+		col_t b = cols[i]; //get_col(state, i);
 		col_t b2 = mul2(b);
 		col_t b4 = mul2(b2);
 		uint8_t t1 = b2.words[0] ^ b2.words[2] ^ b.words[5] ^ b4.words[7] ^ b.words[7];
