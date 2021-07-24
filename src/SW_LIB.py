@@ -237,10 +237,12 @@ def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text):
     elem_t = toks[0]
     
     # Dummy typedefs for now to fool c parser?? oh plz help - double up on some help wassup
+    # Yall sitting round here helplessnshit
     text = "#pragma once\n"
     text += '''
 typedef uint8_t ''' + byte_type + '''; // DUMMY
 #define ''' + elem_t + "_size_t" + ''' uint32_t // DUMMY
+#define ''' + elem_t.upper() + '''_TO_BYTES(so,dumb) // DUMMY
 '''
 
     # Write file
@@ -301,6 +303,9 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
         # Need to manually handle array fields for now
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          # Ok to hacky replace char with u8 here?
+          if elem_t=="char":
+            elem_t = "uint8_t"          
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
@@ -386,12 +391,23 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     return rv;
 }
 '''
-
+    
+    # Also gen helper macro
+    text += '''
+#define ''' + type_t.upper() + '''_TO_BYTES(dst_byte_array, ''' + type_t + '''_x)\\
+''' + byte_type + " " + type_t+"_to_bytes_WIRE = " + type_t + "_to_bytes(" + type_t + '''_x);\\
+uint32_t ''' + type_t+'''_to_bytes_i;\\
+for(''' + type_t + "_to_bytes_i=0;" + type_t+"_to_bytes_i<"+type_t+"_SIZE;"+type_t + '''_to_bytes_i+=1)\\
+{\\
+  dst_byte_array[''' + type_t+'''_to_bytes_i] = ''' + type_t+'''_to_bytes_WIRE.data[''' + type_t+'''_to_bytes_i];\\
+}
+'''
+        
     # Func bytes to type ###############################################
     func_name = "bytes_to_" + type_t
     text += '''
 #pragma FUNC_WIRES ''' + func_name + '''
-''' + type_t + " " + func_name + "(" + byte_type + ''' bytes)
+''' + type_t + " " + func_name + "(uint8_t bytes[" + type_t+"_SIZE"+ '''])
 {
 ''' + type_t + ''' rv;
 '''
@@ -409,6 +425,9 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
         # Need to manually handle array fields for now
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          # Ok to hacky replace char with u8 here?
+          if elem_t=="char":
+            elem_t = "uint8_t"
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
@@ -423,7 +442,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
           text += " "+ elem_t + "_bytes_t " + elem_bytes_var + ";\n"
           text += ''' for(field_pos=0;field_pos<sizeof('''+elem_t+''');field_pos = field_pos + 1)
   {
-    ''' + elem_bytes_var + '''.data[field_pos] = bytes.data[pos];
+    ''' + elem_bytes_var + '''.data[field_pos] = bytes[pos];
     pos = pos + 1;
   }
 '''
@@ -443,7 +462,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
           text += field_type + "_bytes_t " + field + "_bytes;\n"
           text += '''for(field_pos=0;field_pos<sizeof('''+field_type+''');field_pos = field_pos + 1)
 {
-  ''' + field + '''_bytes.data[field_pos] = bytes.data[pos];
+  ''' + field + '''_bytes.data[field_pos] = bytes[pos];
   pos = pos + 1;
 }
 '''
@@ -458,14 +477,14 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
       byte_i = 0
       text += "rv = 0;\n"
       while high_i < width:
-        text += "rv = " + typeprefix + "_uint8_" + str(low_i) + "(rv, bytes.data[" + str(byte_i) + "]);\n"
+        text += "rv = " + typeprefix + "_uint8_" + str(low_i) + "(rv, bytes[" + str(byte_i) + "]);\n"
         low_i = low_i + 8
         high_i = high_i + 8
         byte_i = byte_i + 1
       if low_i < width:
         rem = width - low_i
         remprefix = "uint"+str(rem)
-        text += "rv = " + typeprefix + "_" + remprefix + "_" + str(low_i) + "(rv, bytes.data[" + str(byte_i) + "]);\n"
+        text += "rv = " + typeprefix + "_" + remprefix + "_" + str(low_i) + "(rv, bytes[" + str(byte_i) + "]);\n"
     elif type_t == "float":
       text += '''
     // Assemble 4 byte buffer
@@ -473,7 +492,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
     uint3_t buff_pos;
     for(buff_pos=0;buff_pos<sizeof(float);buff_pos=buff_pos+1)
     {
-      buff[buff_pos] = bytes.data[buff_pos];
+      buff[buff_pos] = bytes[buff_pos];
     }
     // Convert as little endian to uint32_t
     uint32_t val_unsigned;
@@ -494,14 +513,14 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
       byte_i = 0
       text += "int_val = 0;\n"
       while high_i < width:
-        text += "int_val = " + typeprefix + "_uint8_" + str(low_i) + "(int_val, bytes.data[" + str(byte_i) + "]);\n"
+        text += "int_val = " + typeprefix + "_uint8_" + str(low_i) + "(int_val, bytes[" + str(byte_i) + "]);\n"
         low_i = low_i + 8
         high_i = high_i + 8
         byte_i = byte_i + 1
       if low_i < width:
         rem = width - low_i
         remprefix = "uint"+str(rem)
-        text += "int_val = " + typeprefix + "_" + remprefix + "_" + str(low_i) + "(int_val, bytes.data[" + str(byte_i) + "]);\n"
+        text += "int_val = " + typeprefix + "_" + remprefix + "_" + str(low_i) + "(int_val, bytes[" + str(byte_i) + "]);\n"
       # And then convert uint to enum
       text += "rv = int_val;\n"
     else:
@@ -554,6 +573,9 @@ void ''' + type_t + "_to_bytes(" + type_t + '''* x, uint8_t* bytes)
         # Need to manually handle array fields for now
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          # Ok to hacky replace char with u8 here?
+          if elem_t=="char":
+            elem_t = "uint8_t" 
           elem_size = C_TO_LOGIC.C_TYPE_SIZE(elem_t, parser_state)
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
@@ -645,6 +667,9 @@ void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
         # Need to manually handle array fields for now
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
+          # Ok to hacky replace char with u8 here?
+          if elem_t=="char":
+            elem_t = "uint8_t" 
           elem_size = C_TO_LOGIC.C_TYPE_SIZE(elem_t, parser_state)
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):

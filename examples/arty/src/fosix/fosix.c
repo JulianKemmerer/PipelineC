@@ -52,13 +52,16 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
   if(state==REQ)
   {
     // Request
+    fosix_msg_decoded_t decoded_msg = FOSIX_MSG_DECODED_T_NULL();
+    decoded_msg.syscall_num = syscall_io.num;
     if(syscall_io.num==FOSIX_OPEN)
     {
       // Request to open
       open_req_t open_req;
       open_req.path = syscall_io.path;
-      o.proc_to_sys.msg.data = open_req_to_msg(open_req);
-      o.proc_to_sys.msg.valid = 1;
+      OPEN_REQ_T_TO_BYTES(decoded_msg.payload_data, open_req)
+      o.proc_to_sys.msg.data = decoded_msg_to_msg(decoded_msg);
+      o.proc_to_sys.msg.valid = 1;        
       // Keep trying to request until finally was ready
       if(sys_to_proc.proc_to_sys_msg_ready)
       {
@@ -467,15 +470,19 @@ void fosix()
     // Connect sys device with opposite direction flow control
     // And set state for handling response when it comes
     fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys_main.msg);
-    
+    fosix_msg_decoded_t decoded_msg = FOSIX_MSG_DECODED_T_NULL();
+    decoded_msg.syscall_num = req.syscall_num;
     // OPEN
     if(req.syscall_num==FOSIX_OPEN)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
+      
+      OPEN_REQ_T_TO_BYTES(decoded_msg.payload_data, req.sys_open)
+      fosix_msg_t open_req_msg = decoded_msg_to_msg(decoded_msg);
       // BRAM
       if(req.sys_open.path=="bram")
       {
-        proc_to_sys_bram.msg.data = open_req_to_msg(req.sys_open);
+        proc_to_sys_bram.msg.data = open_req_msg;
         proc_to_sys_bram.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
@@ -484,7 +491,7 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg.data = open_req_to_msg(req.sys_open);
+        proc_to_sys_host.msg.data = open_req_msg;
         proc_to_sys_host.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;

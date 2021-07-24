@@ -38,7 +38,7 @@ guess_t my_atoi(char str[USER_GUESS_BUF_SIZE])
 typedef enum my_getline_state_t
 {
   READ_CHARS,
-  OUTPUT
+  OUTPUT_LINE
 }my_getline_state_t;
 typedef struct my_getline_t
 {
@@ -67,8 +67,8 @@ my_getline_t my_getline(syscall_io_t syscall_io, fosix_fd_t fd)
       read_buf = syscall_buf[0];\
       line[num_chars] = read_buf;\
       num_chars += 1;\
-      state = OUTPUT;)
-  } else if(state==OUTPUT) {
+      state = OUTPUT_LINE;)
+  } else if(state==OUTPUT_LINE) {
     // Time for output?
     if(read_buf=='\n')
     {

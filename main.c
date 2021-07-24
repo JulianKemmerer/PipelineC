@@ -31,16 +31,155 @@
 //#include "examples/arty/src/eth/work_app.c"
 //#include "examples/blink.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
-//#include "examples/aes/aes.c"
 //#include "examples/fir.c"
 //#include "examples/arty/src/i2s/i2s_passthrough_app.c"
 //#include "examples/arty/src/audio/distortion.c"
 //#include "examples/arty/src/i2s/i2s_app.c"
 //#include "examples/pipeline_and_fsm.c"
 //#include "examples/arty/src/fosix/main_bram_loopback.c"
+//#include "examples/aes/aes.c"
+//#include "examples/groestl/groestl.c"
 #include "examples/arty/src/fosix/main_game.c"
 
 // Below is a bunch of recent scratch work - enjoy
+
+/*
+#pragma MAIN_MHZ array_test 100.0
+#pragma PART "xc7a35ticsg324-1l"
+#include "uintN_t.h"
+typedef struct my_out_array_t
+{
+  uint8_t data[32];
+}my_out_array_t;
+my_out_array_t array_test(uint8_t data[64]) {
+__vhdl__("\
+begin \n\
+  -- a uint8_t_64 assigning to a uint8_t_32 \n\
+  return_output.data <= data; \n\
+");
+}
+*/
+
+  /*
+  uint8_t out_data[32] = data;
+  my_out_array_t rv;
+  rv.data = out_data;
+  return rv;*/
+
+
+
+/*
+#include "uintN_t.h"
+#pragma MAIN_MHZ single_pattern_recognizer_tb 100.0
+
+#define PATTERN_SIZE 4
+#define pattern_or_tree uint1_array_or4
+#define PATTERN {1,5,6,2}
+typedef struct single_pattern_recognizer_t
+{
+  uint1_t error;
+  uint32_t occurences;
+}single_pattern_recognizer_t;
+single_pattern_recognizer_t single_pattern_recognizer(uint8_t num)
+{
+  static uint8_t pattern[PATTERN_SIZE] = PATTERN;
+  static uint32_t pattern_pos_counter[PATTERN_SIZE];
+  static uint32_t occurences;
+
+  // Logic for matching first num in pattern is always active
+  pattern_pos_counter[0] = 1;
+  
+  // Does new number match any active part of pattern
+  uint1_t pattern_pos_active_and_matching[PATTERN_SIZE];
+  uint32_t i;
+  for(i=0; i<PATTERN_SIZE;i+=1)
+  {
+    pattern_pos_active_and_matching[i] = 
+      (pattern[i]==num) & (pattern_pos_counter[i]>0);
+  }
+  
+  // Binary tree ORing bits together for single match flag
+  uint1_t found_match = pattern_or_tree(pattern_pos_active_and_matching);
+  
+  // Update next pattern position counts/active state
+  // based on current positions that were active and matching
+  for(i=0; i<PATTERN_SIZE;i+=1)
+  {
+    if(pattern_pos_active_and_matching[i])
+    {
+      // Decrement count at current pos
+      pattern_pos_counter[i] -= 1;
+      // Is this the last num in pattern sequence?
+      if(i==(PATTERN_SIZE-1))
+      {
+        // This this was an full occurance of the pattern
+        occurences += 1;
+      }
+      else
+      {
+        // Increment count at next pos
+        pattern_pos_counter[i+1] += 1;
+      }
+    }
+  }
+  
+  single_pattern_recognizer_t o;
+  o.error = !found_match;
+  o.occurences = occurences;
+  return o;  
+}
+
+void single_pattern_recognizer_tb()
+{
+  #define INPUT_SIZE 12
+  static uint8_t nums[INPUT_SIZE] = {1,3,5,1,5,6,2,3,6,2,4,4};
+  static uint32_t i;
+  
+  single_pattern_recognizer_t spr = single_pattern_recognizer(nums[i]);
+  printf("Input[%d] %d, Error? %d, Total Occurences %d\n",
+    i, nums[i], spr.error, spr.occurences);
+  i+=1;
+}
+*/
+
+/*
+pattern_recognizer()
+{
+  
+  for pattern_i len patterns
+  {
+    pattern_match_positions[pattern_i] = pattern_pos_matches(patterns[pattern_i], num)
+    
+    // Is this pattern pos active?
+    
+    for pattern_match_pos_i in 
+    {
+      if(pattern_pos_active_count[pattern_i][pattern_match_pos_i] > 0)
+      {
+        pattern_pos_active_count[pattern_i][pattern_match_pos_i] -= 1;
+        
+      }
+    }
+    if(pattern_pos_active[i]
+    
+  }
+  
+  
+  For eahc pattern see if next num matches any positons, can match multiple
+  (multiple instances of pattern)
+  
+  
+  
+  like open close paren pairs? ish?
+  Then check if there is an active fsm waiting waiting on that pos in pattern
+  bit flag
+  if active increment counter for num of insts of that/next? position
+  if not start by setting bit to later check?
+  
+  
+  
+}
+*/
 
 /*
 #include "uintN_t.h"

@@ -11,7 +11,7 @@
 #include "../uart/uart_msg.c"
 
 // Include protocol for how pack and unpack syscalls into messages
-#include "fosix_msg.h"
+#include "fosix_msg_hw.h"
 #include "host_uart.h"
 
 // Clock cross wire to into fosix router thing

@@ -11,6 +11,7 @@
 // Code defining msgs to from FPGA
 #include "../uart/uart_msg_sw.c"
 #include "host_uart.h"
+#include "fosix_msg_sw.h"
 
 // Do the request system call and return response message
 fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
@@ -22,6 +23,7 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   
   // Parse incoming request message
   fosix_parsed_req_msg_t req = msg_to_request(read_msg);
+  fosix_msg_decoded_t decoded_msg = decode_msg(read_msg);
   // Prepare a response
   fosix_parsed_resp_msg_t resp;
   resp.syscall_num = req.syscall_num;
@@ -74,7 +76,7 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   }
   else
   {
-    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decode_syscall_id(read_msg));
+    printf("FOSIX: TIMEOUT / UNKNOWN SYSTEM CALL REQUEST: %d\n", decoded_msg.syscall_num);
   }
   // Pack up the response into a message
   fosix_msg_s write_msg;
