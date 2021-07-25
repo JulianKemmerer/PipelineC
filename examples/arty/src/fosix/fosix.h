@@ -9,7 +9,7 @@
 #pragma once
 
 // Syscall table
-#define syscall_t uint8_t
+#define syscall_num_t uint8_t
 #define FOSIX_READ  0
 #define FOSIX_WRITE 1
 #define FOSIX_OPEN  2
@@ -17,8 +17,8 @@
 #define FOSIX_UNKNOWN 255
 
 // Exchanging the small/est possible messages / buffer sizes
-// followed by syscall specific bytes
 // syscall id byte
+// followed by syscall specific bytes
 // Path is really largest requirement
 #define fosix_fd_t int32_t
 #define fosix_size_t uint32_t

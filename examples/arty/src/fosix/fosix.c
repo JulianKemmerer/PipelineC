@@ -17,7 +17,7 @@ typedef struct syscall_io_t
   // (could instead use: duplicated instances or share an instance input and output wires need FEEDBACK pragma)
   uint1_t start; // Start flag (inputs valid)
   uint1_t done; // Done flag (outputs valid)
-  syscall_t num; // System call number in progress
+  syscall_num_t num; // System call number in progress
   fosix_fd_t fd; // File descriptor for syscall
   char path[FOSIX_PATH_SIZE]; // Path buf for open()
   uint8_t buf[FOSIX_BUF_SIZE]; // IO buf for write+read
@@ -76,7 +76,8 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
       write_req.buf = syscall_io.buf;
       write_req.nbyte = syscall_io.buf_nbytes;
       write_req.fildes = syscall_io.fd;
-      o.proc_to_sys.msg.data = write_req_to_msg(write_req);
+      WRITE_REQ_T_TO_BYTES(decoded_msg.payload_data, write_req)
+      o.proc_to_sys.msg.data = decoded_msg_to_msg(decoded_msg);
       o.proc_to_sys.msg.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.proc_to_sys_msg_ready)
@@ -91,7 +92,8 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
       read_req_t read_req;
       read_req.nbyte = syscall_io.buf_nbytes;
       read_req.fildes = syscall_io.fd;
-      o.proc_to_sys.msg.data = read_req_to_msg(read_req);
+      READ_REQ_T_TO_BYTES(decoded_msg.payload_data, read_req)
+      o.proc_to_sys.msg.data = decoded_msg_to_msg(decoded_msg);
       o.proc_to_sys.msg.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.proc_to_sys_msg_ready)
@@ -105,7 +107,8 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
       // Request to close
       close_req_t close_req;
       close_req.fildes = syscall_io.fd;
-      o.proc_to_sys.msg.data = close_req_to_msg(close_req);
+      CLOSE_REQ_T_TO_BYTES(decoded_msg.payload_data, close_req)
+      o.proc_to_sys.msg.data = decoded_msg_to_msg(decoded_msg);
       o.proc_to_sys.msg.valid = 1;
       // Keep trying to request until finally was ready
       if(sys_to_proc.proc_to_sys_msg_ready)
@@ -424,7 +427,7 @@ typedef enum fosix_state_t {
   WAIT_RESP // Wait for response into main
 } fosix_state_t;
 fosix_state_t fosix_state;
-syscall_t in_flight_syscall;
+syscall_num_t in_flight_syscall;
 uint1_t in_flight_syscall_dev_is_bram;
 fd_lut_t fosix_fd_lut;
 
@@ -472,17 +475,16 @@ void fosix()
     fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys_main.msg);
     fosix_msg_decoded_t decoded_msg = FOSIX_MSG_DECODED_T_NULL();
     decoded_msg.syscall_num = req.syscall_num;
+    fosix_msg_t req_msg = FOSIX_MSG_T_NULL(); // Outgoing
     // OPEN
     if(req.syscall_num==FOSIX_OPEN)
     {
       sys_to_proc_main.proc_to_sys_msg_ready = 0;
       
       OPEN_REQ_T_TO_BYTES(decoded_msg.payload_data, req.sys_open)
-      fosix_msg_t open_req_msg = decoded_msg_to_msg(decoded_msg);
       // BRAM
       if(req.sys_open.path=="bram")
       {
-        proc_to_sys_bram.msg.data = open_req_msg;
         proc_to_sys_bram.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
@@ -491,7 +493,6 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg.data = open_req_msg;
         proc_to_sys_host.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
@@ -514,10 +515,10 @@ void fosix()
       fosix_fd_t local_fd = req.sys_write.fildes;
       req.sys_write.fildes = translate_fd(req.sys_write.fildes, fosix_fd_lut);
       
+      WRITE_REQ_T_TO_BYTES(decoded_msg.payload_data, req.sys_write)
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg.data = write_req_to_msg(req.sys_write);
         proc_to_sys_bram.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
@@ -526,7 +527,6 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg.data = write_req_to_msg(req.sys_write);
         proc_to_sys_host.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
@@ -549,10 +549,10 @@ void fosix()
       fosix_fd_t local_fd = req.sys_read.fildes;
       req.sys_read.fildes = translate_fd(req.sys_read.fildes, fosix_fd_lut);
       
+      READ_REQ_T_TO_BYTES(decoded_msg.payload_data, req.sys_read)
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg.data = read_req_to_msg(req.sys_read);
         proc_to_sys_bram.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
@@ -561,7 +561,6 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg.data = read_req_to_msg(req.sys_read);
         proc_to_sys_host.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
@@ -584,10 +583,10 @@ void fosix()
       fosix_fd_t local_fd = req.sys_close.fildes;
       req.sys_close.fildes = translate_fd(req.sys_close.fildes, fosix_fd_lut);
       
+      CLOSE_REQ_T_TO_BYTES(decoded_msg.payload_data, req.sys_close)
       // BRAM
       if(fd_is_bram(local_fd, fosix_fd_lut))
       {
-        proc_to_sys_bram.msg.data = close_req_to_msg(req.sys_close);
         proc_to_sys_bram.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_bram.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 1;
@@ -596,7 +595,6 @@ void fosix()
       else
       {
         // Only other devices are stdio paths for now
-        proc_to_sys_host.msg.data = close_req_to_msg(req.sys_close);
         proc_to_sys_host.msg.valid = 1;
         sys_to_proc_main.proc_to_sys_msg_ready = sys_to_proc_host.proc_to_sys_msg_ready;
         in_flight_syscall_dev_is_bram = 0;
@@ -612,6 +610,11 @@ void fosix()
         fosix_fd_lut = remove_fd(local_fd, fosix_fd_lut);
       }
     }
+    
+    // Default response data
+    req_msg = decoded_msg_to_msg(decoded_msg);
+    proc_to_sys_bram.msg.data = req_msg;
+    proc_to_sys_host.msg.data = req_msg;
   }
   // WAIT ON RESPONSES /////////////////////////////////////////////////
   else if(fosix_state==WAIT_RESP)

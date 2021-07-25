@@ -10,7 +10,7 @@
 
 #define FOSIX_MSG_SIZE 64
 #define fosix_msg_size_t uint7_t
-#define FOSIX_PAYLOAD_SIZE 63 // Excluded 1 byte syscall_t uint8_t
+#define FOSIX_PAYLOAD_SIZE 63 // Excluded 1 byte syscall_num_t uint8_t
 typedef struct fosix_msg_t
 {
   uint8_t data[FOSIX_MSG_SIZE];
@@ -46,7 +46,7 @@ fosix_msg_s FOSIX_MSG_S_NULL()
 
 typedef struct fosix_msg_decoded_t
 {
-  syscall_t syscall_num;
+  syscall_num_t syscall_num;
   uint8_t payload_data[FOSIX_PAYLOAD_SIZE];
 }fosix_msg_decoded_t;
 fosix_msg_decoded_t FOSIX_MSG_DECODED_T_NULL()
@@ -110,7 +110,7 @@ fosix_msg_t decoded_msg_to_msg(fosix_msg_decoded_t decoded_msg)
   return msg;
 }
 
-fosix_msg_t apply_syscall_id(syscall_t id, fosix_msg_t msg)
+fosix_msg_t apply_syscall_id(syscall_num_t id, fosix_msg_t msg)
 {
   msg.data[0] = id;
   return msg;
@@ -148,7 +148,7 @@ fosix_sys_to_proc_t POSIX_SYS_TO_PROC_T_NULL()
 
 typedef struct fosix_parsed_req_msg_t
 {
-  syscall_t syscall_num; // use as valid+decode
+  syscall_num_t syscall_num; // use as valid+decode
 	open_req_t sys_open;
 	write_req_t sys_write;
   read_req_t sys_read;
@@ -157,7 +157,7 @@ typedef struct fosix_parsed_req_msg_t
 
 typedef struct fosix_parsed_resp_msg_t
 {
-  syscall_t syscall_num; // use as valid+decode
+  syscall_num_t syscall_num; // use as valid+decode
 	open_resp_t sys_open;
 	write_resp_t sys_write;
   read_resp_t sys_read;
@@ -216,6 +216,7 @@ fosix_msg_t open_resp_to_msg(open_resp_t resp)
   return msg;  
 }
 
+/*
 // WRITE REQ
 fosix_msg_t write_req_to_msg(write_req_t req)
 {
@@ -252,6 +253,7 @@ write_req_t msg_to_write_req(fosix_msg_t msg)
   
   return req;
 }
+*/
 
 // WRITE RESP
 write_resp_t msg_to_write_resp(fosix_msg_t msg)
@@ -274,6 +276,7 @@ fosix_msg_t write_resp_to_msg(write_resp_t resp)
   return msg;
 }
 
+/*
 // READ REQ
 fosix_msg_t read_req_to_msg(read_req_t req)
 {
@@ -298,6 +301,7 @@ read_req_t msg_to_read_req(fosix_msg_t msg)
   
   return req;
 }
+*/
 
 // READ RESP
 read_resp_t msg_to_read_resp(fosix_msg_t msg)
@@ -332,6 +336,7 @@ fosix_msg_t read_resp_to_msg(read_resp_t resp)
   return msg;
 }
 
+/*
 // CLOSE REQ
 fosix_msg_t close_req_to_msg(close_req_t req)
 {
@@ -352,6 +357,7 @@ close_req_t msg_to_close_req(fosix_msg_t msg)
   
   return req;
 }
+*/
 
 // CLOSE RESP
 close_resp_t msg_to_close_resp(fosix_msg_t msg)

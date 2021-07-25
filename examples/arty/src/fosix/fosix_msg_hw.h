@@ -2,9 +2,16 @@
 #include "fosix_msg.h"
 
 // Bytes[1+] are specific to syscall
+
+// Auto generated code for converting to and from bytes
 #include "uint8_t_array_N_t.h"
 #include "uint8_t_bytes_t.h"
+#include "uint32_t_bytes_t.h"
+#include "int32_t_bytes_t.h"
 #include "open_req_t_bytes_t.h"
+#include "write_req_t_bytes_t.h"
+#include "read_req_t_bytes_t.h"
+#include "close_req_t_bytes_t.h"
 
 // Process to system request
 fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg_stream)
@@ -13,9 +20,9 @@ fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg_stream)
   fosix_parsed_req_msg_t req;
   req.syscall_num = decoded_msg.syscall_num;
   req.sys_open  = bytes_to_open_req_t(decoded_msg.payload_data);
-  req.sys_write = msg_to_write_req(msg_stream.data);
-  req.sys_read = msg_to_read_req(msg_stream.data);
-  req.sys_close = msg_to_close_req(msg_stream.data);
+  req.sys_write = bytes_to_write_req_t(decoded_msg.payload_data);
+  req.sys_read = bytes_to_read_req_t(decoded_msg.payload_data);
+  req.sys_close = bytes_to_close_req_t(decoded_msg.payload_data);
   return req;
 }
 
