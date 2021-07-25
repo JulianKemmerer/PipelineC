@@ -27,7 +27,11 @@ else:
 
 VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 
-DO_PNR = False # Do full place and route for timing results, if changed, delete path delay cache
+# Do full place and route for timing results
+# for "all" modules or just the "top" module
+# (if changed to "all", delete contents of
+# ./path_delay_cache since those are all synthesis only number)
+DO_PNR = None # None|"all"|"top"
   
 class ParsedTimingReport:
   def __init__(self, syn_output):
@@ -367,20 +371,15 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv = ""
   
   # Add in VHDL 2008 fixed/float support?
-  #rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd\n"
-  #rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_c.vhd]\n"
   rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd\n"
   rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd]\n"
-  #rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd\n"
-  #rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/float_pkg_c.vhd]\n"
-  
   
   # Bah tcl doesnt like brackets in file names
   # Becuase dumb
   
   # Single read vhdl line
   files_txt,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
-  rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n" #-vhdl2008 
+  rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n"
     
   # Write clock xdc and include it
   clk_xdc_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
@@ -431,9 +430,16 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   # SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
   rv += "synth_design -mode out_of_context -top " + top_entity_name + " -part " + parser_state.part + flatten_hierarchy_none + retiming + "\n"
   
-  if DO_PNR:
+  if DO_PNR=="all" or (DO_PNR=="top" and inst_name is None):
     rv += "place_design\n"
     rv += "route_design\n"
+    
+  # Write checkpoint for top - not individual inst runs
+  if inst_name is None:
+    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+    rv += "write_checkpoint " + output_dir + "/" + top_entity_name + ".dcp\n"
+  #else:
+  #  output_dir = SYN.GET_OUTPUT_DIRECTORY(parser_state.LogicInstLookupTable[inst_name])
   
   # Report clocks
   #rv += "report_clocks" + "\n"
