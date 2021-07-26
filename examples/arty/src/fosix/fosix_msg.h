@@ -195,6 +195,7 @@ open_req_t msg_to_open_req(fosix_msg_t msg)
 }
 */
 
+/*
 // OPEN RESP
 open_resp_t msg_to_open_resp(fosix_msg_t msg)
 {
@@ -215,6 +216,7 @@ fosix_msg_t open_resp_to_msg(open_resp_t resp)
   
   return msg;  
 }
+*/
 
 /*
 // WRITE REQ

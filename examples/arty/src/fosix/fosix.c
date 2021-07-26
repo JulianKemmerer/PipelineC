@@ -658,7 +658,10 @@ void fosix()
         fd_lut_update_t fd_lut_update = insert_fd(resp.sys_open.fildes, in_flight_syscall_dev_is_bram, fosix_fd_lut);
         fosix_fd_lut = fd_lut_update.fd_lut;
         resp.sys_open.fildes = fd_lut_update.fildes;
-        sys_to_proc_main.msg.data = open_resp_to_msg(resp.sys_open);
+        fosix_msg_decoded_t open_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+        open_resp_msg.syscall_num = FOSIX_OPEN;
+        OPEN_RESP_T_TO_BYTES(open_resp_msg.payload_data, resp.sys_open)
+        sys_to_proc_main.msg.data = decoded_msg_to_msg(open_resp_msg);
         sys_to_proc_main.msg.valid = 1;
       }
     }

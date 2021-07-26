@@ -163,7 +163,10 @@ void sys_bram()
     // Just signal valid until ready
     open_resp_t open_resp;
     open_resp.fildes = 0;
-    sys_to_proc.msg.data = open_resp_to_msg(open_resp);
+    fosix_msg_decoded_t open_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+    open_resp_msg.syscall_num = FOSIX_OPEN;
+    OPEN_RESP_T_TO_BYTES(open_resp_msg.payload_data, open_resp)
+    sys_to_proc.msg.data = decoded_msg_to_msg(open_resp_msg);
     sys_to_proc.msg.valid = 1;
     if(proc_to_sys.sys_to_proc_msg_ready)
     {

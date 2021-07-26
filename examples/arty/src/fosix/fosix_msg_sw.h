@@ -1,6 +1,8 @@
 #pragma once
 #include "fosix_msg.h"
 
+// Software specific packing and unpacking of bytes + helpers
+
 // Bytes[1+] are specific to syscall
 
 // Auto generated code for converting to and from bytes
@@ -8,10 +10,16 @@
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/uint8_t_bytes_t.h/uint8_t_bytes.h"
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/uint32_t_bytes_t.h/uint32_t_bytes.h"
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/int32_t_bytes_t.h/int32_t_bytes.h"
+// Requests
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/open_req_t_bytes_t.h/open_req_t_bytes.h"
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/write_req_t_bytes_t.h/write_req_t_bytes.h"
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/read_req_t_bytes_t.h/read_req_t_bytes.h"
 #include "/home/julian/pipelinec_syn_output/type_bytes_t.h/close_req_t_bytes_t.h/close_req_t_bytes.h"
+// Responses
+#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/open_resp_t_bytes_t.h/open_resp_t_bytes.h"
+#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/write_resp_t_bytes_t.h/write_resp_t_bytes.h"
+#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/read_resp_t_bytes_t.h/read_resp_t_bytes.h"
+#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/close_resp_t_bytes_t.h/close_resp_t_bytes.h"
 
 // Process to system request
 fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg_stream)
@@ -32,7 +40,10 @@ fosix_msg_t response_to_msg(fosix_parsed_resp_msg_t resp)
   fosix_msg_t msg = FOSIX_MSG_T_NULL();
   if(resp.syscall_num == FOSIX_OPEN)
   {
-    msg = open_resp_to_msg(resp.sys_open);
+    fosix_msg_decoded_t open_resp_msg;
+    open_resp_msg.syscall_num = resp.syscall_num;
+    open_resp_t_to_bytes(&resp.sys_open, open_resp_msg.payload_data);
+    msg = decoded_msg_to_msg(open_resp_msg);
   }
   else if(resp.syscall_num == FOSIX_WRITE)
   {
@@ -49,16 +60,3 @@ fosix_msg_t response_to_msg(fosix_parsed_resp_msg_t resp)
   
   return msg;
 }
-fosix_parsed_resp_msg_t msg_to_response(fosix_msg_s msg_stream)
-{
-  fosix_parsed_resp_msg_t resp;
-  fosix_msg_decoded_t decoded_msg = decode_msg(msg_stream);
-  resp.syscall_num = decoded_msg.syscall_num;
-  resp.sys_open  = msg_to_open_resp(msg_stream.data);
-  resp.sys_write = msg_to_write_resp(msg_stream.data);
-  resp.sys_read = msg_to_read_resp(msg_stream.data);
-  resp.sys_close = msg_to_close_resp(msg_stream.data);
-  return resp;
-}
-
-
