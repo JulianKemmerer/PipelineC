@@ -167,7 +167,7 @@ class TimingParams:
 
     return latency
     
-  def RECURSIVE_GET_NO_SUBMODULE_SLICES(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
+  def RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
     rv = tuple()
     if len(Logic.submodule_instances) > 0:
       # Not raw hdl, slices dont guarentee describe pipeline structure
@@ -181,28 +181,27 @@ class TimingParams:
           print(0/0,flush=True)
           sys.exit(-1)
         sub_logic = parser_state.LogicInstLookupTable[sub_inst]
-        rv += (self.RECURSIVE_GET_NO_SUBMODULE_SLICES(sub_inst, sub_logic, TimingParamsLookupTable, parser_state),)
+        rv += (self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(sub_inst, sub_logic, TimingParamsLookupTable, parser_state),)
     else:
       # Raw HDL
       timing_params = TimingParamsLookupTable[inst_name]
-      rv += (tuple(timing_params._slices),)
+      rv += (tuple(timing_params._slices), timing_params._has_input_regs, timing_params._has_output_regs)
       
     return rv
     
+  # Hash ext only reflect raw hdl slices (better would be raw hdl bits per stage)
+  def BUILD_HASH_EXT(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
+    #print("BUILD_HASH_EXT",Logic.func_name, flush=True)
+    io_regs_and_slices_tup = self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
+    s = str(io_regs_and_slices_tup)
+    hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
+    return hash_ext
+      
   def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
     if self.hash_ext is None:
       self.hash_ext = self.BUILD_HASH_EXT(self.inst_name, self.logic, TimingParamsLookupTable, parser_state)
     
     return self.hash_ext
-    
-    
-  # Hash ext only reflect raw hdl slices (better would be raw hdl bits per stage)
-  def BUILD_HASH_EXT(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
-    #print("BUILD_HASH_EXT",Logic.func_name, flush=True)
-    slices_tup = self.RECURSIVE_GET_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
-    s = str(slices_tup) + str(self._has_input_regs) + str(self._has_output_regs)
-    hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?    
-    return hash_ext
     
   def ADD_SLICE(self, slice_point):     
     if self._slices is None:
