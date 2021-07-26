@@ -47,15 +47,24 @@ fosix_msg_t response_to_msg(fosix_parsed_resp_msg_t resp)
   }
   else if(resp.syscall_num == FOSIX_WRITE)
   {
-    msg = write_resp_to_msg(resp.sys_write);
+    fosix_msg_decoded_t write_resp_msg;
+    write_resp_msg.syscall_num = resp.syscall_num;
+    write_resp_t_to_bytes(&resp.sys_write, write_resp_msg.payload_data);
+    msg = decoded_msg_to_msg(write_resp_msg);
   }
   else if(resp.syscall_num == FOSIX_READ)
   {
-    msg = read_resp_to_msg(resp.sys_read);
+    fosix_msg_decoded_t read_resp_msg;
+    read_resp_msg.syscall_num = resp.syscall_num;
+    read_resp_t_to_bytes(&resp.sys_read, read_resp_msg.payload_data);
+    msg = decoded_msg_to_msg(read_resp_msg);
   }
   else if(resp.syscall_num == FOSIX_CLOSE)
   {
-    msg = close_resp_to_msg(resp.sys_close);
+    fosix_msg_decoded_t close_resp_msg;
+    close_resp_msg.syscall_num = resp.syscall_num;
+    close_resp_t_to_bytes(&resp.sys_close, close_resp_msg.payload_data);
+    msg = decoded_msg_to_msg(close_resp_msg);
   }
   
   return msg;

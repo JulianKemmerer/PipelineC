@@ -133,3 +133,22 @@ close_resp_t CLOSE_RESP_T_NULL()
   rv.err = 0;
   return rv;
 }
+
+// Types holding the wires of all parsed message struct types
+typedef struct fosix_parsed_req_msg_t
+{
+  syscall_num_t syscall_num; // use as valid+decode
+	open_req_t sys_open;
+	write_req_t sys_write;
+  read_req_t sys_read;
+  close_req_t sys_close;
+} fosix_parsed_req_msg_t;
+typedef struct fosix_parsed_resp_msg_t
+{
+  syscall_num_t syscall_num; // use as valid+decode
+	open_resp_t sys_open;
+	write_resp_t sys_write;
+  read_resp_t sys_read;
+  close_resp_t sys_close;
+} fosix_parsed_resp_msg_t;
+

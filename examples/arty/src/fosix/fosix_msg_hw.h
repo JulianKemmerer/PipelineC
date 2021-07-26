@@ -41,9 +41,9 @@ fosix_parsed_resp_msg_t msg_to_response(fosix_msg_s msg_stream)
   fosix_msg_decoded_t decoded_msg = decode_msg(msg_stream);
   resp.syscall_num = decoded_msg.syscall_num;
   resp.sys_open  = bytes_to_open_resp_t(decoded_msg.payload_data);
-  resp.sys_write = msg_to_write_resp(msg_stream.data);
-  resp.sys_read = msg_to_read_resp(msg_stream.data);
-  resp.sys_close = msg_to_close_resp(msg_stream.data);
+  resp.sys_write = bytes_to_write_resp_t(decoded_msg.payload_data);
+  resp.sys_read = bytes_to_read_resp_t(decoded_msg.payload_data);
+  resp.sys_close = bytes_to_close_resp_t(decoded_msg.payload_data);
   return resp;
 }
 

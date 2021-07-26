@@ -182,7 +182,10 @@ void sys_bram()
       // Output valid response
       write_resp_t write_resp;
       write_resp.nbyte = bram_req_nbyte;
-      sys_to_proc.msg.data = write_resp_to_msg(write_resp);
+      fosix_msg_decoded_t write_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+      write_resp_msg.syscall_num = FOSIX_WRITE;
+      WRITE_RESP_T_TO_BYTES(write_resp_msg.payload_data, write_resp)
+      sys_to_proc.msg.data = decoded_msg_to_msg(write_resp_msg);
       sys_to_proc.msg.valid = 1;
       // And wait for ready for response
       if(proc_to_sys.sys_to_proc_msg_ready)
@@ -204,7 +207,10 @@ void sys_bram()
       read_resp_t read_resp;
       read_resp.buf = bram_output.bytes;
       read_resp.nbyte = bram_req_nbyte;
-      sys_to_proc.msg.data = read_resp_to_msg(read_resp);
+      fosix_msg_decoded_t read_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+      read_resp_msg.syscall_num = FOSIX_READ;
+      READ_RESP_T_TO_BYTES(read_resp_msg.payload_data, read_resp)
+      sys_to_proc.msg.data = decoded_msg_to_msg(read_resp_msg);
       sys_to_proc.msg.valid = 1;
       // And wait for ready for response
       if(proc_to_sys.sys_to_proc_msg_ready)
@@ -222,7 +228,10 @@ void sys_bram()
     // Just signal valid until ready, no err
     close_resp_t close_resp;
     close_resp.err = 0;
-    sys_to_proc.msg.data = close_resp_to_msg(close_resp);
+    fosix_msg_decoded_t close_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+    close_resp_msg.syscall_num = FOSIX_CLOSE;
+    CLOSE_RESP_T_TO_BYTES(close_resp_msg.payload_data, close_resp)
+    sys_to_proc.msg.data = decoded_msg_to_msg(close_resp_msg);
     sys_to_proc.msg.valid = 1;
     if(proc_to_sys.sys_to_proc_msg_ready)
     {
