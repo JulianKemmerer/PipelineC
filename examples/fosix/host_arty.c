@@ -1,5 +1,5 @@
 // This is the main program to run on the host to act as a fosix sys device
-// gcc host.c -o host -I ../../../../
+// gcc host_arty.c -o host_arty -I ../../
 
 #include <math.h>
 #include <time.h>
@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 // Code defining msgs to from FPGA
-#include "../uart/uart_msg_sw.c"
+#include "../arty/src/uart/uart_msg_sw.c"
 #include "host_uart.h"
 #include "fosix_msg_sw.h"
 

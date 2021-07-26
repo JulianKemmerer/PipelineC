@@ -6,13 +6,13 @@
 #include "protocol.h"
 
 // Clock cross into fosix
-posix_h2c_t aws_h2c;
-#include "posix_h2c_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "aws_h2c_clock_crossing.h"
+fosix_sys_to_proc_t aws_h2c;
+#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "aws_sys_to_proc_clock_crossing.h"
 // Clock cross out of fosix
-posix_c2h_t aws_c2h;
-#include "posix_c2h_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "aws_c2h_clock_crossing.h"
+fosix_proc_to_sys_t aws_c2h;
+#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
+#include "aws_proc_to_sys_clock_crossing.h"
 
 // Need to arbitrate valid and ready signals to and from the 
 // appropriate syscalls and messages
@@ -26,9 +26,9 @@ void fosix_aws_fpga_dma()
   // Inputs
   uint1_t dma_msg_out_ready;
   dma_msg_s dma_msg_in;
-  posix_c2h_t c2h;
+  fosix_proc_to_sys_t proc_to_sys;
   // Outputs
-  posix_h2c_t h2c;
+  fosix_sys_to_proc_t sys_to_proc;
   uint1_t dma_msg_in_ready;
   dma_msg_s dma_msg_out;
   
@@ -42,13 +42,13 @@ void fosix_aws_fpga_dma()
   dma_msg_s_array_1_t msgs_in;
   msgs_in = aws_in_msg_READ();
   dma_msg_in = msgs_in.data[0];
-  // Read aws c2h output from fosix
-  posix_c2h_t_array_1_t c2hs;
-  c2hs = aws_c2h_READ();
-  c2h = c2hs.data[0];
+  // Read aws proc_to_sys output from fosix
+  fosix_proc_to_sys_t_array_1_t proc_to_syss;
+  proc_to_syss = aws_proc_to_sys_READ();
+  proc_to_sys = proc_to_syss.data[0];
   //
   // Default output values so each state is easier to write
-  h2c = POSIX_H2C_T_NULL();
+  sys_to_proc = FOSIX_SYS_TO_PROC_T_NULL();
   dma_msg_in_ready = 0;
   dma_msg_out = DMA_MSG_S_NULL();  
   //////////////////////////////////////////////////////////////////////
@@ -59,35 +59,35 @@ void fosix_aws_fpga_dma()
   // if ready for DMA msg out
   if(dma_msg_out_ready)
   {
-    h2c = h2c_set_ready(h2c);
+    sys_to_proc = h2c_set_ready(sys_to_proc);
     // Find one system call making a request
     // and invalidate the ready for all other requests
     // Convert incoming request into dma msg out
     // OK to have dumb constant priority 
     // and valid<->ready combinatorial feedback for now
-    if(c2h.sys_open.req.valid)
+    if(proc_to_sys.sys_open.req.valid)
     {
-      h2c = h2c_clear_ready(h2c);
-      h2c.sys_open.req_ready = 1;
-      dma_msg_out = open_req_to_dma(c2h.sys_open.req);
+      sys_to_proc = h2c_clear_ready(sys_to_proc);
+      sys_to_proc.sys_open.req_ready = 1;
+      dma_msg_out = open_req_to_dma(proc_to_sys.sys_open.req);
     }
-    else if(c2h.sys_write.req.valid)
+    else if(proc_to_sys.sys_write.req.valid)
     {
-      h2c = h2c_clear_ready(h2c);
-      h2c.sys_write.req_ready = 1;
-      dma_msg_out = write_req_to_dma(c2h.sys_write.req);
+      sys_to_proc = h2c_clear_ready(sys_to_proc);
+      sys_to_proc.sys_write.req_ready = 1;
+      dma_msg_out = write_req_to_dma(proc_to_sys.sys_write.req);
     }
-    else if(c2h.sys_read.req.valid)
+    else if(proc_to_sys.sys_read.req.valid)
     {
-      h2c = h2c_clear_ready(h2c);
-      h2c.sys_read.req_ready = 1;
-      dma_msg_out = read_req_to_dma(c2h.sys_read.req);
+      sys_to_proc = h2c_clear_ready(sys_to_proc);
+      sys_to_proc.sys_read.req_ready = 1;
+      dma_msg_out = read_req_to_dma(proc_to_sys.sys_read.req);
     }
-    else if(c2h.sys_close.req.valid)
+    else if(proc_to_sys.sys_close.req.valid)
     {
-      h2c = h2c_clear_ready(h2c);
-      h2c.sys_close.req_ready = 1;
-      dma_msg_out = close_req_to_dma(c2h.sys_close.req);
+      sys_to_proc = h2c_clear_ready(sys_to_proc);
+      sys_to_proc.sys_close.req_ready = 1;
+      dma_msg_out = close_req_to_dma(proc_to_sys.sys_close.req);
     }
   }
   // TODO Break path from dma out ready to dma out valid, unnecessary
@@ -101,35 +101,35 @@ void fosix_aws_fpga_dma()
   // OK to have dumb valid<->ready combinatorial feedback for now
   // Convert incoming dma msg into response
   // Only one response will be valid, if any
-  h2c.sys_open.resp = dma_to_open_resp(dma_msg_in);
-  h2c.sys_write.resp = dma_to_write_resp(dma_msg_in);
-  h2c.sys_read.resp = dma_to_read_resp(dma_msg_in);
-  h2c.sys_close.resp = dma_to_close_resp(dma_msg_in);
+  sys_to_proc.sys_open.resp = dma_to_open_resp(dma_msg_in);
+  sys_to_proc.sys_write.resp = dma_to_write_resp(dma_msg_in);
+  sys_to_proc.sys_read.resp = dma_to_read_resp(dma_msg_in);
+  sys_to_proc.sys_close.resp = dma_to_close_resp(dma_msg_in);
   // and connect flow control
-  if(h2c.sys_open.resp.valid)
+  if(sys_to_proc.sys_open.resp.valid)
   {
-    dma_msg_in_ready = c2h.sys_open.resp_ready;
+    dma_msg_in_ready = proc_to_sys.sys_open.resp_ready;
   }
-  else if(h2c.sys_write.resp.valid)
+  else if(sys_to_proc.sys_write.resp.valid)
   {
-    dma_msg_in_ready = c2h.sys_write.resp_ready;
+    dma_msg_in_ready = proc_to_sys.sys_write.resp_ready;
   }
-  else if(h2c.sys_read.resp.valid)
+  else if(sys_to_proc.sys_read.resp.valid)
   {
-    dma_msg_in_ready = c2h.sys_read.resp_ready;
+    dma_msg_in_ready = proc_to_sys.sys_read.resp_ready;
   }
-  else if(h2c.sys_close.resp.valid)
+  else if(sys_to_proc.sys_close.resp.valid)
   {
-    dma_msg_in_ready = c2h.sys_close.resp_ready;
+    dma_msg_in_ready = proc_to_sys.sys_close.resp_ready;
   }
   
   //////////////////////////////////////////////////////////////////////
   // Write driven outputs into other modules
   //
-  // Write aws h2c into fosix
-  posix_h2c_t_array_1_t h2cs;
-  h2cs.data[0] = h2c;
-  aws_h2c_WRITE(h2cs);
+  // Write aws sys_to_proc into fosix
+  fosix_sys_to_proc_t_array_1_t sys_to_procs;
+  sys_to_procs.data[0] = sys_to_proc;
+  aws_sys_to_proc_WRITE(sys_to_procs);
   // Write ready for input message indicator into aws_fpga_dma
   uint1_t_array_1_t in_readys;
 	in_readys.data[0] = dma_msg_in_ready;

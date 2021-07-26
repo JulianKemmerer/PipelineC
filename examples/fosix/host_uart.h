@@ -1,6 +1,6 @@
 #pragma once
 #include "fosix_msg.h"
-#include "../uart/uart_msg.h"
+#include "../arty/src/uart/uart_msg.h"
 
 // Helper logic to cast uart types to fosix types
 fosix_msg_t uart_msg_t_to_fosix_msg_t(uart_msg_t uart_msg_in)

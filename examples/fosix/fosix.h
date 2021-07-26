@@ -14,6 +14,7 @@
 #define FOSIX_WRITE 1
 #define FOSIX_OPEN  2
 #define FOSIX_CLOSE 3
+// TODO memfd_create
 #define FOSIX_UNKNOWN 255
 
 // Exchanging the small/est possible messages / buffer sizes

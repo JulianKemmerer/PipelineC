@@ -8,7 +8,7 @@
 #include "wire.h"
 
 // Pull in the logic to send and receive messages
-#include "../uart/uart_msg.c"
+#include "../arty/src/uart/uart_msg.c"
 
 // Include protocol for how pack and unpack syscalls into messages
 #include "fosix_msg_hw.h"

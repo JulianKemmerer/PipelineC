@@ -22,11 +22,8 @@ print('''
 '''
 TODO:
 First refactor fosix stuff:
-  switch over to using generated to from bytes funcs
-  to use antikernel like packets (still struct, but more compact than fosix types)
   do demo 1b wide data bus
-  ^ something stream based + varable length not uart fixed msg size
-  to use more global wires make code look as simple as possible
+    ^ something stream based + varable length not uart fixed msg size
   Do DVI over HDMI video demo driven from NoC element (instead of VGA)
 Organize fosix stuff into just arty area? (actually use common fosix area?)
 Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
