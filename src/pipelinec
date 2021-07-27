@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*- 
 
+import argparse
 import os
 import sys
 sys.dont_write_bytecode = True
@@ -8,6 +9,13 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import SYN
 import MODELSIM
+
+parser = argparse.ArgumentParser(description="PipelineC top-level wrapper.")
+parser.add_argument("--c_file", type=str,
+                    help=f"Top-level C implementation file. Default is {C_TO_LOGIC.REPO_ABS_DIR()}/main.c",
+                    required=False)
+
+args = parser.parse_args()
 
 print('''
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -135,9 +143,8 @@ print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 # TODO real command line opts
 c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
-if len(sys.argv) == 2:
-  # Assume first and only arg is c_file
-  c_file = sys.argv[1]
+if args.c_file:
+  c_file = args.c_file
 # Resolve C file to absolute path
 c_file = os.path.abspath(c_file) 
 print("Parsing:",c_file, flush=True)
