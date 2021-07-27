@@ -17,17 +17,17 @@ parser.add_argument("--c_file", type=str,
 
 args = parser.parse_args()
 
-print('''
+print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
 ██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
 ██████╔╝██║██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
 ██╔═══╝ ██║██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
-''', flush=True)
+""", flush=True)
 
 # No need to scare folks with my big dumb todo list printing...
-'''
+"""
 TODO:
 First refactor fosix stuff:
   do demo 1b wide data bus
@@ -137,7 +137,7 @@ Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
 Do built in Q number types
-'''
+"""
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
