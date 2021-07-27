@@ -11,9 +11,8 @@ import SYN
 import MODELSIM
 
 parser = argparse.ArgumentParser(description="PipelineC top-level wrapper.")
-parser.add_argument("--c_file", type=str,
-                    help=f"Top-level C implementation file. Default is {C_TO_LOGIC.REPO_ABS_DIR()}/main.c",
-                    required=False)
+parser.add_argument("c_file", type=str, nargs="?",
+                    help=f"Top-level C implementation file. Default is {C_TO_LOGIC.REPO_ABS_DIR()}/main.c")
 
 args = parser.parse_args()
 
