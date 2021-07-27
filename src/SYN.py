@@ -168,7 +168,10 @@ class TimingParams:
     return latency
     
   def RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
-    rv = tuple()
+    # All modules include IO reg flags
+    timing_params = TimingParamsLookupTable[inst_name]
+    rv = (timing_params._has_input_regs, timing_params._has_output_regs,)
+    # Only lowest level raw VHDL modules with no submodules include slices
     if len(Logic.submodule_instances) > 0:
       # Not raw hdl, slices dont guarentee describe pipeline structure
       for submodule in sorted(Logic.submodule_instances): # MUST BE SORTED FOR CONSISTENT ORDER!
@@ -184,8 +187,7 @@ class TimingParams:
         rv += (self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(sub_inst, sub_logic, TimingParamsLookupTable, parser_state),)
     else:
       # Raw HDL
-      timing_params = TimingParamsLookupTable[inst_name]
-      rv += (tuple(timing_params._slices), timing_params._has_input_regs, timing_params._has_output_regs)
+      rv += (tuple(timing_params._slices),)
       
     return rv
     
