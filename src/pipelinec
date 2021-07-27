@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*- 
 
+import argparse
 import os
 import sys
 sys.dont_write_bytecode = True
@@ -9,17 +10,23 @@ import C_TO_LOGIC
 import SYN
 import MODELSIM
 
-print('''
+parser = argparse.ArgumentParser(description="PipelineC top-level wrapper.")
+parser.add_argument("c_file", type=str, nargs="?",
+                    help=f"Top-level C implementation file. Default is {C_TO_LOGIC.REPO_ABS_DIR()}/main.c")
+
+args = parser.parse_args()
+
+print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
 ██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
 ██████╔╝██║██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
 ██╔═══╝ ██║██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
-''', flush=True)
+""", flush=True)
 
 # No need to scare folks with my big dumb todo list printing...
-'''
+"""
 TODO:
 First refactor fosix stuff:
   do demo 1b wide data bus
@@ -129,15 +136,14 @@ Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
 Do built in Q number types
-'''
+"""
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 # TODO real command line opts
 c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
-if len(sys.argv) == 2:
-  # Assume first and only arg is c_file
-  c_file = sys.argv[1]
+if args.c_file:
+  c_file = args.c_file
 # Resolve C file to absolute path
 c_file = os.path.abspath(c_file) 
 print("Parsing:",c_file, flush=True)
