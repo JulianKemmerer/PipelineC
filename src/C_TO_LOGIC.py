@@ -4013,23 +4013,22 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   if c_ast_decl.init is not None:
     # Dont support struct init here yet
     if type(c_ast_decl.init) == c_ast.InitList:
-      #print(c_ast_decl.init)
-      print("No support for (non-static) local variable struct/array init statement yet...", c_ast_decl.init.coord)
-      sys.exit(-1)
-      # For now user must specify all array elements, none assumed 0, not C spec
-      # Has expressions in the list
-      for init_expr in c_ast_decl.init.exprs:
-        # Do multiple for all specified ref toks
-        #C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC
-        # Named init or constant?
-        if type(init_expr) == c_ast.NamedInitializer:
-          pass
-        elif type(init_expr) == c_ast.Constant:
-          pass
-        else:
-          print("Ramona Reborn - Delicate Steve")
-          print("Whosey whats this init?",init_expr, init_expr.coord)
-          sys.exit(0)      
+      # Only array init for now
+      if C_TYPE_IS_ARRAY(c_type):
+        elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        dim0_size = dims[0]
+        # For now user must specify all array elements, none assumed 0, not C spec
+        if dim0_size != len(c_ast_decl.init.exprs):
+          print("Array initializer is not size of array dimension at", c_ast_decl.init.coord)
+          sys.exit(-1)
+        dim0_i = 0
+        for init_expr in c_ast_decl.init.exprs:
+          ref_toks = (wire_name,dim0_i)
+          parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(ref_toks, c_ast_decl, init_expr, parser_state, prepend_text, None)
+          dim0_i += 1
+      else:
+        print("No support for (non-static) local variable struct init statement yet...", c_ast_decl.init.coord)
+        sys.exit(-1)    
     else:
       # Default connect node to single ref toks
       # TODO is subset of above?
@@ -7360,6 +7359,27 @@ def PARSE_FILE(c_filename):
     # Clear in memory caches
     DEL_ALL_CACHES()
     SYN.DEL_ALL_CACHES()
+    
+    '''
+    from pympler import muppy
+    allObjects = muppy.get_objects()
+    from pympler import summary
+    sum = summary.summarize(allObjects)
+    summary.print_(sum)
+    from pympler import asizeof
+    print("Parser state size:",asizeof.asizeof(parser_state))
+    print("LogicInstLookupTable size:",asizeof.asizeof(parser_state.LogicInstLookupTable))
+    print("LogicInstLookupTable num inst names:",len(parser_state.LogicInstLookupTable))
+    print("LogicInstLookupTable num logic elements:",len(set(parser_state.LogicInstLookupTable.values())))
+    print("FuncLogicLookupTable num logic elements:",len(parser_state.FuncLogicLookupTable))
+    max_len = 0
+    for inst_name in parser_state.LogicInstLookupTable:
+      l = len(inst_name)
+      if l > max_len:
+        max_len = l
+        print(inst_name)
+    sys.exit(0)
+    '''
     
     return parser_state
 

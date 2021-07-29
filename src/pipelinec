@@ -32,6 +32,7 @@ print("""
 """
 TODO:
 Do better LUT syntax (- ROMs/BROMs too?)
+Default +some% target fmax for synthesis estimates?
 Efinix FPGA support
 Silice fun? Is it possible with compiler __clk(); 
 First refactor fosix stuff:
