@@ -10,10 +10,13 @@ import C_TO_LOGIC
 import SYN
 import MODELSIM
 
-parser = argparse.ArgumentParser(description="PipelineC top-level wrapper.")
-parser.add_argument("c_file", type=str, nargs="?",
-                    help=f"Top-level C implementation file. Default is {C_TO_LOGIC.REPO_ABS_DIR()}/main.c")
+# Defaults
+default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
 
+# Parse args
+parser = argparse.ArgumentParser(description="PipelineC:")
+parser.add_argument("c_file", type=str, nargs="?",
+                    help=f"Top-level C implementation file. Default is {default_c_file}")
 args = parser.parse_args()
 
 print("""
@@ -28,11 +31,13 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Do better LUT syntax (- ROMs/BROMs too?)
+Efinix FPGA support
+Silice fun? Is it possible with compiler __clk(); 
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
   Do DVI over HDMI video demo driven from NoC element (instead of VGA)
-Organize fosix stuff into just arty area? (actually use common fosix area?)
 Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
   Hacky sort of const prop across module boundaries? ew?
   ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
@@ -42,7 +47,6 @@ Check auto pipeline and clock crossing read+write behavior
   Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
-Do better LUT syntax - ROMs/BROMs too
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do const func args as generics - ex. const loop vars into func - how to progate const values
 CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - can sometimes if have recent constant assignments/ref toks
@@ -50,8 +54,7 @@ Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Conditional return via output reg +mux + valid signal
-^ Then use valid signal from return to drive fsm transitions? 
-Silice fun? Is it possible with compiler __clock+=1 (or delcare counter pragmad as the 'clock'/'pc' reg?) syntax in functions to allow while(1) style loops and fsms?
+^ Then use valid signal from return to drive fsm transitions?
 FP checks/fixes:
   Zero special case (only needed for mult?)
   Fix shifts in FP operators to check for shfiting more than number of bits
@@ -140,12 +143,12 @@ Do built in Q number types
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
-# TODO real command line opts
-c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
+# Resolve C file arg
+c_file = default_c_file
 if args.c_file:
   c_file = args.c_file
-# Resolve C file to absolute path
-c_file = os.path.abspath(c_file) 
+c_file = os.path.abspath(c_file)
+# Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 
