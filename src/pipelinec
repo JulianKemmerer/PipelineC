@@ -31,9 +31,8 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Do better LUT syntax (- ROMs/BROMs too?)
-Default +some% target fmax for synthesis estimates?
 Efinix FPGA support
+Default +some% target fmax for synthesis estimates?
 Silice fun? Is it possible with compiler __clk(); 
 First refactor fosix stuff:
   do demo 1b wide data bus
@@ -56,6 +55,7 @@ Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Conditional return via output reg +mux + valid signal
 ^ Then use valid signal from return to drive fsm transitions?
+Do BROM support
 FP checks/fixes:
   Zero special case (only needed for mult?)
   Fix shifts in FP operators to check for shfiting more than number of bits
@@ -80,6 +80,7 @@ Try small python ast parsing based example - Pypeline? haha
 Fix bug of not being able to include auto gen headers in auto gend files
 Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 Document pragmas
+How to remove excess io regs from middle out sweep?
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
@@ -132,7 +133,6 @@ Explore Vivado's retiming option - thought it was on by default... it isnt becau
 Explore Vivado's report_pipeline_analysis instead of following timing reports
 Fix not to write empty vhdl io reg processes for void() mains for clock cross ports only
 Try not allowing add/sub of certain slow bits per stage -> need to syn all the adders and prioritize
-How to remove excess io regs from middle out sweep?
 Next not-fine sweep? Cant just blindly slice into pieces - do insertion based on chunks of delay for slice-able (not fixed,global) modules
 Have multiple paths reported per clock domain/main func
 No good? reason to combine variable latency array of regs for pipelining and state regs in same record - flat, human like, easier to read (maybe ok since those regs arent IO?)
