@@ -70,6 +70,9 @@ def PART_SET_TOOL(part_str, allow_fail=False):
       if not allow_fail:
         print("No known synthesis tool for FPGA part:",part_str)
         sys.exit(-1)
+    if SYN_TOOL is None:
+      print("Unknown tool for part:", part_str)
+      sys.exit(-1)
     print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
 
 
