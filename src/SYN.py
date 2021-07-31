@@ -68,12 +68,11 @@ def PART_SET_TOOL(part_str, allow_fail=False):
       
     else:
       if not allow_fail:
-        print("No known synthesis tool for FPGA part:",part_str)
+        print("No known synthesis tool for FPGA part:",part_str, flush=True)
         sys.exit(-1)
-    if SYN_TOOL is None:
-      print("Unknown tool for part:", part_str)
-      sys.exit(-1)
-    print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
+    
+    if SYN_TOOL is not None:
+      print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
 
 
 # These are the parameters that describe how multiple pipelines are timed
