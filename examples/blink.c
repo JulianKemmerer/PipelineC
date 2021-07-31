@@ -3,18 +3,18 @@
 // Install+configure synthesis tool then specify part here
 // #pragma PART "xc7a35ticsg324-1l" 
 
-// Count to 200000000 iterations * 5ns each = 1sec
-uint28_t counter;
+// Count to 33333333 iterations * 30ns each ~= 1sec
+uint25_t counter;
 
 // LED on off state
 uint1_t led;
 
-// 'Called'/'Executing' every 5ns (200MHz)
-#pragma MAIN_MHZ blink 200.0
+// 'Called'/'Executing' every 30ns (33.33MHz)
+#pragma MAIN_MHZ blink 33.33
 uint1_t blink()
 {
   // If reached 1 second
-  if(counter==(200000000-1))
+  if(counter==(33333333-1))
   {
     // Toggle led
     led = !led;
