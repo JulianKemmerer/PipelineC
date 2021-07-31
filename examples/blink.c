@@ -23,7 +23,7 @@ uint1_t blink()
   }
   else
   {
-    counter += 1; // one 5ns increment
+    counter += 1; // one 30ns increment
   }
   return led;
 }
