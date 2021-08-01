@@ -1,7 +1,7 @@
 // Full part string examples:
 // xc7a35ticsg324-1l     Artix 7 (Arty)
 // xcvu9p-flgb2104-2-i   Virtex Ultrascale Plus (AWS F1)
-// xcvu33p-fsvh2104-2L-e Virtex Ultrascale Plus
+// xcvu33p-fsvh2104-2-e  Virtex Ultrascale Plus
 // xc7v2000tfhg1761-2    Virtex 7
 // EP2AGX45CU17I3        Arria II GX
 // 10CL120ZF780I8G       Cyclone 10 LP
@@ -10,7 +10,9 @@
 // LFE5U-85F-6BG381C     ECP5U
 // LFE5UM5G-85F-8BG756C  ECP5UM5G
 // ICE40UP5K-SG48        ICE40UP
-#pragma PART "xc7a35ticsg324-1l"
+// T8F81                 Trion T8 (Xyloni)
+// Ti60F225              Titanium
+//#pragma PART "Ti60F225"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
 //#include "examples/aws-fpga-dma/loopback.c"
@@ -41,96 +43,185 @@
 //#include "examples/groestl/groestl.c"
 #include "examples/fosix/main_game.c"
 
-// Below is a bunch of recent scratch work - enjoy
 
+// Below is a bunch of recent scratch work - enjoy
 /*
-#pragma MAIN_MHZ main 350.0
-#include "uintN_t.h"
-uint64_t main(uint64_t x, uint64_t y)
+#pragma MAIN_MHZ main 900.0
+float main(float x, float y)
 {
   return x + y;
 }
 */
 
 /*
-#pragma MAIN_MHZ array_test 100.0
+///
+///
+//READ/RHS OF INPUT implies comb. INPUT READY ASSERTIOn  (does not proceed FMS if not ready)
+//RETURN OF OUTPUT implies comb OUTPUT VALID ASSERTION
+
+#pragma MAIN_MHZ main 100.0
 #pragma PART "xc7a35ticsg324-1l"
 #include "uintN_t.h"
-uint8_t main(uint8_t i)
+// Inputs 'sampled' at function entry 
+//(input regs maybe with valid+ready handshaking)
+// Return output 'valid' once when fsm reaches return
+//(also maybe with handshaking)
+uint8_t main(uint8_t x)
 {
-  __clk++;
-  return i;
+  __clk();
+  // Equal to input port x 1 cycle ago
+  return x; 
 }
 
-/*
-// What is RETURN? is it a valid/done signal? built in for FSMs
-// ...yeah?
-// Are inputs fixed/registered?
-// Need built in valid and output signals used by tool
-uint8_t main(uint8_t i)
-{
-  __clk++;
-  return i;
-}
-*/
-/*
-// Every expression is a sub fsm of 0 or more cycles?
-// Means adding start and done signals to logic from c code?
-// All local variables could be regs if used across __clk++'s ?
-// Inputs sampled/read in first stage, can be reread in later clocks for new data
-uint8_t main(i)
-{
-  f = foo(i);
-  __clk++;
-  b = bar(f, i); // i value a clock later
-  return b;
-}
 
 typedef enum main_STATE_t{
  // Number of states depends on by number of clk++ in code?
- // while loops are sub state machines
- // functions are sub state machines
- CLK0, // Entry point? Comb logic from inputs into through CLK0 logic
+ // and while loops + certain functions are sub state machines
+ CLK0, // Entry point?
  CLK1,
 }main_STATE_t;
-uint8_t main(i)
+typdef struct main_OUTPUT_t
+{
+  uint1_t input_ready;
+  uint8_t RETURN_OUTPUT;
+  uint1_t output_valid;
+}main_OUTPUT_t;
+typdef struct main_INPUT_t
+{
+  uint1_t input_valid;
+  uint8_t x;
+  uint1_t output_ready;
+}main_INPUT_t;
+main_OUTPUT_t main_FSM(main_INPUT_t i)
 {
   static main_STATE_t main_STATE;
+  // All local vars are regs too 
+  //(none here)
+  main_OUTPUT_t o;
+  o.input_ready = 0;
+  o.RETURN_OUTPUT = 0;
+  o.output_valid = 0;
   uint8_t RETURN_OUTPUT = 0;
-  // All local vars are regs
-  static f, b;
   
   if(main_STATE == CLK0)
   {
-    f = foo(i);
-    // HOW TO KNOW WHEN FOO FSM IS DONE?
-    // RETURN becomes done signal/regs? inputs too?
-    // What is return val here? default zeros?
+    // Special first state signals ready, waits for start
+    o.input_ready = 1;
+    if(i.input_valid)
+    {
+      // Nothing to do, next state
+      main_STATE = CLK1;
+    }
   }
   else if(main_STATE == CLK1)
   {
-    b = bar(f, i); // i value a clock later
-    RETURN_OUTPUT = b;
+    // Special last state signals done, waits for ready
+    o.output_valid = 1;
+    if(i.output_ready)
+    {
+      o.RETURN_OUTPUT = i.x;
+      main_STATE = CLK1;
+    }
   }
   
-  return RETURN_OUTPUT;
+  return o;
 }
 
+// Do case with multiple inputs and outputs over duration of funciton call version
+// 
 
+// Volatile inputs change after each __clk();
+// Such volatile funcs can have a multiple returns
+// (hitting one between  __clk()'s)
+uint8_t main(volatile uint8_t x)
+{
+  // Equal to input port x 'now'/comb logic
+  return x; 
+  __clk();
+  // Equal to input port x 1 cycle later
+  // still 'now'/comb logic wiring
+  return x; 
+}
+
+// Need reading input, on RHS to mean something
+// And multiple returns ?
+
+// Every expression is a sub fsm of 0 or more cycles?
+// Means adding start and done signals to logic from c code?
+* // Need built in valid and output signals used by tool
+// Like fosix syscall io start, input, output done regs
+* // What is RETURN? is it a valid/done signal? built in for FSMs
+// All local variables could be regs if used across __clk++'s ?
+// Inputs sampled/read EACH STAGE/clock
+uint8_t main(uint8_t x)
+{
+  uint8_t f = foo(x);
+  return f;
+  __clk();
+  uint8_t b = bar(f, x); // x value a clock later
+  return b;
+}
+
+main_OUTPUT_t main_FSM(main_INPUT_t i)
+{
+  static main_STATE_t main_STATE;
+  // All local vars are regs too 
+  static uint8_t f;
+  static uint8_t b;
+  static 
+  main_OUTPUT_t o;
+  o.input_ready = 0;
+  o.RETURN_OUTPUT = 0;
+  o.output_valid = 0;
+  uint8_t RETURN_OUTPUT = 0;
+  
+  if(main_STATE == CLK0)
+  {
+    // Special first state signals ready, waits for start
+    o.input_ready = 1;
+    if(i.input_valid)
+    {
+      // If foo is __clk++ function then need to wrap foo usage
+      // For now foo is regular pipelinec single cycle comb function
+      f = foo(i.x);
+      // Next state
+      main_STATE = CLK1;
+    }
+  }
+  else if(main_STATE == CLK1)
+  {
+    b = bar(f, i.x);
+    RETURN_OUTPUT
+    // Next state
+    main_STATE = CLK2;
+  }
+  else if(main_STATE == CLK2)
+  {
+    // Special last state signals done, waits for ready
+    o.output_valid = 1;
+    if(i.output_ready)
+    {
+      o.RETURN_OUTPUT = i.x;
+      main_STATE = CLK1;
+    }
+  }
+  
+  return o;
+}
+*/
+/*
 uint8_t main(i)
 {
   while(i)
   {
     f = foo(i);
-    __clk++;
+    __clk();
     b = bar(f, i); // i value a clock later
     return b;
   }
 }
-
-
-
-
+*/
+/*
 // Compiler sees this as a Silice function
 // A big derived fsm
 uint8_t main()
@@ -150,7 +241,7 @@ uint8_t main()
     // Ex. :=  assign right to left at each rising clock
     //     ++: wait on clock
     // How to do that in PipelineC?
-    __clk++; // Or something?
+    __clk(); // Or something?
   }
   return led;
 }

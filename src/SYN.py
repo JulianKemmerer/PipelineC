@@ -20,6 +20,7 @@ import VIVADO
 import QUARTUS
 import DIAMOND
 import OPEN_TOOLS
+import EFINITY
 
 SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
 SYN_TOOL = None # Attempts to figure out from part number
@@ -65,7 +66,8 @@ def PART_SET_TOOL(part_str, allow_fail=False):
         SYN_TOOL = OPEN_TOOLS
       else:
         SYN_TOOL = DIAMOND #OPEN_TOOLS # Can replace with SYN_TOOL = DIAMOND
-      
+    elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
+      SYN_TOOL = EFINITY
     else:
       if not allow_fail:
         print("No known synthesis tool for FPGA part:",part_str, flush=True)
@@ -1295,10 +1297,12 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     ext = ".sdc"
   elif SYN_TOOL is OPEN_TOOLS:
     ext = ".py"
+  elif SYN_TOOL is EFINITY:
+    ext = ".sdc"
   else:
     # Sufjan Stevens - Video Game
-    print("Add constraints file ext for syn tool",SYN_TOOL.__name__)
-    sys.exit(-1)
+    raise Exception(f"Add constraints file ext for syn tool {SYN_TOOL.__name__}")
+    #sys.exit(-1)
     
   clock_name_to_mhz = dict()
   if inst_name:
@@ -1315,7 +1319,7 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
       clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
       clk_name = "clk_" + clk_ext_str
       clock_name_to_mhz[clk_name] = clock_mhz
-      
+    
   return clock_name_to_mhz,out_filepath
       
 # return path 
@@ -2753,6 +2757,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         sys.exit(-1)
       # Run Syn
       total_latency=0
+      #parsed_timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(inst_name, logic, parser_state, TimingParamsLookupTable, total_latency)
+      #sys.exit(-1)
       my_async_result = my_thread_pool.apply_async(SYN_TOOL.SYN_AND_REPORT_TIMING, (inst_name, logic, parser_state, TimingParamsLookupTable, total_latency))
       func_name_to_async_result[logic_func_name] = my_async_result
       
@@ -2762,7 +2768,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       logic = parser_state.FuncLogicLookupTable[logic_func_name]
       # Get result
       my_async_result = func_name_to_async_result[logic_func_name]
-      print("...Waiting on synthesis for:", logic_func_name)
+      print("...Waiting on synthesis for:", logic_func_name, flush=True)
       parsed_timing_report =  my_async_result.get()
       # Sanity should be one path reported
       if len(parsed_timing_report.path_reports) > 1:
@@ -2926,7 +2932,6 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
           
     # Use next insts as current
     inst_names = set(next_inst_names)
-  
   
   return files_txt,top_entity_name
 
