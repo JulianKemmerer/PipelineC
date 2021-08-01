@@ -79,7 +79,7 @@ class ParsedTimingReport:
     min_split = "Path Details for Min Critical Paths (begin)"
     max_delay_paths = syn_output.split(min_split)[0]
     path_split = "++++ Path"
-    path_texts = syn_output.split(path_split)[1:]
+    path_texts = max_delay_paths.split(path_split)[1:]
     for path_text in path_texts:
         path_report = PathReport(path_text)
         # Set things only parsed once not per report
