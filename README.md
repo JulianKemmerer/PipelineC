@@ -50,6 +50,6 @@ The rules of the puzzle hide/imply hardware concepts. For hardware folks I want 
 
 ```
 Currently Supported Tools (tested on Linux):
-Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond, GHDL+Yosys+NextPNR
+Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond, GHDL+Yosys+nextpnr, Efinix Efinity
 Simulation: Modelsim
 ```
