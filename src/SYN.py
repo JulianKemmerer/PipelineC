@@ -1655,6 +1655,8 @@ def SLICES_EQ(slices_a, slices_b, epsilon):
 
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_params):
   main_insts = set()
+  all_main_insts = list(reversed(sorted(list(parser_state.main_mhz.keys()), key=len)))
+  #print("all_main_insts",all_main_insts)
   # Include start and end regs in search 
   all_netlist_resources = set(path_report.netlist_resources)
   all_netlist_resources.add(path_report.start_reg_name)
@@ -1666,8 +1668,8 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
     # If in the top level - no '/'? then look for main funcs like a dummy
     #if "/" not in netlist_resource:
     # Main funcs sorted by len for best match
-    all_main_insts = list(reversed(sorted(list(parser_state.main_mhz.keys()), key=len)))
     match_main = None
+    #print("netlist_resource",netlist_resource)
     for main_inst in all_main_insts:
       main_logic = parser_state.LogicInstLookupTable[main_inst]
       main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
@@ -1730,7 +1732,9 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   #if not sweep_state.fine_grain_sweep and not skip_coarse_sweep:
   
   #print("Starting coarse sweep...", flush=True)
-  #sweep_state = DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state)#, skip_fine_sweep)
+  #met_timing, main_inst_to_slices  = DO_COARSE_THROUGHPUT_SWEEP(parser_state, sweep_state, 
+  #  do_starting_guess=False, do_incremental_guesses=False)
+  #sys.exit(0)
   print("Starting middle out sweep...", flush=True)
   sweep_state = DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state)
   
@@ -2351,7 +2355,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
       print("Unable to make further adjustments. Failed coarse grain attempt meet timing for this module.")
       return sweep_state.met_timing, main_inst_to_slices 
   
-  return sweep_state
+  return sweep_state.met_timing, main_inst_to_slices 
 
 def GET_SLICE_PER_STAGE(current_slices):
   # Get list of how many slice per stage

@@ -182,16 +182,22 @@ def preprocess_text(text, cpp_path='cpp'):
 def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   # Kill pid after 
   process = subprocess.Popen(cmd_str, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd)
-  output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
+  #print("Reading from ",cmd_str, flush=True)
+  outs, errs = process.communicate()
+  output_text = str(outs.decode(encoding="utf-8",errors="replace"))
+  err_text = str(errs.decode(encoding="utf-8",errors="replace"))
+  #output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
+  #err_text = str(process.stderr.read().decode(encoding="utf-8",errors="replace"))
   # For some reason vivado likes to stay alive? Be sure to kill?
-  os.kill(process.pid, signal.SIGTERM)
-  process.wait()
+  #os.kill(process.pid, signal.SIGTERM)
+  #process.wait()
   if process.returncode != 0:
-    print("Command failed:",cmd_str)
+    print("Command failed:")
     print(cmd_str)
+    print(err_text)
     print(output_text, flush=True)
-    sys.exit(-1)
-
+    raise Exception("Command failed!")
+  #print("Reading DONE ",cmd_str, flush=True)
   return output_text
   
 # gcc -fpreprocessed -dD -E main.c
