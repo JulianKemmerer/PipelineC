@@ -12,12 +12,18 @@ import MODELSIM
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
+default_out_dir = SYN.SYN_OUTPUT_DIRECTORY
 
 # Parse args
 parser = argparse.ArgumentParser(description="PipelineC:")
-parser.add_argument("c_file", type=str, nargs="?",
-                    help=f"Top-level C implementation file. Default is {default_c_file}")
+parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
+                    help=f"C file containing main functions. Default is {default_c_file}.")
+parser.add_argument("--out_dir", type=str, default=default_out_dir,
+                    help=f"Output directory. Default is {default_out_dir}.")
 args = parser.parse_args()
+
+# Apply arguments to global modules
+SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
 
 print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -31,8 +37,8 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Efinix FPGA support
-Default +some% target fmax for synthesis estimates?
+Convert coarse grain sweep to be single inst, so multi main == top assumption is correct again
+Default +some% target fmax for synthesis estimates? <<<<
 Silice fun? Is it possible with compiler __clk(); 
 First refactor fosix stuff:
   do demo 1b wide data bus
@@ -145,10 +151,7 @@ Do built in Q number types
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
 # Resolve C file arg
-c_file = default_c_file
-if args.c_file:
-  c_file = args.c_file
-c_file = os.path.abspath(c_file)
+c_file = os.path.abspath(args.c_file)
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
