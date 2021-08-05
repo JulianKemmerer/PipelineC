@@ -104,10 +104,10 @@ state_t add_key(state_t state, uint128_t key) {
     
     uint32_t i;
     for (i = 0; i < 4; i += 1) {
-        res.words[i][0] = state.words[i][0] ^ (uint8_t) (key >> (i * 4 + 0));
-        res.words[i][1] = state.words[i][1] ^ (uint8_t) (key >> (i * 4 + 8));
-        res.words[i][2] = state.words[i][2] ^ (uint8_t) (key >> (i * 4 + 16));
-        res.words[i][3] = state.words[i][3] ^ (uint8_t) (key >> (i * 4 + 24));
+        res.words[0][i] = state.words[0][i] ^ (uint8_t) (key >> (i * 32 + 0));
+        res.words[1][i] = state.words[1][i] ^ (uint8_t) (key >> (i * 32 + 8));
+        res.words[2][i] = state.words[2][i] ^ (uint8_t) (key >> (i * 32 + 16));
+        res.words[3][i] = state.words[3][i] ^ (uint8_t) (key >> (i * 32 + 24));
     }
     return res;
 }
@@ -129,6 +129,8 @@ state_t aesenclast(state_t state, uint128_t key) {
     return tmp;
 }
 
+// AES minus the initial add_key and key expansion.
+// For benchmarking purposes only.
 state_t aes_ten_rounds(state_t state, uint128_t keys[10]) {
     state_t tmp = state;
     uint32_t i;
