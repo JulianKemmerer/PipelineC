@@ -275,6 +275,8 @@ state_t xor_state(state_t a, state_t b) {
 	return ret;
 }
 
+// Groestl hash function but with IV is set to zero. For benchmarking
+// only, not for hashing use...
 state_t groestl(state_t state) {
 	state_t mid = xor_state(compress_P(state), compress_Q(state));
 	return compress_P(mid);
