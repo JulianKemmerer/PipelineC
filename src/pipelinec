@@ -9,6 +9,7 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import SYN
 import MODELSIM
+import C_TO_FSM
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
@@ -37,9 +38,9 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Convert coarse grain sweep to be single inst, so multi main == top assumption is correct again
-Default +some% target fmax for synthesis estimates? <<<<
 Silice fun? Is it possible with compiler __clk(); 
+Default +some% target fmax for synthesis estimates? (vs MAIN_MHZ actual operating freq) Introduce MAIN_SYN_MHZ, .main_syn_mhz that defaults to +27%?
+Do video demo
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
@@ -155,6 +156,7 @@ c_file = os.path.abspath(args.c_file)
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
+#C_TO_FSM.PARSE_FILE(c_file)
 
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
