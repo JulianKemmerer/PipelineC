@@ -19,7 +19,8 @@ class FsmStateInfo:
     self.c_ast_nodes = [] # C ast nodes
     self.always_next_state = None # State info obj
     # Todo other flags?
-    self.mux_nodes = []
+    self.mux_nodes_to_tf_states = dict()
+    self.ends_w_clk = False
     
   def print(self):
     print("Name: " + str(self.name))
@@ -30,14 +31,17 @@ class FsmStateInfo:
       for c_ast_node in self.c_ast_nodes:
         print(generator.visit(c_ast_node))
     
-    if len(self.mux_nodes) > 0:
-      print("Mux logic")
-      for mux_node in self.mux_nodes:
-        print(generator.visit(mux_node.cond))
+    if len(self.mux_nodes_to_tf_states) > 0:
+      print("Branch logic")
+      for mux_node,(true_state,false_state) in self.mux_nodes_to_tf_states.items():
+        print(generator.visit(mux_node.cond), "?", true_state.name, ":", false_state.name)
       return # Mux is always last?
-        
+    
+    if self.ends_w_clk:
+      print("Delay: __clk();")
+      
     if self.always_next_state is not None:
-      print("Next:",self.always_next_state.name)
+      print("Next:",self.always_next_state.name)   
     
 
 # Storing per func dict of state_name -> FsmStateInfo
@@ -194,11 +198,15 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info)
 
 def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info, next_state_info):
   states = [] 
+  '''
   # Single state doing nothing for the clock
   clk_state = FsmStateInfo()
   clk_state.name = "CLOCK_STATE"
   clk_state.always_next_state = next_state_info
-  states.append(clk_state)
+  states.append(clk_state)'''
+  # Update curr state as ending with clk()?
+  curr_state_info.ends_w_clk = True
+  
   return states
   
 
@@ -226,14 +234,10 @@ def C_AST_CTRL_FLOW_COMPOUND_TO_STATES(c_ast_compound, curr_state_info):
 def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   states = [] 
   
-  # Add mux sel calculation, and jumping to true or false states 
-  # to current state after comb logic
-  curr_state_info.mux_nodes.append(c_ast_if)
-  
   # Create a state for true logic and insert it into return list of states
   
   true_state = FsmStateInfo()
-  true_state.name = "TRUE_STATE"
+  true_state.name = "STATE_" + str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_TRUE"
   true_state.always_next_state = next_state_info
   '''
   # Do pass collecting chunks of comb logic
@@ -257,7 +261,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
       
   # Same for false
   false_state = FsmStateInfo()
-  false_state.name = "FALSE_STATE"
+  false_state.name = "STATE_" + str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
   false_state.always_next_state = next_state_info
   '''
   # Do pass collecting chunks of comb logic
@@ -278,6 +282,12 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   '''
   
   states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
+  
+  
+  
+  # Add mux sel calculation, and jumping to true or false states 
+  # to current state after comb logic
+  curr_state_info.mux_nodes_to_tf_states[c_ast_if] = [true_state,false_state]
 
   return states
 
