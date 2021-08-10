@@ -90,7 +90,7 @@ typedef enum main_STATE_t{
     text += " " + state_info.name + ",\n"
   text += ''' RETURN_REG,
 }main_STATE_t;
-typdef struct main_INPUT_t
+typedef struct main_INPUT_t
 {
   uint1_t input_valid;
   uint8_t x;
