@@ -22,18 +22,24 @@ class FsmStateInfo:
     self.mux_nodes_to_tf_states = dict()
     self.ends_w_clk = False
     self.pass_through_if = True
-    
+    self.return_node = None
+  
+  '''  
   def get_return_node(self):
     for c_ast_node in self.c_ast_nodes:
       if type(c_ast_node) == c_ast.Return:
         return c_ast_node
     return None
-    
+  '''
+   
   def print(self):
     if self.pass_through_if:
       print("If: " + str(self.name))
     else:
       print("Else If: " + str(self.name))
+    
+    if self.always_next_state is not None:
+      print("Default Next:",self.always_next_state.name)
     
     generator = c_generator.CGenerator()
     if len(self.c_ast_nodes) > 0:
@@ -44,18 +50,20 @@ class FsmStateInfo:
     if len(self.mux_nodes_to_tf_states) > 0:
       print("Branch logic")
       for mux_node,(true_state,false_state) in self.mux_nodes_to_tf_states.items():
-        print(generator.visit(mux_node.cond), "?", true_state.name, ":", false_state.name)
+        if false_state is None:
+          print(generator.visit(mux_node.cond), "?", true_state.name, ":", "<default next state>")
+        else:
+          print(generator.visit(mux_node.cond), "?", true_state.name, ":", false_state.name)
       return # Mux is always last?
     
     if self.ends_w_clk:
       print("Delay: __clk();")
       
-    if self.get_return_node() is not None:
+    if self.return_node is not None:
       print("Return, function end")
       return # Return is always last
       
-    if self.always_next_state is not None:
-      print("Next:",self.always_next_state.name)   
+       
     
 
 # Storing per func dict of state_name -> FsmStateInfo
@@ -67,7 +75,7 @@ class FsmLogic:
 
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
   #for state_info in fsm_logic.states_list:
-  # print("State:")
+  #  print("State:")
   #  state_info.print()
   #  print()
   #sys.exit(0)
@@ -94,16 +102,17 @@ typedef struct main_OUTPUT_t
   uint8_t RETURN_OUTPUT;
   uint1_t output_valid;
 }main_OUTPUT_t;
-main_OUTPUT_t main_FSM(main_INPUT_t i)
+main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
 {
   // State reg
   static main_STATE_t FSM_STATE;
   // Input regs
   static uint8_t x;
   // Output reg
-  static uint8_t RETURN_OUTPUT_REG;
+  static uint8_t RETURN_VAL;
   // All local vars are regs too 
   //(none here)
+  // Output wires
   main_OUTPUT_t o;
   o.input_ready = 0;
   o.RETURN_OUTPUT = 0;
@@ -130,13 +139,13 @@ main_OUTPUT_t main_FSM(main_INPUT_t i)
 
 '''
   for state_info in fsm_logic.states_list:
-    return_node = state_info.get_return_node()
     if not state_info.pass_through_if:
       text += "  else if("
     else:
       text += "  if("
     text += "FSM_STATE=="+state_info.name + ")\n"
     text += "  {\n"
+    
     # Comb logic c ast nodes
     for c_ast_node in state_info.c_ast_nodes:
       # Skip special control flow nodes
@@ -146,15 +155,21 @@ main_OUTPUT_t main_FSM(main_INPUT_t i)
       text += "    " + generator.visit(c_ast_node) + "\n"
     # Branch logic
     for mux_node,(true_state,false_state) in state_info.mux_nodes_to_tf_states.items():
-        text += "    uint1_t " + type(mux_node).__name__+"_"+C_TO_LOGIC.C_AST_NODE_COORD_STR(mux_node)+"_MUX_SEL = " + generator.visit(mux_node.cond) + ";\n"
-        text += "    if("+type(mux_node).__name__+"_"+ C_TO_LOGIC.C_AST_NODE_COORD_STR(mux_node)+"_MUX_SEL)\n"
+        text += "    if("+generator.visit(mux_node.cond)+")\n"
         text += "    {\n"
         text += "      FSM_STATE = " + true_state.name + ";\n"
         text += "    }\n"
-        text += "    else\n"
-        text += "    {\n"
-        text += "      FSM_STATE = " + false_state.name + ";\n"
-        text += "    }\n"
+        if false_state is not None:
+          text += "    else\n"
+          text += "    {\n"
+          text += "      FSM_STATE = " + false_state.name + ";\n"
+          text += "    }\n"
+        else:
+          # OK to use default?
+          text += "    else\n"
+          text += "    {\n"
+          text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+          text += "    }\n"
     if len(state_info.mux_nodes_to_tf_states) > 0:
       text += "  }\n"
       continue
@@ -167,14 +182,14 @@ main_OUTPUT_t main_FSM(main_INPUT_t i)
       text += "  }\n"
       continue
     # Return?
-    if return_node is not None:
-      text += "    RETURN_OUTPUT_REG = " + generator.visit(return_node.expr) + ";\n"
+    if state_info.return_node is not None:
+      text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
       text += "    FSM_STATE = RETURN_REG;\n"
       text += "  }\n"
       continue
     # Default next
     if state_info.always_next_state is not None:
-      text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
+      text += "    FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
     text += "  }\n"
   
   text += '''
@@ -185,7 +200,7 @@ main_OUTPUT_t main_FSM(main_INPUT_t i)
   {
     // Special last state signals done, waits for ready
     o.output_valid = 1;
-    o.RETURN_OUTPUT = RETURN_OUTPUT_REG;
+    o.RETURN_OUTPUT = RETURN_VAL;
     if(i.output_ready)
     {
       FSM_STATE = ENTRY_REG;
@@ -233,9 +248,13 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
       # Setup next comb logic chunk if there is stuff there
       curr_state_info = FsmStateInfo()
       if i < len(chunks)-1:
-        next_chunk_of_c_ast_nodes = chunks[i+1]
-        first_c_ast_node = next_chunk_of_c_ast_nodes[0]
-        curr_state_info.name = str(type(first_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(first_c_ast_node)
+        next_chunk = chunks[i+1]
+        if type(next_chunk) == list:
+          next_chunk_of_c_ast_nodes = next_chunk
+          next_c_ast_node = next_chunk_of_c_ast_nodes[0]
+        else:
+          next_c_ast_node = next_chunk
+        curr_state_info.name = str(type(next_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(next_c_ast_node)
       
   # Final comb logic chunk
   if len(curr_state_info.c_ast_nodes) > 0:
@@ -318,6 +337,8 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info)
     return C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_node, curr_state_info, next_state_info)
   elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name=="__clk":
     return C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+  elif type(c_ast_node) == c_ast.Return:
+    return C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info)
   else:
     raise Exception(f"Unknown ctrl flow node: {c_ast_node} {c_ast_node.coord}")
 
@@ -333,6 +354,13 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info
   curr_state_info.ends_w_clk = True
   
   return states
+  
+def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info):
+  states = [] 
+
+  curr_state_info.return_node = c_ast_node
+  
+  return states
     
 def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   states = [] 
@@ -344,11 +372,13 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iftrue, true_state, next_state_info)
       
   # Similar for false
-  false_state = FsmStateInfo()
-  false_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
-  false_state.always_next_state = next_state_info
-  false_state.pass_through_if = False  
-  states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
+  false_state = None
+  if c_ast_if.iffalse is not None:
+    false_state = FsmStateInfo()
+    false_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
+    false_state.always_next_state = next_state_info
+    false_state.pass_through_if = False  
+    states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
   
   # Add mux sel calculation, and jumping to true or false states 
   # to current state after comb logic
@@ -361,6 +391,12 @@ def C_AST_NODE_USES_FSM_CLK(c_ast_node):
   for func_call_node in func_call_nodes:
     if func_call_node.name.name == "__clk":
       return True
+    
+  # Or return?
+  ret_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.Return)
+  if len(ret_nodes) > 0:
+    return True
+  
   return False 
 
 def COLLECT_COMB_LOGIC(c_ast_node_in):
