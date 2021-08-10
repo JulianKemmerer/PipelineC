@@ -21,9 +21,19 @@ class FsmStateInfo:
     # Todo other flags?
     self.mux_nodes_to_tf_states = dict()
     self.ends_w_clk = False
+    self.pass_through_if = True
+    
+  def get_return_node(self):
+    for c_ast_node in self.c_ast_nodes:
+      if type(c_ast_node) == c_ast.Return:
+        return c_ast_node
+    return None
     
   def print(self):
-    print("Name: " + str(self.name))
+    if self.pass_through_if:
+      print("If: " + str(self.name))
+    else:
+      print("Else If: " + str(self.name))
     
     generator = c_generator.CGenerator()
     if len(self.c_ast_nodes) > 0:
@@ -40,6 +50,10 @@ class FsmStateInfo:
     if self.ends_w_clk:
       print("Delay: __clk();")
       
+    if self.get_return_node() is not None:
+      print("Return, function end")
+      return # Return is always last
+      
     if self.always_next_state is not None:
       print("Next:",self.always_next_state.name)   
     
@@ -52,13 +66,151 @@ class FsmLogic:
 
 
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
-  return #for state_info in fsm_logic.states_list:  
+  #for state_info in fsm_logic.states_list:
+  # print("State:")
+  #  state_info.print()
+  #  print()
+  #sys.exit(0)
+  first_user_state = fsm_logic.states_list[0]
+  generator = c_generator.CGenerator()
+  text = ""
+  text += '''
+typedef enum main_STATE_t{
+ ENTRY_REG,
+'''
+  for state_info in fsm_logic.states_list:
+    text += " " + state_info.name + ",\n"
+  text += ''' RETURN_REG,
+}main_STATE_t;
+typdef struct main_INPUT_t
+{
+  uint1_t input_valid;
+  uint8_t x;
+  uint1_t output_ready;
+}main_INPUT_t;
+typedef struct main_OUTPUT_t
+{
+  uint1_t input_ready;
+  uint8_t RETURN_OUTPUT;
+  uint1_t output_valid;
+}main_OUTPUT_t;
+main_OUTPUT_t main_FSM(main_INPUT_t i)
+{
+  // State reg
+  static main_STATE_t FSM_STATE;
+  // Input regs
+  static uint8_t x;
+  // Output reg
+  static uint8_t RETURN_OUTPUT_REG;
+  // All local vars are regs too 
+  //(none here)
+  main_OUTPUT_t o;
+  o.input_ready = 0;
+  o.RETURN_OUTPUT = 0;
+  o.output_valid = 0;
+  // Comb logic signaling that state transition using FSM_STATE
+  // is not single cycle pass through and takes a clk
+  uint1_t NEXT_CLK_STATE_VALID = 0;
+  main_STATE_t NEXT_CLK_STATE = FSM_STATE;
+  
+  // Handshake+inputs registered
+  if(FSM_STATE == ENTRY_REG)
+  {
+    // Special first state signals ready, waits for start
+    o.input_ready = 1;
+    if(i.input_valid)
+    {
+      // Register input
+      x = i.x;
+      FSM_STATE = ''' + first_user_state.name + ''';
+    }
+  }
+
+  // Pass through from ENTRY in same clk cycle
+
+'''
+  for state_info in fsm_logic.states_list:
+    return_node = state_info.get_return_node()
+    if not state_info.pass_through_if:
+      text += "  else if("
+    else:
+      text += "  if("
+    text += "FSM_STATE=="+state_info.name + ")\n"
+    text += "  {\n"
+    # Comb logic c ast nodes
+    for c_ast_node in state_info.c_ast_nodes:
+      # Skip special control flow nodes
+      # Return
+      if c_ast_node == return_node:
+        continue
+      text += "    " + generator.visit(c_ast_node) + "\n"
+    # Branch logic
+    for mux_node,(true_state,false_state) in state_info.mux_nodes_to_tf_states.items():
+        text += "    uint1_t " + type(mux_node).__name__+"_"+C_TO_LOGIC.C_AST_NODE_COORD_STR(mux_node)+"_MUX_SEL = " + generator.visit(mux_node.cond) + ";\n"
+        text += "    if("+type(mux_node).__name__+"_"+ C_TO_LOGIC.C_AST_NODE_COORD_STR(mux_node)+"_MUX_SEL)\n"
+        text += "    {\n"
+        text += "      FSM_STATE = " + true_state.name + ";\n"
+        text += "    }\n"
+        text += "    else\n"
+        text += "    {\n"
+        text += "      FSM_STATE = " + false_state.name + ";\n"
+        text += "    }\n"
+    if len(state_info.mux_nodes_to_tf_states) > 0:
+      text += "  }\n"
+      continue
+    # Delay clk?
+    if state_info.ends_w_clk:
+      # Go to next state, but delayed
+      text += "    // __clk(); // Go to next state in next clock cycle \n"
+      text += "    NEXT_CLK_STATE = " + state_info.always_next_state.name + ";\n"
+      text += "    NEXT_CLK_STATE_VALID = 1;\n"
+      text += "  }\n"
+      continue
+    # Return?
+    if return_node is not None:
+      text += "    RETURN_OUTPUT_REG = " + generator.visit(return_node.expr) + ";\n"
+      text += "    FSM_STATE = RETURN_REG;\n"
+      text += "  }\n"
+      continue
+    # Default next
+    if state_info.always_next_state is not None:
+      text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
+    text += "  }\n"
+  
+  text += '''
+  // Pass through to RETURN_REG in same clk cycle
+  
+  // Handshake+outputs registered
+  if(FSM_STATE == RETURN_REG)
+  {
+    // Special last state signals done, waits for ready
+    o.output_valid = 1;
+    o.RETURN_OUTPUT = RETURN_OUTPUT_REG;
+    if(i.output_ready)
+    {
+      FSM_STATE = ENTRY_REG;
+    }
+  }
+  
+  // Wait/clk delay logic
+  if(NEXT_CLK_STATE_VALID)
+  {
+    FSM_STATE = NEXT_CLK_STATE;
+  }
+  
+  return o;
+}
+  
+  '''
+    
+  print(text)
+  return text  
   
   
 def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=None):
   if curr_state_info is None:
     curr_state_info = FsmStateInfo()
-    curr_state_info.name = "STATE_" + str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node)
+    curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node)
     curr_state_info.always_next_state = next_state_info
   # Collect chunks
   # Chunks are list of comb cast nodes that go into one state
@@ -83,7 +235,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
       if i < len(chunks)-1:
         next_chunk_of_c_ast_nodes = chunks[i+1]
         first_c_ast_node = next_chunk_of_c_ast_nodes[0]
-        curr_state_info.name = "STATE_" + str(type(first_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(first_c_ast_node)
+        curr_state_info.name = str(type(first_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(first_c_ast_node)
       
   # Final comb logic chunk
   if len(curr_state_info.c_ast_nodes) > 0:
@@ -119,34 +271,7 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   #curr_state_info.name = "LOGIC" + str(state_counter)
   
   fsm_logic.states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def.body)
-  '''
-  # Do pass collecting chunks of comb logic
-  for block_item in c_ast_func_def.body.block_items:
-    chunks = COLLECT_COMB_LOGIC(block_item)
-    #print("chunks",chunks)
-    # Chunks are list of comb cast nodes that go into one state
-    # Or individual nodes that need additional handling, returns list of one of more states
-    for chunk in chunks:
-      if type(chunk) == list:
-        curr_state_info.c_ast_nodes += chunk
-      else:
-        # This cuts off the current state adding it to return list
-        ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(chunk, curr_state_info)
-        fsm_logic.states_list.append(copy.copy(curr_state_info))
-        fsm_logic.states_list += ctrl_flow_states
-        state_counter += 1
-        curr_state_info = FsmStateInfo()
-        curr_state_info.name = "LOGIC" + str(state_counter)
-    # Final comb logic chunk
-    if len(curr_state_info.c_ast_nodes) > 0:
-      fsm_logic.states_list.append(copy.copy(curr_state_info))
-  '''  
-      
-  for state_info in fsm_logic.states_list:
-    print("State:")
-    state_info.print()
-    print()
-    
+          
   # TODO sketch out basic C code gen from fsm_logic object
   FSM_LOGIC_TO_C_CODE(fsm_logic) 
   sys.exit(0)
@@ -208,82 +333,22 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info
   curr_state_info.ends_w_clk = True
   
   return states
-  
-
-'''
-def C_AST_CTRL_FLOW_COMPOUND_TO_STATES(c_ast_compound, curr_state_info):
-  states = [] 
-  
-  for block_item in :
-    # Create a state for true logic and insert it into return list of states
-    true_state = FsmStateInfo()
-    # Do pass collecting chunks of comb logic
-    chunks = COLLECT_COMB_LOGIC(c_ast_if.iftrue)
-    # Chunks are list of comb cast nodes that go into one state
-    # Or individual nodes that need additional handling, returns list of one of more states
-    for chunk in chunks:
-      if type(chunk) == list:
-        true_state.c_ast_nodes += chunk
-      else:
-        # This cuts off the current state adding it to return list
-        ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(chunk, true_state)
-        states.append(copy.copy(true_state))
-        states += ctrl_flow_states
-'''
     
 def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   states = [] 
   
   # Create a state for true logic and insert it into return list of states
-  
   true_state = FsmStateInfo()
-  true_state.name = "STATE_" + str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_TRUE"
+  true_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_TRUE"
   true_state.always_next_state = next_state_info
-  '''
-  # Do pass collecting chunks of comb logic
-  chunks = COLLECT_COMB_LOGIC(c_ast_if.iftrue)
-  # Chunks are list of comb cast nodes that go into one state
-  # Or individual nodes that need additional handling, returns list of one of more states
-  for chunk in chunks:
-    if type(chunk) == list:
-      true_state.c_ast_nodes += chunk
-    else:
-      # This cuts off the current state adding it to return list
-      ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(chunk, true_state)
-      states.append(copy.copy(true_state))
-      states += ctrl_flow_states
-  # Final comb logic chunk
-  if len(true_state.c_ast_nodes) > 0:
-    states.append(copy.copy(true_state))
-  '''
   states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iftrue, true_state, next_state_info)
-  
       
-  # Same for false
+  # Similar for false
   false_state = FsmStateInfo()
-  false_state.name = "STATE_" + str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
+  false_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
   false_state.always_next_state = next_state_info
-  '''
-  # Do pass collecting chunks of comb logic
-  chunks = COLLECT_COMB_LOGIC(c_ast_if.iffalse)
-  # Chunks are list of comb cast nodes that go into one state
-  # Or individual nodes that need additional handling, returns list of one of more states
-  for chunk in chunks:
-    if type(chunk) == list:
-      false_state.c_ast_nodes += chunk
-    else:
-      # This cuts off the current state adding it to return list
-      ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(chunk, false_state)
-      states.append(copy.copy(false_state))
-      states += ctrl_flow_states
-  # Final comb logic chunk
-  if len(false_state.c_ast_nodes) > 0:
-    states.append(copy.copy(false_state))
-  '''
-  
+  false_state.pass_through_if = False  
   states += C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
-  
-  
   
   # Add mux sel calculation, and jumping to true or false states 
   # to current state after comb logic
@@ -320,9 +385,3 @@ def COLLECT_COMB_LOGIC(c_ast_node_in):
     chunks.append(comb_logic_nodes[:])
   
   return chunks
-  
-  
-
-  
-
-  
