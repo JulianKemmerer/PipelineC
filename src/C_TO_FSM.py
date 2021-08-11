@@ -72,7 +72,24 @@ class FsmLogic:
     #self.state_to_info = dict()
     self.states_list = []
 
-
+def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
+  if generator is None:
+    generator = c_generator.CGenerator()
+  text = generator.visit(c_ast_node)
+  # What nodes dont need
+  maybe_semicolon = ";"
+  if type(c_ast_node) == c_ast.Compound:
+    maybe_semicolon = ""
+  if type(c_ast_node) == c_ast.If:
+    maybe_semicolon = ""
+  text += maybe_semicolon
+  lines = []
+  for line in text.split("\n"):
+    if line != "":
+      lines.append(indent + line)
+  return "\n".join(lines) + "\n"
+  
+  
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
   ''' 
   for state_info in fsm_logic.states_list:
@@ -157,8 +174,8 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
           continue
         # TODO fix needing ";"
         # Fix print out to be tabbed out
-        text += generator.visit(c_ast_node) + ";\n"
-        
+        text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
+      #text += "\n"
     # Branch logic
     for mux_node,(true_state,false_state) in state_info.mux_nodes_to_tf_states.items():
         text += "    if("+generator.visit(mux_node.cond)+")\n"
