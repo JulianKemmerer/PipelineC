@@ -7012,6 +7012,7 @@ class ParserState:
     
     # Pragma info
     self.main_mhz = dict() # dict[main_inst_name]=mhz # Any inst name can be used
+    self.main_syn_mhz = dict()
     self.main_clk_group = dict() # dict[main_inst_name]=clk_group_str
     self.func_mult_style = dict()
     self.func_marked_wires = set()
@@ -7056,6 +7057,7 @@ class ParserState:
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
     
     rv.main_mhz = dict(self.main_mhz)
+    rv.main_syn_mhz = dict(self.main_syn_mhz)
     rv.main_clk_group = dict(self.main_clk_group)
     rv.func_mult_style = dict(self.func_mult_style)
     rv.func_marked_wires = set(self.func_marked_wires)
@@ -7982,8 +7984,12 @@ def APPEND_PRAGMA_INFO(parser_state):
     # MAIN (None MHz)
     if name=="MAIN":
       main_func = toks[1]
-      parser_state.main_mhz[main_func] = None
-      parser_state.main_clk_group[main_func] = None
+      if main_func not in parser_state.main_mhz:
+        parser_state.main_mhz[main_func] = None
+      if main_func not in parser_state.main_syn_mhz:
+        parser_state.main_syn_mhz[main_func] = None
+      if main_func not in parser_state.main_clk_group:
+        parser_state.main_clk_group[main_func] = None
     
     # MAIN_MHZ
     elif name=="MAIN_MHZ":
@@ -7993,17 +7999,47 @@ def APPEND_PRAGMA_INFO(parser_state):
       group = None
       if len(toks) > 3:
         group = toks[3]
-      parser_state.main_clk_group[main_func] = group
+      if group is not None or main_func not in parser_state.main_clk_group or parser_state.main_clk_group[main_func] is None:
+        parser_state.main_clk_group[main_func] = group
       # Allow float MHz or name of another main func
       try:
           mhz = float(mhz_tok)
           parser_state.main_mhz[main_func] = mhz
+          if main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[main_func] is None:
+            parser_state.main_syn_mhz[main_func] = mhz
       except ValueError:
           #"Not a float"
           if mhz_tok in parser_state.main_mhz:
             parser_state.main_mhz[main_func] = parser_state.main_mhz[mhz_tok]
+            parser_state.main_syn_mhz[main_func] = parser_state.main_syn_mhz[mhz_tok]
           else:
             print("Error in MAIN_MHZ:",main_func, mhz_tok)
+            sys.exit(-1)
+            
+    # MAIN_SYN_MHZ
+    elif name=="MAIN_SYN_MHZ":
+      toks = pragma.string.split(" ")
+      main_func = toks[1]
+      mhz_tok = toks[2]
+      group = None
+      if len(toks) > 3:
+        group = toks[3]
+      if group is not None or main_func not in parser_state.main_clk_group or parser_state.main_clk_group[main_func] is None:
+        parser_state.main_clk_group[main_func] = group
+      # Allow float MHz or name of another main func
+      try:
+          mhz = float(mhz_tok)
+          parser_state.main_syn_mhz[main_func] = mhz
+          if main_func not in parser_state.main_mhz or parser_state.main_mhz[main_func] is None:
+            parser_state.main_mhz[main_func] = mhz
+      except ValueError:
+          #"Not a float"
+          if mhz_tok in parser_state.main_syn_mhz:
+            parser_state.main_syn_mhz[main_func] = parser_state.main_syn_mhz[mhz_tok]
+            if main_func not in parser_state.main_mhz or parser_state.main_mhz[main_func] is None:
+              parser_state.main_mhz[main_func] = parser_state.main_mhz[mhz_tok]
+          else:
+            print("Error in MAIN_SYN_MHZ:",main_func, mhz_tok)
             sys.exit(-1)
             
     # MAIN_GROUP
@@ -8012,7 +8048,10 @@ def APPEND_PRAGMA_INFO(parser_state):
       main_func = toks[1]
       group = toks[2]
       parser_state.main_clk_group[main_func] = group
-      parser_state.main_mhz[main_func] = None
+      if main_func not in parser_state.main_mhz:
+        parser_state.main_mhz[main_func] = None
+      if main_func not in parser_state.main_syn_mhz:
+        parser_state.main_syn_mhz[main_func] = None
   
     # FUNC_MULT_STYLE
     elif name=="FUNC_MULT_STYLE":
