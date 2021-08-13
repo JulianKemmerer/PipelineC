@@ -38,8 +38,7 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Silice fun? Is it possible with compiler __clk(); 
-Default +some% target fmax for synthesis estimates? (vs MAIN_MHZ actual operating freq) Introduce MAIN_SYN_MHZ, .main_syn_mhz that defaults to +27%?
+Silice fun? Is it possible with compiler __clk();
 Do video demo
 First refactor fosix stuff:
   do demo 1b wide data bus
