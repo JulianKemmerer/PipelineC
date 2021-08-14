@@ -19,7 +19,7 @@ class FsmStateInfo:
     self.c_ast_nodes = [] # C ast nodes
     self.always_next_state = None # State info obj
     # Todo other flags?
-    self.mux_nodes_to_tf_states = dict()
+    self.branch_nodes_to_tf_states = dict()
     self.ends_w_clk = False
     self.pass_through_if = True
     self.return_node = None
@@ -47,9 +47,9 @@ class FsmStateInfo:
       for c_ast_node in self.c_ast_nodes:
         print(generator.visit(c_ast_node))
     
-    if len(self.mux_nodes_to_tf_states) > 0:
+    if len(self.branch_nodes_to_tf_states) > 0:
       print("Branch logic")
-      for mux_node,(true_state,false_state) in self.mux_nodes_to_tf_states.items():
+      for mux_node,(true_state,false_state) in self.branch_nodes_to_tf_states.items():
         if false_state is None:
           print(generator.visit(mux_node.cond), "?", true_state.name, ":", "<default next state>")
         else:
@@ -91,13 +91,13 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   
   
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
-  ''' 
+   
   for state_info in fsm_logic.states_list:
     print("State:")
     state_info.print()
     print()
-  sys.exit(0)
-  '''
+  #sys.exit(0)
+  
   first_user_state = fsm_logic.states_list[0]
   generator = c_generator.CGenerator()
   text = ""
@@ -177,7 +177,7 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
         text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
       #text += "\n"
     # Branch logic
-    for mux_node,(true_state,false_state) in state_info.mux_nodes_to_tf_states.items():
+    for mux_node,(true_state,false_state) in state_info.branch_nodes_to_tf_states.items():
         text += "    if("+generator.visit(mux_node.cond)+")\n"
         text += "    {\n"
         text += "      FSM_STATE = " + true_state.name + ";\n"
@@ -193,7 +193,7 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
           text += "    {\n"
           text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
           text += "    }\n"
-    if len(state_info.mux_nodes_to_tf_states) > 0:
+    if len(state_info.branch_nodes_to_tf_states) > 0:
       text += "  }\n"
       continue
       
@@ -393,8 +393,10 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info)
     return C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info)
   elif type(c_ast_node) == c_ast.Return:
     return C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+  elif type(c_ast_node) == c_ast.While:
+    return C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_node, curr_state_info, next_state_info)
   else:
-    raise Exception(f"Unknown ctrl flow node: {c_ast_node} {c_ast_node.coord}")
+    raise Exception(f"Unknown ctrl flow node: {type(c_ast_node).__name__} {c_ast_node.coord}")
 
 def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info, next_state_info):
   states = [] 
@@ -448,9 +450,32 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   
   # Add mux sel calculation, and jumping to true or false states 
   # to current state after comb logic
-  curr_state_info.mux_nodes_to_tf_states[c_ast_if] = [true_state,false_state]
+  curr_state_info.branch_nodes_to_tf_states[c_ast_if] = [true_state,false_state]
 
   return states
+  
+def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_info):
+  states = []
+  
+  # While default next state is looping backto eval loop cond again
+  # Different from if
+  
+  # Create a state for while body logic and insert it into return list of states
+  while_state = FsmStateInfo()
+  while_state.name = str(type(c_ast_while).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_while)
+  if next_state_info is None:
+      print("No next state entering while ",while_state.name,"from",curr_state_info.name)
+      sys.exit(-1)
+  while_state.always_next_state = curr_state_info # Default staying in while
+  while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, while_state, curr_state_info)
+  states += while_states
+   
+  
+  # Add mux sel calculation, and jumping to do current state muxing -> body logic
+  curr_state_info.branch_nodes_to_tf_states[c_ast_while] = [while_state,next_state_info]
+
+  return states
+  
 
 def C_AST_NODE_USES_FSM_CLK(c_ast_node):
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.FuncCall)
