@@ -363,7 +363,7 @@ def GET_STATE_TRANS_LISTS(start_state):
       print(" poss_next_state.name false",false_state.name)
       poss_next_states.add(false_state)
     elif false_state is None and start_state.always_next_state != start_state: # No loops?
-      poss_next_states.append(start_state.always_next_state) # Default next if no false branch
+      poss_next_states.add(start_state.always_next_state) # Default next if no false branch
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
     print(" poss_next_state.name always",start_state.always_next_state.name)
     poss_next_states.add(start_state.always_next_state)
