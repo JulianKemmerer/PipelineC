@@ -352,21 +352,21 @@ def GET_STATE_TRANS_LISTS(start_state):
     print(" returns")
     return [[start_state]]
   
-  poss_next_states = []
+  poss_next_states = set()
   # Branching?
   if start_state.branch_nodes_tf_states is not None:
     (c_ast_node,true_state,false_state) = start_state.branch_nodes_tf_states
     if true_state != start_state: # No loops?
       print(" poss_next_state.name true",true_state.name)
-      poss_next_states.append(true_state)
+      poss_next_states.add(true_state)
     if false_state is not None and false_state != start_state: # No loops?
       print(" poss_next_state.name false",false_state.name)
-      poss_next_states.append(false_state)
+      poss_next_states.add(false_state)
     elif false_state is None and start_state.always_next_state != start_state: # No loops?
       poss_next_states.append(start_state.always_next_state) # Default next if no false branch
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
     print(" poss_next_state.name always",start_state.always_next_state.name)
-    poss_next_states.append(start_state.always_next_state)
+    poss_next_states.add(start_state.always_next_state)
   
   # Make a return state list for each state
   states_trans_lists = []
@@ -401,10 +401,10 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   #entry node + node after each __clk()
   #parallel_states_list = []
   
-  start_states = [states_list[0]]
+  start_states = set([states_list[0]])
   for state in states_list:
     if state.ends_w_clk:
-      start_states.append(state.always_next_state)
+      start_states.add(state.always_next_state)
   
   all_state_trans_lists = []
   for start_state in start_states:
