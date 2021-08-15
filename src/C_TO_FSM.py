@@ -342,14 +342,14 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
   return states
   
 def GET_STATE_TRANS_LISTS(start_state):
-  print("start_state.name",start_state.name,start_state)
+  #print("start_state.name",start_state.name,start_state)
   # Branch or pass through default next or clock(ends chain)?
   if start_state.ends_w_clk:
-    print(" ends w clk")
+    #print(" ends w clk")
     return [[start_state]]
   # Going to return state
   elif start_state.return_node is not None:
-    print(" returns")
+    #print(" returns")
     return [[start_state]]
   
   poss_next_states = set()
@@ -357,15 +357,15 @@ def GET_STATE_TRANS_LISTS(start_state):
   if start_state.branch_nodes_tf_states is not None:
     (c_ast_node,true_state,false_state) = start_state.branch_nodes_tf_states
     if true_state != start_state: # No loops?
-      print(" poss_next_state.name true",true_state.name)
+      #print(" poss_next_state.name true",true_state.name)
       poss_next_states.add(true_state)
     if false_state is not None and false_state != start_state: # No loops?
-      print(" poss_next_state.name false",false_state.name)
+      #print(" poss_next_state.name false",false_state.name)
       poss_next_states.add(false_state)
     elif false_state is None and start_state.always_next_state != start_state: # No loops?
       poss_next_states.add(start_state.always_next_state) # Default next if no false branch
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
-    print(" poss_next_state.name always",start_state.always_next_state.name)
+    #print(" poss_next_state.name always",start_state.always_next_state.name)
     poss_next_states.add(start_state.always_next_state)
   
   # Make a return state list for each state
@@ -382,6 +382,7 @@ def GET_STATE_TRANS_LISTS(start_state):
   
 
 def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
+  func_name = c_ast_func_def.decl.name
   if c_ast_func_def.body.block_items is None:
     return
   fsm_logic = FsmLogic()
@@ -408,7 +409,11 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   
   all_state_trans_lists = []
   for start_state in start_states:
-    state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
+    try:
+      state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
+    except RecursionError as re:
+      print("Function:",func_name, "contains a infinite loop starting at", start_state.name)
+      sys.exit(-1)
     all_state_trans_lists += state_trans_lists_starting_at_start_state
     
   print("Transition lists:")
