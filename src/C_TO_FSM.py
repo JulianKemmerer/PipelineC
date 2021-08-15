@@ -21,7 +21,6 @@ class FsmStateInfo:
     # Todo other flags?
     self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
-    self.pass_through_if = True
     self.return_node = None
   
   '''  
@@ -33,10 +32,7 @@ class FsmStateInfo:
   '''
    
   def print(self):
-    if self.pass_through_if:
-      print("If: " + str(self.name))
-    else:
-      print("Else If: " + str(self.name))
+    print(str(self.name))
     
     if self.always_next_state is not None:
       print("Default Next:",self.always_next_state.name)
@@ -66,11 +62,11 @@ class FsmStateInfo:
        
     
 
-# Storing per func dict of state_name -> FsmStateInfo
+# Storing per func states info
 class FsmLogic:
   def __init__(self):
-    #self.state_to_info = dict()
-    self.states_list = []
+    self.state_groups = []
+    self.first_user_state = None
 
 def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   if generator is None:
@@ -91,18 +87,15 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   
   
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
-   
-  
-  
-  first_user_state = fsm_logic.states_list[0]
   generator = c_generator.CGenerator()
   text = ""
   text += '''
 typedef enum main_STATE_t{
  ENTRY_REG,
 '''
-  for state_info in fsm_logic.states_list:
-    text += " " + state_info.name + ",\n"
+  for state_group in fsm_logic.state_groups:
+    for state_info in state_group:
+      text += " " + state_info.name + ",\n"
   text += ''' RETURN_REG,
 }main_STATE_t;
 typedef struct main_INPUT_t
@@ -146,78 +139,83 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
     {
       // Register input
       x = i.x;
-      FSM_STATE = ''' + first_user_state.name + ''';
+      FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
     }
   }
 
   // Pass through from ENTRY in same clk cycle
 
 '''
-  for state_info in fsm_logic.states_list:
-    if not state_info.pass_through_if:
-      text += "  else if("
-    else:
-      text += "  if("
-    text += "FSM_STATE=="+state_info.name + ")\n"
-    text += "  {\n"
-    
-    # Comb logic c ast nodes
-    if len(state_info.c_ast_nodes) > 0:
-      for c_ast_node in state_info.c_ast_nodes:
-        # Skip special control flow nodes
-        # Return
-        if c_ast_node == state_info.return_node:
-          continue
-        # TODO fix needing ";"
-        # Fix print out to be tabbed out
-        text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
-      #text += "\n"
-    # Branch logic
-    
-    if state_info.branch_nodes_tf_states is not None:
-      mux_node,true_state,false_state = state_info.branch_nodes_tf_states
-      text += "    if("+generator.visit(mux_node.cond)+")\n"
-      text += "    {\n"
-      text += "      FSM_STATE = " + true_state.name + ";\n"
-      text += "    }\n"
-      if false_state is not None:
-        text += "    else\n"
-        text += "    {\n"
-        text += "      FSM_STATE = " + false_state.name + ";\n"
-        text += "    }\n"
+  for state_group_i, state_group in enumerate(fsm_logic.state_groups):
+    first_state_in_group = True
+    for state_info in state_group:
+      # Pass through if starts a group of parallel states
+      if first_state_in_group:
+        text += "  // State group " + str(state_group_i) + "\n"
+        text += "  if("
       else:
-        # OK to use default?
-        text += "    else\n"
+        text += "  else if("
+      first_state_in_group = False
+      text += "FSM_STATE=="+state_info.name + ")\n"
+      text += "  {\n"
+      
+      # Comb logic c ast nodes
+      if len(state_info.c_ast_nodes) > 0:
+        for c_ast_node in state_info.c_ast_nodes:
+          # Skip special control flow nodes
+          # Return
+          if c_ast_node == state_info.return_node:
+            continue
+          # TODO fix needing ";"
+          # Fix print out to be tabbed out
+          text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
+        #text += "\n"
+      # Branch logic
+      
+      if state_info.branch_nodes_tf_states is not None:
+        mux_node,true_state,false_state = state_info.branch_nodes_tf_states
+        text += "    if("+generator.visit(mux_node.cond)+")\n"
         text += "    {\n"
-        text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+        text += "      FSM_STATE = " + true_state.name + ";\n"
         text += "    }\n"
+        if false_state is not None:
+          text += "    else\n"
+          text += "    {\n"
+          text += "      FSM_STATE = " + false_state.name + ";\n"
+          text += "    }\n"
+        else:
+          # OK to use default?
+          text += "    else\n"
+          text += "    {\n"
+          text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+          text += "    }\n"
+        text += "  }\n"
+        continue
+        
+      # Delay clk?
+      if state_info.ends_w_clk:
+        # Go to next state, but delayed
+        if state_info.always_next_state is None:
+          print("No next state for")
+          state_info.print()
+          sys.exit(-1)
+        text += "    // __clk(); // Go to next state in next clock cycle \n"
+        text += "    NEXT_CLK_STATE = " + state_info.always_next_state.name + ";\n"
+        text += "    NEXT_CLK_STATE_VALID = 1;\n"
+        text += "  }\n"
+        continue
+        
+      # Return?
+      if state_info.return_node is not None:
+        text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
+        text += "    FSM_STATE = RETURN_REG;\n"
+        text += "  }\n"
+        continue
+        
+      # Default next
+      if state_info.always_next_state is not None:
+        text += "    FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
       text += "  }\n"
-      continue
-      
-    # Delay clk?
-    if state_info.ends_w_clk:
-      # Go to next state, but delayed
-      if state_info.always_next_state is None:
-        print("No next state for")
-        state_info.print()
-        sys.exit(-1)
-      text += "    // __clk(); // Go to next state in next clock cycle \n"
-      text += "    NEXT_CLK_STATE = " + state_info.always_next_state.name + ";\n"
-      text += "    NEXT_CLK_STATE_VALID = 1;\n"
-      text += "  }\n"
-      continue
-      
-    # Return?
-    if state_info.return_node is not None:
-      text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
-      text += "    FSM_STATE = RETURN_REG;\n"
-      text += "  }\n"
-      continue
-      
-    # Default next
-    if state_info.always_next_state is not None:
-      text += "    FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
-    text += "  }\n"
   
   text += '''
   // Pass through to RETURN_REG in same clk cycle
@@ -391,7 +389,7 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   #curr_state_info.name = "LOGIC" + str(state_counter)
   
   states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def.body)
-  
+  fsm_logic.first_user_state = states_list[0]
   #for state_info in states_list:
   #  print("State:",state_info)
   #  state_info.print()
@@ -399,33 +397,44 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   #sys.exit(0)
   
   #Get all state transitions lists starting at
-  #entry node + node after each __clk()
-  #parallel_states_list = []
-  
+  #entry node + node after each __clk()  
   start_states = set([states_list[0]])
   for state in states_list:
     if state.ends_w_clk:
       start_states.add(state.always_next_state)
-  
   all_state_trans_lists = []
   for start_state in start_states:
     try:
       state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
     except RecursionError as re:
-      print("Function:",func_name, "contains a infinite loop starting at", start_state.name)
-      sys.exit(-1)
+      raise Exception(f"Function: {func_name} could contain a data-dependent infinite (__clk()-less) loop starting at {start_state.name}")
     all_state_trans_lists += state_trans_lists_starting_at_start_state
     
-  print("Transition lists:")
+  # Use transition lists to group states
+  #print("Transition lists:")
+  state_to_latest_index = dict()
   for state_trans_list in all_state_trans_lists:
     text = "States: "
-    for state in state_trans_list:
+    for state_i,state in enumerate(state_trans_list):
       text += state.name + " -> "
-    print(text)
-  #sys.exit(0)
-          
-  # TODO sketch out basic C code gen from fsm_logic object
-  fsm_logic.states_list = states_list
+      if state not in state_to_latest_index:
+        state_to_latest_index[state] = state_i
+      if state_i > state_to_latest_index[state]:
+        state_to_latest_index[state] = state_i
+    #print(text)
+  state_groups = [None]*(max(state_to_latest_index.values())+1)
+  for state,index in state_to_latest_index.items():
+    #print("Last Index",index,state.name)
+    if state_groups[index] is None:
+      state_groups[index] = set()
+    state_groups[index].add(state)
+  for state_group in state_groups:
+    text = "State Group: "
+    for state in state_group:
+      text += state.name + ","
+    #print(text)
+  fsm_logic.state_groups = state_groups
+  
   FSM_LOGIC_TO_C_CODE(fsm_logic) 
   sys.exit(0)
   '''
@@ -522,7 +531,6 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
       print("No next state entering if ",false_state.name,"from",curr_state_info.name)
       sys.exit(-1)
     false_state.always_next_state = next_state_info
-    #false_state.pass_through_if = False  TODO FIX
     false_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
     #new_false_states = false_states[:].remove(false_state)
     states += false_states
