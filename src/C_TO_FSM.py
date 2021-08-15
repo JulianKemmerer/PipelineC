@@ -19,7 +19,7 @@ class FsmStateInfo:
     self.c_ast_nodes = [] # C ast nodes
     self.always_next_state = None # State info obj
     # Todo other flags?
-    self.branch_nodes_to_tf_states = dict()
+    self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
     self.pass_through_if = True
     self.return_node = None
@@ -47,13 +47,13 @@ class FsmStateInfo:
       for c_ast_node in self.c_ast_nodes:
         print(generator.visit(c_ast_node))
     
-    if len(self.branch_nodes_to_tf_states) > 0:
+    if self.branch_nodes_tf_states is not None:
       print("Branch logic")
-      for mux_node,(true_state,false_state) in self.branch_nodes_to_tf_states.items():
-        if false_state is None:
-          print(generator.visit(mux_node.cond), "?", true_state.name, ":", "<default next state>")
-        else:
-          print(generator.visit(mux_node.cond), "?", true_state.name, ":", false_state.name)
+      mux_node,true_state,false_state = self.branch_nodes_tf_states
+      if false_state is None:
+        print(generator.visit(mux_node.cond), "?", true_state.name, ":", "<default next state>")
+      else:
+        print(generator.visit(mux_node.cond), "?", true_state.name, ":", false_state.name)
       return # Mux is always last?
     
     if self.ends_w_clk:
@@ -92,11 +92,7 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   
 def FSM_LOGIC_TO_C_CODE(fsm_logic):
    
-  for state_info in fsm_logic.states_list:
-    print("State:")
-    state_info.print()
-    print()
-  #sys.exit(0)
+  
   
   first_user_state = fsm_logic.states_list[0]
   generator = c_generator.CGenerator()
@@ -177,23 +173,24 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
         text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
       #text += "\n"
     # Branch logic
-    for mux_node,(true_state,false_state) in state_info.branch_nodes_to_tf_states.items():
-        text += "    if("+generator.visit(mux_node.cond)+")\n"
+    
+    if state_info.branch_nodes_tf_states is not None:
+      mux_node,true_state,false_state = state_info.branch_nodes_tf_states
+      text += "    if("+generator.visit(mux_node.cond)+")\n"
+      text += "    {\n"
+      text += "      FSM_STATE = " + true_state.name + ";\n"
+      text += "    }\n"
+      if false_state is not None:
+        text += "    else\n"
         text += "    {\n"
-        text += "      FSM_STATE = " + true_state.name + ";\n"
+        text += "      FSM_STATE = " + false_state.name + ";\n"
         text += "    }\n"
-        if false_state is not None:
-          text += "    else\n"
-          text += "    {\n"
-          text += "      FSM_STATE = " + false_state.name + ";\n"
-          text += "    }\n"
-        else:
-          # OK to use default?
-          text += "    else\n"
-          text += "    {\n"
-          text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
-          text += "    }\n"
-    if len(state_info.branch_nodes_to_tf_states) > 0:
+      else:
+        # OK to use default?
+        text += "    else\n"
+        text += "    {\n"
+        text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+        text += "    }\n"
       text += "  }\n"
       continue
       
@@ -255,7 +252,12 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
 def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=None):
   if curr_state_info is None:
     curr_state_info = FsmStateInfo()
-    curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node)
+    name_c_ast_node = None
+    if type(c_ast_node) is c_ast.Compound:
+      name_c_ast_node = c_ast_node.block_items[0]
+    else:
+      name_c_ast_node = c_ast_node
+    curr_state_info.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
     curr_state_info.always_next_state = next_state_info
   # Collect chunks
   # Chunks are list of comb cast nodes that go into one state
@@ -274,8 +276,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
       curr_state_info.c_ast_nodes += chunk
     else:
       # Or single c ast node of ctrl flow, cuts off accum of comb logic into current state
-      #print("state",curr_state_info.name)
-      comb_states_and_ctrl_flow_nodes.append(copy.copy(curr_state_info))
+      comb_states_and_ctrl_flow_nodes.append(curr_state_info)
       # And saves ctrl flow node for next pass
       comb_states_and_ctrl_flow_nodes.append(chunk)
       # Setup next comb logic chunk if there is stuff there
@@ -289,11 +290,16 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
         else:
           next_c_ast_node = next_chunk
         #print("ctrl1",type(next_c_ast_node).__name__, next_c_ast_node.coord)
-        curr_state_info.name = str(type(next_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(next_c_ast_node)
+        name_c_ast_node = None
+        if type(next_c_ast_node) is c_ast.Compound:
+          name_c_ast_node = next_c_ast_node.block_items[0]
+        else:
+          name_c_ast_node = next_c_ast_node
+        curr_state_info.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
   # Final comb logic chunk
   if len(curr_state_info.c_ast_nodes) > 0:
     #print("state",curr_state_info.name)
-    comb_states_and_ctrl_flow_nodes.append(copy.copy(curr_state_info))
+    comb_states_and_ctrl_flow_nodes.append(curr_state_info)
   #print("=")
   
   # Pass 2
@@ -334,6 +340,44 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
      
   
   return states
+  
+def GET_STATE_TRANS_LISTS(start_state):
+  #print("start_state.name",start_state.name,start_state)
+  # Branch or pass through default next or clock(ends chain)?
+  if start_state.ends_w_clk:
+    #print(" ends w clk")
+    return [[start_state]]
+  # Going to return state
+  elif start_state.return_node is not None:
+    #print(" returns")
+    return [[start_state]]
+  
+  poss_next_states = []
+  # Branching?
+  if start_state.branch_nodes_tf_states is not None:
+    (c_ast_node,true_state,false_state) = start_state.branch_nodes_tf_states
+    if true_state != start_state:
+      #print(" poss_next_state.name true",true_state.name)
+      poss_next_states.append(true_state)
+    if false_state is not None and false_state != start_state: # No loops?
+      #print(" poss_next_state.name false",false_state.name)
+      poss_next_states.append(false_state)
+  elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
+    #print(" poss_next_state.name always",start_state.always_next_state.name)
+    poss_next_states.append(start_state.always_next_state)
+  
+  # Make a return state list for each state
+  states_trans_lists = []
+  for poss_next_state in poss_next_states:
+    start_states_trans_list = [start_state]
+    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state)
+    for new_states_trans_list in new_states_trans_lists:
+      combined_state_trans_list = start_states_trans_list + new_states_trans_list
+      states_trans_lists.append(combined_state_trans_list)
+    
+  #print("start_state.name",start_state.name,states_trans_lists)
+  return states_trans_lists
+  
 
 def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   if c_ast_func_def.body.block_items is None:
@@ -343,9 +387,38 @@ def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
   #curr_state_info = FsmStateInfo()
   #curr_state_info.name = "LOGIC" + str(state_counter)
   
-  fsm_logic.states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def.body)
+  states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def.body)
+  
+  #for state_info in states_list:
+  #  print("State:",state_info)
+  #  state_info.print()
+  #  print()
+  #sys.exit(0)
+  
+  #Get all state transitions lists starting at
+  #entry node + node after each __clk()
+  #parallel_states_list = []
+  
+  start_states = [states_list[0]]
+  for state in states_list:
+    if state.ends_w_clk:
+      start_states.append(state.always_next_state)
+  
+  all_state_trans_lists = []
+  for start_state in start_states:
+    state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
+    all_state_trans_lists += state_trans_lists_starting_at_start_state
+    
+  print("Transition lists:")
+  for state_trans_list in all_state_trans_lists:
+    text = "States: "
+    for state in state_trans_list:
+      text += state.name + " -> "
+    print(text)
+  #sys.exit(0)
           
   # TODO sketch out basic C code gen from fsm_logic object
+  fsm_logic.states_list = states_list
   FSM_LOGIC_TO_C_CODE(fsm_logic) 
   sys.exit(0)
   '''
@@ -450,7 +523,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   
   # Add mux sel calculation, and jumping to true or false states 
   # to current state after comb logic
-  curr_state_info.branch_nodes_to_tf_states[c_ast_if] = [true_state,false_state]
+  curr_state_info.branch_nodes_tf_states = (c_ast_if,true_state,false_state)
 
   return states
   
@@ -462,7 +535,12 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   
   # Create a state for while body logic and insert it into return list of states
   while_state = FsmStateInfo()
-  while_state.name = str(type(c_ast_while).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_while)
+  name_c_ast_node = None
+  if type(c_ast_while.stmt) is c_ast.Compound:
+    name_c_ast_node = c_ast_while.stmt.block_items[0]
+  else:
+    name_c_ast_node = c_ast_while.stmt
+  while_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
   if next_state_info is None:
       print("No next state entering while ",while_state.name,"from",curr_state_info.name)
       sys.exit(-1)
@@ -472,7 +550,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
    
   
   # Add mux sel calculation, and jumping to do current state muxing -> body logic
-  curr_state_info.branch_nodes_to_tf_states[c_ast_while] = [while_state,next_state_info]
+  curr_state_info.branch_nodes_tf_states = (c_ast_while, while_state, next_state_info)
 
   return states
   
