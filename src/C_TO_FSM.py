@@ -512,7 +512,12 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   
   # Create a state for true logic and insert it into return list of states
   true_state = FsmStateInfo()
-  true_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_TRUE"
+  name_c_ast_node = None
+  if type(c_ast_if.iftrue) is c_ast.Compound:
+    name_c_ast_node = c_ast_if.iftrue.block_items[0]
+  else:
+    name_c_ast_node = c_ast_if.iftrue
+  true_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
   if next_state_info is None:
       print("No next state entering if ",true_state.name,"from",curr_state_info.name)
       sys.exit(-1)
@@ -526,7 +531,12 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
   new_false_states = []
   if c_ast_if.iffalse is not None:
     false_state = FsmStateInfo()
-    false_state.name = str(type(c_ast_if).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_if) + "_FALSE"
+    name_c_ast_node = None
+    if type(c_ast_if.iffalse) is c_ast.Compound:
+      name_c_ast_node = c_ast_if.iffalse.block_items[0]
+    else:
+      name_c_ast_node = c_ast_if.iffalse
+    false_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
     if next_state_info is None:
       print("No next state entering if ",false_state.name,"from",curr_state_info.name)
       sys.exit(-1)
