@@ -4459,9 +4459,9 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     # vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
     declared_in_this_if = not(var_name in parser_state.existing_logic.variable_names) and (var_name not in parser_state.existing_logic.state_regs)
     if declared_in_this_if:
-      #print var_name, "declared_in_this_if"
+      #print(var_name, "declared_in_this_if")
       continue
-    #print var_name, "declared outside if"
+    #print(var_name, "declared outside if")
     
     # Get aliases over time
     # original

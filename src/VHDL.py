@@ -58,6 +58,8 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
       maybe_used_i = 0
       for init_expr in init.exprs:
         # named postion or assumed index?
+        value_c_ast_node = None
+        is_negated = False
         if type(init_expr) == c_ast.NamedInitializer:
           # Name needs to be a constant integer
           #print(init_expr.name)
@@ -72,6 +74,10 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
         elif type(init_expr) == c_ast.Constant:
           array_index = maybe_used_i
           value_c_ast_node = init_expr
+        elif type(init_expr) == c_ast.UnaryOp and (str(init_expr.op)=="-") and (type(init_expr.expr) == c_ast.Constant):
+          array_index = maybe_used_i
+          value_c_ast_node = init_expr.expr
+          is_negated = True
         else:
           print("Whats the whats init?",init_expr,init_expr.coord)
           sys.exit(-1)
@@ -80,7 +86,10 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
         
         # Handle value at positon
         if type(value_c_ast_node) == c_ast.Constant:
-          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(str(value_c_ast_node.value), elem_t, parser_state) 
+          val_str = str(value_c_ast_node.value)
+          if is_negated:
+            val_str = "-" + val_str            
+          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(val_str, elem_t, parser_state) 
         else:
           print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
           sys.exit(0)
