@@ -39,7 +39,10 @@ print("""
 """
 TODO:
 Silice fun? Is it possible with compiler __clk();
+  Do global wire blinky demo with while loop WRITE_WIRE
+  Make up local wire write functions? (w/ OR w/o andshaked? just 'now' wir reads and writes)
 Do video demo
+Do more basic tutorials like nandland+hdlbits
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
@@ -59,8 +62,6 @@ CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - c
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
-Conditional return via output reg +mux + valid signal
-^ Then use valid signal from return to drive fsm transitions?
 Do BROM support
 FP checks/fixes:
   Zero special case (only needed for mult?)
@@ -76,7 +77,6 @@ Set write-back/'volatile feedback'? connection markers in code that make volatil
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
 Sanity check signed mult you POS
 Come on do sanity check for reserved words
-Make MAIN_MHZ allow not yet defined funcs for mhz values later
 Multiple reads on globals var / global wires? is maybe OK? ordering of global writes and reads a problem?
 Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
@@ -85,7 +85,6 @@ Continue completing clock crossing features, tool support (volatile/pipelined lo
 Try small python ast parsing based example - Pypeline? haha
 Fix bug of not being able to include auto gen headers in auto gend files
 Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
-Document pragmas
 How to remove excess io regs from middle out sweep?
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
@@ -155,7 +154,6 @@ c_file = os.path.abspath(args.c_file)
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-#C_TO_FSM.PARSE_FILE(c_file)
 
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)

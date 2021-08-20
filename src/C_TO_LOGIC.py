@@ -16,6 +16,7 @@ import VHDL
 import SW_LIB
 import SYN
 import SW_LIB
+import C_TO_FSM
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "inferred"
@@ -427,6 +428,11 @@ class Logic:
     self.wires.add(CLOCK_ENABLE_NAME)
     self.clock_enable_wires.append(CLOCK_ENABLE_NAME)
     self.wire_to_c_type[CLOCK_ENABLE_NAME] = BOOL_C_TYPE
+    
+    # Just for functions using __clk()
+    self.is_fsm_clk_func = False
+    self.state_groups = [] # List of lists of state infos
+    self.first_user_state = None # First/user entry state
   
   
   # Help!
@@ -461,6 +467,9 @@ class Logic:
     rv.ref_submodule_instance_to_input_port_driven_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_input_port_driven_ref_toks)
     rv.ref_submodule_instance_to_ref_toks = self.DEEPCOPY_DICT_LIST(self.ref_submodule_instance_to_ref_toks)
     rv.clock_enable_wires = self.clock_enable_wires[:]
+    rv.is_fsm_clk_func = self.is_fsm_clk_func
+    rv.state_groups = self.state_groups[:]
+    rv.first_user_state = self.first_user_state
     
     return rv
     
@@ -714,7 +723,16 @@ class Logic:
       print("Mismatch clock enable wires merging parallel logic!")
       print(self.clock_enable_wires)
       print(logic_b.clock_enable_wires)
-      sys.exit(-1)      
+      sys.exit(-1)
+      
+    # Might never need this?
+    self.is_fsm_clk_func |= logic_b.is_fsm_clk_func
+    if self.state_groups != logic_b.state_groups:
+      print("Cant merge state groups:")
+      sys.exit(-1)
+    if self.first_user_state != logic_b.first_user_state:
+      print("Cant merge first user state")
+      sys.exit(-1)
     
     return None
       
@@ -6625,41 +6643,50 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
   
   
-  # Merge with logic from the body of the func def
-  driven_wire_names=[]
-  prepend_text=""
-  if parse_body:
-    body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)   
-    parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
+  # Before doing anything with the func body
+  # Need to decide what kind of func
+  # FSM style
+  parser_state.existing_logic.is_fsm_clk_func = C_TO_FSM.FUNC_USES_FSM_CLK(parser_state.existing_logic.func_name, parser_state)
+  #print(parser_state.existing_logic.func_name,"is_fsm_clk_func",parser_state.existing_logic.is_fsm_clk_func)
+  if parser_state.existing_logic.is_fsm_clk_func:
+    parser_state.existing_logic = C_TO_FSM.C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_funcdef.body, parser_state)
+  else:
+    # OR default comb logic
+    # Merge with logic from the body of the func def
+    driven_wire_names=[]
+    prepend_text=""
+    if parse_body:
+      body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)   
+      parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
+      
+    # Connect globals at end of func logic
+    parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_funcdef)
     
-  # Connect globals at end of func logic
-  parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_funcdef)
-  
-  # Final chance for SW_LIB generated code to do stuff to func logic
-  # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
-  # Bright Eyes - An Attempt to Tip the Scales
-  parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(parser_state.existing_logic)
-  
-  # Sanity check for return wire
-  if parse_body:
-    if not parser_state.existing_logic.is_vhdl_text_module and not parser_state.existing_logic.is_clock_crossing:
-      for out_wire in parser_state.existing_logic.outputs:
-        if out_wire not in parser_state.existing_logic.wire_driven_by:
-          print("Not all function outputs driven!? No return value for function?", parser_state.existing_logic.func_name, out_wire)
-          print("(undeclared return value type is assumed 'int', explicitly declare as void instead)")
-          sys.exit(-1)
-            
-            
-  # Check for mixing volatile and not
-  has_volatile = False
-  for state_reg in parser_state.existing_logic.state_regs:
-    if parser_state.existing_logic.state_regs[state_reg].is_volatile:
-      has_volatile = True
-      break
-  for state_reg in parser_state.existing_logic.state_regs:
-    if parser_state.existing_logic.state_regs[state_reg].is_volatile != has_volatile:
-      print("Globals for func",parser_state.existing_logic.func_name, "do not match volatile usage for all globals!")
-      sys.exit(-1)
+    # Final chance for SW_LIB generated code to do stuff to func logic
+    # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
+    # Bright Eyes - An Attempt to Tip the Scales
+    parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(parser_state.existing_logic)
+    
+    # Sanity check for return wire
+    if parse_body:
+      if not parser_state.existing_logic.is_vhdl_text_module and not parser_state.existing_logic.is_clock_crossing:
+        for out_wire in parser_state.existing_logic.outputs:
+          if out_wire not in parser_state.existing_logic.wire_driven_by:
+            print("Not all function outputs driven!? No return value for function?", parser_state.existing_logic.func_name, out_wire)
+            print("(undeclared return value type is assumed 'int', explicitly declare as void instead)")
+            sys.exit(-1)
+              
+              
+    # Check for mixing volatile and not
+    has_volatile = False
+    for state_reg in parser_state.existing_logic.state_regs:
+      if parser_state.existing_logic.state_regs[state_reg].is_volatile:
+        has_volatile = True
+        break
+    for state_reg in parser_state.existing_logic.state_regs:
+      if parser_state.existing_logic.state_regs[state_reg].is_volatile != has_volatile:
+        print("Globals for func",parser_state.existing_logic.func_name, "do not match volatile usage for all globals!")
+        sys.exit(-1)
   
   # Write cache
   _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic

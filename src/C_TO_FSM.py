@@ -6,13 +6,6 @@ import C_TO_LOGIC
 
 # FSM funcs cant be main functions
 
-def PARSE_FILE(c_filename):
-  c_text = open(c_filename).read()
-  c_ast_func_defs = C_TO_LOGIC.GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(c_text, c_filename)
-  for c_ast_func_def in c_ast_func_defs:
-    C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def)
-  sys.exit(0) 
-
 class FsmStateInfo:
   def __init__(self):
     self.name = None
@@ -22,14 +15,6 @@ class FsmStateInfo:
     self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
     self.return_node = None
-  
-  '''  
-  def get_return_node(self):
-    for c_ast_node in self.c_ast_nodes:
-      if type(c_ast_node) == c_ast.Return:
-        return c_ast_node
-    return None
-  '''
    
   def print(self):
     print(str(self.name))
@@ -59,14 +44,6 @@ class FsmStateInfo:
       print("Return, function end")
       return # Return is always last
       
-       
-    
-
-# Storing per func states info
-class FsmLogic:
-  def __init__(self):
-    self.state_groups = []
-    self.first_user_state = None
 
 def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   if generator is None:
@@ -90,30 +67,30 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic):
   generator = c_generator.CGenerator()
   text = ""
   text += '''
-typedef enum main_STATE_t{
+typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
  ENTRY_REG,
 '''
   for state_group in fsm_logic.state_groups:
     for state_info in state_group:
       text += " " + state_info.name + ",\n"
   text += ''' RETURN_REG,
-}main_STATE_t;
-typedef struct main_INPUT_t
+}''' + fsm_logic.func_name + '''_STATE_t;
+typedef struct ''' + fsm_logic.func_name + '''_INPUT_t
 {
   uint1_t input_valid;
   uint8_t x;
   uint1_t output_ready;
-}main_INPUT_t;
-typedef struct main_OUTPUT_t
+}''' + fsm_logic.func_name + '''_INPUT_t;
+typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 {
   uint1_t input_ready;
   uint8_t RETURN_OUTPUT;
   uint1_t output_valid;
-}main_OUTPUT_t;
-main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
+}''' + fsm_logic.func_name + '''_OUTPUT_t;
+''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + '''_FSM(''' + fsm_logic.func_name + '''_INPUT_t i)
 {
   // State reg
-  static main_STATE_t FSM_STATE;
+  static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
   // Input regs
   static uint8_t x;
   // Output reg
@@ -121,7 +98,7 @@ main_OUTPUT_t main_FSM(main_INPUT_t i) // Input wires
   // All local vars are regs too 
   //(none here)
   // Output wires
-  main_OUTPUT_t o;
+  ''' + fsm_logic.func_name + '''_OUTPUT_t o;
   o.input_ready = 0;
   o.RETURN_OUTPUT = 0;
   o.output_valid = 0;
@@ -378,103 +355,6 @@ def GET_STATE_TRANS_LISTS(start_state):
   #print("start_state.name",start_state.name,states_trans_lists)
   return states_trans_lists
   
-
-def C_AST_FUNC_DEF_TO_FSM_LOGIC(c_ast_func_def):
-  func_name = c_ast_func_def.decl.name
-  if c_ast_func_def.body.block_items is None:
-    return
-  fsm_logic = FsmLogic()
-  #state_counter = 0
-  #curr_state_info = FsmStateInfo()
-  #curr_state_info.name = "LOGIC" + str(state_counter)
-  
-  states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def.body)
-  fsm_logic.first_user_state = states_list[0]
-  #for state_info in states_list:
-  #  print("State:",state_info)
-  #  state_info.print()
-  #  print()
-  #sys.exit(0)
-  
-  #Get all state transitions lists starting at
-  #entry node + node after each __clk()  
-  start_states = set([states_list[0]])
-  for state in states_list:
-    if state.ends_w_clk:
-      start_states.add(state.always_next_state)
-  all_state_trans_lists = []
-  for start_state in start_states:
-    try:
-      state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
-    except RecursionError as re:
-      raise Exception(f"Function: {func_name} could contain a data-dependent infinite (__clk()-less) loop starting at {start_state.name}")
-    all_state_trans_lists += state_trans_lists_starting_at_start_state
-    
-  # Use transition lists to group states
-  #print("Transition lists:")
-  state_to_latest_index = dict()
-  for state_trans_list in all_state_trans_lists:
-    text = "States: "
-    for state_i,state in enumerate(state_trans_list):
-      text += state.name + " -> "
-      if state not in state_to_latest_index:
-        state_to_latest_index[state] = state_i
-      if state_i > state_to_latest_index[state]:
-        state_to_latest_index[state] = state_i
-    #print(text)
-  state_groups = [None]*(max(state_to_latest_index.values())+1)
-  for state,index in state_to_latest_index.items():
-    #print("Last Index",index,state.name)
-    if state_groups[index] is None:
-      state_groups[index] = set()
-    state_groups[index].add(state)
-  for state_group in state_groups:
-    text = "State Group: "
-    for state in state_group:
-      text += state.name + ","
-    #print(text)
-  fsm_logic.state_groups = state_groups
-  
-  FSM_LOGIC_TO_C_CODE(fsm_logic) 
-  sys.exit(0)
-  '''
-  # All func def logic has an output wire called "return"
-  return_type = c_ast_funcdef.decl.type.type.type.names[0]
-  if return_type != "void":
-    return_wire_name = RETURN_WIRE_NAME
-    parser_state.existing_logic.outputs.append(return_wire_name)
-    parser_state.existing_logic.wires.add(return_wire_name)
-    #print("return_type",return_type)
-    parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
-
-  # First get name of function from the declaration
-  parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
-  
-  # Then get input wire names from the function def
-  #print "func def:",c_ast_funcdef
-  if c_ast_funcdef.decl.type.args is not None:
-    for param_decl in c_ast_funcdef.decl.type.args.params:
-      input_wire_name = param_decl.name
-      parser_state.existing_logic.inputs.append(input_wire_name)
-      parser_state.existing_logic.wires.add(input_wire_name)
-      parser_state.existing_logic.variable_names.add(input_wire_name)
-      #print "Append input", input_wire_name
-      c_type,input_var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(param_decl, parser_state)
-      parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
-  
-  
-  # Merge with logic from the body of the func def
-  driven_wire_names=[]
-  prepend_text=""
-  if parse_body:
-    body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)   
-    parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
-    
-  # Connect globals at end of func logic
-  parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_funcdef)
-  '''
-  
-  
 def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info):
   if type(c_ast_node) == c_ast.If:
     return C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_node, curr_state_info, next_state_info)
@@ -579,8 +459,78 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
 
   return states
   
+def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
+    states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body)
+    parser_state.existing_logic.first_user_state = states_list[0]
+    #for state_info in states_list:
+    #  print("State:",state_info)
+    #  state_info.print()
+    #  print()
+    #sys.exit(0)
+    
+    #Get all state transitions lists starting at
+    #entry node + node after each __clk()  
+    start_states = set([states_list[0]])
+    for state in states_list:
+      if state.ends_w_clk:
+        start_states.add(state.always_next_state)
+    all_state_trans_lists = []
+    for start_state in start_states:
+      try:
+        state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
+      except RecursionError as re:
+        raise Exception(f"Function: {parser_state.existing_logic.func_name} could contain a data-dependent infinite (__clk()-less) loop starting at {start_state.name}")
+      all_state_trans_lists += state_trans_lists_starting_at_start_state
+      
+    # Use transition lists to group states
+    #print("Transition lists:")
+    state_to_latest_index = dict()
+    for state_trans_list in all_state_trans_lists:
+      text = "States: "
+      for state_i,state in enumerate(state_trans_list):
+        text += state.name + " -> "
+        if state not in state_to_latest_index:
+          state_to_latest_index[state] = state_i
+        if state_i > state_to_latest_index[state]:
+          state_to_latest_index[state] = state_i
+      #print(text)
+    state_groups = [None]*(max(state_to_latest_index.values())+1)
+    for state,index in state_to_latest_index.items():
+      #print("Last Index",index,state.name)
+      if state_groups[index] is None:
+        state_groups[index] = set()
+      state_groups[index].add(state)
+    for state_group in state_groups:
+      text = "State Group: "
+      for state in state_group:
+        text += state.name + ","
+      #print(text)
+    parser_state.existing_logic.state_groups = state_groups
+    
+    return parser_state.existing_logic
 
-def C_AST_NODE_USES_FSM_CLK(c_ast_node):
+def FUNC_USES_FSM_CLK(func_name, parser_state):
+  if func_name == "__clk":
+    return True
+  else:
+    if func_name in parser_state.FuncLogicLookupTable:
+      func_logic = parser_state.FuncLogicLookupTable[func_name]
+      if func_logic.is_fsm_clk_func:
+        return True
+      # Check submodules of logic
+      for sub_inst,sub_func_logic in func_logic.submodules_instances.items():
+        if FUNC_USES_FSM_CLK(sub_func_logic.func_name, parser_state):
+          return True
+    elif func_name in parser_state.func_name_to_calls:
+      # Check funcs called from this func
+      called_funcs = parser_state.func_name_to_calls[func_name]
+      for called_func in called_funcs:
+        if FUNC_USES_FSM_CLK(called_func, parser_state):
+          return True
+  
+  return False
+
+def C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node):
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
     if func_call_node.name.name == "__clk":
@@ -602,7 +552,7 @@ def COLLECT_COMB_LOGIC(c_ast_node_in):
       c_ast_nodes = c_ast_node_in.block_items[:]
       
   for c_ast_node in c_ast_nodes:
-    if not C_AST_NODE_USES_FSM_CLK(c_ast_node):
+    if not C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node):
       comb_logic_nodes.append(c_ast_node)
     else:
       if len(comb_logic_nodes) > 0:
