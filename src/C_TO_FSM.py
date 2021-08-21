@@ -105,7 +105,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
   uint1_t NEXT_CLK_STATE_VALID = 0;
-  main_STATE_t NEXT_CLK_STATE = FSM_STATE;
+  ''' + fsm_logic.func_name + '''_STATE_t NEXT_CLK_STATE = FSM_STATE;
   
   // Handshake+inputs registered
   if(FSM_STATE == ENTRY_REG)
@@ -220,7 +220,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   
   '''
     
-  print(text)
+  #print(text)
   return text  
   
   
@@ -518,8 +518,8 @@ def FUNC_USES_FSM_CLK(func_name, parser_state):
       if func_logic.is_fsm_clk_func:
         return True
       # Check submodules of logic
-      for sub_inst,sub_func_logic in func_logic.submodules_instances.items():
-        if FUNC_USES_FSM_CLK(sub_func_logic.func_name, parser_state):
+      for sub_inst,sub_func_name in func_logic.submodule_instances.items():
+        if FUNC_USES_FSM_CLK(sub_func_name, parser_state):
           return True
     elif func_name in parser_state.func_name_to_calls:
       # Check funcs called from this func

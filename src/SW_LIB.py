@@ -8,6 +8,7 @@ from pycparser import c_parser, c_ast, c_generator
 import C_TO_LOGIC
 import VHDL
 import SYN
+import C_TO_FSM
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)
@@ -21,7 +22,8 @@ RAM_DP_RF="RAM_DP_RF"
 CLOCK_CROSS_HEADER = "var_clock_cross.h"
 TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
 TYPE_BYTES_T_HEADER = "type_bytes_t.h"
-GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T_HEADER]
+FSM_CLK_HEADER = "fsm_clk.h"
+GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T_HEADER, FSM_CLK_HEADER]
 
 # Find generated logic and apply additional 'parsed' information
 def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic):
@@ -36,6 +38,7 @@ def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_
   print("Generating code based on PipelineC supported C design patterns...")
   GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state)
   GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text, parser_state)
+  GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(preprocessed_c_text, parser_state)
   
 def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state): 
   # Write two funcs in a header for each var
@@ -134,6 +137,8 @@ def WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text):
   GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text)
   # type_bytes_t - For converting types to/from bytes
   GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text)
+  # Clock fsm gen
+  GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text)
 
 def FIND_REGEX_MATCHES(regex, text):
   p = re.compile(regex)
@@ -148,6 +153,7 @@ def GEN_EMPTY_GENERATED_HEADERS(all_code_files):
   GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files)
   GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files)
   GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files)
+  GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files)
 
 def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files):
   for f in all_code_files:
@@ -224,7 +230,63 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files):
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
       open(path, 'w').write("")
+      
+def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files):
+  for f in all_code_files:
+    text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+    # Regex search c_text
+    r='"\w+_FSM.h"'
+    str_quotes = FIND_REGEX_MATCHES(r, text)
+    var_names = []
+    for str_quote in str_quotes:
+      header = str_quote.strip('"')
+      toks = header.split("_FSM.h")
+      func_name = toks[0]
+      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + "_FSM.h"
+      path = dir_name + "/" + func_name + "_FSM.h"
+      if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
+      open(path, 'w').write("")
     
+def GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text):
+  # Regex search c_text for <type>_bytes_t
+  r="\w+_FSM"
+  func_names = FIND_REGEX_MATCHES(r, preprocessed_c_text)
+
+  # #define replacing  Typedef each one
+  for func_name in func_names:
+    toks = func_name.split("_FSM")
+    fsm_clk_func_name = toks[0]
+    
+    # We are beyond asking for help
+    # Your biologial and technological distinctiveness will be added to the project
+    # Fake IO types?
+    text = "#pragma once\n"
+    text += '''
+typedef uint8_t ''' + fsm_clk_func_name + '''_INPUT_t; // DUMMY
+typedef uint8_t ''' + fsm_clk_func_name + '''_OUTPUT_t; // DUMMY
+'''
+
+    # Write file
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + fsm_clk_func_name + "_FSM.h"
+    if not os.path.exists(out_dir):
+      os.makedirs(out_dir)    
+    path = out_dir + "/" + fsm_clk_func_name + "_FSM.h"
+    open(path,'w').write(text)
+    
+def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(preprocessed_c_text, parser_state):
+  for func_name,func_logic in parser_state.FuncLogicLookupTable.items():
+    if func_logic.is_fsm_clk_func:
+      text = "#pragma once\n"
+      text += C_TO_FSM.FSM_LOGIC_TO_C_CODE(func_logic)
+      # Write file
+      out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + "_FSM.h"
+      if not os.path.exists(out_dir):
+        os.makedirs(out_dir)    
+      path = out_dir + "/" + func_name + "_FSM.h"
+      open(path,'w').write(text)
+  
+
 def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text):
   # Regex search c_text for <type>_bytes_t
   r="\w+_bytes_t"

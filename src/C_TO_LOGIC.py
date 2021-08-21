@@ -6603,7 +6603,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
   return type_decl.declname, elem_type,dim
   
 _C_AST_FUNC_DEF_TO_LOGIC_cache = dict()
-def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
+def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only_fsm_clk_funcs = False):
   # Reset state for this func def
   parser_state.existing_logic = None
 
@@ -6648,9 +6648,9 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
   # FSM style
   parser_state.existing_logic.is_fsm_clk_func = C_TO_FSM.FUNC_USES_FSM_CLK(parser_state.existing_logic.func_name, parser_state)
   #print(parser_state.existing_logic.func_name,"is_fsm_clk_func",parser_state.existing_logic.is_fsm_clk_func)
-  if parser_state.existing_logic.is_fsm_clk_func:
+  if parser_state.existing_logic.is_fsm_clk_func and only_fsm_clk_funcs:
     parser_state.existing_logic = C_TO_FSM.C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_funcdef.body, parser_state)
-  else:
+  elif not only_fsm_clk_funcs:
     # OR default comb logic
     # Merge with logic from the body of the func def
     driven_wire_names=[]
@@ -6687,6 +6687,9 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True):
       if parser_state.existing_logic.state_regs[state_reg].is_volatile != has_volatile:
         print("Globals for func",parser_state.existing_logic.func_name, "do not match volatile usage for all globals!")
         sys.exit(-1)
+  else:
+    # No body parsing at all - return None this logic was not parsed
+    return None
   
   # Write cache
   _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name] = parser_state.existing_logic
@@ -7150,6 +7153,10 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
       if called_func_name not in func_names_to_called_from:
         func_names_to_called_from[called_func_name] = set()
       func_names_to_called_from[called_func_name].add(func_name)
+      # Also start entry for called func to call funcs?
+      if called_func_name not in func_name_to_calls:
+        func_name_to_calls[called_func_name] = set()
+      
     #if func_name in func_name_to_calls:
     #  print "func_name",func_name,func_name_to_calls[func_name]
     #  print "SCOO"
@@ -7160,6 +7167,14 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
   main_func_name_to_calls = dict()
   main_func_names_to_called_from = dict()
   submodule_func_names = set(parser_state.main_mhz.keys())
+  # Ahh hackey hack help
+  # ~~~Nobody Speak - Run The Jewels
+  # Also include FSM funcs as always included?
+  for func_name in func_name_to_calls:
+    if func_name+"_FSM" in func_name_to_calls:
+      submodule_func_names.add(func_name)
+      submodule_func_names.add(func_name+"_FSM")
+  
   while len(submodule_func_names) > 0:
     next_submodule_func_names = set()
     
@@ -7254,7 +7269,6 @@ def PARSE_FILE(c_filename):
       if c_ast_nonfuncdefs:
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
-        
         # Get the C AST
         parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
         # Parse pragmas
@@ -7273,12 +7287,14 @@ def PARSE_FILE(c_filename):
         parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
         # Elborate what the clock crossings look like
         parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
-      
+        # Get FSM clock func logics only - dont really parse their function body in details, 
+        # different and needs to be before regular func parsing below
+        print("Parsing derived fsm logic functions...", flush=True)
+        parser_state = GET_FSM_CLK_FUNC_LOGICS(parser_state)        
       
       if post_preprocess_wnonfuncdefs:
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
-        
         # Do code gen based on preprocessed C text and non-function definitions
         # This is the newer better way
         SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
@@ -7293,21 +7309,23 @@ def PARSE_FILE(c_filename):
         parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
         # This is the old more hacky way
         # Get SW existing logic for this c file
-        parser_state.FuncLogicLookupTable = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
-    
-    
+        sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
+        # Merge into existing
+        for sw_func_name in sw_func_name_2_logic:
+          parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[sw_func_name]   
     
     # Begin parsing/generating code
     parser_state = ParserState()
     # Need to do multiple passes 
-    parse_pass(parser_state, gen_empty=True, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
-    parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True)
-    #parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
+    parse_pass(parser_state, gen_empty=True)
+    parse_pass(parser_state, gen_empty=False, post_preprocess_gen=True,  c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
+    parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
+    #parse_pass(parser_state, gen_empty=True,  post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
+    #parse_pass(parser_state, gen_empty=False, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
+    #parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
     #parse_pass(parser_state, post_preprocess_wnonfuncdefs=True)
     #print "Temp stop"
     #sys.exit(-1)
-    
-    
     
     # Parse the function definitions for code structure
     print("Parsing function logic...", flush=True)
@@ -7751,8 +7769,6 @@ def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
     
   return var_name
 
-
-
 class EnumInfo():
   def __init__(self):
     self.name = None
@@ -7905,6 +7921,24 @@ def FUNC_IS_PRIMITIVE(func_name):
     return SYN.SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
   except:
     return False
+    
+def GET_FSM_CLK_FUNC_LOGICS(parser_state):
+  func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+  for func_def in func_defs:
+    parser_state.existing_logic=None
+    driven_wire_names=[]
+    prepend_text=""
+    parse_body = True
+    only_fsm_clk_funcs = True
+    logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body, only_fsm_clk_funcs)
+    if logic is not None:
+      print("Parsed __clk() function:", logic.func_name)
+      parser_state.FuncLogicLookupTable[logic.func_name] = logic
+    else:
+      #print("Skipped non __clk() function:", func_def.decl.name)
+      pass
+      
+  return parser_state
 
 # This will likely be called multiple times when loading multiple C files
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
@@ -7917,6 +7951,9 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   # Read in file with C parser and get function def nodes
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
+    # Silently skip fsm clk funcs 
+    if func_def.decl.name in FuncLogicLookupTable and FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
+      continue    
     # Skip functions that are not found in the initial from-main hierarchy mapping
     if ( (func_def.decl.name not in parser_state.func_name_to_calls) and
          (func_def.decl.name not in parser_state.func_names_to_called_from) and 
