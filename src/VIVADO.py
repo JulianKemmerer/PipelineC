@@ -429,7 +429,9 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   
   # SYNTHESIS@@@@@@@@@@@@@@!@!@@@!@
   rv += "synth_design -mode out_of_context -top " + top_entity_name + " -part " + parser_state.part + flatten_hierarchy_none + retiming + "\n"
-  rv += "report_utilization\n"  
+  doing_pnr = DO_PNR=="all" or (DO_PNR=="top" and inst_name is None)
+  if not doing_pnr:
+    rv += "report_utilization\n"
   # Output dir
   if inst_name is None:
     output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
@@ -438,7 +440,6 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   
   # Synthesis Timing report maybe to file
   rv += "report_timing_summary -setup"
-  doing_pnr = DO_PNR=="all" or (DO_PNR=="top" and inst_name is None)
   # Put syn log in separate file if doing pnr
   if doing_pnr:
     rv += " -file " + output_dir + "/" + top_entity_name + ".syn.timing.log"
