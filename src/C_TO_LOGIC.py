@@ -5691,11 +5691,13 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   input_port_names = [] # Port names on submodule
   
   # Helpful check
-  if c_ast_func_call.args is not None:
-    if len(c_ast_func_call.args.exprs) != len(not_inst_func_logic.inputs):
-      print("The function definition for",func_name,"has",len(not_inst_func_logic.inputs), "arguments.")
-      print("At", c_ast_func_call.coord, "it has", len(c_ast_func_call.args.exprs), "arguments.")
-      sys.exit(-1)
+  args_len_as_used = 0
+  if c_ast_func_call.args is not None and c_ast_func_call.args.exprs is not None:
+    args_len_as_used = len(c_ast_func_call.args.exprs)
+  if args_len_as_used != len(not_inst_func_logic.inputs):
+    print("The function definition for",func_name,"has",len(not_inst_func_logic.inputs), "arguments.")
+    print("At", c_ast_func_call.coord, "it has", args_len_as_used, "arguments.")
+    sys.exit(-1)
   
   # Assume inputs are in arg order
   for i in range(0, len(not_inst_func_logic.inputs)):
@@ -7330,11 +7332,14 @@ def PARSE_FILE(c_filename):
     # Parse the function definitions for code structure
     print("Parsing function logic...", flush=True)
     parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
-    # Sanity check main funcs are there
+    # Sanity check main funcs are there + legal
     for main_func in list(parser_state.main_mhz.keys()):
       if main_func not in parser_state.FuncLogicLookupTable:
         print("Main function:", main_func, "does not exist?")
         sys.exit(-1)
+      main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+      if main_func_logic.is_fsm_clk_func:
+        raise Exception(f"Cannot have main function '{main_func}' that uses/calls functions that use __clk().")
     
     # Code gen based on pre elborated logic
     # TODO SW_LIB.WRITE_PRE_ELAB_GEN_CODE(preprocessed_c_text, parser_state)
@@ -8027,6 +8032,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
   
   # Then recursively do submodules
   # USING local names from orig_func_logic
+  #print("orig_func_logic.submodule_instances",orig_func_logic.submodule_instances.values())
   for submodule_inst in orig_func_logic.submodule_instances:
     submodule_func_name = orig_func_logic.submodule_instances[submodule_inst]
     submodule_inst_name = inst_name + SUBMODULE_MARKER + submodule_inst

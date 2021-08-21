@@ -15,6 +15,7 @@ class FsmStateInfo:
     self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
     self.return_node = None
+    self.ends_w_fsm_func_call = None
    
   def print(self):
     print(str(self.name))
@@ -40,6 +41,9 @@ class FsmStateInfo:
     if self.ends_w_clk:
       print("Delay: __clk();")
       
+    if self.ends_w_fsm_func_call is not None:
+      print(self.ends_w_fsm_func_call.name.name + "_FSM();")
+      
     if self.return_node is not None:
       print("Return, function end")
       return # Return is always last
@@ -63,9 +67,23 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
   return "\n".join(lines) + "\n"
   
   
-def FSM_LOGIC_TO_C_CODE(fsm_logic):
+def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
   generator = c_generator.CGenerator()
   text = ""
+  
+  # You stupid bitch
+  # Woods – Moving to the Left
+  # Recursively put any FSM func C code defs included here
+  # since dont have code gen passes that make sense yet, stupid
+  # WHat funcs does this func call
+  if fsm_logic.func_name in parser_state.func_name_to_calls:
+    called_funcs = parser_state.func_name_to_calls[fsm_logic.func_name]
+    for called_func in called_funcs:
+      if called_func in parser_state.FuncLogicLookupTable:
+        called_func_logic = parser_state.FuncLogicLookupTable[called_func]
+        if called_func_logic.is_fsm_clk_func:
+          text += FSM_LOGIC_TO_C_CODE(called_func_logic, parser_state)
+  
   text += '''
 typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
  ENTRY_REG,
@@ -182,6 +200,12 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         text += "  }\n"
         continue
         
+      if state_info.ends_w_fsm_func_call is not None:
+        text += "    // FSM FUNC CALL \n"
+        text += "    " + state_info.ends_w_fsm_func_call.name.name + "_FSM();\n"
+        text += "  }\n"
+        continue
+        
       # Return?
       if state_info.return_node is not None:
         text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
@@ -224,7 +248,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   return text  
   
   
-def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=None):
+def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, next_state_info=None):
   if curr_state_info is None:
     curr_state_info = FsmStateInfo()
     name_c_ast_node = None
@@ -237,7 +261,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
   # Collect chunks
   # Chunks are list of comb cast nodes that go into one state
   # Or individual nodes that need additional handling, returns list of one of more states
-  chunks = COLLECT_COMB_LOGIC(c_ast_node)
+  chunks = COLLECT_COMB_LOGIC(c_ast_node, parser_state)
   # Do two passes, make states for all comb logic single state states
   
   # Pass 1
@@ -305,7 +329,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, curr_state_info=None, next_state_info=
       new_next_state_info = next_state_info
       if i < len(comb_states_and_ctrl_flow_nodes)-1:
         new_next_state_info = comb_states_and_ctrl_flow_nodes[i+1]
-      ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(comb_state_or_ctrl_flow_node, new_curr_state_info, new_next_state_info)
+      ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(comb_state_or_ctrl_flow_node, new_curr_state_info, new_next_state_info, parser_state)
       states += ctrl_flow_states
       
       # Update default next for curr state given new states?
@@ -355,19 +379,29 @@ def GET_STATE_TRANS_LISTS(start_state):
   #print("start_state.name",start_state.name,states_trans_lists)
   return states_trans_lists
   
-def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info):
+def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
   if type(c_ast_node) == c_ast.If:
-    return C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+    return C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name=="__clk":
-    return C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+    return C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.Return:
-    return C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+    return C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.While:
-    return C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_node, curr_state_info, next_state_info)
+    return C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
+  elif type(c_ast_node) is c_ast.FuncCall and FUNC_USES_FSM_CLK(c_ast_node.name.name, parser_state):
+    return C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   else:
-    raise Exception(f"Unknown ctrl flow node: {type(c_ast_node).__name__} {c_ast_node.coord}")
+    raise Exception(f"Unknown derived fsm function ctrl flow node: {type(c_ast_node).__name__} {c_ast_node.coord}")
 
-def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info, next_state_info):
+
+def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
+  states = [] 
+
+  curr_state_info.ends_w_fsm_func_call = c_ast_node
+  
+  return states
+
+def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info, next_state_info, parser_state):
   states = [] 
   '''
   # Single state doing nothing for the clock
@@ -380,14 +414,14 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info
   
   return states
   
-def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info):
+def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
   states = [] 
 
   curr_state_info.return_node = c_ast_node
   
   return states
     
-def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
+def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, parser_state):
   states = [] 
   
   # Create a state for true logic and insert it into return list of states
@@ -402,7 +436,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
       print("No next state entering if ",true_state.name,"from",curr_state_info.name)
       sys.exit(-1)
   true_state.always_next_state = next_state_info
-  true_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iftrue, true_state, next_state_info)
+  true_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iftrue, parser_state, true_state, next_state_info)
   #new_true_states = true_states[:].remove(true_state)
   states += true_states
   
@@ -421,7 +455,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
       print("No next state entering if ",false_state.name,"from",curr_state_info.name)
       sys.exit(-1)
     false_state.always_next_state = next_state_info
-    false_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, false_state, next_state_info)
+    false_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, parser_state, false_state, next_state_info)
     #new_false_states = false_states[:].remove(false_state)
     states += false_states
   
@@ -432,7 +466,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info):
 
   return states
   
-def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_info):
+def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_info, parser_state):
   states = []
   
   # While default next state is looping backto eval loop cond again
@@ -450,7 +484,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
       print("No next state entering while ",while_state.name,"from",curr_state_info.name)
       sys.exit(-1)
   while_state.always_next_state = curr_state_info # Default staying in while
-  while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, while_state, curr_state_info)
+  while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, parser_state, while_state, curr_state_info)
   states += while_states
    
   
@@ -460,7 +494,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   return states
   
 def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
-    states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body)
+    states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
     parser_state.existing_logic.first_user_state = states_list[0]
     #for state_info in states_list:
     #  print("State:",state_info)
@@ -530,10 +564,11 @@ def FUNC_USES_FSM_CLK(func_name, parser_state):
   
   return False
 
-def C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node):
+def C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node, parser_state):
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
-    if func_call_node.name.name == "__clk":
+    #if func_call_node.name.name  == "__clk":
+    if FUNC_USES_FSM_CLK(func_call_node.name.name, parser_state):
       return True
     
   # Or return?
@@ -543,7 +578,7 @@ def C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node):
   
   return False 
 
-def COLLECT_COMB_LOGIC(c_ast_node_in):
+def COLLECT_COMB_LOGIC(c_ast_node_in, parser_state):
   chunks = []
   comb_logic_nodes = []
   c_ast_nodes = [c_ast_node_in]
@@ -552,7 +587,7 @@ def COLLECT_COMB_LOGIC(c_ast_node_in):
       c_ast_nodes = c_ast_node_in.block_items[:]
       
   for c_ast_node in c_ast_nodes:
-    if not C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node):
+    if not C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node, parser_state):
       comb_logic_nodes.append(c_ast_node)
     else:
       if len(comb_logic_nodes) > 0:

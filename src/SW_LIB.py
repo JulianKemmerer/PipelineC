@@ -278,7 +278,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(preprocessed_c_tex
   for func_name,func_logic in parser_state.FuncLogicLookupTable.items():
     if func_logic.is_fsm_clk_func:
       text = "#pragma once\n"
-      text += C_TO_FSM.FSM_LOGIC_TO_C_CODE(func_logic)
+      text += C_TO_FSM.FSM_LOGIC_TO_C_CODE(func_logic, parser_state)
       # Write file
       out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + "_FSM.h"
       if not os.path.exists(out_dir):
