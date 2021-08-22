@@ -2,9 +2,26 @@ import sys
 import copy
 from pycparser import c_parser, c_ast, c_generator
 
+# FSM funcs cant be main functions
+
 import C_TO_LOGIC
 
-# FSM funcs cant be main functions
+def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
+  if generator is None:
+    generator = c_generator.CGenerator()
+  text = generator.visit(c_ast_node)
+  # What nodes dont need semicolon?
+  maybe_semicolon = ";"
+  if type(c_ast_node) == c_ast.Compound:
+    maybe_semicolon = ""
+  if type(c_ast_node) == c_ast.If:
+    maybe_semicolon = ""
+  text += maybe_semicolon
+  lines = []
+  for line in text.split("\n"):
+    if line != "":
+      lines.append(indent + line)
+  return "\n".join(lines) + "\n"
 
 class FsmStateInfo:
   def __init__(self):
@@ -15,10 +32,17 @@ class FsmStateInfo:
     self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
     self.return_node = None
-    self.ends_w_fsm_func_call = None
+    self.ends_w_fsm_func_entry = None # C ast node of func call
+    self.ends_w_fsm_func_entry_input_drivers = None
+    self.is_fsm_func_call_state = None # C ast node of func call
+    self.starts_w_fsm_func_return = None # C ast node of func call
+    self.starts_w_fsm_func_return_output_driven_things = None
    
   def print(self):
     print(str(self.name))
+    
+    if self.starts_w_fsm_func_return is not None:
+      print(self.starts_w_fsm_func_return.name.name + "_FSM() // Return;")
     
     if self.always_next_state is not None:
       print("Default Next:",self.always_next_state.name)
@@ -41,32 +65,17 @@ class FsmStateInfo:
     if self.ends_w_clk:
       print("Delay: __clk();")
       
-    if self.ends_w_fsm_func_call is not None:
-      print(self.ends_w_fsm_func_call.name.name + "_FSM();")
+    if self.ends_w_fsm_func_entry is not None:
+      print(self.ends_w_fsm_func_entry.name.name + "_FSM() // Entry;")
+      
+    if self.is_fsm_func_call_state is not None:
+      print(self.is_fsm_func_call_state.name.name + "_FSM() // State;")
       
     if self.return_node is not None:
       print("Return, function end")
       return # Return is always last
       
 
-def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None):
-  if generator is None:
-    generator = c_generator.CGenerator()
-  text = generator.visit(c_ast_node)
-  # What nodes dont need
-  maybe_semicolon = ";"
-  if type(c_ast_node) == c_ast.Compound:
-    maybe_semicolon = ""
-  if type(c_ast_node) == c_ast.If:
-    maybe_semicolon = ""
-  text += maybe_semicolon
-  lines = []
-  for line in text.split("\n"):
-    if line != "":
-      lines.append(indent + line)
-  return "\n".join(lines) + "\n"
-  
-  
 def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
   generator = c_generator.CGenerator()
   text = ""
@@ -154,6 +163,24 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       text += "FSM_STATE=="+state_info.name + ")\n"
       text += "  {\n"
       
+      # Returning from func call
+      if state_info.starts_w_fsm_func_return is not None:
+        text += "    // " + state_info.starts_w_fsm_func_return.name.name + "_FSM() FUNC CALL RETURN \n"
+        output_driven_things = state_info.starts_w_fsm_func_return_output_driven_things
+        # Connect func output wires
+        # What func is being called?
+        called_func_name = state_info.starts_w_fsm_func_return.name.name
+        called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
+        # Do outputs
+        for output_i,output_port in enumerate(called_func_logic.outputs):
+          output_driven_thing_i = output_driven_things[output_i]
+          if isinstance(output_driven_thing_i,c_ast.Node):
+            text += "    " + C_AST_NODE_TO_C_CODE(output_driven_thing_i, "", generator) + " = " +  called_func_name + "_o." + output_port + ";\n"  
+          elif output_driven_thing_i is None:
+            text += "    // UNUSED = " +  called_func_name + "_o." + output_port + ";\n"
+          else:
+            text += "    " + output_driven_thing_i + " = " +  called_func_name + "_o." + output_port + ";\n"
+      
       # Comb logic c ast nodes
       if len(state_info.c_ast_nodes) > 0:
         for c_ast_node in state_info.c_ast_nodes:
@@ -165,8 +192,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           # Fix print out to be tabbed out
           text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
         #text += "\n"
+        
       # Branch logic
-      
       if state_info.branch_nodes_tf_states is not None:
         mux_node,true_state,false_state = state_info.branch_nodes_tf_states
         text += "    if("+generator.visit(mux_node.cond)+")\n"
@@ -200,12 +227,40 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         text += "  }\n"
         continue
         
-      if state_info.ends_w_fsm_func_call is not None:
-        text += "    // FSM FUNC CALL \n"
-        text += "    " + state_info.ends_w_fsm_func_call.name.name + "_FSM();\n"
+      # Func call entry
+      if state_info.ends_w_fsm_func_entry is not None:
+        text += "    // " + state_info.ends_w_fsm_func_entry.name.name + "_FSM() FUNC CALL ENTRY \n"
+        input_drivers = state_info.ends_w_fsm_func_entry_input_drivers
+        # Connect func input wires, go to func call state
+        # What func is being called?
+        called_func_name = state_info.ends_w_fsm_func_entry.name.name
+        called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
+        # Do inputs
+        for input_i,input_port in enumerate(called_func_logic.inputs):
+          input_driver_i = input_drivers[input_i]
+          if isinstance(input_driver_i,c_ast.Node):
+            text += "    " + called_func_name + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
+          else:
+            text += "    " + called_func_name + "_i." + input_port + " = " + input_driver_i + ";"
+      
+      # Func call state
+      if state_info.is_fsm_func_call_state is not None:
+        called_func_name = state_info.is_fsm_func_call_state.name.name
+        # ok to use wires driving inputs, not regs (included in func)
+        text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' func call known ready
+    ''' + called_func_name + '''_INPUT_t ''' + called_func_name + '''_i;
+    ''' + called_func_name + '''_i.input_valid = 1;
+    ''' + called_func_name + '''_OUTPUT_t ''' + called_func_name + '''_o = ''' + called_func_name + '''_FSM(''' + called_func_name + '''_i);
+    ''' + called_func_name + '''_RETURN_OUTPUT = ''' + called_func_name + '''_o.RETURN_OUTPUT;
+    if(''' + called_func_name + '''_o.output_valid)
+    {
+      // DEFAULT NEXT
+      FSM_STATE = ''' + state_info.always_next_state.name + '''; 
+    }
+'''
         text += "  }\n"
-        continue
-        
+        continue    
+    
       # Return?
       if state_info.return_node is not None:
         text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
@@ -215,7 +270,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         
       # Default next
       if state_info.always_next_state is not None:
-        text += "    FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+        text += "    // DEFAULT NEXT\n"
+        text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n";
       text += "  }\n"
   
   text += '''
@@ -397,32 +453,104 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info,
 def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
   states = [] 
 
-  curr_state_info.ends_w_fsm_func_call = c_ast_node
+  # Set current state to have func entry
+  curr_state_info.ends_w_fsm_func_entry = c_ast_node
+  # Check if each input uses C_AST_NODE_USES_CTRL_FLOW_NODE
+  # Make intermediate wire+states for things that do, get states
+  input_drivers = []
+  called_func_name = c_ast_node.name.name
+  called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
+  for i in range(0, len(called_func_logic.inputs)):
+    input_port_name = called_func_logic.inputs[i]
+    input_c_ast_node = c_ast_node.args.exprs[i]
+    if C_AST_NODE_USES_CTRL_FLOW_NODE(input_c_ast_node, parser_state):
+      raise Exception(f"TODO unsupported control flow in func call argument: {input_c_ast_node.coord}")
+      '''
+      # Need substate
+      # Make up driven wire name add that drivers instead of c ast node
+      input_interm_wire = "FUNC_CALL_TEMP_IN_"+str(i)
+      input_drivers.append(input_interm_wire)
+      print("Func input has clks TODO!")
+      sys.exit(-1)
+      '''
+    else:
+      # Input driven by comb logic
+      input_drivers.append(input_c_ast_node)
+  curr_state_info.ends_w_fsm_func_entry_input_drivers = input_drivers
   
+  # Set next state to be the func call state
+  # Make func call state
+  func_call_state = FsmStateInfo()
+  func_call_state.is_fsm_func_call_state = c_ast_node
+  # Set current state to go to func call state
+  curr_state_info.always_next_state = func_call_state
+  func_call_state.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_SUBROUTINE"
+  if next_state_info is None:
+      print("No next state entering if ",func_call_state.name,"from",curr_state_info.name)
+      sys.exit(-1)
+  func_call_state.always_next_state = next_state_info
+  states.append(func_call_state)
+      
+  # Make state after curr func, next_state_info, have func return logic
+  next_state_info.starts_w_fsm_func_return = c_ast_node
+  # Check if each input uses C_AST_NODE_USES_CTRL_FLOW_NODE
+  # Make intermediate wire+states for things that do, get states
+  output_driven_things = [None]
+  ''' TODO NO OUTPUTS USED YET
+  called_func_name = c_ast_node.name.name
+  called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
+  for i in range(0, len(called_func_logic.outputs)):
+    output_port_name = called_func_logic.outputs[i]
+    input_c_ast_node = c_ast_node.args.exprs[i]
+    if C_AST_NODE_USES_CTRL_FLOW_NODE(input_c_ast_node, parser_state):
+      # Need substate
+      # Make up driven wire name add that drivers instead of c ast node
+      input_interm_wire = "FUNC_CALL_TEMP_IN_"+str(i)
+      input_drivers.append(input_interm_wire)
+      print("Func input has clks TODO!")
+      sys.exit(-1)
+    else:
+      # Input driven by comb logic
+      input_drivers.append(input_c_ast_node)
+  '''
+  next_state_info.starts_w_fsm_func_return_output_driven_things = output_driven_things
+    
+  
+  
+  
+  '''
+  Can add func entry comb logic to the end of states
+  And func exit logic comb logic to start of states
+  
+  EWWW essentially need to make a N_ARG FSM CLK func version that hackky uses logic.wires to describe intermediate wires
+  Store things pointing to iwres in state info
+  '''
   return states
 
 def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info, next_state_info, parser_state):
   states = [] 
-  '''
-  # Single state doing nothing for the clock
-  clk_state = FsmStateInfo()
-  clk_state.name = "CLOCK_STATE"
-  clk_state.always_next_state = next_state_info
-  states.append(clk_state)'''
-  # Update curr state as ending with clk()?
+
+  # Update curr state as ending with clk()
   curr_state_info.ends_w_clk = True
-  
+
   return states
   
 def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
   states = [] 
 
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node.expr, parser_state):
+    raise Exception(f"TODO unsupported control flow in return expression: {c_ast_node.expr.coord}")
+
+  # Update curr state as ending with return transition
   curr_state_info.return_node = c_ast_node
   
   return states
     
 def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, parser_state):
-  states = [] 
+  states = []
+  
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_if.cond, parser_state):
+    raise Exception(f"TODO unsupported control flow in if condition: {c_ast_if.cond.coord}")
   
   # Create a state for true logic and insert it into return list of states
   true_state = FsmStateInfo()
@@ -471,6 +599,9 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   
   # While default next state is looping backto eval loop cond again
   # Different from if
+  
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_while.cond, parser_state):
+    raise Exception(f"TODO unsupported control flow in while condition: {c_ast_while.cond.coord}")
   
   # Create a state for while body logic and insert it into return list of states
   while_state = FsmStateInfo()
