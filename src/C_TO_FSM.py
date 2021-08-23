@@ -131,15 +131,29 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   // All local vars are regs too 
   //(none here)
   // Output wires
-  ''' + fsm_logic.func_name + '''_OUTPUT_t o;
-  o.input_ready = 0;
-  o.return_output = 0;
-  o.output_valid = 0;
+  ''' + fsm_logic.func_name + '''_OUTPUT_t o = {0};
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
   uint1_t NEXT_CLK_STATE_VALID = 0;
   ''' + fsm_logic.func_name + '''_STATE_t NEXT_CLK_STATE = FSM_STATE;
-  
+'''
+  # Get all flow control func call instances
+  flow_ctrl_func_call_nodes = []
+  func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node, c_ast.FuncCall)
+  for func_call_node in func_call_nodes:
+    func_call_name = func_call_node.name.name
+    if C_AST_NODE_USES_CTRL_FLOW_NODE(func_call_node, parser_state) and func_call_name != "__clk":
+      flow_ctrl_func_call_nodes.append(func_call_node)
+  if len(flow_ctrl_func_call_nodes) > 0:
+    text += "  // Wires for subroutine calls\n"
+    # Write wires for each func
+    for flow_ctrl_func_call_node in flow_ctrl_func_call_nodes:
+      flow_ctrl_func_name = flow_ctrl_func_call_node.name.name
+      flow_ctrl_func_inst = flow_ctrl_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(flow_ctrl_func_call_node)
+      text += "  " + flow_ctrl_func_name + "_INPUT_t " + flow_ctrl_func_inst + "_i = {0};\n"
+      text += "  " + flow_ctrl_func_name + "_OUTPUT_t " + flow_ctrl_func_inst + "_o = {0};\n"
+
+  text += '''
   // Handshake+inputs registered
   if(FSM_STATE == ENTRY_REG)
   {
@@ -177,14 +191,15 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           # Connect func output wires
           # What func is being called?
           called_func_name = state_info.starts_w_fsm_func_return.name.name
+          called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.starts_w_fsm_func_return)
           called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
           # Do outputs
           for output_i,output_port in enumerate(called_func_logic.outputs):
             output_driven_thing_i = output_driven_things[output_i]
             if isinstance(output_driven_thing_i,c_ast.Node):
-              text += "    " + C_AST_NODE_TO_C_CODE(output_driven_thing_i, "", generator, is_lhs=True) + " = " +  called_func_name + "_o." + output_port + ";\n"
+              text += "    " + C_AST_NODE_TO_C_CODE(output_driven_thing_i, "", generator, is_lhs=True) + " = " +  called_func_name_inst + "_o." + output_port + ";\n"
             else:
-              text += "    " + output_driven_thing_i + " = " +  called_func_name + "_o." + output_port + ";\n"
+              text += "    " + output_driven_thing_i + " = " +  called_func_name_inst + "_o." + output_port + ";\n"
         else:
           text += "    // UNUSED OUTPUT = " +  called_func_name + "();\n"
           
@@ -241,25 +256,27 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         # Connect func input wires, go to func call state
         # What func is being called?
         called_func_name = state_info.ends_w_fsm_func_entry.name.name
+        called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.ends_w_fsm_func_entry)
         called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
         # Do inputs
         for input_i,input_port in enumerate(called_func_logic.inputs):
           input_driver_i = input_drivers[input_i]
           if isinstance(input_driver_i,c_ast.Node):
-            text += "    " + called_func_name + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
+            text += "    " + called_func_name_inst + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
           else:
-            text += "    " + called_func_name + "_i." + input_port + " = " + input_driver_i + ";"
+            text += "    " + called_func_name_inst + "_i." + input_port + " = " + input_driver_i + ";"
+        text += "\n"
       
       # Func call state
       if state_info.is_fsm_func_call_state is not None:
         called_func_name = state_info.is_fsm_func_call_state.name.name
+        called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.is_fsm_func_call_state)
         # ok to use wires driving inputs, not regs (included in func)
         text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' FUNC CALL, known ready
-    ''' + called_func_name + '''_INPUT_t ''' + called_func_name + '''_i;
-    ''' + called_func_name + '''_i.input_valid = 1;
-    ''' + called_func_name + '''_OUTPUT_t ''' + called_func_name + '''_o = ''' + called_func_name + '''_FSM(''' + called_func_name + '''_i);
-    ''' + called_func_name + '''_return_output = ''' + called_func_name + '''_o.return_output;
-    if(''' + called_func_name + '''_o.output_valid)
+    ''' + called_func_name_inst + '''_i.input_valid = 1;
+    ''' + called_func_name_inst + '''_i.output_ready = 1;
+    ''' + called_func_name_inst + '''_o = ''' + called_func_name + '''_FSM(''' + called_func_name_inst + '''_i);
+    if(''' + called_func_name_inst + '''_o.output_valid)
     {
       // DEFAULT NEXT
       FSM_STATE = ''' + state_info.always_next_state.name + '''; 
@@ -619,12 +636,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
 def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
     parser_state.existing_logic.first_user_state = states_list[0]
-    #for state_info in states_list:
-    #  print("State:",state_info)
-    #  state_info.print()
-    #  print()
-    #sys.exit(0)
-    
+
     #Get all state transitions lists starting at
     #entry node + node after each __clk()  
     start_states = set([states_list[0]])
