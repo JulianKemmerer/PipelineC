@@ -3033,6 +3033,13 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   is_negated = val_str.startswith("-")
   val_str = val_str.strip("-")
+  
+  # Special null token = {0}
+  if val_str==C_TO_LOGIC.COMPOUND_NULL:
+    # Use VHDL null expression
+    return C_TYPE_STR_TO_VHDL_NULL_STR(c_type, parser_state)
+  
+  # Enums
   if C_TO_LOGIC.C_TYPE_IS_ENUM(c_type, parser_state):
     '''
     toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)

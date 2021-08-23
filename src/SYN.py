@@ -2670,7 +2670,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         if logic_func_name in parser_state.FuncToInstances:
           inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
         if inst_name is None:
-          #print "Warning?: No logic instance for function:", logic.func_name, "never used?"
+          #print("Warning?: No logic instance for function:", logic.func_name, "never used?")
           continue
         # All dependencies met?
         all_dep_met = True

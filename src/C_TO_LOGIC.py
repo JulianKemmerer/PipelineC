@@ -43,6 +43,7 @@ BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
 STRLEN_FUNC_NAME = "strlen"
+COMPOUND_NULL = "COMPOUND_NULL"
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
 # Binary operators
@@ -1664,6 +1665,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     sys.exit(-1)
   elif type(c_ast_node) == c_ast.TernaryOp:
     return C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
+  elif C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
+    return C_AST_COMPOUND_NULL_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
   else:
     #start here
     print("Animal Collective - The Purple Bottle")
@@ -3839,8 +3842,28 @@ def C_AST_ENUM_CONST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_
      
   return parser_state.existing_logic
   
+def C_AST_COMPOUND_NULL_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state): 
+  # Driven wire needs to have type
+  driven_type = None
+  for driven_wire_name in driven_wire_names:
+    if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
+      driven_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+  if driven_type is None:
+    print("No type information for compound null expression at", c_ast_node.coord)
+    sys.exit(-1)
+  # Make up a wire name?
+  wire_name = BUILD_CONST_WIRE(COMPOUND_NULL, c_ast_node)
+  parser_state.existing_logic.wire_to_c_type[wire_name] = driven_type
+  # Connect the constant to the wire it drives
+  parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node, False)
+  return parser_state.existing_logic
+  
 def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
   local_name = wire_name
+  
+  # Special null token  
+  if wire_name.startswith(CONST_PREFIX + COMPOUND_NULL):
+    return COMPOUND_NULL
   
   # Get last submodule tok
   toks = local_name.split(SUBMODULE_MARKER)
@@ -4017,6 +4040,12 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
     sys.exit(-1)
     
   return c_type,wire_name
+ 
+def C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
+  return ( type(c_ast_node) == c_ast.InitList and 
+         len(c_ast_node.exprs)==1 and 
+         type(c_ast_node.exprs[0]) == c_ast.Constant and
+         c_ast_node.exprs[0].value == '0' )
     
 def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   c_type,wire_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state)
@@ -4035,8 +4064,13 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   
   # If has init value then is also assignment
   if c_ast_decl.init is not None:
+    # = {0}; // Is special null token
+    if C_AST_NODE_IS_COMPOUND_NULL(c_ast_decl.init):
+      lhs_ref_toks = (wire_name,)
+      parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
+      
     # Dont support struct init here yet
-    if type(c_ast_decl.init) == c_ast.InitList:
+    elif type(c_ast_decl.init) == c_ast.InitList:
       # Only array init for now
       if C_TYPE_IS_ARRAY(c_type):
         elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
@@ -4052,7 +4086,8 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
           dim0_i += 1
       else:
         print("No support for (non-static) local variable struct init statement yet...", c_ast_decl.init.coord)
-        sys.exit(-1)    
+        sys.exit(-1)
+          
     else:
       # Default connect node to single ref toks
       # TODO is subset of above?
@@ -4360,10 +4395,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     else:
       # FALSE BRANCH ONLY
       # Sanity check?
-      if(c_ast_node.iffalse is None):
-        print("If reduces to false branch but false is none?", c_ast_node.coord)
-        sys.exit(-1)      
-      parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text, parser_state)
+      if c_ast_node.iffalse is not None:
+        #print("If reduces to false branch but false is none?", c_ast_node.coord)
+        #sys.exit(-1)      
+        parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.iffalse, driven_wire_names, prepend_text, parser_state)
       return parser_state.existing_logic
     
     

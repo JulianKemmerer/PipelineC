@@ -22,7 +22,7 @@ RAM_DP_RF="RAM_DP_RF"
 CLOCK_CROSS_HEADER = "var_clock_cross.h"
 TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
 TYPE_BYTES_T_HEADER = "type_bytes_t.h"
-FSM_CLK_HEADER = "fsm_clk.h"
+FSM_CLK_HEADER = "func_FSM.h"
 GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T_HEADER, FSM_CLK_HEADER]
 
 # Find generated logic and apply additional 'parsed' information
