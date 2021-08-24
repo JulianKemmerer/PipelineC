@@ -7651,14 +7651,14 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         if read_containing_func is not None:
           if read_containing_func != func_name:
             print("Multiple uses of",read_func_name,"?",read_containing_func,func_name)
-            sys.exit(-1)
+            #sys.exit(-1)
         read_containing_func = func_name
       # Write
       if write_func_name in called_funcs:
         if write_containing_func is not None:
           if write_containing_func != func_name:
             print("Multiple uses of",write_func_name,"?",write_containing_func,func_name)
-            sys.exit(-1)
+            #sys.exit(-1)
         write_containing_func = func_name
       if write_containing_func is not None and read_containing_func is not None:
         break
@@ -7668,8 +7668,8 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     if write_main_func is None:
       print("Problem finding main functions for",var_name,"clock crossing: write, read:", write_containing_func,",",read_containing_func)
-      print("Missing or incorrect #pragma MAIN_MHZ ?")
-      sys.exit(-1)
+      #print("Missing or incorrect #pragma MAIN_MHZ ?")
+      #sys.exit(-1)
     var_to_rw_main_funcs[var_name] = (read_main_func,write_main_func)
     
     
@@ -7696,11 +7696,15 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
         parser_state.main_mhz[read_main_func] = write_mhz
         parser_state.main_clk_group[read_main_func] = write_group
+        if parser_state.main_syn_mhz[read_main_func] is None:
+          parser_state.main_syn_mhz[read_main_func] = write_mhz
         inferring = True
       elif read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
         print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
         parser_state.main_mhz[write_main_func] = read_mhz
         parser_state.main_clk_group[write_main_func] = read_group
+        if parser_state.main_syn_mhz[write_main_func] is None:
+          parser_state.main_syn_mhz[write_main_func] = read_mhz
         inferring = True
   
   # Then loop to construct each clock crossings info
@@ -7714,16 +7718,17 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       if read_main_func is not None:
         read_mhz = parser_state.main_mhz[read_main_func]
         read_group = parser_state.main_clk_group[read_main_func]
-      write_mhz = parser_state.main_mhz[write_main_func]
-      write_group = parser_state.main_clk_group[write_main_func]
+      if write_main_func is not None:
+        write_mhz = parser_state.main_mhz[write_main_func]
+        write_group = parser_state.main_clk_group[write_main_func]
     # Match mhz for disconnected read side
     if write_mhz is not None and read_mhz is None:
       read_mhz = write_mhz
     # Sanity check
     if read_mhz is None and write_mhz is None:
-        print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
-        print("Missing or incorrect #pragma MAIN_MHZ ?")
-        sys.exit(-1)
+      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
+      #print("Missing or incorrect #pragma MAIN_MHZ ?")
+      #sys.exit(-1)
     
     # Async fifo with flow control uses sized READ and WRITE
     flow_control = False
@@ -7736,10 +7741,13 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       flow_control = True
     else:
       # Sync or async not user sized read and write
-      ratio = 0
-      write_size = 0
-      read_size = 0
-      if write_mhz > read_mhz:
+      ratio = 1
+      write_size = 1
+      read_size = 1
+      if write_mhz is None or read_mhz is None:
+        # Ugh?
+        pass
+      elif write_mhz > read_mhz:
         # Write side is faster
         ratio = int(math.ceil(write_mhz/read_mhz))
         write_size = 1
@@ -7754,16 +7762,20 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       if var_name in parser_state.global_state_regs and not parser_state.global_state_regs[var_name].is_volatile:
         if ratio != 1.0 or read_group != write_group:
           print("Non-volatile clock crossing", var_name, "is used like volatile clock crossing from different clocks",write_func_name,write_main_func,"@",write_mhz,"MHz",write_group,"->",read_func_name,read_main_func,"@",read_mhz,"MHz",read_group)
-          sys.exit(-1)
+          #sys.exit(-1)
           
       # Check that volatile crossings are integer ratios and sanme clock group
-      if write_mhz >= read_mhz:
+      clk_ratio = None
+      if write_mhz is None or read_mhz is None:
+        # Ugh?
+        pass
+      elif write_mhz >= read_mhz:
         clk_ratio = write_mhz / read_mhz
       else:
         clk_ratio = read_mhz / write_mhz
-      if int(clk_ratio) != clk_ratio or read_group != write_group:
+      if (clk_ratio is not None and int(clk_ratio) != clk_ratio) or read_group != write_group:
         print("TODO: Volatile non integer ratio clock crossings like:",write_func_name,write_main_func,write_group,write_mhz,"MHz","->",read_func_name,read_main_func,read_group,read_mhz,"MHz")
-        sys.exit(-1)
+        #sys.exit(-1)
     
     # Record
     parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()

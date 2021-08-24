@@ -40,7 +40,8 @@ print("""
 TODO:
 Silice fun? Is it possible with compiler __clk();
   Do global wire blinky demo with while loop WRITE_WIRE
-  Make up local wire write functions? (w/ OR w/o andshaked? just 'now' wir reads and writes)
+  Allow static locals (no code gen changes since all locals are static in gen code?)
+  Make up local wire write functions? yield+read (w/ OR w/o andshaked? just 'now' wir reads and writes)
 Do video demo
 Do more basic tutorials like nandland+hdlbits
 First refactor fosix stuff:
