@@ -212,8 +212,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
             continue
           # TODO fix needing ";"
           # Fix print out to be tabbed out
-          text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
-        text += "\n"
+          text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator) + "\n"
         
       # Branch logic
       if state_info.branch_nodes_tf_states is not None:
@@ -620,9 +619,9 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   else:
     name_c_ast_node = c_ast_while.stmt
   while_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
-  if next_state_info is None:
-      print("No next state entering while ",while_state.name,"from",curr_state_info.name)
-      sys.exit(-1)
+  #if next_state_info is None:
+  #  print("No next state entering while ",while_state.name,"from",curr_state_info.name)
+  #  sys.exit(-1)
   while_state.always_next_state = curr_state_info # Default staying in while
   while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, parser_state, while_state, curr_state_info)
   states += while_states
