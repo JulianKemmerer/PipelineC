@@ -111,26 +111,80 @@ typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
 typedef struct ''' + fsm_logic.func_name + '''_INPUT_t
 {
   uint1_t input_valid;
-  uint8_t x;
-  uint1_t output_ready;
+'''
+  for input_port in fsm_logic.inputs:
+    c_type = fsm_logic.wire_to_c_type[input_port]
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      text += "  " + elem_t + " " + input_port
+      for dim in dims:
+        text += "[" + str(dim) + "]"
+      text += ";\n"
+    else:
+      text += "  " + c_type + " " + input_port + ";\n"
+  text += '''  uint1_t output_ready;
 }''' + fsm_logic.func_name + '''_INPUT_t;
 typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 {
   uint1_t input_ready;
-  uint8_t return_output;
-  uint1_t output_valid;
+'''
+  for output_port in fsm_logic.outputs:
+    c_type = fsm_logic.wire_to_c_type[output_port]
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      text += "  " + elem_t + " " + output_port
+      for dim in dims:
+        text += "[" + str(dim) + "]"
+      text += ";\n"
+    else:
+      text += "  " + c_type + " " + output_port + ";\n"
+  text += '''  uint1_t output_valid;
 }''' + fsm_logic.func_name + '''_OUTPUT_t;
 ''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + '''_FSM(''' + fsm_logic.func_name + '''_INPUT_t i)
 {
   // State reg
   static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
   // Input regs
-  static uint8_t x;
-  // Output reg
-  static uint8_t RETURN_VAL;
-  // All local vars are regs too 
-  //(none here)
-  // Output wires
+'''
+  for input_port in fsm_logic.inputs:
+    c_type = fsm_logic.wire_to_c_type[input_port]
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      text += "  " + "static " + elem_t + " " + input_port
+      for dim in dims:
+        text += "[" + str(dim) + "]"
+      text += ";\n"
+    else:
+      text += "  " + "static " + c_type + " " + input_port + ";\n"
+  text += '''  // Output regs
+'''
+  for output_port in fsm_logic.outputs:
+    c_type = fsm_logic.wire_to_c_type[output_port]
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      text += "  " + "static " + elem_t + " " + output_port + "_FSM"
+      for dim in dims:
+        text += "[" + str(dim) + "]"
+      text += ";\n"
+    else:
+      text += "  " + "static " + c_type + " " + output_port + "_FSM" + ";\n"
+
+  text += '''  // All local vars are regs too
+'''
+  # Collect all decls
+  local_decls = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node.body, c_ast.Decl)
+  for local_decl in local_decls:
+    c_type,var_name = C_TO_LOGIC.C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(local_decl, parser_state)
+    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      text += "  " + "static " + elem_t + " " + var_name
+      for dim in dims:
+        text += "[" + str(dim) + "]"
+      text += ";\n"
+    else:
+      text += "  " + "static " + c_type + " " + var_name + ";\n"
+      
+  text +='''  // Output wires
   ''' + fsm_logic.func_name + '''_OUTPUT_t o = {0};
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
@@ -161,15 +215,22 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     o.input_ready = 1;
     if(i.input_valid)
     {
-      // Register input
-      x = i.x;
-      FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
+      // Register inputs
+'''
+  for input_port in fsm_logic.inputs:
+    text += "      " + input_port + " = i." + input_port + ";\n"
+  
+  # Go to first user state after getting inputs
+  text += '''      // Go to first user state\n'''
+  text += '''      FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
     }
   }
-
+  
   // Pass through from ENTRY in same clk cycle
-
+  
 '''
+  
+  # List out all user states in parallel branch groups
   for state_group_i, state_group in enumerate(fsm_logic.state_groups):
     first_state_in_group = True
     for state_info in state_group:
@@ -226,11 +287,16 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "    {\n"
           text += "      FSM_STATE = " + false_state.name + ";\n"
           text += "    }\n"
-        else:
+        elif state_info.always_next_state is not None:
           # OK to use default?
           text += "    else\n"
           text += "    {\n"
           text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
+          text += "    }\n"
+        else: # No next state, just start over?
+          text += "    else\n"
+          text += "    {\n"
+          text += "      FSM_STATE = ENTRY_REG; // No next state, start over?\n"
           text += "    }\n"
         text += "  }\n"
         continue
@@ -286,7 +352,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     
       # Return?
       if state_info.return_node is not None:
-        text += "    RETURN_VAL = " + generator.visit(state_info.return_node.expr) + ";\n"
+        text += "    " + C_TO_LOGIC.RETURN_WIRE_NAME + "_FSM" + " = " + generator.visit(state_info.return_node.expr) + ";\n"
         text += "    FSM_STATE = RETURN_REG;\n"
         text += "  }\n"
         continue
@@ -297,7 +363,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n";
       text += "  }\n"
   
-  text += '''
+  if len(fsm_logic.outputs) > 0:
+    text += '''
   // Pass through to RETURN_REG in same clk cycle
   
   // Handshake+outputs registered
@@ -305,13 +372,15 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   {
     // Special last state signals done, waits for ready
     o.output_valid = 1;
-    o.return_output = RETURN_VAL;
+    o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + '''_FSM;
     if(i.output_ready)
     {
       FSM_STATE = ENTRY_REG;
     }
   }
+'''
   
+  text += '''  
   // Wait/clk delay logic
   if(NEXT_CLK_STATE_VALID)
   {
@@ -435,12 +504,11 @@ def GET_STATE_TRANS_LISTS(start_state):
   if start_state.branch_nodes_tf_states is not None:
     (c_ast_node,true_state,false_state) = start_state.branch_nodes_tf_states
     if true_state != start_state: # No loops?
-      #print(" poss_next_state.name true",true_state.name)
       poss_next_states.add(true_state)
     if false_state is not None and false_state != start_state: # No loops?
       #print(" poss_next_state.name false",false_state.name)
       poss_next_states.add(false_state)
-    elif false_state is None and start_state.always_next_state != start_state: # No loops?
+    elif false_state is None and start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?
       poss_next_states.add(start_state.always_next_state) # Default next if no false branch
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
     #print(" poss_next_state.name always",start_state.always_next_state.name)
@@ -602,6 +670,8 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
 
   return states
   
+#WHILE COND NEED OWN STATEE FIX WHILE LOOP TO NOT GO BACK TO COMB LOGIC BEFORE WHILE COND
+  
 def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_info, parser_state):
   states = []
   
@@ -610,6 +680,16 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   
   if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_while.cond, parser_state):
     raise Exception(f"TODO unsupported control flow in while condition: {c_ast_while.cond.coord}")
+  
+  # While condition checking needs own state without comb logic
+  if len(curr_state_info.c_ast_nodes) != 0:
+    # New curr state needed
+    prev_curr_state_info = curr_state_info
+    curr_state_info = FsmStateInfo()
+    curr_state_info.name = str(type(c_ast_while).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_while)
+    states += [curr_state_info]
+    # Prev state default goes to new state
+    prev_curr_state_info.always_next_state = curr_state_info
   
   # Create a state for while body logic and insert it into return list of states
   while_state = FsmStateInfo()
@@ -626,7 +706,6 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, parser_state, while_state, curr_state_info)
   states += while_states
    
-  
   # Add mux sel calculation, and jumping to do current state muxing -> body logic
   curr_state_info.branch_nodes_tf_states = (c_ast_while, while_state, next_state_info)
 
