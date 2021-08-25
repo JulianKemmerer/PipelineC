@@ -22,7 +22,7 @@ RAM_DP_RF="RAM_DP_RF"
 CLOCK_CROSS_HEADER = "var_clock_cross.h"
 TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
 TYPE_BYTES_T_HEADER = "type_bytes_t.h"
-FSM_CLK_HEADER = "func_FSM.h"
+FSM_CLK_HEADER = "func"+C_TO_FSM.FSM_EXT+".h"
 GENERATED_HEADER_DIRS = [CLOCK_CROSS_HEADER, TYPE_ARRAY_N_T_HEADER, TYPE_BYTES_T_HEADER, FSM_CLK_HEADER]
 
 # Find generated logic and apply additional 'parsed' information
@@ -235,27 +235,27 @@ def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files):
   for f in all_code_files:
     text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
     # Regex search c_text
-    r='"\w+_FSM.h"'
+    r='"\w+'+C_TO_FSM.FSM_EXT+'.h"'
     str_quotes = FIND_REGEX_MATCHES(r, text)
     var_names = []
     for str_quote in str_quotes:
       header = str_quote.strip('"')
-      toks = header.split("_FSM.h")
+      toks = header.split(C_TO_FSM.FSM_EXT + ".h")
       func_name = toks[0]
-      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + "_FSM.h"
-      path = dir_name + "/" + func_name + "_FSM.h"
+      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
+      path = dir_name + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
       open(path, 'w').write("")
     
 def GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text):
   # Regex search c_text for <type>_bytes_t
-  r="\w+_FSM"
+  r="\w+"+C_TO_FSM.FSM_EXT
   func_names = FIND_REGEX_MATCHES(r, preprocessed_c_text)
 
   # #define replacing  Typedef each one
   for func_name in func_names:
-    toks = func_name.split("_FSM")
+    toks = func_name.split(C_TO_FSM.FSM_EXT)
     fsm_clk_func_name = toks[0]
     
     # We are beyond asking for help
@@ -268,10 +268,10 @@ typedef uint8_t ''' + fsm_clk_func_name + '''_OUTPUT_t; // DUMMY
 '''
 
     # Write file
-    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + fsm_clk_func_name + "_FSM.h"
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + fsm_clk_func_name + C_TO_FSM.FSM_EXT + ".h"
     if not os.path.exists(out_dir):
       os.makedirs(out_dir)    
-    path = out_dir + "/" + fsm_clk_func_name + "_FSM.h"
+    path = out_dir + "/" + fsm_clk_func_name + C_TO_FSM.FSM_EXT + ".h"
     open(path,'w').write(text)
     
 def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(preprocessed_c_text, parser_state):
@@ -280,10 +280,10 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(preprocessed_c_tex
       text = "#pragma once\n"
       text += C_TO_FSM.FSM_LOGIC_TO_C_CODE(func_logic, parser_state)
       # Write file
-      out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + "_FSM.h"
+      out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + FSM_CLK_HEADER + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
       if not os.path.exists(out_dir):
         os.makedirs(out_dir)    
-      path = out_dir + "/" + func_name + "_FSM.h"
+      path = out_dir + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
       open(path,'w').write(text)
   
 

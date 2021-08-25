@@ -7208,10 +7208,10 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
   # ~~~Nobody Speak - Run The Jewels
   # Also include FSM funcs as always included?
   for func_name in func_name_to_calls:
-    if func_name+"_FSM" in func_name_to_calls:
+    if func_name+C_TO_FSM.FSM_EXT in func_name_to_calls:
       submodule_func_names.add(func_name)
-      submodule_func_names.add(func_name+"_FSM")
-  
+      submodule_func_names.add(func_name+C_TO_FSM.FSM_EXT)
+  #print("submodule_func_names",submodule_func_names)
   while len(submodule_func_names) > 0:
     next_submodule_func_names = set()
     
@@ -7632,6 +7632,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       var_names.append(var_name)    
   
   # Find and read and write main funcs
+  #print("var_names",var_names)
+  #print("var_to_read_func",var_to_read_func)
+  #print("var_to_write_func",var_to_write_func)
   var_to_rw_main_funcs = dict()
   for var_name in var_names:
     read_func_name = None
@@ -7642,32 +7645,42 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       write_func_name = var_to_write_func[var_name]
     read_containing_func = None
     write_containing_func = None
+    read_main_func = None
+    write_main_func = None
     # Search for container
     for func_name in parser_state.func_name_to_calls:
+      # Skip looking inside funcitons that have a _FSM copy
+      fsm_dup_func = func_name+C_TO_FSM.FSM_EXT
+      if func_name!=fsm_dup_func and fsm_dup_func in parser_state.func_name_to_calls:
+        continue      
       called_funcs = parser_state.func_name_to_calls[func_name]
-      #print func_name,"called_funcs",called_funcs
       # Read
       if read_func_name in called_funcs:
         if read_containing_func is not None:
           if read_containing_func != func_name:
             print("Multiple uses of",read_func_name,"?",read_containing_func,func_name)
-            #sys.exit(-1)
-        read_containing_func = func_name
+            sys.exit(-1)
+        else:
+          read_containing_func = func_name
+        
       # Write
       if write_func_name in called_funcs:
         if write_containing_func is not None:
           if write_containing_func != func_name:
             print("Multiple uses of",write_func_name,"?",write_containing_func,func_name)
-            #sys.exit(-1)
-        write_containing_func = func_name
-      if write_containing_func is not None and read_containing_func is not None:
+            sys.exit(-1)
+        else:
+          write_containing_func = func_name
+      
+      # Recursively lookup main_func - might fail due to duplicate FSM funcs - so check and then break?
+      read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+      write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+      if read_main_func is not None and write_main_func is not None:
         break
-        
-    # Recursively lookup main_func
-    read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
-    write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+    
+    # Final check per clock cross var
     if write_main_func is None:
-      print("Problem finding main functions for",var_name,"clock crossing: write, read:", write_containing_func,",",read_containing_func)
+      print("Problem finding write main functions for",var_name,"clock crossing: write, read:", write_containing_func,",",read_containing_func)
       #print("Missing or incorrect #pragma MAIN_MHZ ?")
       #sys.exit(-1)
     var_to_rw_main_funcs[var_name] = (read_main_func,write_main_func)
@@ -7679,31 +7692,33 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     inferring = False
     for var_name in var_to_rw_main_funcs:
       read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
-      if read_main_func is None or write_main_func is None:
-        continue
+      #if read_main_func is None or write_main_func is None:
+      #  continue
       read_func_name = var_to_read_func[var_name]
       write_func_name = var_to_write_func[var_name]
       read_mhz = None
-      read_group = parser_state.main_clk_group[read_main_func]
+      read_group = None
       if read_main_func in parser_state.main_mhz:
         read_mhz = parser_state.main_mhz[read_main_func]
+        read_group = parser_state.main_clk_group[read_main_func]
       write_mhz = None
-      write_group = parser_state.main_clk_group[write_main_func]
+      write_group = None
       if write_main_func in parser_state.main_mhz:
         write_mhz = parser_state.main_mhz[write_main_func]
+        write_group = parser_state.main_clk_group[write_main_func]
       # Infer freqs to match if possible and same groups
-      if read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
+      if read_main_func is not None and read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
         print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
         parser_state.main_mhz[read_main_func] = write_mhz
         parser_state.main_clk_group[read_main_func] = write_group
-        if parser_state.main_syn_mhz[read_main_func] is None:
+        if read_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[read_main_func] is None:
           parser_state.main_syn_mhz[read_main_func] = write_mhz
         inferring = True
-      elif read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
+      elif write_main_func is not None and read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
         print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
         parser_state.main_mhz[write_main_func] = read_mhz
         parser_state.main_clk_group[write_main_func] = read_group
-        if parser_state.main_syn_mhz[write_main_func] is None:
+        if write_main_func not in write_main_func or parser_state.main_syn_mhz[write_main_func] is None:
           parser_state.main_syn_mhz[write_main_func] = read_mhz
         inferring = True
   

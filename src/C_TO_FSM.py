@@ -6,6 +6,8 @@ from pycparser import c_parser, c_ast, c_generator
 
 import C_TO_LOGIC
 
+FSM_EXT = "_FSM"
+
 def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
   if generator is None:
     generator = c_generator.CGenerator()
@@ -140,7 +142,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       text += "  " + c_type + " " + output_port + ";\n"
   text += '''  uint1_t output_valid;
 }''' + fsm_logic.func_name + '''_OUTPUT_t;
-''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + '''_FSM(''' + fsm_logic.func_name + '''_INPUT_t i)
+''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + FSM_EXT + '''(''' + fsm_logic.func_name + '''_INPUT_t i)
 {
   // State reg
   static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
@@ -162,12 +164,12 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     c_type = fsm_logic.wire_to_c_type[output_port]
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
       elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-      text += "  " + "static " + elem_t + " " + output_port + "_FSM"
+      text += "  " + "static " + elem_t + " " + output_port + FSM_EXT
       for dim in dims:
         text += "[" + str(dim) + "]"
       text += ";\n"
     else:
-      text += "  " + "static " + c_type + " " + output_port + "_FSM" + ";\n"
+      text += "  " + "static " + c_type + " " + output_port + FSM_EXT + ";\n"
 
   text += '''  // All local vars are regs too
 '''
@@ -340,7 +342,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' FUNC CALL, known ready
     ''' + called_func_name_inst + '''_i.input_valid = 1;
     ''' + called_func_name_inst + '''_i.output_ready = 1;
-    ''' + called_func_name_inst + '''_o = ''' + called_func_name + '''_FSM(''' + called_func_name_inst + '''_i);
+    ''' + called_func_name_inst + '''_o = ''' + called_func_name + FSM_EXT + '''(''' + called_func_name_inst + '''_i);
     if(''' + called_func_name_inst + '''_o.output_valid)
     {
       // DEFAULT NEXT
@@ -352,7 +354,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     
       # Return?
       if state_info.return_node is not None:
-        text += "    " + C_TO_LOGIC.RETURN_WIRE_NAME + "_FSM" + " = " + generator.visit(state_info.return_node.expr) + ";\n"
+        text += "    " + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + " = " + generator.visit(state_info.return_node.expr) + ";\n"
         text += "    FSM_STATE = RETURN_REG;\n"
         text += "  }\n"
         continue
@@ -372,7 +374,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   {
     // Special last state signals done, waits for ready
     o.output_valid = 1;
-    o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + '''_FSM;
+    o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + ''';
     if(i.output_ready)
     {
       FSM_STATE = ENTRY_REG;
