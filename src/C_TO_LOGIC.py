@@ -952,7 +952,7 @@ class Logic:
         
     return False
     
-  def WIRE_DO_NOT_COLLAPSE(self, wire, FuncLogicLookupTable):
+  def WIRE_DO_NOT_COLLAPSE(self, wire, parser_state):
     if wire in self.variable_names:
       return True
     if wire in self.inputs:
@@ -977,8 +977,15 @@ class Logic:
     if SUBMODULE_MARKER in wire:
       inst_name = wire.split(SUBMODULE_MARKER)[0]
       func_name = self.submodule_instances[inst_name]
-      sub_func_logic = FuncLogicLookupTable[func_name]
+      sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
+      # If self or any submodules uses clock crossings
       if sub_func_logic.is_clock_crossing:
+        return True
+      #if VHDL.LOGIC_NEEDS_CLK_CROSS_TO_MODULE(sub_func_logic, parser_state)
+      #  return True
+      # Only need to check if has outputs
+      # inputs to something with no outputs still rips up
+      if VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(sub_func_logic, parser_state):
         return True
     
     return False
@@ -987,7 +994,7 @@ class Logic:
     debug = False
     
     # Stop recursion if reached special wire
-    if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable):
+    if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state):
       if debug:
         print("NOT REMOVE WIRE",self.func_name, "  ", wire, flush=True)
       return
@@ -1181,7 +1188,7 @@ class Logic:
       return False
       
     return True
-      
+
   def SHOW(self):
     # Make adjency matrix out of all wires and submodule isnts and own 'wire'/node in network
     nodes = list(self.wires)
@@ -6823,7 +6830,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     for wire in set(func_logic.wires): # Copy for iter
       if wire in func_logic.wires: # Changes during iter
         # Look for not special wires that have driving info
-        if not func_logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state.FuncLogicLookupTable) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
+        if not func_logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state) and (wire in func_logic.wire_driven_by) and (wire in func_logic.wire_drives):
           # Get driving info
           driving_wire = func_logic.wire_driven_by[wire]        
           driven_wires = func_logic.wire_drives[wire]
