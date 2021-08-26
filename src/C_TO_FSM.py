@@ -88,10 +88,7 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
   generator = c_generator.CGenerator()
   text = ""
   
-  # You stupid bitch
   # Woods – Moving to the Left
-  # Recursively put any FSM func C code defs included here
-  # since dont have code gen passes that make sense yet, stupid
   # WHat funcs does this func call
   if fsm_logic.func_name in parser_state.func_name_to_calls:
     called_funcs = parser_state.func_name_to_calls[fsm_logic.func_name]
@@ -99,8 +96,9 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
       if called_func in parser_state.FuncLogicLookupTable:
         called_func_logic = parser_state.FuncLogicLookupTable[called_func]
         if called_func_logic.is_fsm_clk_func:
-          text += FSM_LOGIC_TO_C_CODE(called_func_logic, parser_state)
-  
+          #text += FSM_LOGIC_TO_C_CODE(called_func_logic, parser_state)
+          text += '#include "' + called_func_logic.func_name + FSM_EXT + ".h" + '"\n'          
+          
   text += '''
 typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
  ENTRY_REG,
@@ -175,16 +173,30 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 '''
   # Collect all decls
   local_decls = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node.body, c_ast.Decl)
+  #print("fsm_logic.func_name",fsm_logic.func_name)
+  #print("local_decls",local_decls)
   for local_decl in local_decls:
+    is_static = 'static' in local_decl.storage
     c_type,var_name = C_TO_LOGIC.C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(local_decl, parser_state)
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
       elem_t,dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
       text += "  " + "static " + elem_t + " " + var_name
       for dim in dims:
         text += "[" + str(dim) + "]"
-      text += ";\n"
     else:
-      text += "  " + "static " + c_type + " " + var_name + ";\n"
+      text += "  " + "static " + c_type + " " + var_name 
+    # Include init if static
+    if is_static:
+      text += " = " + C_AST_NODE_TO_C_CODE(local_decl.init, "", generator) + "\n"
+    else:
+      text += ";\n"
+    # Hacky ahhhhhh???
+    # Adjust static decls to not be static, and not do init later in code.
+    #if is_static:
+    #  local_decl.storage.remove('static')
+    #  local_decl.type = None
+    #  local_decl.name = None
+    #  local_decl.init = None     
       
   text +='''  // Output wires
   ''' + fsm_logic.func_name + '''_OUTPUT_t o = {0};
@@ -275,7 +287,10 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
             continue
           # TODO fix needing ";"
           # Fix print out to be tabbed out
-          text += C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator) + "\n"
+          # HACKY AF OMG remove static decls
+          c_code_text = C_AST_NODE_TO_C_CODE(c_ast_node, "    ", generator)
+          c_code_text = c_code_text.replace("static ", "// static ")
+          text += c_code_text  + "\n"
         
       # Branch logic
       if state_info.branch_nodes_tf_states is not None:
