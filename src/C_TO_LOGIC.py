@@ -1663,6 +1663,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     return C_AST_ASSIGNMENT_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.For:
     return C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
+  elif type(c_ast_node) == c_ast.While:
+    return C_AST_WHILE_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.Cast:
     return C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   elif type(c_ast_node) == c_ast.Pragma:
@@ -4236,6 +4238,40 @@ def C_AST_FOR_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
     # Do next statement
     i = i + 1
     parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.next, [], iter_prepend_text, parser_state)
+    
+  return parser_state.existing_logic
+  
+def C_AST_WHILE_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+  # Repeatedly:
+  #   if cond: 
+  #     body statement
+  #     
+  i = 0
+  while True:
+    # Separate the duplicated logic with identifying prepend text
+    iter_prepend_text = prepend_text + "WHILE_" + C_AST_NODE_COORD_STR(c_ast_node) +  "_ITER_" + str(i) + "_"
+    # Evaluate condition driving a dummy wire so we can recover the value?
+    cond_val = None
+    COND_DUMMY = iter_prepend_text + "COND_DUMMY"
+    parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = BOOL_C_TYPE
+    parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.cond, [COND_DUMMY], iter_prepend_text, parser_state) 
+    const_cond_wire = FIND_CONST_DRIVING_WIRE(COND_DUMMY, parser_state.existing_logic)
+    if const_cond_wire is None:
+      print("I dont know how to handle what you are doing in the while loop condition at", c_ast_node.cond.coord, "iteration", i)
+      sys.exit(-1)
+    cond_val = int(GET_VAL_STR_FROM_CONST_WIRE(const_cond_wire, parser_state.existing_logic, parser_state))
+    
+    # Now that constant condition evaluated
+    # Remove dummy COND wire and anything driving it / driven by it?
+    parser_state.existing_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(COND_DUMMY, parser_state)
+    
+    # If the condition is true, do an iteration of the body statement
+    # Otherwise stop loop
+    if not cond_val:
+      break
+    
+    # Do body statement
+    parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node.stmt, [], iter_prepend_text, parser_state)
     
   return parser_state.existing_logic
   
@@ -7315,6 +7351,7 @@ def PARSE_FILE(c_filename):
         preprocessed_c_text = preprocess_file(c_filename)
         # Get the C AST
         parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+        #print(parser_state.c_file_ast)
         # Parse pragmas
         parse_state = APPEND_PRAGMA_INFO(parser_state)
         # Parse definitions first before code structure
@@ -8008,6 +8045,7 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
     if logic is not None:
       print("Parsed __clk() function:", logic.func_name)
       parser_state.FuncLogicLookupTable[logic.func_name] = logic
+      #print(logic.c_ast_node)
     else:
       #print("Skipped non __clk() function:", func_def.decl.name)
       pass
