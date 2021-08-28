@@ -7,6 +7,9 @@ from pycparser import c_parser, c_ast, c_generator
 import C_TO_LOGIC
 
 FSM_EXT = "_FSM"
+CLK_FUNC = "__clk"
+INPUT_FUNC = "__input"
+YIELD_FUNC = "__yield"
 
 def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
   if generator is None:
@@ -40,6 +43,8 @@ class FsmStateInfo:
     self.branch_nodes_tf_states = None # (c_ast_node,true state, false state)
     self.ends_w_clk = False
     self.return_node = None
+    self.input_func_call_node = None
+    self.yield_func_call_node = None
     self.ends_w_fsm_func_entry = None # C ast node of func call
     self.ends_w_fsm_func_entry_input_drivers = None
     self.is_fsm_func_call_state = None # C ast node of func call
@@ -83,6 +88,13 @@ class FsmStateInfo:
       print("Return, function end")
       return # Return is always last
       
+    if self.input_func_call_node is not None:
+      print("__input();")
+      return
+      
+    if self.yield_func_call_node is not None:
+      print("__yield();")
+      return      
 
 def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
   generator = c_generator.CGenerator()
@@ -142,8 +154,11 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 }''' + fsm_logic.func_name + '''_OUTPUT_t;
 ''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + FSM_EXT + '''(''' + fsm_logic.func_name + '''_INPUT_t i)
 {
-  // State reg
+  // State reg holding current state
   static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
+  // State reg holding state to return to after certain func calls
+  // Starting set to first user state
+  static ''' + fsm_logic.func_name + '''_STATE_t FUNC_CALL_RETURN_FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
   // Input regs
 '''
   for input_port in fsm_logic.inputs:
@@ -210,7 +225,10 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
     func_call_name = func_call_node.name.name
-    if C_AST_NODE_USES_CTRL_FLOW_NODE(func_call_node, parser_state) and func_call_name != "__clk":
+    if ( C_AST_NODE_USES_CTRL_FLOW_NODE(func_call_node, parser_state) and
+         func_call_name != CLK_FUNC and
+         func_call_name != INPUT_FUNC and
+         func_call_name != YIELD_FUNC):
       flow_ctrl_func_call_nodes.append(func_call_node)
   if len(flow_ctrl_func_call_nodes) > 0:
     text += "  // Wires for subroutine calls\n"
@@ -235,8 +253,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     text += "      " + input_port + " = i." + input_port + ";\n"
   
   # Go to first user state after getting inputs
-  text += '''      // Go to first user state\n'''
-  text += '''      FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
+  text += '''      // Go signaled return state\n'''
+  text += '''      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
     }
   }
   
@@ -369,8 +387,27 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     
       # Return?
       if state_info.return_node is not None:
+        text += "    // Return data, restart execution\n"
         text += "    " + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + " = " + generator.visit(state_info.return_node.expr) + ";\n"
         text += "    FSM_STATE = RETURN_REG;\n"
+        text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+        text += "  }\n"
+        continue
+        
+      # Input func
+      if state_info.input_func_call_node is not None:
+        text += "    // Get new inputs, continue execution\n"
+        text += "    FSM_STATE = ENTRY_REG;\n"
+        text += "    FUNC_CALL_RETURN_FSM_STATE = " + state_info.always_next_state.name + ";\n"
+        text += "  }\n"
+        continue
+      
+      # Yield func
+      if state_info.yield_func_call_node is not None:
+        text += "    // Yield output data, continue execution\n"
+        text += "    " + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + " = " + generator.visit(state_info.yield_func_call_node.args.exprs[0]) + ";\n"
+        text += "    FSM_STATE = RETURN_REG;\n"
+        text += "    FUNC_CALL_RETURN_FSM_STATE = " + state_info.always_next_state.name + ";\n"
         text += "  }\n"
         continue
         
@@ -392,7 +429,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + ''';
     if(i.output_ready)
     {
-      FSM_STATE = ENTRY_REG;
+      // Go to signaled return state
+      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
     }
   }
 '''
@@ -515,6 +553,12 @@ def GET_STATE_TRANS_LISTS(start_state):
   elif start_state.return_node is not None:
     #print(" returns")
     return [[start_state]]
+  # Going to inputs state
+  elif start_state.input_func_call_node is not None:
+    return [[start_state]]
+  # Going to yield state
+  elif start_state.yield_func_call_node is not None:
+    return [[start_state]]
   
   poss_next_states = set()
   # Branching?
@@ -546,8 +590,12 @@ def GET_STATE_TRANS_LISTS(start_state):
 def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
   if type(c_ast_node) == c_ast.If:
     return C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
-  elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name=="__clk":
+  elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name==CLK_FUNC:
     return C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
+  elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name==INPUT_FUNC:
+    return C_AST_CTRL_FLOW_INPUT_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
+  elif type(c_ast_node) is c_ast.FuncCall and c_ast_node.name.name==YIELD_FUNC:
+    return C_AST_CTRL_FLOW_YIELD_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.Return:
     return C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.While:
@@ -636,6 +684,25 @@ def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_inf
 
   # Update curr state as ending with return transition
   curr_state_info.return_node = c_ast_node
+  
+  return states
+  
+def C_AST_CTRL_FLOW_INPUT_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
+  states = [] 
+  
+  # Update curr state as ending with getting inputs transition
+  curr_state_info.input_func_call_node = c_ast_node
+  
+  return states
+  
+def C_AST_CTRL_FLOW_YIELD_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
+  states = [] 
+  ret_arg_node = c_ast_node.args.exprs[0]
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(ret_arg_node, parser_state):
+    raise Exception(f"TODO unsupported control flow in yield: {ret_arg_node.coord}")
+
+  # Update curr state as ending with yield transition
+  curr_state_info.yield_func_call_node = c_ast_node
   
   return states
     
@@ -729,15 +796,26 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   return states
   
 def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
+    # Start off with as parsed single file ordered list of states
     states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
     parser_state.existing_logic.first_user_state = states_list[0]
+
+    #for state in states_list:
+    #  state.print()
 
     #Get all state transitions lists starting at
     #entry node + node after each __clk()  
     start_states = set([states_list[0]])
     for state in states_list:
+      # Accomodate special cases
       if state.ends_w_clk:
         start_states.add(state.always_next_state)
+      if state.input_func_call_node:
+        start_states.add(state.always_next_state)
+      if state.yield_func_call_node:
+        start_states.add(state.always_next_state)
+    
+    # Get state lists of all cases so far
     all_state_trans_lists = []
     for start_state in start_states:
       try:
@@ -774,7 +852,11 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     return parser_state.existing_logic
 
 def FUNC_USES_FSM_CLK(func_name, parser_state):
-  if func_name == "__clk":
+  if func_name == CLK_FUNC:
+    return True
+  elif func_name == INPUT_FUNC:
+    return True
+  elif func_name == YIELD_FUNC:
     return True
   else:
     if func_name in parser_state.FuncLogicLookupTable:
@@ -797,7 +879,6 @@ def FUNC_USES_FSM_CLK(func_name, parser_state):
 def C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node, parser_state):
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
-    #if func_call_node.name.name  == "__clk":
     if FUNC_USES_FSM_CLK(func_call_node.name.name, parser_state):
       return True
     
