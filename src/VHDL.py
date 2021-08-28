@@ -38,6 +38,8 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     
   if type(init) == c_ast.Constant:
     return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
+  elif type(init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(init, parser_state.existing_logic, "", parser_state):
+    return CONST_VAL_STR_TO_VHDL(str(init.name), c_type, parser_state)
   elif type(init) == c_ast.InitList:
     # Hey vhdl syntax might make this easy 
     # ...once I special case a portion of possible AST
