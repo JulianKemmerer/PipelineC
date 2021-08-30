@@ -40,7 +40,7 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-FIX declared in this if logic
+What the fuck is going on with compile pass orders?
 Silice fun? Is it possible with compiler __clk();
   used recent game thing as example rewritten in clk style?
   Do announcement posts
@@ -148,6 +148,8 @@ Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
 Do built in Q number types
+Propogate null values for constant folding
+Could make an undefined/Xs constant only meaningful in synthesis
 """
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

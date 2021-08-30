@@ -69,24 +69,9 @@ BIN_OP_DIV_NAME = "DIV"
 C_AST_NODE_HASH_LEN = 4
 TEMP_HACKY_C_AST_NODE_ID = True
 
-# TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
-def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
-  """ Preprocess a file using cpp.
-  filename:
-  Name of the file you want to preprocess.
-  cpp_path:
-  cpp_args:
-  Refer to the documentation of parse_file for the meaning of these
-  arguments.
-  When successful, returns the preprocessed file's contents.
-  Errors from cpp will be printed out.
-  """
-  path_list = [cpp_path]
-  if isinstance(cpp_args, list):
-    path_list += cpp_args
-  elif cpp_args != '':
-    path_list += [cpp_args]
 
+def GET_CPP_INCLUDES_LIST():
+  path_list = []
   # Include output directory, and other generated output dir
   if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
     path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
@@ -108,8 +93,32 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
           path_list += ["-I" + thing_path]
   # Also include src files in git root dir
   dir_path = REPO_ABS_DIR()
-  path_list += ["-I" + dir_path+"/"]        
+  path_list += ["-I" + dir_path+"/"]
   
+  return path_list    
+  
+
+# TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
+def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
+  """ Preprocess a file using cpp.
+  filename:
+  Name of the file you want to preprocess.
+  cpp_path:
+  cpp_args:
+  Refer to the documentation of parse_file for the meaning of these
+  arguments.
+  When successful, returns the preprocessed file's contents.
+  Errors from cpp will be printed out.
+  """
+  path_list = [cpp_path]
+  if isinstance(cpp_args, list):
+    path_list += cpp_args
+  elif cpp_args != '':
+    path_list += [cpp_args]
+
+  # Include output directory, and other generated output dir
+  includes_list = GET_CPP_INCLUDES_LIST()
+  path_list += includes_list  
   #print(path_list)
     
   # Finally the file
@@ -150,13 +159,8 @@ def preprocess_text(text, cpp_path='cpp'):
   path_list = [cpp_path]
   
   # Include output directory, and other generated output dir
-  if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):    
-    path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
-  for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
-    path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir]
-  # Also include src files in git root dir
-  dir_path = REPO_ABS_DIR()
-  path_list += ["-I" + dir_path+"/"]
+  includes_list = GET_CPP_INCLUDES_LIST()
+  path_list += includes_list
   
   # Finally read from std in
   path_list += ["-"] # TO read from std in
@@ -180,6 +184,43 @@ def preprocess_text(text, cpp_path='cpp'):
       ('Original error: %s' % e))
 
   return text
+  
+# Use cpp -MM -MG to parse the #include tree and get all files
+# that need to be code gen'd again
+# DOES NOT INCLUDE to-be-generated missing files
+def get_included_files(c_filename):
+  includes_list = GET_CPP_INCLUDES_LIST()
+  includes_text = " ".join(includes_list)
+  cmd = "cpp -MM -MG " + includes_text + " " + c_filename
+  #print(cmd)
+  include_str = GET_SHELL_CMD_OUTPUT(cmd)
+  #print("include_str",include_str)
+  include_str = include_str.replace("\\\n"," ")
+  
+  '''
+main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
+ examples/aws-fpga-dma/../../axi.h examples/aws-fpga-dma/../../uintN_t.h \
+ examples/aws-fpga-dma/dma_msg_hw.c examples/aws-fpga-dma/dma_msg.h \
+ examples/aws-fpga-dma/work_hw.c examples/aws-fpga-dma/work.h \
+ in_msg_clock_crossing.h out_msg_clock_crossing.h
+  '''
+  # shlex.split('-o 1 --long "Some long string"')
+  # ['-o', '1', '--long', 'Some long string']
+  toks = shlex.split(include_str)
+  #print toks[1:]
+  files = toks[1:]
+  return set(files)
+  '''
+  existing_files = []
+  for f in files:
+    if os.path.exists(f):
+      existing_files.append(f)
+
+  #sys.exit(-1)
+  return existing_files
+  '''
+  
+#def GET_EXISTING_INCLUDED_FILES
 
 def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   # Kill pid after 
@@ -206,34 +247,6 @@ def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
 def READ_FILE_REMOVE_COMMENTS(c_filename):
   cmd = "gcc -E -fpreprocessed -dD " + c_filename
   return GET_SHELL_CMD_OUTPUT(cmd)
- 
-# Use cpp -MM -MG to parse the #include tree and get all files
-# that need to be code gen'd again
-# DOES NOT INCLUDE to-be-generated missing files
-def GET_INCLUDED_FILES(c_filename):
-  cmd = "cpp -MM -MG " + c_filename
-  include_str = GET_SHELL_CMD_OUTPUT(cmd)
-  include_str = include_str.replace("\\\n"," ")
-  
-  '''
-main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
- examples/aws-fpga-dma/../../axi.h examples/aws-fpga-dma/../../uintN_t.h \
- examples/aws-fpga-dma/dma_msg_hw.c examples/aws-fpga-dma/dma_msg.h \
- examples/aws-fpga-dma/work_hw.c examples/aws-fpga-dma/work.h \
- in_msg_clock_crossing.h out_msg_clock_crossing.h
-  '''
-  # shlex.split('-o 1 --long "Some long string"')
-  # ['-o', '1', '--long', 'Some long string']
-  toks = shlex.split(include_str)
-  #print toks[1:]
-  files = toks[1:]
-  existing_files = []
-  for f in files:
-    if os.path.exists(f):
-      existing_files.append(f)
-
-  #sys.exit(-1)
-  return existing_files  
     
 
 def casthelp(arg):
@@ -4104,7 +4117,14 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
       parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
       #print("What init?",c_ast_decl.init.coord)
       #sys.exit(-1)
-   
+  else:
+    # No init but all vars init to zeros by default (like statics do)
+    const_zero = c_ast.Constant(type='int',value='0')
+    fake_compound_null_init_node = c_ast.InitList(exprs=[const_zero])
+    fake_compound_null_init_node.coord = c_ast_decl.coord
+    lhs_ref_toks = (wire_name,)
+    parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, fake_compound_null_init_node, parser_state, prepend_text, None)
+    
   return parser_state.existing_logic
 
   
@@ -4551,17 +4571,9 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     # Might be first place to see globals... is this getting out of hand?
     parser_state.existing_logic = MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(var_name, parser_state)
     
-    #print "var_name",var_name
-    # vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
-    declared_in_this_if = not(var_name in parser_state.existing_logic.variable_names) and (var_name not in parser_state.existing_logic.state_regs)
-    if declared_in_this_if:
-      #print(var_name, "declared_in_this_if")
-      continue
-    #print(var_name, "declared outside if")
-    
     # Get aliases over time
     # original
-    original_aliases= []
+    original_aliases = []
     if var_name in parser_state.existing_logic.wire_aliases_over_time:
       original_aliases = parser_state.existing_logic.wire_aliases_over_time[var_name]
     # true
@@ -4574,10 +4586,30 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
       false_aliases = false_logic.wire_aliases_over_time[var_name]
     # Max len
     max_aliases_len = max(len(true_aliases),len(false_aliases))
-  
-    #print var_name, "original_aliases:", original_aliases
-    #print var_name, "true_aliases",true_aliases
-    #print var_name, "false_aliases",false_aliases
+    
+    #print(var_name, "IF at", c_ast_node.coord)
+    #print(var_name, "original_aliases:", original_aliases)
+    #print(var_name, "true_aliases",true_aliases)
+    #print(var_name, "false_aliases",false_aliases)
+    # Ah need to know if var is declared inside if 
+    # so that we don try to read from it when its not actually in scope?
+    # Scope? Whats scope oh no! Radiohead - Everything in its right place
+    declared_in_this_if = None
+    if var_name in parser_state.existing_logic.state_regs:
+      declared_in_this_if = False
+    elif var_name in parser_state.existing_logic.inputs:
+      declared_in_this_if = False
+    elif var_name in parser_state.existing_logic.outputs:
+      declared_in_this_if = False
+    elif var_name not in parser_state.existing_logic.variable_names:
+      declared_in_this_if = True
+    else:
+      # Some existing variable - but from where? Ugh? Judge by aliases on true and false branches?
+      declared_in_this_if = ( (len(original_aliases)==0) and ( (len(true_aliases) > 0) or (len(false_aliases) > 0) ) )
+    if declared_in_this_if:
+      #print(var_name, "declared_in_this_if", c_ast_node.coord)
+      continue
+    #print(var_name, "declared outside if", c_ast_node.coord)
   
     # Find where the differences start in the wire aliases over time
     diff_start_i = None
@@ -4594,8 +4626,9 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
         
     # If no difference then this var was not driven inside this IF
     if diff_start_i is None:
-      #print var_name, "NO DIFFERENT ALIASES = NOT DRIVEN" 
+      #print(var_name, "NO DIFFERENT ALIASES = NOT DRIVEN INSIDE:", c_ast_node.coord)
       continue
+    #print(var_name, "DRIVEN INSIDE:", c_ast_node.coord)
     
     # Collect all the ref toks from aliases - whatever order
     all_ref_toks_set = set()
@@ -4954,6 +4987,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       # Get values from constants
       lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(lhs_wire, parser_state.existing_logic, parser_state)
       rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
+      # Skip compund null wire optmizations for now
+      if lhs_val_str==COMPOUND_NULL or rhs_val_str==COMPOUND_NULL:
+        return None      
       lhs_negated = lhs_val_str.startswith('-')
       rhs_negated = rhs_val_str.startswith('-')
       lhs_val_str_no_neg = lhs_val_str.strip('-')
@@ -7327,26 +7363,36 @@ def PARSE_FILE(c_filename):
   
   # Catch pycparser exceptions
   try:
-    
+    #parser_state = ParserState()
+    #all_code_files = set()
+    #while True:
     def parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=False, post_preprocess_wnonfuncdefs=False, old_autogen_funclookup=False):
       if gen_empty:
-        # Use cpp --MM --MG to parse the #include tree and get all files
-        # that need to be code gen'd again
-        all_code_files = GET_INCLUDED_FILES(c_filename)
-        
+        print("Generating code to get through first round of preprocessing...")
+        all_code_files = get_included_files(c_filename)
+        inital_missing_files = []
+        for f in all_code_files:
+          if not os.path.exists(f):
+            inital_missing_files.append(f)
+        if len(inital_missing_files) > 0:
+          print("Generating: ",inital_missing_files)
         # Code generate empty to-be-generated header files 
         # so initial preprocessing can happen
         # Then do repeated re-parsing as code gen continues
         SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files)
-      
+    
       if post_preprocess_gen:
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
         #print(preprocessed_c_text)
         # Code gen based purely on preprocessed C text
+        print("Generating code based on PipelineC supported C text patterns...")
         SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
-        
+        all_code_files = get_included_files(c_filename)
+        #print("all_code_files",all_code_files)
+      
       if c_ast_nonfuncdefs:
+        print("Parsing non-function definitions...", flush=True)
         # Preprocess the main file to get single block of text
         preprocessed_c_text = preprocess_file(c_filename)
         # Get the C AST
@@ -7355,7 +7401,6 @@ def PARSE_FILE(c_filename):
         # Parse pragmas
         parse_state = APPEND_PRAGMA_INFO(parser_state)
         # Parse definitions first before code structure
-        print("Parsing non-function definitions...", flush=True)
         # Get the parsed enum info
         parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
         # Get the parsed struct def info
@@ -7372,15 +7417,21 @@ def PARSE_FILE(c_filename):
         # different and needs to be before regular func parsing below
         print("Parsing derived fsm logic functions...", flush=True)
         parser_state = GET_FSM_CLK_FUNC_LOGICS(parser_state)        
-      
+    
       if post_preprocess_wnonfuncdefs:
-        # Preprocess the main file to get single block of text
-        preprocessed_c_text = preprocess_file(c_filename)
         # Do code gen based on preprocessed C text and non-function definitions
         # This is the newer better way
+        print("Generating code based on PipelineC supported C design patterns...")
         SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
-        
       
+      # Need more gen?
+      #new_all_code_files = get_included_files(c_filename)
+      #if new_all_code_files != all_code_files:
+      #  print("Generating: ",(new_all_code_files-all_code_files))
+      #  continue        
+        
+      #print("new_all_code_files",new_all_code_files)
+      #sys.exit(0)
       if old_autogen_funclookup:
         # Preprocess the file again to pull in generated code
         preprocessed_c_text = preprocess_file(c_filename)
@@ -7393,17 +7444,26 @@ def PARSE_FILE(c_filename):
         sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
         # Merge into existing
         for sw_func_name in sw_func_name_2_logic:
-          parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[sw_func_name]   
-    
+          parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[sw_func_name]  
+      
+      '''
+      # Need more gen?
+      new_all_code_files = get_included_files(c_filename)
+      if new_all_code_files != all_code_files:
+        #print("Generating:",(new_all_code_files-all_code_files))
+        continue
+      #print("new_all_code_files",new_all_code_files)
+        
+      # Must be done
+      break
+      '''
+      
     # Begin parsing/generating code
     parser_state = ParserState()
     # Need to do multiple passes 
-    parse_pass(parser_state, gen_empty=True)
-    parse_pass(parser_state, gen_empty=False, post_preprocess_gen=True,  c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
-    parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
-    #parse_pass(parser_state, gen_empty=True,  post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
-    #parse_pass(parser_state, gen_empty=False, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
-    #parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
+    parse_pass(parser_state, gen_empty=True, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
+    parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True)
+    #parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
     #parse_pass(parser_state, post_preprocess_wnonfuncdefs=True)
     #print "Temp stop"
     #sys.exit(-1)
