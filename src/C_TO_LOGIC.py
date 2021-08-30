@@ -7360,113 +7360,117 @@ def PARSE_FILE(c_filename):
     return cached_parser_state
   
   # Otherwise do for real
+  parser_state = ParserState()
   
   # Catch pycparser exceptions
   try:
-    #parser_state = ParserState()
-    #all_code_files = set()
-    #while True:
-    def parse_pass(parser_state, gen_empty=False, post_preprocess_gen=False, c_ast_nonfuncdefs=False, post_preprocess_wnonfuncdefs=False, old_autogen_funclookup=False):
-      if gen_empty:
-        print("Generating code to get through first round of preprocessing...")
-        all_code_files = get_included_files(c_filename)
+    # Need to do complex code generation
+    # Keep track of which files need to be (re)generated
+    regenerate_files = set()
+    # Start off with any missing headers
+    all_code_files = get_included_files(c_filename)
+    for f in all_code_files:
+      if not os.path.exists(f):
+        regenerate_files.add(f)    
+    
+    # Generate the needed files during this single while loop iteration pass
+    # Might need to restart loop if more files needed to be generated as files are generated
+    while True:
+      new_regenerate_files = set()
+      # Start code generating,      
+      # If any of the files are completely missing gen empty headers
+      # in order to get through preprocessing
+      if len(regenerate_files) > 0:
         inital_missing_files = []
-        for f in all_code_files:
+        for f in regenerate_files:
           if not os.path.exists(f):
             inital_missing_files.append(f)
         if len(inital_missing_files) > 0:
+          print("Generating code to get through first round of preprocessing...")
           print("Generating: ",inital_missing_files)
-        # Code generate empty to-be-generated header files 
-        # so initial preprocessing can happen
-        # Then do repeated re-parsing as code gen continues
-        SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files)
-    
-      if post_preprocess_gen:
-        # Preprocess the main file to get single block of text
+          # Code generate empty to-be-generated header files 
+          # so initial preprocessing can happen
+          # Then do repeated re-parsing as code gen continues
+          SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files)
+      
+      # Preprocess the file and generate more code maybe?
+      # Generation return list of files that need continued generation
+      # Preprocess the main file to get single block of text
+      if len(regenerate_files) > 0:        
         preprocessed_c_text = preprocess_file(c_filename)
-        #print(preprocessed_c_text)
         # Code gen based purely on preprocessed C text
         print("Generating code based on PipelineC supported C text patterns...")
-        SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text)
-        all_code_files = get_included_files(c_filename)
-        #print("all_code_files",all_code_files)
+        new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text, regenerate_files)
+        if (new_regenerate_files | regenerate_files) != regenerate_files:
+          print("Re/generating: ", new_regenerate_files)
+          # Restart pass on new files and current pass files
+          regenerate_files = new_regenerate_files | regenerate_files
+          continue
+        
+      # Preprocess again and parse the file
+      # Collect info on non func defs (fsm derived bodies arent really 'parsed')
+      print("Parsing non-function definitions...", flush=True)
+      # Preprocess the main file to get single block of text
+      preprocessed_c_text = preprocess_file(c_filename)
+      # Get the C AST
+      parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+      #print(parser_state.c_file_ast)
+      # Parse pragmas
+      parse_state = APPEND_PRAGMA_INFO(parser_state)
+      # Parse definitions first before code structure
+      # Get the parsed enum info
+      parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
+      # Get the parsed struct def info
+      parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
+      # Get global state regs (global regs, volatile globals) info
+      parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
+      # Build primative map of function use
+      parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
+      # Get local state reg info
+      parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
+      # Elborate what the clock crossings look like
+      parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
+      # Get FSM clock func logics only - dont really parse their function body in details, 
+      # different and needs to be before regular func parsing below
+      print("Parsing derived fsm logic functions...", flush=True)
+      parser_state = GET_FSM_CLK_FUNC_LOGICS(parser_state) 
+      # Done doing code gen?
+      if len(regenerate_files) == 0:
+        break
       
-      if c_ast_nonfuncdefs:
-        print("Parsing non-function definitions...", flush=True)
-        # Preprocess the main file to get single block of text
-        preprocessed_c_text = preprocess_file(c_filename)
-        # Get the C AST
-        parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
-        #print(parser_state.c_file_ast)
-        # Parse pragmas
-        parse_state = APPEND_PRAGMA_INFO(parser_state)
-        # Parse definitions first before code structure
-        # Get the parsed enum info
-        parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
-        # Get the parsed struct def info
-        parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
-        # Get global state regs (global regs, volatile globals) info
-        parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
-        # Build primative map of function use
-        parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
-        # Get local state reg info
-        parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
-        # Elborate what the clock crossings look like
-        parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
-        # Get FSM clock func logics only - dont really parse their function body in details, 
-        # different and needs to be before regular func parsing below
-        print("Parsing derived fsm logic functions...", flush=True)
-        parser_state = GET_FSM_CLK_FUNC_LOGICS(parser_state)        
-    
-      if post_preprocess_wnonfuncdefs:
-        # Do code gen based on preprocessed C text and non-function definitions
-        # This is the newer better way
+      # Generate code needed to later parse function body code, only have non func defs
+      # Do code gen based on preprocessed C text and non-function definitions
+      # This is the newer better way
+      if len(regenerate_files) > 0:
         print("Generating code based on PipelineC supported C design patterns...")
-        SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state)
-      
-      # Need more gen?
-      #new_all_code_files = get_included_files(c_filename)
-      #if new_all_code_files != all_code_files:
-      #  print("Generating: ",(new_all_code_files-all_code_files))
-      #  continue        
-        
-      #print("new_all_code_files",new_all_code_files)
-      #sys.exit(0)
-      if old_autogen_funclookup:
-        # Preprocess the file again to pull in generated code
-        preprocessed_c_text = preprocess_file(c_filename)
-        # Get the C AST again to reflect new generated code
-        parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
-        # Update primative map of function use
-        parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
-        # This is the old more hacky way
-        # Get SW existing logic for this c file
-        sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
-        # Merge into existing
-        for sw_func_name in sw_func_name_2_logic:
-          parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[sw_func_name]  
-      
-      '''
-      # Need more gen?
-      new_all_code_files = get_included_files(c_filename)
-      if new_all_code_files != all_code_files:
-        #print("Generating:",(new_all_code_files-all_code_files))
-        continue
-      #print("new_all_code_files",new_all_code_files)
-        
-      # Must be done
-      break
-      '''
-      
-    # Begin parsing/generating code
-    parser_state = ParserState()
-    # Need to do multiple passes 
-    parse_pass(parser_state, gen_empty=True, post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True)
-    parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True)
-    #parse_pass(parser_state,                 post_preprocess_gen=True, c_ast_nonfuncdefs=True, post_preprocess_wnonfuncdefs=True, old_autogen_funclookup=True) 
-    #parse_pass(parser_state, post_preprocess_wnonfuncdefs=True)
-    #print "Temp stop"
-    #sys.exit(-1)
+        new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state, regenerate_files)
+        if (new_regenerate_files | regenerate_files) != regenerate_files:
+          print("Re/generating: ", new_regenerate_files)
+          # Restart pass on new files and current pass files
+          regenerate_files = new_regenerate_files | regenerate_files
+          continue
+                  
+      # Done generating this set of files
+      if regenerate_files == new_regenerate_files:
+        break
+      # Must be done code gen if got here if got here
+      # Just set empty and not break since need to reparse non func defs one last time
+      regenerate_files = new_regenerate_files #set()
+          
+    # All code gen has been done that used nested generation,
+    # old style 'base level' code gen and rest of parsing below
+    # Preprocess the file again to pull in generated code
+    preprocessed_c_text = preprocess_file(c_filename)
+    # Get the C AST again to reflect new generated code
+    parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
+    # Update primative map of function use
+    parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
+    # This is the old more hacky way
+    # Get SW existing logic for this c file
+    sw_func_name_2_logic = SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_c_text, parser_state)
+    # Merge into existing
+    for sw_func_name in sw_func_name_2_logic:
+      parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[sw_func_name]  
     
     # Parse the function definitions for code structure
     print("Parsing function logic...", flush=True)
@@ -7479,13 +7483,6 @@ def PARSE_FILE(c_filename):
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       if main_func_logic.is_fsm_clk_func:
         raise Exception(f"Cannot have main function '{main_func}' that uses/calls functions that use __clk().")
-    
-    # Code gen based on pre elborated logic
-    # TODO SW_LIB.WRITE_PRE_ELAB_GEN_CODE(preprocessed_c_text, parser_state)
-    # Preprocess the text again to pull in generated code
-    # preprocessed_c_text = preprocess_text(text)
-    # Get the C AST again to reflect new generated code
-    # parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
     
     # Need to add array struct for old internal C code parsing?
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
