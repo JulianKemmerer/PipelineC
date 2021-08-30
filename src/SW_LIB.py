@@ -162,17 +162,18 @@ def GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files):
     if os.path.exists(f):
       existing_files.append(f)
   
-  GEN_EMPTY_TYPE_ARRAY_N_HEADERS(existing_files)
-  GEN_EMPTY_CLOCK_CROSS_HEADERS(existing_files)
-  GEN_EMPTY_TYPE_BYTES_HEADERS(existing_files)
-  GEN_EMPTY_FSM_CLK_FUNC_HEADERS(existing_files)
+  GEN_EMPTY_TYPE_ARRAY_N_HEADERS(existing_files, inital_missing_files)
+  GEN_EMPTY_CLOCK_CROSS_HEADERS(existing_files, inital_missing_files)
+  GEN_EMPTY_TYPE_BYTES_HEADERS(existing_files, inital_missing_files)
+  GEN_EMPTY_FSM_CLK_FUNC_HEADERS(existing_files, inital_missing_files)
 
-def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files):
-  for f in all_code_files:
-    text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
+  #for f in all_code_files:
+  #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+  for inital_missing_file in inital_missing_files:
     # Regex search c_text for "<var>_clock_crossing.h"
-    r='"\w+_clock_crossing.h"'
-    clock_cross_header_str_quotes = FIND_REGEX_MATCHES(r, text)
+    r='\w+_clock_crossing.h'
+    clock_cross_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
     var_names = []
     for clock_cross_header_str_quote in clock_cross_header_str_quotes:
       clock_cross_header = clock_cross_header_str_quote.strip('"')
@@ -210,12 +211,13 @@ def C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(array_struct_c_type, parser_state):
   #print "c_type array struct type to array type",array_struct_c_type, array_c_type 
   return array_c_type
 
-def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files):
-  for f in all_code_files:
-    text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
+  #for f in all_code_files:
+  #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+  for inital_missing_file in inital_missing_files:
     # Regex search c_text for "<type>_array_<num>_t.h"
-    r='"\w+_array_N_t.h"'
-    array_type_header_str_quotes = FIND_REGEX_MATCHES(r, text)
+    r='\w+_array_N_t.h'
+    array_type_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
     var_names = []
     for array_type_header_str_quote in array_type_header_str_quotes:
       array_type_header = array_type_header_str_quote.strip('"')
@@ -228,12 +230,13 @@ def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files):
       if not os.path.exists(path):
         open(path, 'w').write("")
       
-def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files):
-  for f in all_code_files:
-    text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
+  #for f in all_code_files:
+  #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+  for inital_missing_file in inital_missing_files:
     # Regex search c_text for "<type>_bytes_t.h"
-    r='"\w+_bytes_t.h"'
-    bytes_header_str_quotes = FIND_REGEX_MATCHES(r, text)
+    r='\w+_bytes_t.h'
+    bytes_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
     var_names = []
     for bytes_header_str_quote in bytes_header_str_quotes:
       bytes_header = bytes_header_str_quote.strip('"')
@@ -246,12 +249,13 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files):
       if not os.path.exists(path):
         open(path, 'w').write("")
       
-def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files):
-  for f in all_code_files:
-    text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files):
+  #for f in all_code_files:
+  #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
+  for inital_missing_file in inital_missing_files:
     # Regex search c_text
-    r='"\w+'+C_TO_FSM.FSM_EXT+'.h"'
-    str_quotes = FIND_REGEX_MATCHES(r, text)
+    r='\w+'+C_TO_FSM.FSM_EXT+'.h'
+    str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
     var_names = []
     for str_quote in str_quotes:
       header = str_quote.strip('"')
@@ -369,6 +373,9 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type):
           elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(field_type)
           type_to_include = elem_t
+        # Ok to hacky replace char with u8 here?
+        if type_to_include=="char":
+          type_to_include = "uint8_t"
         types_to_include.add(type_to_include)
     for type_to_include in types_to_include:
       text += '#include "' + type_to_include + '_bytes_t.h"\n'

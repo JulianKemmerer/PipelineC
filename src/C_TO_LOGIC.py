@@ -7369,6 +7369,7 @@ def PARSE_FILE(c_filename):
     regenerate_files = set()
     # Start off with any missing headers
     all_code_files = get_included_files(c_filename)
+    #print("all_code_files",all_code_files)
     for f in all_code_files:
       if not os.path.exists(f):
         regenerate_files.add(f)    
@@ -7386,8 +7387,8 @@ def PARSE_FILE(c_filename):
           if not os.path.exists(f):
             inital_missing_files.append(f)
         if len(inital_missing_files) > 0:
-          print("Generating code to get through first round of preprocessing...")
-          print("Generating: ",inital_missing_files)
+          print("Generating code to get through first round of preprocessing...", flush=True)
+          print("Generating: ",inital_missing_files, flush=True)
           # Code generate empty to-be-generated header files 
           # so initial preprocessing can happen
           # Then do repeated re-parsing as code gen continues
@@ -7397,12 +7398,12 @@ def PARSE_FILE(c_filename):
       # Generation return list of files that need continued generation
       # Preprocess the main file to get single block of text
       if len(regenerate_files) > 0:        
+        print("Generating code based on PipelineC supported C text patterns...", flush=True)
         preprocessed_c_text = preprocess_file(c_filename)
         # Code gen based purely on preprocessed C text
-        print("Generating code based on PipelineC supported C text patterns...")
         new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text, regenerate_files)
         if (new_regenerate_files | regenerate_files) != regenerate_files:
-          print("Re/generating: ", new_regenerate_files)
+          print("Re/generating: ", new_regenerate_files, flush=True)
           # Restart pass on new files and current pass files
           regenerate_files = new_regenerate_files | regenerate_files
           continue
@@ -7442,10 +7443,10 @@ def PARSE_FILE(c_filename):
       # Do code gen based on preprocessed C text and non-function definitions
       # This is the newer better way
       if len(regenerate_files) > 0:
-        print("Generating code based on PipelineC supported C design patterns...")
+        print("Generating code based on PipelineC supported C design patterns...", flush=True)
         new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state, regenerate_files)
         if (new_regenerate_files | regenerate_files) != regenerate_files:
-          print("Re/generating: ", new_regenerate_files)
+          print("Re/generating: ", new_regenerate_files, flush=True)
           # Restart pass on new files and current pass files
           regenerate_files = new_regenerate_files | regenerate_files
           continue
