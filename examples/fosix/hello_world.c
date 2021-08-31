@@ -29,7 +29,6 @@ outputs_t main(inputs_t i, uint1_t rst)
 {
   // Default output/reset/null values
   outputs_t o;
-  o.proc_to_sys = FOSIX_PROC_TO_SYS_T_NULL();
   
   // State machine
   if(state==RESET)

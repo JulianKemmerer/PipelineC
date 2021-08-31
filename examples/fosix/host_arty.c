@@ -27,10 +27,6 @@ fosix_msg_s do_syscall_get_resp(fosix_msg_t read_msg_data)
   // Prepare a response
   fosix_parsed_resp_msg_t resp;
   resp.syscall_num = req.syscall_num;
-  resp.sys_open = OPEN_RESP_T_NULL();
-  resp.sys_write = WRITE_RESP_T_NULL();
-  resp.sys_read = READ_RESP_T_NULL();
-  resp.sys_close = CLOSE_RESP_T_NULL();
   if(req.syscall_num==FOSIX_OPEN)
   {
     // OPEN

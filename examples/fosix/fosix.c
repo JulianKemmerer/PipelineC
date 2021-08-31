@@ -40,11 +40,9 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
 {
   // Default output/reset/null values
   syscall_func_t o;
-  o.proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
   o.syscall_io = syscall_io; // Default pass through
   // Except done flag
   o.syscall_io.done = 0;
-  /*o.syscall_io.buf_nbytes_ret = 0;*/
   
   // Subroutine state
   static syscall_state_t state; 
@@ -52,7 +50,7 @@ syscall_func_t syscall_func(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscal
   if(state==REQ)
   {
     // Request
-    fosix_msg_decoded_t decoded_msg = FOSIX_MSG_DECODED_T_NULL();
+    fosix_msg_decoded_t decoded_msg = UNKNOWN_MSG();
     decoded_msg.syscall_num = syscall_io.num;
     if(syscall_io.num==FOSIX_OPEN)
     {
@@ -449,9 +447,9 @@ void fosix()
   
   // Outputs
   // Default outputs so each state is easier to write
-  fosix_proc_to_sys_t proc_to_sys_host = POSIX_PROC_TO_SYS_T_NULL();
-  fosix_proc_to_sys_t proc_to_sys_bram = POSIX_PROC_TO_SYS_T_NULL();
-  fosix_sys_to_proc_t sys_to_proc_main = POSIX_SYS_TO_PROC_T_NULL();
+  fosix_proc_to_sys_t proc_to_sys_host;
+  fosix_proc_to_sys_t proc_to_sys_bram;
+  fosix_sys_to_proc_t sys_to_proc_main;
   //////////////////////////////////////////////////////////////////////
 
   if(fosix_state==RESET)
@@ -473,9 +471,9 @@ void fosix()
     // Connect sys device with opposite direction flow control
     // And set state for handling response when it comes
     fosix_parsed_req_msg_t req = msg_to_request(proc_to_sys_main.msg);
-    fosix_msg_decoded_t decoded_msg = FOSIX_MSG_DECODED_T_NULL();
+    fosix_msg_decoded_t decoded_msg = UNKNOWN_MSG();
     decoded_msg.syscall_num = req.syscall_num;
-    fosix_msg_t req_msg = FOSIX_MSG_T_NULL(); // Outgoing
+    fosix_msg_t req_msg; // Outgoing
     // OPEN
     if(req.syscall_num==FOSIX_OPEN)
     {
@@ -658,7 +656,7 @@ void fosix()
         fd_lut_update_t fd_lut_update = insert_fd(resp.sys_open.fildes, in_flight_syscall_dev_is_bram, fosix_fd_lut);
         fosix_fd_lut = fd_lut_update.fd_lut;
         resp.sys_open.fildes = fd_lut_update.fildes;
-        fosix_msg_decoded_t open_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+        fosix_msg_decoded_t open_resp_msg = UNKNOWN_MSG();
         open_resp_msg.syscall_num = FOSIX_OPEN;
         OPEN_RESP_T_TO_BYTES(open_resp_msg.payload_data, resp.sys_open)
         sys_to_proc_main.msg.data = decoded_msg_to_msg(open_resp_msg);

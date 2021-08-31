@@ -60,7 +60,7 @@ void main()
   fosix_sys_to_proc_t sys_to_proc;
   WIRE_READ(fosix_sys_to_proc_t, sys_to_proc, main_sys_to_proc)  
   // Default output/reset/null values
-  fosix_proc_to_sys_t proc_to_sys = POSIX_PROC_TO_SYS_T_NULL();
+  fosix_proc_to_sys_t proc_to_sys;
 
   // Declare syscall connection wire of type syscall_io_t
   // Use wire to make system calls from FSM below

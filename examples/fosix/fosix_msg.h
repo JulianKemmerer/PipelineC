@@ -14,16 +14,6 @@ typedef struct fosix_msg_t
 {
   uint8_t data[FOSIX_MSG_SIZE];
 } fosix_msg_t;
-fosix_msg_t FOSIX_MSG_T_NULL()
-{
-  fosix_msg_t rv;
-  fosix_msg_size_t i;
-  for(i=0;i<FOSIX_MSG_SIZE;i=i+1)
-  {
-    rv.data[i] = 0;
-  }
-  return rv;
-}
 
 // Stream version of message with valid flag
 typedef struct fosix_msg_s
@@ -31,13 +21,6 @@ typedef struct fosix_msg_s
   fosix_msg_t data; // The message
   uint1_t valid;
 } fosix_msg_s;
-fosix_msg_s FOSIX_MSG_S_NULL()
-{
-  fosix_msg_s rv;
-  rv.data = FOSIX_MSG_T_NULL();
-  rv.valid = 0;
-  return rv;
-}
 
 // Buses to and from 'processes' and the 'system'
 typedef struct fosix_proc_to_sys_t
@@ -47,13 +30,7 @@ typedef struct fosix_proc_to_sys_t
   // And ready signal in opposite direction
   uint1_t sys_to_proc_msg_ready;
 } fosix_proc_to_sys_t;
-fosix_proc_to_sys_t POSIX_PROC_TO_SYS_T_NULL()
-{
-  fosix_proc_to_sys_t rv;
-  rv.msg = FOSIX_MSG_S_NULL();
-  rv.sys_to_proc_msg_ready = 0;
-  return rv;
-}
+
 typedef struct fosix_sys_to_proc_t
 {
   // Message
@@ -61,13 +38,6 @@ typedef struct fosix_sys_to_proc_t
   // And ready signal in opposite direction
   uint1_t proc_to_sys_msg_ready;
 } fosix_sys_to_proc_t;
-fosix_sys_to_proc_t POSIX_SYS_TO_PROC_T_NULL()
-{
-  fosix_sys_to_proc_t rv;
-  rv.msg = FOSIX_MSG_S_NULL();
-  rv.proc_to_sys_msg_ready = 0;
-  return rv;
-}
 
 
 // Byte[0] = Sycall ID
@@ -77,7 +47,7 @@ typedef struct fosix_msg_decoded_t
   syscall_num_t syscall_num;
   uint8_t payload_data[FOSIX_PAYLOAD_SIZE];
 }fosix_msg_decoded_t;
-fosix_msg_decoded_t FOSIX_MSG_DECODED_T_NULL()
+fosix_msg_decoded_t UNKNOWN_MSG()
 {
   fosix_msg_decoded_t rv;
   rv.syscall_num = FOSIX_UNKNOWN;
@@ -90,10 +60,9 @@ fosix_msg_decoded_t FOSIX_MSG_DECODED_T_NULL()
 }
 fosix_msg_decoded_t decode_msg(fosix_msg_s msg_stream)
 {
-  fosix_msg_decoded_t rv;
-  
+  fosix_msg_decoded_t rv = UNKNOWN_MSG();
+
   // First byte is syscall num
-  rv.syscall_num = FOSIX_UNKNOWN;
   //printf("msg.data[0] = %d\n",msg.data[0]);
   if(msg_stream.valid)
   {

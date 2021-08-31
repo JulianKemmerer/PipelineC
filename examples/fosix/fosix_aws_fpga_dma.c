@@ -48,9 +48,6 @@ void fosix_aws_fpga_dma()
   proc_to_sys = proc_to_syss.data[0];
   //
   // Default output values so each state is easier to write
-  sys_to_proc = FOSIX_SYS_TO_PROC_T_NULL();
-  dma_msg_in_ready = 0;
-  dma_msg_out = DMA_MSG_S_NULL();  
   //////////////////////////////////////////////////////////////////////
 
   // REQUEST INPUT TO DMA OUTPUT PATH 

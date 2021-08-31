@@ -42,9 +42,9 @@ void sys_host()
   
   // Outputs
   // Default output values so each state is easier to write
-  fosix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
+  fosix_sys_to_proc_t sys_to_proc;
   uint1_t msg_in_ready = 0;
-  fosix_msg_s msg_out = FOSIX_MSG_S_NULL();
+  fosix_msg_s msg_out;
   //////////////////////////////////////////////////////////////////////
 
   // PROC_TO_SYS MSG OUTPUT PATH

@@ -8,16 +8,6 @@ typedef struct bram_mem_elem_t
 {
 	uint8_t bytes[BRAM_WIDTH];
 } bram_mem_elem_t;
-bram_mem_elem_t BRAM_MEM_ELEM_T_NULL()
-{
-  bram_mem_elem_t rv;
-  fosix_size_t i;
-  for(i=0;i<BRAM_WIDTH;i=i+1)
-  {
-    rv.bytes[i] = 0;
-  }
-  return rv;
-}
 #define BRAM_SIZE (16*1024)
 #define BRAM_DEPTH (BRAM_SIZE/BRAM_WIDTH)
 #define bram_addr_t uint16_t
@@ -57,7 +47,7 @@ void sys_bram()
   
   // Outputs
   // Default output values so each state is easier to write
-  fosix_sys_to_proc_t sys_to_proc = POSIX_SYS_TO_PROC_T_NULL();
+  fosix_sys_to_proc_t sys_to_proc;
   //////////////////////////////////////////////////////////////////////
   
   // BRAM storage
@@ -78,7 +68,7 @@ void sys_bram()
   
   // BRAM input signals defaults
   bram_addr_t addr = 0;
-  bram_mem_elem_t wr_data = BRAM_MEM_ELEM_T_NULL();
+  bram_mem_elem_t wr_data;
   uint1_t wr_en = 0;
   uint1_t valid = 0;
   
@@ -163,7 +153,7 @@ void sys_bram()
     // Just signal valid until ready
     open_resp_t open_resp;
     open_resp.fildes = 0;
-    fosix_msg_decoded_t open_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+    fosix_msg_decoded_t open_resp_msg = UNKNOWN_MSG();
     open_resp_msg.syscall_num = FOSIX_OPEN;
     OPEN_RESP_T_TO_BYTES(open_resp_msg.payload_data, open_resp)
     sys_to_proc.msg.data = decoded_msg_to_msg(open_resp_msg);
@@ -182,7 +172,7 @@ void sys_bram()
       // Output valid response
       write_resp_t write_resp;
       write_resp.nbyte = bram_req_nbyte;
-      fosix_msg_decoded_t write_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+      fosix_msg_decoded_t write_resp_msg = UNKNOWN_MSG();
       write_resp_msg.syscall_num = FOSIX_WRITE;
       WRITE_RESP_T_TO_BYTES(write_resp_msg.payload_data, write_resp)
       sys_to_proc.msg.data = decoded_msg_to_msg(write_resp_msg);
@@ -207,7 +197,7 @@ void sys_bram()
       read_resp_t read_resp;
       read_resp.buf = bram_output.bytes;
       read_resp.nbyte = bram_req_nbyte;
-      fosix_msg_decoded_t read_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+      fosix_msg_decoded_t read_resp_msg = UNKNOWN_MSG();
       read_resp_msg.syscall_num = FOSIX_READ;
       READ_RESP_T_TO_BYTES(read_resp_msg.payload_data, read_resp)
       sys_to_proc.msg.data = decoded_msg_to_msg(read_resp_msg);
@@ -228,7 +218,7 @@ void sys_bram()
     // Just signal valid until ready, no err
     close_resp_t close_resp;
     close_resp.err = 0;
-    fosix_msg_decoded_t close_resp_msg = FOSIX_MSG_DECODED_T_NULL();
+    fosix_msg_decoded_t close_resp_msg = UNKNOWN_MSG();
     close_resp_msg.syscall_num = FOSIX_CLOSE;
     CLOSE_RESP_T_TO_BYTES(close_resp_msg.payload_data, close_resp)
     sys_to_proc.msg.data = decoded_msg_to_msg(close_resp_msg);

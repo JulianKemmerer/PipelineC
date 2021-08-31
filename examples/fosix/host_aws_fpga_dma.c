@@ -12,7 +12,7 @@
 
 fosix_sys_to_proc_t do_syscall_get_resp(fosix_proc_to_sys_t req, dma_msg_t msg)
 {
-  fosix_sys_to_proc_t resp = FOSIX_SYS_TO_PROC_T_NULL();
+  fosix_sys_to_proc_t resp;
   if(req.sys_open.req.valid)
   {
     // OPEN

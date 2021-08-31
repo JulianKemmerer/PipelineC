@@ -40,7 +40,6 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-What the fuck is going on with compile pass orders?
 Silice fun? Is it possible with compiler __clk();
   used recent game thing as example rewritten in clk style?
   Do announcement posts
@@ -53,6 +52,7 @@ First refactor fosix stuff:
 Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
   Hacky sort of const prop across module boundaries? ew?
   ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
+  Do const func args as generics - ex. const loop vars into func - how to progate const values?
 Only syn modules that are used in modules that need pipelining (will need pipeline map of delay)
 Put a risc(v? CHIPS2.0?) core (in pipelinec) along side accelerator in pipeline, + host OS on FOSIX NoC
 Check auto pipeline and clock crossing read+write behavior
@@ -60,7 +60,6 @@ Check auto pipeline and clock crossing read+write behavior
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
-Do const func args as generics - ex. const loop vars into func - how to progate const values
 CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - can sometimes if have recent constant assignments/ref toks
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
@@ -86,7 +85,6 @@ Finish chipscope+virtual io debug thing (write probes) + add w/ pass through reg
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
 Try small python ast parsing based example - Pypeline? haha
-Fix bug of not being able to include auto gen headers in auto gend files
 Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 How to remove excess io regs from middle out sweep?
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
@@ -120,7 +118,6 @@ Add look ahead for built in functions so cast can be inferred
 Remove RESOLVE_CONST_ARRAY_REF from C_AST_REF_TO_TOKENS, and max var ref / var assignement optimize to const ref and const assignment... complicated...
 Consider doing constant optimization as second pass (faster than current way of optimizing as part of first pass?)? How to unroll const for-loop then?
 Pragmas for reset stuff, tag global regs for reset, special clock domain handling stuff with PLL lock and such?
-Maybe can implement variable time loops as PipelineC state machines?? Weird idea Andrew
 Allow resource reuse if can 2x,3x,etc clock a pipeline to accomplish the same 1x,II=1 pipeline task (II<1 means down clocking by 2,3, etc?)
 Try big const ref funcs (not vhdl expr) in modules instead of all in one file where used? removes repeated code for faster elab?
 Built in raw vhdl funcs for array copy / manipulation instead of many const rek tok loops. Built in funcs can return arrays (handled internally) but user can write such funcs  uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N])
@@ -150,6 +147,7 @@ Do more DSP prim functions ideally with backing fabric c code for if on differen
 Do built in Q number types
 Propogate null values for constant folding
 Could make an undefined/Xs constant only meaningful in synthesis
+Fix needing type+name info in clock crossing via two auto gen header includes, array N type .h and clock crossing .h for name
 """
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)

@@ -37,7 +37,7 @@ fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg_stream)
 // System to process response
 fosix_msg_t response_to_msg(fosix_parsed_resp_msg_t resp)
 {
-  fosix_msg_t msg = FOSIX_MSG_T_NULL();
+  fosix_msg_t msg;
   if(resp.syscall_num == FOSIX_OPEN)
   {
     fosix_msg_decoded_t open_resp_msg;

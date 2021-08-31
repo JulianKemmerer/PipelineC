@@ -6,10 +6,6 @@
 // Bytes[1+] are specific to syscall
 
 // Auto generated code for converting to and from bytes
-#include "uint8_t_array_N_t.h"
-#include "uint8_t_bytes_t.h"
-#include "uint32_t_bytes_t.h"
-#include "int32_t_bytes_t.h"
 // Requests
 #include "open_req_t_bytes_t.h"
 #include "write_req_t_bytes_t.h"

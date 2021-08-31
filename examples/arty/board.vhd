@@ -491,12 +491,16 @@ top_inst : entity work.top port map (
         
     -- Each main function's inputs and outputs
     --app_reset_n(0) => rst_n, --i2s_rst_n,
+    ---main_wrapper_return_output(0) => led(0),
+    --main_wrapper_return_output(1) => led(1),
+    --main_wrapper_return_output(2) => led(2),
+    --main_wrapper_return_output(3) => led(3)
     
     -- LEDs
-    --led0_module_return_output(0) => leds_wire(0),
-    --led1_module_return_output(0) => leds_wire(1),
-    --led2_module_return_output(0) => leds_wire(2),
-    --led3_module_return_output(0) => leds_wire(3),
+    --led0_module_return_output(0) => led(0),
+    --led1_module_return_output(0) => led(1),
+    --led2_module_return_output(0) => led(2),
+    --led3_module_return_output(0) => led(3)
     
     -- Switches
     --switches_module_sw => switches_wire,
