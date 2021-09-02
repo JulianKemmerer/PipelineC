@@ -9,7 +9,9 @@
 
 *Please feel free to message - very happy to make PipelineC work for you! Always looking for help as well.* -Julian
 
-Get started by reading the [wiki](https://github.com/JulianKemmerer/PipelineC/wiki).
+# Getting Started
+
+Get started by [reading the wiki](https://github.com/JulianKemmerer/PipelineC/wiki).
 
 # What is PipelineC?
 
