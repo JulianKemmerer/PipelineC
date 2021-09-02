@@ -22,7 +22,8 @@ import DIAMOND
 import OPEN_TOOLS
 import EFINITY
 
-SYN_OUTPUT_DIRECTORY="/home/" + getpass.getuser() + "/pipelinec_syn_output"
+OUTPUT_DIR_NAME = "pipelinec_output"
+SYN_OUTPUT_DIRECTORY=None
 SYN_TOOL = None # Attempts to figure out from part number
 DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 

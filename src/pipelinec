@@ -13,20 +13,31 @@ import C_TO_FSM
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
-default_out_dir = SYN.SYN_OUTPUT_DIRECTORY
 
 # Parse args
 parser = argparse.ArgumentParser(description="PipelineC:")
 parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
                     help=f"C file containing main functions. Default is {default_c_file}.")
-parser.add_argument("--out_dir", type=str, default=default_out_dir,
-                    help=f"Output directory. Default is {default_out_dir}.")
+parser.add_argument("--out_dir", type=str, default=None,
+                    help=f"Output directory. Default is a new directory inside the current directory.")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")             
 args = parser.parse_args()
 
+# Resolve C file arg
+c_file = os.path.abspath(args.c_file)
+
 # Apply arguments to global modules
-SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
+
+# Output dir:
+#   Use what user provided
+#   Or create a new dir for each run by default
+if args.out_dir is not None:
+  SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
+else:
+  # Or create a unique dir for this run in current dir
+  c_filename = os.path.basename(c_file)
+  SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath("./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid()))
 
 print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -40,11 +51,17 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Silice fun? Is it possible with compiler __clk();
-  used recent game thing as example rewritten in clk style?
-  Do announcement posts
-Do video demo
+Default to tool exe in path if there
+Add option to do coarse sweep only from cmd line?
+Default dont put IO regs around single inst funcs in mid out sweep?
+Implement DIAMOND PNR run? (might be IO reg issue from syn?)
+  What params to make popcount not do dumb IO regs?
+Make clk style func subrountines in same func single isnt
+Do announcement of some sort for __clk()
+  Do video demo? guitar i2s audio visualizer of some sort?
 Do more basic tutorials like nandland+hdlbits
+Implement break; in clk step style?
+How does multiple ins and out over time work in clk step style?  (not hdl wrapper)
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
@@ -148,16 +165,15 @@ Do built in Q number types
 Propogate null values for constant folding
 Could make an undefined/Xs constant only meaningful in synthesis
 Fix needing type+name info in clock crossing via two auto gen header includes, array N type .h and clock crossing .h for name
+Uused recent game thing as example rewritten in clk style? hard? boring to go back
 """
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
-# Resolve C file arg
-c_file = os.path.abspath(args.c_file)
+
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 
