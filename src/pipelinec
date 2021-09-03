@@ -20,6 +20,7 @@ parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
                     help=f"C file containing main functions. Default is {default_c_file}.")
 parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
+parser.add_argument("--coarse", help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).", action="store_true")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")             
 args = parser.parse_args()
@@ -51,9 +52,7 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Default to tool exe in path if there
-Add option to do coarse sweep only from cmd line?
-Default dont put IO regs around single inst funcs in mid out sweep?
+Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 Implement DIAMOND PNR run? (might be IO reg issue from syn?)
   What params to make popcount not do dumb IO regs?
 Make clk style func subrountines in same func single isnt
@@ -101,8 +100,7 @@ Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
-Try small python ast parsing based example - Pypeline? haha
-Detect/document function types ...ex. Detect single instance / NO-CONDTIONAL|clock en funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
+Try small python ast parsing based example - Pypeline?
 How to remove excess io regs from middle out sweep?
 File level modules? extern? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
@@ -166,6 +164,7 @@ Propogate null values for constant folding
 Could make an undefined/Xs constant only meaningful in synthesis
 Fix needing type+name info in clock crossing via two auto gen header includes, array N type .h and clock crossing .h for name
 Uused recent game thing as example rewritten in clk style? hard? boring to go back
+Default dont put IO regs around single inst funcs in mid out sweep?
 """
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
@@ -184,7 +183,7 @@ print("================== Adding Timing Information from Synthesis Tool ========
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
 print("================== Beginning Throughput Sweep ================================", flush=True)
-multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state)
+multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state, coarse_only=(args.coarse is True))
 
 print("================== Writing Results of Throughput Sweep ================================", flush=True)
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)

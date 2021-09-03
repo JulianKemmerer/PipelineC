@@ -1733,7 +1733,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_sweep=False):
+def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False): #,skip_coarse_sweep=False, skip_fine_sweep=False):
   for main_func in parser_state.main_mhz:
     if main_func not in parser_state.main_mhz:
       print("Main Function:",main_func,"does not have a set target frequency. Cannot do pipelining throughput sweep!", flush=True)
@@ -1758,15 +1758,17 @@ def DO_THROUGHPUT_SWEEP(parser_state): #,skip_coarse_sweep=False, skip_fine_swee
   # Default sweep state is zero clocks
   sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params)
   
-  # Test coarse only
-  #print("Starting coarse sweep...", flush=True)
-  #if len(parser_state.main_mhz) > 1:
-  #  print("No coarse for you!")
-  #  sys.exit(-1)
-  #inst_sweep_state = InstSweepState()
-  #inst_sweep_state, working_slices = DO_COARSE_THROUGHPUT_SWEEP(list(parser_state.main_mhz.keys())[0], list(parser_state.main_mhz.values())[0],
-  #          inst_sweep_state, parser_state, do_starting_guess=False, do_incremental_guesses=False)
-  #sys.exit(0)
+  # if coarse only
+  if coarse_only:
+    print("Doing coarse sweep only...", flush=True)
+    if len(parser_state.main_mhz) > 1:
+      raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
+      sys.exit(-1)
+    inst_sweep_state = InstSweepState()
+    inst_sweep_state, working_slices, multimain_timing_params.TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(
+      list(parser_state.main_mhz.keys())[0], list(parser_state.main_mhz.values())[0],
+      inst_sweep_state, parser_state)
+    return multimain_timing_params
   
   # Real middle out sweep which includes coarse sweep
   print("Starting middle out sweep...", flush=True)
@@ -1932,7 +1934,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             allowed_worse_results = 1
           print("Allowed worse results in coarse sweep:",allowed_worse_results)
           # Why not do middle out again? All the way down? Because complicated?weird do later
-          sweep_state.inst_sweep_state[func_inst], working_slices = DO_COARSE_THROUGHPUT_SWEEP(func_inst, coarse_target_mhz,
+          sweep_state.inst_sweep_state[func_inst], working_slices, inst_TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(func_inst, coarse_target_mhz,
             sweep_state.inst_sweep_state[func_inst], parser_state, do_starting_guess=True, do_incremental_guesses=True, 
             max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT, stop_at_n_worse_result=allowed_worse_results)
           if not sweep_state.inst_sweep_state[func_inst].met_timing:
@@ -2355,13 +2357,13 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
           
     # Passed timing?
     if inst_sweep_state.met_timing:
-      return inst_sweep_state, working_slices
+      return inst_sweep_state, working_slices, TimingParamsLookupTable
     # Stuck?
     if not made_adj:
       print("Unable to make further adjustments. Failed coarse grain attempt meet timing for this module.")
-      return inst_sweep_state, working_slices 
+      return inst_sweep_state, working_slices, TimingParamsLookupTable 
   
-  return inst_sweep_state, working_slices
+  return inst_sweep_state, working_slices, TimingParamsLookupTable
 
 def GET_SLICE_PER_STAGE(current_slices):
   # Get list of how many slice per stage
