@@ -5,10 +5,23 @@ import SYN
 import VHDL
 import C_TO_LOGIC
 
-FPGA_TOOLCHAIN_PATH = "/media/1TB/Programs/Linux/fpga-toolchain"
-YOSYS_BIN_PATH   = FPGA_TOOLCHAIN_PATH + "/bin"
-NEXTPNR_BIN_PATH = FPGA_TOOLCHAIN_PATH + "/bin"
-GHDL_PREFIX      = FPGA_TOOLCHAIN_PATH + "/lib/ghdl"
+YOSYS_EXE = "yosys"
+NEXT_PNR_EXE = "nextpnr-ecp5"
+GHDL_EXE = "ghdl"
+YOSYS_EXE_PATH = SYN.GET_TOOL_PATH(YOSYS_EXE)
+NEXTPNR_EXE_PATH = SYN.GET_TOOL_PATH(NEXT_PNR_EXE)
+GHDL_EXE_PATH = SYN.GET_TOOL_PATH(GHDL_EXE)
+if (YOSYS_EXE_PATH is not None and 
+    NEXTPNR_EXE_PATH is not None and
+    GHDL_EXE_PATH is not None):
+  YOSYS_BIN_PATH   = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
+  NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
+  GHDL_PREFIX      = os.path.abspath(os.path.dirname(GHDL_EXE_PATH)+"../lib/ghdl")
+else:
+  FPGA_TOOLCHAIN_PATH = "/media/1TB/Programs/Linux/fpga-toolchain"
+  YOSYS_BIN_PATH   = FPGA_TOOLCHAIN_PATH + "/bin"
+  NEXTPNR_BIN_PATH = FPGA_TOOLCHAIN_PATH + "/bin"
+  GHDL_PREFIX      = FPGA_TOOLCHAIN_PATH + "/lib/ghdl"
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
