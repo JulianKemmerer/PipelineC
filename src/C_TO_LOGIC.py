@@ -7460,6 +7460,7 @@ def PARSE_FILE(c_filename):
           
     # All code gen has been done that used nested generation,
     # old style 'base level' code gen and rest of parsing below
+    print("Doing old-style code generation based on PipelineC supported text patterns...", flush=True)
     # Preprocess the file again to pull in generated code
     preprocessed_c_text = preprocess_file(c_filename)
     # Get the C AST again to reflect new generated code
