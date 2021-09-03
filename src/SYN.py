@@ -12,6 +12,13 @@ import getpass
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Lock
 
+def GET_TOOL_PATH(tool_exe_name):
+  from shutil import which
+  w = which(tool_exe_name)
+  if w is not None:
+    return str(w)
+  return None
+
 import C_TO_LOGIC
 import VHDL
 import SW_LIB
@@ -23,7 +30,7 @@ import OPEN_TOOLS
 import EFINITY
 
 OUTPUT_DIR_NAME = "pipelinec_output"
-SYN_OUTPUT_DIRECTORY=None
+SYN_OUTPUT_DIRECTORY = None # Auto created with pid and filename or from user
 SYN_TOOL = None # Attempts to figure out from part number
 DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
@@ -76,6 +83,8 @@ def PART_SET_TOOL(part_str, allow_fail=False):
     
     if SYN_TOOL is not None:
       print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
+
+
 
 
 # These are the parameters that describe how multiple pipelines are timed

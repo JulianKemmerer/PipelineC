@@ -5,7 +5,14 @@ import SYN
 import VHDL
 import C_TO_LOGIC
 
-QUARTUS_PATH = "/media/1TB/Programs/Linux/intelFPGA_lite/20.1/quartus/bin"
+TOOL_EXE = "quartus_sh"
+# Default to env if there
+ENV_TOOL_PATH = SYN.GET_TOOL_PATH(TOOL_EXE)
+if ENV_TOOL_PATH:
+  QUARTUS_SH_PATH = ENV_TOOL_PATH
+  QUARTUS_PATH = os.path.abspath(os.path.dirname(QUARTUS_SH_PATH))
+else:
+  QUARTUS_PATH = "/media/1TB/Programs/Linux/intelFPGA_lite/20.1/quartus/bin"
 
 # Need to know family in addition to part number?
 # Dumb

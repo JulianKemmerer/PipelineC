@@ -5,7 +5,13 @@ import SYN
 import VHDL
 import C_TO_LOGIC
 
-DIAMOND_PATH = "/usr/local/diamond/3.11_x64/bin/lin64/diamondc"
+TOOL_EXE = "diamondc"
+# Default to env if there
+ENV_TOOL_PATH = SYN.GET_TOOL_PATH(TOOL_EXE)
+if ENV_TOOL_PATH:
+  DIAMOND_PATH = ENV_TOOL_PATH
+else:
+  DIAMOND_PATH = "/usr/local/diamond/3.11_x64/bin/lin64/diamondc"
 DIAMOND_TOOL = "synplify"  # lse|synplify  
 # * If changing tool then need to delete FPGA part path_delay_cache dirs to be re synthesized
 # * Might need this to make synplify work on Debian based systems:

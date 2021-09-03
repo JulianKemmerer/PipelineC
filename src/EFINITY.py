@@ -5,7 +5,14 @@ import SYN
 import VHDL
 import C_TO_LOGIC
 
-EFINITY_PATH = "/media/1TB/Programs/Linux/efinity/2021.1/bin"
+TOOL_EXE = "efx_run.py"
+# Default to env if there
+ENV_TOOL_PATH = SYN.GET_TOOL_PATH(TOOL_EXE)
+if ENV_TOOL_PATH:
+  EFINITY_EFX_RUN_PATH = ENV_TOOL_PATH
+  EFINITY_PATH = os.path.abspath(os.path.dirname(EFINITY_EFX_RUN_PATH) + "/../bin")
+else:
+  EFINITY_PATH = "/media/1TB/Programs/Linux/efinity/2021.1/bin"
 
 def PART_TO_FAMILY_TIMING_MODEL(part_str):
   if part_str.upper().startswith("T8"):

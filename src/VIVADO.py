@@ -17,15 +17,20 @@ import SW_LIB
 import MODELSIM
 import SYN
 
-# Default to env if there
-# then fallback to hardcoded 
-ENV_VIVADO_DIR = os.environ.get('XILINX_VIVADO')
-if ENV_VIVADO_DIR:
-  VIVADO_DIR = ENV_VIVADO_DIR
+TOOL_EXE = "vivado"
+# Default to path if there
+ENV_TOOL_PATH = SYN.GET_TOOL_PATH(TOOL_EXE)
+if ENV_TOOL_PATH:
+  VIVADO_PATH = ENV_TOOL_PATH
 else:
-  VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
-
-VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
+  # Environment variable maybe?
+  ENV_VIVADO_DIR = os.environ.get('XILINX_VIVADO')
+  if ENV_VIVADO_DIR:
+    VIVADO_DIR = ENV_VIVADO_DIR
+  else:
+    # then fallback to hardcoded 
+    VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
+  VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
 
 # Do full place and route for timing results
 # for "all" modules or just the "top" module
