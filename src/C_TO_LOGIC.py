@@ -447,6 +447,8 @@ class Logic:
     self.is_fsm_clk_func = False
     self.state_groups = [] # List of lists of state infos
     self.first_user_state = None # First/user entry state
+    self.func_call_name_to_state = dict() # Func call name to lookup of func call state
+    self.func_call_node_to_entry_exit_states = dict() # Same funcs as above, node inst specific entry and exit
   
   
   # Help!
@@ -484,6 +486,8 @@ class Logic:
     rv.is_fsm_clk_func = self.is_fsm_clk_func
     rv.state_groups = self.state_groups[:]
     rv.first_user_state = self.first_user_state
+    rv.func_call_name_to_state = dict(self.func_call_name_to_state)
+    rv.func_call_node_to_entry_exit_states = dict(self.func_call_node_to_entry_exit_states)
     
     return rv
     
@@ -746,6 +750,12 @@ class Logic:
       sys.exit(-1)
     if self.first_user_state != logic_b.first_user_state:
       print("Cant merge first user state")
+      sys.exit(-1)
+    if self.func_call_name_to_state != logic_b.func_call_name_to_state:
+      print("Cant merge func_call_name_to_state")
+      sys.exit(-1)
+    if self.func_call_node_to_entry_exit_states != logic_b.func_call_node_to_entry_exit_states:
+      print("Cant merge func_call_node_to_entry_exit_states")
       sys.exit(-1)
     
     return None

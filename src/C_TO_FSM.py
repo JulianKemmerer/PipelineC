@@ -234,7 +234,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   ''' + fsm_logic.func_name + '''_STATE_t NEXT_CLK_STATE = FSM_STATE;
 '''
   # Get all flow control func call instances
-  flow_ctrl_func_call_nodes = []
+  flow_ctrl_func_call_names = set()
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
     func_call_name = func_call_node.name.name
@@ -243,15 +243,13 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
          func_call_name != INPUT_FUNC and
          func_call_name != YIELD_FUNC and
          func_call_name != INOUT_FUNC):
-      flow_ctrl_func_call_nodes.append(func_call_node)
-  if len(flow_ctrl_func_call_nodes) > 0:
-    text += "  // Wires for subroutine calls\n"
+      flow_ctrl_func_call_names.add(func_call_node.name.name)
+  if len(flow_ctrl_func_call_names) > 0:
+    text += "  // Wires for subroutine fsm calls\n"
     # Write wires for each func
-    for flow_ctrl_func_call_node in flow_ctrl_func_call_nodes:
-      flow_ctrl_func_name = flow_ctrl_func_call_node.name.name
-      flow_ctrl_func_inst = flow_ctrl_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(flow_ctrl_func_call_node)
-      text += "  " + flow_ctrl_func_name + "_INPUT_t " + flow_ctrl_func_inst + "_i = {0};\n"
-      text += "  " + flow_ctrl_func_name + "_OUTPUT_t " + flow_ctrl_func_inst + "_o = {0};\n"
+    for flow_ctrl_func_name in flow_ctrl_func_call_names:
+      text += "  " + flow_ctrl_func_name + "_INPUT_t " + flow_ctrl_func_name + "_i = {0};\n"
+      text += "  " + flow_ctrl_func_name + "_OUTPUT_t " + flow_ctrl_func_name + "_o = {0};\n"
 
   text += '''
   // Handshake+inputs registered
@@ -297,21 +295,20 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       
       # Returning from func call
       if state_info.starts_w_fsm_func_return is not None:
-        text += "    // " + state_info.starts_w_fsm_func_return.name.name + " FUNC CALL RETURN \n"
+        text += "    // " + state_info.starts_w_fsm_func_return.name.name + " " + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.starts_w_fsm_func_return) + " FUNC CALL RETURN \n"
         output_driven_things = state_info.starts_w_fsm_func_return_output_driven_things
         if len(output_driven_things) > 0:
           # Connect func output wires
           # What func is being called?
           called_func_name = state_info.starts_w_fsm_func_return.name.name
-          called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.starts_w_fsm_func_return)
           called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
           # Do outputs
           for output_i,output_port in enumerate(called_func_logic.outputs):
             output_driven_thing_i = output_driven_things[output_i]
             if isinstance(output_driven_thing_i,c_ast.Node):
-              text += "    " + C_AST_NODE_TO_C_CODE(output_driven_thing_i, "", generator, is_lhs=True) + " = " +  called_func_name_inst + "_o." + output_port + ";\n"
+              text += "    " + C_AST_NODE_TO_C_CODE(output_driven_thing_i, "", generator, is_lhs=True) + " = " +  called_func_name + "_o." + output_port + ";\n"
             else:
-              text += "    " + output_driven_thing_i + " = " +  called_func_name_inst + "_o." + output_port + ";\n"
+              text += "    " + output_driven_thing_i + " = " +  called_func_name + "_o." + output_port + ";\n"
         else:
           text += "    // UNUSED OUTPUT = " +  called_func_name + "();\n"
           
@@ -370,35 +367,43 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         
       # Func call entry
       if state_info.ends_w_fsm_func_entry is not None:
-        text += "    // " + state_info.ends_w_fsm_func_entry.name.name + " FUNC CALL ENTRY \n"
+        func_call_node = state_info.ends_w_fsm_func_entry
+        called_func_name = func_call_node.name.name
+        entry_state,exit_state = fsm_logic.func_call_node_to_entry_exit_states[func_call_node]
+        func_call_state = fsm_logic.func_call_name_to_state[called_func_name]
+        text += "    // " + func_call_node.name.name + " " + C_TO_LOGIC.C_AST_NODE_COORD_STR(func_call_node) + " FUNC CALL ENTRY \n"
         input_drivers = state_info.ends_w_fsm_func_entry_input_drivers
         # Connect func input wires, go to func call state
         # What func is being called?
-        called_func_name = state_info.ends_w_fsm_func_entry.name.name
-        called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.ends_w_fsm_func_entry)
         called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
         # Do inputs
         for input_i,input_port in enumerate(called_func_logic.inputs):
           input_driver_i = input_drivers[input_i]
           if isinstance(input_driver_i,c_ast.Node):
-            text += "    " + called_func_name_inst + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
+            text += "    " + called_func_name + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
           else:
-            text += "    " + called_func_name_inst + "_i." + input_port + " = " + input_driver_i + ";"
+            text += "    " + called_func_name + "_i." + input_port + " = " + input_driver_i + ";"
         text += "\n"
+        text += "    // SUBROUTINE STATE NEXT\n"
+        text += "    FSM_STATE = " + func_call_state.name + ";\n";
+        # Set state to return to after func call
+        text += "    // Followed by return state\n"
+        text += "    FUNC_CALL_RETURN_FSM_STATE = " + exit_state.name + ";\n"
+        text += "  }\n"
+        continue
       
       # Func call state
       if state_info.is_fsm_func_call_state is not None:
         called_func_name = state_info.is_fsm_func_call_state.name.name
-        called_func_name_inst = called_func_name + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.is_fsm_func_call_state)
         # ok to use wires driving inputs, not regs (included in func)
         text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' FUNC CALL, known ready
-    ''' + called_func_name_inst + '''_i.input_valid = 1;
-    ''' + called_func_name_inst + '''_i.output_ready = 1;
-    ''' + called_func_name_inst + '''_o = ''' + called_func_name + FSM_EXT + '''(''' + called_func_name_inst + '''_i);
-    if(''' + called_func_name_inst + '''_o.output_valid)
+    ''' + called_func_name + '''_i.input_valid = 1;
+    ''' + called_func_name + '''_i.output_ready = 1;
+    ''' + called_func_name + '''_o = ''' + called_func_name + FSM_EXT + '''(''' + called_func_name + '''_i);
+    if(''' + called_func_name + '''_o.output_valid)
     {
-      // DEFAULT NEXT
-      FSM_STATE = ''' + state_info.always_next_state.name + '''; 
+      // Go to signaled return state
+      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE; 
     }
 '''
         text += "  }\n"
@@ -582,7 +587,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
   
   return states
   
-def GET_STATE_TRANS_LISTS(start_state):
+def GET_STATE_TRANS_LISTS(start_state, parser_state):
   #print("start_state.name",start_state.name,start_state)
   # Branch or pass through default next or clock(ends chain)?
   if start_state.ends_w_clk:
@@ -613,6 +618,16 @@ def GET_STATE_TRANS_LISTS(start_state):
       poss_next_states.add(false_state)
     elif false_state is None and start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?
       poss_next_states.add(start_state.always_next_state) # Default next if no false branch
+  # Multiple returns from single inst fsms
+  elif start_state.is_fsm_func_call_state is not None:
+    func_name = start_state.is_fsm_func_call_state.name.name
+    # Different return state per entry
+    # Dumb search for matching func name
+    for func_call_node in parser_state.existing_logic.func_call_node_to_entry_exit_states:
+      if func_call_node.name.name == func_name:
+        entry_state,exit_state = parser_state.existing_logic.func_call_node_to_entry_exit_states[func_call_node]
+        poss_next_states.add(exit_state)   
+  # Normal single next state
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
     #print(" poss_next_state.name always",start_state.always_next_state.name)
     poss_next_states.add(start_state.always_next_state)
@@ -621,7 +636,7 @@ def GET_STATE_TRANS_LISTS(start_state):
   states_trans_lists = []
   for poss_next_state in poss_next_states:
     start_states_trans_list = [start_state]
-    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state)
+    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state, parser_state)
     for new_states_trans_list in new_states_trans_lists:
       combined_state_trans_list = start_states_trans_list + new_states_trans_list
       states_trans_lists.append(combined_state_trans_list)
@@ -676,8 +691,27 @@ def C_AST_CTRL_FLOW_ASSIGNMENT_TO_STATES(c_ast_node, curr_state_info, next_state
 def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state, output_driven_things=[]):
   states = [] 
 
+  # Current state becomes func entry state if not also returning from func
+  if curr_state_info.starts_w_fsm_func_return is not None: # and curr_state_info.ends_w_fsm_func_entry is not None:
+    if curr_state_info.starts_w_fsm_func_return.name.name == c_ast_node.name.name:
+      # If returning from same func need new state coming from current state
+      old_current_state_info = curr_state_info
+      curr_state_info = FsmStateInfo()
+      curr_state_info.always_next_state = old_current_state_info.always_next_state
+      old_current_state_info.always_next_state = curr_state_info
+      curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_ENTRY"
+      if next_state_info is None:
+        print("No next state entering func ",curr_state_info.name,"from",old_current_state_info.name)
+        sys.exit(-1)
+      # Artifically create a __clk() delay after return to force 
+      # entry state to be next cycle, looking like diff entry to same func call
+      # Makes state transition list work
+      old_current_state_info.ends_w_clk = True
+      states.append(curr_state_info)
+  
   # Set current state to have func entry
   curr_state_info.ends_w_fsm_func_entry = c_ast_node
+  
   # Check if each input uses C_AST_NODE_USES_CTRL_FLOW_NODE
   # Make intermediate wire+states for things that do, get states
   input_drivers = []
@@ -693,22 +727,31 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
       input_drivers.append(input_c_ast_node)
   curr_state_info.ends_w_fsm_func_entry_input_drivers = input_drivers
   
-  # Set next state to be the func call state
-  # Make func call state
-  func_call_state = FsmStateInfo()
-  func_call_state.is_fsm_func_call_state = c_ast_node
-  # Set current state to go to func call state
-  curr_state_info.always_next_state = func_call_state
-  func_call_state.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_SUBROUTINE"
-  if next_state_info is None:
-      print("No next state entering if ",func_call_state.name,"from",curr_state_info.name)
-      sys.exit(-1)
-  func_call_state.always_next_state = next_state_info
-  states.append(func_call_state)
+  # Might be reusing existing func call state
+  func_call_name = c_ast_node.name.name
+  if func_call_name in parser_state.existing_logic.func_call_name_to_state:
+    func_call_state = parser_state.existing_logic.func_call_name_to_state[func_call_name]
+  else:
+    # Make new func call state
+    func_call_state = FsmStateInfo()
+    func_call_state.is_fsm_func_call_state = c_ast_node
+    # Set current state to go to func call state
+    curr_state_info.always_next_state = func_call_state
+    func_call_state.name = func_call_name + "_FSM"
+    if next_state_info is None:
+        print("No next state entering if ",func_call_state.name,"from",curr_state_info.name)
+        sys.exit(-1)
+    func_call_state.always_next_state = next_state_info
+    states.append(func_call_state)
+    
       
   # Make state after curr func, next_state_info, have func return logic
   next_state_info.starts_w_fsm_func_return = c_ast_node
   next_state_info.starts_w_fsm_func_return_output_driven_things = output_driven_things
+  
+  # Record states for func
+  parser_state.existing_logic.func_call_node_to_entry_exit_states[c_ast_node] = (curr_state_info, next_state_info)
+  parser_state.existing_logic.func_call_name_to_state[func_call_name] = func_call_state
 
   return states
 
@@ -876,7 +919,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     all_state_trans_lists = []
     for start_state in start_states:
       try:
-        state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state)
+        state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state, parser_state)
       except RecursionError as re:
         raise Exception(f"Function: {parser_state.existing_logic.func_name} could contain a data-dependent infinite (__clk()-less) loop starting at {start_state.name}")
       all_state_trans_lists += state_trans_lists_starting_at_start_state
