@@ -6,20 +6,20 @@
 // Bytes[1+] are specific to syscall
 
 // Auto generated code for converting to and from bytes
-#include "/home/julian/pipelinec_syn_output/type_array_N_t.h/uint8_t_array_N_t.h/uint8_t_array_N_t.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/uint8_t_bytes_t.h/uint8_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/uint32_t_bytes_t.h/uint32_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/int32_t_bytes_t.h/int32_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_array_N_t.h/uint8_t_array_N_t.h/uint8_t_array_N_t.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/uint8_t_bytes_t.h/uint8_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/uint32_t_bytes_t.h/uint32_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/int32_t_bytes_t.h/int32_t_bytes.h"
 // Requests
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/open_req_t_bytes_t.h/open_req_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/write_req_t_bytes_t.h/write_req_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/read_req_t_bytes_t.h/read_req_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/close_req_t_bytes_t.h/close_req_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/open_req_t_bytes_t.h/open_req_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/write_req_t_bytes_t.h/write_req_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/read_req_t_bytes_t.h/read_req_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/close_req_t_bytes_t.h/close_req_t_bytes.h"
 // Responses
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/open_resp_t_bytes_t.h/open_resp_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/write_resp_t_bytes_t.h/write_resp_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/read_resp_t_bytes_t.h/read_resp_t_bytes.h"
-#include "/home/julian/pipelinec_syn_output/type_bytes_t.h/close_resp_t_bytes_t.h/close_resp_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/open_resp_t_bytes_t.h/open_resp_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/write_resp_t_bytes_t.h/write_resp_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/read_resp_t_bytes_t.h/read_resp_t_bytes.h"
+#include "/home/julian/pipelinec_output/type_bytes_t.h/close_resp_t_bytes_t.h/close_resp_t_bytes.h"
 
 // Process to system request
 fosix_parsed_req_msg_t msg_to_request(fosix_msg_s msg_stream)

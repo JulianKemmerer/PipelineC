@@ -176,7 +176,6 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     # Timing params for this logic
     timing_params = multimain_timing_params.TimingParamsLookupTable[inst_name]
   
-    #print "SYN: FUNC_NAME:", C_TO_LOGIC.LEAF_NAME(Logic.func_name)
     # First create syn/imp directory for this logic
     output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)  
     

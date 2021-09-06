@@ -1,27 +1,7 @@
-/*
-Two async clocks, slow and fast
-where fast is R times faster than slow (slow=100Mhz,fast=250MHz, R=2.5)
-Stream data elements bidirectionally across this domain crossing
-(fast to slow and slow to fast) without bandwidth loss (no flow control on write side required)
-This requires a wider bus on the slow side
-For fast to slow:
-round R up to next integer, ex. N=3
-Over N fast cycles buffer up N elements to write once into an async fifo
-On the read side in the slow domain units of N data elements are read at a time
-```
-      fast domain              d0                  d0
-d0,d1,d2 -> deserialized to -> d1 -> async fifo -> d1  slow domain
-                               d2                  d2
-```
-For slow to fast:
-round R down to the next integer, ex. N=2
-Write N elements at once into an async fifo in the slow domain
-On the read side in the fast domain units of N data elements are read at a time and serialized
-```
-            d0                  d0       fast domain
-slow domain d1 -> async fifo -> d1  -> serialized to -> d0,d1
-```
-*/
+// Send a stream of uint64_t datas across a clock crossing
+// In this example the domains are sync integer ratios and 
+// so the crossing is implemented with 
+// 'volatile' (inserting zeros) de/serializer buffers
 
 #include "compiler.h"
 #include "wire.h"

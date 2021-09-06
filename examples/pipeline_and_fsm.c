@@ -2,10 +2,12 @@
 #include "intN_t.h"
 #include "wire.h"
 
-//Make getting to autopipeline from stateful easier
+// Make getting to autopipeline from stateful easier
 
-//I have func to pipeline f() and I want a stateful f_ctrl() reading the inputs and outputs of f
-//Do global instance and wires macros w/ helper read and write too?
+// I have func to pipeline my_func() and I want a stateful testbench() reading the inputs and outputs of f
+// Do global instance and wires macros w/ helper read and write
+
+// The work to pipeline
 typedef struct my_func_in_t
 {
   int32_t x;
@@ -25,6 +27,7 @@ my_func_out_t my_func(my_func_in_t input)
   return output;
 }
 
+// Helper macros to make a globally visible and wired up instance of the pipeline
 GLOBAL_WIRES_FUNC_DECL(my_inst, my_func_out_t, my_func, my_func_in_t)
 #include "my_func_in_t_array_N_t.h"
 #include "my_func_out_t_array_N_t.h"

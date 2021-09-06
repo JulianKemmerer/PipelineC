@@ -8,13 +8,14 @@
 // 5CGXFC9E7F35C8        Cyclone 5 GX
 // 10M50SCE144I7G        Max 10
 // LFE5U-85F-6BG381C     ECP5U
-// LFE5UM5G-85F-8BG756C  ECP5UM5G
+// LFE5UM5G-85F-8BG756C  ECP5UM5G 
 // ICE40UP5K-SG48        ICE40UP
 // T8F81                 Trion T8 (Xyloni)
 // Ti60F225              Titanium
-//#pragma PART "Ti60F225"
+#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
+// Please see: https://github.com/JulianKemmerer/PipelineC/wiki/Examples
 //#include "examples/aws-fpga-dma/loopback.c"
 //#include "examples/aws-fpga-dma/work.c"
 //#include "examples/fosix/hello_world.c"
@@ -27,224 +28,510 @@
 //#include "examples/arty/src/mnist/neural_network_fsm.c"
 //#include "examples/arty/src/uart/uart_loopback_msg.c"
 //#include "examples/arty/src/blink.c"
-//#include "examples/async_clock_crossing.c"
-//#include "examples/clock_crossing.c"
 //#include "examples/littleriscy/riscv.c"
 //#include "examples/arty/src/eth/work_app.c"
-//#include "examples/blink.c"
 //#include "examples/NexusProofOfWork/NXSTest_syn.c"
 //#include "examples/fir.c"
 //#include "examples/arty/src/i2s/i2s_passthrough_app.c"
 //#include "examples/arty/src/audio/distortion.c"
 //#include "examples/arty/src/i2s/i2s_app.c"
-//#include "examples/pipeline_and_fsm.c"
 //#include "examples/fosix/main_bram_loopback.c"
-//#include "examples/aes/aes.c"
 //#include "examples/groestl/groestl.c"
-#include "examples/fosix/main_game.c"
+//#include "examples/aes/aes.c"
+//#include "examples/async_clock_crossing.c"
+//#include "examples/clock_crossing.c"
+//#include "examples/pipeline_and_fsm.c"
+//#include "examples/fosix/main_game.c"
+#include "examples/blink.c"
 
 
 // Below is a bunch of recent scratch work - enjoy
+
+
+
 /*
-#pragma MAIN_MHZ main 900.0
-float main(float x, float y)
+#include "uintN_t.h"
+
+// Include Arty modules
+// with globally visible port/wires like
+// 'leds' and 'switches'
+#include "examples/arty/src/leds/leds.c"
+#include "examples/arty/src/switches/switches.c"
+
+// Since multiple 'main' instances w/ WIRE_WRITE
+// Identify which instance drives the LEDsfi
+// Just need any part of hierarchical path
+// that can uniquely idenitify an inst
+#pragma ID_INST leds main_1/my_inst[1]
+
+// Full path from main instance on would work too
+
+// A func driving global 'leds' wire
+// and reading global 'switches' wire
+void duplicated_read_write_func()
 {
-  return x + y;
+  static uint4_t leds_reg;
+  // leds = leds_reg;
+  WIRE_WRITE(uint4_t, leds, leds_reg)
+  // leds_reg = switches;
+  WIRE_READ(uint4_t, leds_reg, switches)
+}
+
+#pragma MAIN_MHZ main_0 100.0
+void main_0()
+{
+  #pragma INST_NAME my_inst[0]
+  duplicated_read_write_func();
+}
+
+#pragma MAIN_MHZ main_1 100.0
+void main_1()
+{
+  #pragma INST_NAME my_inst[1]
+  duplicated_read_write_func();
 }
 */
 
 /*
-///
-///
-//READ/RHS OF INPUT implies comb. INPUT READY ASSERTIOn  (does not proceed FMS if not ready)
-//RETURN OF OUTPUT implies comb OUTPUT VALID ASSERTION
+// N instances of the func
+#define N 2
+#pragma MAIN_MHZ rw_n_times 100.0
+void rw_n_times(uint4_t x[N])
+{
+  uint32_t i;
+  for(i=0;i<N;i+=1)
+  {
+    #pragma INST_NAME my_inst i
+    read_write_func(x[i]);
+  }
+}*/
+
+
+/*
+#include "intN_t.h"
+#include "uintN_t.h"
+
+#pragma MAIN func_a
+uint8_t func_a(uint8_t x)
+{
+  // Two instances of func b
+  for(i=0;i<2;i+=1)
+  {
+    #pragma INST_NAME func_b i
+    .. func_b(x) ...
+  }
+}
+
+// A globally visible port/wire
+uint8_t global_wire_b_to_c;
+#pragma WIRE global_wire_b_to_c func_a.func_b[0]
+
+uint8_t func_b(uint8_t x)
+{
+
+  // Driver side of wire
+  WRITE(global_wire_b_to_c, some_value);
+
+}
+uint8_t func_c(...)
+{
+
+  // Reading side of wire
+  some_value = READ(global_wire_b_to_c);
+
+}
+*/
+
+/*
+#pragma PART "LFE5U-45F-8BG256I"
+
+#include "uintN_t.h"
+
+#pragma MAIN_MHZ popcount 440.0
+uint8_t popcount(uint1_t bits[64*12])
+{
+  // Built in binary tree operators on arrays
+  uint8_t result = uint1_array_sum768(bits);
+  return result;
+}
+*/
+
+
+/*
+#include "intN_t.h"
+#include "uintN_t.h"
+#pragma MAIN_MHZ main2 100.0
+
+int32_t main2(uint1_t sel0)
+{
+  int32_t temp;
+  
+  if(sel0)
+  {
+    int32_t unused;
+    unused = sel0 + 1;
+    temp = unused + 1;
+  }
+  else
+  {
+    int32_t unused;
+    unused = 2;
+  }
+  return temp;
+}
+
+
+int32_t main(uint2_t sel,int32_t in0,int32_t in1,int32_t in2,int32_t in3)
+{
+  // Layer 0
+    
+  // Get sel bit
+  uint1_t sel0;
+  sel0 = uint2_0_0(sel);
+
+  int32_t layer0_node0;
+  // Do regular mux
+  if(sel0)
+  {
+    layer0_node0 = in1;
+  }
+  else
+  {
+    layer0_node0 = in0;
+  }
+  
+  int32_t layer0_node1;
+  // Do regular mux
+  if(sel0)
+  {
+    layer0_node1 = in3;
+  }
+  else
+  {
+    layer0_node1 = in2;
+  }
+  
+  // Layer 1
+    
+  // Get sel bit
+  uint1_t sel1;
+  sel1 = uint2_1_1(sel);
+
+  int32_t layer1_node0;
+  // Do regular mux
+  if(sel1)
+  {
+    layer1_node0 = layer0_node1;
+  }
+  else
+  {
+    layer1_node0 = layer0_node0;
+  }
+   
+  return layer1_node0;
+}
+*/
+
+/*
+#include "uintN_t.h"
+typedef struct point_t
+{
+  uint8_t x;
+  uint8_t y;
+}point_t;
+typedef struct square_t
+{
+  point_t tl;
+  point_t bl;
+}square_t;
+//#include "uint8_t_array_N_t.h"
+//#include "uint8_t_bytes_t.h"
+//#include "uint32_t_bytes_t.h"
+#include "square_t_bytes_t.h"
 
 #pragma MAIN_MHZ main 100.0
-#pragma PART "xc7a35ticsg324-1l"
+square_t main(square_t s)
+{
+  return s;
+}
+*/
+
+/*
 #include "uintN_t.h"
-// Inputs 'sampled' at function entry 
-//(input regs maybe with valid+ready handshaking)
-// Return output 'valid' once when fsm reaches return
-//(also maybe with handshaking)
-uint8_t main(uint8_t x)
+#pragma MAIN_MHZ main 100.0
+uint8_t main(uint8_t inc_val, uint1_t inc)
 {
-  __clk();
-  // Equal to input port x 1 cycle ago
-  return x; 
-}
-
-
-typedef enum main_STATE_t{
- // Number of states depends on by number of clk++ in code?
- // and while loops + certain functions are sub state machines
- CLK0, // Entry point?
- CLK1,
-}main_STATE_t;
-typdef struct main_OUTPUT_t
-{
-  uint1_t input_ready;
-  uint8_t RETURN_OUTPUT;
-  uint1_t output_valid;
-}main_OUTPUT_t;
-typdef struct main_INPUT_t
-{
-  uint1_t input_valid;
-  uint8_t x;
-  uint1_t output_ready;
-}main_INPUT_t;
-main_OUTPUT_t main_FSM(main_INPUT_t i)
-{
-  static main_STATE_t main_STATE;
-  // All local vars are regs too 
-  //(none here)
-  main_OUTPUT_t o;
-  o.input_ready = 0;
-  o.RETURN_OUTPUT = 0;
-  o.output_valid = 0;
-  uint8_t RETURN_OUTPUT = 0;
-  
-  if(main_STATE == CLK0)
+  static uint8_t accum = 0;
+  if(inc)
   {
-    // Special first state signals ready, waits for start
-    o.input_ready = 1;
-    if(i.input_valid)
-    {
-      // Nothing to do, next state
-      main_STATE = CLK1;
-    }
+    uint8_t accum = accum + inc_val;
   }
-  else if(main_STATE == CLK1)
-  {
-    // Special last state signals done, waits for ready
-    o.output_valid = 1;
-    if(i.output_ready)
-    {
-      o.RETURN_OUTPUT = i.x;
-      main_STATE = CLK1;
-    }
-  }
-  
-  return o;
-}
-
-// Do case with multiple inputs and outputs over duration of funciton call version
-// 
-
-// Volatile inputs change after each __clk();
-// Such volatile funcs can have a multiple returns
-// (hitting one between  __clk()'s)
-uint8_t main(volatile uint8_t x)
-{
-  // Equal to input port x 'now'/comb logic
-  return x; 
-  __clk();
-  // Equal to input port x 1 cycle later
-  // still 'now'/comb logic wiring
-  return x; 
-}
-
-// Need reading input, on RHS to mean something
-// And multiple returns ?
-
-// Every expression is a sub fsm of 0 or more cycles?
-// Means adding start and done signals to logic from c code?
-* // Need built in valid and output signals used by tool
-// Like fosix syscall io start, input, output done regs
-* // What is RETURN? is it a valid/done signal? built in for FSMs
-// All local variables could be regs if used across __clk++'s ?
-// Inputs sampled/read EACH STAGE/clock
-uint8_t main(uint8_t x)
-{
-  uint8_t f = foo(x);
-  return f;
-  __clk();
-  uint8_t b = bar(f, x); // x value a clock later
-  return b;
-}
-
-main_OUTPUT_t main_FSM(main_INPUT_t i)
-{
-  static main_STATE_t main_STATE;
-  // All local vars are regs too 
-  static uint8_t f;
-  static uint8_t b;
-  static 
-  main_OUTPUT_t o;
-  o.input_ready = 0;
-  o.RETURN_OUTPUT = 0;
-  o.output_valid = 0;
-  uint8_t RETURN_OUTPUT = 0;
-  
-  if(main_STATE == CLK0)
-  {
-    // Special first state signals ready, waits for start
-    o.input_ready = 1;
-    if(i.input_valid)
-    {
-      // If foo is __clk++ function then need to wrap foo usage
-      // For now foo is regular pipelinec single cycle comb function
-      f = foo(i.x);
-      // Next state
-      main_STATE = CLK1;
-    }
-  }
-  else if(main_STATE == CLK1)
-  {
-    b = bar(f, i.x);
-    RETURN_OUTPUT
-    // Next state
-    main_STATE = CLK2;
-  }
-  else if(main_STATE == CLK2)
-  {
-    // Special last state signals done, waits for ready
-    o.output_valid = 1;
-    if(i.output_ready)
-    {
-      o.RETURN_OUTPUT = i.x;
-      main_STATE = CLK1;
-    }
-  }
-  
-  return o;
+  return accum; 
 }
 */
 /*
-uint8_t main(i)
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 100.0
+typedef struct point_t
 {
-  while(i)
+  uint8_t dims[3];
+}point_t;
+typedef struct point_2_t
+{
+  point_t a;
+  point_t b;
+}point_2_t;
+point_2_t main()
+{
+  point_2_t rv = {0};
+  return rv;
+}
+*/
+
+/*
+#include "uintN_t.h"
+uint8_t bar_comb(uint8_t f, uint8_t x)
+{
+  return f + x;
+}
+uint8_t foo_clk_fsm(uint8_t x)
+{
+  static uint8_t accum = 0;
+  accum += x;
+  x = accum;
+  while(x > 0)
   {
-    f = foo(i);
+    x -= 1;
     __clk();
-    b = bar(f, i); // i value a clock later
-    return b;
   }
+  __clk();
+  return accum;
+}
+uint8_t main(uint8_t x)
+{
+  // An FSM that uses __clk() and
+  // takes multiple cycles
+  uint8_t f1 = foo_clk_fsm(x); 
+  // A function without __clk() that
+  // is same cycle comb logic
+  uint8_t b = bar_comb(f1, x);
+  // Second instance is going back to same state
+  uint8_t f2 = foo_clk_fsm(b);
+  return f2;
+}
+// Including this header auto generates a derived
+// finite state machine (in PipelineC) from main_clk_fsm
+#include "main_FSM.h"
+// The top level 'main' wrapper instantiation
+// IO port types from generated code
+#pragma MAIN_MHZ main_wrapper 100.0
+main_OUTPUT_t main_wrapper(main_INPUT_t i)
+{
+  return main_FSM(i);
 }
 */
+
 /*
-// Compiler sees this as a Silice function
-// A big derived fsm
-uint8_t main()
+//#pragma MAIN_MHZ main_FSM 100.0
+#pragma MAIN_MHZ tb 100.0
+void tb()
 {
-  uint8_t led;
+  static uint8_t x;
+  
+  main_INPUT_t i;
+  i.input_valid = 1;
+  i.x = x;
+  i.output_ready = 1;
+  
+  main_OUTPUT_t o = main_FSM(i);
+  
+  if(o.input_ready)
+  {
+    // Next input
+    x += 1;
+  }  
+}
+*/
+
+/*
+#include "uintN_t.h"
+
+// Include Arty leds module
+// with globally visible port/wire 'leds'
+#include "examples/arty/src/leds/leds.c"
+
+void main()
+{
   // a 28 bits unsigned integer register
   uint28_t counter = 0;
-  
-  // How does Silice derive?
-  // "the loop takes exactly one cycle to execute:
-  // we have one increment per cycle at 50 MHz the clock frequency"  
-  while (1) {              // forever
-    // LEDs updated every clock with the 8 most significant bits
-    led = uint28_27_20(counter);
-    counter = counter + 1; // increment counter
-    // If its assumed comb logic unless clocks are inserted
-    // Ex. :=  assign right to left at each rising clock
-    //     ++: wait on clock
-    // How to do that in PipelineC?
-    __clk(); // Or something?
+  while (1) {
+    // LEDs updated every clock
+    // with the 4 most significant bits
+    uint4_t led = uint28_27_24(counter);
+    // Drive the 'leds' global wire
+    WIRE_WRITE(uint4_t, leds, led) // leds = led;
+    counter = counter + 1;
+    __clk();
   }
+}
+// Including this header auto generates a derived
+// finite state machine (in PipelineC) from main
+#include "main_FSM.h"
+// The top level 'main' wrapper instantiation
+// IO port types from generated code
+#pragma MAIN_MHZ main_wrapper 100.0
+void main_wrapper()
+{
+  main_INPUT_t i;
+  i.input_valid = 1;
+  i.output_ready = 1;
+  main_OUTPUT_t o = main_FSM(i);
+}
+*/
+
+/*
+// Output 4b wired to LEDs
+// Regular HDL style
+uint4_t main()
+{
+  // a 28 bits unsigned integer register
+  static uint28_t counter = 0;
+  // LEDs updated every clock
+  // with the 4 most significant bits
+  uint4_t led = uint28_27_24(counter);
+  counter = counter + 1;
   return led;
 }
+*/
+
+/*
+#include "uintN_t.h"
+// Output 4b wired to LEDs
+// Derived FSM style
+uint4_t main()
+{
+  // a 28 bits unsigned integer register
+  uint28_t counter = 0;
+  while (1) {
+    // LEDs updated every clock
+    // with the 4 most significant bits
+    uint4_t led = uint28_27_24(counter);
+    counter = counter + 1;
+    __out(led);
+  }
+}
+// Including this header auto generates a derived
+// finite state machine (in PipelineC) from main
+#include "main_FSM.h"
+// The top level 'main' wrapper instantiation
+// IO port types from generated code
+#pragma MAIN_MHZ main_wrapper 100.0
+uint4_t main_wrapper()
+{
+  main_INPUT_t i;
+  i.input_valid = 1;
+  i.output_ready = 1;
+  main_OUTPUT_t o = main_FSM(i);
+  return o.return_output;
+}
+*/
+
+/*
+#include "uintN_t.h"
+
+uint8_t worker_thread(uint8_t wait_cycles)
+{
+  // Wait some number of cycles then return
+  while(wait_cycles > 0)
+  {
+    wait_cycles -= 1;
+    __clk();
+  }
+  return wait_cycles;
+}
+// Including this header auto generates a derived
+// finite state machine (in PipelineC)
+#include "worker_thread_FSM.h"
+
+// The top level 'main' instantiation
+#pragma MAIN_MHZ main 400.0
+#define NUM_THREADS 10
+uint32_t main()
+{
+  static uint32_t cycle_counter;
+  static uint1_t thread_stopped[NUM_THREADS];
+  uint1_t rv = uint1_array_or10(thread_stopped);
+  // N parallel instances of worker_thread FSM
+  uint32_t i;
+  for(i=0; i <NUM_THREADS; i+=1)
+  {
+    if(!thread_stopped[i])
+    {
+      worker_thread_INPUT_t inputs;
+      inputs.wait_cycles = i;
+      inputs.input_valid = 1;
+      inputs.output_ready = 1;
+      worker_thread_OUTPUT_t outputs = worker_thread_FSM(inputs);
+      if(outputs.input_ready)
+      {
+        printf("Thread %d started in cycle %d\n", i, cycle_counter);
+      }
+      if(outputs.output_valid)
+      {
+        printf("Thread %d ended in cycle %d\n", i, cycle_counter);
+        thread_stopped[i] = 1;
+      }
+    }
+  }
+  cycle_counter += 1;
+  return rv;
+}
+*/
+
+/*
+#include "uintN_t.h"
+#pragma MAIN_MHZ main 400.0
+uint32_t main(uint32_t x)
+{
+  uint32_t rv = {0};
+  if(x > 0)
+  {
+    uint32_t temp;
+    temp = temp + 1;
+    rv = temp + 1;
+  }
+  else
+  {
+    uint32_t temp;
+    temp = temp + 2;
+    rv = temp + 2;
+  }
+  
+  if(x > 1)
+  {
+    uint32_t temp = x + 3;
+    rv = temp + 3;
+  }
+  else
+  {
+    uint32_t temp = x + 4;
+    rv = temp + 4;
+  }
+  
+  if(x > 2)
+  {
+    uint32_t temp = x + 5;
+    rv = temp + 5;
+  }
+  else
+  {
+    uint32_t temp = x + 6;
+    rv = temp + 6;
+  }
+  
+  return rv;
+}
+*/
 
 /*
 // How to un-re-roll differently in time? Aetherling style
@@ -261,7 +548,6 @@ uint8_t main(uint1_t en)
   return accum;
 }
 */
-
 
 /*
 uint8_t the_ram[128];

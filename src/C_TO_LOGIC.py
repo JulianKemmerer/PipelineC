@@ -9,6 +9,7 @@ import hashlib
 import shlex
 import subprocess
 import signal
+import re
 from subprocess import Popen, PIPE
 from collections import OrderedDict
 
@@ -392,6 +393,7 @@ class Logic:
     self.state_regs = dict() # name -> state reg info
     self.uses_nonvolatile_state_regs = False
     self.submodule_instances = dict() # instance name -> logic func_name
+    self.next_user_inst_name = None # User name for func
     self.c_ast_node = None
     # Is this logic a c built in C function?
     self.is_c_built_in = False
@@ -463,6 +465,7 @@ class Logic:
     rv.feedback_vars = set(self.feedback_vars)
     rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
     rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
+    rv.next_user_inst_name = self.next_user_inst_name
     rv.c_ast_node = copy.copy(self.c_ast_node)
     rv.is_c_built_in = self.is_c_built_in
     rv.is_vhdl_func = self.is_vhdl_func
@@ -645,6 +648,13 @@ class Logic:
     self.submodule_instances = UNIQUE_KEY_DICT_MERGE(self.submodule_instances,logic_b.submodule_instances)  
     self.wire_driven_by = UNIQUE_KEY_DICT_MERGE(self.wire_driven_by,logic_b.wire_driven_by)
     
+    # NExt user inst name?
+    if self.next_user_inst_name != logic_b.next_user_inst_name:
+      if self.next_user_inst_name is None:
+        self.next_user_inst_name = logic_b.next_user_inst_name
+      else:
+        raise Exception(f"How to merge next inst names {self.next_user_inst_name} {logic_b.next_user_inst_name}?")
+        
     # WTF MERGE BUG?
     lens = len(self.wire_drives)+ len(logic_b.wire_drives)
     self.wire_drives = DICT_SET_VALUE_MERGE(self.wire_drives,logic_b.wire_drives)
@@ -1716,6 +1726,26 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_stat
     var_name = toks[1]
     parser_state.existing_logic.feedback_vars.add(var_name)
     #print(c_ast_node)
+    
+  # User instance name for next function call
+  if toks[0] == "INST_NAME":    
+    next_inst_name = toks[1]
+    if len(toks) > 2:
+      index_toks = toks[2:]
+      for index_tok in index_toks:
+        # Should be var name, eval as const, like array ref RESOLVE_CONST_ARRAY_REF_TO_LOGIC
+        #print("index_tok",index_tok)
+        res = re.split(r"\.|\[|\]", index_tok)
+        index_ref_roks = tuple(res)
+        #print("index_ref_roks",index_ref_roks)      
+        const_driving_wire = RESOLVE_REF_TOKS_TO_CONSTANT_WIRE(index_ref_roks, c_ast_node, prepend_text, parser_state)
+        if const_driving_wire is None:
+          raise Exception(f"Cannot use non constant values in instance names! {index_tok}")
+        # Get value from this constant
+        maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
+        next_inst_name += "[" + maybe_digit + "]"
+    #print("next_inst_name",next_inst_name)
+    parser_state.existing_logic.next_user_inst_name = next_inst_name
   
   return parser_state.existing_logic
   
@@ -3109,6 +3139,40 @@ def C_TYPE_IS_USER_TYPE(c_type,parser_state):
       
   return user_code
   
+def RESOLVE_REF_TOKS_TO_CONSTANT_WIRE(ref_toks, c_ast_node, prepend_text, parser_state):
+  # Very similar to RESOLVE_CONST_ARRAY_REF_TO_LOGIC
+  
+  # Do a fake C_AST_NODE to logic for subscript
+  
+  # if can trace to constant wire then
+  dummy_wire = "DUMMY_RESOLVE_WIRE"
+  driven_wire_names = [dummy_wire]
+  # This will be removed always?
+  # OK to pre evaluate the subscript because will be evaluated always the same
+  # Will just be driving var ref opr var assign submodules instead of dummy?
+  #parser_state.existing_logic.wire_to_c_type[dummy_wire] = "uint32_t"
+  parser_state.existing_logic = C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_node, driven_wire_names, prepend_text, parser_state)
+  # Is dummy wire driven by constant?
+  const_driving_wire = FIND_CONST_DRIVING_WIRE(dummy_wire, parser_state.existing_logic)
+  
+  # Remove the dummy wire
+  # Fast
+  parser_state.existing_logic.wires.remove(dummy_wire)
+  parser_state.existing_logic.wire_to_c_type.pop(dummy_wire, None)
+  # IO wire is driven by thing
+  driving_wire = parser_state.existing_logic.wire_driven_by[dummy_wire]
+  # Remove io wire from opposite direction
+  all_driven_wires = parser_state.existing_logic.wire_drives[driving_wire]
+  all_driven_wires.remove(dummy_wire)
+  if len(all_driven_wires) > 0:
+    parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wires
+  else:
+    parser_state.existing_logic.wire_drives.pop(driving_wire)
+  # Then remove original direction
+  parser_state.existing_logic.wire_driven_by.pop(dummy_wire)
+  
+  # Const wire might be non if ref toks do not resolve to const
+  return const_driving_wire
   
 # Returns None if not resolved
 # THIS RELYS ON optimizing away constant funcs to const wires in N ARG FUNC logic
@@ -4214,7 +4278,10 @@ def C_AST_NODE_COORD_STR(c_ast_node):
   
   file_coord_str = str(c_ast_node_cord.file) + "_l" + str(c_ast_node_cord.line) + "_c" + str(c_ast_node_cord.column)+hash_ext
   # Get leaf name (just stem file name of file hierarcy)
-  file_coord_str = LEAF_NAME(file_coord_str)
+  toks = file_coord_str.split("/")
+  toks.reverse()
+  file_coord_str = toks[0]
+  #file_coord_str = LEAF_NAME(file_coord_str)
   #file_coord_str = file_coord_str.replace(".","_").replace(":","_")
   #file_coord_str = file_coord_str.replace(":","_")
   # Lose readability for sake of having DOTs mean struct ref in wire names
@@ -4544,8 +4611,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # Get true/false logic
   # Add prepend text to seperate the two branches into paralel combinational logic
   # Rename each driven wire with inst name and _true or _false
-  prepend_text_true = prepend_text  #""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_true"+"/"   # Line numbers should be enough?
-  prepend_text_false = prepend_text  #""#prepend_text+MUX_LOGIC_NAME+"_"+file_coord_str+"_false"+"/" # Line numbers should be enough?
+  prepend_text_true = prepend_text
+  prepend_text_false = prepend_text
   driven_wire_names=[] 
   #
   # Should be able to get away with only deep copying existing_logic
@@ -4862,18 +4929,12 @@ def RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state):
   
 # For things that look like
 # Get the last token (leaf) token when splitting by "/" and sub marker
-def LEAF_NAME(name, do_submodule_split=False):
+def LEAF_NAME(name, do_submodule_split=True):
   new_name = name
   
   # Pick last submodule item 
   if (SUBMODULE_MARKER in name) and do_submodule_split:
     toks = new_name.split(SUBMODULE_MARKER)
-    toks.reverse()
-    new_name = toks[0]  
-  
-  # And last leaf item
-  if "/" in new_name:
-    toks = new_name.split("/")
     toks.reverse()
     new_name = toks[0]
     
@@ -4899,6 +4960,7 @@ def SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_wire_names, prepend_text, parse
 
 
 def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+    func_inst_name,
     prepend_text,
     func_c_ast_node,
     func_base_name,
@@ -4908,10 +4970,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     input_port_names, # Port names on submodule
     output_driven_wire_names,
     parser_state):
-    
-  
-  # Build instance name
-  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
   
   # Dont need to process input nodes with separate parser state since will remove old submodule if optimized away
   
@@ -5299,8 +5357,13 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   @# Then do APPLY_/ SEQ_C    
   '''
   
-  # Build instance name
-  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
+  # User specified func call inst name or build generated one?
+  if type(func_c_ast_node) == c_ast.FuncCall and parser_state.existing_logic.next_user_inst_name is not None:
+    func_inst_name = parser_state.existing_logic.next_user_inst_name
+    parser_state.existing_logic.next_user_inst_name = None # Reset for next
+  else:
+    # Build instance name 
+    func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
   
   # Should not be evaluating c ast node if driver is already known
   for input_i in range(0, len(input_port_names)):
@@ -5311,6 +5374,15 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       print("When it is known that input",input_port_wire," is driven by:", parser_state.existing_logic.wire_driven_by[input_port_wire])
       sys.exit(-1)
   
+  # Try to set input port wire types
+  if func_base_name in parser_state.FuncLogicLookupTable:
+    # Before evaluating input nodes make sure type of port is there so constants can be evaluated
+    # Get types from func defs
+    func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
+    for input_port in func_def_logic_object.inputs:
+      input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port
+      parser_state.existing_logic.wire_to_c_type[input_port_wire] = func_def_logic_object.wire_to_c_type[input_port]
+    
   # Try to determine output type
   # Should be knowable except for mux, which can be inferred
   # Set type for outputs based on func_name (only base name known right now? base name== func name for parsed C coe) if possible
@@ -5369,6 +5441,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
    
   # Is this a constant or reduceable func call?
   const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+            func_inst_name,
             prepend_text,
             func_c_ast_node,
             func_base_name,
@@ -5421,43 +5494,6 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         print(func_inst_name, "port", input_port_name, "mismatched types per func def?",input_driver_type, func_port_type)
         sys.exit(-1)
       #parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = func_port_type
-      
-    ## Do we know the type as passed?
-    #elif input_driver_type is not None:
-    # # Great, save that if needed
-    # if driven_input_wire_name not in parser_state.existing_logic.wire_to_c_type:
-    #   parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
-    
-    '''
-    # Sanity check drive of input port wire type makes sense
-    if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
-      # Set type for this wire by type of wire that drives this
-      # Type of driving wire
-      driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
-      if driving_wire in parser_state.existing_logic.wire_to_c_type:
-        driving_wire_c_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
-        if input_driver_type != driving_wire_c_type:
-          # Allow mismatching uint <= enum
-          if VHDL.C_TYPE_IS_UINT_N(input_driver_type) and C_TYPE_IS_ENUM(driving_wire_c_type, parser_state):
-            pass
-          # Allow integer casting ... eventually think this through
-          elif VHDL.C_TYPES_ARE_INTEGERS([input_driver_type,driving_wire_c_type]):
-            #and VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,driving_wire_c_type) >= VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,input_driver_type) ):
-            pass
-          # Allow arrays of same single dim type if driven wire is large enough
-          
-          
-          else:
-            print("Input index:",i, "(total", len(input_drivers), ")", input_port_names, input_driver_types)
-            print("driven_input_wire_name",driven_input_wire_name)
-            print("driving_wire",driving_wire)
-            print(func_inst_name, "port", input_port_name, "mismatched types?",input_driver_type, driving_wire_c_type)
-            print(func_c_ast_node)
-            print(0/0)
-            sys.exit(-1)
-        #if driven_input_wire_name not in parser_state.existing_logic.wire_to_c_type:
-        # parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = driving_wire_c_type
-    '''
     
     # SAVE TYPE
     parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = input_driver_type
@@ -5472,6 +5508,8 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # need this to see the unconnected wire and rip up form there
     #     ~~~ Akron/Family - Franny/You're Human ~~~
     parser_state.existing_logic.wires.add(output_wire_name)
+    if output_wire_name not in parser_state.existing_logic.wire_to_c_type:
+      parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
     # Finally connect the output of this operation to each of the driven wires
     if len(output_driven_wire_names) > 0:
       parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, output_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
@@ -5806,7 +5844,6 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   not_inst_func_logic = FuncLogicLookupTable[func_name]
   #print "FUNC CALL:",func_name,c_ast_func_call.coord
   func_base_name = func_name
-  func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_func_call)
     
   # N input port names named by their arg name
   # Decompose inputs to N ARG FUNCTION
@@ -5826,30 +5863,11 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   # Assume inputs are in arg order
   for i in range(0, len(not_inst_func_logic.inputs)):
     input_port_name = not_inst_func_logic.inputs[i]
-    input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
     input_c_ast_node = c_ast_func_call.args.exprs[i]
     input_c_type = not_inst_func_logic.wire_to_c_type[input_port_name]  
     input_drivers.append(input_c_ast_node)
     input_driver_types.append(input_c_type)
     input_port_names.append(input_port_name)
-    
-    
-  # Output is type of logic not_inst_func_logic output wire
-  if len(not_inst_func_logic.outputs) > 0:
-    if len(not_inst_func_logic.outputs) != 1:
-      print("Whats going on here multiple outputs??")
-      sys.exit(-1)
-    output_port_name = not_inst_func_logic.outputs[0]
-    output_c_type = not_inst_func_logic.wire_to_c_type[output_port_name]
-    output_wire = func_inst_name+SUBMODULE_MARKER+output_port_name
-    parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
-  
-  # Before evaluating input nodes make sure type of port is there so constants can be evaluated
-  # Get types from func defs
-  func_def_logic_object = FuncLogicLookupTable[func_name]
-  for input_port in func_def_logic_object.inputs:
-    input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port
-    parser_state.existing_logic.wire_to_c_type[input_port_wire] = func_def_logic_object.wire_to_c_type[input_port]  
 
   # Decompose inputs to N ARG FUNCTION
   func_c_ast_node = c_ast_func_call
@@ -7341,23 +7359,6 @@ def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
     nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(child_node, c_ast_type, nodes)
   return nodes
 
-def RECURSIVE_FIND_MAIN_FUNC(func_name, func_name_to_calls, func_names_to_called_from, main_funcs):
-  # Is it main?
-  if func_name in main_funcs:
-    return func_name
-  # Where called from?
-  if func_name in func_names_to_called_from:
-    called_from_funcs = func_names_to_called_from[func_name]
-    # Should only be called once?
-    if len(called_from_funcs) == 1:
-      called_from_func = list(called_from_funcs)[0]
-      return RECURSIVE_FIND_MAIN_FUNC(called_from_func, func_name_to_calls, func_names_to_called_from, main_funcs)
-    else:
-      print("Expected single main func for func, but is called from?",func_name,called_from_func)
-      sys.exit(-1)
-      
-  return None
-
 
 # Returns ParserState
 # TODO make as ParserState then 
@@ -7426,8 +7427,6 @@ def PARSE_FILE(c_filename):
       # Get the C AST
       parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
       #print(parser_state.c_file_ast)
-      # Parse pragmas
-      parse_state = APPEND_PRAGMA_INFO(parser_state)
       # Parse definitions first before code structure
       # Get the parsed enum info
       parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
@@ -7435,6 +7434,8 @@ def PARSE_FILE(c_filename):
       parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
       # Get global state regs (global regs, volatile globals) info
       parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
+      # Parse pragmas
+      parse_state = APPEND_PRAGMA_INFO(parser_state)
       # Build primative map of function use
       parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
       # Get local state reg info
@@ -7617,6 +7618,7 @@ class StateRegInfo:
     self.init = None # c ast node
     self.is_volatile = False
     self.is_static = False
+    self.path_id = None # Use associated path id, for clk cross
 
 def GET_GLOBAL_STATE_REG_INFO(parser_state):
   # Read in file with C parser and get function def nodes
@@ -7693,12 +7695,24 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
         
   return parser_state
   
+def RECURSIVE_FIND_MAIN_FUNCS(func_name, func_name_to_calls, func_names_to_called_from, main_funcs):
+  # Is it main?
+  if func_name in main_funcs:
+    return set([func_name])
+  rv = set()
+  # Where called from?
+  if func_name in func_names_to_called_from:
+    called_from_funcs = func_names_to_called_from[func_name]
+    for called_from_func in called_from_funcs:
+      rv |= RECURSIVE_FIND_MAIN_FUNCS(called_from_func, func_name_to_calls, func_names_to_called_from, main_funcs)      
+  return rv
+  
   
 class ClkCrossVarInfo():
   def __init__(self):
-    self.write_read_main_funcs = (None,None)
-    self.write_read_sizes = (None,None)
+    self.write_read_main_funcs = ([],[])
     self.write_read_funcs = (None,None)
+    self.write_read_sizes = (None,None)
     self.flow_control = False
         
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state): 
@@ -7748,19 +7762,20 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   #print("var_names",var_names)
   #print("var_to_read_func",var_to_read_func)
   #print("var_to_write_func",var_to_write_func)
-  var_to_rw_main_funcs = dict()
+  var_to_rw_main_funcs = dict() # ([read,mains],[write,mains])
   for var_name in var_names:
+    var_to_rw_main_funcs[var_name] = (set(),set())
     read_func_name = None
     if var_name in var_to_read_func:
       read_func_name = var_to_read_func[var_name]
     write_func_name = None
     if var_name in var_to_write_func:
       write_func_name = var_to_write_func[var_name]
-    read_containing_func = None
-    write_containing_func = None
-    read_main_func = None
-    write_main_func = None
-    # Search for container
+    read_containing_funcs = set()
+    write_containing_funcs = set()
+    read_main_funcs = set()
+    write_main_funcs = set()
+    # Search for what container funcs call this read and write funcs
     for func_name in parser_state.func_name_to_calls:
       # Skip looking inside funcitons that have a _FSM copy
       fsm_dup_func = func_name+C_TO_FSM.FSM_EXT
@@ -7769,87 +7784,94 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       called_funcs = parser_state.func_name_to_calls[func_name]
       # Read
       if read_func_name in called_funcs:
-        if read_containing_func is not None:
-          if read_containing_func != func_name:
-            print("Multiple uses of",read_func_name,"?",read_containing_func,func_name)
-            sys.exit(-1)
-        else:
-          read_containing_func = func_name
-        
+        read_containing_funcs.add(func_name)
+        read_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(func_name, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+              
       # Write
       if write_func_name in called_funcs:
-        if write_containing_func is not None:
-          if write_containing_func != func_name:
-            print("Multiple uses of",write_func_name,"?",write_containing_func,func_name)
-            sys.exit(-1)
-        else:
-          write_containing_func = func_name
-      
-      # Recursively lookup main_func - might fail due to duplicate FSM funcs - so check and then break?
-      read_main_func = RECURSIVE_FIND_MAIN_FUNC(read_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
-      write_main_func = RECURSIVE_FIND_MAIN_FUNC(write_containing_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
-      if read_main_func is not None and write_main_func is not None:
-        break
+        write_containing_funcs.add(func_name)
+        write_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(func_name, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     
     # Final check per clock cross var
-    if write_main_func is None:
-      print("Problem finding write main functions for",var_name,"clock crossing: write, read:", write_containing_func,",",read_containing_func)
+    if len(write_main_funcs) == 0:
+      print("Warning: Problem finding write side main functions for",var_name)
       #print("Missing or incorrect #pragma MAIN_MHZ ?")
       #sys.exit(-1)
-    var_to_rw_main_funcs[var_name] = (read_main_func,write_main_func)
+    var_to_rw_main_funcs[var_name] = (read_main_funcs,write_main_funcs)
     
-    
+  
   # Do infer loop slow thing for now
   inferring = True
+  # the single mhz,group read+write side data
+  var_to_rw_mhz_groups = dict()
   while inferring:
     inferring = False
     for var_name in var_to_rw_main_funcs:
-      read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
-      #if read_main_func is None or write_main_func is None:
-      #  continue
+      read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
       read_func_name = var_to_read_func[var_name]
       write_func_name = var_to_write_func[var_name]
-      read_mhz = None
-      read_group = None
-      if read_main_func in parser_state.main_mhz:
-        read_mhz = parser_state.main_mhz[read_main_func]
-        read_group = parser_state.main_clk_group[read_main_func]
+      
+      # Can only be one write side mhz,group
+      write_mhz_group_tuples = set()
       write_mhz = None
       write_group = None
-      if write_main_func in parser_state.main_mhz:
-        write_mhz = parser_state.main_mhz[write_main_func]
-        write_group = parser_state.main_clk_group[write_main_func]
-      # Infer freqs to match if possible and same groups
-      if read_main_func is not None and read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
-        print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
-        parser_state.main_mhz[read_main_func] = write_mhz
-        parser_state.main_clk_group[read_main_func] = write_group
-        if read_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[read_main_func] is None:
-          parser_state.main_syn_mhz[read_main_func] = write_mhz
-        inferring = True
-      elif write_main_func is not None and read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
-        print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
-        parser_state.main_mhz[write_main_func] = read_mhz
-        parser_state.main_clk_group[write_main_func] = read_group
-        if write_main_func not in write_main_func or parser_state.main_syn_mhz[write_main_func] is None:
-          parser_state.main_syn_mhz[write_main_func] = read_mhz
-        inferring = True
-  
+      for write_main_func in write_main_funcs: 
+        if write_main_func in parser_state.main_mhz:
+          write_mhz = parser_state.main_mhz[write_main_func]
+          write_group = parser_state.main_clk_group[write_main_func]
+          write_mhz_group_tuples.add((write_mhz,write_group))
+      if len(write_mhz_group_tuples) > 1:
+        raise Exception(f"Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!")
+      if len(write_mhz_group_tuples) == 1:
+        write_mhz,write_group = list(write_mhz_group_tuples)[0]
+      
+      # Can only be one read side mhz,group
+      read_mhz_group_tuples = set()
+      read_mhz = None
+      read_group = None
+      for read_main_func in read_main_funcs:
+        if read_main_func in parser_state.main_mhz:
+          read_mhz = parser_state.main_mhz[read_main_func]
+          read_group = parser_state.main_clk_group[read_main_func]
+          read_mhz_group_tuples.add((read_mhz,read_group))
+      if len(read_mhz_group_tuples) > 1:
+        raise Exception(f"Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!")
+      if len(read_mhz_group_tuples) == 1:
+        read_mhz,read_group = list(read_mhz_group_tuples)[0]
+     
+      # Infer from each side
+      for read_main_func in read_main_funcs:
+        # Infer freqs to match if possible and same groups
+        if read_main_func is not None and read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
+          print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
+          read_mhz = write_mhz
+          parser_state.main_mhz[read_main_func] = read_mhz
+          read_group = write_group
+          parser_state.main_clk_group[read_main_func] = read_group
+          if read_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[read_main_func] is None:
+            parser_state.main_syn_mhz[read_main_func] = read_mhz
+          inferring = True
+      for write_main_func in write_main_funcs: 
+        if write_main_func is not None and read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
+          print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
+          write_mhz = read_mhz
+          parser_state.main_mhz[write_main_func] = write_mhz
+          write_group = read_group
+          parser_state.main_clk_group[write_main_func] = write_group
+          if write_main_func not in write_main_func or parser_state.main_syn_mhz[write_main_func] is None:
+            parser_state.main_syn_mhz[write_main_func] = write_mhz
+          inferring = True
+          
+      # Finally record mhz,group if set
+      if write_mhz is not None: # OK to have disconnected read side, read_mhz is not None and 
+        var_to_rw_mhz_groups[var_name] = ( (read_mhz,read_group) , (write_mhz, write_group) ) 
+          
+
   # Then loop to construct each clock crossings info
   for var_name in var_names:
-    # Get main funcs and mhz
-    read_main_func,write_main_func = None,None
-    read_mhz,write_mhz = None,None
-    read_group,write_group = None,None
-    if var_name in var_to_rw_main_funcs:
-      read_main_func,write_main_func = var_to_rw_main_funcs[var_name]
-      if read_main_func is not None:
-        read_mhz = parser_state.main_mhz[read_main_func]
-        read_group = parser_state.main_clk_group[read_main_func]
-      if write_main_func is not None:
-        write_mhz = parser_state.main_mhz[write_main_func]
-        write_group = parser_state.main_clk_group[write_main_func]
-    # Match mhz for disconnected read side
+    ( (read_mhz,read_group) , (write_mhz, write_group) ) = var_to_rw_mhz_groups[var_name] 
+    read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
+    # Match mhz for disconnected read side - needed here?
     if write_mhz is not None and read_mhz is None:
       read_mhz = write_mhz
     # Sanity check
@@ -7909,7 +7931,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()
     parser_state.clk_cross_var_info[var_name].flow_control = flow_control
     parser_state.clk_cross_var_info[var_name].write_read_funcs = (write_func_name,read_func_name)
-    parser_state.clk_cross_var_info[var_name].write_read_main_funcs = (write_main_func,read_main_func)
+    parser_state.clk_cross_var_info[var_name].write_read_main_funcs = (write_main_funcs,read_main_funcs)
     parser_state.clk_cross_var_info[var_name].write_read_sizes = (write_size, read_size)
 
   '''
@@ -8340,10 +8362,24 @@ def APPEND_PRAGMA_INFO(parser_state):
       thing = toks[1]
       parser_state.marked_onehot.add(thing)
       
+    # ID_INST
+    elif name=="ID_INST":
+      # note global var clk cross id is associated with specific instance
+      toks = pragma.string.split(" ")
+      var_name = toks[1]
+      path_id = toks[2]
+      state_reg_info = parser_state.global_state_regs[var_name]
+      state_reg_info.path_id = path_id
+      
     # FEEDBACK
     elif name=="FEEDBACK":
       # Not handled here, done in func def parsing
       pass
+      
+    # INST_NAME
+    elif name=="INST_NAME":
+      # Not handled here, done in func def parsing
+      pass    
     
     else:
       print("Unhandled pragma:", name, pragma.coord)

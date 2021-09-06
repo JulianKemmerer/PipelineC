@@ -1348,6 +1348,8 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     # Standard sdc like constraints
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
+      if clock_mhz is None:
+        raise Exception(f"No frequency associated with clock {clock_name}! (Missing MAIN_MHZ?)")
       ns = (1000.0 / clock_mhz)
       f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
       
@@ -1723,11 +1725,12 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
       start_info = parser_state.clk_cross_var_info[start_inst]
       end_info = parser_state.clk_cross_var_info[end_inst]
       # Start read and end write must be same main
-      start_write_main, start_read_main = start_info.write_read_main_funcs
-      end_write_main, end_read_main = end_info.write_read_main_funcs
+      start_write_mains, start_read_mains = start_info.write_read_main_funcs
+      end_write_mains, end_read_mains = end_info.write_read_main_funcs
       #print(start_read_main,end_write_main)
-      if start_read_main == end_write_main:
-        main_insts.add(start_read_main)
+      in_both_mains = start_read_mains & end_write_main
+      if len(in_both_mains) > 0:
+        main_insts |= in_both_mains
         
   return main_insts
 
@@ -3001,20 +3004,4 @@ def GET_ABS_SUBMODULE_STAGE_WHEN_COMPLETE(submodule_inst_name, inst_name, logic,
   used = GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, inst_name, logic, parser_state, TimingParamsLookupTable)
   
   return used + TimingParamsLookupTable[submodule_inst_name].GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  
-def GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME(wire_write_pipe_var_name, logic):
-  # Reg name can be wire name or submodule and port
-  #print "GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME", wire_reg_name
-  # Check for submodule inst in name
-  for submodule_inst_name in logic.submodule_instances:
-    if C_TO_LOGIC.LEAF_NAME(submodule_inst_name) in wire_write_pipe_var_name:
-      # Port name is without inst name
-      port_name = wire_write_pipe_var_name.replace(C_TO_LOGIC.LEAF_NAME(submodule_inst_name)+"_", "")
-      wire_name = submodule_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + port_name
-      return wire_name
-      
-  # Not a submodule port wire 
-  print("GET_WIRE_NAME_FROM_WRITE_PIPE_VAR_NAME Not a submodule port wire ?")
-  print("wire_write_pipe_var_name",wire_write_pipe_var_name)
-  sys.exit(-1)  
 
