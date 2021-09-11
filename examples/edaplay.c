@@ -1,33 +1,41 @@
+// Arbitrary bit width uints
 #include "uintN_t.h"
 
-uint8_t my_counter(uint1_t reset, uint1_t load, uint8_t val)
+// Counting module, decrements each clock if not loading/resetting
+uint8_t my_count_down(uint1_t reset, uint1_t load, uint8_t val)
 {
-  static uint8_t counter;
-  uint8_t rv = counter;
-  counter += 1;
+  static uint8_t count;
+  uint8_t rv = count;
+  count -= 1;
   if(load)
   {
-    counter = val;
+    count = val;
   }
   if(reset)
   {
-    counter = 0;
+    count = 0;
   }
   return rv;
 }
 
-
 // Return 1 bit flag signaling testbench is done
 #pragma MAIN_MHZ my_test_bench 100.0
+// Test setting count to N and waiting N clocks then checking for zero count
+#define VAL 10
 uint1_t my_test_bench()
 {
-  static uint8_t clk_count = 0;
+  // Counter reg to do reset, then wait some
+  static uint8_t clk_count;
+  // Reg holding the expecected time of count down finish
+  static uint8_t clk_count_end;
+  // Record if passed test or not with flag reg
   static uint8_t pass;
+  // Signals into my_counter
   uint1_t reset;
   uint1_t load;
-  uint8_t val;
   uint1_t done;
 
+  // Use first two cycles to reset and load counter
   if(clk_count==0)
   {
     reset = 1;
@@ -35,20 +43,31 @@ uint1_t my_test_bench()
   else if(clk_count==1)
   {
     load = 1;
-    val = 10;
+    clk_count_end = clk_count + VAL + 1;
   }
   
-  uint8_t the_count = my_counter(reset, load, val);
+  // The instance of your counter
+  uint8_t the_count = my_count_down(reset, load, VAL);
   
-  if(clk_count >= 10)
+  // Wait a little to check at expected end time
+  if(clk_count == clk_count_end)
   {
-    pass = 0;
-    if(the_count==(clk_count-1))
+    // Stop sim
+    done = 1;
+    
+    // Check if countdown completed
+    if(the_count==0)
     {
       pass = 1;
+      printf("The test passed!\n");
     }
-    done = 1;
+    else
+    {
+      pass = 0;
+      printf("The test failed!\n");
+    }
   }
   clk_count+=1;
+  
   return done;
 }
