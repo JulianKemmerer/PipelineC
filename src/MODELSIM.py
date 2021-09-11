@@ -13,8 +13,16 @@ import SW_LIB
 import SYN
 import VIVADO
 
-#MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim"
-MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
+
+
+# Default to env if there
+TOOL_EXE = "vsim"
+ENV_TOOL_PATH = SYN.GET_TOOL_PATH(TOOL_EXE)
+if ENV_TOOL_PATH:
+  MODELSIM_PATH = ENV_TOOL_PATH
+else:
+  #MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim"
+  MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
 
 MODEL_SIM_INI_TEXT='''
 ; Copyright 1991-2017 Mentor Graphics Corporation
@@ -600,25 +608,9 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
   # #######################################################################################################
   
   # Get all vhd files in syn output
-  vhd_files = []
-  for root, dirs, filenames in os.walk(SYN.SYN_OUTPUT_DIRECTORY):
-    for f in filenames:
-      if f.endswith(".vhd"):
-        #print "f",f
-        fullpath = os.path.join(root, f)
-        abs_path = os.path.abspath(fullpath)
-        #print "fullpath",fullpath
-        #f
-        if ( (root == SYN.SYN_OUTPUT_DIRECTORY + "/main") and
-           f.startswith("main_") and f.endswith("CLK.vhd") ):
-          clks = int(f.replace("main_","").replace("CLK.vhd",""))
-          if clks==latency:
-            print("Using top:",abs_path)
-            vhd_files.append(abs_path)
-        else:
-          vhd_files.append(abs_path)
-  # DO FILE to execute:
+  vhd_files = SIM.GET_SIM_FILES(latency=0)
   
+  # .do FILE to execute:
   proj_name = "pipelinc_proj"
   proj_dir = SYN.SYN_OUTPUT_DIRECTORY + "/"
   text = ""
