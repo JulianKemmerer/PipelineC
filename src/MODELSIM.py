@@ -7,6 +7,7 @@ import math
 import hashlib
 import copy
 
+import SIM
 import C_TO_LOGIC
 import VHDL
 import SW_LIB
