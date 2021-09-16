@@ -18,13 +18,15 @@ else:
 # Dumb
 # SAINT MOTEL - "Daydream/Wetdream/Nightmare"
 def PART_TO_FAMILY(part_str):
-  if part_str.upper() == "EP2AGX45CU17I3":
+  if part_str.upper().startswith("EP2A"): #GX45CU17I3":
     return "Arria II GX"
-  elif part_str.upper() == "10CL120ZF780I8G":
+  elif part_str.upper().startswith("EP4C"): #E22F17C6":
+    return "Cyclone IV E"
+  elif part_str.upper().startswith("10C"): #120ZF780I8G":
     return "Cyclone 10 LP"
-  elif part_str.upper() == "5CGXFC9E7F35C8":
+  elif part_str.upper().startswith("5C"): #GXFC9E7F35C8":
     return "Cyclone"
-  elif part_str.upper() == "10M50SCE144I7G":
+  elif part_str.upper().startswith("10M"): #50SCE144I7G":
     return "MAX 10"
   else:
     print("What family is part'",part_str,"from? Edit QUARTUS.py.", flush=True)
