@@ -1,6 +1,6 @@
-// Similar to clock_crossing.c except that instread of 
-// data width ratioed clock crossing stream,
-// this used same size read and write ports on an async fifo
+// Similar to clock_crossing.c except that instead of 
+// data width integer ratioed clock crossing stream,
+// this uses same size read and write ports on an async fifo
 
 #include "compiler.h"
 #include "wire.h"
@@ -11,6 +11,8 @@
 
 #include "uintN_t.h"
 
+// Write+read 2 'datas' in/out the fifo at a time
+// (port sizes on each side of async fifo)
 #define data_t uint8_t
 #define DATAS_PER_ITER 2
 #define fast_to_slow_WRITE_N fast_to_slow_WRITE_2
@@ -18,10 +20,12 @@
 #define slow_to_fast_WRITE_N slow_to_fast_WRITE_2
 #define fast_to_slow_READ_N fast_to_slow_READ_2
 
-data_t fast_to_slow[4];
+// Fifo depth=4
+data_t fast_to_slow[4]; 
 #include "fast_to_slow_clock_crossing.h" // Auto generated
 
-data_t slow_to_fast[4];
+// Fifo depth=4
+data_t slow_to_fast[4]; 
 #include "slow_to_fast_clock_crossing.h" // Auto generated
 
 void fast(uint1_t reset)

@@ -3332,7 +3332,8 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Struct
         # Sanity check
         if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
-          print("Struct ref tok but not struct type?", remaining_toks,c_ast_ref.coord)
+          print("Struct ref tok but not struct type?", remaining_toks, current_c_type, c_ast_ref.coord)
+          print(parser_state.struct_to_field_type_dict)
           sys.exit(-1)
         field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
         if next_tok not in field_type_dict:
@@ -7194,9 +7195,17 @@ class ParserState:
     self.func_marked_debug = set()
     self.marked_onehot = set()
     self.part = None
+    self.io_pairs = set()
     
     # Clock crossing info
     self.clk_cross_var_info = dict() # var name -> clk cross var info
+    self.arb_handshake_infos = set()
+    
+    # Generated header info
+    # FSM funcs
+    self.func_fsm_header_included = set()
+    # SINGLE inst funcs
+    self.func_single_inst_header_included = set()
 
   def DEEPCOPY(self):
     # Fuck me how many times will I get caught with objects getting copied incorrectly?
@@ -7238,8 +7247,13 @@ class ParserState:
     rv.func_marked_blackbox = set(self.func_marked_blackbox)
     rv.marked_onehot = set(self.marked_onehot)
     rv.part = self.part
+    rv.io_pairs = set(self.io_pairs)
     
-    self.clk_cross_var_info = dict(self.clk_cross_var_info)
+    rv.clk_cross_var_info = dict(self.clk_cross_var_info)
+    rv.arb_handshake_infos = set(self.arb_handshake_infos)
+    
+    rv.func_fsm_header_included = set(self.func_fsm_header_included)
+    rv.func_single_inst_header_included = set(self.func_single_inst_header_included)
     
     return rv
     
@@ -7399,11 +7413,11 @@ def PARSE_FILE(c_filename):
             inital_missing_files.append(f)
         if len(inital_missing_files) > 0:
           print("Generating code to get through first round of preprocessing...", flush=True)
-          print("Generating: ",inital_missing_files, flush=True)
+          print("Trying to generate: ",inital_missing_files, flush=True)
           # Code generate empty to-be-generated header files 
           # so initial preprocessing can happen
           # Then do repeated re-parsing as code gen continues
-          SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files)
+          SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files, parser_state)
       
       # Preprocess the file and generate more code maybe?
       # Generation return list of files that need continued generation
@@ -7412,7 +7426,7 @@ def PARSE_FILE(c_filename):
         print("Generating code based on PipelineC supported C text patterns...", flush=True)
         preprocessed_c_text = preprocess_file(c_filename)
         # Code gen based purely on preprocessed C text
-        new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text, regenerate_files)
+        new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text, regenerate_files, parser_state)
         if (new_regenerate_files | regenerate_files) != regenerate_files:
           print("Re/generating: ", new_regenerate_files, flush=True)
           # Restart pass on new files and current pass files
@@ -7424,6 +7438,7 @@ def PARSE_FILE(c_filename):
       print("Parsing non-function definitions...", flush=True)
       # Preprocess the main file to get single block of text
       preprocessed_c_text = preprocess_file(c_filename)
+      #print("preprocessed_c_text",preprocessed_c_text)
       # Get the C AST
       parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
       #print(parser_state.c_file_ast)
@@ -7432,6 +7447,7 @@ def PARSE_FILE(c_filename):
       parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
       # Get the parsed struct def info
       parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
+      #print("struct_to_field_type_dict",parser_state.struct_to_field_type_dict)
       # Get global state regs (global regs, volatile globals) info
       parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
       # Parse pragmas
@@ -7442,6 +7458,7 @@ def PARSE_FILE(c_filename):
       parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
       # Elborate what the clock crossings look like
       parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
+      parser_state = DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
       # Get FSM clock func logics only - dont really parse their function body in details, 
       # different and needs to be before regular func parsing below
       print("Parsing derived fsm logic functions...", flush=True)
@@ -7714,6 +7731,7 @@ class ClkCrossVarInfo():
     self.write_read_funcs = (None,None)
     self.write_read_sizes = (None,None)
     self.flow_control = False
+    self.is_part_of_arb_handshake = False
         
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state): 
   # Regex search c_text for pair of write and read funcs
@@ -7751,12 +7769,12 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   for var_name in all_var_names:
     if var_name in parser_state.global_state_regs:
       if var_name not in var_to_write_func:
-        print("Missing clock cross write function for clock crossing named:",var_name)
-        sys.exit(-1)
+        print("Warning: Missing clock cross write function for clock crossing named:",var_name)
+        #sys.exit(-1)
       # Make up a read func if needed (unconnected output)
       if var_name not in var_to_read_func:
         var_to_read_func[var_name] = var_to_write_func[var_name].replace("_WRITE","_READ")
-      var_names.append(var_name)    
+      var_names.append(var_name)
   
   # Find and read and write main funcs
   #print("var_names",var_names)
@@ -7807,6 +7825,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   while inferring:
     inferring = False
     for var_name in var_to_rw_main_funcs:
+      # Skip temp during code gen disconnected write side
+      if var_name not in var_to_write_func:
+        continue
       read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
       read_func_name = var_to_read_func[var_name]
       write_func_name = var_to_write_func[var_name]
@@ -7869,6 +7890,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
 
   # Then loop to construct each clock crossings info
   for var_name in var_names:
+    # Skip temp during code gen disconnected write side
+    if var_name not in var_to_rw_mhz_groups:
+      continue
     ( (read_mhz,read_group) , (write_mhz, write_group) ) = var_to_rw_mhz_groups[var_name] 
     read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
     # Match mhz for disconnected read side - needed here?
@@ -7970,6 +7994,33 @@ def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
     var_name = func_name.split("_WRITE")[0]
     
   return var_name
+  
+  
+class ArbHandshakeInfo:
+  def __init__(self):
+    self.input_var_name = None
+    self.input_clk_cross_var_info = None
+    self.output_var_name = None
+    self.output_clk_cross_var_info = None
+    
+# return parser state with updated info
+def DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
+  
+  parser_state.arb_handshake_infos = set()
+
+  for i_var,o_var in parser_state.io_pairs:
+    if i_var in parser_state.clk_cross_var_info and o_var in parser_state.clk_cross_var_info:
+      arb_handshake_info = ArbHandshakeInfo()
+      arb_handshake_info.input_var_name = i_var
+      arb_handshake_info.output_var_name = o_var
+      arb_handshake_info.input_clk_cross_var_info = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name]
+      arb_handshake_info.input_clk_cross_var_info.is_part_of_arb_handshake = True
+      arb_handshake_info.output_clk_cross_var_info = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name]
+      arb_handshake_info.output_clk_cross_var_info.is_part_of_arb_handshake = True
+      
+      parser_state.arb_handshake_infos.add(arb_handshake_info)
+  
+  return parser_state
 
 class EnumInfo():
   def __init__(self):
@@ -8370,6 +8421,13 @@ def APPEND_PRAGMA_INFO(parser_state):
       path_id = toks[2]
       state_reg_info = parser_state.global_state_regs[var_name]
       state_reg_info.path_id = path_id
+      
+    # IO_PAIR
+    elif name=="IO_PAIR":
+      toks = pragma.string.split(" ")
+      i_wire = toks[1]
+      o_wire = toks[2]
+      parser_state.io_pairs.add((i_wire,o_wire))
       
     # FEEDBACK
     elif name=="FEEDBACK":

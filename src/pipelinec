@@ -53,13 +53,10 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Do more basic tutorials like nandland+hdlbits
-Make var_WIRE.h that just does same as _clock_crossing.h shouldnt need array n include? 
 Do announcement of some sort for __clk()
   Do video demo? guitar i2s audio visualizer of some sort?
-Shared single inst implies arbitration? user arb func? 
- is special fsm style func
- replace all insts with global wires connecting to central N arb inst w/ handshaking
+Do more basic tutorials like nandland+hdlbits
+Make var_WIRE.h that just does same as _clock_crossing.h shouldnt need array n include?
 File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force

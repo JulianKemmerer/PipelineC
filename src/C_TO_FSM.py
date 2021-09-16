@@ -26,6 +26,8 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.Decl and is_lhs:
     maybe_semicolon = ""
+  elif type(c_ast_node) == c_ast.ID and is_lhs:
+    maybe_semicolon = ""
   #print(type(c_ast_node))
   text += maybe_semicolon
   lines = []
@@ -165,7 +167,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       text += "  " + c_type + " " + output_port + ";\n"
   text += '''  uint1_t output_valid;
 }''' + fsm_logic.func_name + '''_OUTPUT_t;
-''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + FSM_EXT + '''(''' + fsm_logic.func_name + '''_INPUT_t i)
+''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + FSM_EXT + '''(''' + fsm_logic.func_name + '''_INPUT_t fsm_i)
 {
   // State reg holding current state
   static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
@@ -214,7 +216,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     else:
       text += "  " + "static " + c_type + " " + var_name 
     # Include init if static
-    if is_static:
+    if is_static and local_decl.init is not None:
       text += " = " + C_AST_NODE_TO_C_CODE(local_decl.init, "", generator) + "\n"
     else:
       text += ";\n"
@@ -227,13 +229,14 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     #  local_decl.init = None     
       
   text +='''  // Output wires
-  ''' + fsm_logic.func_name + '''_OUTPUT_t o = {0};
+  ''' + fsm_logic.func_name + '''_OUTPUT_t fsm_o = {0};
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
   uint1_t NEXT_CLK_STATE_VALID = 0;
   ''' + fsm_logic.func_name + '''_STATE_t NEXT_CLK_STATE = FSM_STATE;
 '''
   # Get all flow control func call instances
+  single_inst_flow_ctrl_func_call_names = set()
   flow_ctrl_func_call_names = set()
   func_call_nodes = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node, c_ast.FuncCall)
   for func_call_node in func_call_nodes:
@@ -242,8 +245,17 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
          func_call_name != CLK_FUNC and
          func_call_name != INPUT_FUNC and
          func_call_name != YIELD_FUNC and
-         func_call_name != INOUT_FUNC):
-      flow_ctrl_func_call_names.add(func_call_node.name.name)
+         func_call_name != INOUT_FUNC):  
+      if func_call_name in parser_state.func_single_inst_header_included:
+        single_inst_flow_ctrl_func_call_names.add(func_call_node.name.name)
+      else:
+        flow_ctrl_func_call_names.add(func_call_node.name.name)
+  if len(single_inst_flow_ctrl_func_call_names) > 0:
+    text += "  // Regs for single instance subroutine fsm calls\n"
+    # Write regs for each func
+    for flow_ctrl_func_name in single_inst_flow_ctrl_func_call_names:
+      text += "  static " + flow_ctrl_func_name + "_INPUT_t " + flow_ctrl_func_name + "_i;\n"
+      text += "  static " + flow_ctrl_func_name + "_OUTPUT_t " + flow_ctrl_func_name + "_o;\n"
   if len(flow_ctrl_func_call_names) > 0:
     text += "  // Wires for subroutine fsm calls\n"
     # Write wires for each func
@@ -259,17 +271,26 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   text += ''')
   {
     // Special first state signals ready, waits for start
-    o.input_ready = 1;
-    if(i.input_valid)
+    fsm_o.input_ready = 1;
+    if(fsm_i.input_valid)
     {
       // Register inputs
 '''
   for input_port in fsm_logic.inputs:
-    text += "      " + input_port + " = i." + input_port + ";\n"
+    text += "      " + input_port + " = fsm_i." + input_port + ";\n"
   
   # Go to first user state after getting inputs
-  text += '''      // Go to signaled return state\n'''
-  text += '''      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+  text += '''      // Go to signaled return-from-entry state if valid
+      if(FUNC_CALL_RETURN_FSM_STATE==FSM_STATE)
+      {
+        // Invalid, default to first user state
+        FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
+      }
+      else
+      {
+        // Make indicated transition from entry
+        FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+      }
     }
   }
 '''
@@ -380,10 +401,10 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         for input_i,input_port in enumerate(called_func_logic.inputs):
           input_driver_i = input_drivers[input_i]
           if isinstance(input_driver_i,c_ast.Node):
-            text += "    " + called_func_name + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator)
+            text += "    " + called_func_name + "_i." + input_port + " = " + C_AST_NODE_TO_C_CODE(input_driver_i, "", generator) + "\n"
           else:
-            text += "    " + called_func_name + "_i." + input_port + " = " + input_driver_i + ";"
-        text += "\n"
+            text += "    " + called_func_name + "_i." + input_port + " = " + input_driver_i + ";\n"
+        #text += "\n"
         text += "    // SUBROUTINE STATE NEXT\n"
         text += "    FSM_STATE = " + func_call_state.name + ";\n";
         # Set state to return to after func call
@@ -396,18 +417,24 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       if state_info.is_fsm_func_call_state is not None:
         called_func_name = state_info.is_fsm_func_call_state.name.name
         # ok to use wires driving inputs, not regs (included in func)
-        text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' FUNC CALL, known ready
-    ''' + called_func_name + '''_i.input_valid = 1;
-    ''' + called_func_name + '''_i.output_ready = 1;
-    ''' + called_func_name + '''_o = ''' + called_func_name + FSM_EXT + '''(''' + called_func_name + '''_i);
-    if(''' + called_func_name + '''_o.output_valid)
+        text += '''    ''' + called_func_name + '''_i.input_valid = 1;
+    ''' + called_func_name + '''_i.output_ready = 1;\n'''
+        # Single inst uses global wires
+        if called_func_name in parser_state.func_single_inst_header_included:
+          text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' single instance FUNC CALL\n'''
+          text += '''    WIRE_WRITE('''+called_func_name+'''_INPUT_t, '''+called_func_name+'''_arb_inputs, '''+called_func_name+'''_i)
+    WIRE_READ('''+called_func_name+'''_OUTPUT_t, '''+called_func_name+'''_o, '''+called_func_name+'''_arb_outputs)\n'''
+        # Normal ctrl flow fsm func call/instance
+        else:
+          text += '''    // ''' + state_info.is_fsm_func_call_state.name.name + ''' multiple instance FUNC CALL, known ready\n'''
+          text += "   " + called_func_name + '''_o = ''' + called_func_name + FSM_EXT + '''(''' + called_func_name + '''_i);\n'''
+        text += '''    if(''' + called_func_name + '''_o.output_valid)
     {
       // Go to signaled return state
-      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE; 
-    }
-'''
+      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+    }\n'''
         text += "  }\n"
-        continue    
+        continue
     
       # Return?
       if state_info.return_node is not None:
@@ -456,26 +483,26 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   
   // Handshake+outputs registered
   if( (FSM_STATE==RETURN_REG) '''
-  if uses_io_func:
-    text += " | (FSM_STATE==ENTRY_RETURN_OUT) "
-  text += ''')
+    if uses_io_func:
+      text += " | (FSM_STATE==ENTRY_RETURN_OUT) "
+    text += ''')
   {
     // Special last state signals done, waits for ready
-    o.output_valid = 1;
-    o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + ''';
-    if(i.output_ready)
+    fsm_o.output_valid = 1;
+    fsm_o.return_output = ''' + C_TO_LOGIC.RETURN_WIRE_NAME + FSM_EXT + ''';
+    if(fsm_i.output_ready)
     {
       // Go to signaled return state
       FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
 '''
-  if uses_io_func:
-    text += '''      // Go to second part of io state\n'''
-    text += '''      if(FSM_STATE==ENTRY_RETURN_OUT)
+    if uses_io_func:
+      text += '''      // Go to second part of io state\n'''
+      text += '''      if(FSM_STATE==ENTRY_RETURN_OUT)
       {
         FSM_STATE = ENTRY_RETURN_IN;
       }
 '''
-  text += '''    }
+    text += '''    }
   }
 '''
   
@@ -486,7 +513,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
     FSM_STATE = NEXT_CLK_STATE;
   }
   
-  return o;
+  return fsm_o;
 }
   
   '''
@@ -952,7 +979,9 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     return parser_state.existing_logic
 
 def FUNC_USES_FSM_CLK(func_name, parser_state):
-  if func_name == CLK_FUNC:
+  if func_name in parser_state.func_fsm_header_included:
+    return True
+  elif func_name == CLK_FUNC:
     return True
   elif func_name == INPUT_FUNC:
     return True
