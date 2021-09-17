@@ -206,6 +206,31 @@ if(name.done | name##_reg.done) \
 } \
 name##_reg = name;
 
+/*
+// Do syscall using new clk step operator code
+syscall_func_t syscall_fsm(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscall_io)
+{
+  syscall_func_t o;
+  while(1)
+  {
+    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io);
+    o.proc_to_sys = sc.proc_to_sys;
+    o.syscall_io = sc.syscall_io;
+    __out(o);
+  }
+
+}
+
+#define SYSCALL_FSM(name, sys_to_proc, proc_to_sys) \
+
+while(!name##_reg.done)
+{
+  
+  ????
+  
+}
+*/
+
 
 // Do not modify inputs after start, and do not use outputs until done
 
@@ -404,12 +429,10 @@ uint1_t fd_is_bram(fosix_fd_t local_fildes, fd_lut_t fd_lut)
 
 // Clock cross into main
 fosix_sys_to_proc_t main_sys_to_proc;
-#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "main_sys_to_proc_clock_crossing.h"
+#include "clock_crossing/main_sys_to_proc.h"
 // Clock cross out of main
 fosix_proc_to_sys_t main_proc_to_sys;
-#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "main_proc_to_sys_clock_crossing.h"
+#include "clock_crossing/main_proc_to_sys.h"
 
 // NEED Antikernel like NoC routing instead of using file descriptor numbers+paths
 // Slow bulky single state machine 'router' for now...

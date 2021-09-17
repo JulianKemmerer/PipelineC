@@ -6,9 +6,8 @@
 
 // TODO DO BETTER THAN COPY PASTE - MACRO ME FOOL
 
-uint1_t led0; 
-#include "uint1_t_array_N_t.h"
-#include "led0_clock_crossing.h"
+uint1_t led0;
+#include "clock_crossing/led0.h"
 #pragma MAIN led0_module
 uint1_t led0_module()
 {
@@ -17,9 +16,8 @@ uint1_t led0_module()
   return out_wire;
 }
 
-uint1_t led1; 
-#include "uint1_t_array_N_t.h"
-#include "led1_clock_crossing.h"
+uint1_t led1;
+#include "clock_crossing/led1.h"
 #pragma MAIN led1_module
 uint1_t led1_module()
 {
@@ -28,9 +26,8 @@ uint1_t led1_module()
   return out_wire;
 }
 
-uint1_t led2; 
-#include "uint1_t_array_N_t.h"
-#include "led2_clock_crossing.h"
+uint1_t led2;
+#include "clock_crossing/led2.h"
 #pragma MAIN led2_module
 uint1_t led2_module()
 {
@@ -39,9 +36,8 @@ uint1_t led2_module()
   return out_wire;
 }
 
-uint1_t led3; 
-#include "uint1_t_array_N_t.h"
-#include "led3_clock_crossing.h"
+uint1_t led3;
+#include "clock_crossing/led3.h"
 #pragma MAIN led3_module
 uint1_t led3_module()
 {

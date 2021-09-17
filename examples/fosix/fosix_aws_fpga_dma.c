@@ -6,13 +6,11 @@
 #include "protocol.h"
 
 // Clock cross into fosix
-fosix_sys_to_proc_t aws_h2c;
-#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "aws_sys_to_proc_clock_crossing.h"
+fosix_sys_to_proc_t aws_sys_to_proc;
+#include "clock_crossing/aws_sys_to_proc.h"
 // Clock cross out of fosix
-fosix_proc_to_sys_t aws_c2h;
-#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "aws_proc_to_sys_clock_crossing.h"
+fosix_proc_to_sys_t aws_proc_to_sys;
+#include "clock_crossing/aws_proc_to_sys.h"
 
 // Need to arbitrate valid and ready signals to and from the 
 // appropriate syscalls and messages

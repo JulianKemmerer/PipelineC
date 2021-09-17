@@ -9,10 +9,8 @@
 uint1_t uart_rx_msg_fifo_read_en; 
 // Outputs 
 uart_msg_s uart_rx_msg_fifo_msg;
-#include "uint1_t_array_N_t.h"
-#include "uart_msg_s_array_N_t.h"
-#include "uart_rx_msg_fifo_read_en_clock_crossing.h"
-#include "uart_rx_msg_fifo_msg_clock_crossing.h"
+#include "clock_crossing/uart_rx_msg_fifo_read_en.h"
+#include "clock_crossing/uart_rx_msg_fifo_msg.h"
 #pragma MAIN uart_rx_msg_fifo_wires_module
 void uart_rx_msg_fifo_wires_module()
 {
@@ -35,10 +33,8 @@ void uart_rx_msg_fifo_wires_module()
 uart_msg_s uart_tx_msg_fifo_msg;
 // Outputs 
 uint1_t uart_tx_msg_fifo_ready; 
-#include "uint1_t_array_N_t.h"
-#include "uart_msg_s_array_N_t.h"
-#include "uart_tx_msg_fifo_msg_clock_crossing.h"
-#include "uart_tx_msg_fifo_ready_clock_crossing.h"
+#include "clock_crossing/uart_tx_msg_fifo_msg.h"
+#include "clock_crossing/uart_tx_msg_fifo_ready.h"
 #pragma MAIN uart_tx_msg_fifo_wires_module
 void uart_tx_msg_fifo_wires_module()
 {

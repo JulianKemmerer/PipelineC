@@ -22,10 +22,8 @@
 // Globally visible port/wire names
 uint1_t uart_data_in;
 uint1_t uart_data_out; 
-// This should be in a macro somehow TODO \/
-#include "uint1_t_array_N_t.h"
-#include "uart_data_in_clock_crossing.h"
-#include "uart_data_out_clock_crossing.h"
+#include "clock_crossing/uart_data_in.h"
+#include "clock_crossing/uart_data_out.h"
 
 // Delcare as top level module io and connect to internal wires
 MAIN_MHZ(uart_module,UART_CLK_MHZ)

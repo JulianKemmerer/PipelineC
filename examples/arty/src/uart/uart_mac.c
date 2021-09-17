@@ -19,13 +19,12 @@ typedef struct uart_mac_s
 uint1_t uart_rx_mac_out_ready;
 // Outputs
 uart_mac_s uart_rx_mac_word_out;
-volatile uint1_t uart_rx_mac_overflow; // Volatile since is not part of cycle-by-cycle signaling, can read by another process with latency,datapath width adjustments
-// This should be in a macro somehow TODO \/
-#include "uint1_t_array_N_t.h"
-#include "uart_mac_s_array_N_t.h"
-#include "uart_rx_mac_out_ready_clock_crossing.h"
-#include "uart_rx_mac_word_out_clock_crossing.h"
-#include "uart_rx_mac_overflow_clock_crossing.h"
+// Volatile overflow since is not part of cycle-by-cycle signaling,
+// can read by another process with latency,datapath width adjustments
+volatile uint1_t uart_rx_mac_overflow;
+#include "clock_crossing/uart_rx_mac_out_ready.h"
+#include "clock_crossing/uart_rx_mac_word_out.h"
+#include "clock_crossing/uart_rx_mac_overflow.h"
 
 // Deserialize eight bits into one 8b byte
 #include "deserializer.h"
@@ -136,11 +135,8 @@ void uart_rx_mac()
 uart_mac_s uart_tx_mac_word_in;
 // Outputs
 uint1_t uart_tx_mac_in_ready;
-// This should be in a macro somehow TODO \/
-#include "uint1_t_array_N_t.h"
-#include "uart_mac_s_array_N_t.h"
-#include "uart_tx_mac_word_in_clock_crossing.h"
-#include "uart_tx_mac_in_ready_clock_crossing.h"
+#include "clock_crossing/uart_tx_mac_word_in.h"
+#include "clock_crossing/uart_tx_mac_in_ready.h"
 
 // Slight clock differences between RX and TX sides can occur.
 // Do a hacky off by one fewer clock cycles to ensure TX bandwidth

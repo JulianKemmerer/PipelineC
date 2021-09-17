@@ -29,12 +29,10 @@ typedef enum bram_state_t {
 
 // Clock cross into fosix router thing
 fosix_sys_to_proc_t bram_sys_to_proc;
-#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "bram_sys_to_proc_clock_crossing.h"
+#include "clock_crossing/bram_sys_to_proc.h"
 // Clock cross out of fosix router thing
 fosix_proc_to_sys_t bram_proc_to_sys;
-#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "bram_proc_to_sys_clock_crossing.h"
+#include "clock_crossing/bram_proc_to_sys.h"
 
 MAIN_MHZ(sys_bram, UART_CLK_MHZ) // use uart clock from now
 void sys_bram()

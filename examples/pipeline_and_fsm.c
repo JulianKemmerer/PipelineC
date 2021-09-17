@@ -29,10 +29,8 @@ my_func_out_t my_func(my_func_in_t input)
 
 // Helper macros to make a globally visible and wired up instance of the pipeline
 GLOBAL_WIRES_FUNC_DECL(my_inst, my_func_out_t, my_func, my_func_in_t)
-#include "my_func_in_t_array_N_t.h"
-#include "my_func_out_t_array_N_t.h"
-#include "my_inst_in_clock_crossing.h"
-#include "my_inst_out_clock_crossing.h"
+#include "clock_crossing/my_inst_in.h"
+#include "clock_crossing/my_inst_out.h"
 GLOBAL_WIRES_FUNC_IMPL(my_inst, my_func_out_t, my_func, my_func_in_t)
 
 #pragma MAIN_MHZ testbench 200.0

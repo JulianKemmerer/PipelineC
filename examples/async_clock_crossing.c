@@ -22,11 +22,11 @@
 
 // Fifo depth=4
 data_t fast_to_slow[4]; 
-#include "fast_to_slow_clock_crossing.h" // Auto generated
+#include "clock_crossing/fast_to_slow.h" // Auto generated
 
 // Fifo depth=4
 data_t slow_to_fast[4]; 
-#include "slow_to_fast_clock_crossing.h" // Auto generated
+#include "clock_crossing/slow_to_fast.h" // Auto generated
 
 void fast(uint1_t reset)
 {  

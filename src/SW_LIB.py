@@ -33,12 +33,25 @@ GENERATED_HEADER_DIRS = [
 ]
 
 # Find generated logic and apply additional 'parsed' information
-def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic):
-  # Hacky detect+tag clock crossing (TODO change to looking at clock crossing info in parser state?)
-  if str(func_logic.c_ast_node.coord).split(":")[0].endswith("_clock_crossing.h") and not func_logic.is_c_built_in:
+def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic, parser_state):
+  # Hacky detect+tag clock crossing
+  is_clk_cross = False
+  if not func_logic.is_c_built_in:
+    if '_READ' in func_logic.func_name:
+      read_toks = func_logic.func_name.split('_READ')
+      var = read_toks[0]
+      if var in parser_state.clk_cross_var_info:
+        is_clk_cross = True
+    if '_WRITE' in func_logic.func_name:
+      write_toks = func_logic.func_name.split('_WRITE')
+      var = write_toks[0]
+      if var in parser_state.clk_cross_var_info:
+        is_clk_cross = True
+  if is_clk_cross:
     func_logic.is_clock_crossing = True
     # Hacky marking clk cross func read+write as not able to be pipelined
     func_logic.uses_nonvolatile_state_regs = True
+    
   return func_logic
 
 def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(preprocessed_c_text, parser_state, regenerate_files):
@@ -52,6 +65,8 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
   new_regenerate_files = set()
   # Write two funcs in a header for each var
   for var_name in parser_state.clk_cross_var_info:
+    c_type = parser_state.global_state_regs[var_name].type_name
+    #is_volatile = parser_state.global_state_regs[var_name].is_volatile
     write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
     write_func_name, read_func_name = parser_state.clk_cross_var_info[var_name].write_read_funcs
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
@@ -102,11 +117,11 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
       c_type = None
       if var_name in parser_state.global_state_regs:
         c_type = parser_state.global_state_regs[var_name].type_name
+      text += '#include "' + c_type + '_array_N_t.h"\n'
+      new_regenerate_files.add(c_type + "_array_N_t.h")
       write_out_t = "void"
       write_in_t = c_type + "_array_" + str(write_size) + "_t"
       read_out_t = c_type + "_array_" + str(read_size) + "_t"
-      text += '#include "' + c_type + '_array_N_t.h"\n'
-      new_regenerate_files.add(c_type + '_array_N_t.h')
       text += '#define ' + var_name + "_write_t " + write_in_t + "\n"
       text += '#define ' + var_name + "_read_t " + read_out_t + "\n"
     
@@ -138,7 +153,7 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
 }
 '''
     # Write file
-    path = SYN.SYN_OUTPUT_DIRECTORY + "/" + CLOCK_CROSS_HEADER + "/" + var_name + "_clock_crossing.h"
+    path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing" + "/" + var_name + ".h"
     open(path,'w').write(text)
     
   return new_regenerate_files
@@ -170,14 +185,19 @@ def GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files, parser_sta
   for f in all_code_files:
     if os.path.exists(f):
       existing_files.append(f)
+      
+  new_regenerate_files = set()
   
-  GEN_EMPTY_TYPE_ARRAY_N_HEADERS(existing_files, inital_missing_files)
-  GEN_EMPTY_CLOCK_CROSS_HEADERS(existing_files, inital_missing_files)
-  GEN_EMPTY_TYPE_BYTES_HEADERS(existing_files, inital_missing_files)
-  GEN_EMPTY_FSM_CLK_FUNC_HEADERS(existing_files, inital_missing_files, parser_state)
-  GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(existing_files, inital_missing_files, parser_state)
+  new_regenerate_files |= GEN_EMPTY_TYPE_ARRAY_N_HEADERS(existing_files, inital_missing_files)
+  new_regenerate_files |= GEN_EMPTY_CLOCK_CROSS_HEADERS(existing_files, inital_missing_files)
+  new_regenerate_files |= GEN_EMPTY_TYPE_BYTES_HEADERS(existing_files, inital_missing_files)
+  new_regenerate_files |= GEN_EMPTY_FSM_CLK_FUNC_HEADERS(existing_files, inital_missing_files, parser_state)
+  new_regenerate_files |= GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(existing_files, inital_missing_files, parser_state)
+  
+  return new_regenerate_files
 
 def GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(existing_files, inital_missing_files, parser_state):
+  new_regenerate_files = set()
   for inital_missing_file in inital_missing_files:
     # Regex search c_text for "<func>_SINGLE_INST.h"
     r='\w+_SINGLE_INST.h'
@@ -200,31 +220,54 @@ def GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(existing_files, inital_missing_files, par
         f.write(text)
         f.close()
       parser_state.func_single_inst_header_included.add(func_name)
+      
+  return new_regenerate_files
 
 def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
+  new_regenerate_files = set()
   #for f in all_code_files:
   #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
   for inital_missing_file in inital_missing_files:
-    # Regex search c_text for "<var>_clock_crossing.h"
-    r='\w+_clock_crossing.h'
-    clock_cross_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
+    # Regex search c_text for "clock_crossing/<type>/<var>.h"
+    r='.*clock_crossing.*'
+    clock_cross_header_strs = FIND_REGEX_MATCHES(r, inital_missing_file)
+    #print("clock_cross_header_str_quotes", clock_cross_header_str_quotes)
     var_names = []
-    for clock_cross_header_str_quote in clock_cross_header_str_quotes:
-      clock_cross_header = clock_cross_header_str_quote.strip('"')
-      toks = clock_cross_header.split("_clock_crossing.h")
-      var_name = toks[0]
-      dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + CLOCK_CROSS_HEADER
-      path = dir_name + "/" + var_name + "_clock_crossing.h"
+    for clock_cross_header_str in clock_cross_header_strs:
+      toks = clock_cross_header_str.split(".h")
+      type_slash_var = toks[0]
+      if "/" not in type_slash_var:
+        var_name = type_slash_var.split("_clock_crossing.h")[0]
+        print("")
+        print("Please remove array include:")
+        print(f'#include "<type>_array_N_t.h"')
+        print("")
+        print("And change clock crossing variable in include statement to be like:")
+        print(f'#include "clock_crossing/{var_name}.h"')
+        sys.exit(-1)
+        
+      type_slash_toks = type_slash_var.split("/")
+      #is_volatile = False
+      if len(type_slash_toks)==2:
+        cc_str,var_name = type_slash_toks
+        dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing" #+ "/" + var_type
+      
+      path = dir_name + "/" + var_name + ".h"
       if not os.path.exists(dir_name):
         os.makedirs(dir_name)
       if not os.path.exists(path):
         f = open(path, 'w')
+        #f.write(decl_text)
         # Need dummy defines
         f.write('#define ' + var_name + "_RATIO 0\n")
-        f.write('#define ' + var_name + "_write_t int\n")
-        f.write('#define ' + var_name + "_read_t int\n")
+        #f.write('#define ' + var_name + "_write_t int\n")
+        #f.write('#define ' + var_name + "_read_t int\n")
+        f.write('typedef int ' + var_name + "_write_t;\n")
+        f.write('typedef int ' + var_name + "_read_t;\n")
         f.write("")
-        f.close()      
+        f.close()     
+  
+  return new_regenerate_files
     
 def C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
   r="\w+_array(_[0-9]+)+_t"
@@ -246,6 +289,7 @@ def C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(array_struct_c_type, parser_state):
   return array_c_type
 
 def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
+  new_regenerate_files = set()
   #for f in all_code_files:
   #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
   for inital_missing_file in inital_missing_files:
@@ -263,8 +307,11 @@ def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
         os.makedirs(dir_name)
       if not os.path.exists(path):
         open(path, 'w').write("")
+        
+  return new_regenerate_files
       
 def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
+  new_regenerate_files = set()
   #for f in all_code_files:
   #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
   for inital_missing_file in inital_missing_files:
@@ -282,8 +329,11 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
         os.makedirs(dir_name)
       if not os.path.exists(path):
         open(path, 'w').write("")
+        
+  return new_regenerate_files
       
 def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_state):
+  new_regenerate_files = set()
   #for f in all_code_files:
   #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
   for inital_missing_file in inital_missing_files:
@@ -302,6 +352,8 @@ def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_
       if not os.path.exists(path):
         open(path, 'w').write("")
       parser_state.func_fsm_header_included.add(func_name)
+      
+  return new_regenerate_files
       
 def GEN_POST_PREPROCESS_SINGLE_INST_HEADERS(preprocessed_c_text, regenerate_files, parser_state):
   # Nothing in preprocessed text to look at so use 

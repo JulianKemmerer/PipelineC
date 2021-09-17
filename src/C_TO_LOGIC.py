@@ -6757,7 +6757,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
     parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[c_ast_funcdef.decl.name]
     return parser_state.existing_logic
     
-  #print("FUNC_DEF",c_ast_funcdef.decl.name, flush=True)
+  #print("FUNC_DEF",c_ast_funcdef, flush=True)
   
   parser_state.existing_logic = Logic()
   # Save the c_ast node
@@ -6810,7 +6810,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
     # Final chance for SW_LIB generated code to do stuff to func logic
     # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
     # Bright Eyes - An Attempt to Tip the Scales
-    parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(parser_state.existing_logic)
+    parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(parser_state.existing_logic, parser_state)
     
     # Sanity check for return wire
     if parse_body:
@@ -7409,7 +7409,7 @@ def PARSE_FILE(c_filename):
       if len(regenerate_files) > 0:
         inital_missing_files = []
         for f in regenerate_files:
-          if not os.path.exists(f):
+          if not os.path.exists(f) and not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY + "/" + f):
             inital_missing_files.append(f)
         if len(inital_missing_files) > 0:
           print("Generating code to get through first round of preprocessing...", flush=True)
@@ -7417,7 +7417,13 @@ def PARSE_FILE(c_filename):
           # Code generate empty to-be-generated header files 
           # so initial preprocessing can happen
           # Then do repeated re-parsing as code gen continues
-          SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files, parser_state)
+          new_regenerate_files |= SW_LIB.GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files, parser_state)
+          if (new_regenerate_files | regenerate_files) != regenerate_files:
+            print("Re/generating: ", new_regenerate_files, flush=True)
+            # Restart pass on new files and current pass files
+            regenerate_files = new_regenerate_files | regenerate_files
+            continue
+          
       
       # Preprocess the file and generate more code maybe?
       # Generation return list of files that need continued generation

@@ -5,7 +5,7 @@
 
 // Globally visible port/clock crossing/fifo
 uart_msg_t uart_rx_msg_fifo[1]; // As small as possible for now
-#include "uart_rx_msg_fifo_clock_crossing.h"
+#include "clock_crossing/uart_rx_msg_fifo.h"
 #pragma MAIN_MHZ uart_rx_msg_fifo_module uart_rx_msg // Match freq of messages module
 void uart_rx_msg_fifo_module()
 {
@@ -25,7 +25,7 @@ void uart_rx_msg_fifo_module()
 
 // Globally visible port/clock crossing/fifo
 uart_msg_t uart_tx_msg_fifo[1]; // As small as possible for now
-#include "uart_tx_msg_fifo_clock_crossing.h"
+#include "clock_crossing/uart_tx_msg_fifo.h"
 #pragma MAIN_MHZ uart_tx_msg_fifo_module uart_tx_msg // Match freq of messages module
 void uart_tx_msg_fifo_module()
 {

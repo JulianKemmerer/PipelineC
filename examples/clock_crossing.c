@@ -17,13 +17,11 @@ typedef struct uint64_s
   uint64_t data;
   uint1_t valid;  
 } uint64_s;
-#include "uint64_s_array_N_t.h" // Auto generated
 
 volatile uint64_s fast_to_slow;
-#include "fast_to_slow_clock_crossing.h" // Auto generated
-
+#include "clock_crossing/fast_to_slow.h" // Auto generated
 volatile uint64_s slow_to_fast;
-#include "slow_to_fast_clock_crossing.h" // Auto generated
+#include "clock_crossing/slow_to_fast.h" // Auto generated
 
 void fast(uint1_t reset)
 {  

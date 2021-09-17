@@ -14,10 +14,8 @@
 uint1_t uart_rx_msg_out_ready;
 // Outputs
 uart_msg_s uart_rx_msg_out;
-#include "uint1_t_array_N_t.h"
-#include "uart_msg_s_array_N_t.h"
-#include "uart_rx_msg_out_ready_clock_crossing.h"
-#include "uart_rx_msg_out_clock_crossing.h"
+#include "clock_crossing/uart_rx_msg_out_ready.h"
+#include "clock_crossing/uart_rx_msg_out.h"
 
 // Deserialize bytes into msg
 deserializer(uart_rx_msg_deserializer, uint8_t, UART_MSG_SIZE) // macro
@@ -53,10 +51,8 @@ void uart_rx_msg()
 uart_msg_s uart_tx_msg_in;
 // Outputs
 uint1_t uart_tx_msg_in_ready;
-#include "uint1_t_array_N_t.h"
-#include "uart_msg_s_array_N_t.h"
-#include "uart_tx_msg_in_clock_crossing.h"
-#include "uart_tx_msg_in_ready_clock_crossing.h"
+#include "clock_crossing/uart_tx_msg_in.h"
+#include "clock_crossing/uart_tx_msg_in_ready.h"
 
 // Serialize messages into bytes
 serializer(uart_tx_msg_serializer, uint8_t, UART_MSG_SIZE) // macro

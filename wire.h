@@ -36,12 +36,12 @@ type clk_cross_wire_name; \
 
 // Read from a global clock cross same clock domain wire
 #define WIRE_READ(type, lhs, clk_cross_name) \
-type##_array_1_t clk_cross_name##_clk_cross_read_array = clk_cross_name##_READ(); \
+clk_cross_name##_read_t clk_cross_name##_clk_cross_read_array = clk_cross_name##_READ(); \
 lhs = clk_cross_name##_clk_cross_read_array.data[0];
 
 // Write to a global clock cross same clock domain wire
 #define WIRE_WRITE(type, clk_cross_name, rhs) \
-type##_array_1_t clk_cross_name##_clk_cross_write_array; \
+clk_cross_name##_write_t clk_cross_name##_clk_cross_write_array; \
 clk_cross_name##_clk_cross_write_array.data[0] = rhs; \
 clk_cross_name##_WRITE(clk_cross_name##_clk_cross_write_array);
 

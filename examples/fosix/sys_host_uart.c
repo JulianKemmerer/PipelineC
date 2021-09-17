@@ -16,12 +16,10 @@
 
 // Clock cross wire to into fosix router thing
 fosix_sys_to_proc_t host_sys_to_proc;
-#include "fosix_sys_to_proc_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "host_sys_to_proc_clock_crossing.h"
+#include "clock_crossing/host_sys_to_proc.h"
 // Clock cross out of fosix
 fosix_proc_to_sys_t host_proc_to_sys;
-#include "fosix_proc_to_sys_t_array_N_t.h" // TODO include inside clock_crossing.h?
-#include "host_proc_to_sys_clock_crossing.h"
+#include "clock_crossing/host_proc_to_sys.h"
 
 MAIN_MHZ(sys_host, UART_CLK_MHZ)
 void sys_host()
