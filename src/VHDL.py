@@ -2655,15 +2655,12 @@ end function;
   return rv
   
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
+  text = "use ieee.float_pkg.all;\n"
   if SYN.SYN_TOOL is VIVADO:
-    return '''
-use ieee.float_pkg.all;
-library ieee_proposed;
+    text +=  '''library ieee_proposed;
 use ieee_proposed.fixed_pkg.all;
 '''
-  else:
-    return ""
-
+  return text
   
 def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_files=False): 
   # Sanity check until complete sanity has been 100% ensured with absolute certainty ~~~
