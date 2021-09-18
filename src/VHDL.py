@@ -991,6 +991,9 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsL
   
   
 def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
+  if len(parser_state.clk_cross_var_info) <= 0 and len(parser_state.arb_handshake_infos) <= 0:
+    return
+  
   text = ""
   
   for arb_handshake_info in parser_state.arb_handshake_infos:
