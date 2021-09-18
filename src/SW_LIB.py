@@ -374,14 +374,10 @@ def GEN_POST_PREPROCESS_SINGLE_INST_HEADERS(preprocessed_c_text, regenerate_file
       text += func_name+'_INPUT_t '+func_name+'_arb_inputs;\n'
       text += func_name+'_OUTPUT_t '+func_name+'_arb_outputs;\n'
       text += '#pragma IO_PAIR '''+func_name+'_arb_inputs ' + func_name+'_arb_outputs\n'
-      text += '#include "'+func_name+'_INPUT_t_array_N_t.h"\n'
-      new_regenerate_files.add(func_name+'_INPUT_t_array_N_t.h')
-      text += '#include "'+func_name+'_OUTPUT_t_array_N_t.h"\n'
-      new_regenerate_files.add(func_name+'_OUTPUT_t_array_N_t.h')
-      text += '#include "'+func_name+'_arb_inputs_clock_crossing.h"\n'
-      new_regenerate_files.add(func_name+'_arb_inputs_clock_crossing.h')
-      text += '#include "'+func_name+'_arb_outputs_clock_crossing.h"\n'
-      new_regenerate_files.add(func_name+'_arb_outputs_clock_crossing.h')
+      text += '#include "clock_crossing/'+func_name+'_arb_inputs.h"\n'
+      new_regenerate_files.add('clock_crossing/'+func_name+'_arb_inputs.h')
+      text += '#include "clock_crossing/'+func_name+'_arb_outputs.h"\n'
+      new_regenerate_files.add('clock_crossing/'+func_name+'_arb_outputs.h')
       text += '''#pragma MAIN '''+func_name+'''_arb
 void '''+func_name+'''_arb()
 {

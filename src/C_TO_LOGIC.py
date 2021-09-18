@@ -7846,9 +7846,11 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         if write_main_func in parser_state.main_mhz:
           write_mhz = parser_state.main_mhz[write_main_func]
           write_group = parser_state.main_clk_group[write_main_func]
-          write_mhz_group_tuples.add((write_mhz,write_group))
+          if write_mhz is not None:
+            write_mhz_group_tuples.add((write_mhz,write_group))
       if len(write_mhz_group_tuples) > 1:
-        raise Exception(f"Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!")
+        print(f"Warning: Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!")
+        inferring = True
       if len(write_mhz_group_tuples) == 1:
         write_mhz,write_group = list(write_mhz_group_tuples)[0]
       
@@ -7860,9 +7862,11 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         if read_main_func in parser_state.main_mhz:
           read_mhz = parser_state.main_mhz[read_main_func]
           read_group = parser_state.main_clk_group[read_main_func]
-          read_mhz_group_tuples.add((read_mhz,read_group))
+          if read_mhz is not None:
+            read_mhz_group_tuples.add((read_mhz,read_group))
       if len(read_mhz_group_tuples) > 1:
-        raise Exception(f"Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!")
+        print(f"Warning: Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!")
+        inferring = True
       if len(read_mhz_group_tuples) == 1:
         read_mhz,read_group = list(read_mhz_group_tuples)[0]
      

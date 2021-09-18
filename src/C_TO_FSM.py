@@ -22,6 +22,8 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.If:
     maybe_semicolon = ""
+  elif type(c_ast_node) == c_ast.While:
+    maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.Decl and is_lhs:
@@ -122,7 +124,7 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
           text += '#include "' + called_func_logic.func_name + FSM_EXT + ".h" + '"\n'          
           
   text += '''
-typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
+typedef enum ''' + fsm_logic.func_name + '''_FSM_STATE_t{
  ENTRY_REG,
 '''
   # Extra IO in single stage
@@ -134,7 +136,7 @@ typedef enum ''' + fsm_logic.func_name + '''_STATE_t{
     for state_info in state_group:
       text += " " + state_info.name + ",\n"
   text += ''' RETURN_REG,
-}''' + fsm_logic.func_name + '''_STATE_t;
+}''' + fsm_logic.func_name + '''_FSM_STATE_t;
 typedef struct ''' + fsm_logic.func_name + '''_INPUT_t
 {
   uint1_t input_valid;
@@ -170,10 +172,10 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 ''' + fsm_logic.func_name + '''_OUTPUT_t ''' + fsm_logic.func_name + FSM_EXT + '''(''' + fsm_logic.func_name + '''_INPUT_t fsm_i)
 {
   // State reg holding current state
-  static ''' + fsm_logic.func_name + '''_STATE_t FSM_STATE;
+  static ''' + fsm_logic.func_name + '''_FSM_STATE_t FSM_STATE;
   // State reg holding state to return to after certain func calls
   // Starting set to first user state
-  static ''' + fsm_logic.func_name + '''_STATE_t FUNC_CALL_RETURN_FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
+  static ''' + fsm_logic.func_name + '''_FSM_STATE_t FUNC_CALL_RETURN_FSM_STATE = ''' + fsm_logic.first_user_state.name + ''';
   // Input regs
 '''
   for input_port in fsm_logic.inputs:
@@ -233,7 +235,7 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
   uint1_t NEXT_CLK_STATE_VALID = 0;
-  ''' + fsm_logic.func_name + '''_STATE_t NEXT_CLK_STATE = FSM_STATE;
+  ''' + fsm_logic.func_name + '''_FSM_STATE_t NEXT_CLK_STATE = FSM_STATE;
 '''
   # Get all flow control func call instances
   single_inst_flow_ctrl_func_call_names = set()
