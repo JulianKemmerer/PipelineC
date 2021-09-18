@@ -38,6 +38,9 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     
   if type(init) == c_ast.Constant:
     return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
+  elif type(init) == c_ast.UnaryOp and str(init.op)=='-' and (type(init.expr) == c_ast.Constant):
+    negated_str = '-' + str(init.expr.value)
+    return CONST_VAL_STR_TO_VHDL(negated_str, c_type, parser_state)
   elif type(init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(init, parser_state.existing_logic, "", parser_state):
     return CONST_VAL_STR_TO_VHDL(str(init.name), c_type, parser_state)
   elif type(init) == c_ast.InitList:
@@ -3382,7 +3385,7 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
 
 def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   is_negated = val_str.startswith("-")
-  val_str = val_str.strip("-")
+  no_neg_val_str = val_str.strip("-")
   
   # Special null token = {0}
   if val_str==C_TO_LOGIC.COMPOUND_NULL:
@@ -3425,13 +3428,13 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     
   # Chars
   if c_type == 'char':
+    if is_negated:
+      print("TODO negated chars?")
+      sys.exit(-1)
     val_str = val_str.strip("'")
     vhdl_char_str = "'" + val_str + "'"
     if val_str == '\\n':
       vhdl_char_str = "LF"
-    if is_negated:
-      print("TODO negated chars?")
-      sys.exit(-1)
     #HAHA have fun filling this in dummy    
     return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)";
     
@@ -3448,7 +3451,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     return "to_byte_array("+C_CONST_STR_TO_VHDL_CONST_STR(val_str)+")"
   
   #print("CONST_VAL_STR_TO_VHDL val_str",val_str)
-  value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, None, is_negated)
+  value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(no_neg_val_str, None, is_negated)
   # c_type_str is small gen'd type based on constant literal
   # c_type is what ever...user?...upper level intended and already knows - use that
   #if c_type_str != c_type:
