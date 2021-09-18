@@ -2324,10 +2324,15 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
   '''
   
   text += "\nbegin\n"
-  # Process for each arg - 2008 all use ok?
+  # Process for sensitive to each arg
   text += "-- synthesis translate_off\n"
   text += "-- Postponed so only prints once?\n"
-  text += "postponed process(all) is \nbegin\n"
+  text += "postponed process(CLOCK_ENABLE,\n"
+  # List all inputs
+  for input_port in Logic.inputs:
+    text += " " + input_port + ",\n"
+  text = text.strip('\n').strip(',')
+  text +=") is \nbegin\n"
   text += '''
 if CLOCK_ENABLE(0) = '1' then
   write(output, ''' + vhdl_format_string + ''');
