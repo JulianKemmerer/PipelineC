@@ -2,16 +2,33 @@ import sys
 import os
 
 import SYN
-import MODELSIM
 import EDAPLAY
+import MODELSIM
+import CXXRTL
 
-def DO_OPTIONAL_SIM(do_sim=False, is_edaplay=False, latency=0):
-  if is_edaplay and do_sim:
+# Default simulation tool is free edaplayground
+SIM_TOOL = EDAPLAY
+
+def SET_SIM_TOOL(cmd_line_args):
+  global SIM_TOOL
+  if cmd_line_args.edaplay:
+    SIM_TOOL = EDAPLAY
+  elif cmd_line_args.cxxrtl:
+    SIM_TOOL = CXXRTL
+  elif cmd_line_args.modelsim:
+    SIM_TOOL = MODELSIM
+
+def DO_OPTIONAL_SIM(do_sim=False, latency=0):
+  if do_sim and SIM_TOOL is EDAPLAY:
     EDAPLAY.SETUP_EDAPLAY(latency)
-  else:
+  elif SIM_TOOL is MODELSIM:
     # Assume modelsim is default sim
     MODELSIM.DO_OPTIONAL_DEBUG(do_sim, latency)
-  
+  elif SIM_TOOL is CXXRTL:
+    # Assume modelsim is default sim
+    CXXRTL.DO_SIM(latency)
+  else:
+    print("Unknown simulation tool:",SIM_TOOL)
 
 def GET_SIM_FILES(latency=0):
   # Get all vhd files in syn output
