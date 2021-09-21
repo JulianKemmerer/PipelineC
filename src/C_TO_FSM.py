@@ -343,11 +343,11 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       # Returning from func call
       if state_info.starts_w_fsm_func_return is not None:
         text += "    // " + state_info.starts_w_fsm_func_return.name.name + " " + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.starts_w_fsm_func_return) + " FUNC CALL RETURN \n"
+        called_func_name = state_info.starts_w_fsm_func_return.name.name
         output_driven_things = state_info.starts_w_fsm_func_return_output_driven_things
         if len(output_driven_things) > 0:
           # Connect func output wires
           # What func is being called?
-          called_func_name = state_info.starts_w_fsm_func_return.name.name
           called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
           # Do outputs
           for output_i,output_port in enumerate(called_func_logic.outputs):
@@ -423,6 +423,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         # Set state to return to after func call
         text += "    // Followed by return state\n"
         text += "    FUNC_CALL_RETURN_FSM_STATE = " + exit_state.name + ";\n"
+        if state_info.ends_w_clk and not state_info.clk_end_is_user:
+          text += "    // FUNC ENTRY FORCED CLK DELAY IMPLIED\n"
         text += "  }\n"
         continue
       
@@ -761,6 +763,9 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
   func_name = c_ast_node.name.name
   return_from_same_func = (curr_state_info.starts_w_fsm_func_return is not None) and (curr_state_info.starts_w_fsm_func_return.name.name == func_name)
 
+  # Dont need this for 'same func no reentry' since fixed with
+  # 'all funcs take an extra clock' (not just single inst) fix below
+  '''
   # Current state becomes func entry state if not also returning from func
   if return_from_same_func:
     # If returning from same func need new state coming from current state
@@ -773,16 +778,14 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
       print("No next state entering func ",curr_state_info.name,"from",old_current_state_info.name)
       sys.exit(-1)
     
-    # Dont need this for 'same func no reentry' since fixed with
-    # 'all funcs take an extra clock' (not just single inst) fix below
-    '''
+    
     # Artifically create a __clk() delay after return to force 
     # entry state to be next cycle, looking like diff entry to same func call
     # Makes state transition list work
     old_current_state_info.ends_w_clk = True
     old_current_state_info.clk_end_is_user = False
     states.append(curr_state_info)
-    '''
+  '''
   
   # Set current state to have func entry
   curr_state_info.ends_w_fsm_func_entry = c_ast_node
