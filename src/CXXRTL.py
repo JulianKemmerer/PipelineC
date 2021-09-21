@@ -26,11 +26,8 @@ def DO_SIM(latency, parser_state):
 #include <iostream>
 #include "top/top.cpp"
 #include "pipelinec_cxxrtl.h"
-// ^ #define my_debug_output p_my__debug__output__DEBUG__OUTPUT__MAIN__return_output
 
-#define p_clk 		p_clk__33p33
-#define p_led		p_blink__return__output
-//#define p_counter	p_my__debug__output__DEBUG__OUTPUT__MAIN__return__output
+#define p_clk p_clk__33p33
    
 using namespace std;
    
@@ -46,8 +43,8 @@ int main()
        top.p_clk.set<bool>(false); top.step();
        top.p_clk.set<bool>(true); top.step();
   
-       bool cur_led        = top.p_led.get<bool>();
-       uint32_t counter    = top.my_debug_output.get<uint32_t>();
+       bool cur_led        = top.led_debug.get<bool>();
+       uint32_t counter    = top.counter_debug.get<uint32_t>();
        cout << "cycle " << cycle << " - led: " << cur_led << ", counter: " << counter << endl;
     }
     return 0;

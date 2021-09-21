@@ -34,14 +34,14 @@ type_t name() \
   return rv; \
 }
 
-// Two lines to mark a wire for debug naming?
+#include "clock_crossing/counter_debug_DEBUG.h"
+DEBUG_OUTPUT_DECL(uint25_t, counter_debug)
 
-#include "clock_crossing/my_debug_output_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint25_t, my_debug_output)
-// cxxrtl name: p_my__debug__output__DEBUG__OUTPUT__MAIN__return__output
+#include "clock_crossing/led_debug_DEBUG.h"
+DEBUG_OUTPUT_DECL(uint1_t, led_debug)
 
-//#include "clock_crossing/my_debug_input_DEBUG.h"
-//DEBUG_INPUT_DECL(uint4_t, my_debug_input)
+//#include "clock_crossing/inc_debug_DEBUG.h"
+//DEBUG_INPUT_DECL(uint4_t, inc_debug)
 
 uint25_t counter;
 
@@ -52,7 +52,8 @@ uint1_t led;
 #pragma MAIN_MHZ blink 33.33
 uint1_t blink()
 {
-  my_debug_output(counter);
+  counter_debug(counter);
+  led_debug(led);
   
   // If reached 1 second
   if(counter==(3-1))
@@ -64,7 +65,7 @@ uint1_t blink()
   }
   else
   {
-    //uint4_t inc = my_debug_input();
+    //uint4_t inc = inc_debug();
     //counter += inc;
     counter += 1; // one 30ns increment
   }  
