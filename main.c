@@ -12,7 +12,7 @@
 // ICE40UP5K-SG48        ICE40UP
 // T8F81                 Trion T8 (Xyloni)
 // Ti60F225              Titanium
-#pragma PART "xc7a35ticsg324-1l"
+//#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
 // Please see: https://github.com/JulianKemmerer/PipelineC/wiki/Examples
@@ -41,12 +41,154 @@
 //#include "examples/async_clock_crossing.c"
 //#include "examples/clock_crossing.c"
 //#include "examples/pipeline_and_fsm.c"
-//#include "examples/fosix/main_game.c"
+//#include "examples/edaplay.c"
+//#include "examples/fosix/main_game_clk_step.c"
 #include "examples/blink.c"
-
 
 // Below is a bunch of recent scratch work - enjoy
 
+/*
+#include "uintN_t.h"
+float my_float_global = -1.23;
+#pragma MAIN_MHZ my_test_bench 100.0
+uint1_t my_test_bench()
+{
+  float my_float_local = -3.45;
+  printf("Global value is %f\n", my_float_global);
+  printf("Local value is %f\n", my_float_local);
+  return 1;
+}
+*/
+
+/*
+#include "uintN_t.h"
+
+// A single cycle comb. logic doing:
+//  Input/entry handshake
+//  Comb. logic add
+//  Update a storage register
+//  Output/return handshake 
+uint8_t atomic_add(uint8_t val, uint8_t tid)
+{
+  static uint8_t the_reg;
+  uint8_t new_reg_val = the_reg + val;
+  printf("Thread %d incremented value from %d -> %d.\n",
+    tid, the_reg, new_reg_val);
+  the_reg = new_reg_val;
+  return the_reg;
+}
+// Signal to tool to derive a single instance
+// FSM region, ex. only one 8b the_reg in the design
+// shared among N calling instances
+#include "atomic_add_SINGLE_INST.h"
+
+// A 'thread'/FSM instance definition
+// trying to repeatedly increment the_reg
+uint8_t incrementer_thread(uint8_t tid)
+{
+  while(1)
+  {
+    // Try to do atomic add 
+    uint8_t local_reg_val = atomic_add(1, tid);
+    // Output val so doesnt synthesize away
+    __out(local_reg_val); 
+  }
+}
+// Derive FSM from above function
+#include "incrementer_thread_FSM.h"
+
+// Top level N parallel instances of incrementer_thread
+#define N_THREADS 10
+// Connect FSM outputs to top level output
+// So doesnt synthesize away
+typedef struct n_thread_outputs_t
+{
+  incrementer_thread_OUTPUT_t data[N_THREADS];
+}n_thread_outputs_t;
+#pragma MAIN_MHZ main 100.0
+n_thread_outputs_t main()
+{
+  // Registers keeping time count and knowning when done
+  static uint32_t clk_cycle_count;
+  
+  // N parallel instances of incrementer_thread
+  uint8_t tid;
+  incrementer_thread_INPUT_t inputs[N_THREADS];
+  n_thread_outputs_t outputs;
+  for(tid=0; tid<N_THREADS; tid+=1)
+  {
+    inputs[tid].tid = tid;
+    inputs[tid].input_valid = 1;
+    inputs[tid].output_ready = 1;
+    outputs.data[tid] = incrementer_thread_FSM(inputs[tid]);
+    if(outputs.data[tid].input_ready)
+    {
+      printf("Clock# %d: Thread %d starting.\n",
+        clk_cycle_count, tid);  
+    }
+    if(outputs.data[tid].output_valid)
+    {
+      printf("Clock# %d: Thread %d output value = %d.\n",
+        clk_cycle_count, tid, outputs.data[tid].return_output);
+    }
+  }
+  
+  // Func occuring each clk cycle
+  clk_cycle_count += 1;
+  
+  // Wire up outputs
+  return outputs;
+}
+*/
+
+/*
+#include "uintN_t.h"
+
+uint8_t shared_region(uint8_t val, uint8_t wr_en)
+{
+  static uint8_t the_reg;
+  uint8_t rd_data = the_reg;
+  if(wr_en)
+  {
+    the_reg = val;
+  }
+  return rd_data;
+}
+// A single instance region, ex. only one 8b the_reg
+#include "shared_region_SINGLE_INST.h"
+
+void incrementer_thread()
+{
+  static uint8_t local_reg;
+  while(1)
+  {
+    local_reg = shared_region(local_reg, 1);
+    local_reg += 1;
+    __clk();
+  }
+}
+#include "incrementer_thread_FSM.h"
+
+// First instance of thread
+#pragma MAIN_MHZ main_0 100.0
+incrementer_thread_OUTPUT_t main_0(incrementer_thread_INPUT_t i)
+{
+  incrementer_thread_INPUT_t i;
+  i.input_valid = 1;
+  i.output_ready = 1;
+  incrementer_thread_OUTPUT_t o = incrementer_thread_FSM(i);
+  return o;
+}
+// Second instance of thread
+#pragma MAIN_MHZ main_1 100.0
+incrementer_thread_OUTPUT_t main_1(incrementer_thread_INPUT_t i)
+{
+  incrementer_thread_INPUT_t i;
+  i.input_valid = 1;
+  i.output_ready = 1;
+  incrementer_thread_OUTPUT_t o = incrementer_thread_FSM(i);
+  return o;
+}*/
 
 
 /*
