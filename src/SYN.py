@@ -1411,6 +1411,19 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
         bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
         VHDL.WRITE_LOGIC_ENTITY(inst_name, blackbox_func_logic, bb_out_dir, parser_state, multimain_timing_params.TimingParamsLookupTable, is_final_top)
   
+  # Do generic dump of vhdl files
+  # Which vhdl files?
+  vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
+  # One more rvhdl line for the final entity  with constant name
+  top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
+  vhdl_files_texts += " " + top_file_path
+  out_filename = "vhdl_files.txt"
+  out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+  out_text = vhdl_files_texts
+  f=open(out_filepath,"w")
+  f.write(out_text)
+  f.close()
+  
   # read_vhdl.tcl only for Vivado for now
   if SYN_TOOL is VIVADO:
     # TODO better GUI / tcl scripts support for other tools
@@ -1434,16 +1447,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     out_filename = "read_vhdl.tcl"
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     out_text = rv
-  else:
-    # Do generic dump of vhdl files
-    # Which vhdl files?
-    vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
-    # One more rvhdl line for the final entity  with constant name
-    top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
-    vhdl_files_texts += " " + top_file_path
-    out_filename = "vhdl_files.txt"
-    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
-    out_text = vhdl_files_texts
+    
     
   print("Output VHDL files:", out_filepath)
   f=open(out_filepath,"w")

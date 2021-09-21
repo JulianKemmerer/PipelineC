@@ -179,7 +179,7 @@ C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 
 # Here is a good point to check basic single cycle/comb logic functionality before pipelining
 SIM.SET_SIM_TOOL(args)
-SIM.DO_OPTIONAL_SIM(args.sim_comb)
+SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state)
   
 print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
@@ -192,5 +192,5 @@ SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
 
 # Start simulation on final VHDL
-SIM.DO_OPTIONAL_SIM(args.sim)
+SIM.DO_OPTIONAL_SIM(args.sim, parser_state)
 

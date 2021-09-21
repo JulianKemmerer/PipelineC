@@ -4,6 +4,7 @@ import os
 import SYN
 import EDAPLAY
 import MODELSIM
+import OPEN_TOOLS
 import CXXRTL
 
 # Default simulation tool is free edaplayground
@@ -18,15 +19,17 @@ def SET_SIM_TOOL(cmd_line_args):
   elif cmd_line_args.modelsim:
     SIM_TOOL = MODELSIM
 
-def DO_OPTIONAL_SIM(do_sim=False, latency=0):
-  if do_sim and SIM_TOOL is EDAPLAY:
-    EDAPLAY.SETUP_EDAPLAY(latency)
+def DO_OPTIONAL_SIM(do_sim, parser_state, latency=0):
+  if SIM_TOOL is EDAPLAY:
+    if do_sim:
+      EDAPLAY.SETUP_EDAPLAY(latency)
   elif SIM_TOOL is MODELSIM:
     # Assume modelsim is default sim
     MODELSIM.DO_OPTIONAL_DEBUG(do_sim, latency)
   elif SIM_TOOL is CXXRTL:
-    # Assume modelsim is default sim
-    CXXRTL.DO_SIM(latency)
+    if do_sim:
+      # Assume modelsim is default sim
+      CXXRTL.DO_SIM(latency, parser_state)
   else:
     print("Unknown simulation tool:",SIM_TOOL)
 

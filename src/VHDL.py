@@ -2664,10 +2664,12 @@ end function;
   
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   text = "use ieee.float_pkg.all;\n"
-  if SYN.SYN_TOOL is VIVADO:
-    text +=  '''library ieee_proposed;
-use ieee_proposed.fixed_pkg.all;
-'''
+  
+  # NVM for now nobody is using proposed fixed anyway
+  #if SYN.SYN_TOOL is VIVADO:
+  #  text +=  '''library ieee_proposed;
+  #use ieee_proposed.fixed_pkg.all;
+  #'''
   return text
   
 def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_files=False): 
