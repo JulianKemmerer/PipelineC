@@ -43,9 +43,12 @@ int main()
        top.p_clk.set<bool>(false); top.step();
        top.p_clk.set<bool>(true); top.step();
   
-       bool cur_led        = top.led_debug.get<bool>();
+       
        uint32_t counter    = top.counter_debug.get<uint32_t>();
+       //cout << "cycle " << cycle << ", counter: " << counter << endl;
+       bool cur_led        = top.led_debug.get<bool>();
        cout << "cycle " << cycle << " - led: " << cur_led << ", counter: " << counter << endl;
+       
     }
     return 0;
 }
@@ -62,7 +65,7 @@ int main()
   sh_text = f'''
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -m ghdl -p "ghdl --std=08 top; write_cxxrtl ./top/top.cpp" && \
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g -m ghdl -p "ghdl --std=08 top; write_cxxrtl ./top/top.cpp" && \
 clang++ -g -O3 -std=c++14 -I `yosys-config --datdir`/include main.cpp -o ./top/top
 '''
   sh_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "cxxrtl.sh"

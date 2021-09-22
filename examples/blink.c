@@ -1,38 +1,10 @@
-#include "compiler.h" // PRAGMA_MESSAGE
-#include "wire.h"     // WIRE READ+WRITE
 #include "uintN_t.h"  // uintN_t types for any N
 
 // Install+configure synthesis tool then specify part here
 // #pragma PART "xc7a35ticsg324-1l" 
 
-// TO BE "debug_wire.h" maybe
-#define DEBUG_OUTPUT_DECL(type_t, name) \
-type_t name##_DEBUG; \
-PRAGMA_MESSAGE(MAIN name##_DEBUG_OUTPUT_MAIN) \
-type_t name##_DEBUG_OUTPUT_MAIN() \
-{ \
-  type_t rv; \
-  WIRE_READ(type_t, rv, name##_DEBUG) \
-  return rv; \
-} \
-void name(type_t val) \
-{ \
-  WIRE_WRITE(type_t, name##_DEBUG, val) \
-}
-
-#define DEBUG_INPUT_DECL(type_t, name) \
-type_t name##_DEBUG; \
-PRAGMA_MESSAGE(MAIN name##_DEBUG_INPUT_MAIN) \
-void name##_DEBUG_INPUT_MAIN(type_t val) \
-{ \
-  WIRE_WRITE(type_t, name##_DEBUG, val)\
-} \
-type_t name() \
-{ \
-  type_t rv; \
-  WIRE_READ(type_t, rv, name##_DEBUG) \
-  return rv; \
-}
+// Generate top level debug ports with associated pipelinec_cxxrtl.h
+#include "debug_port.h"
 
 #include "clock_crossing/counter_debug_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint25_t, counter_debug)
@@ -43,6 +15,7 @@ DEBUG_OUTPUT_DECL(uint1_t, led_debug)
 //#include "clock_crossing/inc_debug_DEBUG.h"
 //DEBUG_INPUT_DECL(uint4_t, inc_debug)
 
+// Time counter
 uint25_t counter;
 
 // LED on off state
