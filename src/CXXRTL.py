@@ -33,6 +33,9 @@ def DO_SIM(latency, parser_state):
   main_cpp_text = '''
 #include <iostream>
 #include "top/top.cpp"
+
+// Generated internal wire names mapped to
+// clk, counter_debug, led_debug
 #include "pipelinec_cxxrtl.h"
    
 using namespace std;
@@ -44,20 +47,19 @@ int main()
 
     for(int cycle=0; cycle<10; ++cycle)
     {
-       top.debug_eval(); //if not called, some values are optimized (thus not calculated)
+       top.debug_eval(); // if not called, some values are optimized away
 
        top.clk.set<bool>(false); top.step();
        top.clk.set<bool>(true); top.step();
   
-       
        uint32_t counter    = top.counter_debug.get<uint32_t>();
-       //cout << "cycle " << cycle << ", counter: " << counter << endl;
        bool cur_led        = top.led_debug.get<bool>();
        cout << "cycle " << cycle << " - led: " << cur_led << ", counter: " << counter << endl;
        
     }
     return 0;
 }
+
 '''
   main_cpp_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "main.cpp"
   f=open(main_cpp_path,"w")

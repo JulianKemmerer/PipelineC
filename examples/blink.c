@@ -6,6 +6,8 @@
 // Generate top level debug ports with associated pipelinec_cxxrtl.h
 #include "debug_port.h"
 
+// Two lines needed to mark a signal for debug
+
 #include "clock_crossing/counter_debug_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint25_t, counter_debug)
 
