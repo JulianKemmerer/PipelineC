@@ -7894,8 +7894,8 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           inferring = True
           
       # Finally record mhz,group if set
-      if write_mhz is not None: # OK to have disconnected read side, read_mhz is not None and 
-        var_to_rw_mhz_groups[var_name] = ( (read_mhz,read_group) , (write_mhz, write_group) ) 
+      #if write_mhz is not None: # OK to have disconnected read side, read_mhz is not None and 
+      var_to_rw_mhz_groups[var_name] = ( (read_mhz,read_group) , (write_mhz, write_group) )
           
 
   # Then loop to construct each clock crossings info

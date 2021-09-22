@@ -11,23 +11,29 @@ def DO_SIM(latency, parser_state):
   print("================== Doing CXXRTL Simulation ================================", flush=True)
   # Generate helpful include of cxxrtl names
   names_text = ""
+  # Clocks
+  clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state)
+  for clock_name,mhz in clock_name_to_mhz.items():
+    if mhz:
+      names_text += f'#define {clock_name} p_{clock_name.replace("_","__")}\n'
+    else:
+      names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
+  # Debug ports
   for func in parser_state.main_mhz:
     if func.endswith("_DEBUG_INPUT_MAIN") or func.endswith("_DEBUG_OUTPUT_MAIN"):
       debug_name = func.split("_DEBUG")[0]
       names_text += f'#define {debug_name} p_{func.replace("_","__")}__return__output\n'
+  # Write names files
   names_h_path = SYN.SYN_OUTPUT_DIRECTORY + "/pipelinec_cxxrtl.h"
   f=open(names_h_path,"w")
   f.write(names_text)
-  f.close() 
-  
+  f.close()  
   
   # Generate main.cpp
   main_cpp_text = '''
 #include <iostream>
 #include "top/top.cpp"
 #include "pipelinec_cxxrtl.h"
-
-#define p_clk p_clk__33p33
    
 using namespace std;
    
@@ -40,8 +46,8 @@ int main()
     {
        top.debug_eval(); //if not called, some values are optimized (thus not calculated)
 
-       top.p_clk.set<bool>(false); top.step();
-       top.p_clk.set<bool>(true); top.step();
+       top.clk.set<bool>(false); top.step();
+       top.clk.set<bool>(true); top.step();
   
        
        uint32_t counter    = top.counter_debug.get<uint32_t>();

@@ -15,20 +15,19 @@ DEBUG_OUTPUT_DECL(uint1_t, led_debug)
 //#include "clock_crossing/inc_debug_DEBUG.h"
 //DEBUG_INPUT_DECL(uint4_t, inc_debug)
 
-// Time counter
+// Time counter registers
 uint25_t counter;
 
-// LED on off state
+// LED on off state registers
 uint1_t led;
 
-// 'Called'/'Executing' every 30ns (33.33MHz)
-#pragma MAIN_MHZ blink 33.33
+#pragma MAIN blink
 uint1_t blink()
 {
   counter_debug(counter);
   led_debug(led);
   
-  // If reached 1 second
+  // If reached timeout
   if(counter==(3-1))
   {
     // Toggle led
@@ -40,7 +39,7 @@ uint1_t blink()
   {
     //uint4_t inc = inc_debug();
     //counter += inc;
-    counter += 1; // one 30ns increment
+    counter += 1;
   }  
   
   return led;
