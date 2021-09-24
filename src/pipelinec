@@ -57,6 +57,12 @@ Do announcement of some sort for __clk()
   Used recent game thing as example rewritten in clk style?
   Could use new arbitration for slow IO?
   Do video demo? guitar i2s audio visualizer of some sort?
+Generics?
+  Let __vhdl__ describe VHDL funcs that can # pragmad and used somehow?
+  Do const func args as generics - ex. const loop vars into func - how to progate const values?
+  Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
+  Hacky sort of const prop across module boundaries? ew?
+  ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
 Do more basic tutorials like nandland+hdlbits
 File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Implement DIAMOND PNR run?
@@ -67,11 +73,7 @@ How does multiple ins and out over time work in clk step style?  (not hdl wrappe
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
-  Do DVI over HDMI video demo driven from NoC element (instead of VGA?)
-Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
-  Hacky sort of const prop across module boundaries? ew?
-  ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
-  Do const func args as generics - ex. const loop vars into func - how to progate const values?
+  Do VGA driven from NoC element
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
