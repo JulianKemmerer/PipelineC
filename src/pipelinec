@@ -21,6 +21,9 @@ parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
 parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
 parser.add_argument("--coarse", help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).", action="store_true")
+parser.add_argument("--start", type=int, default=None,
+                    help="When doing a --coarse sweep, start from N cycles latency.")
+parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
 parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")        
@@ -184,7 +187,7 @@ print("================== Adding Timing Information from Synthesis Tool ========
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
 print("================== Beginning Throughput Sweep ================================", flush=True)
-multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state, coarse_only=(args.coarse is True))
+multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state, coarse_only=args.coarse, starting_guess_latency=args.start, do_incremental_guesses=not(args.sweep))
 
 print("================== Writing Results of Throughput Sweep ================================", flush=True)
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)

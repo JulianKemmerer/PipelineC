@@ -12,6 +12,7 @@ import SW_LIB
 import RAW_VHDL
 import SYN
 import VIVADO
+import QUARTUS
 
 
 VHDL_FILE_EXT=".vhd"
@@ -2662,12 +2663,29 @@ end function;
   
   return rv
   
+# Tools tools tools
+# Animal Collective - Banshee Beat
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
-  text = "use ieee.float_pkg.all;\n"
+  text = ""
+  
   if SYN.SYN_TOOL is VIVADO:
     text +=  '''library ieee_proposed;
 use ieee_proposed.fixed_pkg.all;
 '''
+  elif SYN.SYN_TOOL is QUARTUS:
+    # Lite version doesnt support vhdl 08
+    text +='''library ieee_proposed;
+use ieee_proposed.float_pkg.all;\n'''
+  
+  if SYN.SYN_TOOL is QUARTUS:
+    # Lite version doesnt support vhdl 08
+    text +='''library ieee_proposed;
+use ieee_proposed.float_pkg.all;\n'''
+    
+  else:
+    text += "use ieee.float_pkg.all;\n"
+  
+  
   return text
   
 def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_files=False): 
