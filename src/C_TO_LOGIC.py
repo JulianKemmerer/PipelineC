@@ -20,9 +20,9 @@ import SW_LIB
 import C_TO_FSM
 
 # Global default constants for inferring different VHDL implementations of operators
-MULT_STYLE_INFERRED = "inferred"
+MULT_STYLE_INFERRED = "infer"
 MULT_STYLE_FABRIC = "fabric"
-MULT_STYLE = MULT_STYLE_INFERRED
+MULT_STYLE = None
 
 # Debug
 TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, False for debug
