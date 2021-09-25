@@ -31,6 +31,8 @@ else:
     # then fallback to hardcoded 
     VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
   VIVADO_PATH = VIVADO_DIR+"/bin/vivado"
+  
+FIXED_PKG_PATH = VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd"
 
 # Do full place and route for timing results
 # for "all" modules or just the "top" module
@@ -376,8 +378,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv = ""
   
   # Add in VHDL 2008 fixed/float support?
-  rv += "add_files -norecurse " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd\n"
-  rv += "set_property library ieee_proposed [get_files " + VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd]\n"
+  rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
+  rv += "set_property library ieee_proposed [get_files " + FIXED_PKG_PATH + "]\n"
   
   # Bah tcl doesnt like brackets in file names
   # Becuase dumb

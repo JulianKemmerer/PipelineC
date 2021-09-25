@@ -8163,7 +8163,7 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
 def BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst_name, parser_state):
   # Need to have 'from code' defintion of macro func too for now
   if func_name not in parser_state.FuncLogicLookupTable:
-    print("Primative",func_name,"needs function defintion!")
+    print("Primitive",func_name,"needs function defintion!")
     sys.exit(-1)
   orig_func_logic = parser_state.FuncLogicLookupTable[func_name]
   
@@ -8178,8 +8178,9 @@ def BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst
   
   return func_logic
   
-def FUNC_IS_PRIMITIVE(func_name):
+def FUNC_IS_PRIMITIVE(func_name, parser_state):
   # Try to use the tool assume false otherwise
+  SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
   try:
     return SYN.SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
   except:
@@ -8216,6 +8217,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
     # Silently skip fsm clk funcs 
+    parse_func_body = parse_body
     if func_def.decl.name in FuncLogicLookupTable and FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
       continue    
     # Skip functions that are not found in the initial from-main hierarchy mapping
@@ -8224,13 +8226,17 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
          (func_def.decl.name not in parser_state.main_mhz) ):
       print("Function skipped:",func_def.decl.name)
       continue
+    elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
+      print("Parsing primitive function:",func_def.decl.name, flush=True)
+      parse_func_body = False
     else:
       print("Parsing function:",func_def.decl.name, flush=True)
+
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
     prepend_text=""
-    logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
+    logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body=parse_func_body)
     FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
@@ -8257,7 +8263,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
     
     
   # Is this function a hardware/tool specific primative?
-  if FUNC_IS_PRIMITIVE(func_name):
+  if FUNC_IS_PRIMITIVE(func_name, parser_state):
     if func_name in parser_state.PrimFuncLogicLookupTable:
       orig_func_logic = parser_state.PrimFuncLogicLookupTable[func_name]
     else:
@@ -8288,6 +8294,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
   if func_name not in parser_state.FuncToInstances:
     parser_state.FuncToInstances[func_name] = set()
   parser_state.FuncToInstances[func_name].add(inst_name)
+  
   
   # Then recursively do submodules
   # USING local names from orig_func_logic

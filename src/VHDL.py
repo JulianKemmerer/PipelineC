@@ -2791,7 +2791,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   if not is_final_files and Logic.func_name in parser_state.func_marked_blackbox:
     rv += GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # Tool specific hard macros replace entire arch decl and body
-  elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name):
+  elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name, parser_state):
     rv += SYN.SYN_TOOL.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # VHDL func replaces arch decl and body
   elif Logic.is_vhdl_text_module:
