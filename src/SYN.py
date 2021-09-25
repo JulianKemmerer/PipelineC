@@ -1947,7 +1947,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           print("Allowed worse results in coarse sweep:",allowed_worse_results)
           # Why not do middle out again? All the way down? Because complicated?weird do later
           sweep_state.inst_sweep_state[func_inst], working_slices, inst_TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(func_inst, coarse_target_mhz,
-            sweep_state.inst_sweep_state[func_inst], parser_state, do_starting_guess=True, do_incremental_guesses=True, 
+            sweep_state.inst_sweep_state[func_inst], parser_state, starting_guess_latency=None, do_incremental_guesses=True, 
             max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT, stop_at_n_worse_result=allowed_worse_results)
           if not sweep_state.inst_sweep_state[func_inst].met_timing:
             # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
