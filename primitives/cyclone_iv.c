@@ -2,17 +2,23 @@
 
 #include "uintN_t.h"
 
-/*TODO
+
 uint18_t LPM_MULT9X9(uint9_t a, uint9_t b)
 {
   return a * b;
-}*/
+}
 
 uint36_t LPM_MULT18X18(uint18_t a, uint18_t b)
 {
   return a * b;
 }
 
+uint48_t LPM_MULT24X24(uint24_t a, uint24_t b)
+{
+  return a * b;
+}
+
+/*
 uint48_t cyclone_iv_mult24x24(uint24_t l, uint24_t r)
 {
   // Essentially rounding up to 36bx3b mult
@@ -38,6 +44,7 @@ uint48_t cyclone_iv_mult24x24(uint24_t l, uint24_t r)
 
   return result;
 }
+*/
 
 // This is a copy of the internal PipelineC FP multiplier
 // With the unsigned multiply replaced with cyclone_iv prim
@@ -93,7 +100,7 @@ float cyclone_iv_fp_mult(float left, float right)
     
     aux2_x = uint1_uint23(1, x_mantissa);
     aux2_y = uint1_uint23(1, y_mantissa);
-    aux2 = cyclone_iv_mult24x24(aux2_x, aux2_y); //aux2_x * aux2_y;
+    aux2 = LPM_MULT24X24(aux2_x, aux2_y); //cyclone_iv_mult24x24(aux2_x, aux2_y); //aux2_x * aux2_y;
     // args in Q23 result in Q46
     aux = uint48_47_47(aux2);
     if(aux) //if(aux == 1)

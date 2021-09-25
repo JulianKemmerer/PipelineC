@@ -210,7 +210,9 @@ class TimingParams:
     #print("BUILD_HASH_EXT",Logic.func_name, flush=True)
     io_regs_and_slices_tup = self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
     s = str(io_regs_and_slices_tup)
-    hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
+    full_hash = (hashlib.md5(s.encode("utf-8")).hexdigest())
+    hash_ext = "_" + (full_hash[0:8]) #4 chars enough, no you dummy, lets hope 8 is
+    #print(f"inst {inst_name} {full_hash} {hash_ext}")
     return hash_ext
       
   def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
@@ -236,6 +238,9 @@ class TimingParams:
       self._slices.append(slice_point)
       self._slices = sorted(self._slices)
       self.INVALIDATE_CACHE()
+    else:
+      raise Exception(f"Slice {slice_point} exists already cant add? slices pre add: {self._slices}")
+      
     
     if self.calcd_total_latency is not None:
       print("WTF adding a slice and has latency cache?",self.calcd_total_latency)

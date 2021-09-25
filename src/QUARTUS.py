@@ -33,24 +33,27 @@ def PART_TO_FAMILY(part_str):
     sys.exit(-1)
     
 def FUNC_IS_PRIMITIVE(func_name):
-  #if func_name == "LPM_MULT9X9":
-  #  return True
-  if func_name == "LPM_MULT18X18":
+  if func_name.startswith("LPM_MULT"):
     return True
   return False
   
 def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
   #TODO easy to support any width from prim name alone
-  if Logic.func_name != "LPM_MULT18X18":
+  name = "LPM_MULT"
+  if not Logic.func_name.startswith(name):
     print("TODO other prims!")
     sys.exit(-1)
+  
+  toks = Logic.func_name.split(name)
+  lxr_str = toks[1]
+  l_width,r_width = lxr_str.split("X")
   # Assume LPM_MULT18X18
   needs_clk = VHDL.LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   timing_params = TimingParamsLookupTable[inst_name]
   
-  LPM_WIDTHA = 18
-  LPM_WIDTHB = 18
-  LPM_WIDTHP = 36
+  LPM_WIDTHA = int(l_width)
+  LPM_WIDTHB = int(r_width)
+  LPM_WIDTHP = LPM_WIDTHA + LPM_WIDTHB
   LPM_REPRESENTATION = "UNSIGNED"
   LPM_PIPELINE = len(timing_params._slices)
   INPUT_A_IS_CONSTANT = "NO"
