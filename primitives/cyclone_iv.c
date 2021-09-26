@@ -2,6 +2,10 @@
 
 #include "uintN_t.h"
 
+uint16_t LPM_MULT8X8(uint8_t a, uint8_t b)
+{
+  return a * b;
+}
 
 uint18_t LPM_MULT9X9(uint9_t a, uint9_t b)
 {
@@ -19,7 +23,7 @@ uint48_t LPM_MULT24X24(uint24_t a, uint24_t b)
 }
 
 /*
-uint48_t cyclone_iv_mult24x24(uint24_t l, uint24_t r)
+uint48_t mult24x24(uint24_t l, uint24_t r)
 {
   // Essentially rounding up to 36bx3b mult
   // using LPM_MULT18X18's
@@ -45,6 +49,39 @@ uint48_t cyclone_iv_mult24x24(uint24_t l, uint24_t r)
   return result;
 }
 */
+
+/*Let's say we need to multiply two mantisa values A and B, 24 bit each:
+Value a can be represented as 1.abc with a b and c being 8 bit valies. B is
+1.xyz, same width.
+Then you can mult:
+ A*B=(a*x+a*y+a*z+b*x+b*y+c*x) that is not calculating least significant
+term b*z+c*y+c*z. Using the full 9 bits instead of 8 will solve the carry
+issues from the least significant term.
+*/
+uint27_t mult27x27(uint27_t x, uint27_t y)
+{
+  //extract 9 bit fields
+  uint9_t a = uint27_26_18(x); // x[26:18]
+  uint9_t b = uint27_17_9(x);
+  uint9_t c = uint27_8_0(x);
+  uint9_t d = uint27_26_18(y);
+  uint9_t e = uint27_17_9(y);
+  uint9_t f = uint27_8_0(y);
+
+  uint9_t cd = uint18_17_9(LPM_MULT9X9(c, d));  // 18b c*d result top msbits [17:9]
+  uint10_t be_cd = cd + uint18_17_9(LPM_MULT9X9(b, e));
+  uint11_t be_cd_af = be_cd + uint18_17_9(LPM_MULT9X9(a, f));
+
+  uint18_t bd = LPM_MULT9X9(b, d);
+  uint19_t ae_bd = bd + LPM_MULT9X9(a, e);
+
+  uint18_t ad = LPM_MULT9X9(a, d);
+  uint27_t r = (ad << 9) + (ae_bd + be_cd_af);
+  
+  return r;
+}
+
+
 
 // This is a copy of the internal PipelineC FP multiplier
 // With the unsigned multiply replaced with cyclone_iv prim
@@ -98,8 +135,9 @@ float cyclone_iv_fp_mult(float left, float right)
     uint7_t BIAS;
     BIAS = 127;
     
-    aux2_x = uint1_uint23(1, x_mantissa);
-    aux2_y = uint1_uint23(1, y_mantissa);
+    aux2_x = uint1_uint23(1, x_mantissa); // Concat '1' bit to MSB/left
+    aux2_y = uint1_uint23(1, y_mantissa); // Concat '1' bit to MSB/left
+    /*
     aux2 = LPM_MULT24X24(aux2_x, aux2_y); //cyclone_iv_mult24x24(aux2_x, aux2_y); //aux2_x * aux2_y;
     // args in Q23 result in Q46
     aux = uint48_47_47(aux2);
@@ -107,13 +145,14 @@ float cyclone_iv_fp_mult(float left, float right)
     { 
       // >=2, shift left and add one to exponent
       // HACKY NO ROUNDING + aux2(23); // with round18
-      z_mantissa = uint48_46_24(aux2); 
+      z_mantissa = uint48_46_24(aux2); // aux2[46:24]
     }
     else
     { 
       // HACKY NO ROUNDING + aux2(22); // with rounding
-      z_mantissa = uint48_45_23(aux2); 
-    }
+      z_mantissa = uint48_45_23(aux2); // aux2[45:23]
+    }*/
+    z_mantissa = mult27x27(aux2_x, aux2_y);
     
     // calculate exponent in parts 
     // do sequential unsigned adds and subs to avoid signed numbers for now
