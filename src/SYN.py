@@ -2299,7 +2299,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
       best_mhz_so_far = 0.0
       if len(inst_sweep_state.mhz_to_latency) > 0:
         best_mhz_so_far = max(inst_sweep_state.mhz_to_latency.keys())
-      better_mhz = curr_mhz > best_mhz_so_far
+      better_mhz = curr_mhz >= best_mhz_so_far
       if better_mhz:
         # Log result
         inst_sweep_state.mhz_to_latency[curr_mhz] = latency
@@ -2312,7 +2312,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
       else:
         # Same or worse timing result
         inst_sweep_state.worse_or_same_tries_count += 1
-        print("Same or worse timing result...")
+        print(f"Same or worse timing result... (best={best_mhz_so_far})", flush=True)
         if stop_at_n_worse_result is not None:
           if inst_sweep_state.worse_or_same_tries_count >= stop_at_n_worse_result:
             print(logic.func_name,"giving up after",inst_sweep_state.worse_or_same_tries_count,"bad tries...")
