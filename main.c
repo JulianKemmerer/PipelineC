@@ -12,7 +12,7 @@
 // ICE40UP5K-SG48        ICE40UP
 // T8F81                 Trion T8 (Xyloni)
 // Ti60F225              Titanium
-//#pragma PART "xc7a35ticsg324-1l"
+#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
 // Please see: https://github.com/JulianKemmerer/PipelineC/wiki/Examples
@@ -43,20 +43,19 @@
 //#include "examples/pipeline_and_fsm.c"
 //#include "examples/edaplay.c"
 //#include "examples/fosix/main_game_clk_step.c"
-#include "examples/blink.c"
+//#include "examples/blink.c"
+//#include "examples/llvm/rsqrtf.c"
+#include "examples/arty/src/vga/test_pattern.c"
 
 // Below is a bunch of recent scratch work - enjoy
 
 /*
+#pragma PART "EP4CE22F17C6"
 #include "uintN_t.h"
-float my_float_global = -1.23;
-#pragma MAIN_MHZ my_test_bench 100.0
-uint1_t my_test_bench()
+#pragma MAIN my_mult
+uint48_t my_mult(uint24_t a, uint24_t b)
 {
-  float my_float_local = -3.45;
-  printf("Global value is %f\n", my_float_global);
-  printf("Local value is %f\n", my_float_local);
-  return 1;
+  return a * b;
 }
 */
 
@@ -164,7 +163,6 @@ void incrementer_thread()
   {
     local_reg = shared_region(local_reg, 1);
     local_reg += 1;
-    __clk();
   }
 }
 #include "incrementer_thread_FSM.h"
@@ -188,8 +186,8 @@ incrementer_thread_OUTPUT_t main_1(incrementer_thread_INPUT_t i)
   i.output_ready = 1;
   incrementer_thread_OUTPUT_t o = incrementer_thread_FSM(i);
   return o;
-}*/
-
+}
+*/
 
 /*
 #include "uintN_t.h"

@@ -9,7 +9,7 @@ use UNISIM.VCOMPONENTS.ALL;
 -- PipelineC packages
 use work.c_structs_pkg.all;
 
--- Connections to the board, see xdc files, un/commment things as needed
+-- Connections to the board, see board io in xdc files, un/commment things as needed
 entity board is
   port (
     CLK100MHZ : in std_logic;
@@ -18,6 +18,8 @@ entity board is
     uart_rxd_out : out std_logic;
     uart_txd_in : in std_logic;
     ja : inout std_logic_vector(7 downto 0);
+    jb : inout std_logic_vector(7 downto 0);
+    jc : inout std_logic_vector(7 downto 0);
     ddr3_dq       : inout std_logic_vector(15 downto 0);
     ddr3_dqs_p    : inout std_logic_vector(1 downto 0);
     ddr3_dqs_n    : inout std_logic_vector(1 downto 0);
@@ -82,6 +84,22 @@ port
  (
   -- Clock out ports
   i2s_mclk          : out    std_logic;
+  -- Status and control signals
+  locked            : out    std_logic;
+  -- Clock in ports
+  sys_clk_100       : in     std_logic
+ );
+end component;
+
+-- VGA clock+reset based off of the board's CLK100MHZ
+signal vga_pixel_clk : std_logic;
+signal vga_clocks_ready : std_logic;
+signal pixel_clk_reset_n : std_logic;
+component vga_clocks
+port
+ (
+  -- Clock out ports
+  pixel_clk          : out    std_logic;
   -- Status and control signals
   locked            : out    std_logic;
   -- Clock in ports
@@ -287,23 +305,38 @@ clks_sys_clk_100_inst : clks_sys_clk_100
 rst <= not clks_ready;
 rst_n <= clks_ready;
 
--- I2S clocks based off of the board's CLK100MHZ 
-i2s_clks_inst : i2s_clks
+-- -- I2S clocks based off of the board's CLK100MHZ 
+-- i2s_clks_inst : i2s_clks
+-- port map
+--  (
+--   -- Clock out ports
+--   i2s_mclk => i2s_mclk,
+--   -- Status and control signals
+--   locked => i2s_clks_ready,
+--   -- Clock in ports
+--   sys_clk_100 => sys_clk_100
+--  );
+-- -- I2S PMOD JA MCLK outputs
+-- ja(0) <= i2s_mclk;
+-- ja(4) <= i2s_mclk;
+-- clk_22p579 <= i2s_mclk;
+-- -- Hold in reset until clocks are ready
+-- i2s_rst_n <= i2s_clks_ready;
+
+
+-- VGA clocks based off of the board's CLK100MHZ 
+vga_clocks_inst : vga_clocks
 port map
  (
   -- Clock out ports
-  i2s_mclk => i2s_mclk,
+  pixel_clk => vga_pixel_clk,
   -- Status and control signals
-  locked => i2s_clks_ready,
+  locked => vga_clocks_ready,
   -- Clock in ports
   sys_clk_100 => sys_clk_100
  );
--- I2S PMOD JA MCLK outputs
-ja(0) <= i2s_mclk;
-ja(4) <= i2s_mclk;
-clk_22p579 <= i2s_mclk;
 -- Hold in reset until clocks are ready
-i2s_rst_n <= i2s_clks_ready;
+pixel_clk_reset_n <= vga_clocks_ready;
 
 -- -- DDR clocks based off of the board's CLK100MHZ 
 -- ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
@@ -478,7 +511,7 @@ end process;
 top_inst : entity work.top port map (   
     -- Main function clocks
     --clk_22p579 => clk_22p579,
-    clk_25p0 => clk_25,
+    clk_148p5 => vga_pixel_clk,
     --clk_25p0_xil_temac_rx => clk_25_eth_rx,
     --clk_25p0_xil_temac_tx => clk_25_eth_tx,
     --clk_50p0 => clk_50,
@@ -506,10 +539,10 @@ top_inst : entity work.top port map (
     --switches_module_sw => switches_wire,
 
     -- UART
-    uart_module_data_in(0) => uart_txd_in,
-    uart_module_return_output(0) => uart_rxd_out
+    --uart_module_data_in(0) => uart_txd_in,
+    --uart_module_return_output(0) => uart_rxd_out
     
-    -- PMOD
+    -- PMODA
     ----pmod_ja_return_output.ja0(0) => ja(0),
     --pmod_ja_return_output.ja1(0) => ja(1),
     --pmod_ja_return_output.ja2(0) => ja(2),
@@ -517,7 +550,25 @@ top_inst : entity work.top port map (
     ----pmod_ja_return_output.ja4(0) => ja(4),
     --pmod_ja_return_output.ja5(0) => ja(5),
     --pmod_ja_return_output.ja6(0) => ja(6),
-    --pmod_ja_inputs.ja7(0) => ja(7)
+    --pmod_ja_inputs.ja7(0) => ja(7),
+    -- PMODB
+    pmod_jb_return_output.jb0(0) => jb(0),
+    pmod_jb_return_output.jb1(0) => jb(1),
+    pmod_jb_return_output.jb2(0) => jb(2),
+    pmod_jb_return_output.jb3(0) => jb(3),
+    pmod_jb_return_output.jb4(0) => jb(4),
+    pmod_jb_return_output.jb5(0) => jb(5),
+    pmod_jb_return_output.jb6(0) => jb(6),
+    pmod_jb_return_output.jb7(0) => jb(7),
+    -- PMODC
+    pmod_jc_return_output.jc0(0) => jc(0),
+    pmod_jc_return_output.jc1(0) => jc(1),
+    pmod_jc_return_output.jc2(0) => jc(2),
+    pmod_jc_return_output.jc3(0) => jc(3),
+    pmod_jc_return_output.jc4(0) => jc(4),
+    pmod_jc_return_output.jc5(0) => jc(5),
+    pmod_jc_return_output.jc6(0) => jc(6),
+    pmod_jc_return_output.jc7(0) => jc(7)
     
     -- DDR3
     --xil_mig_module_mig_to_app => mig_to_app,
