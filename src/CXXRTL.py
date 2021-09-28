@@ -13,11 +13,16 @@ def DO_SIM(latency, parser_state):
   names_text = ""
   # Clocks
   clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True)
-  for clock_name,mhz in clock_name_to_mhz.items():
-    if mhz:
-      names_text += f'#define {clock_name} p_{clock_name.replace("_","__")}\n'
-    else:
-      names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
+  if len(clock_name_to_mhz) > 1:
+    for clock_name,mhz in clock_name_to_mhz.items():
+      if mhz:
+        names_text += f'#define {clock_name} p_{clock_name.replace("_","__")}\n'
+      else:
+        names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
+  else:
+    clock_name,mhz = list(clock_name_to_mhz.items())[0]
+    names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
+    
   # Debug ports
   for func in parser_state.main_mhz:
     if func.endswith("_DEBUG_INPUT_MAIN") or func.endswith("_DEBUG_OUTPUT_MAIN"):
@@ -52,10 +57,18 @@ int main()
        top.clk.set<bool>(false); top.step();
        top.clk.set<bool>(true); top.step();
   
-       uint32_t counter    = top.counter_debug.get<uint32_t>();
-       bool cur_led        = top.led_debug.get<bool>();
-       cout << "cycle " << cycle << " - led: " << cur_led << ", counter: " << counter << endl;
-       
+       bool vsync = top.vsync.get<bool>();
+       bool hsync = top.hsync.get<bool>();
+       uint32_t red = top.vga_red.get<uint32_t>();
+       uint32_t green = top.vga_green.get<uint32_t>();
+       uint32_t blue = top.vga_blue.get<uint32_t>();
+       cout << "cycle " << cycle 
+            << " vsync: " << vsync
+            << " hsync: " << hsync
+            << " red: " << red
+            << " green: " << green
+            << " blue: " << blue
+            << endl;
     }
     return 0;
 }
