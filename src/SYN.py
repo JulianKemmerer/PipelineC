@@ -1300,7 +1300,7 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   
   return TimingParamsLookupTable
         
-def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
+def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None, allow_no_syn_tool=False):
   ext = None
   if SYN_TOOL is VIVADO:
     ext = ".xdc"
@@ -1315,9 +1315,11 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
   elif SYN_TOOL is EFINITY:
     ext = ".sdc"
   else:
-    # Sufjan Stevens - Video Game
-    raise Exception(f"Add constraints file ext for syn tool {SYN_TOOL.__name__}")
-    #sys.exit(-1)
+    if not allow_no_syn_tool:
+      # Sufjan Stevens - Video Game
+      raise Exception(f"Add constraints file ext for syn tool {SYN_TOOL.__name__}")
+      #sys.exit(-1)
+    ext = ""
     
   clock_name_to_mhz = dict()
   if inst_name:
@@ -1330,7 +1332,7 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     out_filename = "clocks" + ext
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     for main_func in parser_state.main_mhz:
-      clock_mhz = GET_TARGET_MHZ(main_func, parser_state)
+      clock_mhz = GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool)
       clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
       clk_name = "clk_" + clk_ext_str
       clock_name_to_mhz[clk_name] = clock_mhz
@@ -1392,7 +1394,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
   
 # Target mhz is internal name for whatever mhz we are using in this run
 # Real pnr MAIN_MHZ or syn only MAIN_SYN_MHZ
-def GET_TARGET_MHZ(main_func, parser_state):
+def GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=False):
   # Does tool do full PNR or just syn?
   if SYN_TOOL is VIVADO:
     if VIVADO.DO_PNR is not None:
@@ -1406,7 +1408,10 @@ def GET_TARGET_MHZ(main_func, parser_state):
   elif (SYN_TOOL is DIAMOND):
     return parser_state.main_syn_mhz[main_func]
   else:
-    raise Exception("Need syn tool!")
+    if not allow_no_syn_tool:
+      raise Exception("Need syn tool!")
+    # Default to main mhz
+    return parser_state.main_mhz[main_func]
     
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   is_final_top = True
