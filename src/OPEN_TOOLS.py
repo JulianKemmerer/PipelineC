@@ -355,20 +355,20 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
   out_reg = "NONE"
   # TODO UPDATE TO USE timing_params._has regs flags
   # 0 slices = comb
-  if len(timing_params.slices) == 0:
+  if len(timing_params._slices) == 0:
     pass
   # 1 slice > 50% is output, < means input
-  elif len(timing_params.slices) == 1:
-    if timing_params.slices[0] > 0.5:
+  elif len(timing_params._slices) == 1:
+    if timing_params._slices[0] > 0.5:
       out_reg = "CLK0"
     else:
       in_reg = "CLK0"
   # 2 slice is in and out
-  elif len(timing_params.slices) == 2:
+  elif len(timing_params._slices) == 2:
     out_reg = "CLK0"
     in_reg = "CLK0"
   # 3 slice is in,pipline,out regs
-  elif len(timing_params.slices) == 3:
+  elif len(timing_params._slices) == 3:
     out_reg = "CLK0"
     in_reg = "CLK0"
     pipe_reg = "CLK0"

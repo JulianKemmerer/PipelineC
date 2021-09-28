@@ -1244,7 +1244,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
     # Keep everything except logic stuff
     parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
     parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-    parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+    parser_state_copy.existing_logic = C_TO_LOGIC.Logic() # Temp working copy of logic ? idk it should work
     parse_body = False # MEM DOES NOT HAVE SW IMPLEMENTATION
     FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
     
@@ -1943,7 +1943,7 @@ typedef uint8_t ''' + result_t + '''; // FUCK
     # Keep everything except logic stuff
     parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
     parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-    parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+    parser_state_copy.existing_logic = C_TO_LOGIC.Logic() # Temp working copy of logic ? idk it should work
     
     ## NEED MANIP in MATH
     
@@ -2313,7 +2313,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Keep everything except logic stuff
     parser_state_copy.FuncLogicLookupTable=dict() #dict[func_name]=Logic() instance with just func info
     parser_state_copy.LogicInstLookupTable=dict() #dict[inst_name]=Logic() instance in full
-    parser_state_copy.existing_logic = None # Temp working copy of logic ? idk it should work
+    parser_state_copy.existing_logic = C_TO_LOGIC.Logic() # Temp working copy of logic ? idk it should work
     parse_body = False # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
     FuncLogicLookupTable = C_TO_LOGIC.GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(text, outfile, parser_state_copy, parse_body)
     

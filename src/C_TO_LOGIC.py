@@ -20,9 +20,9 @@ import SW_LIB
 import C_TO_FSM
 
 # Global default constants for inferring different VHDL implementations of operators
-MULT_STYLE_INFERRED = "inferred"
+MULT_STYLE_INFERRED = "infer"
 MULT_STYLE_FABRIC = "fabric"
-MULT_STYLE = MULT_STYLE_INFERRED
+MULT_STYLE = None
 
 # Debug
 TRIM_COLLAPSE_LOGIC = True # Flag to reduce duplicate wires, unused modules, False for debug
@@ -3139,6 +3139,41 @@ def C_TYPE_IS_USER_TYPE(c_type,parser_state):
       
   return user_code
   
+def RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_node, prepend_text, parser_state):
+  # Very similar to RESOLVE_REF_TOKS_TO_CONSTANT_WIRE
+  if c_ast_node is None:
+    return None
+
+  dummy_wire = "DUMMY_RESOLVE_WIRE"
+  driven_wire_names = [dummy_wire]
+  parser_state.existing_logic = C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
+  # Is dummy wire driven by constant?
+  const_driving_wire = FIND_CONST_DRIVING_WIRE(dummy_wire, parser_state.existing_logic)
+  
+  # Remove the dummy wire
+  # Fast
+  parser_state.existing_logic.wires.remove(dummy_wire)
+  parser_state.existing_logic.wire_to_c_type.pop(dummy_wire, None)
+  # IO wire is driven by thing
+  driving_wire = parser_state.existing_logic.wire_driven_by[dummy_wire]
+  # Remove io wire from opposite direction
+  all_driven_wires = parser_state.existing_logic.wire_drives[driving_wire]
+  all_driven_wires.remove(dummy_wire)
+  if len(all_driven_wires) > 0:
+    parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wires
+  else:
+    parser_state.existing_logic.wire_drives.pop(driving_wire)
+  # Then remove original direction
+  parser_state.existing_logic.wire_driven_by.pop(dummy_wire)
+  
+  # Return the constant or None
+  if const_driving_wire is not None:
+    # Get value from this constant
+    val_str = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
+    return val_str #, parser_state.existing_logic
+  else:
+    return None #, parser_state.existing_logic
+  
 def RESOLVE_REF_TOKS_TO_CONSTANT_WIRE(ref_toks, c_ast_node, prepend_text, parser_state):
   # Very similar to RESOLVE_CONST_ARRAY_REF_TO_LOGIC
   
@@ -3972,7 +4007,7 @@ def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
   if local_name.startswith(CONST_PREFIX):
     stripped_wire_name = local_name[len(CONST_PREFIX):]
   
-  # CANT SPLIT ON UNDER DUMMY - ENUMS ARE CONSTs too
+  # CANT SPLIT ON UNDER dummy - ENUMS ARE CONSTs too
   if ENUM_CONST_MARKER in stripped_wire_name:
     ami_digit = stripped_wire_name.split(ENUM_CONST_MARKER)[0]
   else:
@@ -4111,6 +4146,7 @@ def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, st
   state_reg_info.name = state_reg_var
   state_reg_info.type_name = c_type
   state_reg_info.init = c_ast_static_decl.init # Static init must be const?
+  state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_static_decl.init, prepend_text, parser_state)
   state_reg_info.is_volatile = 'volatile' in c_ast_static_decl.quals
   state_reg_info.is_static = True
   
@@ -5045,9 +5081,23 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   #
   # ALL INPUTS CONSTANT - REPLACE WITH CONSTANT
   if all_inputs_constant:
+    
+    # Thanks stackoverflow for twos comp BullSHEEIITITT FUCK ECE 200
+    def int2bin(integer, digits):
+      if integer >= 0:
+        return bin(integer)[2:].zfill(digits)
+      else:
+        return bin(2**digits + integer)[2:]
+    # STACKOVERFLOW MY MAN
+    def to_int(bin,signed):
+      x = int(bin, 2)
+      if signed:
+        if bin[0] == '1': # "sign bit", big-endian
+           x -= 2**len(bin)
+      return x
+    
     const_val_str = None
-    # Is this binary op?
-    # TODO other things
+    # BINARY OPERATIONS
     if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX) and not base_name_is_name:
       lhs_wire = const_input_wires[0]
       rhs_wire = const_input_wires[1]
@@ -5127,21 +5177,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         if not is_ints:
           print("Constant bit operation function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
           sys.exit(-1)
-          
-        # Thanks stackoverflow for twos comp BullSHEEIITITT FUCK ECE 200
-        def int2bin(integer, digits):
-          if integer >= 0:
-            return bin(integer)[2:].zfill(digits)
-          else:
-            return bin(2**digits + integer)[2:]
-        # STACKOVERFLOW MY MAN
-        def to_int(bin,signed):
-          x = int(bin, 2)
-          if signed:
-            if bin[0] == '1': # "sign bit", big-endian
-               x -= 2**len(bin)
-          return x
-        
+
         if func_base_name.endswith(BIN_OP_SR_NAME):
           # Output type is type of LHS
           c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
@@ -5181,6 +5217,38 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       else:
         print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
         sys.exit(-1)
+        
+    # UNARY OPERATIONS
+    elif func_base_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX) and not base_name_is_name:
+      in_wire = const_input_wires[0]
+      in_val_str = GET_VAL_STR_FROM_CONST_WIRE(in_wire, parser_state.existing_logic, parser_state)
+      # Skip compund null wire optmizations for now
+      if in_val_str==COMPOUND_NULL:
+        return None
+      in_negated = in_val_str.startswith('-')
+      in_val_str_no_neg = in_val_str.strip('-')
+      in_val, in_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_no_neg, func_c_ast_node, in_negated)
+      signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
+      in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
+      is_int = VHDL.C_TYPES_ARE_INTEGERS([in_c_type])
+      #is_float = in_c_type=="float"
+      
+      # Number who?
+      if not is_int: # and not is_float:
+        print("Function", func_base_name, func_c_ast_node.coord, "is constant unary op of non numbers?")
+        sys.exit(-1)
+        
+      # What op?
+      if func_base_name.endswith(UNARY_OP_NOT_NAME):
+        in_bin_str = int2bin(in_val, in_width)
+        out_bin_str = in_bin_str.replace('0','T').replace('1','0').replace('T', '1')
+        out_val = to_int(out_bin_str, signed)
+        const_val_str = str(out_val)
+      else:
+        print("Function", func_base_name, func_c_ast_node.coord, "is constant unary op yet to be supported.",func_base_name)
+        sys.exit(-1)
+        
+    # BIT MANIPULATION
     elif (func_logic is not None) and SW_LIB.IS_BIT_MANIP(func_logic):
       # TODO
       return None    
@@ -7176,7 +7244,6 @@ class ParserState:
     self.func_to_local_state_regs = dict() #funcname-> [state,reg,infos]
     
     # Parsed from function defintions
-    self.existing_logic = None # Temp working copy of current func logic, probably should not be here?
     # Function definitons as logic
     self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
     # Special primitive funcs
@@ -7206,6 +7273,9 @@ class ParserState:
     self.func_fsm_header_included = set()
     # SINGLE inst funcs
     self.func_single_inst_header_included = set()
+    
+    # Temp working copy of current func logic, probably should not be here?
+    self.existing_logic = Logic() # Empty start for 'global namespace parsing'? 
 
   def DEEPCOPY(self):
     # Fuck me how many times will I get caught with objects getting copied incorrectly?
@@ -7639,6 +7709,7 @@ class StateRegInfo:
     self.name = None
     self.type_name = None
     self.init = None # c ast node
+    self.resolved_const_str = None
     self.is_volatile = False
     self.is_static = False
     self.path_id = None # Use associated path id, for clk cross
@@ -7653,6 +7724,7 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
     c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
     state_reg_info.type_name = c_type
     state_reg_info.init = global_decl.init
+    state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(global_decl.init, "", parser_state)
         
     # Save flags
     if 'volatile' in global_decl.quals:
@@ -7685,6 +7757,8 @@ def GET_LOCAL_STATE_REG_INFO(parser_state):
         state_reg_info.name = var_name
         state_reg_info.type_name = c_type
         state_reg_info.init = decl_c_ast_node.init
+        # Resolved when evaluating containing func
+        #state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(decl_c_ast_node.init, "", parser_state)
             
         # Save flags
         if 'volatile' in decl_c_ast_node.quals:
@@ -8163,7 +8237,7 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
 def BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst_name, parser_state):
   # Need to have 'from code' defintion of macro func too for now
   if func_name not in parser_state.FuncLogicLookupTable:
-    print("Primative",func_name,"needs function defintion!")
+    print("Primitive",func_name,"needs function defintion!")
     sys.exit(-1)
   orig_func_logic = parser_state.FuncLogicLookupTable[func_name]
   
@@ -8178,8 +8252,9 @@ def BUILD_PRIMITIVE_FUNC_LOGIC(func_name, containing_logic_inst_name, local_inst
   
   return func_logic
   
-def FUNC_IS_PRIMITIVE(func_name):
+def FUNC_IS_PRIMITIVE(func_name, parser_state):
   # Try to use the tool assume false otherwise
+  SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
   try:
     return SYN.SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
   except:
@@ -8216,6 +8291,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
     # Silently skip fsm clk funcs 
+    parse_func_body = parse_body
     if func_def.decl.name in FuncLogicLookupTable and FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
       continue    
     # Skip functions that are not found in the initial from-main hierarchy mapping
@@ -8224,13 +8300,17 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
          (func_def.decl.name not in parser_state.main_mhz) ):
       print("Function skipped:",func_def.decl.name)
       continue
+    elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
+      print("Parsing primitive function:",func_def.decl.name, flush=True)
+      parse_func_body = False
     else:
       print("Parsing function:",func_def.decl.name, flush=True)
+
     # Each func def produces a single logic item
     parser_state.existing_logic=None
     driven_wire_names=[]
     prepend_text=""
-    logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
+    logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body=parse_func_body)
     FuncLogicLookupTable[logic.func_name] = logic 
     parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
@@ -8257,7 +8337,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
     
     
   # Is this function a hardware/tool specific primative?
-  if FUNC_IS_PRIMITIVE(func_name):
+  if FUNC_IS_PRIMITIVE(func_name, parser_state):
     if func_name in parser_state.PrimFuncLogicLookupTable:
       orig_func_logic = parser_state.PrimFuncLogicLookupTable[func_name]
     else:
@@ -8288,6 +8368,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_stat
   if func_name not in parser_state.FuncToInstances:
     parser_state.FuncToInstances[func_name] = set()
   parser_state.FuncToInstances[func_name].add(inst_name)
+  
   
   # Then recursively do submodules
   # USING local names from orig_func_logic

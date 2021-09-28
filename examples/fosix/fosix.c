@@ -206,32 +206,6 @@ if(name.done | name##_reg.done) \
 } \
 name##_reg = name;
 
-/*
-// Do syscall using new clk step operator code
-syscall_func_t syscall_fsm(fosix_sys_to_proc_t sys_to_proc, syscall_io_t syscall_io)
-{
-  syscall_func_t o;
-  while(1)
-  {
-    syscall_func_t sc = syscall_func(sys_to_proc, syscall_io);
-    o.proc_to_sys = sc.proc_to_sys;
-    o.syscall_io = sc.syscall_io;
-    __out(o);
-  }
-
-}
-
-#define SYSCALL_FSM(name, sys_to_proc, proc_to_sys) \
-
-while(!name##_reg.done)
-{
-  
-  ????
-  
-}
-*/
-
-
 // Do not modify inputs after start, and do not use outputs until done
 
 #define OPEN_THEN(syscall_io, fd_out, path_in, then) \
@@ -730,4 +704,122 @@ void fosix()
 }
 
 
-// Implement helper funcs main_syscall( which uses global wires attached to syscall?
+// Derived FSM IO for syscalls
+typedef struct syscall_i_t
+{
+  syscall_num_t num; // System call number in progress
+  fosix_fd_t fd; // File descriptor for syscall
+  char path[FOSIX_PATH_SIZE]; // Path buf for open()
+  uint8_t buf[FOSIX_BUF_SIZE]; // IO buf for write+read
+  fosix_size_t buf_nbytes; // Input number of bytes
+}syscall_i_t;
+typedef struct syscall_o_t
+{
+  fosix_fd_t fd; // File descriptor for syscall
+  uint8_t buf[FOSIX_BUF_SIZE]; // IO buf for write+read
+  fosix_size_t buf_nbytes_ret; // Return count of bytes
+}syscall_o_t;
+
+// Make a single instance of the syscall fsm function
+// Uses single sintance global wires connecting to fosix stuff
+syscall_o_t syscall(syscall_i_t i)
+{
+  syscall_o_t o;
+  uint1_t func_running = 1;
+  while(func_running)
+  {
+    // Inputs
+    fosix_sys_to_proc_t sys_to_proc;
+    WIRE_READ(fosix_sys_to_proc_t, sys_to_proc, main_sys_to_proc)  
+    syscall_io_t io;
+    io.start = 1;
+    io.num = i.num;
+    io.fd = i.fd;
+    io.path = i.path;
+    io.buf = i.buf;
+    io.buf_nbytes = i.buf_nbytes;
+    
+    // The function
+    syscall_func_t sc;  
+    sc = syscall_func(sys_to_proc, io);
+    
+    // Outputs
+    io = sc.syscall_io;
+    o.fd = io.fd;
+    o.buf = io.buf;
+    o.buf_nbytes_ret = io.buf_nbytes_ret;
+    fosix_proc_to_sys_t proc_to_sys = sc.proc_to_sys;
+    WIRE_WRITE(fosix_proc_to_sys_t, main_proc_to_sys, proc_to_sys)
+    
+    // Detect end of comb logic fsm
+    // TODO: implement break;
+    if(io.done)
+    {
+      func_running = 0;
+    }
+    
+    // Loop iteration needs to take atleast 1 clk
+    // (No logic above take any clock cycles, all comb. logic)
+    __clk();
+  }
+  return o;
+}
+#include "syscall_SINGLE_INST.h"
+
+fosix_fd_t open(char path[FOSIX_PATH_SIZE])
+{
+  syscall_i_t i;
+  i.num = FOSIX_OPEN;
+  i.path = path;
+  syscall_o_t o = syscall(i);
+  return o.fd;
+}
+#include "open_SINGLE_INST.h"
+  
+fosix_size_t write(fosix_fd_t fd, char buf[FOSIX_BUF_SIZE], fosix_size_t buf_nbytes)
+{
+  syscall_i_t i;
+  i.num = FOSIX_WRITE;
+  i.buf = buf;
+  i.buf_nbytes = buf_nbytes;
+  i.fd = fd;
+  syscall_o_t o = syscall(i);
+  return o.buf_nbytes_ret;
+} 
+#include "write_SINGLE_INST.h"
+
+// Needs to be macro since can't pass string arg for strlen through func args
+#define STRWRITE(fd_in, buf_in)\
+write(fd_in, buf_in, strlen(buf_in)+1 /* w/ null term*/);
+
+typedef struct read_t
+{
+  uint8_t buf[FOSIX_BUF_SIZE];
+  fosix_size_t buf_nbytes_ret;
+}read_t;
+read_t read(fosix_fd_t fd, fosix_size_t buf_nbytes)
+{
+  syscall_i_t i;
+  i.num = FOSIX_READ;
+  i.buf_nbytes = buf_nbytes;
+  i.fd = fd;
+  syscall_o_t o = syscall(i);
+  read_t r;
+  r.buf = o.buf;
+  r.buf_nbytes_ret = o.buf_nbytes_ret;
+  return r;
+} 
+#include "read_SINGLE_INST.h"
+
+/*TEMP NOT USED CANT SPECIFY AS BEING THERE AS A SINGLE INST
+// Temp return fd const 0
+fosix_fd_t close(fosix_fd_t fd)
+{
+  syscall_i_t i;
+  i.num = FOSIX_CLOSE;
+  i.fd = fd;
+  syscall_o_t o = syscall(i);
+  return 0;
+} 
+#include "close_SINGLE_INST.h"
+*/

@@ -32,6 +32,83 @@ def PART_TO_FAMILY(part_str):
     print("What family is part'",part_str,"from? Edit QUARTUS.py.", flush=True)
     sys.exit(-1)
     
+def FUNC_IS_PRIMITIVE(func_name):
+  if func_name.startswith("LPM_MULT"):
+    return True
+  return False
+  
+def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+  #TODO easy to support any width from prim name alone
+  name = "LPM_MULT"
+  if not Logic.func_name.startswith(name):
+    print("TODO other prims!")
+    sys.exit(-1)
+  
+  toks = Logic.func_name.split(name)
+  lxr_str = toks[1]
+  l_width,r_width = lxr_str.split("X")
+  # Assume LPM_MULT18X18
+  needs_clk = VHDL.LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
+  timing_params = TimingParamsLookupTable[inst_name]
+  
+  LPM_WIDTHA = int(l_width)
+  LPM_WIDTHB = int(r_width)
+  LPM_WIDTHP = LPM_WIDTHA + LPM_WIDTHB
+  LPM_REPRESENTATION = "UNSIGNED"
+  LPM_PIPELINE = len(timing_params._slices)
+  INPUT_A_IS_CONSTANT = "NO"
+  INPUT_B_IS_CONSTANT = "NO"
+  USE_EAB = "NO"  
+  text = f'''
+  
+--LIBRARY lpm;
+--USE lpm.lpm_components.all;
+component LPM_MULT
+generic ( 
+  LPM_WIDTHA : natural;
+  LPM_WIDTHB : natural;
+  LPM_WIDTHS : natural := 1;
+  LPM_WIDTHP : natural;
+  LPM_REPRESENTATION : string := "UNSIGNED";
+  LPM_PIPELINE : natural := 0;
+  --LPM_TYPE: string := L_MULT;
+  LPM_HINT : string := "UNUSED"
+);
+port ( 
+  DATAA : in std_logic_vector(LPM_WIDTHA-1 downto 0);
+  DATAB : in std_logic_vector(LPM_WIDTHB-1 downto 0);
+  ACLR : in std_logic := '0';
+  CLOCK : in std_logic := '0';
+  CLKEN : in std_logic := '1';
+  SUM : in std_logic_vector(LPM_WIDTHS-1 downto 0) := (OTHERS => '0');
+  RESULT : out std_logic_vector(LPM_WIDTHP-1 downto 0)
+);
+
+end component;
+
+begin
+  
+  LPM_MULT_inst : LPM_MULT
+  generic map (
+   LPM_WIDTHA => {LPM_WIDTHA},
+   LPM_WIDTHB => {LPM_WIDTHB},
+   LPM_WIDTHP => {LPM_WIDTHP},
+   LPM_REPRESENTATION => "{LPM_REPRESENTATION}",
+   LPM_PIPELINE => {LPM_PIPELINE}
+  )
+  port map(
+'''
+  if needs_clk:
+    text += "CLOCK => clk,\n"
+  text += f'''
+  DATAA => std_logic_vector(a),
+  DATAB => std_logic_vector(b),
+  unsigned(RESULT) => return_output
+  );
+'''
+  
+  return text
+    
 # Convert Intel style 'node' paths with | and : into 'element' ones with just |
 # And while here convert to use / instead of | like Xilinx too
 def NODE_TO_ELEM(node_str):  
@@ -284,6 +361,12 @@ set_global_assignment -name SDC_FILE ''' + constraints_filepath + '''
       if vhdl_file_text != "":
         f.write('''set_global_assignment -name VHDL_FILE ''' + vhdl_file_text + '''
 ''')
+
+    # IEEE proposed since quartus lite doesnt include vhdl 2008
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n")
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n")
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n")   
+
     # Do compile
     f.write('''
 # compile the project

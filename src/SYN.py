@@ -210,7 +210,9 @@ class TimingParams:
     #print("BUILD_HASH_EXT",Logic.func_name, flush=True)
     io_regs_and_slices_tup = self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(inst_name, Logic, TimingParamsLookupTable, parser_state)
     s = str(io_regs_and_slices_tup)
-    hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4]) #4 chars enough?
+    full_hash = (hashlib.md5(s.encode("utf-8")).hexdigest())
+    hash_ext = "_" + (full_hash[0:8]) #4 chars enough, no you dummy, lets hope 8 is
+    #print(f"inst {inst_name} {full_hash} {hash_ext}")
     return hash_ext
       
   def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
@@ -236,6 +238,9 @@ class TimingParams:
       self._slices.append(slice_point)
       self._slices = sorted(self._slices)
       self.INVALIDATE_CACHE()
+    else:
+      raise Exception(f"Slice {slice_point} exists already cant add? slices pre add: {self._slices}")
+      
     
     if self.calcd_total_latency is not None:
       print("WTF adding a slice and has latency cache?",self.calcd_total_latency)
@@ -1544,14 +1549,15 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
       # Init hier sweep mult to be top level
       func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
       target_mhz = GET_TARGET_MHZ(main_inst_name, parser_state)
-      target_path_delay_ns = 1000.0 / target_mhz
-      sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
-      if delay > 0.0 and func_logic.CAN_BE_SLICED():
-        sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
-        # Dont bother making from the top level if need more than 50 slices? # MAGIC?
-        hier_sweep_mult = max(HIER_SWEEP_MULT_MIN, (target_path_delay_ns/func_path_delay_ns) - HIER_SWEEP_MULT_INC) # HIER_SWEEP_MULT_INC since fp rounding stuff?
-        sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
-        #print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
+      if target_mhz is not None:
+        target_path_delay_ns = 1000.0 / target_mhz
+        sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
+        if delay > 0.0 and func_logic.CAN_BE_SLICED():
+          sweep_state.inst_sweep_state[main_inst_name].slice_ep = SLICE_EPSILON(delay)
+          # Dont bother making from the top level if need more than 50 slices? # MAGIC?
+          hier_sweep_mult = max(HIER_SWEEP_MULT_MIN, (target_path_delay_ns/func_path_delay_ns) - HIER_SWEEP_MULT_INC) # HIER_SWEEP_MULT_INC since fp rounding stuff?
+          sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = hier_sweep_mult
+          #print(func_logic.func_name,"hierarchy sweep mult:",sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult)
         
   return sweep_state
   
@@ -1744,7 +1750,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False): #,skip_coarse_sweep=False, skip_fine_sweep=False):
+def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=None, do_incremental_guesses=True):
   for main_func in parser_state.main_mhz:
     if main_func not in parser_state.main_mhz:
       print("Main Function:",main_func,"does not have a set target frequency. Cannot do pipelining throughput sweep!", flush=True)
@@ -1775,10 +1781,18 @@ def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False): #,skip_coarse_sweep=Fa
     if len(parser_state.main_mhz) > 1:
       raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
       sys.exit(-1)
+    main_func = list(parser_state.main_mhz.keys())[0]
+    if GET_TARGET_MHZ(main_func, parser_state) is None:
+      print("Main Function:",main_func,"does not have a set target frequency.")
+      print("Starting a coarse sweep incrementally from zero latency comb. logic.", flush=True)
+      starting_guess_latency = 0
+      do_incremental_guesses = False
+      parser_state.main_mhz[main_func] = INF_MHZ
     inst_sweep_state = InstSweepState()
     inst_sweep_state, working_slices, multimain_timing_params.TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(
       list(parser_state.main_mhz.keys())[0], list(parser_state.main_mhz.values())[0],
-      inst_sweep_state, parser_state)
+      inst_sweep_state, parser_state,
+      starting_guess_latency, do_incremental_guesses)
     return multimain_timing_params
   
   # Real middle out sweep which includes coarse sweep
@@ -1852,6 +1866,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
           # Cached coarse sweep?
           target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+          if target_mhz is None:
+            raise Exception(f"Main function {main_func} does not have a specified operating frequency. Missing MAIN_MHZ pragma?")
           target_path_delay_ns = 1000.0 / target_mhz
           coarse_target_mhz = target_mhz * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
           
@@ -1946,7 +1962,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           print("Allowed worse results in coarse sweep:",allowed_worse_results)
           # Why not do middle out again? All the way down? Because complicated?weird do later
           sweep_state.inst_sweep_state[func_inst], working_slices, inst_TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(func_inst, coarse_target_mhz,
-            sweep_state.inst_sweep_state[func_inst], parser_state, do_starting_guess=True, do_incremental_guesses=True, 
+            sweep_state.inst_sweep_state[func_inst], parser_state, starting_guess_latency=None, do_incremental_guesses=True, 
             max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT, stop_at_n_worse_result=allowed_worse_results)
           if not sweep_state.inst_sweep_state[func_inst].met_timing:
             # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
@@ -2175,7 +2191,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
 # Starting guess really only saves 1 extra syn run for dup multimain top
 def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
     inst_sweep_state, parser_state,
-    do_starting_guess=True, do_incremental_guesses=True, 
+    starting_guess_latency=None, do_incremental_guesses=True, 
     max_allowed_latency_mult=None,
     stop_at_n_worse_result=None):
   working_slices = None
@@ -2184,7 +2200,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
   # Dont even bother running multimain top as combinatorial logic
   inst_sweep_state.coarse_latency = 0
   inst_sweep_state.initial_guess_latency = 0
-  if do_starting_guess:
+  if starting_guess_latency is None:
     target_path_delay_ns = 1000.0 / target_mhz
     path_delay_ns = float(logic.delay) / DELAY_UNIT_MULT
     if path_delay_ns > 0.0:
@@ -2197,7 +2213,11 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
         if logic.CAN_BE_SLICED():
           clks = int(math.ceil(mult)) - 1
           inst_sweep_state.coarse_latency = clks
-          inst_sweep_state.initial_guess_latency = clks         
+          inst_sweep_state.initial_guess_latency = clks
+  else:
+    if logic.CAN_BE_SLICED():
+      inst_sweep_state.coarse_latency = starting_guess_latency
+      inst_sweep_state.initial_guess_latency = starting_guess_latency
       
   # Do loop of:
   #   Reset top to 0 clk
@@ -2289,7 +2309,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
       best_mhz_so_far = 0.0
       if len(inst_sweep_state.mhz_to_latency) > 0:
         best_mhz_so_far = max(inst_sweep_state.mhz_to_latency.keys())
-      better_mhz = curr_mhz > best_mhz_so_far
+      better_mhz = curr_mhz >= best_mhz_so_far
       if better_mhz:
         # Log result
         inst_sweep_state.mhz_to_latency[curr_mhz] = latency
@@ -2302,7 +2322,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
       else:
         # Same or worse timing result
         inst_sweep_state.worse_or_same_tries_count += 1
-        print("Same or worse timing result...")
+        print(f"Same or worse timing result... (best={best_mhz_so_far})", flush=True)
         if stop_at_n_worse_result is not None:
           if inst_sweep_state.worse_or_same_tries_count >= stop_at_n_worse_result:
             print(logic.func_name,"giving up after",inst_sweep_state.worse_or_same_tries_count,"bad tries...")

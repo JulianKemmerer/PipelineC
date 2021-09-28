@@ -20,12 +20,18 @@ parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
                     help=f"C file containing main functions. Default is {default_c_file}.")
 parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
-parser.add_argument("--coarse", help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).", action="store_true")
+parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
+                      help=f"infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
 parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")
 parser.add_argument("--modelsim", help="Setup simulation files for use with Modelsim.", action="store_true")
-parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")        
+parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
+parser.add_argument("--coarse", 
+                      help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).",
+                      action="store_true")
+parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from N cycles latency.")
+parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
 args = parser.parse_args()
 
 # Resolve C file arg
@@ -42,6 +48,9 @@ else:
   # Or create a unique dir for this run in current dir
   c_filename = os.path.basename(c_file)
   SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath("./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid()))
+# Multiplier style
+C_TO_LOGIC.MULT_STYLE = args.mult
+
 
 print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
@@ -59,6 +68,13 @@ Do announcement of some sort for __clk()
   Used recent game thing as example rewritten in clk style?
   Could use new arbitration for slow IO?
   Do video demo? guitar i2s audio visualizer of some sort?
+Publish math packages 0,1,2..n clock versions of things for all sorts of devices
+Generics? - MAKE issue, big enough language level
+  Let __vhdl__ describe VHDL funcs that can # pragmad and used somehow?
+  Do const func args as generics - ex. const loop vars into func - how to progate const values?
+  Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
+  Hacky sort of const prop across module boundaries? ew?
+  ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
 Do more basic tutorials like nandland+hdlbits
 File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Implement DIAMOND PNR run?
@@ -69,11 +85,7 @@ How does multiple ins and out over time work in clk step style?  (not hdl wrappe
 First refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
-  Do DVI over HDMI video demo driven from NoC element (instead of VGA?)
-Make any modules with constant inputs that inst fully reduceable a renamed func with consts inside?
-  Hacky sort of const prop across module boundaries? ew?
-  ^Try to optimize/reduce var ref of all const inputs except mux value into constants-inside module version explicit 'LUT' module
-  Do const func args as generics - ex. const loop vars into func - how to progate const values?
+  Do VGA driven from NoC element
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
@@ -166,6 +178,8 @@ Propogate null values for constant folding
 Could make an undefined/Xs constant only meaningful in synthesis
 Default dont put IO regs around single inst funcs in mid out sweep?
 Make wire/var.h that just does same as clock_crossing/var.h?
+Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
+Add compound one = {1}; to init to all bits=1
 """
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
@@ -185,7 +199,7 @@ print("================== Adding Timing Information from Synthesis Tool ========
 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
 print("================== Beginning Throughput Sweep ================================", flush=True)
-multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state, coarse_only=(args.coarse is True))
+multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(parser_state, coarse_only=args.coarse, starting_guess_latency=args.start, do_incremental_guesses=not(args.sweep))
 
 print("================== Writing Results of Throughput Sweep ================================", flush=True)
 SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)

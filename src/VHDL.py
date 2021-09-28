@@ -12,6 +12,7 @@ import SW_LIB
 import RAW_VHDL
 import SYN
 import VIVADO
+import QUARTUS
 
 
 VHDL_FILE_EXT=".vhd"
@@ -29,12 +30,16 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
 
 # Could be volatile state too
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
+  parser_state.existing_logic = logic
   # Does this wire have an init?
   leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
   c_type = logic.wire_to_c_type[wire]
   init = None
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
+  resolved_const_str = None
+  if leaf in logic.state_regs:
+    resolved_const_str = logic.state_regs[leaf].resolved_const_str  
     
   if type(init) == c_ast.Constant:
     return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
@@ -93,7 +98,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
         if type(value_c_ast_node) == c_ast.Constant:
           val_str = str(value_c_ast_node.value)
           if is_negated:
-            val_str = "-" + val_str            
+            val_str = "-" + val_str
           index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(val_str, elem_t, parser_state) 
         else:
           print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
@@ -115,6 +120,11 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # If not use null
   elif init is None:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+    
+  # Try to use resolved to a constant string? ugh
+  elif resolved_const_str is not None:
+    #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
+    return CONST_VAL_STR_TO_VHDL(resolved_const_str, c_type, parser_state)
   else:
     print("Unsupported initializer for state variable:", wire, "in func",logic.func_name,init.coord)
     sys.exit(-1)
@@ -2662,14 +2672,29 @@ end function;
   
   return rv
   
+# Tools tools tools
+# Animal Collective - Banshee Beat
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
-  text = "use ieee.float_pkg.all;\n"
+  text = ""
   
-  # NVM for now nobody is using proposed fixed anyway
-  #if SYN.SYN_TOOL is VIVADO:
-  #  text +=  '''library ieee_proposed;
-  #use ieee_proposed.fixed_pkg.all;
-  #'''
+  if SYN.SYN_TOOL is VIVADO:
+    text +=  '''library ieee_proposed;
+use ieee_proposed.fixed_pkg.all;
+'''
+  elif SYN.SYN_TOOL is QUARTUS:
+    # Lite version doesnt support vhdl 08
+    text +='''library ieee_proposed;
+use ieee_proposed.float_pkg.all;\n'''
+  
+  if SYN.SYN_TOOL is QUARTUS:
+    # Lite version doesnt support vhdl 08
+    text +='''library ieee_proposed;
+use ieee_proposed.float_pkg.all;\n'''
+    
+  else:
+    text += "use ieee.float_pkg.all;\n"
+  
+  
   return text
   
 def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable,is_final_files=False): 
@@ -2775,7 +2800,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   if not is_final_files and Logic.func_name in parser_state.func_marked_blackbox:
     rv += GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # Tool specific hard macros replace entire arch decl and body
-  elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name):
+  elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name, parser_state):
     rv += SYN.SYN_TOOL.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   # VHDL func replaces arch decl and body
   elif Logic.is_vhdl_text_module:
