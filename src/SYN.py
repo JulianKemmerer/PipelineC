@@ -1858,6 +1858,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
           # Cached coarse sweep?
           target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+          if target_mhz is None:
+            raise Exception(f"Main function {main_func} does not have a specified operating frequency. Missing MAIN_MHZ pragma?")
           target_path_delay_ns = 1000.0 / target_mhz
           coarse_target_mhz = target_mhz * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
           
