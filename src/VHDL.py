@@ -30,12 +30,16 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
 
 # Could be volatile state too
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
+  parser_state.existing_logic = logic
   # Does this wire have an init?
   leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
   c_type = logic.wire_to_c_type[wire]
   init = None
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
+  resolved_const_str = None
+  if leaf in logic.state_regs:
+    resolved_const_str = logic.state_regs[leaf].resolved_const_str  
     
   if type(init) == c_ast.Constant:
     return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
@@ -94,7 +98,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
         if type(value_c_ast_node) == c_ast.Constant:
           val_str = str(value_c_ast_node.value)
           if is_negated:
-            val_str = "-" + val_str            
+            val_str = "-" + val_str
           index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(val_str, elem_t, parser_state) 
         else:
           print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
@@ -116,6 +120,11 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # If not use null
   elif init is None:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+    
+  # Try to use resolved to a constant string? ugh
+  elif resolved_const_str is not None:
+    #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
+    return CONST_VAL_STR_TO_VHDL(resolved_const_str, c_type, parser_state)
   else:
     print("Unsupported initializer for state variable:", wire, "in func",logic.func_name,init.coord)
     sys.exit(-1)
