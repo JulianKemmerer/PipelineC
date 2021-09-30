@@ -27,7 +27,7 @@ def DO_SIM(latency, parser_state):
     
   # Debug ports
   for func in parser_state.main_mhz:
-    if func.endswith("_DEBUG_INPUT_MAIN") or func.endswith("_DEBUG_OUTPUT_MAIN"):
+    if func.endswith("_DEBUG_OUTPUT_MAIN"):
       debug_name = func.split("_DEBUG")[0]
       names_text += f'#define {debug_name} p_{func.replace("_","__")}__return__output\n'
   # Write names files

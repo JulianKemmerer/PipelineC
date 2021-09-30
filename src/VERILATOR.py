@@ -37,10 +37,14 @@ def DO_SIM(latency, parser_state):
   # Debug ports
   debug_names = []
   for func in parser_state.main_mhz:
-    if func.endswith("_DEBUG_INPUT_MAIN") or func.endswith("_DEBUG_OUTPUT_MAIN"):
-      debug_name = func.split("_DEBUG")[0]
+    debug_name = func.split("_DEBUG")[0]
+    if func.endswith("_DEBUG_OUTPUT_MAIN"):
       debug_names.append(debug_name)
       debug_verilator_name = func.replace("__","_") + "_return_output"
+      names_text += f'#define {debug_name} {debug_verilator_name}\n'
+    if func.endswith("_DEBUG_INPUT_MAIN"):
+      debug_names.append(debug_name)
+      debug_verilator_name = func.replace("__","_") + "_val"
       names_text += f'#define {debug_name} {debug_verilator_name}\n'
       
   names_text += '''#define DUMP_PIPELINEC_DEBUG(top) \
