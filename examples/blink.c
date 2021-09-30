@@ -3,34 +3,18 @@
 // Install+configure synthesis tool then specify part here
 // #pragma PART "xc7a35ticsg324-1l" 
 
-// Generate top level debug ports with associated pipelinec_verilator.h
-#include "debug_port.h"
-
-// Two lines needed to mark a signal for debug
-
-#include "clock_crossing/counter_debug_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint25_t, counter_debug)
-
-#include "clock_crossing/led_debug_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint1_t, led_debug)
-
-//#include "clock_crossing/inc_debug_DEBUG.h"
-//DEBUG_INPUT_DECL(uint4_t, inc_debug)
-
-// Time counter registers
+// Count to 33333333 iterations * 30ns each ~= 1sec
 uint25_t counter;
 
-// LED on off state registers
+// LED on off state
 uint1_t led;
 
-#pragma MAIN blink
+// 'Called'/'Executing' every 30ns (33.33MHz)
+#pragma MAIN_MHZ blink 33.33
 uint1_t blink()
 {
-  counter_debug(counter);
-  led_debug(led);
-  
-  // If reached timeout
-  if(counter==(3-1))
+  // If reached 1 second
+  if(counter==(33333333-1))
   {
     // Toggle led
     led = !led;
@@ -39,15 +23,7 @@ uint1_t blink()
   }
   else
   {
-    //uint4_t inc = inc_debug();
-    //counter += inc;
-    counter += 1;
-  }  
-  
+    counter += 1; // one 30ns increment
+  }
   return led;
 }
-
-
-
-
-

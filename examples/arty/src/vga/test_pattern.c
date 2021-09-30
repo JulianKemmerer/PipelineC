@@ -4,9 +4,9 @@
 // Generate top level debug ports with associated pipelinec_cxxrtl.h
 #include "debug_port.h"
 
-// Simple design mimicing the VGA test pattern design from Digilent
-// https://digilent.com/reference/learn/programmable-logic/tutorials/arty-pmod-vga-demo/start
+// Simple design essentially copy-pasting the VHDL VGA test pattern design from Digilent
 // https://github.com/Digilent/Arty-Pmod-VGA/blob/master/src/hdl/top.vhd
+// https://digilent.com/reference/learn/programmable-logic/tutorials/arty-pmod-vga-demo/start
 
 // See top level IO wiring in
 #include "vga_pmod.c"
@@ -104,7 +104,7 @@
 #define BOX_X_INIT 0
 #define BOX_Y_INIT 400
 
-// CXXRTL Debug wires
+// Verilator Debug wires
 #include "clock_crossing/vga_red_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_red)
 #include "clock_crossing/vga_green_DEBUG.h"
@@ -162,7 +162,7 @@ void app()
   o.b = vga_blue_reg;
   WIRE_WRITE(app_to_vga_t, app_to_vga, o)
   
-  // Connect to CXXRTL debug ports
+  // Connect to Verilator debug ports
   vsync(o.vs);
   hsync(o.hs);
   vga_red(o.r);
