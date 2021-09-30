@@ -101,10 +101,13 @@ int main(int argc, char *argv[]) {
   vhd_files = SIM.GET_SIM_FILES(latency=0)
   # Write a shell script to execute
   import OPEN_TOOLS
+  m_ghdl = ""
+  if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
+    m_ghdl = "-m ghdl "
   sh_text = f'''
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g -m ghdl -p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
 {VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe main.cpp && \
 make -j4 -C obj_dir -f Vtop.mk
 '''
