@@ -2691,8 +2691,9 @@ use ieee_proposed.float_pkg.all;\n'''
     text +='''library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n'''
     
-  else:
-    text += "use ieee.float_pkg.all;\n"
+  # Temp no float default
+  #else:
+  #  text += "use ieee.float_pkg.all;\n"
   
   
   return text
@@ -3041,6 +3042,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
     
   rv += " " + " " + "-- Write to stage reg\n"
   rv += " " + " " + "write_self_regs(STAGE) := write_pipe;\n"
+  rv += " " + " " + "-- Some tools dont like if read_pipe is never fully driven, dummy drive\n"
+  rv += " " + " " + "read_pipe := write_pipe;\n"
   rv += " " + "end loop;\n"
   rv += "\n"
   rv += "\n"  

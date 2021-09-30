@@ -27,8 +27,3 @@ uint1_t blink()
   }
   return led;
 }
-
-
-
-
-

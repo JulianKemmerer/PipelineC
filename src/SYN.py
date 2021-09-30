@@ -12,13 +12,6 @@ import getpass
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Lock
 
-def GET_TOOL_PATH(tool_exe_name):
-  from shutil import which
-  w = which(tool_exe_name)
-  if w is not None:
-    return str(w)
-  return None
-
 import C_TO_LOGIC
 import VHDL
 import SW_LIB
@@ -1300,7 +1293,7 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(inst_name, l
   
   return TimingParamsLookupTable
         
-def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
+def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None, allow_no_syn_tool=False):
   ext = None
   if SYN_TOOL is VIVADO:
     ext = ".xdc"
@@ -1315,9 +1308,11 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
   elif SYN_TOOL is EFINITY:
     ext = ".sdc"
   else:
-    # Sufjan Stevens - Video Game
-    raise Exception(f"Add constraints file ext for syn tool {SYN_TOOL.__name__}")
-    #sys.exit(-1)
+    if not allow_no_syn_tool:
+      # Sufjan Stevens - Video Game
+      raise Exception(f"Add constraints file ext for syn tool {SYN_TOOL.__name__}")
+      #sys.exit(-1)
+    ext = ""
     
   clock_name_to_mhz = dict()
   if inst_name:
@@ -1330,7 +1325,7 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None):
     out_filename = "clocks" + ext
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     for main_func in parser_state.main_mhz:
-      clock_mhz = GET_TARGET_MHZ(main_func, parser_state)
+      clock_mhz = GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool)
       clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
       clk_name = "clk_" + clk_ext_str
       clock_name_to_mhz[clk_name] = clock_mhz
@@ -1348,13 +1343,17 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     # All clock assumed async in nextpnr constraints
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
+      if clock_mhz is None:
+        print(f"Warning: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
+        continue      
       f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n');
   else:
     # Standard sdc like constraints
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        raise Exception(f"No frequency associated with clock {clock_name}! (Missing MAIN_MHZ?)")
+        print(f"Warning: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
+        continue
       ns = (1000.0 / clock_mhz)
       f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
       
@@ -1388,7 +1387,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
   
 # Target mhz is internal name for whatever mhz we are using in this run
 # Real pnr MAIN_MHZ or syn only MAIN_SYN_MHZ
-def GET_TARGET_MHZ(main_func, parser_state):
+def GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=False):
   # Does tool do full PNR or just syn?
   if SYN_TOOL is VIVADO:
     if VIVADO.DO_PNR is not None:
@@ -1402,7 +1401,10 @@ def GET_TARGET_MHZ(main_func, parser_state):
   elif (SYN_TOOL is DIAMOND):
     return parser_state.main_syn_mhz[main_func]
   else:
-    raise Exception("Need syn tool!")
+    if not allow_no_syn_tool:
+      raise Exception("Need syn tool!")
+    # Default to main mhz
+    return parser_state.main_mhz[main_func]
     
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   is_final_top = True
@@ -1415,6 +1417,19 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
       for inst_name in parser_state.FuncToInstances[func_name]:
         bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
         VHDL.WRITE_LOGIC_ENTITY(inst_name, blackbox_func_logic, bb_out_dir, parser_state, multimain_timing_params.TimingParamsLookupTable, is_final_top)
+  
+  # Do generic dump of vhdl files
+  # Which vhdl files?
+  vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
+  # One more rvhdl line for the final entity  with constant name
+  top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
+  vhdl_files_texts += " " + top_file_path
+  out_filename = "vhdl_files.txt"
+  out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+  out_text = vhdl_files_texts
+  f=open(out_filepath,"w")
+  f.write(out_text)
+  f.close()
   
   # read_vhdl.tcl only for Vivado for now
   if SYN_TOOL is VIVADO:
@@ -1439,16 +1454,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     out_filename = "read_vhdl.tcl"
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     out_text = rv
-  else:
-    # Do generic dump of vhdl files
-    # Which vhdl files?
-    vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
-    # One more rvhdl line for the final entity  with constant name
-    top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
-    vhdl_files_texts += " " + top_file_path
-    out_filename = "vhdl_files.txt"
-    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
-    out_text = vhdl_files_texts
+    
     
   print("Output VHDL files:", out_filepath)
   f=open(out_filepath,"w")

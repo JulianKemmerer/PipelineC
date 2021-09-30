@@ -12,7 +12,7 @@
 // ICE40UP5K-SG48        ICE40UP
 // T8F81                 Trion T8 (Xyloni)
 // Ti60F225              Titanium
-#pragma PART "xc7a35ticsg324-1l"
+//#pragma PART "xc7a35ticsg324-1l"
 
 // Most recent (and more likely working) examples towards the bottom of list \/
 // Please see: https://github.com/JulianKemmerer/PipelineC/wiki/Examples
@@ -43,9 +43,9 @@
 //#include "examples/pipeline_and_fsm.c"
 //#include "examples/edaplay.c"
 //#include "examples/fosix/main_game_clk_step.c"
-//#include "examples/blink.c"
+#include "examples/blink.c"
 //#include "examples/llvm/rsqrtf.c"
-#include "examples/arty/src/vga/test_pattern.c"
+//#include "examples/arty/src/vga/test_pattern.c"
 
 // Below is a bunch of recent scratch work - enjoy
 

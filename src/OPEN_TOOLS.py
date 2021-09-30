@@ -5,23 +5,37 @@ import SYN
 import VHDL
 import C_TO_LOGIC
 
+# Tool names
 YOSYS_EXE = "yosys"
 NEXT_PNR_EXE = "nextpnr-ecp5"
 GHDL_EXE = "ghdl"
-YOSYS_EXE_PATH = SYN.GET_TOOL_PATH(YOSYS_EXE)
-NEXTPNR_EXE_PATH = SYN.GET_TOOL_PATH(NEXT_PNR_EXE)
-GHDL_EXE_PATH = SYN.GET_TOOL_PATH(GHDL_EXE)
-if (YOSYS_EXE_PATH is not None and 
-    NEXTPNR_EXE_PATH is not None and
-    GHDL_EXE_PATH is not None):
-  YOSYS_BIN_PATH   = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
-  NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
-  GHDL_PREFIX      = os.path.abspath(os.path.dirname(GHDL_EXE_PATH)+"../lib/ghdl")
+
+# Hard coded/default exe paths for simplest oss-cad-suite based install
+# https://github.com/YosysHQ/oss-cad-suite-build/releases/
+# Download, extract, set path here
+OSS_CAD_SUITE_PATH = "/media/1TB/Programs/Linux/oss-cad-suite"
+YOSYS_BIN_PATH = None
+GHDL_BIN_PATH = None
+NEXTPNR_BIN_PATH = None
+GHDL_PREFIX = None
+if os.path.exists(OSS_CAD_SUITE_PATH):
+  YOSYS_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+  GHDL_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+  NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+  GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
 else:
-  FPGA_TOOLCHAIN_PATH = "/media/1TB/Programs/Linux/fpga-toolchain"
-  YOSYS_BIN_PATH   = FPGA_TOOLCHAIN_PATH + "/bin"
-  NEXTPNR_BIN_PATH = FPGA_TOOLCHAIN_PATH + "/bin"
-  GHDL_PREFIX      = FPGA_TOOLCHAIN_PATH + "/lib/ghdl"
+  YOSYS_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(YOSYS_EXE)
+  if YOSYS_EXE_PATH is not None:
+    YOSYS_BIN_PATH = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
+
+  GHDL_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(GHDL_EXE)
+  if GHDL_EXE_PATH is not None:
+    GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
+    GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH)+"/../lib/ghdl")
+
+  NEXTPNR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(NEXT_PNR_EXE)
+  if NEXTPNR_EXE_PATH is not None:
+    NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
@@ -298,6 +312,13 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
       exe_ext = "ice40"
     else:
       exe_ext = "ecp5"
+      
+    if GHDL_PREFIX is None:
+      raise Exception("ghdl not installed?")
+    if YOSYS_BIN_PATH is None:
+      raise Exception("yosys not installed?")
+    if NEXTPNR_BIN_PATH is None:
+      raise Exception("nextpnr not installed?")
     
     # A single shell script build .sh
     sh_file = top_entity_name + ".sh"
@@ -306,13 +327,11 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     # -v --debug
     f.write('''
 #!/usr/bin/env bash
-export PATH="''' + YOSYS_BIN_PATH + ''':$PATH"
-export PATH="''' + NEXTPNR_BIN_PATH + ''':$PATH"
-export GHDL_PREFIX=''' + GHDL_PREFIX + '''
+export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
 # Elab+Syn (json is output)
-yosys $MODULE -p 'ghdl ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + '''
+{YOSYS_BIN_PATH}/yosys $MODULE -p 'ghdl ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
 # P&R
-nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
+{NEXTPNR_BIN_PATH}/nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
     ''')
     f.close()
 
