@@ -13,6 +13,13 @@ import re
 from subprocess import Popen, PIPE
 from collections import OrderedDict
 
+def GET_TOOL_PATH(tool_exe_name):
+  from shutil import which
+  w = which(tool_exe_name)
+  if w is not None:
+    return str(w)
+  return None
+
 import VHDL
 import SW_LIB
 import SYN
@@ -220,8 +227,6 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
   #sys.exit(-1)
   return existing_files
   '''
-  
-#def GET_EXISTING_INCLUDED_FILES
 
 def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   # Kill pid after 

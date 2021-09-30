@@ -12,13 +12,6 @@ import getpass
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Lock
 
-def GET_TOOL_PATH(tool_exe_name):
-  from shutil import which
-  w = which(tool_exe_name)
-  if w is not None:
-    return str(w)
-  return None
-
 import C_TO_LOGIC
 import VHDL
 import SW_LIB

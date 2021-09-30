@@ -5,6 +5,15 @@ import shutil
 import SIM
 import SYN
 import C_TO_LOGIC
+import OPEN_TOOLS
+
+VERILATOR_EXE="verilator"
+VERILATOR_BIN_PATH = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"
+
+if not os.path.exists(VERILATOR_BIN_PATH):
+  VERILATOR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(VERILATOR_EXE)
+  if VERILATOR_EXE_PATH is not None:
+    VERILATOR_BIN_PATH = os.path.abspath(os.path.dirname(VERILATOR_EXE_PATH))
 
 def DO_SIM(latency, parser_state):
   print("================== Doing Verilator Simulation ================================", flush=True)
@@ -93,7 +102,7 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g -m ghdl -p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ./top/top.v" && \
-verilator -cc ./top/top.v -O3 --exe main.cpp && \
+{VERILATOR_BIN_PATH}/verilator -cc ./top/top.v -O3 --exe main.cpp && \
 make -j4 -C obj_dir -f Vtop.mk
 '''
   sh_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "verilator.sh"

@@ -9,7 +9,6 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import SYN
 import SIM
-import C_TO_FSM
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
