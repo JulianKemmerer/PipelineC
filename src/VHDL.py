@@ -2691,8 +2691,9 @@ use ieee_proposed.float_pkg.all;\n'''
     text +='''library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n'''
     
-  else:
-    text += "use ieee.float_pkg.all;\n"
+  # Temp no float default
+  #else:
+  #  text += "use ieee.float_pkg.all;\n"
   
   
   return text

@@ -4,10 +4,10 @@ import os
 import SYN
 import EDAPLAY
 import MODELSIM
-import OPEN_TOOLS
 import CXXRTL
+import VERILATOR
 
-# Default simulation tool is free edaplayground
+# Default simulation tool is free online edaplayground
 SIM_TOOL = EDAPLAY
 
 def SET_SIM_TOOL(cmd_line_args):
@@ -16,6 +16,8 @@ def SET_SIM_TOOL(cmd_line_args):
     SIM_TOOL = EDAPLAY
   elif cmd_line_args.cxxrtl:
     SIM_TOOL = CXXRTL
+  elif cmd_line_args.verilator:
+    SIM_TOOL = VERILATOR
   elif cmd_line_args.modelsim:
     SIM_TOOL = MODELSIM
 
@@ -24,14 +26,15 @@ def DO_OPTIONAL_SIM(do_sim, parser_state, latency=0):
     if do_sim:
       EDAPLAY.SETUP_EDAPLAY(latency)
   elif SIM_TOOL is MODELSIM:
-    # Assume modelsim is default sim
     MODELSIM.DO_OPTIONAL_DEBUG(do_sim, latency)
   elif SIM_TOOL is CXXRTL:
     if do_sim:
-      # Assume modelsim is default sim
       CXXRTL.DO_SIM(latency, parser_state)
+  elif SIM_TOOL is VERILATOR:
+    if do_sim:
+      VERILATOR.DO_SIM(latency, parser_state)
   else:
-    print("Unknown simulation tool:",SIM_TOOL)
+    print("Warning: Unknown simulation tool:", SIM_TOOL.__name__)
 
 def GET_SIM_FILES(latency=0):
   # Get all vhd files in syn output

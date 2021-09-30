@@ -5,7 +5,6 @@ import shutil
 import SIM
 import SYN
 import C_TO_LOGIC
-import OPEN_TOOLS
 
 def DO_SIM(latency, parser_state):
   print("================== Doing CXXRTL Simulation ================================", flush=True)
@@ -83,6 +82,7 @@ int main()
   # Get all vhd files in syn output
   vhd_files = SIM.GET_SIM_FILES(latency=0)
   # Write a shell script to execute
+  import OPEN_TOOLS
   sh_text = f'''
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \

@@ -3,7 +3,7 @@
 // Install+configure synthesis tool then specify part here
 // #pragma PART "xc7a35ticsg324-1l" 
 
-// Generate top level debug ports with associated pipelinec_cxxrtl.h
+// Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
 
 // Two lines needed to mark a signal for debug

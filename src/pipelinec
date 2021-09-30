@@ -27,6 +27,7 @@ parser.add_argument("--sim", help="Start simulation using final (maybe autopipel
 parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")
 parser.add_argument("--modelsim", help="Setup simulation files for use with Modelsim.", action="store_true")
 parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
+parser.add_argument("--verilator", help="Setup simulation files for use with GHDL+Yosys+Verilator.", action="store_true")
 parser.add_argument("--coarse", 
                       help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).",
                       action="store_true")
