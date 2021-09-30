@@ -17,6 +17,9 @@ if not os.path.exists(VERILATOR_BIN_PATH):
 
 def DO_SIM(latency, parser_state):
   print("================== Doing Verilator Simulation ================================", flush=True)
+  VERILATOR_OUT_DIR = SYN.SYN_OUTPUT_DIRECTORY + "/verilator"
+  if not os.path.exists(VERILATOR_OUT_DIR):
+    os.makedirs(VERILATOR_OUT_DIR)
   # Generate helpful include of verilator names
   names_text = ""
   # Clocks
@@ -47,7 +50,7 @@ cout <<'''
   names_text += "endl;\n"
       
   # Write names files
-  names_h_path = SYN.SYN_OUTPUT_DIRECTORY + "/pipelinec_verilator.h"
+  names_h_path = VERILATOR_OUT_DIR + "/pipelinec_verilator.h"
   f=open(names_h_path,"w")
   f.write(names_text)
   f.close()  
@@ -88,7 +91,7 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 '''
-  main_cpp_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "main.cpp"
+  main_cpp_path = VERILATOR_OUT_DIR + "/" + "main.cpp"
   f=open(main_cpp_path,"w")
   f.write(main_cpp_text)
   f.close()
@@ -99,13 +102,13 @@ int main(int argc, char *argv[]) {
   # Write a shell script to execute
   import OPEN_TOOLS
   sh_text = f'''
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat vhdl_files.txt` && \
+{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g -m ghdl -p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ./top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -cc ./top/top.v -O3 --exe main.cpp && \
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g -m ghdl -p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
+{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe main.cpp && \
 make -j4 -C obj_dir -f Vtop.mk
 '''
-  sh_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "verilator.sh"
+  sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
   f=open(sh_path,"w")
   f.write(sh_text)
   f.close()
@@ -114,13 +117,13 @@ make -j4 -C obj_dir -f Vtop.mk
   print("Compiling...", flush=True)
   bash_cmd = f"bash {sh_path}"
   #print(bash_cmd, flush=True)  
-  log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=SYN.SYN_OUTPUT_DIRECTORY)
+  log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
   #print(log_text, flush=True)
 
   # Run the simulation
   print("Starting simulation...", flush=True)
   bash_cmd = "./obj_dir/Vtop"
   #print(bash_cmd, flush=True)
-  log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=SYN.SYN_OUTPUT_DIRECTORY)
+  log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
   print(log_text, flush=True)
   sys.exit(0)
