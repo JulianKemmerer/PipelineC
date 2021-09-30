@@ -15,7 +15,7 @@ if not os.path.exists(VERILATOR_BIN_PATH):
   if VERILATOR_EXE_PATH is not None:
     VERILATOR_BIN_PATH = os.path.abspath(os.path.dirname(VERILATOR_EXE_PATH))
 
-def DO_SIM(latency, parser_state):
+def DO_SIM(latency, parser_state, args):
   print("================== Doing Verilator Simulation ================================", flush=True)
   VERILATOR_OUT_DIR = SYN.SYN_OUTPUT_DIRECTORY + "/verilator"
   if not os.path.exists(VERILATOR_OUT_DIR):
@@ -100,6 +100,10 @@ int main(int argc, char *argv[]) {
   f.write(main_cpp_text)
   f.close()
   
+  # Use main cpp template or not?
+  if args.main_cpp is not None:
+    main_cpp_path = os.path.abspath(args.main_cpp)
+  
   # Generate+compile sim .cpp from output VHDL
   # Get all vhd files in syn output
   vhd_files = SIM.GET_SIM_FILES(latency=0)
@@ -112,8 +116,8 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe main.cpp && \
-make -j4 -C obj_dir -f Vtop.mk
+{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} && \
+make -j4 -C obj_dir -f Vtop.mk -I{VERILATOR_OUT_DIR}
 '''
   sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
   f=open(sh_path,"w")

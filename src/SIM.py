@@ -21,7 +21,7 @@ def SET_SIM_TOOL(cmd_line_args):
   elif cmd_line_args.modelsim:
     SIM_TOOL = MODELSIM
 
-def DO_OPTIONAL_SIM(do_sim, parser_state, latency=0):
+def DO_OPTIONAL_SIM(do_sim, parser_state, args, latency=0):
   if SIM_TOOL is EDAPLAY:
     if do_sim:
       EDAPLAY.SETUP_EDAPLAY(latency)
@@ -32,7 +32,7 @@ def DO_OPTIONAL_SIM(do_sim, parser_state, latency=0):
       CXXRTL.DO_SIM(latency, parser_state)
   elif SIM_TOOL is VERILATOR:
     if do_sim:
-      VERILATOR.DO_SIM(latency, parser_state)
+      VERILATOR.DO_SIM(latency, parser_state, args)
   else:
     print("Warning: Unknown simulation tool:", SIM_TOOL.__name__)
 
