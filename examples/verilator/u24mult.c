@@ -1,4 +1,5 @@
-#include "uintN_t.h"  // uintN_t types for any N
+// Module under test
+#include "u24mult.h"
 
 // Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
@@ -17,7 +18,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  result(x() * y());
+  result(u24mult(x(), y()));
 }
 
 

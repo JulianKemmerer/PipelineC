@@ -13,7 +13,11 @@ typedef unsigned char uint5_t;
 typedef unsigned char uint6_t;
 typedef unsigned char uint7_t;
 #ifndef _BITS_STDINT_INTN_H
+#ifndef _BITS_STDINT_UINTN_H
+#ifndef _STDINT_H
 typedef unsigned char uint8_t;
+#endif
+#endif
 #endif
 
 typedef unsigned short uint9_t;
@@ -24,7 +28,11 @@ typedef unsigned short uint13_t;
 typedef unsigned short uint14_t;
 typedef unsigned short uint15_t;
 #ifndef _BITS_STDINT_INTN_H
+#ifndef _BITS_STDINT_UINTN_H
+#ifndef _STDINT_H
 typedef unsigned short uint16_t;
+#endif
+#endif
 #endif
 
 typedef unsigned long uint17_t;
@@ -43,7 +51,11 @@ typedef unsigned long uint29_t;
 typedef unsigned long uint30_t;
 typedef unsigned long uint31_t;
 #ifndef _BITS_STDINT_INTN_H
+#ifndef _BITS_STDINT_UINTN_H
+#ifndef _STDINT_H
 typedef unsigned long uint32_t;
+#endif
+#endif
 #endif
 
 typedef unsigned long long uint33_t;
@@ -78,7 +90,11 @@ typedef unsigned long long uint61_t;
 typedef unsigned long long uint62_t;
 typedef unsigned long long uint63_t;
 #ifndef _BITS_STDINT_INTN_H
+#ifndef _BITS_STDINT_UINTN_H
+#ifndef _STDINT_H
 typedef unsigned long long uint64_t;
+#endif
+#endif
 #endif
 
 // Oh no C language!

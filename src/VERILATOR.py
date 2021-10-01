@@ -116,8 +116,8 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} && \
-make -j4 -C obj_dir -f Vtop.mk -I{VERILATOR_OUT_DIR}
+{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
+make -j4 -C obj_dir -f Vtop.mk -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}
 '''
   sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
   f=open(sh_path,"w")
