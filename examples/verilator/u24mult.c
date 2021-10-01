@@ -18,7 +18,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  result(u24mult(x(), y()));
+  DEBUG_SET(result, u24mult(DEBUG_GET(x), DEBUG_GET(y)));
 }
 
 

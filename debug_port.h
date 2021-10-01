@@ -1,6 +1,7 @@
 #pragma once
 #include "compiler.h" // PRAGMA_MESSAGE
 #include "wire.h"     // WIRE READ+WRITE
+
 #define DEBUG_OUTPUT_DECL(type_t, name) \
 type_t name##_DEBUG; \
 PRAGMA_MESSAGE(MAIN name##_DEBUG_OUTPUT_MAIN) \
@@ -28,3 +29,6 @@ type_t name() \
   WIRE_READ(type_t, rv, name##_DEBUG) \
   return rv; \
 }
+
+#define DEBUG_SET(x, v) x(v)
+#define DEBUG_GET(x) x()
