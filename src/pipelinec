@@ -65,7 +65,6 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Implement && logical and defined as sw lib l!=0 & r!=0
 Do announcement of some sort for __clk()
   Used recent game thing as example rewritten in clk style?
   Could use new arbitration for slow IO?
