@@ -103,7 +103,10 @@ def GET_CPP_INCLUDES_LIST():
   dir_path = REPO_ABS_DIR()
   path_list += ["-I" + dir_path+"/"]
   
-  return path_list    
+  # For now global __PIPELINEC__ define lives here
+  path_list += ["-D__PIPELINEC__"]
+  
+  return path_list
   
 
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
