@@ -2676,7 +2676,7 @@ end function;
 # Animal Collective - Banshee Beat
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   text = ""
-  
+
   if SYN.SYN_TOOL is VIVADO:
     text +=  '''library ieee_proposed;
 use ieee_proposed.fixed_pkg.all;
@@ -2685,16 +2685,9 @@ use ieee_proposed.fixed_pkg.all;
     # Lite version doesnt support vhdl 08
     text +='''library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n'''
-  
-  if SYN.SYN_TOOL is QUARTUS:
-    # Lite version doesnt support vhdl 08
-    text +='''library ieee_proposed;
-use ieee_proposed.float_pkg.all;\n'''
     
-  # Temp no float default
-  #else:
-  #  text += "use ieee.float_pkg.all;\n"
-  
+  else:
+    text += "use ieee.float_pkg.all;\n"
   
   return text
   

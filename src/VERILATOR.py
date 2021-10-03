@@ -50,7 +50,7 @@ def DO_SIM(latency, parser_state, args):
   names_text += '''#define DUMP_PIPELINEC_DEBUG(top) \
 cout <<'''
   for debug_name in debug_names:
-    names_text += '" ' + debug_name + ': " << to_string(' +"top->" + debug_name + ") << "
+    names_text += '"' + debug_name + ': " << to_string(' +"top->" + debug_name + ") << " + '" " << '
   names_text += "endl;\n"
       
   # Write names files
@@ -113,9 +113,9 @@ int main(int argc, char *argv[]) {
   if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
     m_ghdl = "-m ghdl "
   sh_text = f'''
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i `cat ../vhdl_files.txt` && \
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m top && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
+{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
+{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
 {VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 '''
