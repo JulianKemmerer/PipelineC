@@ -2677,16 +2677,25 @@ end function;
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   text = ""
 
+  # Fixed pkg
   if SYN.SYN_TOOL is VIVADO:
     text +=  '''library ieee_proposed;
 use ieee_proposed.fixed_pkg.all;
 '''
-  elif SYN.SYN_TOOL is QUARTUS:
+  else:
+    # Default no fixed for now
+    pass
+    #text += '''library ieee_proposed;
+    #use ieee_proposed.fixed_pkg.all;
+
+  # Float pkg
+  if SYN.SYN_TOOL is QUARTUS:
     # Lite version doesnt support vhdl 08
     text +='''library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n'''
     
   else:
+    # Default use ieee package
     text += "use ieee.float_pkg.all;\n"
   
   return text
@@ -3036,7 +3045,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += " " + " " + "-- Write to stage reg\n"
   rv += " " + " " + "write_self_regs(STAGE) := write_pipe;\n"
   rv += " " + " " + "-- Some tools dont like if read_pipe is never fully driven, dummy drive\n"
-  rv += " " + " " + "read_pipe := write_pipe;\n"
+  rv += " " + " " + "-- read_pipe := write_pipe;\n"
   rv += " " + "end loop;\n"
   rv += "\n"
   rv += "\n"  
