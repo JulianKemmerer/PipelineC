@@ -103,7 +103,9 @@ void test_bench()
 #define DUT_VARS_DECL \
 float x;\
 float result;\
-float c_result;
+float c_result;\
+float allowed_err;\
+float err;
 
 #define DUT_SET_NEXT_INPUTS \
 if(test_num==(10-1))\
@@ -111,18 +113,26 @@ if(test_num==(10-1))\
   done = true; \
 }\
 /*Generate random input*/ \
-x = rand_float();
+x = rand_float(false);
 
 #define DUT_SET_INPUTS(top) \
 DUT_SET_FLOAT_INPUT(top, x)
 
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
-c_result = 1.0/sqrt(x);
+c_result = 1.0/sqrt(x);\
+/* <= 1/500 part error allowed */\
+allowed_err = fabs(c_result)/500.0;
 
 #define DUT_COMPARE_LOG(top) \
-DUMP_PIPELINEC_DEBUG(top) \
-if(fabs(c_result-result)>1.0e-6)\
+err = fabs(c_result - result);\
+cout << "x: " << x << \
+" c_result: " << c_result << \
+" result: " << result << \
+" err: " << err << \
+" allowed_err: " << allowed_err << endl;\
+if(err > allowed_err)\
 {\
+  cout << "FAILED" << endl;\
   test_passed = false;\
 }

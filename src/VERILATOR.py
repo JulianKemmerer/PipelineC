@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
+{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 '''
   sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"

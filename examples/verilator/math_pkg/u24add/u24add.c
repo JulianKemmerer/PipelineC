@@ -3,9 +3,9 @@
 #include "uintN_t.h"
 
 // Function to test
-uint48_t u24mult(uint24_t x, uint24_t y)
+uint25_t u24add(uint24_t x, uint24_t y)
 {
-  return x * y;
+  return x + y;
 }
 
 // Verilator device under test test bench setup
@@ -23,7 +23,7 @@ DEBUG_INPUT_DECL(uint24_t, x)
 #include "clock_crossing/y_DEBUG.h"
 DEBUG_INPUT_DECL(uint24_t, y)
 #include "clock_crossing/result_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint48_t, result)
+DEBUG_OUTPUT_DECL(uint25_t, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
 void test_bench()
@@ -31,7 +31,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, u24mult(DEBUG_GET(x), DEBUG_GET(y)));
+  DEBUG_SET(result, u24add(DEBUG_GET(x), DEBUG_GET(y)));
 }
 #endif
 
@@ -40,8 +40,8 @@ void test_bench()
 #define DUT_VARS_DECL \
 uint24_t x;\
 uint24_t y;\
-uint48_t result;\
-uint48_t c_result;
+uint25_t result;\
+uint25_t c_result;
 
 #define DUT_SET_NEXT_INPUTS \
 if(test_num==(100-1))\
@@ -58,7 +58,7 @@ DUT_SET_INPUT(top, y)
 
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_OUTPUT(top, result)\
-c_result = u24mult(x, y);
+c_result = u24add(x, y);
 
 #define DUT_COMPARE_LOG(top) \
 DUMP_PIPELINEC_DEBUG(top) \

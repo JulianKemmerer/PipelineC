@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
         test_num++;
     }
     
-    cout << test_num << " inputs checked." << endl;
+    cout << test_num << " outputs checked." << endl;
 
     if(test_passed)
     {

@@ -41,7 +41,9 @@ void test_bench()
 float x;\
 float y;\
 float result;\
-float c_result;
+float c_result;\
+float allowed_err;\
+float err;
 
 #define DUT_SET_NEXT_INPUTS \
 if(test_num==(10-1))\
@@ -58,11 +60,20 @@ DUT_SET_FLOAT_INPUT(top, y)
 
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
-c_result = fp32sub(x, y);
+c_result = fp32sub(x, y);\
+/* <= 1e-5 part error allowed */\
+allowed_err = fabs(c_result)*1e-5;
 
 #define DUT_COMPARE_LOG(top) \
-DUMP_PIPELINEC_DEBUG(top) \
-if(fabs(c_result - result) > 1e-6)\
+err = fabs(c_result - result);\
+cout << "x: " << x << \
+" y: " << y << \
+" c_result: " << c_result << \
+" result: " << result << \
+" err: " << err << \
+" allowed_err: " << allowed_err << endl;\
+if(err > allowed_err)\
 {\
+  cout << "FAILED" << endl;\
   test_passed = false;\
 }

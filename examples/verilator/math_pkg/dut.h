@@ -10,9 +10,13 @@
 #include "pipelinec_verilator.h"
 
 //#include <limits>
-float rand_float()
+float rand_float(bool include_neg=true)
 {
-  return -1.0 + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(1.0-(-1.0))));
+  int i = rand();
+  float f = *((float*)(&i));
+  if(include_neg && (rand()%2)) f *= -1;
+  return f;
+  //return -1.0 + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(1.0-(-1.0))));
 }
 inline uint32_t float_31_0(float a) { union _noname { float f; uint32_t i;} conv; conv.f = a; return conv.i; }
 inline float float_uint32(uint32_t a) { union _noname { float f; uint32_t i;} conv; conv.i = a; return conv.f; }

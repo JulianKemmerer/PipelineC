@@ -2445,6 +2445,40 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
       rv += text_addition
       
     rv += "end record;\n"
+    
+    # Also define func to null out these wires, mostly for sim
+    rv += "\n-- Function to null out variables \n"
+    rv += "function variables_NULL return variables_t is\n"
+    rv += ''' variable rv : variables_t;
+  begin
+  '''
+  
+    # Not c built in
+    # First get wires from declarations and assignments Logic itself
+    # sort wires so easy to find bugs?
+    text_additions = []
+    for wire_name in Logic.wire_to_c_type:
+      # Skip constants here
+      if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
+        continue
+
+      # Skip globals too
+      # Dont skip volatile globals, they are like regular wires   
+      if wire_name in Logic.state_regs and not Logic.state_regs[wire_name].is_volatile:
+        continue      
+      
+      # Skip VHDL input wires 
+      if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(wire_name, Logic, parser_state):
+        continue
+      if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire_name, Logic, parser_state):
+        continue
+        
+      rv += " rv." + WIRE_TO_VHDL_NAME(wire_name, Logic) + " := " + WIRE_TO_VHDL_NULL_STR(wire_name, Logic, parser_state) + ";\n"
+              
+    rv += '''
+    return rv;
+  end function;\n
+'''
   
   
   # Input registers
@@ -2981,6 +3015,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
   
+  # Raw HDL functions are done differently
+  if not(len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in):
+    rv += " " + "-- Default null read_pipe\n"
+    rv += " " + "read_pipe := variables_NULL;\n"
+  
   # Input regs
   if timing_params._has_input_regs:
     rv += " -- Input regs\n"
@@ -3045,7 +3084,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   rv += " " + " " + "-- Write to stage reg\n"
   rv += " " + " " + "write_self_regs(STAGE) := write_pipe;\n"
   rv += " " + " " + "-- Some tools dont like if read_pipe is never fully driven, dummy drive\n"
-  rv += " " + " " + "-- read_pipe := write_pipe;\n"
+  rv += " " + " " + "-- And some tools dont like this dummy? read_pipe := write_pipe;\n"
   rv += " " + "end loop;\n"
   rv += "\n"
   rv += "\n"  
