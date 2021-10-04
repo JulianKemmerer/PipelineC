@@ -34,6 +34,9 @@ output_name = top->output_name;
 #define DUT_GET_FLOAT_OUTPUT(top, output_name) \
 output_name = float_uint32(top->output_name);
 
+#define DUT_PRINT_FLOAT(f_val)\
+printf(#f_val": float %e, uint32 0x%08X ", f_val, float_31_0(f_val));
+
 #define DUT_RISING_EDGE(top) \
 top->clk = 0;\
 top->eval();\

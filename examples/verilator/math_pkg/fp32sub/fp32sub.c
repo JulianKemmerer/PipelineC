@@ -66,14 +66,13 @@ allowed_err = fabs(c_result)*1e-5;
 
 #define DUT_COMPARE_LOG(top) \
 err = fabs(c_result - result);\
-cout << "x: " << x << \
-" y: " << y << \
-" c_result: " << c_result << \
-" result: " << result << \
-" err: " << err << \
-" allowed_err: " << allowed_err << endl;\
 if(err > allowed_err)\
 {\
+  cout << "x: " << x << " y: " << y << " ";\
+  DUT_PRINT_FLOAT(c_result)\
+  DUT_PRINT_FLOAT(result)\
+  cout << "err: " << err << \
+  " allowed_err: " << allowed_err << " ";\
   cout << "FAILED" << endl;\
   test_passed = false;\
 }

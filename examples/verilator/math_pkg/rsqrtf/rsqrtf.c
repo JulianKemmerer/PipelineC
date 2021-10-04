@@ -128,11 +128,11 @@ allowed_err = fabs(c_result)/500.0;
 err = fabs(c_result - result);\
 if(err > allowed_err)\
 {\
-  cout << "x: " << x << \
-" c_result: " << c_result << \
-" result: " << result << \
-" err: " << err << \
-" allowed_err: " << allowed_err << endl;\
+  cout << "x: " << x << " ";\
+  DUT_PRINT_FLOAT(c_result)\
+  DUT_PRINT_FLOAT(result)\
+  cout << "err: " << err << \
+  " allowed_err: " << allowed_err << " ";\
   cout << "FAILED" << endl;\
   test_passed = false;\
 }
