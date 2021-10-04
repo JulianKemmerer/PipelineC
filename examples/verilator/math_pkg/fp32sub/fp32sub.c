@@ -46,7 +46,7 @@ float allowed_err;\
 float err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(10-1))\
+if(test_num==(100-1))\
 {\
   done = true; \
 }\

@@ -44,7 +44,7 @@ uint25_t result;\
 uint25_t c_result;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(100-1))\
+if(test_num==(100000000-1))\
 {\
   done = true; \
 }\
@@ -61,9 +61,9 @@ DUT_GET_OUTPUT(top, result)\
 c_result = u24add(x, y);
 
 #define DUT_COMPARE_LOG(top) \
-DUMP_PIPELINEC_DEBUG(top) \
 if(c_result != result)\
 {\
-  cout << "FAILED" << endl;\
+  DUMP_PIPELINEC_DEBUG(top) \
+  cout << "FAILED c_result: " << c_result << endl;\
   test_passed = false;\
 }

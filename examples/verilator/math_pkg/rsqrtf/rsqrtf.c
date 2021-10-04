@@ -108,7 +108,7 @@ float allowed_err;\
 float err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(10-1))\
+if(test_num==(1000-1))\
 {\
   done = true; \
 }\
@@ -126,13 +126,13 @@ allowed_err = fabs(c_result)/500.0;
 
 #define DUT_COMPARE_LOG(top) \
 err = fabs(c_result - result);\
-cout << "x: " << x << \
+if(err > allowed_err)\
+{\
+  cout << "x: " << x << \
 " c_result: " << c_result << \
 " result: " << result << \
 " err: " << err << \
 " allowed_err: " << allowed_err << endl;\
-if(err > allowed_err)\
-{\
   cout << "FAILED" << endl;\
   test_passed = false;\
 }
