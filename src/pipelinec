@@ -98,9 +98,6 @@ Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Do BROM support
-FP checks/fixes:
-  Zero special case (only needed for mult?)
-  Fix shifts in FP operators to check for shfiting more than number of bits
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
 Parallelize sweeps better - aws support?

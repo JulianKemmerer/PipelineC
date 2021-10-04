@@ -4319,7 +4319,7 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   }
   else
   {
-    // Otherwise use N mux
+    // Otherwise use N mux and resized_shift_amount
     // right < max_shift , right_max = max_shift-1
     // Append sign bits on left and select rv from MSBs
     uint1_t sign;
@@ -4411,7 +4411,7 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   }
   else
   {
-    // Otherwise use N mux
+    // Otherwise use N mux and resized_shift_amount
     rv = ''' + output_prefix + "_mux" + str(max_shift) + "(resized_shift_amount,"
 
   # Array of inputs to mux for each shift

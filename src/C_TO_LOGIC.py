@@ -6377,17 +6377,14 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     right_type = "uint8_t"
     parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
     
-  # Force bit shifts to have uint RHS
-  if is_bit_shift:
-    # Shift size is limited by width of left input
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    max_shift = left_width
-    shift_bit_width = max_shift.bit_length()
-    # Shift amount is resized
-    resized_prefix = "uint" + str(shift_bit_width)
+  # Force bit shifts to have uint RHS (neg shift undefined)
+  right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
+  if is_bit_shift and right_signed:
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    resized_prefix = "uint" + str(right_width)
     resized_t = resized_prefix + "_t"
     right_type = resized_t
-    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type    
+    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type 
     
   # Hack in resizing single dim arrays to max size
   if C_TYPE_IS_ARRAY(left_type) and C_TYPE_IS_ARRAY(right_type):
