@@ -2,8 +2,6 @@
 // Verilator device under test test bench setup
 #include "../dut.h"
 
-#ifdef __PIPELINEC__
-
 #include "uintN_t.h"
 #define FLOAT float
 #define llvm_dis_float_rsqrt_K0 0.5
@@ -77,6 +75,7 @@ float llvm_dis_Z11float_rsqrtf_local_opt( FLOAT a0)
 }
 */
 
+#ifdef __PIPELINEC__
 // Define hardware debug hooks
 
 // Generate top level debug ports
@@ -120,7 +119,7 @@ DUT_SET_FLOAT_INPUT(top, x)
 
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
-c_result = 1.0/sqrt(x);\
+c_result = llvm_dis_Z11float_rsqrtf(x);\
 /* <= 1/500 part error allowed */\
 allowed_err = fabs(c_result)/500.0;
 
