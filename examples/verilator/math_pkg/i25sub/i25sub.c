@@ -1,9 +1,9 @@
 #pragma once
-// uintN_t types for any N
+#include "intN_t.h"
 #include "uintN_t.h"
 
 // Function to test
-float fp32sub(float x, float y)
+int26_t i25sub(int25_t x, int25_t y)
 {
   return x - y;
 }
@@ -19,11 +19,11 @@ float fp32sub(float x, float y)
 
 // Debug ports, two inputs, one output
 #include "clock_crossing/x_DEBUG.h"
-DEBUG_INPUT_DECL(float, x)
+DEBUG_INPUT_DECL(int25_t, x)
 #include "clock_crossing/y_DEBUG.h"
-DEBUG_INPUT_DECL(float, y)
+DEBUG_INPUT_DECL(int25_t, y)
 #include "clock_crossing/result_DEBUG.h"
-DEBUG_OUTPUT_DECL(float, result)
+DEBUG_OUTPUT_DECL(int26_t, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
 void test_bench()
@@ -31,49 +31,43 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, fp32sub(DEBUG_GET(x), DEBUG_GET(y)));
+  DEBUG_SET(result, i25sub(DEBUG_GET(x), DEBUG_GET(y)));
 }
 #endif
 
 // Define test params + logic using debug hooks
 
 #define DUT_VARS_DECL \
-float x;\
-float y;\
-float result;\
-float c_result;\
-float allowed_err;\
-float err;
+int25_t x;\
+int25_t y;\
+int26_t result;\
+int26_t c_result;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(1000-1))\
+if(test_num==(10-1))\
 {\
   done = true; \
 }\
 /*Generate random input*/ \
-x = rand_float();\
-y = rand_float();
+x = rand_int_range(-1*(int)pow(2, 25-1), ((int)pow(2, 25-1)) - 1);\
+y = rand_int_range(-1*(int)pow(2, 25-1), ((int)pow(2, 25-1)) - 1);
 
 #define DUT_SET_INPUTS(top) \
-DUT_SET_FLOAT_INPUT(top, x)\
-DUT_SET_FLOAT_INPUT(top, y)
+DUT_SET_INPUT(top, x)\
+DUT_SET_INPUT(top, y)
 
 #define DUT_GET_OUTPUTS(top) \
-DUT_GET_FLOAT_OUTPUT(top, result)\
-c_result = fp32sub(x, y);\
-/* <= 1e-6 part error allowed */\
-allowed_err = fabs(c_result)*1e-6;
+DUT_GET_SIGNED_OUTPUT(top, result, 26)\
+c_result = i25sub(x, y);
 
 #define DUT_COMPARE_LOG(top) \
-err = fabs(c_result - result);\
-if(err > allowed_err)\
+if(c_result != result)\
 {\
-  DUT_PRINT_FLOAT(x)\
-  DUT_PRINT_FLOAT(y)\
-  DUT_PRINT_FLOAT(c_result)\
-  DUT_PRINT_FLOAT(result)\
-  cout << "err: " << err << \
-  " allowed_err: " << allowed_err << " ";\
+  /*DUMP_PIPELINEC_DEBUG(top)*/ \
+  DUT_PRINT_INT(x)\
+  DUT_PRINT_INT(y)\
+  DUT_PRINT_INT(c_result)\
+  DUT_PRINT_INT(result)\
   cout << "FAILED" << endl;\
   test_passed = false;\
 }

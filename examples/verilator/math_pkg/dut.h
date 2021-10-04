@@ -18,8 +18,20 @@ float rand_float(bool include_neg=true)
   return f;
   //return -1.0 + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(1.0-(-1.0))));
 }
+int64_t rand_int_range(int64_t min, int64_t max)
+{
+  int64_t r64 = ((long long)rand() << 32) | rand();
+  return min + r64 % (( max + 1 ) - min);
+}
 inline uint32_t float_31_0(float a) { union _noname { float f; uint32_t i;} conv; conv.f = a; return conv.i; }
 inline float float_uint32(uint32_t a) { union _noname { float f; uint32_t i;} conv; conv.i = a; return conv.f; }
+
+template <typename T, unsigned B>
+inline T signextend(const T x)
+{
+  struct {T x:B;} s;
+  return s.x = x;
+}
 #endif
 
 #define DUT_SET_INPUT(top, input_name) \
@@ -31,8 +43,14 @@ top->input_name = float_31_0(input_name);
 #define DUT_GET_OUTPUT(top, output_name) \
 output_name = top->output_name;
 
+#define DUT_GET_SIGNED_OUTPUT(top, output_name, bitwidth) \
+output_name = signextend<int64_t,bitwidth>(top->output_name);
+
 #define DUT_GET_FLOAT_OUTPUT(top, output_name) \
 output_name = float_uint32(top->output_name);
+
+#define DUT_PRINT_INT(i_val)\
+printf(#i_val": integer %lld, uint64 0x%016llX ", i_val, (uint64_t)i_val);
 
 #define DUT_PRINT_FLOAT(f_val)\
 printf(#f_val": float %e, uint32 0x%08X ", f_val, float_31_0(f_val));
