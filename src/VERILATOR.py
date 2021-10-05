@@ -107,8 +107,14 @@ int main(int argc, char *argv[]) {
   # Generate+compile sim .cpp from output VHDL
   # Get all vhd files in syn output
   vhd_files = SIM.GET_SIM_FILES(latency=0)
-  # Write a shell script to execute
+ 
+  # Identify tool versions
   import OPEN_TOOLS
+  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
+  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
+  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)
+  
+  # Write a shell script to execute
   m_ghdl = ""
   if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
     m_ghdl = "-m ghdl "
@@ -119,6 +125,7 @@ int main(int argc, char *argv[]) {
 {VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 '''
+  # --report-unoptflat
   sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
   f=open(sh_path,"w")
   f.write(sh_text)
