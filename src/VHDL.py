@@ -3015,10 +3015,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
   
+  
   # Raw HDL functions are done differently
   if not(len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in):
     rv += " " + "-- Default null read_pipe\n"
-    rv += " " + "read_pipe := variables_NULL;\n"
+    rv += " " + "-- NO DONT, hides tool problems? read_pipe := variables_NULL;\n"
   
   # Input regs
   if timing_params._has_input_regs:
