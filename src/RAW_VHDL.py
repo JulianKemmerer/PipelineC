@@ -842,7 +842,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
   right_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
   left_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
   right_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
-  full_width_return_output : signed(''' + str(max_input_width-1) + ''' downto 0);
+  full_width_return_output : signed(''' + str(output_width-1) + ''' downto 0);
   return_output : signed(''' + str(output_width-1) + ''' downto 0);
   right : signed(''' + str(right_width-1) + ''' downto 0);
   left : signed(''' + str(left_width-1) + ''' downto 0);
@@ -902,17 +902,16 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
         write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := std_logic_vector(write_pipe.left_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + '''));
         write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := std_logic_vector(write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + '''));  
 
-        -- DOIGN SUB OP,  carry indicates -1
+        -- DOING SUB OP,  carry indicates -1
         -- Sub signed values
         write_pipe.intermediate := (others => '0'); -- Zero out for this stage
-        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.carry) ); 
-  '''
-
-      text += '''
+        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( signed('0' & write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) - signed('0' & write_pipe.carry) );
+        --write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( resize(signed(write_pipe.left_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)), ''' + str(bits_per_stage_dict[stage]+1) + ''') - resize(signed(write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)),''' + str(bits_per_stage_dict[stage]+1) + ''') - signed('0' & write_pipe.carry) );
         -- New carry is sign (negative carry)
         write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
         -- Assign output bits into full width
-        write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+        write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0));
+        --write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
         --write_pipe.return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := signed(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
       '''
       
@@ -922,7 +921,8 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
       # sign is in last stage
       # depends on carry
       text += '''
-      write_pipe.return_output := resize(write_pipe.full_width_return_output(''' + str(max_input_width-1) + ''' downto 0), ''' + str(output_width) + ''');      
+      write_pipe.return_output := write_pipe.full_width_return_output;      
+      --write_pipe.return_output := resize(write_pipe.full_width_return_output(''' + str(max_input_width-1) + ''' downto 0), ''' + str(output_width) + ''');      
 '''
       # Last stage so no else if
       text += '''

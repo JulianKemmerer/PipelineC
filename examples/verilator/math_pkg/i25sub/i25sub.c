@@ -44,7 +44,7 @@ int26_t result;\
 int26_t c_result;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(10-1))\
+if(test_num==(100000000-1))\
 {\
   done = true; \
 }\
@@ -68,6 +68,7 @@ if(c_result != result)\
   DUT_PRINT_INT(y)\
   DUT_PRINT_INT(c_result)\
   DUT_PRINT_INT(result)\
+  DUT_PRINT_INT(top->result)\
   cout << "FAILED" << endl;\
   test_passed = false;\
 }
