@@ -46,13 +46,12 @@ float allowed_err;\
 float err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(1000-1))\
+if(test_num==(1000000-1))\
 {\
   done = true; \
 }\
 /*Generate random input*/ \
-x = rand_float();\
-y = rand_float();
+rand_two_floats(&x, &y);
 
 #define DUT_SET_INPUTS(top) \
 DUT_SET_FLOAT_INPUT(top, x)\
@@ -62,7 +61,7 @@ DUT_SET_FLOAT_INPUT(top, y)
 DUT_GET_FLOAT_OUTPUT(top, result)\
 c_result = fp32sub(x, y);\
 /* <= 1e-6 part error allowed */\
-allowed_err = fabs(c_result)*1e-6;
+allowed_err = max((double)(fabs(c_result)*1e-6), (double)FLT_MIN);
 
 #define DUT_COMPARE_LOG(top) \
 err = fabs(c_result - result);\

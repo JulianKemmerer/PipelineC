@@ -51,6 +51,9 @@ if(test_num==(100000000-1))\
 /*Generate random input*/ \
 x = rand_int_range(-1*(int)pow(2, 25-1), ((int)pow(2, 25-1)) - 1);\
 y = rand_int_range(-1*(int)pow(2, 25-1), ((int)pow(2, 25-1)) - 1);
+//done = true; \
+//x = 9127271;\
+//y = -337;
 
 #define DUT_SET_INPUTS(top) \
 DUT_SET_INPUT(top, x)\
