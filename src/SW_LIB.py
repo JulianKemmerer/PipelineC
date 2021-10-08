@@ -3676,7 +3676,7 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   sum_mantissa_width = mantissa_w_hidden_bit_sign_adj_width + 1 #26
   leading_zeros_width = int(math.ceil(math.log(mantissa_width+1,2.0)))
 
-  text = ''''''
+  text = ""
   text += '''
 #include "uintN_t.h"
 #include "intN_t.h"
@@ -3684,194 +3684,15 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 #include "bit_math.h"
 
 // Float minus std_logic_vector in VHDL
-// Minus is as complicated as add?
+// Minus is as complicated as add - yeah, so just use add
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
-  // Get exponent for left and right
-  uint''' + str(exponent_width) + '''_t left_exponent;
-  left_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
-  uint''' + str(exponent_width) + '''_t right_exponent;
-  right_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
-    
-  float x;
-  float y;
-  // Step 1: Copy inputs so that left's exponent >= than right's.
-  // ?????????MAYBE TODO: 
-  //    Is this only needed for shift operation that takes unsigned only?
-  //    ALLOW SHIFT BY NEGATIVE?????
-  //    OR NO since that looses upper MSBs of mantissa which not acceptable? IDK too many drinks
-  uint1_t do_swap;
-  do_swap = right_exponent > left_exponent; // Lazy switch to GT
-  if ( do_swap ) 
-  {
-     x = right;  
-     y = left;
-  }
-  else
-  { 
-     x = left;
-     y = right;
-  }
-  
-  // Step 2: Break apart into S E M
-  // X
-  uint''' + str(mantissa_width) + '''_t x_mantissa; 
-  x_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(x);
-  uint''' + str(exponent_width) + '''_t x_exponent;
-  x_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(x);
-  uint1_t left_sign;
-  left_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
-  // Y
-  uint''' + str(mantissa_width) + '''_t y_mantissa;
-  y_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(y);
-  uint''' + str(exponent_width) + '''_t y_exponent;
-  y_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(y);
   uint1_t right_sign;
   right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
-  
-  
-  // SUBTRACT FLIP SIGN IF LR SWAP AND SIGNS EQUAL
-  uint1_t x_sign;
-  uint1_t y_sign;
-  // +1.23 - +4.56 = -4.56 - -1.23     11 00
-  // -1.23 - -4.56 = +4.56 - +1.23     00 11
-  // -1.23 - +4.56 = -4.56 - +1.23     01 01
-  // +1.23 - -4.56 = +4.56 - -1.23     10 10
-  // If signs are equal and did swap then invert both
-  uint1_t signs_eq;
-  signs_eq = left_sign == right_sign;
-  if(signs_eq & do_swap) // OK to do bit and
-  {
-    x_sign = !left_sign;
-    y_sign = !right_sign;
-  }
-  else
-  {
-    // No swap or signs unequal : then keep orig left/right sign
-    x_sign = left_sign;
-    y_sign = right_sign;
-  }
-
-  
-  // Mantissa needs +3b wider
-  //  [sign][overflow][hidden][23 bit mantissa]
-  // Put 0's in overflow bit and sign bit
-  // Put a 1 hidden bit if exponent is non-zero.
-  // X
-  // Determine hidden bit
-  uint1_t x_hidden_bit;
-  if(x_exponent == 0) // lazy swith to ==
-  {
-    x_hidden_bit = 0;
-  }
-  else
-  {
-    x_hidden_bit = 1;
-  }
-  // Apply hidden bit
-  uint''' + str(mantissa_w_hidden_bit_width) + '''_t x_mantissa_w_hidden_bit; 
-  x_mantissa_w_hidden_bit = uint1_uint''' + str(mantissa_width) + '''(x_hidden_bit, x_mantissa);
-  // Y
-  // Determine hidden bit
-  uint1_t y_hidden_bit;
-  if(y_exponent == 0) // lazy swith to ==
-  {
-    y_hidden_bit = 0;
-  }
-  else
-  {
-    y_hidden_bit = 1;
-  }
-  // Apply hidden bit
-  uint''' + str(mantissa_w_hidden_bit_width) + '''_t y_mantissa_w_hidden_bit; 
-  y_mantissa_w_hidden_bit = uint1_uint''' + str(mantissa_width) + '''(y_hidden_bit, y_mantissa);
-
-  // Step 3: Un-normalize Y (including hidden bit) so that xexp == yexp.
-  // Already swapped left/right based on exponent
-  // diff will be >= 0
-  uint''' + str(exponent_width) + '''_t diff;
-  diff = x_exponent - y_exponent;
-  // Shift y by diff (bit manip pipelined function)
-  uint''' + str(mantissa_w_hidden_bit_width) + '''_t y_mantissa_w_hidden_bit_unnormalized;
-  y_mantissa_w_hidden_bit_unnormalized = y_mantissa_w_hidden_bit >> diff;
-  
-  // Step 4: If necessary, negate mantissas (twos comp) such that add makes sense
-  // STEP 2.B moved here
-  // Make wider for twos comp/sign
-  int''' + str(mantissa_w_hidden_bit_sign_adj_width) + '''_t x_mantissa_w_hidden_bit_sign_adj;
-  int''' + str(mantissa_w_hidden_bit_sign_adj_width) + '''_t y_mantissa_w_hidden_bit_sign_adj;
-  if(x_sign) //if(x_sign == 1)
-  {
-    x_mantissa_w_hidden_bit_sign_adj = uint''' + str(mantissa_w_hidden_bit_width) + '''_negate(x_mantissa_w_hidden_bit); //Returns +1 wider signed, int''' + str(mantissa_w_hidden_bit_sign_adj_width) + '''t
-  }
-  else
-  {
-    x_mantissa_w_hidden_bit_sign_adj = x_mantissa_w_hidden_bit;
-  }
-  if(y_sign) //y_sign == 1
-  {
-    y_mantissa_w_hidden_bit_sign_adj = uint''' + str(mantissa_w_hidden_bit_width) + '''_negate(y_mantissa_w_hidden_bit_unnormalized);
-  }
-  else
-  {
-    y_mantissa_w_hidden_bit_sign_adj = y_mantissa_w_hidden_bit_unnormalized;
-  }
-  
-  // Step 5: Compute subtraction 
-  int''' + str(sum_mantissa_width) + '''_t sum_mantissa;
-  sum_mantissa = x_mantissa_w_hidden_bit_sign_adj - y_mantissa_w_hidden_bit_sign_adj;
-
-  // Step 6: Save sign flag and take absolute value of sum.
-  uint1_t sum_sign;
-  sum_sign = int''' + str(sum_mantissa_width) + '''_''' + str(sum_mantissa_width-1) + '''_''' + str(sum_mantissa_width-1) + '''(sum_mantissa);
-  uint''' + str(sum_mantissa_width) + '''_t sum_mantissa_unsigned;
-  sum_mantissa_unsigned = int''' + str(sum_mantissa_width) + '''_abs(sum_mantissa);
-
-  // Step 7: Normalize sum and exponent. (Three cases.)
-  uint1_t sum_overflow;
-  sum_overflow = uint''' + str(sum_mantissa_width) + '''_''' + str(mantissa_w_hidden_bit_sign_adj_width-1) + '''_''' + str(mantissa_w_hidden_bit_sign_adj_width-1) + '''(sum_mantissa_unsigned);
-  uint''' + str(exponent_width) + '''_t sum_exponent_normalized;
-  uint''' + str(mantissa_width) + '''_t sum_mantissa_unsigned_normalized;
-  if(sum_overflow) //if ( sum_overflow == 1 )
-  {
-     // Case 1: Sum overflow.
-     //         Right shift significand by 1 and increment exponent.
-     sum_exponent_normalized = x_exponent + 1;
-     sum_mantissa_unsigned_normalized = uint''' + str(sum_mantissa_width) + '''_''' + str(mantissa_range[0]+1) + '''_''' + str(mantissa_range[1]+1) + '''(sum_mantissa_unsigned);
-  }
-    else if(sum_mantissa_unsigned == 0) // laxy switch to ==
-    {
-     //
-     // Case 3: Sum is zero.
-     sum_exponent_normalized = 0;
-     sum_mantissa_unsigned_normalized = 0;
-  }
-  else
-  {
-     // Case 2: Sum is nonzero and did not overflow.
-     // Dont waste zeros at start of mantissa
-     // Find position of first non-zero digit from left
-     // Know bit25(sign) and bit24(overflow) are not set
-     // Hidden bit is [23], can narrow down to 24b wide including hidden bit 
-     uint''' + str(mantissa_w_hidden_bit_width) + '''_t sum_mantissa_unsigned_narrow;
-     sum_mantissa_unsigned_narrow = sum_mantissa_unsigned;
-     uint''' + str(leading_zeros_width) + '''_t leading_zeros; // width = ceil(log2(len(sumsig)))
-     leading_zeros = count0s_uint''' + str(mantissa_w_hidden_bit_width) + '''(sum_mantissa_unsigned_narrow); // Count from left/msbs downto, uintX_count0s counts from right
-     // NOT CHECKING xexp < adj
-     // Case 2b: Adjust significand and exponent.
-     sum_exponent_normalized = x_exponent - leading_zeros;
-     sum_mantissa_unsigned_normalized = sum_mantissa_unsigned_narrow << leading_zeros;
-    }
-  
-  // Declare the output portions
-  uint''' + str(mantissa_width) + '''_t z_mantissa;
-  uint''' + str(exponent_width) + '''_t z_exponent;
-  uint1_t z_sign;
-  z_sign = sum_sign;
-  z_exponent = sum_exponent_normalized;
-  z_mantissa = sum_mantissa_unsigned_normalized;
-  // Assemble output  
-  return float_uint1_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+  uint'''+str(right_width-1)+'''_t right_everythingelse = float_''' + str(sign_index-1) + '''_0(right);
+  uint'''+str(right_width)+'''_t negated_right_unsigned = uint1_uint'''+str(right_width-1) + '''(!right_sign, right_everythingelse);
+  float negated_right = float_uint32(negated_right_unsigned);
+  return left + negated_right;
 }'''
 
   #print "C CODE"
