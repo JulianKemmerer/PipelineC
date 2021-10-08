@@ -1,8 +1,11 @@
 #pragma once
-// uintN_t types for any N
+
+// types for any N
+#include "intN_t.h"
 #include "uintN_t.h"
 
 // Function to test
+
 float fp32add(float x, float y)
 {
   return x + y;
@@ -46,7 +49,7 @@ float allowed_err;\
 float err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(1000000-1))\
+if(test_num==(10000000-1))\
 {\
   done = true; \
 }\
