@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     while (cycle < 10)
     {
         // Print the PipelineC debug vars
-        cout << "cycle " << cycle << ":";
+        cout << "cycle " << cycle << ": ";
         DUMP_PIPELINEC_DEBUG(g_top)
 
         g_top->clk = 0;
@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
   import OPEN_TOOLS
   print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
   print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
-  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)
+  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)  
   
   # Write a shell script to execute
   m_ghdl = ""

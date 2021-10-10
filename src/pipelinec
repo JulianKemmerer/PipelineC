@@ -65,12 +65,18 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Publish math packages 0,1,2..n clock versions of things for all sorts of devices
-  Automate u24,rsqrtf demo cpp
 Do announcement of some sort for __clk()
-  Used recent game thing as example rewritten in clk style?
-  Could use new arbitration for slow IO?
-  Do video demo? guitar i2s audio visualizer of some sort?
+  Get video demo verilating (+running as raw C?)
+  Do video demo. Pong? MAKE TEST PATTERN INTO pipelined module-then pipelinec logo
+  Mention recent game thing as example rewritten in clk style
+  guitar i2s audio visualizer of some sort?
+Publish math packages 0,1,2..n clock versions of things for all sorts of devices
+  Automate with --math_pkg <func name> --part <FPGA PART>
+    Does incremental coarse sweep from 0
+  Setup demo verification of all N clocks of output 
+  Setup collection of resource util too
+  Setup final packaging (single file vhdl?)
+  Automate u24,rsqrtf demo cpp
 Do more basic tutorials like nandland+hdlbits
 File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
@@ -107,7 +113,7 @@ Nexus try to beat Wolfs results. try retiming, try area opt setting, target iden
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
 Sanity check signed mult you POS
-Come on do sanity check for reserved words
+Come on do sanity check for reserved words. Append _restricted?
 Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
@@ -130,7 +136,6 @@ Support AWS PCIM port - need to write kernel driver and maybe user space wrapper
 Add constant defintion (struct+array init), use const keyword? #define init expressions? Init becomes like const ref funcs assigning ref toks
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
 Expose latencies of each instance as a constant for use in external vhdl package - not for use in pipelinec code
-Fix for vhdl restricted words. Append _restricted?
 Fix to remove useless int casts, ex. uint32->uint32 and do casts of ints as vhdl expr not funcs
 Do auto gen unsigned to array functions now that support array_N_t
 CONST REF intern gen code: Use gcc array init instead of for loop many const ref tok assignments that are bulky?
@@ -177,10 +182,10 @@ Add compound one = {1}; to init to all bits=1
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
-
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
+
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 

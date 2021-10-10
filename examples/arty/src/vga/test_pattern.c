@@ -12,20 +12,20 @@
 #include "vga_pmod.c"
 
 ////***640x480@60Hz***//  Requires 25 MHz clock
-//#define PIXEL_CLK_MHZ 25.0
-//#define FRAME_WIDTH 640
-//#define FRAME_HEIGHT 480
+#define PIXEL_CLK_MHZ 25.0
+#define FRAME_WIDTH 640
+#define FRAME_HEIGHT 480
 
-//#define H_FP 16 //H front porch width (pixels)
-//#define H_PW 96 //H sync pulse width (pixels)
-//#define H_MAX 800 //H total period (pixels)
+#define H_FP 16 //H front porch width (pixels)
+#define H_PW 96 //H sync pulse width (pixels)
+#define H_MAX 800 //H total period (pixels)
 
-//#define V_FP 10 //V front porch width (lines)
-//#define V_PW 2 //V sync pulse width (lines)
-//#define V_MAX 525 //V total period (lines)
+#define V_FP 10 //V front porch width (lines)
+#define V_PW 2 //V sync pulse width (lines)
+#define V_MAX 525 //V total period (lines)
 
-//#define H_POL 0
-//#define V_POL 0
+#define H_POL 0
+#define V_POL 0
 
 ////***800x600@60Hz***//  Requires 40 MHz clock
 //#define PIXEL_CLK_MHZ 40.0
@@ -76,6 +76,7 @@
 //#define V_POL 1
 
 //***1920x1080@60Hz***// Requires 148.5 MHz pxl_clk
+/*
 #define PIXEL_CLK_MHZ 148.5
 #define FRAME_WIDTH 1920
 #define FRAME_HEIGHT 1080
@@ -90,6 +91,7 @@
 
 #define H_POL 1
 #define V_POL 1
+*/
 
 //Moving Box constants
 #define BOX_WIDTH 8
@@ -104,6 +106,7 @@
 #define BOX_X_INIT 0
 #define BOX_Y_INIT 400
 
+#ifndef SKIP_DEBUG_OUTPUT
 // Verilator Debug wires
 #include "clock_crossing/vga_red_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_red)
@@ -115,6 +118,15 @@ DEBUG_OUTPUT_DECL(uint4_t, vga_blue)
 DEBUG_OUTPUT_DECL(uint1_t, vsync)
 #include "clock_crossing/hsync_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, hsync)
+#endif
+
+// Temp hacky introduce 'and'
+// https://github.com/JulianKemmerer/PipelineC/issues/24
+#ifdef __PIPELINEC__
+#define and &
+#else
+#define and &&
+#endif
 
 // Set design to run at pixel clock
 MAIN_MHZ(app, PIXEL_CLK_MHZ)
@@ -161,14 +173,21 @@ void app()
   o.g = vga_green_reg;
   o.b = vga_blue_reg;
   WIRE_WRITE(app_to_vga_t, app_to_vga, o)
-  
-  // Connect to Verilator debug ports
+
+#ifndef SKIP_DEBUG_OUTPUT
+  // Connect to CXXRTL debug ports
   vsync(o.vs);
   hsync(o.hs);
   vga_red(o.r);
   vga_green(o.g);
-  vga_blue(o.b);  
-  
+  vga_blue(o.b);
+#else
+  debug_vsync = o.vs;
+  debug_hsync = o.hs;
+  debug_vga_red = o.r;
+  debug_vga_green = o.g;
+  debug_vga_blue = o.b;
+#endif
   //----------------------------------------------------
   //-----         MOVING BOX LOGIC                //----
   //----------------------------------------------------
@@ -180,8 +199,8 @@ void app()
   }
  
   pixel_in_box = 0;
-  if(((h_cntr_reg >= box_x_reg) & (h_cntr_reg < (box_x_reg + BOX_WIDTH))) &
-     ((v_cntr_reg >= box_y_reg) & (v_cntr_reg < (box_y_reg + BOX_WIDTH))))
+  if(((h_cntr_reg >= box_x_reg) and (h_cntr_reg < (box_x_reg + BOX_WIDTH))) and
+     ((v_cntr_reg >= box_y_reg) and (v_cntr_reg < (box_y_reg + BOX_WIDTH))))
   {
     pixel_in_box = 1;
   }
@@ -212,11 +231,11 @@ void app()
                   
   if(update_box == 1)
   {
-    if((box_x_dir == 1 & (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 & (box_x_tmp == BOX_X_MIN + 1)))
+    if((box_x_dir == 1 and (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 and (box_x_tmp == BOX_X_MIN + 1)))
     {
       box_x_dir = !(box_x_dir);
     }
-    if((box_y_dir == 1 & (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 & (box_y_tmp == BOX_Y_MIN + 1))) 
+    if((box_y_dir == 1 and (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 and (box_y_tmp == BOX_Y_MIN + 1))) 
     {
       box_y_dir = !(box_y_dir);
     }
@@ -236,52 +255,52 @@ void app()
   //--------------------------------------------------
   
   active = 0;
-  if((h_cntr_reg < FRAME_WIDTH) & (v_cntr_reg < FRAME_HEIGHT))
+  if((h_cntr_reg < FRAME_WIDTH) and (v_cntr_reg < FRAME_HEIGHT))
   {
     active = 1;
   }
   
   vga_red = 0;
-  if(active == 1 & ((h_cntr_reg < 512 & v_cntr_reg < 256) & uint12_8_8(h_cntr_reg) == 1))
+  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and uint12_8_8(h_cntr_reg) == 1))
   {
     vga_red = uint12_5_2(h_cntr_reg);
   }
-  else if(active == 1 & ((h_cntr_reg < 512 & !(v_cntr_reg < 256)) & !(pixel_in_box == 1)))
+  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1)))
   {
     vga_red = 0b1111;
   }
-  else if(active == 1 & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 0 & uint12_3_3(v_cntr_reg) == 1))))
+  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1))))
   {
     vga_red = 0b1111;
   }
      
   vga_blue = 0;
-  if(active == 1 & ((h_cntr_reg < 512 & v_cntr_reg < 256) &  uint12_6_6(h_cntr_reg) == 1))
+  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and  uint12_6_6(h_cntr_reg) == 1))
   {
     vga_blue = uint12_5_2(h_cntr_reg); 
   }
-  else if(active == 1 & ((h_cntr_reg < 512 & !(v_cntr_reg < 256)) & !(pixel_in_box == 1)))
+  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1)))
   {
     vga_blue = 0b1111;
   }
-  else if(active == 1 & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 0 & uint12_3_3(v_cntr_reg) == 1))))
+  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1))))
   {
     vga_blue = 0b1111;
   }                      
                          
   vga_green = 0;
-  if(active == 1 & ((h_cntr_reg < 512 & v_cntr_reg < 256) & uint12_7_7(h_cntr_reg) == 1))
+  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and uint12_7_7(h_cntr_reg) == 1))
   {
     vga_green = uint12_5_2(h_cntr_reg); 
   }
-  else if(active == 1 & ((h_cntr_reg < 512 & !(v_cntr_reg < 256)) & !(pixel_in_box == 1))) 
+  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1))) 
   {
     vga_green = 0b1111;
   }
-  else if(active == 1 & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 0 & uint12_3_3(v_cntr_reg) == 1)))) 
+  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1)))) 
   {
     vga_green = 0b1111;
   }
@@ -293,7 +312,7 @@ void app()
   v_sync_dly_reg = v_sync_reg;
   h_sync_dly_reg = h_sync_reg;
  
-  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
+  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) and (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
   {
     h_sync_reg = H_POL;
   }
@@ -302,7 +321,7 @@ void app()
     h_sync_reg = !(H_POL);
   }
 
-  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) & (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
+  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) and (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
   {
     v_sync_reg = V_POL;
   }
@@ -311,7 +330,7 @@ void app()
     v_sync_reg = !(V_POL);
   }
 
-  if((h_cntr_reg == (H_MAX - 1)) & (v_cntr_reg == (V_MAX - 1)))
+  if((h_cntr_reg == (H_MAX - 1)) and (v_cntr_reg == (V_MAX - 1)))
   {
     v_cntr_reg = 0;
   }
@@ -333,6 +352,4 @@ void app()
   vga_green_reg = vga_green;
   vga_blue_reg = vga_blue;
 }
-
-
 
