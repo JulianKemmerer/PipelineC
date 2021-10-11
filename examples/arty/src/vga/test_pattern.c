@@ -1,7 +1,7 @@
 #include "compiler.h"
 #include "uintN_t.h"
 
-// Generate top level debug ports with associated pipelinec_cxxrtl.h
+// Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
 
 // Simple design essentially copy-pasting the VHDL VGA test pattern design from Digilent
@@ -175,7 +175,7 @@ void app()
   WIRE_WRITE(app_to_vga_t, app_to_vga, o)
 
 #ifndef SKIP_DEBUG_OUTPUT
-  // Connect to CXXRTL debug ports
+  // Connect to Verilator debug ports
   vsync(o.vs);
   hsync(o.hs);
   vga_red(o.r);
