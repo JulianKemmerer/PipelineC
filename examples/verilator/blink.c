@@ -26,10 +26,11 @@ uint1_t led;
 #pragma MAIN blink
 uint1_t blink()
 {
+  // Connect to verilator debug wires
   counter_debug(counter);
   led_debug(led);
   
-  // If reached timeout
+  // If reached timeout (short for demo)
   if(counter==(3-1))
   {
     // Toggle led
@@ -39,6 +40,7 @@ uint1_t blink()
   }
   else
   {
+    // TODO: Try setting inputs from verilator
     //uint4_t inc = inc_debug();
     //counter += inc;
     counter += 1;
@@ -46,8 +48,3 @@ uint1_t blink()
   
   return led;
 }
-
-
-
-
-

@@ -132,7 +132,7 @@ make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_d
   f.close()
   
   # Run compile
-  print("Compiling...", flush=True)
+  print(f"Compiling {main_cpp_path}...", flush=True)
   bash_cmd = f"bash {sh_path}"
   #print(bash_cmd, flush=True)  
   log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
