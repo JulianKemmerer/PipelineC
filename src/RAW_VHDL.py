@@ -102,6 +102,7 @@ def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
 def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, clocks):
   # Func is known to have made it look like is using var?
   var_name = list(Logic.state_regs.keys())[0]
+  #state_reg = Logic.state_regs[var_name]
   c_type = Logic.wire_to_c_type[var_name]
   vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
   
@@ -133,13 +134,18 @@ def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_d
 '''
     
     
-  # Ram registers but renamed to be single dimension
-  num_entries = 2**addr_bits
-  unrolled_c_type = elem_type + "[" + str(num_entries) + "]"
-  unrolled_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(unrolled_c_type,parser_state)
-  rv += '''
+  # Ram registers but renamed to be single dimension if needed
+  if len(dims) > 1:
+    num_entries = 2**addr_bits
+    unrolled_c_type = elem_type + "[" + str(num_entries) + "]"
+    unrolled_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(unrolled_c_type,parser_state)
+    rv += '''
   type ''' + vhdl_type + '''_unrolled is array(natural range <>) of ''' + elem_vhdl_type + ''';
-  signal ''' + var_name + ''' : ''' + vhdl_type + '''_unrolled(0 to ''' + str(num_entries-1) + ''') := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(unrolled_c_type,parser_state) + ''';
+  signal ''' + var_name + ''' : ''' + vhdl_type + '''_unrolled(0 to ''' + str(num_entries-1) + ''') := ''' + VHDL.STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state) + ''';
+'''
+  else:
+    rv += '''
+  signal ''' + var_name + ''' : ''' + vhdl_type + ''' := ''' + VHDL.STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state) + ''';
 '''
 
   # Include IO regs if needed
