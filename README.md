@@ -49,9 +49,3 @@ The hope is to build shared, high performance, device agnostic, hardware designs
 
 For software folks I want writing PipelineC to feel like solving a programming puzzle in C, not a whole new paradigm of programming languages.
 The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language (it is my language of choice as an FPGA engineer :) ).
-
-```
-Currently Supported Tools (tested on Linux):
-Synthesis: Xilinx Vivado, Intel Quartus, Lattice Diamond, GHDL+Yosys+nextpnr, Efinix Efinity
-Simulation: Modelsim
-```

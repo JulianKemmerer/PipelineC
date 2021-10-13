@@ -1421,7 +1421,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst,
   #print "submodule_inst",submodule_inst
   #print "submodule_logic_name",submodule_logic_name
   submodule_logic.func_name = submodule_logic_name
-  #print("...",submodule_logic.func_name)
+  #print("...", submodule_logic.func_name, flush=True)
   
   # Ports and types are specific to the submodule instance
   # Get data from c ast node
@@ -3150,6 +3150,10 @@ def C_TYPE_IS_USER_TYPE(c_type,parser_state):
 def RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_node, prepend_text, parser_state):
   # Very similar to RESOLVE_REF_TOKS_TO_CONSTANT_WIRE
   if c_ast_node is None:
+    return None
+    
+  # Ugh hacky pass through for ram init, etc
+  if type(c_ast_node) == c_ast.InitList:
     return None
 
   dummy_wire = "DUMMY_RESOLVE_WIRE"
@@ -7516,13 +7520,15 @@ def PARSE_FILE(c_filename):
         
       # Preprocess again and parse the file
       # Collect info on non func defs (fsm derived bodies arent really 'parsed')
-      print("Parsing non-function definitions...", flush=True)
+      print("Preprocessing file...", flush=True)
       # Preprocess the main file to get single block of text
       preprocessed_c_text = preprocess_file(c_filename)
       #print("preprocessed_c_text",preprocessed_c_text)
+      print("Parsing C syntax...", flush=True)
       # Get the C AST
       parser_state.c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_c_text, c_filename)
       #print(parser_state.c_file_ast)
+      print("Parsing non-function definitions...", flush=True)
       # Parse definitions first before code structure
       # Get the parsed enum info
       parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
