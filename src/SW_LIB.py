@@ -1161,9 +1161,9 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
       # Get local static var info for this func
       local_state_reg_info_dict = dict()     
       if calling_func_name in parser_state.func_to_local_state_regs:
-        local_state_reg_infos = parser_state.func_to_local_state_regs[calling_func_name]
-        for local_state_reg_info in local_state_reg_infos:
-          local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
+        local_state_reg_info_dict = parser_state.func_to_local_state_regs[calling_func_name]
+        #for local_state_reg_info in local_state_reg_infos_dict.values():
+        #  local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
       for called_func_name in called_func_names:
         if called_func_name.endswith(ram_type):
           ram_func_name = called_func_name

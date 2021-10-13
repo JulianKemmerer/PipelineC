@@ -1754,6 +1754,13 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_stat
         next_inst_name += "[" + maybe_digit + "]"
     #print("next_inst_name",next_inst_name)
     parser_state.existing_logic.next_user_inst_name = next_inst_name
+    
+  # Use given file with raw VHDL init for variabel
+  if toks[0] == "VAR_VHDL_INIT":   
+    var_name = toks[1]
+    init_file = toks[2]
+    state_reg_info = parser_state.existing_logic.state_regs[var_name]
+    state_reg_info.init = init_file
   
   return parser_state.existing_logic
   
@@ -4154,7 +4161,10 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, 
  
 def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, state_reg_var, c_type):
   # Like a global variable 
-  state_reg_info = StateRegInfo()
+  
+  # Dont make new state reg info, use existing from earlier pass
+  #state_reg_info = StateRegInfo()
+  state_reg_info = parser_state.func_to_local_state_regs[parser_state.existing_logic.func_name][state_reg_var]
   state_reg_info.name = state_reg_var
   state_reg_info.type_name = c_type
   state_reg_info.init = c_ast_static_decl.init # Static init must be const?
@@ -7719,7 +7729,7 @@ class StateRegInfo:
   def __init__(self):
     self.name = None
     self.type_name = None
-    self.init = None # c ast node
+    self.init = None # c ast node or string filename
     self.resolved_const_str = None
     self.is_volatile = False
     self.is_static = False
@@ -7777,8 +7787,8 @@ def GET_LOCAL_STATE_REG_INFO(parser_state):
         
         # Save info
         if func_name not in parser_state.func_to_local_state_regs:
-          parser_state.func_to_local_state_regs[func_name] = []
-        parser_state.func_to_local_state_regs[func_name].append(state_reg_info)
+          parser_state.func_to_local_state_regs[func_name] = dict()
+        parser_state.func_to_local_state_regs[func_name][state_reg_info.name] = state_reg_info
   
   return parser_state
 
@@ -8540,6 +8550,11 @@ def APPEND_PRAGMA_INFO(parser_state):
     elif name=="INST_NAME":
       # Not handled here, done in func def parsing
       pass    
+    
+    # VAR_VHDL_INIT
+    elif name=="VAR_VHDL_INIT":
+      # Not handled here, done in func def parsing for local statics only first
+      pass
     
     else:
       print("Unhandled pragma:", name, pragma.coord)

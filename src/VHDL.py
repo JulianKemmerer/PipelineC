@@ -37,6 +37,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   init = None
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
+  print(logic.func_name,logic.state_regs,logic.state_regs[leaf].init)
   resolved_const_str = None
   if leaf in logic.state_regs:
     resolved_const_str = logic.state_regs[leaf].resolved_const_str  
@@ -117,10 +118,16 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     else:
       print("Only init lists for arrays at the moment...",init.coord)
       sys.exit(-1)
+  # Raw VHDL init string?
+  elif type(init) == str:
+    init_file = init
+    f=open(init_file)
+    text=f.read()
+    f.close()
+    return text
   # If not use null
   elif init is None:
     return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
-    
   # Try to use resolved to a constant string? ugh
   elif resolved_const_str is not None:
     #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
