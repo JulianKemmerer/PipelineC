@@ -41,19 +41,19 @@ void vga()
   // i.e. wire VGA to PMOD pins
   // https://github.com/Digilent/Arty-Pmod-VGA/blob/8341f622a13324fc59ab69d595b16e32a9519029/src/constraints/Arty_Master.xdc#L58
   app_to_pmod_jb_t b;
-  b.jb0 = vga.g >> 0;
-  b.jb1 = vga.g >> 1;
-  b.jb2 = vga.g >> 2;
-  b.jb3 = vga.g >> 3;
-  b.jb4 = vga.r >> 0;
-  b.jb5 = vga.r >> 1;
-  b.jb6 = vga.r >> 2;
-  b.jb7 = vga.r >> 3;
+  b.jb0 = vga.r >> 0;
+  b.jb1 = vga.r >> 1;
+  b.jb2 = vga.r >> 2;
+  b.jb3 = vga.r >> 3;
+  b.jb4 = vga.b >> 0;
+  b.jb5 = vga.b >> 1;
+  b.jb6 = vga.b >> 2;
+  b.jb7 = vga.b >> 3;
   app_to_pmod_jc_t c;
-  c.jc0 = vga.b >> 0;
-  c.jc1 = vga.b >> 1;
-  c.jc2 = vga.b >> 2;
-  c.jc3 = vga.b >> 3;
+  c.jc0 = vga.g >> 0;
+  c.jc1 = vga.g >> 1;
+  c.jc2 = vga.g >> 2;
+  c.jc3 = vga.g >> 3;
   c.jc4 = vga.hs;
   c.jc5 = vga.vs;
 
