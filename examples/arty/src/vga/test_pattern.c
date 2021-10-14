@@ -12,20 +12,20 @@
 #include "vga_pmod.c"
 
 ////***640x480@60Hz***//  Requires 25 MHz clock
-#define PIXEL_CLK_MHZ 25.0
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
-
-#define H_FP 16 //H front porch width (pixels)
-#define H_PW 96 //H sync pulse width (pixels)
-#define H_MAX 800 //H total period (pixels)
-
-#define V_FP 10 //V front porch width (lines)
-#define V_PW 2 //V sync pulse width (lines)
-#define V_MAX 525 //V total period (lines)
-
-#define H_POL 0
-#define V_POL 0
+//#define PIXEL_CLK_MHZ 25.0
+//#define FRAME_WIDTH 640
+//#define FRAME_HEIGHT 480
+//
+//#define H_FP 16 //H front porch width (pixels)
+//#define H_PW 96 //H sync pulse width (pixels)
+//#define H_MAX 800 //H total period (pixels)
+//
+//#define V_FP 10 //V front porch width (lines)
+//#define V_PW 2 //V sync pulse width (lines)
+//#define V_MAX 525 //V total period (lines)
+//
+//#define H_POL 0
+//#define V_POL 0
 
 ////***800x600@60Hz***//  Requires 40 MHz clock
 //#define PIXEL_CLK_MHZ 40.0
@@ -44,20 +44,20 @@
 //#define V_POL 1
 
 ////***1280x720@60Hz***// Requires 74.25 MHz clock
-//#define PIXEL_CLK_MHZ 74.25
-//#define FRAME_WIDTH 1280
-//#define FRAME_HEIGHT 720
-//
-//#define H_FP 110 //H front porch width (pixels)
-//#define H_PW 40 //H sync pulse width (pixels)
-//#define H_MAX 1650 //H total period (pixels)
-//
-//#define V_FP 5 //V front porch width (lines)
-//#define V_PW 5 //V sync pulse width (lines)
-//#define V_MAX 750 //V total period (lines)
-//
-//#define H_POL 1
-//#define V_POL 1
+#define PIXEL_CLK_MHZ 74.25
+#define FRAME_WIDTH 1280
+#define FRAME_HEIGHT 720
+
+#define H_FP 110 //H front porch width (pixels)
+#define H_PW 40 //H sync pulse width (pixels)
+#define H_MAX 1650 //H total period (pixels)
+
+#define V_FP 5 //V front porch width (lines)
+#define V_PW 5 //V sync pulse width (lines)
+#define V_MAX 750 //V total period (lines)
+
+#define H_POL 1
+#define V_POL 1
 
 ////***1280x1024@60Hz***// Requires 108 MHz clock
 //#define PIXEL_CLK_MHZ 108.0

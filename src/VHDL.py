@@ -37,7 +37,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   init = None
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
-  print(logic.func_name,logic.state_regs,logic.state_regs[leaf].init)
+  #print(logic.func_name,logic.state_regs,logic.state_regs[leaf].init)
   resolved_const_str = None
   if leaf in logic.state_regs:
     resolved_const_str = logic.state_regs[leaf].resolved_const_str  
@@ -121,6 +121,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # Raw VHDL init string?
   elif type(init) == str:
     init_file = init
+    # Ugh need to todo some kind of relative file path support
     f=open(init_file)
     text=f.read()
     f.close()

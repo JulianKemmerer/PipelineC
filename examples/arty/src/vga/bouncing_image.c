@@ -17,6 +17,8 @@
 // Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
 
+// TODO MOVE VGA STUFF TO OWN FILE
+
 // See top level IO wiring in
 #include "vga_pmod.c"
 
@@ -177,157 +179,132 @@ vga_signals_t vga_timing()
   return o;
 }
 
-// Moving box module
-#define BOX_WIDTH 8
-#define BOX_CLK_DIV 1000000 //MAX=(2^25 - 1)
-#define BOX_X_MAX (512 - BOX_WIDTH)
-#define BOX_Y_MAX (FRAME_HEIGHT - BOX_WIDTH)
-#define BOX_X_MIN 0
-#define BOX_Y_MIN 256
-#define BOX_X_INIT 0
-#define BOX_Y_INIT 400
-vga_pos_t moving_box_logic()
-{  
-  static uint12_t box_x_reg = BOX_X_INIT;
-  static uint1_t box_x_dir = 1;
-  static uint12_t box_y_reg = BOX_Y_INIT;
-  static uint1_t box_y_dir = 1;
-  static uint25_t box_cntr_reg;
-  
-  vga_pos_t box_pos;
-  box_pos.x = box_x_reg;
-  box_pos.y = box_y_reg;
-  
-  uint1_t update_box;
-  update_box = 0;
-  if(box_cntr_reg == (BOX_CLK_DIV - 1))
-  {
-    update_box = 1;
-  }
- 
-  // Save box x,y for comparing during direction logic
-  uint12_t box_x_tmp;
-  uint12_t box_y_tmp;
-  box_x_tmp = box_x_reg;
-  box_y_tmp = box_y_reg;
-  
-  if(update_box == 1)
-  {
-    if(box_x_dir == 1)
-    {
-      box_x_reg = box_x_reg + 1;
-    }
-    else
-    {
-      box_x_reg = box_x_reg - 1;
-    }
-    if(box_y_dir == 1)
-    {
-      box_y_reg = box_y_reg + 1;
-    }
-    else
-    {
-      box_y_reg = box_y_reg - 1;
-    }
-  }      
-                  
-  if(update_box == 1)
-  {
-    if((box_x_dir == 1 and (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 and (box_x_tmp == BOX_X_MIN + 1)))
-    {
-      box_x_dir = !(box_x_dir);
-    }
-    if((box_y_dir == 1 and (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 and (box_y_tmp == BOX_Y_MIN + 1))) 
-    {
-      box_y_dir = !(box_y_dir);
-    }
-  }
-
-  if(box_cntr_reg == (BOX_CLK_DIV - 1))
-  {
-    box_cntr_reg = 0;
-  }
-  else
-  {
-    box_cntr_reg = box_cntr_reg + 1;     
-  }
-  
-  return box_pos;
-}
-
-// Logic for coloring pixels
 typedef struct color_12b_t
 {
   uint4_t red;
   uint4_t green;
   uint4_t blue;
 }color_12b_t;
-color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
+
+// Image rectangle to use
+#include "pipelinec_color.h" // See make_image_files.py
+// Logic for coloring the rect given rel pos inside rect
+color_12b_t get_rect_color(vga_pos_t rel_pos)
 {
-  uint4_t vga_red;
-  uint4_t vga_green;
-  uint4_t vga_blue;
+  // Func from from pipelinec_color.h
+  uint32_t pixel_num = pipelinec_color_pixel_num(rel_pos);
+
+  // In pipelineable luts, too slow for pycparser (and probabaly rest of PipelineC too)
+  //color_12b_t pipelinec_color[pipelinec_color_W*pipelinec_color_H];
+  // return pipelinec_color[pixel_num]; 
   
-  uint1_t pixel_in_box;
-  pixel_in_box = 0;
-  if(((pos.x >= box_pos.x) and (pos.x < (box_pos.x + BOX_WIDTH))) and
-     ((pos.y >= box_pos.y) and (pos.y < (box_pos.y + BOX_WIDTH))))
-  {
-    pixel_in_box = 1;
-  }  
-  
-  vga_red = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and uint12_8_8(pos.x) == 1))
-  {
-    vga_red = uint12_5_2(pos.x);
-  }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1)))
-  {
-    vga_red = 0b1111;
-  }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1))))
-  {
-    vga_red = 0b1111;
-  }
-     
-  vga_blue = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and  uint12_6_6(pos.x) == 1))
-  {
-    vga_blue = uint12_5_2(pos.x); 
-  }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1)))
-  {
-    vga_blue = 0b1111;
-  }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1))))
-  {
-    vga_blue = 0b1111;
-  }                      
-                         
-  vga_green = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and uint12_7_7(pos.x) == 1))
-  {
-    vga_green = uint12_5_2(pos.x); 
-  }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1))) 
-  {
-    vga_green = 0b1111;
-  }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1)))) 
-  {
-    vga_green = 0b1111;
-  }
-  
-  color_12b_t c;
-  c.red = vga_red;
-  c.green = vga_green;
-  c.blue = vga_blue;
-  return c;
+  // As synthesis tool inferred RAM
+  pipelinec_color_DECL // Macro from pipelinec_color.h
+  color_12b_t unused_write_data;
+  // RAM template function
+  return pipelinec_color_RAM_SP_RF_0(pixel_num, unused_write_data, 0);
 }
 
+// Moving logo module
+// Logo should be small enough
+// to bounce a little on smallest 640x480 screens
+#define RECT_W pipelinec_color_W
+#define RECT_H pipelinec_color_H
+#define RECT_X_MAX (FRAME_WIDTH - RECT_W)
+#define RECT_Y_MAX (FRAME_HEIGHT - RECT_H)
+#define RECT_X_MIN 0
+#define RECT_Y_MIN 0
+#define RECT_X_INIT 0
+#define RECT_Y_INIT ((FRAME_HEIGHT/2)-(RECT_H/2))
+#define RECT_CLK_DIV 1000000 //MAX=(2^25 - 1)
+vga_pos_t moving_rect_logic()
+{  
+  static uint12_t rect_x_reg = RECT_X_INIT;
+  static uint1_t rect_x_dir = 1;
+  static uint12_t rect_y_reg = RECT_Y_INIT;
+  static uint1_t rect_y_dir = 1;
+  static uint25_t rect_cntr_reg;
+  
+  vga_pos_t rect_pos;
+  rect_pos.x = rect_x_reg;
+  rect_pos.y = rect_y_reg;
+  
+  uint1_t update_rect;
+  update_rect = 0;
+  if(rect_cntr_reg == (RECT_CLK_DIV - 1))
+  {
+    update_rect = 1;
+  }
+ 
+  // Save rect x,y for comparing during direction logic
+  uint12_t rect_x_tmp;
+  uint12_t rect_y_tmp;
+  rect_x_tmp = rect_x_reg;
+  rect_y_tmp = rect_y_reg;
+  
+  if(update_rect == 1)
+  {
+    if(rect_x_dir == 1)
+    {
+      rect_x_reg = rect_x_reg + 1;
+    }
+    else
+    {
+      rect_x_reg = rect_x_reg - 1;
+    }
+    if(rect_y_dir == 1)
+    {
+      rect_y_reg = rect_y_reg + 1;
+    }
+    else
+    {
+      rect_y_reg = rect_y_reg - 1;
+    }
+  }      
+                  
+  if(update_rect == 1)
+  {
+    if((rect_x_dir == 1 and (rect_x_tmp == RECT_X_MAX - 1)) | (rect_x_dir == 0 and (rect_x_tmp == RECT_X_MIN + 1)))
+    {
+      rect_x_dir = !(rect_x_dir);
+    }
+    if((rect_y_dir == 1 and (rect_y_tmp == RECT_Y_MAX - 1)) | (rect_y_dir == 0 and (rect_y_tmp == RECT_Y_MIN + 1))) 
+    {
+      rect_y_dir = !(rect_y_dir);
+    }
+  }
+
+  if(rect_cntr_reg == (RECT_CLK_DIV - 1))
+  {
+    rect_cntr_reg = 0;
+  }
+  else
+  {
+    rect_cntr_reg = rect_cntr_reg + 1;     
+  }
+  
+  return rect_pos;
+}
+
+// Logic for coloring pixels
+color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t rect_pos)
+{
+  // Default zeros/black background
+  color_12b_t c;
+  
+  // Except for where rectange is
+  if(((pos.x >= rect_pos.x) and (pos.x < (rect_pos.x + RECT_W))) and
+     ((pos.y >= rect_pos.y) and (pos.y < (rect_pos.y + RECT_H))))
+  {
+    // Where in rectangle?
+    vga_pos_t rect_rel_pos;
+    rect_rel_pos.x = pos.x - rect_pos.x;
+    rect_rel_pos.y = pos.y - rect_pos.y;
+    c = get_rect_color(rect_rel_pos);
+  }
+  
+  return c;
+}
 
 // Logic for connecting outputs/sim debug wires
 #ifndef SKIP_DEBUG_OUTPUT
@@ -393,11 +370,11 @@ void app()
   // VGA timing for fixed resolution
   vga_signals_t vga_signals = vga_timing();
   
-  // Logic to make a box move
-  vga_pos_t box_pos = moving_box_logic();
+  // Logic to make a rectangle move
+  vga_pos_t rect_pos = moving_rect_logic();
   
   // Color pixel at x,y 
-  color_12b_t color = get_pixel_color(vga_signals.active, vga_signals.pos, box_pos);
+  color_12b_t color = get_pixel_color(vga_signals.active, vga_signals.pos, rect_pos);
   
   // Drive output signals/registers
   register_outputs(vga_signals, color);

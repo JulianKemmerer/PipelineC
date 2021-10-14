@@ -65,6 +65,9 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Finish VAR_VHDL_INIT
+Do BROM support
+  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Do announcement of some sort for __clk()
   Get video demo verilating (+running as raw C?)
   Do video demo. Pong? MAKE TEST PATTERN INTO pipelined module-then pipelinec logo
@@ -103,7 +106,6 @@ CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - c
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
-Do BROM support
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
 Parallelize sweeps better - aws support?
