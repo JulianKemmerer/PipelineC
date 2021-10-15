@@ -511,7 +511,7 @@ end process;
 top_inst : entity work.top port map (   
     -- Main function clocks
     --clk_22p579 => clk_22p579,
-    clk_148p5 => vga_pixel_clk,
+    clk_74p25 => vga_pixel_clk,
     --clk_25p0_xil_temac_rx => clk_25_eth_rx,
     --clk_25p0_xil_temac_tx => clk_25_eth_tx,
     --clk_50p0 => clk_50,

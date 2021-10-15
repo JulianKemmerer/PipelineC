@@ -1,12 +1,11 @@
 #include "compiler.h"
 #include "uintN_t.h"
 
-// Generate top level debug ports with associated pipelinec_verilator.h
-#include "debug_port.h"
-
 // Simple design essentially copy-pasting the VHDL VGA test pattern design from Digilent
 // https://github.com/Digilent/Arty-Pmod-VGA/blob/master/src/hdl/top.vhd
 // https://digilent.com/reference/learn/programmable-logic/tutorials/arty-pmod-vga-demo/start
+// (test pattern color order does not match exactly but seems to be pmod board revision thing?
+// not worried about it at the moment since later experiments seem to have colors working fine)
 
 // See top level IO wiring in
 #include "vga_pmod.c"
@@ -93,7 +92,7 @@
 #define V_POL 1
 */
 
-//Moving Box constants
+// Moving Box constants
 #define BOX_WIDTH 8
 #define BOX_CLK_DIV 1000000 //MAX=(2^25 - 1)
 
@@ -106,8 +105,10 @@
 #define BOX_X_INIT 0
 #define BOX_Y_INIT 400
 
-#ifndef SKIP_DEBUG_OUTPUT
+// Generate top level debug ports with associated pipelinec_verilator.h
+#include "debug_port.h"
 // Verilator Debug wires
+#ifndef SKIP_DEBUG_OUTPUT
 #include "clock_crossing/vga_red_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_red)
 #include "clock_crossing/vga_green_DEBUG.h"
@@ -120,20 +121,12 @@ DEBUG_OUTPUT_DECL(uint1_t, vsync)
 DEBUG_OUTPUT_DECL(uint1_t, hsync)
 #endif
 
-// Temp hacky introduce 'and'
-// https://github.com/JulianKemmerer/PipelineC/issues/24
-#ifdef __PIPELINEC__
-#define and &
-#else
-#define and &&
-#endif
-
 // Set design to run at pixel clock
 MAIN_MHZ(app, PIXEL_CLK_MHZ)
 // The test pattern driving entity
 void app()
 {
-  // Wires and registers
+  // Wires & registers
   
   uint1_t active;
 
@@ -188,6 +181,7 @@ void app()
   debug_vga_green = o.g;
   debug_vga_blue = o.b;
 #endif
+
   //----------------------------------------------------
   //-----         MOVING BOX LOGIC                //----
   //----------------------------------------------------
@@ -199,8 +193,8 @@ void app()
   }
  
   pixel_in_box = 0;
-  if(((h_cntr_reg >= box_x_reg) and (h_cntr_reg < (box_x_reg + BOX_WIDTH))) and
-     ((v_cntr_reg >= box_y_reg) and (v_cntr_reg < (box_y_reg + BOX_WIDTH))))
+  if(((h_cntr_reg >= box_x_reg) & (h_cntr_reg < (box_x_reg + BOX_WIDTH))) &
+     ((v_cntr_reg >= box_y_reg) & (v_cntr_reg < (box_y_reg + BOX_WIDTH))))
   {
     pixel_in_box = 1;
   }
@@ -231,11 +225,11 @@ void app()
                   
   if(update_box == 1)
   {
-    if((box_x_dir == 1 and (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 and (box_x_tmp == BOX_X_MIN + 1)))
+    if((box_x_dir == 1 & (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 & (box_x_tmp == BOX_X_MIN + 1)))
     {
       box_x_dir = !(box_x_dir);
     }
-    if((box_y_dir == 1 and (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 and (box_y_tmp == BOX_Y_MIN + 1))) 
+    if((box_y_dir == 1 & (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 & (box_y_tmp == BOX_Y_MIN + 1))) 
     {
       box_y_dir = !(box_y_dir);
     }
@@ -255,52 +249,52 @@ void app()
   //--------------------------------------------------
   
   active = 0;
-  if((h_cntr_reg < FRAME_WIDTH) and (v_cntr_reg < FRAME_HEIGHT))
+  if((h_cntr_reg < FRAME_WIDTH) & (v_cntr_reg < FRAME_HEIGHT))
   {
     active = 1;
   }
   
   vga_red = 0;
-  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and uint12_8_8(h_cntr_reg) == 1))
+  if((active == 1) & (((h_cntr_reg < 512) & (v_cntr_reg < 256)) & (uint12_8_8(h_cntr_reg) == 1)))
   {
     vga_red = uint12_5_2(h_cntr_reg);
   }
-  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1)))
+  else if((active == 1) & (((h_cntr_reg < 512) & !(v_cntr_reg < 256)) & !(pixel_in_box == 1)))
   {
     vga_red = 0b1111;
   }
-  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1))))
+  else if((active == 1) & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) & ((uint12_8_8(v_cntr_reg) == 0) & (uint12_3_3(v_cntr_reg) == 1)))))
   {
     vga_red = 0b1111;
   }
      
   vga_blue = 0;
-  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and  uint12_6_6(h_cntr_reg) == 1))
+  if((active == 1) & (((h_cntr_reg < 512) & (v_cntr_reg < 256)) & (uint12_6_6(h_cntr_reg) == 1)))
   {
     vga_blue = uint12_5_2(h_cntr_reg); 
   }
-  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1)))
+  else if((active == 1) & (((h_cntr_reg < 512) & !(v_cntr_reg < 256)) & !(pixel_in_box == 1)))
   {
     vga_blue = 0b1111;
   }
-  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1))))
+  else if((active == 1) & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) & ((uint12_8_8(v_cntr_reg) == 0) & (uint12_3_3(v_cntr_reg) == 1)))))
   {
     vga_blue = 0b1111;
   }                      
                          
   vga_green = 0;
-  if(active == 1 and ((h_cntr_reg < 512 and v_cntr_reg < 256) and uint12_7_7(h_cntr_reg) == 1))
+  if((active == 1) & (((h_cntr_reg < 512) & (v_cntr_reg < 256)) & (uint12_7_7(h_cntr_reg) == 1)))
   {
     vga_green = uint12_5_2(h_cntr_reg); 
   }
-  else if(active == 1 and ((h_cntr_reg < 512 and !(v_cntr_reg < 256)) and !(pixel_in_box == 1))) 
+  else if((active == 1) & (((h_cntr_reg < 512) & !(v_cntr_reg < 256)) & !(pixel_in_box == 1))) 
   {
     vga_green = 0b1111;
   }
-  else if(active == 1 and ((!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 1 and uint12_3_3(h_cntr_reg) == 1)) |
-           (!(h_cntr_reg < 512) and (uint12_8_8(v_cntr_reg) == 0 and uint12_3_3(v_cntr_reg) == 1)))) 
+  else if((active == 1) & ((!(h_cntr_reg < 512) & (uint12_8_8(v_cntr_reg) == 1 & uint12_3_3(h_cntr_reg) == 1)) |
+           (!(h_cntr_reg < 512) & ((uint12_8_8(v_cntr_reg) == 0) & (uint12_3_3(v_cntr_reg) == 1))))) 
   {
     vga_green = 0b1111;
   }
@@ -312,7 +306,7 @@ void app()
   v_sync_dly_reg = v_sync_reg;
   h_sync_dly_reg = h_sync_reg;
  
-  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) and (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
+  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
   {
     h_sync_reg = H_POL;
   }
@@ -321,7 +315,7 @@ void app()
     h_sync_reg = !(H_POL);
   }
 
-  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) and (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
+  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) & (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
   {
     v_sync_reg = V_POL;
   }
@@ -330,7 +324,7 @@ void app()
     v_sync_reg = !(V_POL);
   }
 
-  if((h_cntr_reg == (H_MAX - 1)) and (v_cntr_reg == (V_MAX - 1)))
+  if((h_cntr_reg == (H_MAX - 1)) & (v_cntr_reg == (V_MAX - 1)))
   {
     v_cntr_reg = 0;
   }

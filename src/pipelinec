@@ -65,7 +65,7 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Finish VAR_VHDL_INIT
+Report test pattern modular new ghdl build issue
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Do announcement of some sort for __clk()
