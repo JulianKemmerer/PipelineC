@@ -2719,17 +2719,18 @@ end function;
 def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
   text = ""
 
+  # Default no fixed for now
+  '''
   # Fixed pkg
   if SYN.SYN_TOOL is VIVADO:
-    text +=  '''library ieee_proposed;
-use ieee_proposed.fixed_pkg.all;
-'''
+    text +=  "library ieee_proposed;\n"
+    text +=  "use ieee_proposed.fixed_pkg.all;\n"
   else:
-    # Default no fixed for now
     pass
-    #text += '''library ieee_proposed;
-    #use ieee_proposed.fixed_pkg.all;
-
+    #text += "library ieee_proposed;\n"
+    #text += "use ieee_proposed.fixed_pkg.all;\n"
+  '''
+  
   # Float pkg
   if SYN.SYN_TOOL is QUARTUS:
     # Lite version doesnt support vhdl 08
