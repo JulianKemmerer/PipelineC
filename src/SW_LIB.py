@@ -2891,7 +2891,9 @@ def GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_co
       for var_dim_value in var_dim_values:
         ref_sel += "_" + str(var_dim_value)
     else:
-      ref_sel = "0"
+      # Hacky allow unfilled to be filled in w/ prev ref? 
+      #ref_sel = "0"
+      pass
       
     # Use this ref_sel in nmux
     text += "     " + ref_sel + ",\n"
