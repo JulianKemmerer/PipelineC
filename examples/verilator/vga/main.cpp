@@ -1,10 +1,10 @@
 // https://github.com/JulianKemmerer/PipelineC/discussions/22
 /*
-(C) 2021 Victor Suarez Rovere <suarezvictor@gmail.com>
+(C) 2021 Victor Suarez Rovere <suarezvictor@gmail.com>, Julian Kemmerer <julian.v.kemmerer@gmail.com>
 LICENSE: GPL 3.0
 
 Compile like:
-(TODO: make compatible with Verilator --main_cpp make file based flow)
+(TODO: make compatible with PipelineC --main_cpp Verilator make file based flow)
 
 # From pipelinec repo:
 $ ./src/pipelinec ./examples/arty/src/vga/test_pattern_modular.c --sim_comb --verilator --out_dir ~/pipelinec_output
