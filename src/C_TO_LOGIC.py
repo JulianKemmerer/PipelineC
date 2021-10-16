@@ -7120,10 +7120,15 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
       new_sub_inst_name = BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node) + dup_postpend_text
     else:
       the_c_ast_node = None
-      file_coord_strs = ""
+      file_lines = []
       for c_ast_node in c_ast_nodes:
-        file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
-      new_sub_inst_name = sub_func_logic.func_name + file_coord_strs + dup_postpend_text
+        #file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
+        file_line = "l" + str(c_ast_node.coord.line)
+        if file_line not in file_lines:
+          file_lines.append(file_line)
+      #new_sub_inst_name = sub_func_logic.func_name + file_coord_strs + dup_postpend_text
+      file_coord_strs = "_".join(file_lines)
+      new_sub_inst_name = sub_func_logic.func_name + "_" + (os.path.split(str(c_ast_node.coord.file))[1]).replace(".","_") + "_" + file_coord_strs + dup_postpend_text 
     #print("replacing with",new_sub_inst_name)
     
     
