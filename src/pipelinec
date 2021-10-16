@@ -65,9 +65,6 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Report test pattern modular new ghdl build issue
-Do BROM support
-  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Do announcement of some sort for __clk()
   Get video demo verilating (+running as raw C?)
   Do video demo. Pong? MAKE TEST PATTERN INTO pipelined module-then pipelinec logo
@@ -81,6 +78,8 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Setup final packaging (single file vhdl?)
   Automate u24,rsqrtf demo cpp
 Do more basic tutorials like nandland+hdlbits
+Do BROM support
+  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?

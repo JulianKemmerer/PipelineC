@@ -61,3 +61,10 @@ void vga()
   WIRE_WRITE(app_to_pmod_jb_t, app_to_pmod_jc, c)
 }
 
+typedef struct color_12b_t
+{
+  uint4_t red;
+  uint4_t green;
+  uint4_t blue;
+}color_12b_t;
+// TODO make above use this type?

@@ -1,3 +1,4 @@
+# Helper script to write C and VHDL constants from image file
 from PIL import Image
 import sys
 import os
@@ -31,7 +32,7 @@ c_text = (f'''// See make_image_files.py
 // {img_name} : {img_file}
 #define {img_name}_W {width}
 #define {img_name}_H {height}
-#define {img_name}_pixel_num(pos) ((pos.y*{img_name}_W) + pos.x)
+#define {img_name}_pixel_addr(pos) ((pos.y*{img_name}_W) + pos.x)
 ''')
 vhd_out_name = img_name + ".vhd"
 vhd_out_abs_path = os.path.abspath(vhd_out_name)
@@ -56,7 +57,7 @@ c_text += f"#define {img_name}_DECL \\\n"
 c_text += f"static color_12b_t {img_name}[{img_name}_W*{img_name}_H];\\\n"
 c_text += f"#pragma VAR_VHDL_INIT {img_name} {vhd_out_abs_path}\\\n"
 rgb_im = im.convert('RGB')
-# pixel_num = (rel_pos.y*RECT_W) + rel_pos.x;
+# pixel_addr = (rel_pos.y*RECT_W) + rel_pos.x;
 for y in range(0,height):
   for x in range(0,width):
     rgb_8b = rgb_im.getpixel((x, y))
