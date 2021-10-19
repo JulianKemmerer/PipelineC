@@ -1,5 +1,13 @@
 // Constants and logic to produce VGA signals at fixed resolution
 
+// Temp hacky introduce 'and'
+// https://github.com/JulianKemmerer/PipelineC/issues/24
+#ifdef __PIPELINEC__
+#define and &
+#else
+#define and &&
+#endif
+
 ////***640x480@60Hz***//  Requires 25 MHz clock
 //#define PIXEL_CLK_MHZ 25.0
 //#define FRAME_WIDTH 640

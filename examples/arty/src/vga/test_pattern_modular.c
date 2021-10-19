@@ -2,19 +2,8 @@
 #include "compiler.h"
 #include "uintN_t.h"
 
-// Temp hacky introduce 'and'
-// https://github.com/JulianKemmerer/PipelineC/issues/24
-#ifdef __PIPELINEC__
-#define and &
-#else
-#define and &&
-#endif
-
 // See top level IO wiring in
 #include "vga_pmod.c"
-
-// Constants and logic to produce VGA signals at fixed resolution
-#include "vga_timing.h"
 
 // Moving box module
 #define BOX_WIDTH 8
@@ -167,64 +156,6 @@ color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
   return c;
 }
 
-// Generate top level debug ports with associated pipelinec_verilator.h
-#include "debug_port.h"
-// Logic for connecting outputs/sim debug wires
-#ifndef SKIP_DEBUG_OUTPUT
-// Verilator Debug wires
-#include "clock_crossing/vga_red_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint4_t, vga_red)
-#include "clock_crossing/vga_green_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint4_t, vga_green)
-#include "clock_crossing/vga_blue_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint4_t, vga_blue)
-#include "clock_crossing/vsync_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint1_t, vsync)
-#include "clock_crossing/hsync_DEBUG.h"
-DEBUG_OUTPUT_DECL(uint1_t, hsync)
-#endif
-void register_outputs(vga_signals_t vga, color_12b_t color)
-{
-  // Registers
-  static uint4_t vga_red_reg;
-  static uint4_t vga_green_reg;
-  static uint4_t vga_blue_reg;
-  static uint1_t h_sync_dly_reg = !H_POL;
-  static uint1_t v_sync_dly_reg = !V_POL;
-  
-  // Connect to VGA PMOD board IO via app_to_vga wire
-  app_to_vga_t o;
-  o.hs = h_sync_dly_reg;
-  o.vs = v_sync_dly_reg;
-  o.r = vga_red_reg;
-  o.g = vga_green_reg;
-  o.b = vga_blue_reg;
-  WIRE_WRITE(app_to_vga_t, app_to_vga, o)
-  
-  // Connect to simulation debug
-#ifndef SKIP_DEBUG_OUTPUT
-  // Connect to Verilator debug ports
-  vsync(o.vs);
-  hsync(o.hs);
-  vga_red(o.r);
-  vga_green(o.g);
-  vga_blue(o.b);
-#else
-  debug_vsync = o.vs;
-  debug_hsync = o.hs;
-  debug_vga_red = o.r;
-  debug_vga_green = o.g;
-  debug_vga_blue = o.b;
-#endif
-  
-  // Output delay regs
-  v_sync_dly_reg = vga.vsync;
-  h_sync_dly_reg = vga.hsync;
-  vga_red_reg = color.red;
-  vga_green_reg = color.green;
-  vga_blue_reg = color.blue;
-}
-
 // The test pattern driving entity
 // Set design to run at pixel clock
 MAIN_MHZ(app, PIXEL_CLK_MHZ)
@@ -240,5 +171,5 @@ void app()
   color_12b_t color = get_pixel_color(vga_signals.active, vga_signals.pos, box_pos);
   
   // Drive output signals/registers
-  register_outputs(vga_signals, color);
+  vga_pmod_register_outputs(vga_signals, color);
 }

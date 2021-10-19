@@ -66,10 +66,11 @@ print("""
 """
 TODO:
 Do announcement of some sort for __clk()
-  Get video demo verilating (+running as raw C?)
-  Do video demo. Pong? MAKE TEST PATTERN INTO pipelined module-then pipelinec logo
+  Pong using clk() FSMs?
   Mention recent game thing as example rewritten in clk style
   guitar i2s audio visualizer of some sort?
+Try to go from PipelineC directly to Verilator (RTLIL probably)
+  Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -77,6 +78,9 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Setup collection of resource util too
   Setup final packaging (single file vhdl?)
   Automate u24,rsqrtf demo cpp
+Try Victors RT verilate, syn cyclone iv (doesnt fit in arty) ?
+  Switch to 16b floats or some other fixed point?
+Verilate pipelined bouncing images uses too much RAM in new versions?
 Do more basic tutorials like nandland+hdlbits
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
@@ -130,7 +134,6 @@ Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
-Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
