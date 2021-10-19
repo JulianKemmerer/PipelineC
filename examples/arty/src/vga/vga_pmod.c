@@ -125,7 +125,13 @@ void vga_pmod_register_outputs(vga_signals_t vga, color_12b_t color)
   // Output delay regs
   v_sync_dly_reg = vga.vsync;
   h_sync_dly_reg = vga.hsync;
-  vga_red_reg = color.red;
-  vga_green_reg = color.green;
-  vga_blue_reg = color.blue;
+  // Black color when inactive
+  color_12b_t active_color;
+  if(vga.active)
+  {
+    active_color = color;
+  }
+  vga_red_reg = active_color.red;
+  vga_green_reg = active_color.green;
+  vga_blue_reg = active_color.blue;
 }
