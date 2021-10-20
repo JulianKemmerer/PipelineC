@@ -147,21 +147,24 @@ void vga_pmod_register_outputs(vga_signals_t current_timing, color_12b_t current
 {
   //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.red);
 
-   if(current_timing.active)
-     fb_setpixel(current_timing.pos.x, current_timing.pos.y,
-       current_color.red << 4, current_color.green << 4, current_color.blue << 4);
+  if(current_timing.active)
+  {
+    fb_setpixel(current_timing.pos.x, current_timing.pos.y,
+     current_color.red << 4, current_color.green << 4, current_color.blue << 4);
 
-   if(current_timing.pos.x==0 && current_timing.pos.y==0)
-   {
+    if(current_timing.pos.x==0 && current_timing.pos.y==0)
+    {
       fb_update();
       frame += 1;
-      if(fb_should_quit())
-      {
-        float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
-        printf("FPS: %f\n", frame/elapsed);
-        exit(1);
-      }
-   }
+    }
+  }
+  
+  if(fb_should_quit())
+  {
+    float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
+    printf("FPS: %f\n", frame/elapsed);
+    exit(1);
+  }
 }
 
 #ifdef USE_VERILATOR
@@ -180,13 +183,14 @@ void verilator_vga_output(Vtop* g_top)
     {
       fb_update();
       frame += 1;
-      if(fb_should_quit())
-      {
-        float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
-        printf("FPS: %f\n", frame/elapsed);
-        exit(1);
-      }
     }
+  }
+  
+  if(fb_should_quit())
+  {
+    float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
+    printf("FPS: %f\n", frame/elapsed);
+    exit(1);
   }
 }
 #endif
