@@ -1,6 +1,10 @@
 #pragma once
 // Define types like from stdint.h but use types built into language
 // not from stdint.h which has a bunch of baggage
+// (only include for software compile)
+#ifndef __PIPELINEC__
+#include <stdint.h>
+#endif
 
 // Do not double define existing types by checking for if stdint.h was included via
 // #ifndef _BITS_STDINT_INTN_H

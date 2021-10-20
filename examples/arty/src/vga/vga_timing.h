@@ -1,12 +1,6 @@
-// Constants and logic to produce VGA signals at fixed resolution
+#pragma once
 
-// Temp hacky introduce 'and'
-// https://github.com/JulianKemmerer/PipelineC/issues/24
-#ifdef __PIPELINEC__
-#define and &
-#else
-#define and &&
-#endif
+// Constants and logic to produce VGA signals at fixed resolution
 
 ////***640x480@60Hz***//  Requires 25 MHz clock
 //#define PIXEL_CLK_MHZ 25.0
@@ -103,6 +97,8 @@ typedef struct vga_signals_t
   uint1_t vsync;
   uint1_t active;
 }vga_signals_t;
+
+#ifdef __PIPELINEC__
 vga_signals_t vga_timing()
 {
   uint1_t active;
@@ -118,8 +114,14 @@ vga_signals_t vga_timing()
   o.vsync = v_sync_reg;
   o.pos.x = h_cntr_reg;
   o.pos.y = v_cntr_reg;
+  active = 0;
+  if((h_cntr_reg < FRAME_WIDTH) & (v_cntr_reg < FRAME_HEIGHT))
+  {
+    active = 1;
+  }
+  o.active = active;
   
-  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) and (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
+  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
   {
     h_sync_reg = H_POL;
   }
@@ -128,7 +130,7 @@ vga_signals_t vga_timing()
     h_sync_reg = !(H_POL);
   }
 
-  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) and (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
+  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) & (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
   {
     v_sync_reg = V_POL;
   }
@@ -137,7 +139,7 @@ vga_signals_t vga_timing()
     v_sync_reg = !(V_POL);
   }
 
-  if((h_cntr_reg == (H_MAX - 1)) and (v_cntr_reg == (V_MAX - 1)))
+  if((h_cntr_reg == (H_MAX - 1)) & (v_cntr_reg == (V_MAX - 1)))
   {
     v_cntr_reg = 0;
   }
@@ -155,12 +157,22 @@ vga_signals_t vga_timing()
     h_cntr_reg = h_cntr_reg + 1;
   }
   
-  active = 0;
-  if((h_cntr_reg < FRAME_WIDTH) and (v_cntr_reg < FRAME_HEIGHT))
-  {
-    active = 1;
-  }
-  o.active = active;
-  
   return o;
 }
+#endif // ifdef __PIPELINEC__
+
+#ifndef __PIPELINEC__
+// Software timing that includes frame pixels only (no front/back porch) timing
+vga_signals_t vga_timing()
+{
+  static vga_signals_t current_timing;
+  if(++current_timing.pos.x > FRAME_WIDTH)
+  {
+    current_timing.pos.x = 0;
+    if(++current_timing.pos.y > FRAME_HEIGHT)
+     current_timing.pos.y = 0;
+  }
+  current_timing.active = current_timing.pos.x < FRAME_WIDTH && current_timing.pos.y < FRAME_HEIGHT;
+  return current_timing;
+}
+#endif

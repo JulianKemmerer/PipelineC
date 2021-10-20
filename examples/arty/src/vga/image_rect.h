@@ -66,8 +66,8 @@ rect_init[5].color_mode = 5;
 uint1_t rect_contains(rect_t rect, vga_pos_t pos)
 {
   uint1_t rv;
-  if(((pos.x >= rect.pos.x) and (pos.x < (rect.pos.x + RECT_W))) and
-     ((pos.y >= rect.pos.y) and (pos.y < (rect.pos.y + RECT_H))))
+  if(((pos.x >= rect.pos.x) & (pos.x < (rect.pos.x + RECT_W))) &
+     ((pos.y >= rect.pos.y) & (pos.y < (rect.pos.y + RECT_H))))
   {
     rv = 1;
   }
@@ -164,12 +164,12 @@ rect_t rect_move(rect_t reset_state)
   if(update_rect == 1)
   {
     uint1_t colliding;
-    if((state.x_dir == 1 and (rect_x_tmp == RECT_X_MAX - 1)) | (state.x_dir == 0 and (rect_x_tmp == RECT_X_MIN + 1)))
+    if(((state.x_dir == 1) & (rect_x_tmp == RECT_X_MAX - 1)) | ((state.x_dir == 0) & (rect_x_tmp == RECT_X_MIN + 1)))
     {
       state.x_dir = !(state.x_dir);
       colliding = 1;
     }
-    if((state.y_dir == 1 and (rect_y_tmp == RECT_Y_MAX - 1)) | (state.y_dir == 0 and (rect_y_tmp == RECT_Y_MIN + 1))) 
+    if(((state.y_dir == 1) & (rect_y_tmp == RECT_Y_MAX - 1)) | ((state.y_dir == 0) & (rect_y_tmp == RECT_Y_MIN + 1))) 
     {
       state.y_dir = !(state.y_dir);
       colliding = 1;

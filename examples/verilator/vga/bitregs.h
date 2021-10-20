@@ -1,3 +1,6 @@
+static inline uint32_t float_31_0(float a) { union _noname { float f; uint32_t i;} conv; conv.f = a; return conv.i; }
+static inline float float_uint32(uint32_t a) { union _noname { float f; uint32_t i;} conv; conv.i = a; return conv.f; }
+
 #ifndef __BITREGS_H_
 #define __BITREGS_H_
 //based on https://blog.codef00.com/2014/12/06/portable-bitfields-using-c11/
@@ -63,11 +66,11 @@ DEFUINT(60); DEFUINT(61); DEFUINT(62); DEFUINT(63);
 
 
 //some bit access shortcuts
-#define uint12_5_2(a) XYZbit(a, 12, 5, 2)
+/*#define uint12_5_2(a) XYZbit(a, 12, 5, 2)
 #define uint12_5_2(a) XYZbit(a, 12, 5, 2)
 #define uint12_8_8(a) XYZbit(a, 12, 8, 8)
 #define uint12_7_7(a) XYZbit(a, 12, 7, 7)
 #define uint12_3_3(a) XYZbit(a, 12, 3, 3)
-#define uint12_6_6(a) XYZbit(a, 12, 6, 6)
+#define uint12_6_6(a) XYZbit(a, 12, 6, 6)*/
 
 #endif // __BITREGS_H_

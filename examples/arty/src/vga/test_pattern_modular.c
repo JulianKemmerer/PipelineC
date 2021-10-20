@@ -1,9 +1,19 @@
 // Organized and modular version of test_pattern.c
+#ifdef __PIPELINEC__
 #include "compiler.h"
 #include "uintN_t.h"
+#endif
 
 // See top level IO wiring in
 #include "vga_pmod.c"
+
+// Temp hacky introduce 'and'
+// https://github.com/JulianKemmerer/PipelineC/issues/24
+#ifdef __PIPELINEC__
+#define and &
+#else
+#define and &&
+#endif
 
 // Moving box module
 #define BOX_WIDTH 8
@@ -84,12 +94,6 @@ vga_pos_t moving_box_logic()
 }
 
 // Logic for coloring pixels
-typedef struct color_12b_t
-{
-  uint4_t red;
-  uint4_t green;
-  uint4_t blue;
-}color_12b_t;
 color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
 {
   uint4_t vga_red;
