@@ -46,7 +46,7 @@ uint allowed_err;\
 uint err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(100-1))\
+if(test_num==(100000000-1))\
 {\
   done = true; \
 }\

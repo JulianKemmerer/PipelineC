@@ -6235,12 +6235,16 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   has_bit_growth = False # Float not included
   if c_ast_bin_op_str == ">":
     c_ast_op_str = BIN_OP_GT_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == ">=":
     c_ast_op_str = BIN_OP_GTE_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "<":
     c_ast_op_str = BIN_OP_LT_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "<=":
     c_ast_op_str = BIN_OP_LTE_NAME
+    has_bit_growth = True
   elif c_ast_bin_op_str == "+":
     c_ast_op_str = BIN_OP_PLUS_NAME
     has_bit_growth = True
