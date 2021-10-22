@@ -11,12 +11,13 @@
 
 #include <cfloat>
 
-// Limited to an order of magnitude of min and max
+// Limited to an order of magnitude of min and max, not NaN
 bool good_float(float f)
 {
   if(f>(FLT_MAX/10.0)) return false;
   if(f > 0.0 && f<(FLT_MIN*10.0)) return false;
   if(fabs(f)<(FLT_MIN*10.0)) return false;
+  if(f/f!=1.0) return false; // NaN
   return true;
 }
 
@@ -53,6 +54,16 @@ void rand_two_floats(float* out1, float* out2, bool include_neg=true)
   *out2 = f2;
 }
 
+uint64_t int_max_val(int bitwidth)
+{
+  return pow(2,bitwidth-1)-1;
+}
+
+int64_t int_min_val(int bitwidth)
+{
+  return pow(2,bitwidth-1)*-1;
+}
+
 int64_t rand_int_range(int64_t min, int64_t max)
 {
   int64_t r64 = ((long long)rand() << 32) | rand();
@@ -86,7 +97,7 @@ output_name = signextend<int64_t,bitwidth>(top->output_name);
 output_name = float_uint32(top->output_name);
 
 #define DUT_PRINT_INT(i_val)\
-printf(#i_val": integer %lld, uint64 0x%016llX ", i_val, (uint64_t)i_val);
+printf(#i_val": integer %lld, uint64 0x%016llX ", (int64_t)i_val, (uint64_t)i_val);
 
 #define DUT_PRINT_FLOAT(f_val)\
 printf(#f_val": float %e, uint32 0x%08X ", f_val, float_31_0(f_val));
