@@ -4109,6 +4109,12 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
   right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+  if VHDL.C_TYPE_IS_INT_N(right_t):
+    right_max_val = pow(2,right_width-1)-1
+    right_unsigned_width = right_width-1
+  else:
+    right_max_val = pow(2,right_width)-1
+    right_unsigned_width = right_width
   output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t) 
   output_prefix = output_t.replace("_t","")
   
@@ -4122,7 +4128,8 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   
   # Shift size is limited by width of left input
   max_shift = left_width-1
-  shift_bit_width = max_shift.bit_length()
+  shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)
+  needs_resize = right_max_val > (pow(2,shift_bit_width)-1)
   # Shift amount is resized
   resized_prefix = "uint" + str(shift_bit_width)
   resized_t = resized_prefix + "_t"
@@ -4143,25 +4150,29 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   
   // Output
   ''' + output_t + ''' rv;
-  
+'''
+  if needs_resize:
+    text += '''
   // Check for oversized
   if(right > ''' + str(max_shift) + ''')
   {
     // Append sign bits on left and select rv from MSBs
     uint1_t sign;
 '''
-  if is_signed:
-    text += '''    sign = ''' + left_prefix + '''_''' + str(left_width-1) + '''_''' + str(left_width-1) + '''(left);
+    if is_signed:
+      text += '''    sign = ''' + left_prefix + '''_''' + str(left_width-1) + '''_''' + str(left_width-1) + '''(left);
 '''
-  else:
-    text += '''    sign = 0;
+    else:
+      text += '''    sign = 0;
 '''
-  text += "    // Big shift all sign bits\n"
-  text += "    rv = uint1_"+str(output_width)+"(sign);\n"
-  text += '''
+    text += "    // Big shift all sign bits\n"
+    text += "    rv = uint1_"+str(output_width)+"(sign);\n"
+    text += '''
   }
   else
   {
+'''
+  text += '''
     // Otherwise use Victor's muxes
     ''' + output_t + ''' v0 = left;
 '''
@@ -4169,9 +4180,12 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
     text += "    " + output_t + " v"+str(b+1) + " = " + output_prefix + "_" + str(b) + "_" + str(b) + "(resized_shift_amount)" + " ? (v" + str(b) + " >> " + str(pow(2,b)) + ") : v" + str(b) + ";\n"
     
   text += "    rv = v" + str(shift_bit_width) + ";\n"
-   
-  text += '''
+  
+  if needs_resize:
+    text += '''
   }
+'''
+  text += '''
   return rv;
 }'''
 
@@ -4192,6 +4206,12 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
   right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+  if VHDL.C_TYPE_IS_INT_N(right_t):
+    right_max_val = pow(2,right_width-1)-1
+    right_unsigned_width = right_width-1
+  else:
+    right_max_val = pow(2,right_width)-1
+    right_unsigned_width = right_width
   output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t) 
   output_prefix = output_t.replace("_t","") 
   
@@ -4200,8 +4220,10 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   
   # Shift size is limited by width of left input
   max_shift = left_width-1
-  shift_bit_width = max_shift.bit_length()
-  # Shift amount is resized
+  shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)
+  needs_resize = right_max_val > (pow(2,shift_bit_width)-1)
+  # Shift amount is resized up if needed
+  
   resized_prefix = "uint" + str(shift_bit_width)
   resized_t = resized_prefix + "_t"
   
@@ -4218,10 +4240,13 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
   // Resize the shift amount (right)
   ''' + resized_t + ''' resized_shift_amount;
   resized_shift_amount = right;
-  
+'''
+  text += '''
   // Output
   ''' + output_t + ''' rv;
-  
+'''
+  if needs_resize:
+    text += '''
   // Check for oversized
   if(right > ''' + str(max_shift) + ''')
   {
@@ -4229,7 +4254,8 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
     rv = 0;
   }
   else
-  {
+  {'''
+  text += '''
     // Otherwise use Victor's muxes
     ''' + output_t + ''' v0 = left;
 '''
@@ -4238,8 +4264,12 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_
     
   text += "    rv = v" + str(shift_bit_width) + ";\n"
    
-  text += '''
+  if needs_resize:
+    text += '''
   }
+'''
+
+  text += '''
   return rv;
 }'''
 
