@@ -892,8 +892,9 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
 def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
   if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
     return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
-  elif c_type_str == "float":
-    return 32
+  elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+    e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    return 1+e+m
   elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
     # Enum type
     return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(parser_state.enum_info_dict[c_type_str].int_c_type)
@@ -978,15 +979,15 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
       logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME)                                          or
       logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MULT_NAME)                                         or
       logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MOD_NAME)                                          or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME) and output_c_type=="float"   ) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME) and C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(output_c_type)   ) or
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SL_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or # ASSUME FOR NOW
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SR_NAME) and C_TYPES_ARE_INTEGERS(input_c_types) ) or # ASSUME FOR NOW
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float")) or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float")) or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float")) or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float")) or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float")) or
-    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME) and C_TYPES_ARE_TYPE(input_c_types,"float"))
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)) or
+    ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types))
     ):
     return False
   else:
@@ -1894,6 +1895,9 @@ package c_structs_pkg is
   for i in range(1, 257):
     types_written.append("uint" + str(i) + "_t")
     types_written.append("int" + str(i) + "_t")
+  for e in range(0,24):
+    for m in range(0,24):
+      types_written.append("float_" + str(e) + "_" + str(m) + "_t")
   # Oh dont forget to be extra dumb
   types_written.append("float")
   # Oh hey adding to the dumb
@@ -3191,6 +3195,8 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
   left_type = logic.wire_to_c_type[driven_wire]
   if left_type == right_type:
     return RHS
+  if C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([right_type, left_type]):
+    return RHS
     
   # DO VHDL CONVERSION FUNCTIONS
   resize_toks = []
@@ -3566,8 +3572,9 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
   elif C_TYPE_IS_INT_N(c_type):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
     return "to_signed(" + str(value_num) + ", " + str(width) + ")"
-  elif c_type == "float":
-    return "to_slv(to_float(" + val_str + ", 8, 23))"
+  elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
+    e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)
+    return "to_slv(to_float(" + val_str + ", " + str(e) + ", " + str(m) + "))"
   else:
     print("How to give const",val_str,"gen VHDL?")
     sys.exit(-1)
@@ -3748,8 +3755,9 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
     return "unsigned(" + str(width-1) + " downto 0)"
   elif c_type_str == C_TO_LOGIC.BOOL_C_TYPE:
     return "unsigned(0 downto 0)"
-  elif c_type_str =="float":
-    return "std_logic_vector(31 downto 0)"
+  elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+    e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    return "std_logic_vector("+str((1+e+m)-1)+" downto 0)"
   elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
     # Use same type from C
     return c_type_str
@@ -3803,7 +3811,7 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
     
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
   # Check for int types
-  if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str) or (c_type_str == C_TO_LOGIC.BOOL_C_TYPE) or (c_type_str =="float"):
+  if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str) or (c_type_str == C_TO_LOGIC.BOOL_C_TYPE) or C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
     return "(others => '0')"
   elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
     # Use same type from C

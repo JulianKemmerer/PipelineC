@@ -741,7 +741,7 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
   
   
   # Only ints+floats for now, check all inputs
-  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_C_TYPE(logic.inputs,"float",logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
+  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
     # HACK OH GOD NO dont look up enums
     left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
     right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
@@ -2065,7 +2065,14 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
   # Bit slice or concat?
   #print "toks",toks
   # Bit slice
-  if len(toks) ==4:
+  
+  # New float_e_m_t bit select
+  if len(toks) == 6:
+    high = int(toks[4])
+    low = int(toks[5])
+    return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
+  
+    '''elif len(toks) ==4:
     # Only known thing is float SEM contructor
     # Just like bit concat
     if not(logic.func_name.startswith("float_")):
@@ -2073,10 +2080,12 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
       sys.exit(-1)
     else:
       return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
-  
+    '''
   elif len(toks) == 3:
+    if logic.func_name.startswith("float_") and not toks[1].isdigit() and not toks[2].isdigit():
+      return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     # Array to unsigned # uint8_array250_le
-    if "array" in toks[1]:
+    elif "array" in toks[1]:
       return GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     # Eith BIT SLICE #uint64_39_39(
     elif toks[1].isdigit() and toks[2].isdigit():
@@ -2086,6 +2095,7 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     # OR BIT ASSIGN # uint64_uint15_2(
     else:
       # Above will fail if is BIT assign
+      #print("bit assign?",logic.func_name)
       return GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
       
       
@@ -2145,6 +2155,7 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, p
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   # TODO check for ints only as constructing elements?
   # ONLY INTS FOR NOW
+  #print("logic.func_name",logic.func_name,logic.inputs)
   s_type = logic.wire_to_c_type[logic.inputs[0]]
   e_type = logic.wire_to_c_type[logic.inputs[1]]
   m_type = logic.wire_to_c_type[logic.inputs[2]]

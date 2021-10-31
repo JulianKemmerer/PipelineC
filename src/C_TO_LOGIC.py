@@ -3136,6 +3136,45 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
 def C_TYPE_IS_ARRAY(c_type):
   return "[" in c_type and c_type.endswith("]")
   
+def C_TYPE_IS_FLOAT_E_M(c_type):
+  toks=c_type.split("_")
+  if c_type.startswith("float_") and c_type.endswith("_t") and len(toks)==4 and toks[1].isdigit() and toks[2].isdigit():
+    return True
+  return False
+  
+def C_TYPE_IS_FLOAT_TYPE(c_type):
+  if c_type=="float":
+    return True
+  elif C_TYPE_IS_FLOAT_E_M(c_type):
+    return True
+  return False
+  
+def C_TYPES_ARE_FLOAT_TYPES(c_types):
+  for c_type in c_types:
+    if not C_TYPE_IS_FLOAT_TYPE(c_type):
+      return False
+  return True
+
+def C_FLOAT_E_M_TYPE_TO_E_M(c_type):
+  if c_type=="float":
+    return (8,23)
+  #print("c_type",c_type)
+  toks = c_type.split("_")
+  e = int(toks[1])
+  m = int(toks[2])
+  return e,m
+  
+def C_FLOAT_TYPES_ARE_EQUAL(c_types):
+  the_type = c_types[0]
+  for c_type in c_types:
+    if c_type=="float" and the_type=="float_8_23_t":
+      continue
+    elif c_type=="float_8_23_t" and the_type=="float":
+      continue
+    elif c_type != the_type:
+      return False  
+  return True
+  
 def C_TYPE_IS_USER_TYPE(c_type,parser_state):
   user_code = False
   if C_TYPE_IS_STRUCT(c_type,parser_state):
@@ -5140,24 +5179,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       
       # First check for integer arguments
       is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
-      '''
-      try:
-        lhs_val = int(lhs_val_str)
-        rhs_val = int(rhs_val_str)
-      except:
-        is_ints = False
-      '''
+
       # Then allow for floats, if either float then treat boths as floats
-      is_floats = lhs_c_type=="float" or rhs_c_type=="float"
-      '''
-      if not is_ints:
-        is_floats = True
-        try:
-          lhs_val = float(lhs_val_str)
-          rhs_val = float(rhs_val_str)
-        except:
-          is_floats = False
-      '''
+      is_floats = C_TYPE_IS_FLOAT_TYPE(lhs_c_type) or C_TYPE_IS_FLOAT_TYPE(rhs_c_type)
       
       # Number who?
       if not is_ints and not is_floats:
@@ -5253,7 +5277,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
       in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
       is_int = VHDL.C_TYPES_ARE_INTEGERS([in_c_type])
-      #is_float = in_c_type=="float"
       
       # Number who?
       if not is_int: # and not is_float:
@@ -5279,9 +5302,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
       out_t = parser_state.existing_logic.wire_to_c_type[output_driven_wire_names[0]]
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
-      if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
+      if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TYPE_IS_FLOAT_TYPE(out_t):
         const_val_str = str(float(in_val_str))
-      elif in_t == "float" and VHDL.C_TYPES_ARE_INTEGERS([out_t]) :
+      elif C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPES_ARE_INTEGERS([out_t]) :
         const_val_str = str(int(float(in_val_str)))
       elif VHDL.C_TYPES_ARE_INTEGERS([in_t, out_t]):
         (signed, left_width, left_unsigned_width, 
@@ -6033,8 +6056,10 @@ def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
   elif VHDL.C_TYPES_ARE_INTEGERS([c_type]):
     bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
     byte_size = int(math.ceil(float(bit_width)/float(8)))
-  elif c_type == "float":
-    return 4
+  elif C_TYPE_IS_FLOAT_TYPE(c_type):
+    e,m = C_FLOAT_E_M_TYPE_TO_E_M(c_type)
+    bit_width = 1+e+m
+    byte_size = int(math.ceil(float(bit_width)/float(8)))
   elif C_TYPE_IS_ENUM(c_type,parser_state):
     bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state,c_type)
     byte_size = int(math.ceil(float(bit_width)/float(8)))
@@ -6488,9 +6513,13 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     else:
       # Types for both left and right are known
       # Derive output
-      # Floats yield floats
-      if left_type == "float" or right_type == "float":
-        output_c_type = "float"
+      # New float_e_m_t types
+      if C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
+         output_c_type = left_type # same as right
+      elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
+        output_c_type = left_type
+      elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
+        output_c_type = right_type
       else:
         # Ints only
         if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
@@ -6722,18 +6751,21 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
                ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(rhs_type, parser_state) and (driven_wire_type==SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(rhs_type, parser_state)) )
              ):
           continue
+        # Handle special case of equal float types
+        elif C_FLOAT_TYPES_ARE_EQUAL([driven_wire_type,rhs_type]):
+            continue
         
         
         #######
-        # At this point we have incompatible types that need special casting parser_state.existing_logic
+        # At this point we have incompatible types that need special casting logic
         #     Build cast function to connect driving wire to driven wire
         # int = float
         # float = int
         # float = uint
         # DONT do uint = float since force int cast for now
-        if  ( (VHDL.C_TYPE_IS_INT_N(rhs_type) and driven_wire_type == "float") or
-            (rhs_type == "float" and VHDL.C_TYPE_IS_INT_N(driven_wire_type)) or
-            (VHDL.C_TYPE_IS_UINT_N(rhs_type) and driven_wire_type == "float")
+        if( (VHDL.C_TYPE_IS_INT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type)) or
+            (C_TYPE_IS_FLOAT_TYPE(rhs_type) and VHDL.C_TYPE_IS_INT_N(driven_wire_type)) or
+            (VHDL.C_TYPE_IS_UINT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type))
           ):
           # Return n arg func
           func_base_name = CAST_FUNC_NAME_PREFIX

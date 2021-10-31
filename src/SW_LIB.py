@@ -597,13 +597,10 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
         byte_i = byte_i + 1
       if low_i < width:
         text += "rv.data[" + str(byte_i) + "] = " + typeprefix + "_" + str(width-1) + "_" + str(low_i) + "(x);\n"
-    elif type_t == "float":
-      text += '''
-      rv.data[0] = float_7_0(x);
-      rv.data[1] = float_15_8(x);
-      rv.data[2] = float_23_16(x);
-      rv.data[3] = float_31_24(x);
-      '''
+    elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(type_t):
+      float_bytes = C_TYPE_SIZE(type_t, parser_state)
+      for float_byte_i in range(0,float_bytes):
+        text += f"rv.data[{float_byte_i}] = {type_t}_{((float_byte_i+1)*8)-1}_{float_byte_i*8}(x);\n"
     elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
       # How many bytes
       width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
@@ -1586,13 +1583,14 @@ typedef uint8_t ''' + result_t + '''; // FUCK
 ''' + result_t + " " + func_name+"("+ in_t + ''' x)
 {
   // First do all the compares in parallel
+  // All zeros has has many zeros as width
+  uint1_t leading''' + str(in_width) + ''' = (x==0);
   '''
       for leading_zeros in range(1, in_width):
         text += '''
   uint1_t leading''' + str(leading_zeros) + ''';
   leading''' + str(leading_zeros) + ''' = ''' + in_prefix + '''_''' + str(in_width-1) + '''_'''+ str(in_width-1-leading_zeros) + '''(x) == 1;
-  // All zeros has has many zeros as width
-  uint1_t leading''' + str(in_width) + ''' = (x==0);
+  
   
   // Mux each one hot into a constant
   // This cant be optimal but better than before for sure
@@ -2001,6 +1999,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   header_text = '''
 #include "uintN_t.h"
 #include "intN_t.h"
+#include "float_e_m_t.h"
   ''' 
   
   # Regex search c_text
@@ -2008,7 +2007,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   # Parse to list of width toks
   bit_sel_func_names = []
   # uint64_39_39(input);
-  for type_regex in ["uint[0-9]+","int[0-9]+","float"]:
+  for type_regex in ["uint[0-9]+","int[0-9]+","float", "float_[0-9]+_[0-9]+_t"]:
     p = re.compile(type_regex + '_[0-9]+_[0-9]+\s?\(')
     bit_sel_func_names = p.findall(c_text)
     bit_sel_func_names = list(set(bit_sel_func_names))
@@ -2018,25 +2017,35 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     for bit_sel_func_name in bit_sel_func_names:
       bit_sel_func_name = bit_sel_func_name.strip("(").strip()
       toks = bit_sel_func_name.split("_")
-      high = int(toks[1])
-      low = int(toks[2])
-      in_prefix = toks[0]
-      if type_regex == "float":
-        in_t = "float"
+      
+      if len(toks) == 3:
+        high = int(toks[1])
+        low = int(toks[2])
+        in_prefix = toks[0]
+        if type_regex == "float":
+          in_t = "float"
+        else:
+          in_t = in_prefix + "_t"
+        func_name = in_prefix + "_"+str(high)+"_"+str(low)
+        # Catch reverse
+        if high < low:
+          temp = low
+          low = high
+          high = temp
+        result_width = high - low + 1
+        result_t = "uint" + str(result_width) + "_t"
       else:
-        in_t = in_prefix + "_t"
-      func_name = in_prefix + "_"+str(high)+"_"+str(low)
-      # Catch reverse
-      if high < low:
-        temp = low
-        low = high
-        high = temp
-      result_width = high - low + 1
-      result_t = "uint" + str(result_width) + "_t"
+        # New float_e_m_t_#_#
+        high = int(toks[4])
+        low = int(toks[5])
+        in_t = "_".join(toks[0:4])
+        result_width = high - low + 1
+        result_t = "uint" + str(result_width) + "_t"
+      
       
       text += '''
 // BIT SELECT
-''' + result_t + " " + func_name+"("+ in_t + ''' x)
+''' + result_t + " " + bit_sel_func_name+"("+ in_t + ''' x)
 {
   //TODO
 }
@@ -2189,23 +2198,23 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   float_const_func_names = []
   # float_1_8_23(left_resized);
   for type_regex in ["float"]:
-    p = re.compile(type_regex + '_uint[0-9]+_uint[0-9]+_uint[0-9]+\s?\(')
+    p = re.compile(type_regex + '_uint[0-9]+_uint[0-9]+\s?\(')
     float_const_func_names = p.findall(c_text)
     float_const_func_names = list(set(float_const_func_names))
     for float_const_func_name in float_const_func_names:
       float_const_func_name = float_const_func_name.strip("(").strip()
       toks = float_const_func_name.split("_")
-      s_prefix = toks[1]
+      s_prefix = "uint1"
       s_t = s_prefix + "_t"
-      e_prefix = toks[2]
+      e_prefix = toks[1]
       e_t = e_prefix + "_t"
-      m_prefix = toks[3]
+      m_prefix = toks[2]
       m_t = m_prefix + "_t"
-      result_t = type_regex
+      result_t = "float_" + str(e_prefix.replace("uint","")) + "_" + str(m_prefix.replace("uint","")) + "_t"
       func_name = float_const_func_name
       text += '''
-// BIT SELECT
-''' + result_t + " " + func_name+"("+ s_t + ''' sign, ''' + e_t + ''' exponent, ''' + m_t + ''' mantissa)
+// FLOAT SEM CONSTRUCT
+''' + result_t + " " + float_const_func_name+"("+ s_t + ''' sign, ''' + e_t + ''' exponent, ''' + m_t + ''' mantissa)
 {
   //TODO
 }
@@ -2365,9 +2374,9 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
   in_t = partially_complete_logic.wire_to_c_type[input_wire]
   output_wire = partially_complete_logic.outputs[0]
   out_t = partially_complete_logic.wire_to_c_type[output_wire]
-  if in_t == "float" and VHDL.C_TYPE_IS_INT_N(out_t):
+  if C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPE_IS_INT_N(out_t):
     return GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
-  if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and out_t == "float":
+  if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
     return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
   else:
     print("Implement more casting: Easy/Lucky/Free Bright Eyes")
@@ -2382,31 +2391,34 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
   is_int = VHDL.C_TYPE_IS_INT_N(in_t) 
   output_wire = partially_complete_logic.outputs[0]
   out_t = partially_complete_logic.wire_to_c_type[output_wire]
+  fp_t = out_t
   
-  ######## COPIED FLOAT STUFF FROM THE FUTURE
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
   mantissa_t_prefix = "uint" + str(mantissa_width)
   mantissa_t = mantissa_t_prefix + "_t"
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
   exponent_t_prefix = "uint" + str(exponent_width)
   exponent_t = exponent_t_prefix + "_t"
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
-  exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
-  sign_index = 31
+  sign_index = mantissa_width+exponent_width
   sign_width = 1
   sign_t_prefix = "uint" + str(sign_width)
   sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   text = ""
   text += '''
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
+#include "float_e_m_t.h"
 
 // CAST
 ''' + out_t + " " + partially_complete_logic.func_name+"("+ in_t + ''' rhs)
@@ -2496,12 +2508,12 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
     ''' + exponent_t + ''' exponent;
     exponent = ''' + str(input_width) + ''' - shift;
     // Add bias
-    biased_exponent = exponent + ''' + str(exponent_bias_to_add) + ''';
+    biased_exponent = exponent + ''' + str(exponent_bias) + ''';
   }'''
   
   # Construct float to return
   text += '''
-  return float_''' + sign_t_prefix + "_" + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
+  return float_''' + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
 }'''
 
   #print(text)
@@ -2518,33 +2530,35 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
   in_t = partially_complete_logic.wire_to_c_type[input_wire]
   output_wire = partially_complete_logic.outputs[0]
   out_t = partially_complete_logic.wire_to_c_type[output_wire]    
-    
+  fp_t = in_t  
   # I HATE TWOS COMPLEMENT   # A Day In The Life - The Beatles
   
-  ######## COPIED FLOAT STUFF FROM THE FUTURE
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
   mantissa_t_prefix = "uint" + str(mantissa_width)
   mantissa_t = mantissa_t_prefix + "_t"
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
   exponent_t_prefix = "uint" + str(exponent_width)
   exponent_t = exponent_t_prefix + "_t"
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
-  exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
-  sign_index = 31
+  sign_index = mantissa_width+exponent_width
   sign_width = 1
   sign_t_prefix = "uint" + str(sign_width)
   sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   text = ""
   text += '''
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "''' + BIT_MATH_HEADER_FILE + '''"
+#include "float_e_m_t.h"
 
 // CAST
 ''' + out_t + " " + func_name+"("+ in_t + ''' rhs)
@@ -2564,7 +2578,7 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
   ''' + signed_exponent_t + ''' signed_biased_exponent;
   signed_biased_exponent = biased_exponent;
   ''' + unbiased_exponent_t + ''' unbiased_exponent;
-  unbiased_exponent = signed_biased_exponent - ''' + str(exponent_bias_to_add) + ''';'''
+  unbiased_exponent = signed_biased_exponent - ''' + str(exponent_bias) + ''';'''
   
   # Append the 1 in front of the manitissa
   mantissa_width_plus_1 = mantissa_width+1
@@ -3152,7 +3166,7 @@ def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
   # If one of inputs is signed int then other input will be bit extended to include positive sign bit
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
-  if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs, "float", partially_complete_logic):
+  if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
   else:
     print("GET_BIN_OP_PLUS_C_CODE Only plus between float for now!")
@@ -3162,10 +3176,10 @@ def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
   # If one of inputs is signed int then other input will be bit extended to include positive sign bit
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
-  if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs, "float", partially_complete_logic):
+  if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
   else:
-    print("GET_BIN_OP_MINUS_C_CODE Only plus between float for now!")
+    print("GET_BIN_OP_MINUS_C_CODE Only sub between float for now!")
     sys.exit(-1)
 
 def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
@@ -3174,7 +3188,7 @@ def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
   #if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
   # return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir)
   #el
-  if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+  if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
     print("GET_BIN_OP_MOD_C_CODE Only mod between float for now!")
@@ -3185,7 +3199,7 @@ def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
-  elif VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
     print("GET_BIN_OP_DIV_C_CODE Only div between uint and float for now!")
@@ -3199,7 +3213,7 @@ def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_MULT_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
-  elif VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   elif VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
@@ -3211,19 +3225,35 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
-    print('''"left_t != "float" or  right_t != "float" output_t too  for plus''')
+  left_exp_width, left_mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_t)
+  right_exp_width, right_mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_t)
+  left_width = 1 + left_exp_width + left_mantissa_width
+  right_width = 1 + right_exp_width + right_mantissa_width
+  
+  if not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t,output_t]) or not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t,output_t]):
+    print('''"left_t != "float" or  right_t != "float" output_t too  for plus''',left_t,right_t)
     sys.exit(-1)
+  fp_t = output_t
   
-  left_width = 32
-  right_width = 32
-  output_width = 32
-  
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
-  sign_index = 31
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   # Could pad up to make diff in exponents/max shifting amount = 255?
   # Software 32b implementations pad with 6 zeros
@@ -3240,21 +3270,22 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   text += '''
 #include "uintN_t.h"
 #include "intN_t.h"
-#include "bit_manip.h"
-#include "bit_math.h"
+#include "float_e_m_t.h"
+//#include "bit_manip.h"
+//#include "bit_math.h"
 
-// Float adds std_logic_vector in VHDL
+// Float add
 // Adds are complicated
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Get exponent for left and right
   uint''' + str(exponent_width) + '''_t left_exponent;
-  left_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  left_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
   uint''' + str(exponent_width) + '''_t right_exponent;
-  right_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+  right_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
     
-  float x;
-  float y;
+  '''+fp_t+''' x;
+  '''+fp_t+''' y;
   // Step 1: Copy inputs so that left's exponent >= than right's.
   //    Is this only needed for shift operation that takes unsigned only?
   //    ALLOW SHIFT BY NEGATIVE?????
@@ -3272,18 +3303,18 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   // Step 2: Break apart into S E M
   // X
   uint''' + str(mantissa_width) + '''_t x_mantissa; 
-  x_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(x);
+  x_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(x);
   uint''' + str(exponent_width) + '''_t x_exponent;
-  x_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(x);
+  x_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(x);
   uint1_t x_sign;
-  x_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(x);
+  x_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(x);
   // Y
   uint''' + str(mantissa_width) + '''_t y_mantissa;
-  y_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(y);
+  y_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(y);
   uint''' + str(exponent_width) + '''_t y_exponent;
-  y_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(y);
+  y_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(y);
   uint1_t y_sign;
-  y_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(y);
+  y_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(y);
   
   // Mantissa needs +3b wider
   //  [sign][overflow][hidden][23 bit mantissa]
@@ -3409,18 +3440,18 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   z_exponent = sum_exponent_normalized;
   z_mantissa = sum_mantissa_unsigned_normalized;
   // Assemble output  
-  return float_uint1_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+  return float_uint'''+str(exponent_width) + "_uint" + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
 }'''
 
-  #print "C CODE"
-  #print text
+  #print("C CODE")
+  #print(text)
 
   return text
   
 def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
-  if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+  if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
   else:
     print("GET_BIN_OP_LT_LTE_C_CODE Only between float for now!")
@@ -3432,7 +3463,7 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
   
   # Inputs must be float
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     print('''"left_t != "float" or  right_t != "float" for <= ''')
     sys.exit(-1)
     
@@ -3441,27 +3472,27 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
     print("GET_BIN_OP_LT_LTE_FLOAT_C_CODE output_t != uint1_t")
     sys.exit(-1)
   
-  left_width = 32
-  right_width = 32  
+  fp_t = left_t  
   
-  ######## COPIED FLOAT STUFF FROM THE FUTURE
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
   mantissa_t_prefix = "uint" + str(mantissa_width)
   mantissa_t = mantissa_t_prefix + "_t"
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
   exponent_t_prefix = "uint" + str(exponent_width)
   exponent_t = exponent_t_prefix + "_t"
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
-  exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
-  sign_index = 31
+  sign_index = mantissa_width+exponent_width
   sign_width = 1
   sign_t_prefix = "uint" + str(sign_width)
   sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   abs_val_width = exponent_width + mantissa_width
   abs_val_prefix = "uint" + str(abs_val_width)
@@ -3473,6 +3504,7 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "bit_manip.h"
+#include "float_e_m_t.h"
 
 // Float LT/LTE std_logic_vector in C silly
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
@@ -3548,7 +3580,7 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
-  if VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs,"float",partially_complete_logic):
+  if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
   else:
     print("GET_BIN_OP_GT_GTE_C_CODE Only between float for now!")
@@ -3559,23 +3591,36 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs ,"float",partially_complete_logic):
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     print('''"left_t != "float" or  right_t != "float" for >= ''')
     sys.exit(-1)
-    
+  fp_t = left_t
   # Output must be bool
   if output_t != "uint1_t":
     print("GET_BIN_OP_GT_GTE_FLOAT_C_CODE output_t != uint1_t")
     sys.exit(-1)
   
-  left_width = 32
-  right_width = 32
+  fp_t = left_t
   
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
-  sign_index = 31
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   abs_val_width = exponent_width + mantissa_width
   abs_val_prefix = "uint" + str(abs_val_width)
@@ -3587,6 +3632,7 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "bit_manip.h"
+#include "float_e_m_t.h"
 
 // Float GT/GTE std_logic_vector in C silly
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
@@ -3659,19 +3705,30 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t,output_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t,output_t]):
     print('''"left_t != "float" or  right_t != "float" output_t too  for minus''')
     sys.exit(-1)
+  fp_t = output_t
   
-  left_width = 32
-  right_width = 32
-  output_width = 32
-  
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
-  sign_index = 31
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   mantissa_w_hidden_bit_width = mantissa_width + 1 # 24
   mantissa_w_hidden_bit_sign_adj_width = mantissa_w_hidden_bit_width + 1 #25
@@ -3684,6 +3741,7 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 #include "intN_t.h"
 #include "bit_manip.h"
 #include "bit_math.h"
+#include "float_e_m_t.h"
 
 // Float minus std_logic_vector in VHDL
 // Minus is as complicated as add - yeah, so just use add
@@ -3691,8 +3749,8 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 {
   uint1_t right_sign;
   right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
-  uint'''+str(right_width-1)+'''_t right_everythingelse = float_''' + str(sign_index-1) + '''_0(right);
-  uint'''+str(right_width)+'''_t negated_right_unsigned = uint1_uint'''+str(right_width-1) + '''(!right_sign, right_everythingelse);
+  uint'''+str(fp_t_width-1)+'''_t right_everythingelse = float_''' + str(sign_index-1) + '''_0(right);
+  uint'''+str(fp_t_width)+'''_t negated_right_unsigned = uint1_uint'''+str(fp_t_width-1) + '''(!right_sign, right_everythingelse);
   float negated_right = float_uint32(negated_right_unsigned);
   return left + negated_right;
 }'''
@@ -3711,7 +3769,7 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+  if left_t!=right_t or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t,output_t]):
     print(left_t, right_t, output_t)
     print('''"left_t != "float" or  right_t != "float" output_t mod''')
     sys.exit(-1)
@@ -3763,33 +3821,31 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t,output_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t,output_t]):
     print(left_t, right_t, output_t)
     print('''"left_t != "float" or  right_t != "float" output_t too div/mod''')
     sys.exit(-1)
+  fp_t = output_t
   
-  left_width = 32
-  right_width = 32
-  output_width = 32
-  
-  ######## COPIED FLOAT STUFF FROM THE FUTURE
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
   mantissa_t_prefix = "uint" + str(mantissa_width)
   mantissa_t = mantissa_t_prefix + "_t"
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
   exponent_t_prefix = "uint" + str(exponent_width)
   exponent_t = exponent_t_prefix + "_t"
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
-  exponent_bias_to_add = int(math.pow(2,exponent_width-1) - 1)
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
-  sign_index = 31
+  sign_index = mantissa_width+exponent_width
   sign_width = 1
   sign_t_prefix = "uint" + str(sign_width)
   sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
   
   a_width = mantissa_width + 3
   a_prefix = "uint" + str(a_width)
@@ -3817,6 +3873,7 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   text += '''
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
+#include "float_e_m_t.h"
 
 // Float div std_logic_vector in VHDL
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
@@ -3859,7 +3916,7 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   
   // BIAS CONST
   ''' + exponent_bias_t + ''' BIAS;
-  BIAS = ''' + str(exponent_bias_to_add) + ''';
+  BIAS = ''' + str(exponent_bias) + ''';
   
   // Declare the output portions
   ''' + mantissa_t + ''' z_mantissa;
@@ -3932,7 +3989,7 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   z_exponent = ''' + exponent_aux_t_prefix + '''_''' + str(exponent_width-1) + '''_0(exponent_aux); 
   
   // Assemble output
-  return float_uint''' + str(sign_width) + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+  return float''' + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
 }'''
 
   #print "C CODE"
@@ -3954,33 +4011,33 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
   output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
-  if not VHDL.WIRES_ARE_C_TYPE(partially_complete_logic.inputs + partially_complete_logic.outputs,"float",partially_complete_logic):
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,right_t,output_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t,output_t]):
     print(left_t, right_t, output_t)
     print('''"left_t != "float" or  right_t != "float" output_t too''')
     sys.exit(-1)
+  fp_t = output_t
   
-  left_width = 32
-  right_width = 32
-  output_width = 32
-  
-  mantissa_range = [22,0]
-  mantissa_width = mantissa_range[0] - mantissa_range[1] + 1
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
   mantissa_t_prefix = "uint" + str(mantissa_width)
   mantissa_t = mantissa_t_prefix + "_t"
-  exponent_range = [30,23]
-  exponent_width = exponent_range[0] - exponent_range[1] + 1
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
   exponent_t_prefix = "uint" + str(exponent_width)
   exponent_t = exponent_t_prefix + "_t"
   exponent_width_plus1 = exponent_width + 1
   exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
   exponent_wide_t = exponent_wide_t_prefix + "_t"
   exponent_max = int(math.pow(2,exponent_width) - 1)
-  exponent_bias_to_sub = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
   exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
-  sign_index = 31
+  sign_index = mantissa_width+exponent_width
   sign_width = 1
   sign_t_prefix = "uint" + str(sign_width)
   sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
+  
+  
   aux_width = 1
   aux_t_prefix = "uint" + str(aux_width)
   aux_t = aux_t_prefix + "_t"
@@ -4008,6 +4065,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   text += '''
 #include "uintN_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
+#include "float_e_m_t.h"
 
 // Float mult std_logic_vector in VHDL
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
@@ -4058,7 +4116,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
     ''' + aux2_in_t + ''' aux2_y;
     ''' + aux2_t + ''' aux2;
     ''' + exponent_bias_t + ''' BIAS;
-    BIAS = ''' + str(exponent_bias_to_sub) + ''';
+    BIAS = ''' + str(exponent_bias) + ''';
     
     aux2_x = uint1_''' + mantissa_t_prefix + '''(1, x_mantissa);
     aux2_y = uint1_''' + mantissa_t_prefix + '''(1, y_mantissa);
@@ -4092,7 +4150,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   
   
   // Assemble output
-  return float_uint''' + str(sign_width) + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+  return float''' + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
 }'''
 
   #print "C CODE"
