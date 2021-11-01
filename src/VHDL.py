@@ -1888,6 +1888,49 @@ package c_structs_pkg is
   end function;
   '''
   
+  # Float resizing func
+  #resize_float_e_m_t(", f",{r_e},{r_m},{l_e},{l_m})"]
+  text += f'''
+  function resize_float_e_m_t(
+    x : std_logic_vector; 
+    in_exponent_width : integer;
+    in_mantissa_width : integer;
+    out_exponent_width : integer;
+    out_mantissa_width : integer) return std_logic_vector; 
+   '''
+  pkg_body_text += f'''
+  function resize_float_e_m_t(
+    x : std_logic_vector; 
+    in_exponent_width : integer;
+    in_mantissa_width : integer;
+    out_exponent_width : integer;
+    out_mantissa_width : integer) return std_logic_vector
+  is
+    variable x_s : std_logic;
+    variable x_e : signed(in_exponent_width-1 downto 0);
+    variable x_m : unsigned(in_mantissa_width-1 downto 0);
+    variable rv_s : std_logic;
+    variable rv_e : signed(out_exponent_width-1 downto 0);
+    variable rv_m : unsigned(out_mantissa_width-1 downto 0);
+    variable rv : std_logic_vector((1+out_exponent_width+out_mantissa_width)-1 downto 0);
+  begin
+    x_s := x(in_exponent_width+in_mantissa_width);
+    x_e := signed(x((in_exponent_width+in_mantissa_width)-1 downto in_mantissa_width));
+    x_m := unsigned(x(in_mantissa_width-1 downto 0));
+    rv_s := x_s;
+    rv_e := resize(x_e, out_exponent_width);
+    -- Top left n bits
+    if out_mantissa_width <= in_mantissa_width then
+      rv_m := x_m(in_mantissa_width-1 downto (in_mantissa_width-out_mantissa_width));
+    else
+      -- All bits padded with zeros on right
+      rv_m := x_m & to_unsigned(0, out_mantissa_width-in_mantissa_width);
+    end if;
+    rv := rv_s & std_logic_vector(rv_e) & std_logic_vector(rv_m);
+    return rv;
+  end function;'''  
+  
+  
   # Do this stupid dumb loop to resolve dependencies
   # Hacky resolve dependencies
   types_written = []
@@ -3232,7 +3275,13 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
       # Cast int to slv then to unsigned then resize
       #resize(unsigned(std_logic_vector(x)),31)
       #signed(std_logic_vector(resize(x,left_width)))
-      resize_toks = ["resize(unsigned(std_logic_vector(", "))," + str(left_width) + ")" ] 
+      resize_toks = ["resize(unsigned(std_logic_vector(", "))," + str(left_width) + ")" ]
+      
+  # float_e_m_t types
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]):
+    l_e,l_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_type)
+    r_e,r_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(right_type)
+    resize_toks = ["resize_float_e_m_t(", f",{r_e},{r_m},{l_e},{l_m})"]
     
   # ENUM DRIVING U/INT is ok
   elif (WIRES_ARE_INT_N([driven_wire], logic) or WIRES_ARE_UINT_N([driven_wire], logic)) and C_TO_LOGIC.C_TYPE_IS_ENUM(logic.wire_to_c_type[driving_wire], parser_state):

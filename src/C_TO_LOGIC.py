@@ -3175,6 +3175,17 @@ def C_FLOAT_TYPES_ARE_EQUAL(c_types):
       return False  
   return True
   
+def C_FLOAT_TYPES_TO_COMMON_TYPE(c_types):
+  # Since alternative fp types are typically smaller
+  # Find the minimum fp width involved, use probabaly wants that
+  min_e = 9999
+  min_m = 9999
+  for c_type in c_types:
+    e,m=C_FLOAT_E_M_TYPE_TO_E_M(c_type)
+    min_e = min(min_e,e)
+    min_m = min(min_m,m)
+  return "float_" + str(min_e) + "_" + str(min_m) + "_t"
+  
 def C_TYPE_IS_USER_TYPE(c_type,parser_state):
   user_code = False
   if C_TYPE_IS_STRUCT(c_type,parser_state):
@@ -4086,13 +4097,8 @@ def BUILD_CONST_WIRE(value_str, c_ast_node, is_negated=False):
 
 # Const jsut makes wire with CONST name
 # C ast constants are not enum id constants
-def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False): 
-  # Since constants are constants... dont add prepend text or line location info
-  # Create wire for this constant
-  c_type_str = None
-  value_str = c_ast_node.value
-  #print "value_str",value_str
-  
+def C_AST_CONSTANT_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+  value_str = c_ast_node.value  
   return NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated)
 
 def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
@@ -4189,13 +4195,19 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     
   return value,c_type_str
 
-def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False):
+def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False, known_c_type=None):
   wire_name = BUILD_CONST_WIRE(value_str, c_ast_node, is_negated)
-  value,c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
-  if not(c_type_str is None):
-    parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
+  if known_c_type is None:
+    value,c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
+    if not(c_type_str is None) and (wire_name not in parser_state.existing_logic.wire_to_c_type):
+      parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
+  else:
+    parser_state.existing_logic.wire_to_c_type[wire_name] = known_c_type
   # Connect the constant to the wire it drives
+  #print("connecting",wire_name, driven_wire_names,parser_state.existing_logic.wire_to_c_type[wire_name])
   parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node)
+  #print("connected",wire_name,"type",parser_state.existing_logic.wire_to_c_type[wire_name])
+  
   return parser_state.existing_logic
  
 def C_AST_STATIC_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser_state, state_reg_var, c_type):
@@ -5176,6 +5188,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       rhs_val_str_no_neg = rhs_val_str.strip('-')
       lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(lhs_val_str_no_neg, func_c_ast_node, lhs_negated)
       rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(rhs_val_str_no_neg, func_c_ast_node, rhs_negated)
+      # Prefer exisitng type if set
+      if lhs_wire in parser_state.existing_logic.wire_to_c_type:
+        lhs_c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
+      if rhs_wire in parser_state.existing_logic.wire_to_c_type:
+        rhs_c_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]
       
       # First check for integer arguments
       is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
@@ -5274,6 +5291,10 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_negated = in_val_str.startswith('-')
       in_val_str_no_neg = in_val_str.strip('-')
       in_val, in_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_no_neg, func_c_ast_node, in_negated)
+      # Prefer type if set
+      if in_wire in parser_state.existing_logic.wire_to_c_type:
+        in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]
+      
       signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
       in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
       is_int = VHDL.C_TYPES_ARE_INTEGERS([in_c_type])
@@ -5302,7 +5323,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
       out_t = parser_state.existing_logic.wire_to_c_type[output_driven_wire_names[0]]
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
-      if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TYPE_IS_FLOAT_TYPE(out_t):
+      if C_TYPES_ARE_FLOAT_TYPES([in_t,out_t]):
+        const_val_str = str(float(in_val_str))
+      elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TYPE_IS_FLOAT_TYPE(out_t):
         const_val_str = str(float(in_val_str))
       elif C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPES_ARE_INTEGERS([out_t]) :
         const_val_str = str(int(float(in_val_str)))
@@ -5359,20 +5382,25 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       print(func_base_name, func_c_ast_node.coord)
       #sys.exit(-1)
       return None
+      
+    # Determine types for const wire to output wire and return
+    is_negated = False
+    if const_val_str.startswith("-"):
+      const_val_str = const_val_str.lstrip("-")
+      is_negated = True
+    driving_output_port_wire = func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
+    output_c_type = GET_C_TYPE_FROM_WIRE_NAMES([driving_output_port_wire], parser_state.existing_logic, allow_fail=True)
+    # Fall back to driven wires....uh?
+    #if output_c_type is None:
+    #  output_c_type = GET_C_TYPE_FROM_WIRE_NAMES(output_driven_wire_names, parser_state.existing_logic, allow_fail=True)
     
     # Going to replace with constant
     # Remove old submodule instance
     #print "Replacing:",func_inst_name,"with constant",const_val_str
     parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state)
         
-    # Connect const wire to output wire and return
     # Do connection using real parser state and logic
-    is_negated = False
-    if const_val_str.startswith("-"):
-      const_val_str = const_val_str.lstrip("-")
-      is_negated = True
-    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated)
-    
+    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated, known_c_type=output_c_type)
     
     return parser_state.existing_logic
   
@@ -6343,8 +6371,12 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   output_c_type = None
   
   # By now the input wires have been connected - CAST inserted as needed
-  # From here on we can only adjust input wires in ways that can be resolved with
-  #   VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
+  #
+  #
+  #    From here on we can only adjust input wires in ways that can be resolved with
+  #       VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
+  #
+  #
 
   # If types are integers then check signed/unsigned matches
   #   Change type from unsigned to sign by adding bit to type
@@ -6371,6 +6403,15 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
         else:
           left_type = "int" + str(left_width) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+        
+  # If types are floats, round to common float format needed
+  # This is instead of having non-equal width FP binary op
+  if C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]):
+    common_fp_type = C_FLOAT_TYPES_TO_COMMON_TYPE([left_type,right_type])
+    left_type = common_fp_type
+    parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+    right_type = common_fp_type
+    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
   
   # Replace ENUM with INT type of input wire so cast happens? :/?
   # Left
@@ -6514,12 +6555,16 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       # Types for both left and right are known
       # Derive output
       # New float_e_m_t types
-      if C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
+      if C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
          output_c_type = left_type # same as right
       elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
-        output_c_type = left_type
+        #output_c_type = left_type
+        print("TODO: Float int ops? shouldnt occur")
+        sys.exit(-1)
       elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
-        output_c_type = right_type
+        #output_c_type = right_type
+        print("TODO: Int float ops? shouldnt occur")
+        sys.exit(-1)
       else:
         # Ints only
         if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
@@ -6751,20 +6796,20 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
                ( SW_LIB.C_TYPE_IS_ARRAY_STRUCT(rhs_type, parser_state) and (driven_wire_type==SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(rhs_type, parser_state)) )
              ):
           continue
-        # Handle special case of equal float types
-        elif C_FLOAT_TYPES_ARE_EQUAL([driven_wire_type,rhs_type]):
+        # Float casting is wires in VHDl for now
+        elif C_TYPES_ARE_FLOAT_TYPES([driven_wire_type,rhs_type]):
             continue
         
         
         #######
         # At this point we have incompatible types that need special casting logic
-        #     Build cast function to connect driving wire to driven wire
+        #     Build cast function to connect driving wire to driven wire-
         # int = float
         # float = int
         # float = uint
         # DONT do uint = float since force int cast for now
-        if( (VHDL.C_TYPE_IS_INT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type)) or
-            (C_TYPE_IS_FLOAT_TYPE(rhs_type) and VHDL.C_TYPE_IS_INT_N(driven_wire_type)) or
+        if( (VHDL.C_TYPE_IS_INT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type))  or
+            (C_TYPE_IS_FLOAT_TYPE(rhs_type) and VHDL.C_TYPE_IS_INT_N(driven_wire_type))  or
             (VHDL.C_TYPE_IS_UINT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type))
           ):
           # Return n arg func
@@ -6776,6 +6821,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
           output_driven_wire_names = driven_wire_names
           # Build instance name
           func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
+          #print("cast",func_inst_name,rhs_type,driven_wire_type)
           # Record output port type
           output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
           parser_state.existing_logic.wire_to_c_type[output_wire_name] = driven_wire_type
@@ -8230,7 +8276,7 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
           sys.exit(-1)
         is_negated=False
         val_str = str(child.value.value)
-        val,c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, child.value.value, is_negated)
+        val,unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(val_str, child.value.value, is_negated)
         next_index_or_val = val + 1
       rv[enum_name].id_to_int_val[id_str] = val
       #print(id_str, val)

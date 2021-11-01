@@ -2071,16 +2071,11 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     high = int(toks[4])
     low = int(toks[5])
     return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
-  
-    '''elif len(toks) ==4:
-    # Only known thing is float SEM contructor
-    # Just like bit concat
-    if not(logic.func_name.startswith("float_")):
-      print(" Only known thing is float SEM constructor")
-      sys.exit(-1)
-    else:
-      return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
-    '''
+    
+  elif len(toks)==5:
+    # Only know float_e_m_t_uintN construct
+    return GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    
   elif len(toks) == 3:
     if logic.func_name.startswith("float_") and not toks[1].isdigit() and not toks[2].isdigit():
       return GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
@@ -2101,7 +2096,7 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
       
   elif len(toks) == 2:
     if toks[0] == "float":
-      return GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+      return GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     elif toks[0] == "bswap":
       # Byte swap
       return GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
@@ -2124,10 +2119,7 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     
     
     
-def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
-  LogicInstLookupTable = parser_state.LogicInstLookupTable
-  # TODO check for ints only as constructing elements?
-  # ONLY INTS FOR NOW
+def GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   in_type = logic.wire_to_c_type[logic.inputs[0]]
   in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
   in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
@@ -2141,7 +2133,7 @@ def GET_FLOAT_UINT32_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic
 
   # Float constrcut must always be zero clock
   if len(timing_params._slices) > 0:
-    print("Cannot do a float UINT32 construct concat in multiple clocks!?")
+    print("Cannot do a float UINT construct concat in multiple clocks!?")
     sys.exit(-1)
     
   text = '''

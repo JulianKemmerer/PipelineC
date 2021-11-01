@@ -2225,20 +2225,25 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   # Parse to list of width toks
   float_const_func_names = []
   # float_uint32(in);
-  for type_regex in ["float"]:
+  for type_regex in ["float", "float_[0-9]+_[0-9]+_t"]:
     p = re.compile(type_regex + '_uint[0-9]+\s?\(')
     float_const_func_names = p.findall(c_text)
     float_const_func_names = list(set(float_const_func_names))
     for float_const_func_name in float_const_func_names:
       float_const_func_name = float_const_func_name.strip("(").strip()
       toks = float_const_func_name.split("_")
-      in_prefix = toks[1]
-      in_t = in_prefix + "_t"
-      result_t = type_regex
-      func_name = float_const_func_name
+      if len(toks)==2:
+        in_prefix = toks[1]
+        in_t = in_prefix + "_t"
+        result_t = type_regex
+      else:
+        in_prefix = toks[4]
+        in_t = in_prefix + "_t"
+        result_t = "float_"+toks[1]+"_"+toks[2]+"_t"
+        
       text += '''
 // FLOAT UINT32
-''' + result_t + " " + func_name+"("+ in_t + ''' x)
+''' + result_t + " " + float_const_func_name+"("+ in_t + ''' x)
 {
   //TODO
 }
@@ -2380,7 +2385,7 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
     return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
   else:
     print("Implement more casting: Easy/Lucky/Free Bright Eyes")
-    print(in_t, out_t)
+    print(in_t, out_t,partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
     
 def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
@@ -2565,11 +2570,11 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
 {
   // Break into SEM
   ''' + mantissa_t + ''' mantissa;
-  mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(rhs);
+  mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(rhs);
   ''' + exponent_t + ''' biased_exponent;
-  biased_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(rhs);
+  biased_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(rhs);
   ''' + sign_t + ''' sign;
-  sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(rhs);'''
+  sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(rhs);'''
   
   # Get real unbiased exponent
   signed_exponent_t = "int" + str(exponent_width_plus1) + "_t"
@@ -3511,18 +3516,18 @@ def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 {
   // LEFT
   uint''' + str(mantissa_width) + '''_t left_mantissa;  
-  left_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  left_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
   uint''' + str(exponent_width) + '''_t left_exponent;
-  left_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  left_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
   uint1_t left_sign;
-  left_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  left_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
   // RIGHT
   uint''' + str(mantissa_width) + '''_t right_mantissa;
-  right_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
+  right_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
   uint''' + str(exponent_width) + '''_t right_exponent;
-  right_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+  right_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
   uint1_t right_sign;
-  right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+  right_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
   
   // Do abs value compare by using exponent as msbs
   //  (-1)^s    * m  *   2^(e - 127)
@@ -3639,18 +3644,18 @@ def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
 {
   // LEFT
   uint''' + str(mantissa_width) + '''_t left_mantissa;  
-  left_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  left_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
   uint''' + str(exponent_width) + '''_t left_exponent;
-  left_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  left_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
   uint1_t left_sign;
-  left_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  left_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
   // RIGHT
   uint''' + str(mantissa_width) + '''_t right_mantissa;
-  right_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
+  right_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
   uint''' + str(exponent_width) + '''_t right_exponent;
-  right_exponent = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+  right_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
   uint1_t right_sign;
-  right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+  right_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
   
   // Do abs value compare by using exponent as msbs
   //  (-1)^s    * m  *   2^(e - 127)
@@ -3748,10 +3753,10 @@ def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   uint1_t right_sign;
-  right_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
-  uint'''+str(fp_t_width-1)+'''_t right_everythingelse = float_''' + str(sign_index-1) + '''_0(right);
+  right_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+  uint'''+str(fp_t_width-1)+'''_t right_everythingelse = '''+fp_t+'''_''' + str(sign_index-1) + '''_0(right);
   uint'''+str(fp_t_width)+'''_t negated_right_unsigned = uint1_uint'''+str(fp_t_width-1) + '''(!right_sign, right_everythingelse);
-  float negated_right = float_uint32(negated_right_unsigned);
+  '''+fp_t+''' negated_right = '''+fp_t+'''_uint'''+str(fp_t_width)+'''(negated_right_unsigned);
   return left + negated_right;
 }'''
 
@@ -3773,19 +3778,41 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
     print(left_t, right_t, output_t)
     print('''"left_t != "float" or  right_t != "float" output_t mod''')
     sys.exit(-1)
+  fp_t = output_t
+    
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
 
   text = ""
   
   text += '''
 #include "uintN_t.h"
 #include "intN_t.h"
+#include "float_e_m_t.h"
 #include "''' + BIT_MANIP_HEADER_FILE + '''"
 
 // Float div std_logic_vector in VHDL
 ''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
 {
   // Quotient
-  float q;
+  '''+fp_t+''' q;
   q = left / right;
   
   // Convert to int (floor?)
@@ -3795,10 +3822,10 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   q_int = q;
   
   // Partial quotient
-  float partial;
-  partial = (float)q_int * right;
+  '''+fp_t+''' partial;
+  partial = ('''+fp_t+''')q_int * right;
   
-  float remainder;
+  '''+fp_t+''' remainder;
   remainder = left - partial;
   
   return remainder;
@@ -3806,7 +3833,6 @@ def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
 '''
 
   return text
-
 
 
 def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
@@ -3881,18 +3907,18 @@ def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   // Get mantissa exponent and sign for both
   // LEFT
   ''' + mantissa_t + ''' x_mantissa;
-  x_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  x_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
   ''' + exponent_wide_t + ''' x_exponent_wide;
-  x_exponent_wide = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  x_exponent_wide = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
   ''' + sign_t + ''' x_sign;
-  x_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  x_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
   // RIGHT
   ''' + mantissa_t + ''' y_mantissa;
-  y_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
+  y_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
   ''' + exponent_wide_t + ''' y_exponent_wide;
-  y_exponent_wide = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+  y_exponent_wide = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
   ''' + sign_t + ''' y_sign;
-  y_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+  y_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
   
   // Delcare intermediates
   ''' + a_t + ''' a;
@@ -4073,18 +4099,18 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   // Get mantissa exponent and sign for both
   // LEFT
   ''' + mantissa_t + ''' x_mantissa;
-  x_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  x_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
   ''' + exponent_wide_t + ''' x_exponent_wide;
-  x_exponent_wide = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  x_exponent_wide = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
   ''' + sign_t + ''' x_sign;
-  x_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  x_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
   // RIGHT
   ''' + mantissa_t + ''' y_mantissa;
-  y_mantissa = float_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
+  y_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(right);
   ''' + exponent_wide_t + ''' y_exponent_wide;
-  y_exponent_wide = float_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
+  y_exponent_wide = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(right);
   ''' + sign_t + ''' y_sign;
-  y_sign = float_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
+  y_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(right);
   
   // Declare the output portions
   ''' + mantissa_t + ''' z_mantissa;
@@ -4153,7 +4179,7 @@ def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
   return float''' + '''_uint''' + str(exponent_width) + '''_uint''' + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
 }'''
 
-  #print "C CODE"
+  #print("C CODE")
   #print(text)
 
   return text
