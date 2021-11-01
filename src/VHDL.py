@@ -1909,16 +1909,18 @@ package c_structs_pkg is
     variable x_s : std_logic;
     variable x_e : signed(in_exponent_width-1 downto 0);
     variable x_m : unsigned(in_mantissa_width-1 downto 0);
+    variable x_bias : integer := (2**(in_exponent_width-1)) - 1;
     variable rv_s : std_logic;
     variable rv_e : signed(out_exponent_width-1 downto 0);
     variable rv_m : unsigned(out_mantissa_width-1 downto 0);
+    variable rv_bias : integer := (2**(out_exponent_width-1)) - 1;
     variable rv : std_logic_vector((1+out_exponent_width+out_mantissa_width)-1 downto 0);
   begin
     x_s := x(in_exponent_width+in_mantissa_width);
     x_e := signed(x((in_exponent_width+in_mantissa_width)-1 downto in_mantissa_width));
     x_m := unsigned(x(in_mantissa_width-1 downto 0));
     rv_s := x_s;
-    rv_e := resize(x_e, out_exponent_width);
+    rv_e := resize(signed(unsigned(x_e)-x_bias)+rv_bias, out_exponent_width);
     -- Top left n bits
     if out_mantissa_width <= in_mantissa_width then
       rv_m := x_m(in_mantissa_width-1 downto (in_mantissa_width-out_mantissa_width));
@@ -1928,7 +1930,7 @@ package c_structs_pkg is
     end if;
     rv := rv_s & std_logic_vector(rv_e) & std_logic_vector(rv_m);
     return rv;
-  end function;'''  
+  end function;'''
   
   
   # Do this stupid dumb loop to resolve dependencies
