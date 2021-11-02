@@ -4199,7 +4199,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(value_str, c_ast_node, driven_wire_names, 
   wire_name = BUILD_CONST_WIRE(value_str, c_ast_node, is_negated)
   if known_c_type is None:
     value,c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated)
-    if not(c_type_str is None) and (wire_name not in parser_state.existing_logic.wire_to_c_type):
+    if not(c_type_str is None): # and (wire_name not in parser_state.existing_logic.wire_to_c_type):
       parser_state.existing_logic.wire_to_c_type[wire_name]=c_type_str
   else:
     parser_state.existing_logic.wire_to_c_type[wire_name] = known_c_type
@@ -5188,11 +5188,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       rhs_val_str_no_neg = rhs_val_str.strip('-')
       lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(lhs_val_str_no_neg, func_c_ast_node, lhs_negated)
       rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(rhs_val_str_no_neg, func_c_ast_node, rhs_negated)
-      # Prefer exisitng type if set
+      '''# Prefer exisitng type if set
       if lhs_wire in parser_state.existing_logic.wire_to_c_type:
         lhs_c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
       if rhs_wire in parser_state.existing_logic.wire_to_c_type:
-        rhs_c_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]
+        rhs_c_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]'''
       
       # First check for integer arguments
       is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
@@ -5291,9 +5291,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       in_negated = in_val_str.startswith('-')
       in_val_str_no_neg = in_val_str.strip('-')
       in_val, in_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_no_neg, func_c_ast_node, in_negated)
-      # Prefer type if set
+      '''# Prefer type if set
       if in_wire in parser_state.existing_logic.wire_to_c_type:
-        in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]
+        in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]'''
       
       signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
       in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
@@ -5400,7 +5400,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state)
         
     # Do connection using real parser state and logic
-    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated, known_c_type=output_c_type)
+    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated) #, known_c_type=output_c_type)
     
     return parser_state.existing_logic
   

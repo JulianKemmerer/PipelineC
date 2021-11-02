@@ -1919,15 +1919,27 @@ package c_structs_pkg is
     x_s := x(in_exponent_width+in_mantissa_width);
     x_e := signed(x((in_exponent_width+in_mantissa_width)-1 downto in_mantissa_width));
     x_m := unsigned(x(in_mantissa_width-1 downto 0));
+    
+    -- Default zero
     rv_s := x_s;
-    rv_e := resize(signed(unsigned(x_e)-x_bias)+rv_bias, out_exponent_width);
-    -- Top left n bits
-    if out_mantissa_width <= in_mantissa_width then
-      rv_m := x_m(in_mantissa_width-1 downto (in_mantissa_width-out_mantissa_width));
-    else
-      -- All bits padded with zeros on right
-      rv_m := x_m & to_unsigned(0, out_mantissa_width-in_mantissa_width);
+    rv_e := (others => '0');
+    rv_m := (others => '0');
+    
+    -- Check if non zero
+    if x_e /= to_signed(0, in_exponent_width) then
+      -- Exponent change bias
+      rv_e := resize(signed('0' & x_e) - x_bias, out_exponent_width); -- De-bias
+      rv_e := rv_e + rv_bias; -- Re-bias
+            
+      -- Top left n bits of mantissa
+      if out_mantissa_width <= in_mantissa_width then
+        rv_m := x_m(in_mantissa_width-1 downto (in_mantissa_width-out_mantissa_width));
+      else
+        -- All bits padded with zeros on right
+        rv_m := x_m & to_unsigned(0, out_mantissa_width-in_mantissa_width);
+      end if;
     end if;
+    
     rv := rv_s & std_logic_vector(rv_e) & std_logic_vector(rv_m);
     return rv;
   end function;'''
