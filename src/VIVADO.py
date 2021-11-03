@@ -36,8 +36,7 @@ FIXED_PKG_PATH = VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd"
 
 # Do full place and route for timing results
 # for "all" modules or just the "top" module
-# (if changed to "all", delete contents of
-# ./path_delay_cache since those are all synthesis only numbers)
+# (if changed, delete/rename/move contents of ./path_delay_cache)
 DO_PNR = None # None|"all"|"top"
   
 class ParsedTimingReport:

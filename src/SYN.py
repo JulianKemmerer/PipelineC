@@ -1460,17 +1460,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   f=open(out_filepath,"w")
   f.write(out_text)
   f.close()
-    
 
-def DO_SYN_FROM_TIMING_PARAMS(multimain_timing_params, parser_state):
-  # Then run syn
-  timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
-  if len(timing_report.path_reports) == 0:
-    print(timing_report.orig_text)
-    print("Using a bad syn log file?")
-    sys.exit(-1)
-    
-  return timing_report
   
 # Sweep state for a single pipeline inst of logic (a main inst typically?)
 class InstSweepState:
@@ -1748,16 +1738,18 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=None, do_incremental_guesses=True):
+def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=None, do_incremental_guesses=True, comb_only=False):
   for main_func in parser_state.main_mhz:
+    '''
     if main_func not in parser_state.main_mhz:
       print("Main Function:",main_func,"does not have a set target frequency. Cannot do pipelining throughput sweep!", flush=True)
       print("Define frequency with 'MAIN_MHZ' or clock group with 'MAIN_GROUP' pragmas...")
       sys.exit(-1)
     else:
-      mhz = GET_TARGET_MHZ(main_func, parser_state)
-      print("Function:",main_func,"Target MHz:", mhz, flush=True)
-  
+    '''
+    mhz = GET_TARGET_MHZ(main_func, parser_state)
+    print("Function:",main_func,"Target MHz:", mhz, flush=True)
+
   # Populate timing lookup table as all 0 clk
   print("Setting all instances to comb. logic to start...", flush=True)
   ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
@@ -1769,6 +1761,12 @@ def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=
     
   # Write multi-main top
   VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+  
+  # If comb. logic only
+  if comb_only:
+    print("Running synthesis on comb. logic only top level ...", flush=True)
+    timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+    return multimain_timing_params
   
   # Default sweep state is zero clocks
   sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params)
@@ -2080,7 +2078,12 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       main_func_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
       print(main_func,":",main_func_timing_params.GET_TOTAL_LATENCY(parser_state,sweep_state.multimain_timing_params.TimingParamsLookupTable),"clocks latency...", flush=True)
-    sweep_state.timing_report = DO_SYN_FROM_TIMING_PARAMS(sweep_state.multimain_timing_params, parser_state)
+      # Then run syn
+      sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, sweep_state.multimain_timing_params)
+      if len(sweep_state.timing_report.path_reports) == 0:
+        print(sweep_state.timing_report.orig_text)
+        print("Using a bad syn log file?")
+        sys.exit(-1)
     
     # Did it meet timing? Make adjusments as checking
     made_adj = False
@@ -2735,9 +2738,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           # Then check for known delays
           elif LOGIC_IS_ZERO_DELAY(logic, parser_state):
             logic.delay = 0
-          elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
-            logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
-            print("Function:", logic.func_name, "assumed same delay as it's single submodule...")
+          #elif LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state) is not None:
+          #  logic.delay = LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state)
+          #  print("Function:", logic.func_name, "assumed same delay as it's single submodule...")
           
           # Save delay value or prepare for syn to determine
           if logic.delay is None:
