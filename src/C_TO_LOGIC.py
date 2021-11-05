@@ -6559,11 +6559,11 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
          output_c_type = left_type # same as right
       elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
         #output_c_type = left_type
-        print("TODO: Float int ops? shouldnt occur")
+        print("TODO: Float int ops? shouldnt occur",left_type,right_type,c_ast_binary_op.coord)
         sys.exit(-1)
       elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
         #output_c_type = right_type
-        print("TODO: Int float ops? shouldnt occur")
+        print("TODO: Int float ops? shouldnt occur",left_type,right_type,c_ast_binary_op.coord)
         sys.exit(-1)
       else:
         # Ints only
@@ -7810,6 +7810,22 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+  print("Writing report of module instances...", flush=True)
+  WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+ 
+def WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+  text = ""
+  for func_name in sorted(parser_state.FuncToInstances):
+    instances = sorted(parser_state.FuncToInstances[func_name])
+    text += f"{func_name} {len(instances)} instances:\n"
+    for instance in instances:
+      text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
+    text += "\n"
+    
+  out_file = SYN.SYN_OUTPUT_DIRECTORY + "/module_instances.log"
+  f=open(out_file,'w')
+  f.write(text)
+  f.close()
     
 # Global list of these in parser_state + lists per function in logic for locally delclared
 class StateRegInfo:
