@@ -9,5 +9,8 @@ PRAGMA_MESSAGE(MAIN main_func)
 #define MAIN_MHZ(main_func, mhz)\
 PRAGMA_MESSAGE(MAIN_MHZ main_func mhz)
 
+#define MAIN_SYN_MHZ(main_func, mhz)\
+PRAGMA_MESSAGE(MAIN_SYN_MHZ main_func mhz)
+
 #define MAIN_MHZ_GROUP(main_func, mhz, group)\
 PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)

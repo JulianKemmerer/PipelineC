@@ -1771,6 +1771,14 @@ def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=
   # Default sweep state is zero clocks
   sweep_state = GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params)
   
+  # Switch to coase if single main with no target mhz
+  if len(parser_state.main_mhz) == 1:
+    main_func = list(parser_state.main_mhz.keys())[0]
+    target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+    if target_mhz is None:
+      print("Switching to coarse sweep since only main function has no specified frequency...")
+      coarse_only = True
+      
   # if coarse only
   if coarse_only:
     print("Doing coarse sweep only...", flush=True)
@@ -1780,9 +1788,10 @@ def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=
     main_func = list(parser_state.main_mhz.keys())[0]
     if GET_TARGET_MHZ(main_func, parser_state) is None:
       print("Main Function:",main_func,"does not have a set target frequency.")
-      print("Starting a coarse sweep incrementally from zero latency comb. logic.", flush=True)
-      starting_guess_latency = 0
-      do_incremental_guesses = False
+      if starting_guess_latency is None:
+        print("Starting a coarse sweep incrementally from zero latency comb. logic.", flush=True)
+        starting_guess_latency = 0
+        do_incremental_guesses = False
       parser_state.main_mhz[main_func] = INF_MHZ
     inst_sweep_state = InstSweepState()
     inst_sweep_state, working_slices, multimain_timing_params.TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(
