@@ -2894,10 +2894,49 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   #if min_mhz_func_name is not None:
   # print "Design limited to ~", min_mhz, "MHz due to function:", min_mhz_func_name
   # parser_state.global_mhz_limit = min_mhz
+  WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
     
   return parser_state
 
   
+def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
+  print("Updating modules instances log to list longest delay, most used modules only...")
+  top_n_delay_usage = 10
+  
+  # Calc delay*n uses
+  func_to_delay_usage = dict()
+  for func_name in parser_state.FuncToInstances:
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    if func_logic.delay is None:
+        continue
+    func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+    n_instances = len(parser_state.FuncToInstances[func_name])
+    delay_usage = func_path_delay_ns * n_instances
+    func_to_delay_usage[func_name] = delay_usage
+  
+  # Print top N funcs
+  text = ""
+  for n in range(0, top_n_delay_usage):
+    if len(func_to_delay_usage) <= 0:
+      break
+    max_delay_usage = max(func_to_delay_usage.values())
+    for func_name in sorted(func_to_delay_usage):
+      func_logic = parser_state.FuncLogicLookupTable[func_name]
+      func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+      instances = sorted(parser_state.FuncToInstances[func_name])
+      n_instances = len(instances)
+      delay_usage = func_path_delay_ns * n_instances
+      if delay_usage >= max_delay_usage:
+        func_to_delay_usage.pop(func_name, None)
+        text += f"{func_name} {n_instances} instances:\n"
+        for instance in instances:
+          text += instance.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/") + "\n"
+        text += "\n"
+    
+  out_file = SYN_OUTPUT_DIRECTORY + "/module_instances.log"
+  f=open(out_file,'w')
+  f.write(text)
+  f.close()
   
 # Generalizing is a bad thing to do
 # Abstracting is something more
