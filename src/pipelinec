@@ -23,7 +23,7 @@ parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
                       help=f"infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.")
 parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
-parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions.", action="store_true")
+parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.", action="store_true")
 parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")
 parser.add_argument("--modelsim", help="Setup simulation files for use with Modelsim.", action="store_true")
 parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
@@ -32,9 +32,17 @@ parser.add_argument("--main_cpp", type=str, default=None,help=f"Specify an exist
 parser.add_argument("--coarse",
                       help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).",
                       action="store_true")
-parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from N cycles latency.")
+parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from START cycles latency.")
+parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
 parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
 args = parser.parse_args()
+
+# Combine certain args
+if args.sim and args.comb:
+  args.sim_comb = True
+if args.sim_comb:
+  args.sim = True
+  args.comb = True
 
 # Resolve C file arg
 c_file = os.path.abspath(args.c_file)
@@ -66,15 +74,15 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Implement report of instances
 Do announcement of some sort for __clk()
   Pong using clk() FSMs?
   Mention recent game thing as example rewritten in clk style
   guitar i2s audio visualizer of some sort?
 Do more basic tutorials like nandland+hdlbits
 Victor's RT
-  Do MADD prim that uses device specific prim? Make internal fp ops use prim
-  Buy bigger FPGA, share demo asking for help to optimize?
-  Do more 7 series specific optimizations? Cyclone iv?
+  Changing colors and adding some few operations for materials can do wonders
+  Publish code and write up
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -210,7 +218,8 @@ multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
   coarse_only=args.coarse, 
   starting_guess_latency=args.start, 
   do_incremental_guesses=not(args.sweep), 
-  comb_only=args.comb
+  comb_only=args.comb,
+  stop_at_latency=args.stop
 )
 
 print("================== Writing Results of Throughput Sweep ================================", flush=True)

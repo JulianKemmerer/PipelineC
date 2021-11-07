@@ -1738,7 +1738,13 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=None, do_incremental_guesses=True, comb_only=False):
+def DO_THROUGHPUT_SWEEP(
+  parser_state,
+  coarse_only=False, 
+  starting_guess_latency=None, 
+  do_incremental_guesses=True, 
+  comb_only=False,
+  stop_at_latency=None):
   for main_func in parser_state.main_mhz:
     '''
     if main_func not in parser_state.main_mhz:
@@ -1793,11 +1799,13 @@ def DO_THROUGHPUT_SWEEP(parser_state, coarse_only=False, starting_guess_latency=
         starting_guess_latency = 0
         do_incremental_guesses = False
       parser_state.main_mhz[main_func] = INF_MHZ
+    max_allowed_latency_mult=None
+    stop_at_n_worse_result=None
     inst_sweep_state = InstSweepState()
     inst_sweep_state, working_slices, multimain_timing_params.TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(
       list(parser_state.main_mhz.keys())[0], list(parser_state.main_mhz.values())[0],
       inst_sweep_state, parser_state,
-      starting_guess_latency, do_incremental_guesses)
+      starting_guess_latency, do_incremental_guesses, max_allowed_latency_mult, stop_at_n_worse_result, stop_at_latency)
     return multimain_timing_params
   
   # Real middle out sweep which includes coarse sweep
@@ -2203,7 +2211,8 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
     inst_sweep_state, parser_state,
     starting_guess_latency=None, do_incremental_guesses=True, 
     max_allowed_latency_mult=None,
-    stop_at_n_worse_result=None):
+    stop_at_n_worse_result=None,
+    stop_at_latency=None):
   working_slices = None
   logic = parser_state.LogicInstLookupTable[inst_name]
   # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
@@ -2337,6 +2346,11 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
           if inst_sweep_state.worse_or_same_tries_count >= stop_at_n_worse_result:
             print(logic.func_name,"giving up after",inst_sweep_state.worse_or_same_tries_count,"bad tries...")
             continue
+            
+      # Intentionally stopping?
+      if stop_at_latency is not None and inst_sweep_state.coarse_latency >= stop_at_latency:
+        print("Stopping at", stop_at_latency, "clocks latency...")
+        continue  
       
       # Make adjustment if can be sliced
       if not met_timing and func_logic.CAN_BE_SLICED():
@@ -2396,13 +2410,16 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
           inst_sweep_state.last_latency_increase = 1
           made_adj = True
           
+    # Intentionally stopping?
+    if stop_at_latency is not None and inst_sweep_state.coarse_latency >= stop_at_latency:
+      return inst_sweep_state, working_slices, TimingParamsLookupTable
     # Passed timing?
     if inst_sweep_state.met_timing:
       return inst_sweep_state, working_slices, TimingParamsLookupTable
     # Stuck?
     if not made_adj:
       print("Unable to make further adjustments. Failed coarse grain attempt meet timing for this module.")
-      return inst_sweep_state, working_slices, TimingParamsLookupTable 
+      return inst_sweep_state, working_slices, TimingParamsLookupTable
   
   return inst_sweep_state, working_slices, TimingParamsLookupTable
 
