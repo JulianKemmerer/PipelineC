@@ -7802,6 +7802,8 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
+  print("Writing report of module instances...", flush=True)
+  WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
   print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
   SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
   print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
@@ -7810,8 +7812,7 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-  print("Writing report of module instances...", flush=True)
-  WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+  
  
 def WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
   text = ""

@@ -2246,7 +2246,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
   # until mhz goals met
   while True:
     # Reset to zero clock
-    print("Starting from comb. logic...",flush=True)
+    print("Building timing params up from comb. logic...",flush=True)
     # TODO dont need full copy of all other inst being zero clock too
     TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
     
