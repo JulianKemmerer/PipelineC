@@ -332,7 +332,7 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
 #!/usr/bin/env bash
 export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
 # Elab+Syn (json is output)
-{YOSYS_BIN_PATH}/yosys $MODULE -p 'ghdl ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
+{YOSYS_BIN_PATH}/yosys $MODULE -p 'ghdl --std=08 ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
 # P&R
 {NEXTPNR_BIN_PATH}/nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
     ''')
