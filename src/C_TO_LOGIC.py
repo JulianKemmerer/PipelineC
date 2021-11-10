@@ -7802,8 +7802,8 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
   multimain_timing_params = SYN.MultiMainTimingParams()
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
-  print("Writing report of module instances...", flush=True)
-  WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+  # Write report of floating point module use - hi Victor!
+  WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
   print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
   SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
   print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
@@ -7814,16 +7814,32 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
   
  
-def WRITE_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+  # Collect float func names dumb way 
+  # looking for any built in funcs with 'float' in the name
+  
+  float_funcs = set()
+  for func_name in parser_state.FuncToInstances:
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    # Also ignore 'CONST_' things like CONST_REF, and muxes
+    if ('float' in func_name and 
+         func_logic.is_c_built_in and 
+         'CONST_' not in func_name and
+         'MUX_' not in func_name):
+      float_funcs.add(func_name)
+  
+  if len(float_funcs) <= 0:
+    return
+  print("Writing log of floating point module instances...")
   text = ""
-  for func_name in sorted(parser_state.FuncToInstances):
+  for func_name in sorted(float_funcs):
     instances = sorted(parser_state.FuncToInstances[func_name])
     text += f"{func_name} {len(instances)} instances:\n"
     for instance in instances:
       text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
     text += "\n"
     
-  out_file = SYN.SYN_OUTPUT_DIRECTORY + "/module_instances.log"
+  out_file = SYN.SYN_OUTPUT_DIRECTORY + "/float_module_instances.log"
   f=open(out_file,'w')
   f.write(text)
   f.close()
