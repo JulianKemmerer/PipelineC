@@ -1,4 +1,4 @@
-// A single pipeline that loops its outback back on itself
+// A single pipeline that loops its output back on itself
 // It has two inputs and two outputs, the first output loops back
 // to become the second input after some N cycles of pipeline delay
 
