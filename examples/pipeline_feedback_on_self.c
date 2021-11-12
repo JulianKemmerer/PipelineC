@@ -39,10 +39,11 @@ pipeline_output_t the_pipeline(in1_t in1, in2_t in2)
   return o;
 }
 
+#pragma MAIN_MHZ main 170.0
+
+/*
 in2_t out1_feedback;
 #include "clock_crossing/out1_feedback.h"
-
-#pragma MAIN_MHZ main 170.0
 out2_t main(in1_t in1)
 {
   in2_t in2;
@@ -51,6 +52,20 @@ out2_t main(in1_t in1)
   pipeline_output_t both_outputs = the_pipeline(in1, in2);
   
   WIRE_WRITE(in2_t, out1_feedback, both_outputs.out1) // out1_feedback = both_outputs.out1
+
+  return both_outputs.out2;
+}*/
+
+out2_t main(in1_t in1)
+{
+  // Non-volatile static would force this func to be comb. logic.
+  volatile static in2_t out1_vol_feedback_reg;
+  
+  in2_t in2 = out1_vol_feedback_reg;
+
+  pipeline_output_t both_outputs = the_pipeline(in1, in2);
+  
+  out1_vol_feedback_reg = both_outputs.out1;
 
   return both_outputs.out2;
 }
