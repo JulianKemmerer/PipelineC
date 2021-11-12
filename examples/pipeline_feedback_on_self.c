@@ -46,7 +46,7 @@ in2_t out1_feedback;
 #include "clock_crossing/out1_feedback.h"
 out2_t main(in1_t in1)
 {
-  // No globals or static locals are used in this func direction
+  // No globals or static locals are used in this func directly
   // Only through WIRE macros which prevent like-a-register use of out1_feedback
   in2_t in2;
   WIRE_READ(in2_t, in2, out1_feedback) // in2 = out1_feedback
