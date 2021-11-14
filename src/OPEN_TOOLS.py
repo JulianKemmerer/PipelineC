@@ -39,6 +39,9 @@ else:
   NEXTPNR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(NEXT_PNR_EXE)
   if NEXTPNR_EXE_PATH is not None:
     NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
+    
+# Flag to skip pnr
+YOSYS_JSON_ONLY = False
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
@@ -310,11 +313,6 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     # Which vhdl files?
     vhdl_files_texts,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
     
-    # Which exe?
-    if parser_state.part.lower().startswith("ice"):
-      exe_ext = "ice40"
-    else:
-      exe_ext = "ecp5"
       
     if GHDL_PREFIX is None:
       raise Exception("ghdl not installed?")
@@ -328,14 +326,30 @@ def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name 
     sh_path = output_directory + "/" + sh_file
     f=open(sh_path,'w')
     # -v --debug
-    f.write('''
+    
+    if not YOSYS_JSON_ONLY:
+      # Which exe?
+      if parser_state.part.lower().startswith("ice"):
+        exe_ext = "ice40"
+      else:
+        exe_ext = "ecp5"
+      f.write('''
 #!/usr/bin/env bash
 export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
 # Elab+Syn (json is output)
 {YOSYS_BIN_PATH}/yosys $MODULE -p 'ghdl --std=08 ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
 # P&R
 {NEXTPNR_BIN_PATH}/nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
-    ''')
+''')
+    else:
+      # YOSYS_JSON_ONLY
+      f.write('''
+# Only output yosys json
+#!/usr/bin/env bash
+export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
+# Elab+Syn (json is output)
+{YOSYS_BIN_PATH}/yosys $MODULE -p 'ghdl --std=08 ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth -top ''' + top_entity_name + '''; write_json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
+''')
     f.close()
 
     # Execute the command
@@ -345,8 +359,11 @@ export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
-    #print("log:",log_text)
-    #sys.exit(0)
+    
+    # If just outputting json have to stop now?
+    if YOSYS_JSON_ONLY:
+      print("Stopping after json output in:",output_directory)
+      sys.exit(0)
     
   return ParsedTimingReport(log_text)
   

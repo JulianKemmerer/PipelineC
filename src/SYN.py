@@ -1745,15 +1745,11 @@ def DO_THROUGHPUT_SWEEP(
   do_incremental_guesses=True, 
   comb_only=False,
   stop_at_latency=None):
+  
+  global SYN_TOOL
+  
   for main_func in parser_state.main_mhz:
-    '''
-    if main_func not in parser_state.main_mhz:
-      print("Main Function:",main_func,"does not have a set target frequency. Cannot do pipelining throughput sweep!", flush=True)
-      print("Define frequency with 'MAIN_MHZ' or clock group with 'MAIN_GROUP' pragmas...")
-      sys.exit(-1)
-    else:
-    '''
-    mhz = GET_TARGET_MHZ(main_func, parser_state)
+    mhz = GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=True)
     print("Function:",main_func,"Target MHz:", mhz, flush=True)
 
   # Populate timing lookup table as all 0 clk
@@ -1767,6 +1763,12 @@ def DO_THROUGHPUT_SWEEP(
     
   # Write multi-main top
   VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+  
+  # Can only do comb. logic with yosys json for now
+  if OPEN_TOOLS.YOSYS_JSON_ONLY:
+    print("Running Yosys on unpipelined top level comb. logic. TODO: Complete feedback for pipeline params...")
+    comb_only = True
+    SYN_TOOL = OPEN_TOOLS
   
   # If comb. logic only
   if comb_only:

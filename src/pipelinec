@@ -9,6 +9,7 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import SYN
 import SIM
+import OPEN_TOOLS
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
@@ -35,6 +36,7 @@ parser.add_argument("--coarse",
 parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from START cycles latency.")
 parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
 parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
+parser.add_argument("--yosys_json", help="Just output the json from yosys.", action="store_true")
 args = parser.parse_args()
 
 # Combine certain args
@@ -60,6 +62,8 @@ else:
   SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath("./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid()))
 # Multiplier style
 C_TO_LOGIC.MULT_STYLE = args.mult
+# Open tools flag to not run nextpnr
+OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 
 
 print("""
@@ -74,14 +78,13 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Implement report of instances
 Do announcement of some sort for __clk()
   Pong using clk() FSMs?
   Mention recent game thing as example rewritten in clk style
   guitar i2s audio visualizer of some sort?
 Do more basic tutorials like nandland+hdlbits
 Victor's RT
-  Changing colors and adding some few operations for materials can do wonders
+  Rewrite changing colors and adding some few operations for materials can do wonders
   Publish code and write up
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
@@ -208,7 +211,7 @@ C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 SIM.SET_SIM_TOOL(args)
 SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
   
-if not args.comb:
+if not args.comb and not args.yosys_json:
   print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
   parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
