@@ -1773,7 +1773,18 @@ def DO_THROUGHPUT_SWEEP(
   # If comb. logic only
   if comb_only:
     print("Running synthesis on comb. logic only top level ...", flush=True)
-    timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+    # Comb logic only AND coarse?
+    if coarse_only:
+      if len(parser_state.main_mhz) > 1:
+        raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
+        sys.exit(-1)
+      main_func = list(parser_state.main_mhz.keys())[0]
+      main_logic = parser_state.FuncLogicLookupTable[main_func]
+      print(f"Comb. logic for single main '{main_func}' function only...", flush=True)
+      timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(main_func, main_logic, parser_state, multimain_timing_params.TimingParamsLookupTable, total_latency=0)
+    else:
+      # Regular multi main top comb logic
+      timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
     return multimain_timing_params
   
   # Default sweep state is zero clocks
