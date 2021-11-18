@@ -21,6 +21,7 @@ import QUARTUS
 import DIAMOND
 import OPEN_TOOLS
 import EFINITY
+import PYRTL
 
 OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None # Auto created with pid and filename or from user
@@ -53,31 +54,34 @@ def PART_SET_TOOL(part_str, allow_fail=False):
       if allow_fail:
         return
       else:
-        print("Need to set FPGA part somewhere in the code to continue with synthesis tool support!")
-        print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
-        sys.exit(0)
-      
-    if part_str.lower().startswith("xc"):
-      SYN_TOOL = VIVADO
-    elif part_str.lower().startswith("ep") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
-      SYN_TOOL = QUARTUS
-    elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
-      # Diamond fails to create proj for UMG5G part?
-      if "um5g" in part_str.lower():
-        SYN_TOOL = OPEN_TOOLS
-      else:
-        SYN_TOOL = DIAMOND #OPEN_TOOLS # Can replace with SYN_TOOL = DIAMOND
-    elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
-      SYN_TOOL = EFINITY
+        # Try to default to part-less estimates from pyrtl?
+        if PYRTL.IS_INSTALLED():
+          SYN_TOOL = PYRTL
+          print("Defaulting to pyrtl based timing estimates...")
+        else:
+          print("Need to set FPGA part somewhere in the code to continue with synthesis tool support!")
+          print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
+          sys.exit(0)
     else:
-      if not allow_fail:
-        print("No known synthesis tool for FPGA part:",part_str, flush=True)
-        sys.exit(-1)
+      if part_str.lower().startswith("xc"):
+        SYN_TOOL = VIVADO
+      elif part_str.lower().startswith("ep") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
+        SYN_TOOL = QUARTUS
+      elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
+        # Diamond fails to create proj for UMG5G part?
+        if "um5g" in part_str.lower():
+          SYN_TOOL = OPEN_TOOLS
+        else:
+          SYN_TOOL = DIAMOND #OPEN_TOOLS # Can replace with SYN_TOOL = DIAMOND
+      elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
+        SYN_TOOL = EFINITY
+      else:
+        if not allow_fail:
+          print("No known synthesis tool for FPGA part:",part_str, flush=True)
+          sys.exit(-1)
     
     if SYN_TOOL is not None:
       print("Using",SYN_TOOL.__name__, "synthesizing for part:",part_str)
-
-
 
 
 # These are the parameters that describe how multiple pipelines are timed
@@ -1307,6 +1311,8 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None, allow_no_s
     ext = ".py"
   elif SYN_TOOL is EFINITY:
     ext = ".sdc"
+  elif SYN_TOOL is PYRTL:
+    ext = ".sdc"
   else:
     if not allow_no_syn_tool:
       # Sufjan Stevens - Video Game
@@ -1398,7 +1404,7 @@ def GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=False):
   elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
     return parser_state.main_mhz[main_func]
   # Uses synthesis estimates
-  elif (SYN_TOOL is DIAMOND):
+  elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
     return parser_state.main_syn_mhz[main_func]
   else:
     if not allow_no_syn_tool:
@@ -2669,7 +2675,9 @@ def IS_USER_CODE(logic, parser_state):
   return user_code
     
 def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
-  PATH_DELAY_CACHE_DIR= C_TO_LOGIC.EXE_ABS_DIR() + "/../path_delay_cache/" + str(SYN_TOOL.__name__).lower() + "/" + parser_state.part
+  PATH_DELAY_CACHE_DIR = C_TO_LOGIC.EXE_ABS_DIR() + "/../path_delay_cache/" + str(SYN_TOOL.__name__).lower() 
+  if parser_state.part is not None:
+    PATH_DELAY_CACHE_DIR += "/" + parser_state.part
   return PATH_DELAY_CACHE_DIR
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
@@ -2689,11 +2697,6 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
       for input_port in logic.inputs:
         c_type = logic.wire_to_c_type[input_port]
         key += "_" + c_type
-  
-  if parser_state.part is None:
-    print("Did not set FPGA part!")
-    print('Ex. #pragma PART "xc7a35ticsg324-1l"')
-    sys.exit(-1)
   
   file_path = GET_PATH_DELAY_CACHE_DIR(logic, parser_state) + "/" + key + ".delay"
   

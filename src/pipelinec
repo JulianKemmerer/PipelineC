@@ -78,6 +78,7 @@ print("""
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Get 24b pmod working
 Do announcement of some sort for __clk()
   Pong using clk() FSMs?
   Mention recent game thing as example rewritten in clk style
@@ -92,13 +93,12 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Setup demo verification of all N clocks of output 
   Setup collection of resource util too
   Setup final packaging (single file vhdl?)
-  Automate u24,rsqrtf demo cpp
   Can publish arbitrary with float points popular formats, i.e. wiki page
+  Automate u24,rsqrtf demo cpp
 Try to go from PipelineC directly to Verilator (RTLIL probably)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
-File level modules? extern? 'external?' module use? pragmas for ports with sub-MAIN funcs. for two-func clock crossing 'instance of a file-module' - how to do clk crossing instances? macros? hah
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force

@@ -244,11 +244,12 @@ def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   #os.kill(process.pid, signal.SIGTERM)
   #process.wait()
   if process.returncode != 0:
-    print("Command failed:")
-    print(cmd_str)
-    print(err_text)
-    print(output_text, flush=True)
-    raise Exception("Command failed!")
+    e_text = ""
+    e_text += "Command failed:" + "\n"
+    e_text += (cmd_str + "\n")
+    e_text += (err_text + "\n")
+    e_text += (output_text + "\n")
+    raise Exception(e_text)
   #print("Reading DONE ",cmd_str, flush=True)
   return output_text
   
