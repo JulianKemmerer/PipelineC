@@ -75,6 +75,40 @@ print("""
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 """, flush=True)
 
+print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
+print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
+# Do parsing
+print("Parsing:",c_file, flush=True)
+parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
+
+print("================== Writing Resulting Logic to File ================================", flush=True)
+C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
+
+# Here is a good point to check basic single cycle/comb logic functionality before pipelining
+SIM.SET_SIM_TOOL(args)
+SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
+  
+if not args.comb and not args.yosys_json:
+  print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
+  parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+
+print("================== Beginning Throughput Sweep ================================", flush=True)
+multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
+  parser_state, 
+  coarse_only=args.coarse, 
+  starting_guess_latency=args.start, 
+  do_incremental_guesses=not(args.sweep), 
+  comb_only=args.comb,
+  stop_at_latency=args.stop
+)
+
+print("================== Writing Results of Throughput Sweep ================================", flush=True)
+SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+print("Done.", flush=True)
+
+# Start simulation on final VHDL
+SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
+
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
@@ -83,10 +117,10 @@ Do announcement of some sort for __clk()
   Pong using clk() FSMs?
   Mention recent game thing as example rewritten in clk style
   guitar i2s audio visualizer of some sort?
+Do BROM support
+  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Do more basic tutorials like nandland+hdlbits
-Victor's RT
-  Rewrite changing colors and adding some few operations for materials can do wonders
-  Publish code and write up
+Victor's RT - see Discord chat
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -97,8 +131,6 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate u24,rsqrtf demo cpp
 Try to go from PipelineC directly to Verilator (RTLIL probably)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
-Do BROM support
-  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
@@ -173,7 +205,6 @@ Const SR/SL as vhdl funcs instead of modules..thought this was done...
 Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
-Explore logic level / LUT based optimizations
 Extern keyword for (same-clock?) clock crossings?
 Allow values form code into __vhdl__ funcs (vhdl isnt entire module) like printf support?
 Use yosys ltp of primitives in longest topological path for faster initial estimates?
@@ -197,38 +228,4 @@ Make wire/var.h that just does same as clock_crossing/var.h?
 Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
 Add compound one = {1}; to init to all bits=1
 """
-
-print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
-print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
-# Do parsing
-print("Parsing:",c_file, flush=True)
-parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-
-print("================== Writing Resulting Logic to File ================================", flush=True)
-C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
-
-# Here is a good point to check basic single cycle/comb logic functionality before pipelining
-SIM.SET_SIM_TOOL(args)
-SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
-  
-if not args.comb and not args.yosys_json:
-  print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
-  parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-
-print("================== Beginning Throughput Sweep ================================", flush=True)
-multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
-  parser_state, 
-  coarse_only=args.coarse, 
-  starting_guess_latency=args.start, 
-  do_incremental_guesses=not(args.sweep), 
-  comb_only=args.comb,
-  stop_at_latency=args.stop
-)
-
-print("================== Writing Results of Throughput Sweep ================================", flush=True)
-SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-print("Done.", flush=True)
-
-# Start simulation on final VHDL
-SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 
