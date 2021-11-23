@@ -96,6 +96,8 @@ typedef struct vga_signals_t
   uint1_t hsync;
   uint1_t vsync;
   uint1_t active;
+  uint1_t start_of_frame;
+  uint1_t end_of_frame;
 }vga_signals_t;
 
 #ifdef __PIPELINEC__
@@ -120,6 +122,8 @@ vga_signals_t vga_timing()
     active = 1;
   }
   o.active = active;
+  o.start_of_frame = (h_cntr_reg==0) & (v_cntr_reg==0);
+  o.end_of_frame = (h_cntr_reg==(FRAME_WIDTH-1)) & (v_cntr_reg==(FRAME_HEIGHT-1));
   
   if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
   {
@@ -170,9 +174,13 @@ vga_signals_t vga_timing()
   {
     current_timing.pos.x = 0;
     if(++current_timing.pos.y > FRAME_HEIGHT)
-     current_timing.pos.y = 0;
+    {
+      current_timing.pos.y = 0;
+    }
   }
   current_timing.active = current_timing.pos.x < FRAME_WIDTH && current_timing.pos.y < FRAME_HEIGHT;
+  current_timing.start_of_frame = (current_timing.pos.x==0) && (current_timing.pos.y==0);
+  current_timing.end_of_frame = (current_timing.pos.x==(FRAME_WIDTH-1)) && (current_timing.pos.y==(FRAME_HEIGHT-1));
   return current_timing;
 }
 #endif

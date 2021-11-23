@@ -14,6 +14,7 @@ entity board is
   port (
     CLK100MHZ : in std_logic;
     sw : in std_logic_vector(3 downto 0);
+    btn : in std_logic_vector(3 downto 0);
     led : out std_logic_vector(3 downto 0);
     uart_rxd_out : out std_logic;
     uart_txd_in : in std_logic;
@@ -537,6 +538,9 @@ top_inst : entity work.top port map (
     
     -- Switches
     --switches_module_sw => switches_wire,
+    
+    -- Buttons
+    buttons_module_btn => unsigned(btn),
 
     -- UART
     --uart_module_data_in(0) => uart_txd_in,

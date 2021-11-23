@@ -42,7 +42,6 @@ color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, rect_t rects[NUM_IMAG
   return c;
 }
 
-// The test pattern driving entity
 // Set design to run at pixel clock
 MAIN_MHZ(app, PIXEL_CLK_MHZ)
 void app()
