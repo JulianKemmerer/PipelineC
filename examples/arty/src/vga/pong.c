@@ -1,6 +1,7 @@
 // Is it legal to call this Pong?
 // You know whats up with this paddle and ball game.
 
+#ifdef __PIPELINEC__
 #include "compiler.h"
 #include "intN_t.h"
 #include "uintN_t.h"
@@ -9,19 +10,22 @@
 #include "../buttons/buttons.c"
 // Top level IO wiring + VGA resolution timing logic+types
 #include "vga_pmod.c"
+#endif
+// Pixel color types
+#include "pixel.h"
 // Helper types+funcs for rectangles
 #include "rect.h"
 
 // Paddle dimensions+color
 #define PADDLE_WIDTH (FRAME_WIDTH/50)
 #define PADDLE_HEIGHT (FRAME_HEIGHT/8)
-#define PADDLE_L_RED 0xF
-#define PADDLE_L_GREEN 0xF
-#define PADDLE_L_BLUE 0xF
+#define PADDLE_L_RED 0xFF
+#define PADDLE_L_GREEN 0xFF
+#define PADDLE_L_BLUE 0xFF
 #define PADDLE_L_X_POS PADDLE_WIDTH
-#define PADDLE_R_RED 0xF
-#define PADDLE_R_GREEN 0xF
-#define PADDLE_R_BLUE 0xF
+#define PADDLE_R_RED 0xFF
+#define PADDLE_R_GREEN 0xFF
+#define PADDLE_R_BLUE 0xFF
 #define PADDLE_R_X_POS (FRAME_WIDTH - (2*PADDLE_WIDTH))
 #define PADDLE_VEL_INC 1
 #define BTN_POS_INC 2
@@ -29,9 +33,9 @@
 // Ball dimensions+color
 #define BALL_WIDTH (FRAME_WIDTH/50)
 #define BALL_HEIGHT BALL_WIDTH
-#define BALL_RED 0xF
-#define BALL_GREEN 0xF
-#define BALL_BLUE 0xF
+#define BALL_RED 0xFF
+#define BALL_GREEN 0xFF
+#define BALL_BLUE 0xFF
 
 // User input buttons
 typedef struct user_input_t
@@ -41,7 +45,8 @@ typedef struct user_input_t
   uint1_t paddle_l_up;
   uint1_t paddle_l_down;
 }user_input_t;
-user_input_t get_user_input()
+
+inline user_input_t get_user_input()
 {
   // Read buttons wire/board IO port
   uint4_t btns;
@@ -64,65 +69,66 @@ typedef struct game_state_t
 }game_state_t;
 
 // Logic for coloring pixel given state
-color_12b_t render_pixel(vga_pos_t pos, game_state_t state)
+inline pixel_t render_pixel(vga_pos_t pos, game_state_t state)
 {
   // Default zeros/black background
-  color_12b_t c;
-  c.red = 0;
-  c.green = 0;
-  c.blue = 0;
+  pixel_t c;
+  c.a = 0;
+  c.r = 0;
+  c.g = 0;
+  c.b = 0;
   
   // Left paddle?
   if(rect_contains(state.lpaddle.rect, pos))
   {
-    c.red = PADDLE_L_RED;
-    c.green = PADDLE_L_GREEN;
-    c.blue = PADDLE_L_BLUE;
+    c.r = PADDLE_L_RED;
+    c.g = PADDLE_L_GREEN;
+    c.b = PADDLE_L_BLUE;
   }
   // Right paddle?
   else if(rect_contains(state.rpaddle.rect, pos))
   {
-    c.red = PADDLE_R_RED;
-    c.green = PADDLE_R_GREEN;
-    c.blue = PADDLE_R_BLUE;
+    c.r = PADDLE_R_RED;
+    c.g = PADDLE_R_GREEN;
+    c.b = PADDLE_R_BLUE;
   }
   // Ball?
   else if(rect_contains(state.ball.rect, pos))
   {
-    c.red = BALL_RED;
-    c.green = BALL_GREEN;
-    c.blue = BALL_BLUE;
+    c.r = BALL_RED;
+    c.g = BALL_GREEN;
+    c.b = BALL_BLUE;
   }
   
   return c;
 }
 
 // Is the ball in left goal?
-uint1_t ball_in_l_goal(rect_animated_t ball)
+inline uint1_t ball_in_l_goal(rect_animated_t ball)
 {
   return (ball.vel_x_dir==LEFT) & (ball.rect.pos.x < (PADDLE_L_X_POS+PADDLE_WIDTH));
 }
 
 // Is the ball in right goal?
-uint1_t ball_in_r_goal(rect_animated_t ball)
+inline uint1_t ball_in_r_goal(rect_animated_t ball)
 {
   return (ball.vel_x_dir==RIGHT) & ((ball.rect.pos.x + BALL_WIDTH) > PADDLE_R_X_POS);
 }
 
 // Ball hit top of frame?
-uint1_t ball_hit_roof(rect_animated_t ball)
+inline uint1_t ball_hit_roof(rect_animated_t ball)
 {
   return (ball.vel_y_dir==UP) & (ball.rect.pos.y == 0);
 }
 
 // Ball hit bottom of frame?
-uint1_t ball_hit_floor(rect_animated_t ball)
+inline uint1_t ball_hit_floor(rect_animated_t ball)
 {
   return (ball.vel_y_dir==DOWN) & (ball.rect.pos.y >= (FRAME_HEIGHT-BALL_HEIGHT));
 }
 
 // How to adjust speed from user hit
-vga_pos_t ball_paddle_inc_vel(vga_pos_t vel)
+inline vga_pos_t ball_paddle_inc_vel(vga_pos_t vel)
 {
   // Add velocity to ball from whack
   if(vel.x > 0)
@@ -137,7 +143,7 @@ vga_pos_t ball_paddle_inc_vel(vga_pos_t vel)
 }
 
 // How to move paddle from user input, with screen limits
-vga_pos_t move_paddle(vga_pos_t pos, uint1_t paddle_up, uint1_t paddle_down)
+inline vga_pos_t move_paddle(vga_pos_t pos, uint1_t paddle_up, uint1_t paddle_down)
 {
   if(paddle_up & !paddle_down)
   {
@@ -157,7 +163,7 @@ vga_pos_t move_paddle(vga_pos_t pos, uint1_t paddle_up, uint1_t paddle_down)
 }
 
 // State to return to at reset
-game_state_t reset_state()
+inline game_state_t reset_state()
 {
   game_state_t state;
   // Ball in the middle
@@ -183,11 +189,17 @@ game_state_t reset_state()
 }
 
 // Logic for animating game state over time
-game_state_t next_state_func(uint1_t reset, game_state_t state, user_input_t user_input)
+inline game_state_t next_state_func(uint1_t reset, game_state_t state, user_input_t user_input)
 {
   // Next state starts off as keeping current state  
   game_state_t next_state = state;
   
+  /*
+  printf("ball pos: %d, %d vel: %d, %d, dir: %d, %d\n",
+    (int) state.ball.rect.pos.x, (int) state.ball.rect.pos.y,
+    (int) state.ball.vel.x, (int) state.ball.vel.y,
+    (int) state.ball.vel_x_dir, (int) state.ball.vel_y_dir);
+  */
   // Default animation of moving rectangles (no collision checking)
   next_state.ball = rect_move(state.ball);
   next_state.lpaddle = rect_move(state.lpaddle);
@@ -274,16 +286,22 @@ void app()
   static game_state_t state;
   // Per clock game logic:
   // Render the pixel at x,y pos given state
-  color_12b_t color = render_pixel(vga_signals.pos, state);
-  // Read input controls from user
-  user_input_t user_input = get_user_input();
+  pixel_t color = render_pixel(vga_signals.pos, state);
   // Do animation state update, not every clock, but on every frame
   if(vga_signals.end_of_frame)
   {
+    // Read input controls from user
+    user_input_t user_input = get_user_input();
+    //printf("user input: %d\n", (int) user_input.paddle_r_up);
+
     state = next_state_func(reset, state, user_input);
     reset = 0; // Out of reset after first frame
   }  
   
   // Drive output signals/registers
-  vga_pmod_register_outputs(vga_signals, color);
+  color_12b_t color12b;
+  color12b.red = color.r >> 4;
+  color12b.green = color.g >> 4;
+  color12b.blue = color.b >> 4;
+  vga_pmod_register_outputs(vga_signals, color12b);
 }

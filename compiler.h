@@ -14,3 +14,9 @@ PRAGMA_MESSAGE(MAIN_SYN_MHZ main_func mhz)
 
 #define MAIN_MHZ_GROUP(main_func, mhz, group)\
 PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
+
+// Temp work around for C++/bool types, see github issue
+#ifdef __PIPELINEC__
+#define and &
+#endif
+

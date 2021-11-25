@@ -5,11 +5,11 @@ typedef struct rect_t
 } rect_t;
 
 // Is point inside rect?
-uint1_t rect_contains(rect_t rect, vga_pos_t pos)
+inline uint1_t rect_contains(rect_t rect, vga_pos_t pos)
 {
-  uint1_t rv;
-  if(((pos.x >= rect.pos.x) & (pos.x < (rect.pos.x + rect.dim.x))) &
-     ((pos.y >= rect.pos.y) & (pos.y < (rect.pos.y + rect.dim.y))))
+  uint1_t rv = 0;
+  if(((pos.x >= rect.pos.x) and (pos.x < (rect.pos.x + rect.dim.x))) and
+     ((pos.y >= rect.pos.y) and (pos.y < (rect.pos.y + rect.dim.y))))
   {
     rv = 1;
   }
@@ -17,7 +17,7 @@ uint1_t rect_contains(rect_t rect, vga_pos_t pos)
 }
 
 // Absolute point to relative point in rect
-vga_pos_t rect_rel_pos(rect_t rect, vga_pos_t pos)
+inline vga_pos_t rect_rel_pos(rect_t rect, vga_pos_t pos)
 {
   vga_pos_t rel_pos;
   rel_pos.x = pos.x - rect.pos.x;
@@ -26,7 +26,7 @@ vga_pos_t rect_rel_pos(rect_t rect, vga_pos_t pos)
 }
 
 // Do two rectangles collide?
-uint1_t rects_collide(rect_t r0, rect_t r1)
+inline uint1_t rects_collide(rect_t r0, rect_t r1)
 {
   uint12_t r0_left = r0.pos.x;
   uint12_t r0_right = r0.pos.x + r0.dim.x;
@@ -55,7 +55,7 @@ typedef struct rect_animated_t
 #define DOWN 1
 
 // How rectangle moves, with bounds checks going negative since using unsigned numbers
-rect_animated_t rect_move(rect_animated_t state)
+inline rect_animated_t rect_move(rect_animated_t state)
 {  
   if(state.vel_x_dir == RIGHT)
   {
