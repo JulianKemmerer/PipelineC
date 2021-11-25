@@ -68,6 +68,9 @@ color_12b_t render_pixel(vga_pos_t pos, game_state_t state)
 {
   // Default zeros/black background
   color_12b_t c;
+  c.red = 0;
+  c.green = 0;
+  c.blue = 0;
   
   // Left paddle?
   if(rect_contains(state.lpaddle.rect, pos))
