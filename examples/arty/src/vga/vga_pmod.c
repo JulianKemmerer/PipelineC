@@ -145,25 +145,24 @@ uint64_t t0;
 uint64_t frame = 0;
 void vga_pmod_register_outputs(vga_signals_t current_timing, color_12b_t current_color)
 {
-  //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.red);
-
   if(current_timing.active)
   {
+    /*if(current_timing.pos.x==0 && current_timing.pos.y==0 && current_color.blue>0) 
+      printf("frame %lu color at %d,%d=%d (blue)\n", frame, current_timing.pos.x, current_timing.pos.y, current_color.blue);*/
+    
     fb_setpixel(current_timing.pos.x, current_timing.pos.y,
      current_color.red << 4, current_color.green << 4, current_color.blue << 4);
-
     if(current_timing.pos.x==0 && current_timing.pos.y==0)
     {
       fb_update();
       frame += 1;
+      if(fb_should_quit())
+      {
+        float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
+        printf("FPS: %f\n", frame/elapsed);
+        exit(1);
+      }
     }
-  }
-  
-  if(fb_should_quit())
-  {
-    float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
-    printf("FPS: %f\n", frame/elapsed);
-    exit(1);
   }
 }
 
@@ -171,26 +170,28 @@ void vga_pmod_register_outputs(vga_signals_t current_timing, color_12b_t current
 void verilator_vga_output(Vtop* g_top)
 {
   uint8_t r = g_top->vga_red;
-  uint8_t g = g_top->vga_green ;
-  uint8_t b = g_top->vga_blue ;
+  uint8_t g = g_top->vga_green;
+  uint8_t b = g_top->vga_blue;
   uint1_t active = g_top->vga_active;
   uint12_t x = g_top->vga_x;
   uint12_t y = g_top->vga_y;
   if(active)
   {
-    fb_setpixel(x, y, r << 4, g << 4, b<< 4);
+    /*if((x==0) && (y==0) && (b>0))
+      printf("frame %lu color at %d,%d=%d (blue)\n", frame, x, y, b);*/
+    
+    fb_setpixel(x, y, r << 4, g << 4, b << 4);
     if((x==0) && (y==0))
     {
       fb_update();
       frame += 1;
+      if(fb_should_quit())
+      {
+        exit(1);
+      }
+      float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
+      printf("frame %lu FPS: %f\n", frame, frame/elapsed);
     }
-  }
-  
-  if(fb_should_quit())
-  {
-    float elapsed = float(higres_ticks()-t0)/higres_ticks_freq();
-    printf("FPS: %f\n", frame/elapsed);
-    exit(1);
   }
 }
 #endif
