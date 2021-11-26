@@ -16,7 +16,10 @@ PRAGMA_MESSAGE(MAIN_SYN_MHZ main_func mhz)
 PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
 
 // Temp work around for C++/bool types, see github issue
+// https://github.com/JulianKemmerer/PipelineC/issues/24
 #ifdef __PIPELINEC__
 #define and &
+#else
+#define and &&
 #endif
 

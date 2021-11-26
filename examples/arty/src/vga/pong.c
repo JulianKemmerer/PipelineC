@@ -11,8 +11,6 @@
 // Top level IO wiring + VGA resolution timing logic+types
 #include "vga_pmod.c"
 #endif
-// Pixel color types
-#include "pixel.h"
 // Helper types+funcs for rectangles
 #include "rect.h"
 

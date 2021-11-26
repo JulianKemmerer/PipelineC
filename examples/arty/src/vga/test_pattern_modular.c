@@ -7,14 +7,6 @@
 // See top level IO wiring in
 #include "vga_pmod.c"
 
-// Temp hacky introduce 'and'
-// https://github.com/JulianKemmerer/PipelineC/issues/24
-#ifdef __PIPELINEC__
-#define and &
-#else
-#define and &&
-#endif
-
 // Moving box module
 #define BOX_WIDTH 8
 #define BOX_CLK_DIV 1000000 //MAX=(2^25 - 1)
@@ -24,7 +16,7 @@
 #define BOX_Y_MIN 256
 #define BOX_X_INIT 0
 #define BOX_Y_INIT 400
-vga_pos_t moving_box_logic()
+inline vga_pos_t moving_box_logic()
 {  
   static uint12_t box_x_reg = BOX_X_INIT;
   static uint1_t box_x_dir = 1;
@@ -94,7 +86,7 @@ vga_pos_t moving_box_logic()
 }
 
 // Logic for coloring pixels
-color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
+inline color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
 {
   uint4_t vga_red;
   uint4_t vga_green;
