@@ -3,9 +3,9 @@
 
 typedef struct color_12b_t
 {
-  uint4_t red;
-  uint4_t green;
-  uint4_t blue;
+  uint4_t r;
+  uint4_t g;
+  uint4_t b;
 }color_12b_t;
 
 #endif

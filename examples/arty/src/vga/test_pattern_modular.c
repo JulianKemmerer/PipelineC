@@ -146,9 +146,9 @@ inline color_12b_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_
   }
   
   color_12b_t c;
-  c.red = vga_red;
-  c.green = vga_green;
-  c.blue = vga_blue;
+  c.r = vga_red;
+  c.g = vga_green;
+  c.b = vga_blue;
   return c;
 }
 
@@ -167,5 +167,9 @@ void app()
   color_12b_t color = get_pixel_color(vga_signals.active, vga_signals.pos, box_pos);
   
   // Drive output signals/registers
-  vga_pmod_register_outputs(vga_signals, color);
+  pixel_t pixel;
+  pixel.r = color.r << 4;
+  pixel.g = color.g << 4;
+  pixel.b = color.b << 4;
+  vga_pmod_register_outputs(vga_signals, pixel);
 }

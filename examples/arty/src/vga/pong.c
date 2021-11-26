@@ -5,12 +5,12 @@
 #include "compiler.h"
 #include "intN_t.h"
 #include "uintN_t.h"
-
 // Access to board buttons
 #include "../buttons/buttons.c"
 // Top level IO wiring + VGA resolution timing logic+types
 #include "vga_pmod.c"
 #endif
+
 // Helper types+funcs for rectangles
 #include "rect.h"
 
@@ -297,9 +297,5 @@ void app()
   }  
   
   // Drive output signals/registers
-  color_12b_t color12b;
-  color12b.red = color.r >> 4;
-  color12b.green = color.g >> 4;
-  color12b.blue = color.b >> 4;
-  vga_pmod_register_outputs(vga_signals, color12b);
+  vga_pmod_register_outputs(vga_signals, color);
 }

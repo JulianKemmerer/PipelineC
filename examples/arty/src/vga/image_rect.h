@@ -103,17 +103,17 @@ color_12b_t rect_color(vga_pos_t rel_pos, uint3_t color_mode)
   uint4_t color_mode_values[NUM_COLOR_MODES][3];
   // (hacky re-decl to support init list syntax)
   uint4_t color_values[3];
-  uint4_t color_values[3] = {c.red, c.green, c.blue}; color_mode_values[0] = color_values;
-  uint4_t color_values[3] = {c.blue, c.green, c.red}; color_mode_values[1] = color_values;
-  uint4_t color_values[3] = {c.blue, c.red, c.green}; color_mode_values[2] = color_values;
-  uint4_t color_values[3] = {c.green, c.blue, c.red}; color_mode_values[3] = color_values;
-  uint4_t color_values[3] = {c.green, c.red, c.blue}; color_mode_values[4] = color_values;
-  uint4_t color_values[3] = {c.red, c.blue, c.green}; color_mode_values[5] = color_values;
+  uint4_t color_values[3] = {c.r, c.g, c.b}; color_mode_values[0] = color_values;
+  uint4_t color_values[3] = {c.b, c.g, c.r}; color_mode_values[1] = color_values;
+  uint4_t color_values[3] = {c.b, c.r, c.g}; color_mode_values[2] = color_values;
+  uint4_t color_values[3] = {c.g, c.b, c.r}; color_mode_values[3] = color_values;
+  uint4_t color_values[3] = {c.g, c.r, c.b}; color_mode_values[4] = color_values;
+  uint4_t color_values[3] = {c.r, c.b, c.g}; color_mode_values[5] = color_values;
   color_values = color_mode_values[color_mode];
   color_12b_t rv_color;
-  rv_color.red = color_values[0];
-  rv_color.green = color_values[1];
-  rv_color.blue = color_values[2];
+  rv_color.r = color_values[0];
+  rv_color.g = color_values[1];
+  rv_color.b = color_values[2];
   return rv_color;
 }
 

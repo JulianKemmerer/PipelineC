@@ -112,15 +112,15 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Do writeup for pong vga demo
+  Mention recent other game thing as example rewritten in clk style w/ fosix
+  DONT publish yet until RT
 Get 24b pmod working
+Victor's RT - see Discord chat
 Do announcement of some sort for __clk()
-  Pong using clk() FSMs?
-  Mention recent game thing as example rewritten in clk style
-  guitar i2s audio visualizer of some sort?
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Do more basic tutorials like nandland+hdlbits
-Victor's RT - see Discord chat
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -129,6 +129,7 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Setup final packaging (single file vhdl?)
   Can publish arbitrary with float points popular formats, i.e. wiki page
   Automate u24,rsqrtf demo cpp
+Guitar i2s audio visualizer of some sort?
 Try to go from PipelineC directly to Verilator (RTLIL probably)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
@@ -183,7 +184,6 @@ Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based d
 OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
-Add constant defintion (struct+array init), use const keyword? #define init expressions? Init becomes like const ref funcs assigning ref toks
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
 Expose latencies of each instance as a constant for use in external vhdl package - not for use in pipelinec code
 Fix to remove useless int casts, ex. uint32->uint32 and do casts of ints as vhdl expr not funcs

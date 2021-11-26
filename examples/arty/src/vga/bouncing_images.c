@@ -67,5 +67,9 @@ void app()
   color_12b_t color = get_pixel_color(vga_signals.active, vga_signals.pos, rects);
   
   // Drive output signals/registers
-  vga_pmod_register_outputs(vga_signals, color);
+  pixel_t pixel;
+  pixel.r = color.r << 4;
+  pixel.g = color.g << 4;
+  pixel.b = color.b << 4;
+  vga_pmod_register_outputs(vga_signals, pixel);
 }

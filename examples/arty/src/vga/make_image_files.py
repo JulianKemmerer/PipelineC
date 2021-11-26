@@ -63,9 +63,9 @@ for y in range(0,height):
     rgb_8b = rgb_im.getpixel((x, y))
     rgb_4b = scale_rgb(8,rgb_8b,4)
     r,g,b=rgb_4b
-    #c_text += f"{img_name}[{x}][{y}].red = {r};\\\n"
-    #c_text += f"{img_name}[{x}][{y}].green = {g};\\\n"
-    #c_text += f"{img_name}[{x}][{y}].blue = {b};\\\n"
+    #c_text += f"{img_name}[{x}][{y}].r = {r};\\\n"
+    #c_text += f"{img_name}[{x}][{y}].g = {g};\\\n"
+    #c_text += f"{img_name}[{x}][{y}].b = {b};\\\n"
     vhd_text += f"(red => to_unsigned({r}, 4), green => to_unsigned({g}, 4), blue => to_unsigned({b}, 4)),\n"
 vhd_text = vhd_text.strip(",\n")
 vhd_text += "\n)"

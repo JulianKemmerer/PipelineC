@@ -1,6 +1,7 @@
 #pragma once
 // Constants and logic to produce VGA signals at fixed resolution
 #include "vga_timing.h"
+#include "pixel.h"
 #include "color_12b.h"
 
 #ifdef __PIPELINEC__
@@ -23,9 +24,7 @@ typedef struct app_to_vga_t
 {
   uint1_t hs;
   uint1_t vs;
-  uint4_t r;
-  uint4_t g;
-  uint4_t b;
+  color_12b_t color;
 }app_to_vga_t;
 
 // Globally visible ports/wires
@@ -46,19 +45,19 @@ void vga()
   // i.e. wire VGA to PMOD pins
   // https://github.com/Digilent/Arty-Pmod-VGA/blob/8341f622a13324fc59ab69d595b16e32a9519029/src/constraints/Arty_Master.xdc#L58
   app_to_pmod_jb_t b;
-  b.jb0 = vga.r >> 0;
-  b.jb1 = vga.r >> 1;
-  b.jb2 = vga.r >> 2;
-  b.jb3 = vga.r >> 3;
-  b.jb4 = vga.b >> 0;
-  b.jb5 = vga.b >> 1;
-  b.jb6 = vga.b >> 2;
-  b.jb7 = vga.b >> 3;
+  b.jb0 = vga.color.r >> 0;
+  b.jb1 = vga.color.r >> 1;
+  b.jb2 = vga.color.r >> 2;
+  b.jb3 = vga.color.r >> 3;
+  b.jb4 = vga.color.b >> 0;
+  b.jb5 = vga.color.b >> 1;
+  b.jb6 = vga.color.b >> 2;
+  b.jb7 = vga.color.b >> 3;
   app_to_pmod_jc_t c;
-  c.jc0 = vga.g >> 0;
-  c.jc1 = vga.g >> 1;
-  c.jc2 = vga.g >> 2;
-  c.jc3 = vga.g >> 3;
+  c.jc0 = vga.color.g >> 0;
+  c.jc1 = vga.color.g >> 1;
+  c.jc2 = vga.color.g >> 2;
+  c.jc3 = vga.color.g >> 3;
   c.jc4 = vga.hs;
   c.jc5 = vga.vs;
 
@@ -88,7 +87,7 @@ DEBUG_OUTPUT_DECL(uint12_t, vga_x)
 #include "clock_crossing/vga_y_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, vga_y)
 
-void vga_pmod_register_outputs(vga_signals_t vga, color_12b_t color)
+void vga_pmod_register_outputs(vga_signals_t vga, pixel_t color)
 {
   // Registers
   static uint4_t vga_red_reg;
@@ -104,17 +103,17 @@ void vga_pmod_register_outputs(vga_signals_t vga, color_12b_t color)
   app_to_vga_t o;
   o.hs = h_sync_dly_reg;
   o.vs = v_sync_dly_reg;
-  o.r = vga_red_reg;
-  o.g = vga_green_reg;
-  o.b = vga_blue_reg;
+  o.color.r = vga_red_reg;
+  o.color.g = vga_green_reg;
+  o.color.b = vga_blue_reg;
   WIRE_WRITE(app_to_vga_t, app_to_vga, o)
   
   // Connect to Verilator debug ports
   vsync(o.vs);
   hsync(o.hs);
-  vga_red(o.r);
-  vga_green(o.g);
-  vga_blue(o.b);
+  vga_red(o.color.r);
+  vga_green(o.color.g);
+  vga_blue(o.color.b);
   vga_active(active_reg);
   vga_x(x_reg);
   vga_y(y_reg);
@@ -123,12 +122,15 @@ void vga_pmod_register_outputs(vga_signals_t vga, color_12b_t color)
   color_12b_t active_color;
   if(vga.active)
   {
-    active_color = color;
+    // Convert 8b colors ot 4b
+    active_color.r = color.r >> 4;
+    active_color.g = color.g >> 4;
+    active_color.b = color.b >> 4;
   }
   // Output delay regs
-  vga_red_reg = active_color.red;
-  vga_green_reg = active_color.green;
-  vga_blue_reg = active_color.blue;
+  vga_red_reg = active_color.r;
+  vga_green_reg = active_color.g;
+  vga_blue_reg = active_color.b;
   active_reg = vga.active;
   v_sync_dly_reg = vga.vsync;
   h_sync_dly_reg = vga.hsync;
@@ -143,14 +145,14 @@ void vga_pmod_register_outputs(vga_signals_t vga, color_12b_t color)
 
 uint64_t t0;
 uint64_t frame = 0;
-void vga_pmod_register_outputs(vga_signals_t current_timing, color_12b_t current_color)
+void vga_pmod_register_outputs(vga_signals_t current_timing, pixel_t current_color)
 {
-  //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.red);
+  //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.r);
 
   if(current_timing.active)
   {
     fb_setpixel(current_timing.pos.x, current_timing.pos.y,
-     current_color.red << 4, current_color.green << 4, current_color.blue << 4);
+     current_color.r, current_color.g, current_color.b);
 
     if(current_timing.pos.x==0 && current_timing.pos.y==0)
     {
@@ -170,6 +172,7 @@ void vga_pmod_register_outputs(vga_signals_t current_timing, color_12b_t current
 #ifdef USE_VERILATOR
 void verilator_vga_output(Vtop* g_top)
 {
+  // 4b colors from hardware
   uint8_t r = g_top->vga_red;
   uint8_t g = g_top->vga_green ;
   uint8_t b = g_top->vga_blue ;
@@ -178,6 +181,7 @@ void verilator_vga_output(Vtop* g_top)
   uint12_t y = g_top->vga_y;
   if(active)
   {
+    // Shift 4b to 8b colors
     fb_setpixel(x, y, r << 4, g << 4, b<< 4);
     if((x==0) && (y==0))
     {
