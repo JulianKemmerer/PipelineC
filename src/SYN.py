@@ -1791,6 +1791,12 @@ def DO_THROUGHPUT_SWEEP(
     else:
       # Regular multi main top comb logic
       timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+    
+    # Print a little timing info to characterize comb logic
+    for reported_clock_group,path_report in timing_report.path_reports.items():
+      mhz = 1000.0 / path_report.path_delay_ns
+      print(f"Clock {reported_clock_group} FMAX: {mhz:.3f} MHz ({path_report.path_delay_ns:.3f} ns)",flush=True)
+    
     return multimain_timing_params
   
   # Default sweep state is zero clocks
