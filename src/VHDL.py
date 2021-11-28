@@ -2472,6 +2472,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
   varables_t_pre += "type variables_t is record\n"
   varables_t_pre += " -- All of the wires in function\n"
   wrote_variables_t = False
+  wrote_variables_NULL = False
   # Raw HDL functions are done differently
   if len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in: # func_name not in parser_state.main_mhz:
     text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, Logic, parser_state, timing_params)
@@ -2548,6 +2549,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLook
     return rv;
   end function;\n
 '''
+    wrote_variables_NULL = True
   
   
   # Input registers
@@ -2632,12 +2634,16 @@ type feedback_vars_t is record'''
   '''
   
   if needs_regs:
-    # Function to null out globals (not internal self pipeline regs since those need flushing)
+    # Function to null out globals
     rv += "\n-- Function to null out regs \n"
     rv += "function registers_NULL return registers_t is\n"
     rv += ''' variable rv : registers_t;
   begin
   '''
+    # Self pipeline regs
+    # Self regs
+    #if wrote_variables_NULL and needs_self_regs:
+    #  rv += " rv.self := (others => variables_NULL);\n"
     # Input regs
     if timing_params._has_input_regs:
       for input_port in Logic.inputs:
@@ -3637,7 +3643,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     return "to_signed(" + str(value_num) + ", " + str(width) + ")"
   elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
     e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)
-    return "to_slv(to_float(" + val_str + ", " + str(e) + ", " + str(m) + "))"
+    return "to_slv(to_float(" + str(value_num) + ", " + str(e) + ", " + str(m) + "))"
   else:
     print("How to give const",val_str,"gen VHDL?")
     sys.exit(-1)
