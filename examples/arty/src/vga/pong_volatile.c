@@ -25,7 +25,7 @@
 #define PADDLE_R_GREEN 0xFF
 #define PADDLE_R_BLUE 0xFF
 #define PADDLE_R_X_POS (FRAME_WIDTH - (2*PADDLE_WIDTH))
-#define PADDLE_VEL_INC 1
+#define PADDLE_VEL_MULT 1.1
 #define BTN_POS_INC 2
 
 // Ball dimensions+color
@@ -126,18 +126,35 @@ inline uint1_t ball_hit_floor(rect_animated_t ball)
 }
 
 // How to adjust speed from user hit
+
 inline vga_pos_t ball_paddle_inc_vel(vga_pos_t vel)
 {
   // Add velocity to ball from whack
-  if(vel.x > 0)
+  // Intentionally complex version.
+  // Lets work in floats
+  float vel_x = vel.x;
+  float vel_y = vel.y;
+  
+  vel_x *= PADDLE_VEL_MULT;
+  vel_y *= PADDLE_VEL_MULT;
+  
+  vga_pos_t vel_new;
+  vel_new.x = (int32_t)vel_x;
+  vel_new.y = (int32_t)vel_x;
+  
+  // Adjust for the dumb fact that velocity is integer 0,1,2
+  // Multiplying for ex. 10% increment on 1 is still 1
+  // TODO fix so above multiply is used/useful
+  if(vel_new.x==vel.x)
   {
-    vel.x += PADDLE_VEL_INC;
+    vel_new.x += 1;
   }
-  if(vel.y > 0)
+  if(vel_new.y==vel.y)
   {
-    vel.y += PADDLE_VEL_INC;
+    vel_new.y += 1;
   }
-  return vel;
+
+  return vel_new;
 }
 
 // How to move paddle from user input, with screen limits
