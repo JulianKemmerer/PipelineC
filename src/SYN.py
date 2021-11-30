@@ -1391,26 +1391,35 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
   f.close()
   return out_filepath
   
+def TOOL_DOES_PNR():
+  # Does tool do full PNR or just syn?
+  if SYN_TOOL is VIVADO:
+    return VIVADO.DO_PNR=="all"
+  # Uses PNR
+  elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
+    return True
+  # Uses synthesis estimates
+  elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
+    return False
+  else:
+    raise Exception("Need syn tool!")
+  
 # Target mhz is internal name for whatever mhz we are using in this run
 # Real pnr MAIN_MHZ or syn only MAIN_SYN_MHZ
 def GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=False):
-  # Does tool do full PNR or just syn?
-  if SYN_TOOL is VIVADO:
-    if VIVADO.DO_PNR is not None:
-      return parser_state.main_mhz[main_func]
-    else:
-      return parser_state.main_syn_mhz[main_func]
-  # Uses PNR MAIN_MHZ
-  elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
-    return parser_state.main_mhz[main_func]
-  # Uses synthesis estimates
-  elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
-    return parser_state.main_syn_mhz[main_func]
-  else:
+  if SYN_TOOL is None:
     if not allow_no_syn_tool:
       raise Exception("Need syn tool!")
     # Default to main mhz
     return parser_state.main_mhz[main_func]
+    
+  # Does tool do full PNR or just syn?
+  if TOOL_DOES_PNR():
+    # Uses PNR MAIN_MHZ
+    return parser_state.main_mhz[main_func]
+  else:
+    # Uses synthesis estimates
+    return parser_state.main_syn_mhz[main_func]
     
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   is_final_top = True
@@ -2684,6 +2693,10 @@ def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
   PATH_DELAY_CACHE_DIR = C_TO_LOGIC.EXE_ABS_DIR() + "/../path_delay_cache/" + str(SYN_TOOL.__name__).lower() 
   if parser_state.part is not None:
     PATH_DELAY_CACHE_DIR += "/" + parser_state.part
+  if TOOL_DOES_PNR():
+    PATH_DELAY_CACHE_DIR += "/pnr"
+  else:
+    PATH_DELAY_CACHE_DIR += "/syn"
   return PATH_DELAY_CACHE_DIR
 
 def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
@@ -2778,7 +2791,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
           if cached_path_delay is not None:
             logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
-            print("Function:",logic.func_name, "Cached path delay(ns):", cached_path_delay)
+            print(f"Function: {logic.func_name} Cached path delay: {cached_path_delay:.3f} ns")
             if cached_path_delay > 0.0 and logic.delay==0:
               print("Have timing path of",cached_path_delay,"ns")
               print("...but recorded zero delay. Increase delay multiplier!")
@@ -2885,10 +2898,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         sys.exit(-1)      
       # Make adjustment for 0 LLs to have 0 delay
       if (SYN_TOOL is VIVADO) and path_report.logic_levels == 0:
-        logic.delay = 0        
+        logic.delay = 0
         
       # Syn results are delay and clock 
-      print(logic_func_name, "Path delay (ns):", path_report.path_delay_ns, "=",mhz, "MHz")
+      print(f"{logic_func_name} Path delay: {path_report.path_delay_ns:.3f} ({mhz:.3f} MHz)")
       print("")
       # Record worst non slicable logic
       if not logic.CAN_BE_SLICED():

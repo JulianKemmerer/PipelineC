@@ -5710,8 +5710,8 @@ def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_i
   func_name = func_base_name
   if not base_name_is_name:
     types_str = ""
-    # Output type
-    types_str += "_" + output_type.replace("[","_").replace("]","")
+    ## Output type
+    #types_str += "_" + output_type.replace("[","_").replace("]","")
     # Append input types to base name
     for input_driver_type in input_driver_types:
       if input_driver_type is None:
@@ -6554,9 +6554,16 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       #parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
     else:
       # Types for both left and right are known
-      # Derive output
+      # Derive output type
+      
+      # Does it match a user operator overload func?
+      # No output type in func name now
+      maybe_user_overload_func_name = BUILD_FUNC_NAME(func_base_name, None, [left_type,right_type], False)
+      if maybe_user_overload_func_name in parser_state.FuncLogicLookupTable:
+        overload_logic = parser_state.FuncLogicLookupTable[maybe_user_overload_func_name]
+        output_c_type = overload_logic.wire_to_c_type[RETURN_WIRE_NAME]
       # New float_e_m_t types
-      if C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
+      elif C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
          output_c_type = left_type # same as right
       elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
         #output_c_type = left_type
@@ -8421,6 +8428,14 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
       
   return parser_state
 
+# Only needed for logic to skip func parsing so what hurts if its hacky?
+def FUNC_IS_OP_OVERLOAD(func_name):
+  if func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX+"_"):
+    return True
+  elif func_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX+"_"):
+    return True
+  return False
+
 # This will likely be called multiple times when loading multiple C files
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
   existing_func_name_2_logic = parser_state.FuncLogicLookupTable
@@ -8436,15 +8451,20 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     parse_func_body = parse_body
     if func_def.decl.name in FuncLogicLookupTable and FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
       continue    
+    # Special overload funcs
+    if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
+      print("Parsing operator overload function:",func_def.decl.name, flush=True)
     # Skip functions that are not found in the initial from-main hierarchy mapping
-    if ( (func_def.decl.name not in parser_state.func_name_to_calls) and
+    elif ( (func_def.decl.name not in parser_state.func_name_to_calls) and
          (func_def.decl.name not in parser_state.func_names_to_called_from) and 
          (func_def.decl.name not in parser_state.main_mhz) ):
       print("Function skipped:",func_def.decl.name)
       continue
+    # Prims
     elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
       print("Parsing primitive function:",func_def.decl.name, flush=True)
       parse_func_body = False
+    # General user code
     else:
       print("Parsing function:",func_def.decl.name, flush=True)
 
