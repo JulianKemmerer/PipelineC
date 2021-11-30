@@ -6175,23 +6175,30 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   input_driver_types.append(expr_type)
   in_driver_wire = parser_state.existing_logic.wire_driven_by[unary_op_input]
   input_drivers.append(in_driver_wire)
+  func_name = BUILD_FUNC_NAME(func_base_name, None, input_driver_types, base_name_is_name)
   
-  # Determine output type based on operator or driving wire type
-  driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail=True)
-  if driven_c_type_str is not None:
-    # Most unary ops use the type of the driven wire
-    if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
-      output_c_type = driven_c_type_str
-    else:
-      print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
-      sys.exit(-1) 
+  # Operator overload?
+  if func_name in parser_state.FuncLogicLookupTable:
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    output_c_type = func_logic.wire_to_c_type[RETURN_WIRE_NAME]
     # Set type for output wire
     parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
+  # Determine output type based on operator or driving wire type
+  else:
+    driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail=True)
+    if driven_c_type_str is not None:
+      # Most unary ops use the type of the driven wire
+      if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
+        output_c_type = driven_c_type_str
+      else:
+        print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
+        sys.exit(-1) 
+      # Set type for output wire
+      parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
   
   # Otherwise use input expr type?  
   if unary_op_output not in parser_state.existing_logic.wire_to_c_type:
     parser_state.existing_logic.wire_to_c_type[unary_op_output] = expr_type
-
   
   func_c_ast_node = c_ast_unary_op
   func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
