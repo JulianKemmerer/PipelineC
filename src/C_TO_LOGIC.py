@@ -46,7 +46,7 @@ BIN_OP_LOGIC_NAME_PREFIX="BIN_OP"
 CONST_REF_RD_FUNC_NAME_PREFIX = "CONST_REF_RD"
 VAR_REF_ASSIGN_FUNC_NAME_PREFIX="VAR_REF_ASSIGN"
 VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
-CAST_FUNC_NAME_PREFIX = "CAST"
+CAST_FUNC_NAME_PREFIX = "CAST_TO"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
@@ -5320,7 +5320,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       # TODO
       return None    
     # CASTING
-    elif func_base_name == CAST_FUNC_NAME_PREFIX and not base_name_is_name :
+    elif func_base_name.startswith(CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
       in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
       out_t = parser_state.existing_logic.wire_to_c_type[output_driven_wire_names[0]]
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
@@ -6030,8 +6030,9 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
   return parser_state.existing_logic
   
 def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+  output_t = str(c_ast_node.to_type.type.type.names[0])
   # Need to evaluate input node/type first
-  func_base_name = CAST_FUNC_NAME_PREFIX
+  func_base_name = CAST_FUNC_NAME_PREFIX + "_" + output_t
   func_inst_name = BUILD_INST_NAME(prepend_text,func_base_name, c_ast_node)
   input_port_name = "rhs"
   input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
@@ -6049,7 +6050,6 @@ def C_AST_CAST_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state)
   output_wire_name=func_inst_name+SUBMODULE_MARKER+RETURN_WIRE_NAME
   #casthelp(c_ast_node.to_type.type.type.names[0])
   #sys.exit(-1)
-  output_t = str(c_ast_node.to_type.type.type.names[0])
   parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
   
   # TODO Sanity dont make submodule doing pass through wire?
@@ -6821,7 +6821,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
             (VHDL.C_TYPE_IS_UINT_N(rhs_type) and C_TYPE_IS_FLOAT_TYPE(driven_wire_type))
           ):
           # Return n arg func
-          func_base_name = CAST_FUNC_NAME_PREFIX
+          func_base_name = CAST_FUNC_NAME_PREFIX + "_" + driven_wire_type
           base_name_is_name = False # append types in name too
           input_drivers = [driving_wire]
           input_driver_types = [rhs_type]

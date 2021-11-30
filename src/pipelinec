@@ -114,6 +114,7 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 TODO:
 Do announcement of some sort for __clk()
   Basic NN?
+  Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Victor's RT - see Discord chat
@@ -149,7 +150,6 @@ Check auto pipeline and clock crossing read+write behavior
   Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
-Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - can sometimes if have recent constant assignments/ref toks
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
@@ -173,7 +173,6 @@ How to remove excess io regs from middle out sweep?
 Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
-NO its good - syn like multiplies with common truncation for better timing estimations - ENSURE built in operations have resize() on outputs if user casts down
 Karatsuba algo for mult - need to recursive gen big mult funcs for differing bit widths
 Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
