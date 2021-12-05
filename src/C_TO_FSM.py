@@ -24,6 +24,8 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.While:
     maybe_semicolon = ""
+  elif type(c_ast_node) == c_ast.If:
+    maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.Decl and is_lhs:
@@ -755,6 +757,8 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(c_ast_node, curr_state_info, next_state_info,
     return C_AST_CTRL_FLOW_INOUT_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.While:
     return C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
+  elif type(c_ast_node) == c_ast.For:
+    return C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) is c_ast.FuncCall and FUNC_USES_FSM_CLK(c_ast_node.name.name, parser_state):
     return C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state)
   elif type(c_ast_node) == c_ast.Assignment:
@@ -958,7 +962,65 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
 
   return states
   
-#WHILE COND NEED OWN STATEE FIX WHILE LOOP TO NOT GO BACK TO COMB LOGIC BEFORE WHILE COND
+def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
+  # For loop is like while loop with extra stuff
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node.init, parser_state):
+    raise Exception(f"TODO unsupported control flow in for init: {c_ast_node.init.coord}")
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node.cond, parser_state):
+    raise Exception(f"TODO unsupported control flow in for cond: {c_ast_node.cond.coord}")
+  if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_node.next, parser_state):
+    raise Exception(f"TODO unsupported control flow in for next: {c_ast_node.next.coord}")
+  states = [] 
+  
+  # Add init to curr state
+  curr_state_info.c_ast_nodes.append(c_ast_node.init)
+  
+  # Condition handled like while loop
+  # Condition checking needs own state without logic
+  if not curr_state_info.is_ok_for_jump_back():
+    # New curr state needed
+    prev_curr_state_info = curr_state_info
+    curr_state_info = FsmStateInfo()
+    curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_FOR_COND"
+    curr_state_info.always_next_state = None # Branching, no default
+    states += [curr_state_info]
+    # Prev state default goes to new state
+    prev_curr_state_info.always_next_state = curr_state_info
+    
+  # Next increment needs own state?
+  # Kinda like condition state but for next state?
+  # How to combine with other state is_ok_for_jump_back?
+  prev_next_state_info = next_state_info
+  next_state_info = FsmStateInfo() 
+  next_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_FOR_NEXT"
+  next_state_info.c_ast_nodes.append(c_ast_node.next)
+  next_state_info.always_next_state = curr_state_info # Always back to cond state
+   
+  # For statement handled like while loop
+  # Create a state for while body logic and insert it into return list of states
+  for_state = FsmStateInfo()
+  name_c_ast_node = None
+  if type(c_ast_node.stmt) is c_ast.Compound:
+    name_c_ast_node = c_ast_node.stmt.block_items[0]
+  else:
+    name_c_ast_node = c_ast_node.stmt
+  for_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FOR"
+  for_state.always_next_state = curr_state_info # Default staying in for body
+  # Add mux sel calculation, and jumping to do current state muxing -> body logic (before evaluating body)
+  curr_state_info.branch_nodes_tf_states = (c_ast_node, for_state, prev_next_state_info)
+  
+  # Eval body and accum states
+  for_states = C_AST_NODE_TO_STATES_LIST(c_ast_node.stmt, parser_state, for_state, next_state_info)
+  states += for_states
+  
+  # Add next to somewhere?
+  #curr_state_info
+  #for_state
+  #last_for_state = for_states[-1]
+  #next_state_info.c_ast_nodes.append(c_ast_node.next)
+  states.append(next_state_info)
+  
+  return states  
   
 def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_info, parser_state):
   states = []
