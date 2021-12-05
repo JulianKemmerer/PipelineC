@@ -8140,7 +8140,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       read_mhz = write_mhz
     # Sanity check
     if read_mhz is None and write_mhz is None:
-      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_func,",",write_main_func)
+      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_funcs,",",write_main_funcs)
       #print("Missing or incorrect #pragma MAIN_MHZ ?")
       #sys.exit(-1)
     
