@@ -56,8 +56,8 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
       # Only int array
       elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-      if not C_TYPES_ARE_INTEGERS([elem_t]) or len(dims) > 1:
-        print("Only basic init list for ints for now...",init.coord)
+      if not(C_TYPES_ARE_INTEGERS([elem_t]) or C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([elem_t])) or len(dims) > 1:
+        print("Only basic init list for single dimension arrays for now...",init.coord)
         sys.exit(-1)
       array_size = dims[0]
       
