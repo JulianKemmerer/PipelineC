@@ -1761,6 +1761,8 @@ def DO_THROUGHPUT_SWEEP(
   comb_only=False,
   stop_at_latency=None):
   
+  # Make sure syn tool is set
+  PART_SET_TOOL(parser_state.part)
   global SYN_TOOL
   
   for main_func in parser_state.main_mhz:
