@@ -19,29 +19,6 @@ for (i = 0; i < MNIST_LABELS; i+=1)
 */
 // Keep host memory loading / communication separate from computation NN core
 
-pixel_t get_pixel(uint32_t j)
-{
-  static pixel_t pixel[MNIST_IMAGE_SIZE] = 
-    #include "random_pixels.c"
-  ;
-  pixel_t unused_write_data;
-  return pixel_RAM_SP_RF_0(j, unused_write_data, 0);
-  //return pixel[j];
-}
-
-float scale_pixel(pixel_t p)
-{
-  return (float)p / 255.0;
-}
-
-float get_bias(uint32_t i)
-{
-  static float bias[MNIST_LABELS] = 
-    #include "random_biases.c"
-  ;
-  return bias[i];
-}
-
 float get_weight(uint32_t i, uint32_t j)
 {
   // Flatten two indicies into one dimensional array
@@ -50,25 +27,38 @@ float get_weight(uint32_t i, uint32_t j)
   static float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
     #include "random_weights.c"
   ;
+  // RAM built in function
   float unused_write_data;
   return weight_RAM_SP_RF_0(addr, unused_write_data, 0);
-  //static float weight[MNIST_LABELS][MNIST_IMAGE_SIZE] = RANDOM_WEIGHTS;
   //return weight[i][j];
 }
 
-float weight_mul(float weight, float pixel)
+float get_bias(uint32_t i)
 {
-  return weight * pixel;
+  static float bias[MNIST_LABELS] = 
+    #include "random_biases.c"
+  ;
+  // RAM built in function
+  float unused_write_data;
+  return bias_RAM_SP_RF_0(i, unused_write_data, 0);
+  //return bias[i];
 }
 
-uint1_t act_gt(float lhs, float rhs)
+pixel_t get_pixel(uint32_t j)
 {
-  return lhs > rhs;
-} 
+  static pixel_t pixel[MNIST_IMAGE_SIZE] = 
+    #include "random_pixels.c"
+  ;
+  // RAM built in function
+  pixel_t unused_write_data;
+  return pixel_RAM_SP_RF_0(j, unused_write_data, 0);
+  //return pixel[j];
+}
 
 float rw_act(uint32_t i, float write_data, uint1_t write_enable)
 {
   static float act[MNIST_LABELS]; // init to zeros
+  // RAM built in function
   return act_RAM_SP_RF_0(i, write_data, write_enable);
   //float rv = act[i];
   //if(write_enable)
@@ -77,7 +67,24 @@ float rw_act(uint32_t i, float write_data, uint1_t write_enable)
   //}
   //return rv;
 }
+// Only one fsm can run this func at a time
+// (only a single rw_act module will exist)
 #include "rw_act_SINGLE_INST.h"
+
+float weight_mul(float weight, float pixel)
+{
+  return weight * pixel;
+}
+
+float scale_pixel(pixel_t p)
+{
+  return (float)p * (1.0/255.0); // / 255.0;
+}
+
+uint1_t act_gt(float lhs, float rhs)
+{
+  return lhs > rhs;
+}
 
 float get_act(uint32_t i)
 {
@@ -142,7 +149,7 @@ uint32_t inference()
 #include "inference_FSM.h"
 
 // Wrap up inference FSM as top level
-MAIN_MHZ(inference_wrapper, 10.0) // UART_CLK_MHZUse uart clock for main
+MAIN_MHZ(inference_wrapper, 25.0)
 uint32_t inference_wrapper()
 {
   inference_INPUT_t i;
