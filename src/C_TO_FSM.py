@@ -1029,7 +1029,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
     name_c_ast_node = c_ast_node.stmt.block_items[0]
   else:
     name_c_ast_node = c_ast_node.stmt
-  for_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FOR"
+  for_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FOR_BODY"
   for_state.always_next_state = next_state_info # Default do next iter/statement curr_state_info # Default staying in for body
   # Add mux sel calculation, and jumping to do current state muxing -> body logic (before evaluating body)
   curr_state_info.branch_nodes_tf_states = (c_ast_node, for_state, prev_next_state_info)

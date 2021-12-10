@@ -189,21 +189,21 @@ uint32_t inference_fsm_basic()
   // Loop computing activation for each label
   for(i = 0; i < MNIST_LABELS; i+=1) 
   {
-      
+      __clk(); // Combinatorial logic dividing marker
       float b = bias_RAM_SP_RF_0(i, 0.0, 0); // ROM lookup
       activation[i] = b; // Array write
-      __clk(); // Combinatorial logic dividing marker
       for(j = 0; j < MNIST_IMAGE_SIZE; j+=1)
       {
+        __clk(); // Combinatorial logic dividing marker
         pixel_t p = pixel_RAM_SP_RF_0(j, 0, 0); // ROM lookup
         float scaled_pixel = (float)p * (1.0/255.0); // FP mul
         float w = weight_RAM_SP_RF_0(i*MNIST_IMAGE_SIZE + j, 0.0, 0); // ROM lookup
         float act_inc = w * scaled_pixel; // FP mul
         activation[i] = activation[i] + act_inc; // Array RMW (FP add)
-        __clk(); // Combinatorial logic dividing marker
       }
   }
   
+  __clk(); // Combinatorial logic dividing marker
   // Find maximally activated neuron
   uint32_t max_act_label;
   float max_act = FLOAT_MIN;
@@ -217,7 +217,7 @@ uint32_t inference_fsm_basic()
       max_act_label = i;
     }
   }
-  __clk(); // Combinatorial logic dividing marker
+  
   return max_act_label;
 }
 // Derived fsm from inference func
