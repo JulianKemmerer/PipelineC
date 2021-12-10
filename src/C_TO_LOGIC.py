@@ -2059,7 +2059,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   if not const_lhs:
     # TODO
     if c_ast_assignment.op != "=":
-      print("Unsupported assignment op non const",c_ast_assignment.op)
+      print(f"TODO: Unsupported assignment {c_ast_assignment.op} on non constant destination/left hand side!", c_ast_assignment.coord)
       sys.exit(-1)
     
     # Variable references write to larger "sized" references then constant references

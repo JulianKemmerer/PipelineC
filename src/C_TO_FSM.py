@@ -16,6 +16,11 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
   if generator is None:
     generator = c_generator.CGenerator()
   text = generator.visit(c_ast_node)
+
+  # What nodes need curlys?
+  if type(c_ast_node) == c_ast.InitList:
+    text = "{" + text + "}"
+    
   # What nodes dont need semicolon?
   maybe_semicolon = ";"
   if type(c_ast_node) == c_ast.Compound:
@@ -24,7 +29,7 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.While:
     maybe_semicolon = ""
-  elif type(c_ast_node) == c_ast.If:
+  elif type(c_ast_node) == c_ast.For:
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
     maybe_semicolon = ""
@@ -34,6 +39,7 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   #print(type(c_ast_node))
   text += maybe_semicolon
+  
   lines = []
   for line in text.split("\n"):
     if line != "":
@@ -279,10 +285,12 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       
   text +='''  // Output wires
   ''' + fsm_logic.func_name + '''_OUTPUT_t fsm_o = {0};
+  /*
   // Comb logic signaling that state transition using FSM_STATE
   // is not single cycle pass through and takes a clk
   uint1_t NEXT_CLK_STATE_VALID = 0;
   ''' + fsm_logic.func_name + '''_FSM_STATE_t NEXT_CLK_STATE = FSM_STATE;
+  */
 '''
   # Get all flow control func call instances
   single_inst_flow_ctrl_func_call_names = set()
@@ -504,9 +512,10 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "    // __clk(); // Go to next state in next clock cycle \n"
         else:
           text += "    // FORCED CLK DELAY - Go to next state in next clock cycle \n"
-        text += "    NEXT_CLK_STATE = " + state_info.always_next_state.name + ";\n"
-        text += "    NEXT_CLK_STATE_VALID = 1;\n"
-        #text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
+        text += "    // NEXT_CLK_STATE = " + state_info.always_next_state.name + ";\n"
+        text += "    // NEXT_CLK_STATE_VALID = 1;\n"
+        text += "    // MUST OCCUR IN LAST STAGE GROUP \n"
+        text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
         text += "  }\n"
         continue
         
@@ -574,12 +583,14 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   }
 '''
 
-  text += '''  
+  text += '''
+  /*  
   // Wait/clk delay logic
   if(NEXT_CLK_STATE_VALID)
   {
     FSM_STATE = NEXT_CLK_STATE;
   }
+  */
 '''
 
   text += '''
@@ -1019,7 +1030,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
   else:
     name_c_ast_node = c_ast_node.stmt
   for_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FOR"
-  for_state.always_next_state = curr_state_info # Default staying in for body
+  for_state.always_next_state = next_state_info # Default do next iter/statement curr_state_info # Default staying in for body
   # Add mux sel calculation, and jumping to do current state muxing -> body logic (before evaluating body)
   curr_state_info.branch_nodes_tf_states = (c_ast_node, for_state, prev_next_state_info)
   
@@ -1083,40 +1094,22 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   # Start off with as parsed single file ordered list of states
   states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
   parser_state.existing_logic.first_user_state = states_list[0]
-
   '''
-  # Branching jumps backwards require 1 clock
-  # Insert dummy ends_w_clk for states that go backwards to branch conditions
-  for state_i,state in enumerate(states_list):
-    if state.always_next_state is not None and state.branch_nodes_tf_states is None:
-      if state.always_next_state != state and states_list.index(state.always_next_state) < state_i:
-        state.ends_w_clk = True
-        state.clk_end_is_user = False
-    elif state.branch_nodes_tf_states is not None:
-      c_ast_node,true_state, false_state = state.branch_nodes_tf_states
-      # Need both states to be going back to mark is forced delay
-      if true_state != state and states_list.index(true_state) < state_i:
-        if false_state is None:
-          state.ends_w_clk = True
-          state.clk_end_is_user = False
-        elif false_state != state and states_list.index(false_state) < state_i:
-          state.ends_w_clk = True
-          state.clk_end_is_user = False
+  print("func:",parser_state.existing_logic.func_name)
+  for state in states_list:
+    state.print()
+    print("=====", flush=True)
+  print("=====", flush=True)
+  print("=====", flush=True)
+  print("=====", flush=True)
   '''
   
-  #print("func:",parser_state.existing_logic.func_name)
-  #for state in states_list:
-  #  state.print()
-  #  print("=====", flush=True)
-
-  # By default threads start after func return
-  # Now get threads of execution starting at fsm return states
+  # Sub return -> onwward groups "post" fsm middle
   fsm_return_states_list = []
   for state in states_list:
     if state.starts_w_fsm_func_return:
       fsm_return_states_list.append(state)
-  # Get state groups from starting states
-  # Exclude pre fsm stuff (entry)
+  # Exclude pre fsm + fsm stuff (entry+fsm state)
   excluded_subentry_and_subfsm_states = True
   # And exclude states that end with clock
   states_ends_w_clk = set()
@@ -1125,21 +1118,36 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
       states_ends_w_clk.add(state)
   post_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(fsm_return_states_list, 
     parser_state, 
-    excluded_subentry_and_subfsm_states=excluded_subentry_and_subfsm_states)#,
-    #excluded_states=states_ends_w_clk)
-
-  # Then any normal threads continue from start excluding stuff after fsms
-  # Pre fsm stuff
+    excluded_subentry_and_subfsm_states=excluded_subentry_and_subfsm_states,
+    excluded_states=states_ends_w_clk)
+  '''
+  print("Postfsm groups:")
+  for i,post_fsms_group in enumerate(post_fsms_groups):
+    print("Postfsm group:",i)
+    for post_fsm_state in post_fsms_group:
+      post_fsm_state.print()
+      print("======")
+    print()
+  '''
+  
+  # Collect middle subroutine FSM state group
   states_list_no_fsms = []
-  fsms_groups = [set()]
+  fsms_group = set()
   for state in states_list:
     if state.is_fsm_func_call_state is None:
       states_list_no_fsms.append(state)
       #print("Start:",state.name)
     if state.is_fsm_func_call_state is not None:
-      fsms_groups[0].add(state)
-  # State transition "clock execution thread" list things start at
-  #   Func entry 
+      fsms_group.add(state)
+  fsms_groups = []   
+  if len(fsms_group) > 0:
+    fsms_groups.append(fsms_group)
+  
+  # "Pre" subroutine groups
+  # Func entry -> onward
+  # sub routine return -> onward
+  # Ends with clock -> onward
+  # etc
   start_states = set([states_list_no_fsms[0]])
   for state in states_list_no_fsms:
     # Pseduo new starts from func returns
@@ -1168,14 +1176,45 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   all_post_states = set()
   for post_fsms_group in post_fsms_groups:
     all_post_states |= post_fsms_group
+  #### Exclude states end with clk
+  all_post_and_ends_w_clk_states = all_post_states | states_ends_w_clk
   pre_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state, 
     excluded_subfsm_states_and_subreturn=excluded_subfsm_states_and_subreturn,
-    excluded_states=all_post_states) # |states_ends_w_clk
-  #DEBUGparser_state.existing_logic.state_groups = pre_fsms_groups
+    excluded_states=all_post_and_ends_w_clk_states)
+  '''
+  print("Prefsm groups:")
+  for i,pre_fsms_group in enumerate(pre_fsms_groups):
+    print("Prefsm group:",i)
+    for pre_fsm_state in pre_fsms_group:
+      pre_fsm_state.print()
+      print("======")
+    print()
+  '''
 
   # Combine all
-  state_groups = pre_fsms_groups + fsms_groups + post_fsms_groups # + [states_ends_w_clk]
+  state_groups = pre_fsms_groups + fsms_groups + post_fsms_groups
+  
+  # Doing opposite of Ends with clock -> onward being a starting state
+  # by making states that lead up to ending with a clock an ending state
+  last_state_group = state_groups[-1]
+  last_state_group |= states_ends_w_clk
+
   parser_state.existing_logic.state_groups = state_groups
+  
+  # Sanity check all states coming in, went out
+  total_states_from_groups = []
+  for state_group in state_groups:
+    total_states_from_groups += list(state_group)
+  if len(total_states_from_groups) != len(set(total_states_from_groups)):
+    print("Duplicate states!?")
+    #for s in set(states_list) - set(total_states_from_groups):
+    #  s.print()
+    sys.exit(-1)
+  if len(total_states_from_groups) < len(states_list):
+    print("Missing states!")
+    for s in set(states_list) - set(total_states_from_groups):
+      s.print()
+    sys.exit(-1)
 
   return parser_state.existing_logic
 

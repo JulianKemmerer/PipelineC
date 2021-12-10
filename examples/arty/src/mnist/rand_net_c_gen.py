@@ -19,3 +19,9 @@ print("WEIGHTS:")
 for a in range(0,MNIST_LABELS*MNIST_IMAGE_SIZE):
   print(random.uniform(0, 1),",")
 print("")
+
+print("WEIGHTS 2D:")
+for i in range(0,MNIST_LABELS):
+  for j in range(0,MNIST_IMAGE_SIZE):
+    print(f"weight[{i}][{j}] = {random.uniform(0, 1)};")
+print("")
