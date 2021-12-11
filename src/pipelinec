@@ -112,12 +112,13 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Victor's RT - see Discord chat
+Do video walkthrough of Pong demo?
 Do announcement of some sort for __clk()
   Basic NN?
   Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
-Victor's RT - see Discord chat
 Get 24b pmod working
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>

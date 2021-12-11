@@ -695,10 +695,13 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
   
   return states
   
-def GET_STATE_TRANS_LISTS(start_state, parser_state):
+def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=set()):
   #print("start_state.name",start_state.name)
   #start_state.print()
   #print()
+  if start_state in visited_states:
+    return [[start_state]]
+  
   # Branch or pass through default next or clock(ends chain)?
   if start_state.ends_w_clk:
     return [[start_state]]
@@ -755,7 +758,8 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state):
   states_trans_lists = []
   for poss_next_state in poss_next_states:
     start_states_trans_list = [start_state]
-    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state, parser_state)
+    visited_states.add(start_state)
+    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state, parser_state, visited_states)
     for new_states_trans_list in new_states_trans_lists:
       combined_state_trans_list = start_states_trans_list + new_states_trans_list
       states_trans_lists.append(combined_state_trans_list)
@@ -1266,13 +1270,16 @@ def GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state,
     if state_groups[index] is None:
       state_groups[index] = set()
     state_groups[index].add(state)
+  non_none_state_groups = []
   for state_group in state_groups:
-    text = "State Group: "
-    for state in state_group:
-      text += state.name + ","
-    #print(text)
+    if state_group is not None:
+      non_none_state_groups.append(state_group)
+      text = "State Group: "
+      for state in state_group:
+        text += state.name + ","
+      #print(text)
       
-  return state_groups
+  return non_none_state_groups
 
 def FUNC_USES_FSM_CLK(func_name, parser_state):
   if func_name in parser_state.func_fsm_header_included:

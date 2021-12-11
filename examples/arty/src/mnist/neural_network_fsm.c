@@ -189,7 +189,6 @@ uint32_t inference_fsm_basic()
   // Loop computing activation for each label
   for(i = 0; i < MNIST_LABELS; i+=1) 
   {
-      __clk(); // Combinatorial logic dividing marker
       float b = bias_RAM_SP_RF_0(i, 0.0, 0); // ROM lookup
       activation[i] = b; // Array write
       for(j = 0; j < MNIST_IMAGE_SIZE; j+=1)
@@ -216,8 +215,7 @@ uint32_t inference_fsm_basic()
       max_act = act_i;
       max_act_label = i;
     }
-  }
-  
+  }  
   return max_act_label;
 }
 // Derived fsm from inference func
