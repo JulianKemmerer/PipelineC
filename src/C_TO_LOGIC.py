@@ -4243,9 +4243,7 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
     wire_name = c_ast_decl.name
     c_type = c_ast_typedecl.type.names[0]
   else:
-    print("C_AST_DECL_TO_C_TYPE_AND_VAR_NAME",c_ast_decl.type, c_ast_decl.type.coord)
-    sys.exit(-1)
-    
+    raise Exception(f"C_AST_DECL_TO_C_TYPE_AND_VAR_NAME {c_ast_decl.type} {c_ast_decl.type.coord}")    
   return c_type,wire_name
  
 def C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
@@ -5236,13 +5234,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       elif func_base_name.endswith(BIN_OP_EQ_NAME):
         const_val_str = "1" if lhs_val==rhs_val else "0"
       # Bit operations
-      elif func_base_name.endswith(BIN_OP_SR_NAME) or func_base_name.endswith(BIN_OP_SL_NAME): 
-        # SHIFT INT ONLY FOR NOW?
-        if not is_ints:
-          print("Constant bit operation function", func_base_name, func_c_ast_node.coord, "for ints only right now...")
-          sys.exit(-1)
-
-        if func_base_name.endswith(BIN_OP_SR_NAME):
+      elif func_base_name.endswith(BIN_OP_SR_NAME) or func_base_name.endswith(BIN_OP_SL_NAME):
+        if is_ints and func_base_name.endswith(BIN_OP_SR_NAME):
           # Output type is type of LHS
           c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
           width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
@@ -5257,7 +5250,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           output_int = to_int(output_bin_str,signed)
           const_val_str = str(output_int)
           #print(lhs_bin_str,">>",rhs_val, const_val_str)
-        elif func_base_name.endswith(BIN_OP_SL_NAME):
+        elif is_ints and func_base_name.endswith(BIN_OP_SL_NAME):
           # Int constants are made as wide as possible
           # ex.
           # uint32 = 1 << 3;
@@ -5274,6 +5267,12 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           output_int = to_int(output_bin_str,signed)
           const_val_str = str(output_int)
           #print(lhs_bin_str,"<<",rhs_val, const_val_str)
+        elif C_TYPE_IS_FLOAT_TYPE(lhs_c_type) and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type]) and func_base_name.endswith(BIN_OP_SL_NAME):
+          # Implement pow2 mult for <<
+          const_val_str = str(lhs_val*pow(2,rhs_val))
+        elif C_TYPE_IS_FLOAT_TYPE(lhs_c_type) and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type]) and func_base_name.endswith(BIN_OP_SL_NAME):
+          # Implement pow2 div for >>
+          const_val_str = str(lhs_val/pow(2,rhs_val))
         else:
           print("Unsupported const bit operation", func_base_name)
           sys.exit(-1)
@@ -5417,8 +5416,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   new_input_port_names = [] # Port names on submodule
   is_reducable = False
   # TODO other things
-  # CONSTANT SHIFT LEFT
-  if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME) and const_input_wires[1] is not None:
+  # CONSTANT SHIFT LEFT on INT
+  if VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]]) and func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME) and const_input_wires[1] is not None:
     # Replace with const
     rhs_wire = const_input_wires[1]
     rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
@@ -5431,8 +5430,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     new_output_wire = new_func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
     parser_state.existing_logic.wire_to_c_type[new_output_wire] = new_input_driver_types[0] # Shift outputs LHS type
     is_reducable = True
-  # CONSTANT SHIFT RIGHT  
-  elif func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME) and const_input_wires[1] is not None:
+  # CONSTANT SHIFT RIGHT on INT
+  elif VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]]) and func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME) and const_input_wires[1] is not None:
     # Replace with const
     rhs_wire = const_input_wires[1]
     rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(rhs_wire, parser_state.existing_logic, parser_state)
@@ -6530,13 +6529,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   else:
     # Not bool operation
     # OUTPUT TYPE MUST BE DERIVED FROM FUNCITONALITY
-    '''
-    @BAAHHH<<<<<<<<<<<<<<<<<<<<<<<
-    # Try to get output type from type of driven wire
-    allow_fail = True
-    driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail)
-    if driven_c_type_str is None:
-    '''
     # Which ones to use?
     if (left_type is None) and (right_type is None):
       print(func_inst_name, "doesn't have type information for either inputs OR OUTPUT? What's going on?")
@@ -6572,6 +6564,9 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       # New float_e_m_t types
       elif C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) and C_FLOAT_TYPES_ARE_EQUAL([left_type,right_type]):
          output_c_type = left_type # same as right
+      # Float shifts (mult/div by pow2)
+      elif is_bit_shift and C_TYPE_IS_FLOAT_TYPE(left_type) and VHDL.C_TYPES_ARE_INTEGERS([right_type]):
+        output_c_type = left_type
       elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
         #output_c_type = left_type
         print("TODO: Float int ops? shouldnt occur",left_type,right_type,c_ast_binary_op.coord)

@@ -3126,7 +3126,132 @@ def GET_VAR_REF_ASSIGN_C_CODE(partially_complete_logic_local_inst_name, partiall
   #sys.exit(-1)
   
   return text
+
+def GET_BIN_OP_SR_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+  left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+  right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
+  output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,output_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,output_t]):
+    print('''"left_t != "float" or  output_t != "float" for sr ''')
+    sys.exit(-1)
+  fp_t = left_t
   
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
+  
+  text = ""
+  text += '''
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float shift right div pow2
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+{
+  // LEFT
+  uint''' + str(mantissa_width) + '''_t left_mantissa;  
+  left_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  uint''' + str(exponent_width) + '''_t left_exponent;
+  left_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  uint1_t left_sign;
+  left_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  
+  // Declare the output portions
+  uint''' + str(mantissa_width) + '''_t z_mantissa;
+  uint''' + str(exponent_width) + '''_t z_exponent;
+  uint1_t z_sign;
+  z_sign = left_sign;
+  z_exponent = left_exponent - right; // Div by pow2
+  z_mantissa = left_mantissa;
+  // Assemble output  
+  return float_uint'''+str(exponent_width) + "_uint" + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+}'''
+
+  #print "C CODE"
+  #print text
+
+  return text  
+
+def GET_BIN_OP_SL_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state):
+  left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+  right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
+  output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+  if not C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t,output_t]) or not C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,output_t]):
+    print('''"left_t != "float" or  output_t != "float" for sl ''')
+    sys.exit(-1)
+  fp_t = left_t
+  
+  ######## ARB WIDTH FLOATS
+  exponent_width,mantissa_width = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+  mantissa_range = [mantissa_width-1,0]
+  mantissa_t_prefix = "uint" + str(mantissa_width)
+  mantissa_t = mantissa_t_prefix + "_t"
+  exponent_range = [mantissa_width+exponent_width-1,mantissa_width]
+  exponent_t_prefix = "uint" + str(exponent_width)
+  exponent_t = exponent_t_prefix + "_t"
+  exponent_width_plus1 = exponent_width + 1
+  exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+  exponent_wide_t = exponent_wide_t_prefix + "_t"
+  exponent_max = int(math.pow(2,exponent_width) - 1)
+  exponent_bias = int(math.pow(2,exponent_width-1) - 1)
+  exponent_bias_t = "uint" + str(exponent_width-1) + "_t"
+  sign_index = mantissa_width+exponent_width
+  sign_width = 1
+  sign_t_prefix = "uint" + str(sign_width)
+  sign_t = sign_t_prefix + "_t"
+  fp_t_width = 1+exponent_width+mantissa_width
+  
+  text = ""
+  text += '''
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float shift left mult pow2
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+{
+  // LEFT
+  uint''' + str(mantissa_width) + '''_t left_mantissa;  
+  left_mantissa = '''+fp_t+'''_''' + str(mantissa_range[0]) + '''_''' + str(mantissa_range[1]) + '''(left);
+  uint''' + str(exponent_width) + '''_t left_exponent;
+  left_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(left);
+  uint1_t left_sign;
+  left_sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(left);
+  
+  // Declare the output portions
+  uint''' + str(mantissa_width) + '''_t z_mantissa;
+  uint''' + str(exponent_width) + '''_t z_exponent;
+  uint1_t z_sign;
+  z_sign = left_sign;
+  z_exponent = left_exponent + right; // mult by pow2
+  z_mantissa = left_mantissa;
+  // Assemble output  
+  return float_uint'''+str(exponent_width) + "_uint" + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
+}'''
+
+  #print "C CODE"
+  #print text
+
+  return text
   
     
 def GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, out_dir, containing_func_logic, parser_state):
@@ -3138,12 +3263,14 @@ def GET_BIN_OP_SR_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
   left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
-  if not(right_const_driving_wire is None):
-    print("SW defined constant shift right?",partially_complete_logic.c_ast_node.coord)
-    sys.exit(-1)
   
   if VHDL.WIRES_ARE_INT_N([partially_complete_logic.inputs[0]], partially_complete_logic) or VHDL.WIRES_ARE_UINT_N([partially_complete_logic.inputs[0]], partially_complete_logic):
+    if not(right_const_driving_wire is None):
+      print("SW defined constant shift right?",partially_complete_logic.c_ast_node.coord)
+      sys.exit(-1)
     return GET_BIN_OP_SR_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t]):
+    return GET_BIN_OP_SR_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
     print("GET_BIN_OP_SR_C_CODE what types!?",partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
@@ -3157,12 +3284,14 @@ def GET_BIN_OP_SL_C_CODE(partially_complete_logic_local_inst_name, partially_com
   right_input_wire = partially_complete_logic_local_inst_name + C_TO_LOGIC.SUBMODULE_MARKER + partially_complete_logic.inputs[1]
   left_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(left_input_wire, containing_func_logic)
   right_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(right_input_wire, containing_func_logic)
-  if not(right_const_driving_wire is None):
-    print("SW defined constant shift left?",partially_complete_logic.c_ast_node.coord)
-    sys.exit(-1)
   
   if VHDL.WIRES_ARE_INT_N([partially_complete_logic.inputs[0]], partially_complete_logic) or VHDL.WIRES_ARE_UINT_N([partially_complete_logic.inputs[0]], partially_complete_logic):
+    if not(right_const_driving_wire is None):
+      print("SW defined constant shift left?",partially_complete_logic.c_ast_node.coord)
+      sys.exit(-1)
     return GET_BIN_OP_SL_INT_UINT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t]):
+    return GET_BIN_OP_SL_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
   else:
     print("GET_BIN_OP_SL_C_CODE what types!?",partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
