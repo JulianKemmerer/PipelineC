@@ -1718,6 +1718,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     return C_AST_TERNARY_OP_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
   elif C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
     return C_AST_COMPOUND_NULL_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
+  elif type(c_ast_node) == c_ast.InitList:
+    return C_AST_INIT_LIST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state)
   else:
     #start here
     print("Animal Collective - The Purple Bottle")
@@ -1892,29 +1894,28 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_st
   alias_base = id_str+"_"+coord_str
   
   # Return base without number appended?
-  if orig_var_name in existing_logic.wire_aliases_over_time:
-    aliases = existing_logic.wire_aliases_over_time[orig_var_name]
-    if alias_base not in aliases:
-      return alias_base
+  if orig_var_name not in existing_logic.wire_aliases_over_time:
+    return alias_base
   
-  # Check existing logic for alias
-  # First one to try is "0"
-  i=0
-  alias = alias_base + "_" + str(i)
-  if existing_logic is not None:
-    if orig_var_name in existing_logic.wire_aliases_over_time:
-      # Aliases exist, start i at last one
-      aliases = existing_logic.wire_aliases_over_time[orig_var_name]
-      last_alias = aliases[len(aliases)-1]
-      last_num = int(last_alias.replace(alias_base+"_",""))
+  # Aliases exist, maybe start i at last one
+  aliases = existing_logic.wire_aliases_over_time[orig_var_name]
+  if alias_base not in aliases:
+    return alias_base
+  else:
+    #aliases = existing_logic.wire_aliases_over_time[orig_var_name]
+    last_alias = aliases[len(aliases)-1]
+    #print(aliases,"last_alias",last_alias)
+    maybe_last_digit = last_alias.replace(alias_base+"_","")
+    if maybe_last_digit.isdigit():    
+      last_num = int(maybe_last_digit)
       i=last_num+1
+    else:
+      i = 0
+    alias = alias_base + "_" + str(i)
+    while alias in aliases:
+      i=i+1
       alias = alias_base + "_" + str(i)
-      while alias in aliases:
-        i=i+1
-        alias = alias_base + "_" + str(i)
-  
-  return alias
-  
+    return alias
 
 def ORIG_WIRE_NAME_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(orig_wire_name, c_ast_node,  existing_logic):
   # Alias will include location in src
@@ -2455,7 +2456,10 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_a
     # Assigning to a variable creates an alias
     # future reads on this variable are done from the alias
     lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, lhs_c_ast_node, parser_state)
-      
+    # Record
+    parser_state.existing_logic.alias_to_driven_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
+    parser_state.existing_logic.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
+    
     # /\
     # SET LHS TYPE
     lhs_c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(lhs_ref_toks, lhs_c_ast_node, parser_state)
@@ -2473,6 +2477,7 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_a
       rhs_to_lhs_logic = C_AST_NODE_TO_LOGIC(rhs_c_ast_node, driven_wire_names, prepend_text, parser_state)
     
     # Set type of RHS wire as LHS type if not known
+    #print("rhs_to_lhs_logic.wire_driven_by",rhs_to_lhs_logic.wire_driven_by)
     rhs_driver = rhs_to_lhs_logic.wire_driven_by[lhs_next_wire_assignment_alias]
     if rhs_driver not in rhs_to_lhs_logic.wire_to_c_type:
       #print "rhs_driver",rhs_driver
@@ -2492,8 +2497,6 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_a
     if not(lhs_next_wire_assignment_alias in new_aliases):
       new_aliases = new_aliases + [lhs_next_wire_assignment_alias]
     parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
-    parser_state.existing_logic.alias_to_driven_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
-    parser_state.existing_logic.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
    
     return parser_state.existing_logic
   
@@ -4251,7 +4254,114 @@ def C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
          len(c_ast_node.exprs)==1 and 
          type(c_ast_node.exprs[0]) == c_ast.Constant and
          c_ast_node.exprs[0].value == '0' )
-    
+
+def C_AST_INIT_LIST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
+  #print(c_ast_node)
+  #print("drives",driven_wire_names)
+  for driven_wire_name in driven_wire_names: 
+    # Init/drive driven wire
+    lhs_ref_toks = parser_state.existing_logic.alias_to_driven_ref_toks[driven_wire_name]
+    c_type = parser_state.existing_logic.wire_to_c_type[driven_wire_name]
+    parser_state.existing_logic = C_AST_INIT_TO_LOGIC(
+        c_ast_node, 
+        lhs_ref_toks,
+        c_ast_node,
+        c_type,
+        prepend_text, 
+        parser_state
+      )
+  return parser_state.existing_logic
+  
+
+def C_AST_INIT_TO_LOGIC(c_ast_init, lhs_ref_toks, lhs_c_ast_node, c_type, prepend_text, parser_state):
+  # All inits start with null
+  const_zero = c_ast.Constant(type='int',value='0')
+  fake_compound_null_init_node = c_ast.InitList(exprs=[const_zero])
+  fake_compound_null_init_node.coord = c_ast_init.coord
+  parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, fake_compound_null_init_node, parser_state, prepend_text, None)
+  #parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, c_ast_init, parser_state, prepend_text, None)
+  # If just null then return now
+  # = {0}; // Is special null token
+  if C_AST_NODE_IS_COMPOUND_NULL(c_ast_init):
+    return parser_state.existing_logic
+  
+  # Each thing in init list is either position based, [index], .member
+  pos = 0
+  # Shared logic for 1 or more init exprs
+  if type(c_ast_init) == c_ast.InitList:
+    init_exprs = c_ast_init.exprs
+  else:
+    init_exprs = [c_ast_init]
+  for init_expr in init_exprs:
+    # What is expected for this expression given type?
+    ref_toks = None
+    expr_node = None
+    if type(c_ast_init) == c_ast.InitList and C_TYPE_IS_ARRAY(c_type):
+      # Array
+      elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      expr_node = init_expr
+      expr_type = elem_t
+      # Assign this pos in array, or specified pos
+      if type(init_expr) == c_ast.NamedInitializer:
+        # pos name 
+        pos = int(init_expr.name[0].value)
+        expr_node = init_expr.expr
+      ref_toks = lhs_ref_toks + (pos,)
+      parser_state.existing_logic = C_AST_INIT_TO_LOGIC(
+          expr_node, 
+          ref_toks, 
+          lhs_c_ast_node, 
+          expr_type, 
+          prepend_text, 
+          parser_state
+        )     
+    elif type(c_ast_init) == c_ast.InitList and C_TYPE_IS_STRUCT(c_type, parser_state):
+      # Struct
+      field_type_dict = parser_state.struct_to_field_type_dict[c_type]
+      field_names_list = list(field_type_dict.keys())
+      field_types_list = list(field_type_dict.values())
+      expr_node = init_expr
+      # Assign to specified member or by pos in member list
+      if type(init_expr) == c_ast.NamedInitializer:
+        # Field name based
+        member_name = init_expr.name[0].name
+        pos = field_names_list.index(member_name)
+        expr_type = field_type_dict[member_name]
+        expr_node = init_expr.expr
+      else:
+        # Position based
+        expr_type = field_types_list[pos]
+        member_name = field_names_list[pos]
+      ref_toks = lhs_ref_toks + (member_name,)
+      parser_state.existing_logic = C_AST_INIT_TO_LOGIC(
+          expr_node, 
+          ref_toks, 
+          lhs_c_ast_node, 
+          expr_type, 
+          prepend_text, 
+          parser_state
+        )     
+    else:
+      # Simple var
+      expr_type = c_type
+      expr_node = init_expr
+      ref_toks = tuple(lhs_ref_toks)    
+      # Do assignment
+      parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(
+          ref_toks, 
+          lhs_c_ast_node, 
+          expr_node, 
+          parser_state, 
+          prepend_text, 
+          None
+        )
+        
+    # Update for next expr
+    pos += 1
+  
+  return parser_state.existing_logic
+        
+        
 def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   c_type,wire_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state)
   # This is a variable declaration
@@ -4269,37 +4379,8 @@ def C_AST_DECL_TO_LOGIC(c_ast_decl, prepend_text, parser_state):
   
   # If has init value then is also assignment
   if c_ast_decl.init is not None:
-    # = {0}; // Is special null token
-    if C_AST_NODE_IS_COMPOUND_NULL(c_ast_decl.init):
-      lhs_ref_toks = (wire_name,)
-      parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
-      
-    # Dont support struct init here yet
-    elif type(c_ast_decl.init) == c_ast.InitList:
-      # Only array init for now
-      if C_TYPE_IS_ARRAY(c_type):
-        elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-        dim0_size = dims[0]
-        # For now user must specify all array elements, none assumed 0, not C spec
-        if dim0_size != len(c_ast_decl.init.exprs):
-          print("Array initializer is not size of array dimension at", c_ast_decl.init.coord)
-          sys.exit(-1)
-        dim0_i = 0
-        for init_expr in c_ast_decl.init.exprs:
-          ref_toks = (wire_name,dim0_i)
-          parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(ref_toks, c_ast_decl, init_expr, parser_state, prepend_text, None)
-          dim0_i += 1
-      else:
-        print("No support for (non-static) local variable struct init statement yet...", c_ast_decl.init.coord)
-        sys.exit(-1)
-          
-    else:
-      # Default connect node to single ref toks
-      # TODO is subset of above?
-      lhs_ref_toks = (wire_name,)
-      parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, c_ast_decl.type, c_ast_decl.init, parser_state, prepend_text, None)
-      #print("What init?",c_ast_decl.init.coord)
-      #sys.exit(-1)
+    lhs_ref_toks = (wire_name,)   
+    parser_state.existing_logic = C_AST_INIT_TO_LOGIC(c_ast_decl.init, lhs_ref_toks, c_ast_decl.type, c_type, prepend_text, parser_state)
   else:
     # No init but all vars init to zeros by default (like statics do)
     const_zero = c_ast.Constant(type='int',value='0')
@@ -6468,9 +6549,9 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     right_type = "uint8_t"
     parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
     
-  # Force bit shifts to have uint RHS (neg shift undefined)
+  # Force int bit shifts to have uint RHS (neg shift undefined)
   right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
-  if is_bit_shift and right_signed:
+  if VHDL.C_TYPES_ARE_INTEGERS([left_type]) and is_bit_shift and right_signed:
     right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     resized_prefix = "uint" + str(right_width)
     resized_t = resized_prefix + "_t"
