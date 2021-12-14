@@ -54,6 +54,7 @@ STRLEN_FUNC_NAME = "strlen"
 COMPOUND_NULL = "COMPOUND_NULL"
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
+UNARY_OP_NEGATE_NAME = "NEGATE"
 # Binary operators
 BIN_OP_GT_NAME = "GT"
 BIN_OP_GTE_NAME = "GTE"
@@ -1559,6 +1560,8 @@ def BUILD_LOGIC_AS_C_CODE(partially_complete_logic_local_inst_name, partially_co
       c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(partially_complete_logic_local_inst_name, partially_complete_logic, containing_func_logic, out_dir, parser_state)  
     elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
       c_code_text = SW_LIB.GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)  
+    elif partially_complete_logic.func_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX + "_" + UNARY_OP_NEGATE_NAME):
+      c_code_text = SW_LIB.GET_UNARY_OP_NEGATE_C_CODE(partially_complete_logic, out_dir, containing_func_logic, parser_state)
     elif (partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME) 
          or partially_complete_logic.func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_INFERRED_MULT_NAME)):
       c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state)
@@ -5359,42 +5362,46 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
           sys.exit(-1)
         
       else:
-        print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.",func_base_name)
+        print("Function", func_base_name, func_c_ast_node.coord, "is constant binary op yet to be supported.")
         sys.exit(-1)
         
     # UNARY OPERATIONS
     elif func_base_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX) and not base_name_is_name:
       in_wire = const_input_wires[0]
+      in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(in_wire, parser_state.existing_logic, parser_state)
       # Skip compund null wire optmizations for now
       if in_val_str==COMPOUND_NULL:
         return None
       in_negated = in_val_str.startswith('-')
       in_val_str_no_neg = in_val_str.strip('-')
-      in_val, in_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_no_neg, func_c_ast_node, in_negated)
-      '''# Prefer type if set
-      if in_wire in parser_state.existing_logic.wire_to_c_type:
-        in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]'''
-      
-      signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
-      in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
-      is_int = VHDL.C_TYPES_ARE_INTEGERS([in_c_type])
-      
-      # Number who?
-      if not is_int: # and not is_float:
-        print("Function", func_base_name, func_c_ast_node.coord, "is constant unary op of non numbers?")
+      in_val, in_c_type_from_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_no_neg, func_c_ast_node, in_negated)
+      if in_c_type != in_c_type_from_str:
+        print("Mismatching c types for unary op const?", in_val_str, in_c_type, in_c_type_from_str, func_c_ast_node.coord)
         sys.exit(-1)
-        
-      # What op?
-      if func_base_name.endswith(UNARY_OP_NOT_NAME):
-        in_bin_str = int2bin(in_val, in_width)
-        out_bin_str = in_bin_str.replace('0','T').replace('1','0').replace('T', '1')
-        out_val = to_int(out_bin_str, signed)
-        const_val_str = str(out_val)
+      if C_TYPE_IS_FLOAT_TYPE(in_c_type):
+        # Floats
+        # What op?
+        if func_base_name.endswith(UNARY_OP_NEGATE_NAME):
+          const_val_str = str(in_val*-1.0)
+        else:
+          print("Function", func_base_name, func_c_ast_node.coord, "is constant float unary op yet to be supported.")
+          sys.exit(-1)
       else:
-        print("Function", func_base_name, func_c_ast_node.coord, "is constant unary op yet to be supported.",func_base_name)
-        sys.exit(-1)
-        
+        # Ints
+        signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
+        in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
+        # What op?
+        if func_base_name.endswith(UNARY_OP_NOT_NAME):
+          in_bin_str = int2bin(in_val, in_width)
+          out_bin_str = in_bin_str.replace('0','T').replace('1','0').replace('T', '1')
+          out_val = to_int(out_bin_str, signed)
+          const_val_str = str(out_val)
+        elif func_base_name.endswith(UNARY_OP_NEGATE_NAME):
+          const_val_str = str(int(in_val*-1))
+        else:
+          print("Function", func_base_name, func_c_ast_node.coord, "is constant integer unary op yet to be supported.")
+          sys.exit(-1)
     # BIT MANIPULATION
     elif (func_logic is not None) and SW_LIB.IS_BIT_MANIP(func_logic):
       # TODO
@@ -6215,6 +6222,8 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   # Determine op string to use in func name
   if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
     c_ast_op_str = UNARY_OP_NOT_NAME
+  elif c_ast_unary_op_str == "-":
+    c_ast_op_str = UNARY_OP_NEGATE_NAME
   else:
     print("Unsupported unary op '" + c_ast_unary_op_str + "'?", c_ast_unary_op.coord)
     sys.exit(-1)
@@ -6261,24 +6270,25 @@ def C_AST_UNARY_OP_TO_LOGIC(c_ast_unary_op,driven_wire_names, prepend_text, pars
   if func_name in parser_state.FuncLogicLookupTable:
     func_logic = parser_state.FuncLogicLookupTable[func_name]
     output_c_type = func_logic.wire_to_c_type[RETURN_WIRE_NAME]
-    # Set type for output wire
-    parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
   # Determine output type based on operator or driving wire type
   else:
-    driven_c_type_str = GET_C_TYPE_FROM_WIRE_NAMES(driven_wire_names, parser_state.existing_logic, allow_fail=True)
-    if driven_c_type_str is not None:
-      # Most unary ops use the type of the driven wire
-      if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
-        output_c_type = driven_c_type_str
+    # Most unary ops use the type of the driven wire
+    if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
+      output_c_type = expr_type
+    # Negate is like signed mult by -1
+    elif c_ast_unary_op_str == "-":
+      if C_TYPE_IS_FLOAT_TYPE(expr_type):
+        output_c_type = expr_type
       else:
-        print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
-        sys.exit(-1) 
-      # Set type for output wire
-      parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
-  
-  # Otherwise use input expr type?  
-  if unary_op_output not in parser_state.existing_logic.wire_to_c_type:
-    parser_state.existing_logic.wire_to_c_type[unary_op_output] = expr_type
+        # Integer types
+        input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(expr_type)
+        output_c_type = "int"+str(input_width+1)+"_t"
+    else:
+      print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
+      sys.exit(-1)
+      
+  # Set type for output wire
+  parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
   
   func_c_ast_node = c_ast_unary_op
   func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(

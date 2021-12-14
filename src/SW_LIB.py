@@ -1348,7 +1348,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   # Parse to list of width toks
   abs_func_names = []
   # int24_abs(left_resized);
-  for type_regex in ["int[0-9]+_abs\s?\("]: #DO float abs?
+  for type_regex in ["int[0-9]+_abs\s?\("]: # Float abs is bit manip func
     p = re.compile(type_regex)
     abs_func_names = p.findall(c_text)
     abs_func_names = list(set(abs_func_names))
@@ -2249,6 +2249,36 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 }
 '''
 
+  # Float abs, just clear sign bit
+  # Regex search c_text
+  # Parse to list of width toks
+  float_const_func_names = []
+  # float_abs(in);
+  for type_regex in ["float", "float_[0-9]+_[0-9]+_t"]:
+    p = re.compile(type_regex + '_abs\s?\(')
+    float_const_func_names = p.findall(c_text)
+    float_const_func_names = list(set(float_const_func_names))
+    for float_const_func_name in float_const_func_names:
+      float_const_func_name = float_const_func_name.strip("(").strip()
+      toks = float_const_func_name.split("_")
+      if len(toks)==2:
+        # float
+        in_t = type_regex
+        result_t = in_t
+      else:
+        # float_e_m_t
+        in_t = "float_"+toks[1]+"_"+toks[2]+"_t"
+        result_t = in_t
+        
+      text += '''
+// FLOAT ABS
+''' + result_t + " " + float_const_func_name+"("+ in_t + ''' x)
+{
+  //TODO
+}
+'''
+
+
 
 
   # Byte swap, with same name as real C func
@@ -2381,13 +2411,60 @@ def GET_CAST_C_CODE(partially_complete_logic, containing_func_logic, out_dir, pa
   out_t = partially_complete_logic.wire_to_c_type[output_wire]
   if C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPE_IS_INT_N(out_t):
     return GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
-  if VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
+  elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
     return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
   else:
     print("Implement more casting: Easy/Lucky/Free Bright Eyes")
     print(in_t, out_t,partially_complete_logic.c_ast_node.coord)
     sys.exit(-1)
-    
+  
+def GET_UNARY_OP_NEGATE_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+  input_wire = partially_complete_logic.inputs[0]
+  in_t = partially_complete_logic.wire_to_c_type[input_wire]
+  if VHDL.C_TYPES_ARE_INTEGERS([in_t]):
+    return GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state)
+  else:
+    print("Implement more negate: ABBA - Dancing Queen")
+    print(in_t, out_t,partially_complete_logic.c_ast_node.coord)
+    sys.exit(-1)
+  
+  
+def GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
+  input_wire = partially_complete_logic.inputs[0]
+  in_t = partially_complete_logic.wire_to_c_type[input_wire]
+  in_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+  is_int = VHDL.C_TYPE_IS_INT_N(in_t) 
+  result_t = "int" + str(in_width+1) + "_t"
+  result_uint_t = "uint" + str(in_width+1) + "_t"
+
+  text = ""
+  text += '''
+#include "intN_t.h"
+#include "uintN_t.h"
+// Negate
+''' + result_t + " " + partially_complete_logic.func_name+"("+ in_t + ''' expr)
+{
+  // Twos comp
+  
+  ''' + result_uint_t + ''' x_wide;
+  x_wide = expr;
+  
+  ''' + result_uint_t + ''' x_wide_neg;
+  x_wide_neg = !x_wide;
+  
+  ''' + result_uint_t + ''' x_neg_wide_plus1;
+  x_neg_wide_plus1 = x_wide_neg + 1;
+  
+  ''' + result_t + ''' rv;
+  rv = x_neg_wide_plus1;
+  
+  return rv;
+}
+'''
+
+  return text
+  
+  
 def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_logic, out_dir, parser_state):
   # Int to float
   input_wire = partially_complete_logic.inputs[0]

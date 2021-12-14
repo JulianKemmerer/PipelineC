@@ -287,6 +287,8 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
 def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
   if str(logic.c_ast_node.op) == "!" or str(logic.c_ast_node.op) == "~":
     return GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
+  elif str(logic.c_ast_node.op) == "-":
+    return GET_UNARY_OP_NEGATE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state)
   else:
     print("GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for", str(logic.c_ast_node.op))
     sys.exit(-1)
@@ -515,7 +517,69 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(inst_n
   
   return wires_decl_text, text  
    
-  
+def GET_UNARY_OP_NEGATE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
+  # ONLY FLOATS FOR NOW FOR NOW
+  input_type = logic.wire_to_c_type[logic.inputs[0]]
+  input_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_type, parser_state)
+  output_type = logic.wire_to_c_type[logic.outputs[0]]
+  output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
+
+  wires_decl_text = '''
+  return_output : ''' + output_vhdl_type + ''';
+  expr : ''' + input_vhdl_type + ''';
+'''
+
+  # MAx clocks is input reg and output reg
+  #max_clocks = 2
+  latency = len(timing_params._slices)
+  num_stages = latency + 1
+  # Which stage gets the 1 LL ?
+  stage_for_1ll = None
+  if latency == 0:
+    stage_for_1ll = 0
+  elif latency == 1:
+    # Rely on percent
+    stage_for_1ll = 0
+    # If slice is to left logic is on right
+    if timing_params._slices[0] < 0.5:
+      stage_for_1ll = 1 
+  elif latency == 2:
+    # INput reg and output reg logic in middle
+    # IN stage 1 :  0 | 1 | 2
+    stage_for_1ll = 1
+  # Shouldnt need this but can do it
+  elif latency % 2 == 0:
+    # Even
+    # Ex. 4 | | | |
+    #      0 1 2 3 4
+    # Jsut put in middle stage
+    stage_for_1ll = int(latency/2)
+  else:
+    # Odd, ex 5:  | | | | |
+    #                 ^
+    # Depends on position of middle slice
+    middle_index = int(latency/2)
+    middle_slice = timing_params._slices[middle_index]
+    # If slice is to left, logic is on right
+    stage_for_1ll = middle_index
+    if middle_slice < 0.5:
+      stage_for_1ll = middle_index + 1
+    
+    
+
+  # 1 LL VHDL   
+  # VHDL text is just the IF for the stage in question
+  text = ""
+  text += '''
+    if STAGE = ''' + str(stage_for_1ll) + ''' then
+      -- Same value
+      write_pipe.return_output := write_pipe.expr; 
+      -- With left most sign bit inverted
+      write_pipe.return_output(write_pipe.return_output'left) := not write_pipe.expr(write_pipe.expr'left);
+    end if;     
+  '''
+
+  return wires_decl_text, text
 
 def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, LogicInstLookupTable, timing_params, parser_state):
   # ONLY INTS FOR NOW
