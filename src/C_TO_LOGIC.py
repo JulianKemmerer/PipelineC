@@ -5422,7 +5422,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
            right_width, right_unsigned_width,
            max_width, max_unsigned_width, left_max_val, 
            left_min_val, right_max_val, right_min_val) = GET_INTEGER_MAX_SIZE_INFO([in_t, out_t])
-        out_val = int(in_val_str)
+        
+        is_negated = in_val_str.startswith('-')
+        in_val_str_abs_val = in_val_str.strip('-') 
+        in_val, in_val_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(in_val_str_abs_val, func_c_ast_node, is_negated)
+        out_val = in_val
         if out_val > left_max_val or out_val < left_min_val:
           print("How to trim/add bits for cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
           sys.exit(-1)
