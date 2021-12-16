@@ -8015,23 +8015,24 @@ def GET_LOCAL_STATE_REG_INFO(parser_state):
     decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.Decl)
     for decl_c_ast_node in decl_c_ast_nodes:
       # Looking for state regs
-      if 'static' in decl_c_ast_node.storage:
-        state_reg_info = StateRegInfo()
-        c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(decl_c_ast_node, parser_state)
-        state_reg_info.name = var_name
-        state_reg_info.type_name = c_type
-        state_reg_info.init = decl_c_ast_node.init
-        # Resolved when evaluating containing func
-        #state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(decl_c_ast_node.init, "", parser_state)
-            
-        # Save flags
-        if 'volatile' in decl_c_ast_node.quals:
-          state_reg_info.is_volatile = True
-        
-        # Save info
-        if func_name not in parser_state.func_to_local_state_regs:
-          parser_state.func_to_local_state_regs[func_name] = dict()
-        parser_state.func_to_local_state_regs[func_name][state_reg_info.name] = state_reg_info
+      if 'static' not in decl_c_ast_node.storage:
+        continue
+      state_reg_info = StateRegInfo()
+      c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(decl_c_ast_node, parser_state)
+      state_reg_info.name = var_name
+      state_reg_info.type_name = c_type
+      state_reg_info.init = decl_c_ast_node.init
+      # Resolved when evaluating containing func
+      #state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(decl_c_ast_node.init, "", parser_state)
+          
+      # Save flags
+      if 'volatile' in decl_c_ast_node.quals:
+        state_reg_info.is_volatile = True
+      
+      # Save info
+      if func_name not in parser_state.func_to_local_state_regs:
+        parser_state.func_to_local_state_regs[func_name] = dict()
+      parser_state.func_to_local_state_regs[func_name][state_reg_info.name] = state_reg_info
   
   return parser_state
   
@@ -8046,13 +8047,14 @@ def GET_GLOBAL_CONST_INFO(parser_state):
   parser_state.global_consts = dict()
   global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
   for global_decl in global_decls:
-    if 'const' in global_decl.quals: 
-      info = GlobalConstInfo()
-      info.name = str(global_decl.name)
-      c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
-      info.type_name = c_type
-      info.init = global_decl.init
-        
+    if 'const' not in global_decl.quals:
+      continue
+    info = GlobalConstInfo()
+    info.name = str(global_decl.name)
+    c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
+    info.type_name = c_type
+    info.init = global_decl.init
+      
     # Save info
     parser_state.global_consts[info.name] = info
       
