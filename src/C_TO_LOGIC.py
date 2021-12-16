@@ -2027,9 +2027,9 @@ def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state):
     info = parser_state.global_consts[maybe_global_name]
     parser_state.existing_logic.wire_to_c_type[maybe_global_name] = info.type_name
     parser_state.existing_logic.variable_names.add(maybe_global_name)
-    # Do constant logic from init (dont have lhs node? use init?
-    lhs_ref_toks = (maybe_global_name,)   
-    parser_state.existing_logic = C_AST_INIT_TO_LOGIC(info.init, lhs_ref_toks, info.init, info.type_name, "", parser_state)  
+    # Do constant logic from init
+    lhs_ref_toks = (maybe_global_name,) 
+    parser_state.existing_logic = C_AST_DECL_TO_LOGIC(info.lhs, "", parser_state)
   
   # Sanity check not using clock cross globals?
   # TODO: for other things like brams declared but not directly used?
@@ -2061,7 +2061,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   
   #### GLOBALS \/
   # This is the first place we should see a global reference in terms of this function/logic
-  parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(lhs_orig_var_name, parser_state)
+  #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(lhs_orig_var_name, parser_state)
   
   # Sanity check
   if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
@@ -3536,7 +3536,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   base_var_name = ref_toks[0]
   
   # This is the first place we could see a global reference in terms of this function/logic
-  parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(base_var_name, parser_state)
+  #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(base_var_name, parser_state)
   
   # What type is this reference?
   c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state)
@@ -4850,8 +4850,10 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   #print "==== IF",file_coord_str,"======="
   for var_name in merge_var_names:    
     # Might be first place to see globals... is this getting out of hand?
-    parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
-    
+    #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
+    #parser_state_for_true.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_true)
+    #parser_state_for_false.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_false)
+      
     # Get aliases over time
     # original
     original_aliases = []
@@ -4936,7 +4938,9 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     for ref_toks in all_ref_toks_set:
       # Might be first place to see globals... is this getting out of hand?
       var_name = ref_toks[0]      
-      parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
+      #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
+      #parser_state_for_true.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_true)
+      #parser_state_for_false.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_false)
       
       # Get c type of ref
       c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_node, parser_state)
@@ -7071,7 +7075,16 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
       #print "Append input", input_wire_name
       c_type,input_var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(param_decl, parser_state)
       parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
-  
+      
+      
+  # In addition to inputs and outputs
+  # All func bodys can see globally defined variable names
+  # Instead of processing upon finding global names multiple times
+  # do a single copy of info from global to local func
+  all_ids = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_funcdef.body, c_ast.ID)
+  for id_node in all_ids:
+    var_name = str(id_node.name)
+    parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
   
   # Before doing anything with the func body
   # Need to decide what kind of func
@@ -8040,6 +8053,7 @@ class GlobalConstInfo:
   def __init__(self):
     self.name = None
     self.type_name = None
+    self.lhs = None
     self.init = None
       
 def GET_GLOBAL_CONST_INFO(parser_state):
@@ -8053,7 +8067,9 @@ def GET_GLOBAL_CONST_INFO(parser_state):
     info.name = str(global_decl.name)
     c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
     info.type_name = c_type
+    #print(global_decl)
     info.init = global_decl.init
+    info.lhs = global_decl
       
     # Save info
     parser_state.global_consts[info.name] = info
