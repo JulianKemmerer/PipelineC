@@ -1253,7 +1253,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
         # Add global for this logic
         #print "RAM GLOBAL:",global_name
         parser_state_copy.existing_logic = func_logic
-        func_logic = C_TO_LOGIC.MAYBE_GLOBAL_STATE_REG_INFO_TO_LOGIC(state_reg_info.name, parser_state_copy)
+        func_logic = C_TO_LOGIC.MAYBE_GLOBAL_DECL_TO_LOGIC(state_reg_info.name, parser_state_copy)
         FuncLogicLookupTable[func_name] = func_logic
       elif not func_name_was_global_def[func_name]:
         # Copy into local special here similar to MAYBE_GLOBAL^ above
