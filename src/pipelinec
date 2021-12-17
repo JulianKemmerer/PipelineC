@@ -112,7 +112,9 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Victor's RT - see Discord chat
+Victor's RT
+  See Discord chat
+Do struct init for statics! complex roms!
 Do video walkthrough of Pong demo?
 Do announcement of some sort for __clk()
   Basic NN?
@@ -225,5 +227,6 @@ Default dont put IO regs around single inst funcs in mid out sweep?
 Make wire/var.h that just does same as clock_crossing/var.h?
 Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
 Add compound one = {1}; to init to all bits=1
+Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
 """
 
