@@ -805,13 +805,19 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(log
   
   
   # Only ints+floats for now, check all inputs
-  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
+  if VHDL.WIRES_ARE_INT_N(logic.inputs, logic) or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic) or VHDL.WIRES_ARE_ENUM(logic.inputs,logic,parser_state):
     # HACK OH GOD NO dont look up enums
     left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
     right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_width = max(left_width,right_width)
     left_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
     right_cast_toks = ["std_logic_vector(resize(","," + str(max_width) + "))"]
+  elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type,right_type]):
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    max_width = max(left_width,right_width)
+    left_cast_toks = ["",""]
+    right_cast_toks = ["",""]
   else:
     # Some other type, rely on built in to from slv funcs
     left_width = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(left_type, parser_state)
