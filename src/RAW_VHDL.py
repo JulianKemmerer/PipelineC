@@ -2131,12 +2131,12 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
   # Bit slice
   
   # New float_e_m_t bit select
-  if len(toks) == 6:
+  if len(toks) == 6 and "float" in logic.func_name:
     high = int(toks[4])
     low = int(toks[5])
     return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
     
-  elif len(toks)==5:
+  elif len(toks)==5 and "float" in  logic.func_name and "uint" in logic.func_name:
     # Only know float_e_m_t_uintN construct
     return GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     
@@ -2147,19 +2147,21 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     elif "array" in toks[1]:
       return GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     # Eith BIT SLICE #uint64_39_39(
-    elif toks[1].isdigit() and toks[2].isdigit():
+    elif not toks[0].isdigit() and toks[1].isdigit() and toks[2].isdigit():
       high = int(toks[1])
       low = int(toks[2])
       return GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params, high, low)
     # OR BIT ASSIGN # uint64_uint15_2(
-    else:
+    elif "int" in toks[0] and "int" in toks[1] and toks[2].isdigit():
       # Above will fail if is BIT assign
       #print("bit assign?",logic.func_name)
       return GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
-      
+    else:
+      print("1GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
+      sys.exit(-1)
       
   elif len(toks) == 2:
-    if toks[0] == "float":
+    if toks[0] == "float" and "uint" in toks[1]:
       return GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     elif toks[0] == "bswap":
       # Byte swap
@@ -2171,17 +2173,45 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
       # Rotate right
       return GET_ROTR_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
     # Bit concat or bit duplicate?
-    elif toks[1].isdigit():
+    elif "int" in toks[0] and toks[1].isdigit():
       # Duplicate
       return GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, timing_params, parser_state)
-    else:
+    elif "int" in toks[0] and "int" in toks[1]:
       # Concat
       return GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    elif "float" in toks[0] and toks[1]=="abs":
+      return GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    else:
+      print("2GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
+      sys.exit(-1)
   else:
-    print("GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
+    print("3GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
+    sys.exit(-1)
+
+def GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  in_type = logic.wire_to_c_type[logic.inputs[0]]
+  in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
+  in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+  out_type = logic.wire_to_c_type[logic.outputs[0]]
+  out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_type, parser_state)
+  
+  wires_decl_text = '''
+  --variable x : ''' + in_vhdl_type + ''';
+  variable return_output : ''' + out_vhdl_type + ''';
+'''
+
+  # Float constrcut must always be zero clock
+  if len(timing_params._slices) > 0:
+    print("Cannot do a float abs in multiple clocks!?")
     sys.exit(-1)
     
-    
+  text = '''
+    return_output := x; -- Same value
+    return_output(return_output'left) := '0'; -- Clear sign bit
+    return return_output;
+'''
+
+  return wires_decl_text, text
     
 def GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   in_type = logic.wire_to_c_type[logic.inputs[0]]
