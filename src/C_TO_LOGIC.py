@@ -1866,7 +1866,7 @@ def C_AST_REF_TOKS_ARE_CONST(ref_toks):
   return True
       
       
-def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_state):
+def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(prepend_text, ref_toks, c_ast_node, parser_state):
   existing_logic = parser_state.existing_logic
   orig_var_name = ref_toks[0]
   id_str = ""
@@ -1894,7 +1894,7 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_st
   # Alias will include location in src
   coord_str = C_AST_NODE_COORD_STR(c_ast_node)
   # Base name
-  alias_base = id_str+"_"+coord_str
+  alias_base = prepend_text + id_str+"_"+coord_str
   
   # Return base without number appended?
   if orig_var_name not in existing_logic.wire_aliases_over_time:
@@ -1904,21 +1904,22 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(ref_toks, c_ast_node, parser_st
   aliases = existing_logic.wire_aliases_over_time[orig_var_name]
   if alias_base not in aliases:
     return alias_base
+  
+  #print("aliases",aliases,alias_base,alias_base not in aliases)
+  #aliases = existing_logic.wire_aliases_over_time[orig_var_name]
+  last_alias = aliases[len(aliases)-1]
+  #print(aliases,"last_alias",last_alias)
+  maybe_last_digit = last_alias.replace(alias_base+"_","")
+  if maybe_last_digit.isdigit():    
+    last_num = int(maybe_last_digit)
+    i=last_num+1
   else:
-    #aliases = existing_logic.wire_aliases_over_time[orig_var_name]
-    last_alias = aliases[len(aliases)-1]
-    #print(aliases,"last_alias",last_alias)
-    maybe_last_digit = last_alias.replace(alias_base+"_","")
-    if maybe_last_digit.isdigit():    
-      last_num = int(maybe_last_digit)
-      i=last_num+1
-    else:
-      i = 0
+    i = 0
+  alias = alias_base + "_" + str(i)
+  while alias in aliases:
+    i=i+1
     alias = alias_base + "_" + str(i)
-    while alias in aliases:
-      i=i+1
-      alias = alias_base + "_" + str(i)
-    return alias
+  return alias
 
 def ORIG_WIRE_NAME_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(orig_wire_name, c_ast_node,  existing_logic):
   # Alias will include location in src
@@ -2356,7 +2357,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
     # Assignments are ordered over time with existing logic
     # Assigning to a variable creates an alias
     # future reads on this variable are done from the alias
-    lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
+    lhs_next_wire_assignment_alias = C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(prepend_text, lhs_ref_toks, c_ast_assignment.lvalue, parser_state)
     #print "lhs_next_wire_assignment_alias",lhs_next_wire_assignment_alias
       
     # /\
@@ -2464,11 +2465,12 @@ def C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC(c_ast_assignment, driven_wire_names, prepe
 def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_ast_node, parser_state, prepend_text, c_ast_assignment):
     # RECORD NEW ALIAS FOR THIS ASSIGNMENT!!!
     lhs_orig_var_name = lhs_ref_toks[0]
+    #print("lhs_orig_var_name",lhs_orig_var_name)
     
     # Assignments are ordered over time with existing logic
     # Assigning to a variable creates an alias
     # future reads on this variable are done from the alias
-    lhs_next_wire_assignment_alias = prepend_text+C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(lhs_ref_toks, lhs_c_ast_node, parser_state)
+    lhs_next_wire_assignment_alias = C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(prepend_text, lhs_ref_toks, lhs_c_ast_node, parser_state)
     # Record
     parser_state.existing_logic.alias_to_driven_ref_toks[lhs_next_wire_assignment_alias] = lhs_ref_toks
     parser_state.existing_logic.alias_to_orig_var_name[lhs_next_wire_assignment_alias] = lhs_orig_var_name
@@ -2492,6 +2494,9 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(lhs_ref_toks, lhs_c_ast_node, rhs_c_a
     # Set type of RHS wire as LHS type if not known
     #print("rhs_to_lhs_logic.wire_driven_by",rhs_to_lhs_logic.wire_driven_by)
     rhs_driver = rhs_to_lhs_logic.wire_driven_by[lhs_next_wire_assignment_alias]
+    #print("lhs",lhs_ref_toks,lhs_next_wire_assignment_alias, "=",  rhs_driver)
+    #if lhs_orig_var_name in parser_state.existing_logic.wire_aliases_over_time:
+    #  print("aliases:",parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name])
     if rhs_driver not in rhs_to_lhs_logic.wire_to_c_type:
       #print "rhs_driver",rhs_driver
       #print "lhs_c_type",lhs_c_type
@@ -4358,7 +4363,7 @@ def C_AST_INIT_TO_LOGIC(c_ast_init, lhs_ref_toks, lhs_c_ast_node, c_type, prepen
       # Simple var
       expr_type = c_type
       expr_node = init_expr
-      ref_toks = tuple(lhs_ref_toks)    
+      ref_toks = tuple(lhs_ref_toks)
       # Do assignment
       parser_state.existing_logic = C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(
           ref_toks, 

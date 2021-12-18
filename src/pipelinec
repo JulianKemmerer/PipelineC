@@ -116,6 +116,7 @@ Victor's RT
   See Discord chat
 Do struct init for statics! complex roms!
 Do video walkthrough of Pong demo?
+FSM style bug: Fix NN demo inner loop not taking 1 cycle
 Do announcement of some sort for __clk()
   Basic NN?
   Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
