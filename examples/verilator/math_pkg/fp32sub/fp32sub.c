@@ -1,4 +1,3 @@
-#pragma once
 // uintN_t types for any N
 #include "uintN_t.h"
 

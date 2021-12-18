@@ -1,5 +1,3 @@
-#pragma once
-
 // types for any N
 #include "intN_t.h"
 #include "uintN_t.h"

@@ -1,4 +1,3 @@
-#pragma once
 // Verilator device under test test bench setup
 #include "../dut.h"
 
