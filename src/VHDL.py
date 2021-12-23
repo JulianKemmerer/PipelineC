@@ -28,6 +28,84 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
   c_type_str = logic.wire_to_c_type[global_wire]
   return C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state)
 
+def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
+  # Single item / not list
+  if type(c_ast_init) == c_ast.Constant:
+    return CONST_VAL_STR_TO_VHDL(str(c_ast_init.value), c_type, parser_state)
+  elif type(c_ast_init) == c_ast.UnaryOp and str(init.op)=='-' and (type(c_ast_init.expr) == c_ast.Constant):
+    negated_str = '-' + str(c_ast_init.expr.value)
+    return CONST_VAL_STR_TO_VHDL(negated_str, c_type, parser_state)
+  elif type(c_ast_init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(c_ast_init, logic, "", parser_state):
+    return CONST_VAL_STR_TO_VHDL(str(c_ast_init.name), c_type, parser_state)
+  
+  # Each thing in init list is either position based, [index], .member
+  pos = 0
+  # Shared logic for 1 or more init exprs
+  if type(c_ast_init) == c_ast.InitList:
+    init_exprs = c_ast_init.exprs
+  else:
+    print("Unsupported initializer for state variable in func", logic.func_name, type(c_ast_init).__name__, c_ast_init.coord)
+    sys.exit(-1) 
+  index_to_vhdl_str = dict()
+  member_to_vhdl_str = dict()
+  for init_expr in init_exprs:
+    # What is expected for this expression given type?
+    ref_toks = None
+    expr_node = None
+    if type(c_ast_init) == c_ast.InitList and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+      # Array
+      elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+      expr_node = init_expr
+      expr_type = elem_t
+      # Assign this pos in array, or specified pos
+      if type(init_expr) == c_ast.NamedInitializer:
+        # pos name 
+        pos = int(init_expr.name[0].value)
+        expr_node = init_expr.expr
+      index_to_vhdl_str[pos] = INIT_C_AST_NODE_TO_VHDL_INIT_STR(expr_node, elem_t, logic, parser_state)
+      
+    elif type(c_ast_init) == c_ast.InitList and C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+      # Struct
+      field_type_dict = parser_state.struct_to_field_type_dict[c_type]
+      field_names_list = list(field_type_dict.keys())
+      field_types_list = list(field_type_dict.values())
+      expr_node = init_expr
+      # Assign to specified member or by pos in member list
+      if type(init_expr) == c_ast.NamedInitializer:
+        # Field name based
+        member_name = init_expr.name[0].name
+        pos = field_names_list.index(member_name)
+        expr_type = field_type_dict[member_name]
+        expr_node = init_expr.expr
+      else:
+        # Position based
+        expr_type = field_types_list[pos]
+        member_name = field_names_list[pos]
+      member_to_vhdl_str[member_name] = INIT_C_AST_NODE_TO_VHDL_INIT_STR(expr_node, expr_type, logic, parser_state)
+      
+    # Update for next expr
+    pos += 1
+  
+  # Assemble text
+  text = "(\n"
+  if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+    for array_index in index_to_vhdl_str:
+      text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
+    text += "others => " + C_TYPE_STR_TO_VHDL_NULL_STR(elem_t, parser_state) + ",\n"
+  elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+    field_type_dict = parser_state.struct_to_field_type_dict[c_type]
+    field_names_list = list(field_type_dict.keys())
+    field_types_list = list(field_type_dict.values())
+    for member_name in field_names_list:
+      if member_name in member_to_vhdl_str:
+        text += member_name + " => " + member_to_vhdl_str[member_name] + ",\n"
+      else:
+        text += str(array_index) + " => " + C_TYPE_STR_TO_VHDL_NULL_STR(field_type_dict[member_name], parser_state)+ ",\n"
+  text = text.strip('\n').strip(',')
+  text += ")\n"
+  return text
+    
+
 # Could be volatile state too
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   parser_state.existing_logic = logic
@@ -41,101 +119,28 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   resolved_const_str = None
   if leaf in logic.state_regs:
     resolved_const_str = logic.state_regs[leaf].resolved_const_str  
-    
-  if type(init) == c_ast.Constant:
-    return CONST_VAL_STR_TO_VHDL(str(init.value), c_type, parser_state)
-  elif type(init) == c_ast.UnaryOp and str(init.op)=='-' and (type(init.expr) == c_ast.Constant):
-    negated_str = '-' + str(init.expr.value)
-    return CONST_VAL_STR_TO_VHDL(negated_str, c_type, parser_state)
-  elif type(init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(init, parser_state.existing_logic, "", parser_state):
-    return CONST_VAL_STR_TO_VHDL(str(init.name), c_type, parser_state)
-  elif type(init) == c_ast.InitList:
-    # Hey vhdl syntax might make this easy 
-    # ...once I special case a portion of possible AST
-    # Only do for arrays
-    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-      # Only int array
-      elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-      if not(C_TYPES_ARE_INTEGERS([elem_t]) or C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([elem_t])) or len(dims) > 1:
-        print("Only basic init list for single dimension arrays for now...",init.coord)
-        sys.exit(-1)
-      array_size = dims[0]
-      
-      # Construct named index assignments ( 0 => thing, 1 => thing2);
-      #int a[6] = { [1] = v1, v2, [4] = v4 };
-      #is equivalent to
-      #int a[6] = { 0, v1, v2, 0, v4, 0 };
-      index_to_vhdl_str = dict()
-      maybe_used_i = 0
-      for init_expr in init.exprs:
-        # named postion or assumed index?
-        value_c_ast_node = None
-        is_negated = False
-        if type(init_expr) == c_ast.NamedInitializer:
-          # Name needs to be a constant integer
-          #print(init_expr.name)
-          name = init_expr.name[0]
-          if name.type == 'int':
-            array_index = int(name.value)
-            maybe_used_i = array_index
-            value_c_ast_node = init_expr.expr
-          else:
-            print("Whats a not int doing in init array?",name,name.coord)
-            sys.exit(-1)
-        elif type(init_expr) == c_ast.Constant:
-          array_index = maybe_used_i
-          value_c_ast_node = init_expr
-        elif type(init_expr) == c_ast.UnaryOp and (str(init_expr.op)=="-") and (type(init_expr.expr) == c_ast.Constant):
-          array_index = maybe_used_i
-          value_c_ast_node = init_expr.expr
-          is_negated = True
-        else:
-          print("Whats the whats init?",init_expr,init_expr.coord)
-          sys.exit(-1)
-        # next might not be named
-        maybe_used_i += 1
-        
-        # Handle value at positon
-        if type(value_c_ast_node) == c_ast.Constant:
-          val_str = str(value_c_ast_node.value)
-          if is_negated:
-            val_str = "-" + val_str
-          index_to_vhdl_str[array_index] = CONST_VAL_STR_TO_VHDL(val_str, elem_t, parser_state) 
-        else:
-          print("Only simple constants in array init for now...",value_c_ast_node,value_c_ast_node.coord)
-          sys.exit(0)
-          
-      # Do not fill in as zeros, use others=>
-      
-      # Make vhdl str
-      text = "(\n"
-      for array_index in index_to_vhdl_str:
-        text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
-      text += "others => " + CONST_VAL_STR_TO_VHDL("0", elem_t, parser_state) + ")"
-      #text = text.strip('\n').strip(',')
-      #text += "\n)"
-      return text   
-    else:
-      print("Only init lists for arrays at the moment...",init.coord)
-      sys.exit(-1)
+  
+  # If none use null
+  if init is None:
+    return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+  
   # Raw VHDL init string?
-  elif type(init) == str:
+  if type(init) == str:
     init_file = init
     # Ugh need to todo some kind of relative file path support
     f=open(init_file)
     text=f.read()
     f.close()
     return text
-  # If not use null
-  elif init is None:
-    return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+  
   # Try to use resolved to a constant string? ugh
-  elif resolved_const_str is not None:
+  if resolved_const_str is not None:
     #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
     return CONST_VAL_STR_TO_VHDL(resolved_const_str, c_type, parser_state)
-  else:
-    print("Unsupported initializer for state variable:", wire, "in func",logic.func_name,init.coord)
-    sys.exit(-1)
+    
+  # Default handle c code
+  return INIT_C_AST_NODE_TO_VHDL_INIT_STR(init, c_type, logic, parser_state)
+  
     
 def CLK_EXT_STR(main_func, parser_state):
   text = ""
