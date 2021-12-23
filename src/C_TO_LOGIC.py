@@ -73,6 +73,7 @@ BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
 BIN_OP_INFERRED_MULT_NAME = "INFERRED_MULT"
 BIN_OP_DIV_NAME = "DIV"
+BIN_OP_DIV_NAME = "DIV"
 
 # Hacky internal names hash large strings into short hex codes, dont need them to be too large
 C_AST_NODE_HASH_LEN = 4
@@ -6407,31 +6408,22 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   # Determine op string to use in func name
   is_bit_shift = False
   is_bitwise = False
-  has_bit_growth = False # Float not included
   if c_ast_bin_op_str == ">":
     c_ast_op_str = BIN_OP_GT_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == ">=":
     c_ast_op_str = BIN_OP_GTE_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "<":
     c_ast_op_str = BIN_OP_LT_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "<=":
     c_ast_op_str = BIN_OP_LTE_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "+":
     c_ast_op_str = BIN_OP_PLUS_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "-":
     c_ast_op_str = BIN_OP_MINUS_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_INFERRED:
     c_ast_op_str = BIN_OP_INFERRED_MULT_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_FABRIC:
     c_ast_op_str = BIN_OP_MULT_NAME
-    has_bit_growth = True
   elif c_ast_bin_op_str == "/":
     c_ast_op_str = BIN_OP_DIV_NAME
   elif c_ast_bin_op_str == "==":
@@ -6511,19 +6503,11 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     if left_signed != right_signed:
       if left_signed:
         # Update right
-        # Only need bit growth if doing math, not bit manip stuff
-        if has_bit_growth:
-          right_type = "int" + str(right_width+1) + "_t"
-        else:
-          right_type = "int" + str(right_width) + "_t"
+        right_type = "int" + str(right_width+1) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type 
       if right_signed:
         # Update left
-        # Only need bit growth if doing math, not bit manip stuff
-        if has_bit_growth:
-          left_type = "int" + str(left_width+1) + "_t"
-        else:
-          left_type = "int" + str(left_width) + "_t"
+        left_type = "int" + str(left_width+1) + "_t"
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
         
   # If types are floats, round to common float format needed
