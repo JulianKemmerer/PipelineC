@@ -73,7 +73,6 @@ BIN_OP_MOD_NAME = "MOD"
 BIN_OP_MULT_NAME = "MULT"
 BIN_OP_INFERRED_MULT_NAME = "INFERRED_MULT"
 BIN_OP_DIV_NAME = "DIV"
-BIN_OP_DIV_NAME = "DIV"
 
 # Hacky internal names hash large strings into short hex codes, dont need them to be too large
 C_AST_NODE_HASH_LEN = 4
