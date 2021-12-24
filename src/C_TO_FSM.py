@@ -1206,10 +1206,17 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   state_groups = pre_fsms_groups + fsms_groups + post_fsms_groups
   
   # Doing opposite of Ends with clock -> onward being a starting state
-  # by making states that lead up to ending with a clock an ending state
+  # by making states that lead up to ending with a clock in the last group
   last_state_group = state_groups[-1]
-  last_state_group |= states_ends_w_clk
+  # Unless that group is the FSMs group, skip that since might be FSM return that needs to come after
+  if last_state_group==fsms_group:
+    last_state_group = states_ends_w_clk
+    state_groups.append(last_state_group)
+  else:
+    # Can safely add into last state group
+    last_state_group |= states_ends_w_clk
 
+  # Save return val
   parser_state.existing_logic.state_groups = state_groups
   
   # Sanity check all states coming in, went out
