@@ -1098,15 +1098,18 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   # Start off with as parsed single file ordered list of states
   states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
   parser_state.existing_logic.first_user_state = states_list[0]
-  '''
-  print("func:",parser_state.existing_logic.func_name)
-  for state in states_list:
-    state.print()
+  
+  debug = False #parser_state.existing_logic.func_name == "inc_act"
+  
+  if debug:
+    print("func:",parser_state.existing_logic.func_name)
+    for state in states_list:
+      state.print()
+      print("=====", flush=True)
     print("=====", flush=True)
-  print("=====", flush=True)
-  print("=====", flush=True)
-  print("=====", flush=True)
-  '''
+    print("=====", flush=True)
+    print("=====", flush=True)
+  
   
   # Sub return -> onwward groups "post" fsm middle
   fsm_return_states_list = []
@@ -1124,15 +1127,15 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     parser_state, 
     excluded_subentry_and_subfsm_states=excluded_subentry_and_subfsm_states,
     excluded_states=states_ends_w_clk)
-  '''
-  print("Postfsm groups:")
-  for i,post_fsms_group in enumerate(post_fsms_groups):
-    print("Postfsm group:",i)
-    for post_fsm_state in post_fsms_group:
-      post_fsm_state.print()
-      print("======")
-    print()
-  '''
+  if debug:
+    print("Postfsm groups:")
+    for i,post_fsms_group in enumerate(post_fsms_groups):
+      print("Postfsm group:",i)
+      for post_fsm_state in post_fsms_group:
+        post_fsm_state.print()
+        print("======")
+      print()
+  
   
   # Collect middle subroutine FSM state group
   states_list_no_fsms = []
@@ -1151,13 +1154,17 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   # Func entry -> onward
   # sub routine return -> onward
   # Ends with clock -> onward
+  # Branching backwards 
   # etc
   start_states = set([states_list_no_fsms[0]])
   for state in states_list_no_fsms:
+    # Pseduo new starts from func entry
+    if state.ends_w_fsm_func_entry:
+      start_states.add(state)
     # Pseduo new starts from func returns
     if state.starts_w_fsm_func_return:
       start_states.add(state)
-    # State after user delay clk  
+    # State after user delay clk
     if state.always_next_state is not None:
       if state.ends_w_clk:
         start_states.add(state.always_next_state)
@@ -1185,15 +1192,15 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   pre_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state, 
     excluded_subfsm_states_and_subreturn=excluded_subfsm_states_and_subreturn,
     excluded_states=all_post_and_ends_w_clk_states)
-  '''
-  print("Prefsm groups:")
-  for i,pre_fsms_group in enumerate(pre_fsms_groups):
-    print("Prefsm group:",i)
-    for pre_fsm_state in pre_fsms_group:
-      pre_fsm_state.print()
-      print("======")
-    print()
-  '''
+  if debug:
+    print("Prefsm groups:")
+    for i,pre_fsms_group in enumerate(pre_fsms_groups):
+      print("Prefsm group:",i)
+      for pre_fsm_state in pre_fsms_group:
+        pre_fsm_state.print()
+        print("======")
+      print()
+  
 
   # Combine all
   state_groups = pre_fsms_groups + fsms_groups + post_fsms_groups
