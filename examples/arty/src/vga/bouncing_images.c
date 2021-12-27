@@ -71,5 +71,5 @@ void app()
   pixel.r = color.r << 4;
   pixel.g = color.g << 4;
   pixel.b = color.b << 4;
-  vga_pmod_register_outputs(vga_signals, pixel);
+  pmod_register_outputs(vga_signals, pixel);
 }

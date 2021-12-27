@@ -87,7 +87,7 @@ DEBUG_OUTPUT_DECL(uint12_t, vga_x)
 #include "clock_crossing/vga_y_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, vga_y)
 
-void vga_pmod_register_outputs(vga_signals_t vga, pixel_t color)
+void pmod_register_outputs(vga_signals_t vga, pixel_t color)
 {
   // Registers
   static uint4_t vga_red_reg;
@@ -145,7 +145,7 @@ void vga_pmod_register_outputs(vga_signals_t vga, pixel_t color)
 
 uint64_t t0;
 uint64_t frame = 0;
-void vga_pmod_register_outputs(vga_signals_t current_timing, pixel_t current_color)
+void pmod_register_outputs(vga_signals_t current_timing, pixel_t current_color)
 {
   //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.r);
 
@@ -170,7 +170,7 @@ void vga_pmod_register_outputs(vga_signals_t current_timing, pixel_t current_col
 }
 
 #ifdef USE_VERILATOR
-void verilator_vga_output(Vtop* g_top)
+void verilator_output(Vtop* g_top)
 {
   // 4b colors from hardware
   uint8_t r = g_top->vga_red;

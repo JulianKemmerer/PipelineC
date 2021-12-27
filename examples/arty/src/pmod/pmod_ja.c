@@ -9,26 +9,26 @@
 // Inputs
 typedef struct pmod_ja_to_app_t
 {
-  //uint1_t ja0
-  //uint1_t ja1;
-  //uint1_t ja2;
-  //uint1_t ja3;
-  //uint1_t ja4;
-  //uint1_t ja5;
-  //uint1_t ja6;
+  uint1_t ja0;
+  uint1_t ja1;
+  uint1_t ja2;
+  uint1_t ja3;
+  uint1_t ja4;
+  uint1_t ja5;
+  uint1_t ja6;
   uint1_t ja7;
 }pmod_ja_to_app_t;
 // Outputs
 typedef struct app_to_pmod_ja_t
 {
-  //uint1_t ja0;
+  uint1_t ja0;
   uint1_t ja1;
   uint1_t ja2;
   uint1_t ja3;
-  //uint1_t ja4;
+  uint1_t ja4;
   uint1_t ja5;
   uint1_t ja6;
-  //uint1_t ja7;
+  uint1_t ja7;
 }app_to_pmod_ja_t;
 
 // Globally visible ports/wires

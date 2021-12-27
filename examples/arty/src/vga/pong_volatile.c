@@ -364,5 +364,5 @@ void app()
   pixel_t color = render_pixel(vga_signals.pos, curr_state);
   
   // Drive output signals/registers
-  vga_pmod_register_outputs(vga_signals, color);
+  pmod_register_outputs(vga_signals, color);
 }
