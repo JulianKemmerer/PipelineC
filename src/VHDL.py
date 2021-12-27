@@ -1123,10 +1123,90 @@ architecture arch of arb_clk_cross_''' + arb_inst_name + ''' is
 
   constant N_ARB : integer := ''' + str(n_arb) + ''';
   signal arb_state_r : integer range 0 to (N_ARB-1) := 0;
-  signal arb_state_waiting_for_done_r : std_logic := '0';
+  signal arb_state_waiting_for_done_r : std_logic := '0'; -- Like a valid for arb_state_r
+  signal input_arb_in_input_valids : std_logic_vector(0 to (N_ARB-1));
+  signal input_arb_in_output_readys : std_logic_vector(0 to (N_ARB-1));
+  signal output_arb_in_output_valid : std_logic;
+  signal output_arb_in_input_ready : std_logic;
+  signal priority_arb_r : integer range 0 to (N_ARB-1) := 0;
+  signal priority_arb_state_c : integer range 0 to (N_ARB-1);
+  
+  type priority_list_t is array(0 to (N_ARB-1)) of integer;
+  type priority_lists_t is array(0 to (N_ARB-1)) of priority_list_t;
+  function priority_list_func(constant priority_state : integer) return priority_list_t is 
+    variable pos : integer;
+    variable rv: priority_list_t;
+  begin
+     pos := 0;
+     for i in priority_state to (N_ARB-1) loop
+        rv(pos) := i;
+        pos := pos + 1;
+     end loop;
+     for i in 0 to (priority_state-1) loop
+        rv(pos) := i;
+        pos := pos + 1;
+     end loop;
+     return rv;
+  end function;
+  
+  function priority_func(priority_state : integer; valids : std_logic_vector) return integer is
+    variable priority_lists : priority_lists_t;
+    variable priority_list : priority_list_t;
+    variable chosen_index : integer range 0 to (N_ARB-1);
+  begin
+    -- Compute all priority arrangements
+    for i in 0 to (N_ARB-1) loop
+      priority_lists(i) := priority_list_func(i);
+    end loop;
+    -- Choose the current one
+    priority_list :=  priority_lists(priority_state);
+    -- case(priority_state) is
+    --   when 0 =>
+    --     priority_list := priority_lists(0);
+    --   when 1 =>
+    --     priority_list := priority_lists(1);
+    --   when 2 =>
+    --     priority_list := priority_lists(2);
+    --   when 3 =>
+    --     priority_list := priority_lists(3);
+    -- end case;
+    -- Pick individial arb based on current priority list
+    chosen_index := 0;
+    for i in 0 to (N_ARB-1) loop
+      if valids(priority_list(i)) = '1' then
+        chosen_index := priority_list(i);
+        exit;
+      end if;
+    end loop;
+    return chosen_index;
+  end function;
 
 begin
 
+  -- Apply clock enables
+  -- Multiple inputs
+'''
+    for i in range(0,n_arb):
+      text += f'''
+  input_arb_in_input_valids({i}) <= input_arb_in_data_{i}.data(0).input_valid(0) and input_arb_in_clk_en_{i}(0);
+  input_arb_in_output_readys({i}) <= input_arb_in_data_{i}.data(0).output_ready(0) and input_arb_in_clk_en_{i}(0);'''
+    text += '''
+  -- Single output
+  output_arb_in_output_valid <= output_arb_in_data_0.data(0).output_valid(0) and output_arb_in_clk_en_0(0);
+  output_arb_in_input_ready <= output_arb_in_data_0.data(0).input_ready(0) and output_arb_in_clk_en_0(0);
+    
+  -- Process for intermediate priority state
+  process(all) is
+  begin
+    -- Default arb state this cycle is signalled current state
+    priority_arb_state_c <= arb_state_r;
+    -- But if not waiting for done, use priority to choose
+    -- Given priority state and input valids, what is actual arb state this cycle
+    if arb_state_waiting_for_done_r='0' then
+      priority_arb_state_c <= priority_func(priority_arb_r, input_arb_in_input_valids);
+    end if;
+  end process;
+  
   -- Process connecting ports
   process(all) is
   begin
@@ -1143,18 +1223,18 @@ begin
     output_arb_rd_return_output_'''+str(i)+'''.data(0).input_ready(0) <= '0';\n'''
     
     text += '''
-    case(arb_state_r) is
+    case(priority_arb_state_c) is
       -- Mux each arb\n'''
     for i in range(0,n_arb):
       text += '''
       when '''+str(i)+''' =>
         -- Inputs w/ valid+ready gated by clock enable
         input_arb_rd_return_output_0 <= input_arb_in_data_'''+str(i)+''';
-        input_arb_rd_return_output_0.data(0).input_valid(0) <= input_arb_in_data_'''+str(i)+'''.data(0).input_valid(0) and input_arb_in_clk_en_'''+str(i)+'''(0);
-        input_arb_rd_return_output_0.data(0).output_ready(0) <= input_arb_in_data_'''+str(i)+'''.data(0).output_ready(0) and input_arb_in_clk_en_'''+str(i)+'''(0);
+        input_arb_rd_return_output_0.data(0).input_valid(0) <= input_arb_in_input_valids('''+str(i)+''');
+        input_arb_rd_return_output_0.data(0).output_ready(0) <= input_arb_in_output_readys('''+str(i)+''');
         -- Outputs w/ valid+ready gated by clock enable
-        output_arb_rd_return_output_'''+str(i)+'''.data(0).output_valid(0) <= output_arb_in_data_0.data(0).output_valid(0) and output_arb_in_clk_en_0(0);
-        output_arb_rd_return_output_'''+str(i)+'''.data(0).input_ready(0) <= output_arb_in_data_0.data(0).input_ready(0) and output_arb_in_clk_en_0(0);\n'''
+        output_arb_rd_return_output_'''+str(i)+'''.data(0).output_valid(0) <= output_arb_in_output_valid;
+        output_arb_rd_return_output_'''+str(i)+'''.data(0).input_ready(0) <= output_arb_in_input_ready;\n'''
     
     text += '''
     end case;
@@ -1164,61 +1244,63 @@ begin
   process(clk) is
 
     procedure next_state(
-      signal arb_state : inout integer range 0 to (N_ARB-1);
+      signal arb_state_in : in integer range 0 to (N_ARB-1);
       signal waiting_for_done : inout std_logic;
       input_valid : in std_logic;
       input_ready : in std_logic;
       output_valid : in std_logic; 
-      output_ready : in std_logic  
+      output_ready : in std_logic;
+      signal arb_state_out : out integer range 0 to (N_ARB-1)
     ) is
       variable waiting_for_done_var : std_logic;
-      variable default_next_arb_state : integer range 0 to (N_ARB-1); 
     begin
-      -- Default next transition
-      if(arb_state=(N_ARB-1)) then
-        default_next_arb_state := 0;
-      else 
-        default_next_arb_state := arb_state + 1;
-      end if;
-      arb_state <= default_next_arb_state;
-    
       -- Begin waiting for done if input valid+ready
       waiting_for_done_var := waiting_for_done;
       if(waiting_for_done_var='0') then
         if(input_valid='1' and input_ready='1') then
+          arb_state_out <= arb_state_in; -- Signal state being arbitrated now
           waiting_for_done_var := '1';
         end if;
       end if;
       -- If waiting for done then 
       -- Stay in current state and look for outputs
       if(waiting_for_done_var='1') then
-        arb_state <= arb_state; -- Override default and stay
         -- Go to next arb state if output valid+ready
         if(output_valid='1' and output_ready='1') then
-          arb_state <= default_next_arb_state;
           waiting_for_done_var := '0';
         end if;
       end if;
       waiting_for_done <= waiting_for_done_var;
     end procedure;
+    
+    variable selected_input_valid : std_logic;
+    variable selected_output_ready : std_logic;
 
   begin
     if rising_edge(clk) then 
-      case(arb_state_r) is\n'''
-    
-    for i in range(0,n_arb):
-      text += '''
-      when '''+str(i)+''' =>
-        next_state(
-          arb_state_r,
+      -- Priority state only changes when 
+      -- not stopped waiting for one arb to finish
+      if arb_state_waiting_for_done_r='0' then
+        if(priority_arb_r=(N_ARB-1)) then
+          priority_arb_r <= 0;
+        else 
+          priority_arb_r <= priority_arb_r + 1;
+        end if;
+      end if;
+      
+      -- Do next state based on which arb input chosen this cycle 
+      selected_input_valid := input_arb_in_input_valids(priority_arb_state_c);
+      selected_output_ready := input_arb_in_output_readys(priority_arb_state_c);
+      next_state(
+          priority_arb_state_c,
           arb_state_waiting_for_done_r,
-          input_arb_in_data_'''+str(i)+'''.data(0).input_valid(0) and input_arb_in_clk_en_'''+str(i)+'''(0),
-          output_arb_in_data_0.data(0).input_ready(0) and output_arb_in_clk_en_0(0),
-          output_arb_in_data_0.data(0).output_valid(0) and output_arb_in_clk_en_0(0),
-          input_arb_in_data_'''+str(i)+'''.data(0).output_ready(0) and input_arb_in_clk_en_'''+str(i)+'''(0)
-        );\n'''
-    text += '''
-      end case;
+          selected_input_valid,
+          output_arb_in_input_ready,
+          output_arb_in_output_valid,
+          selected_output_ready,
+          arb_state_r
+        );
+      
     end if;
   end process;
 

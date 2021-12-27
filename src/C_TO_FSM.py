@@ -602,6 +602,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
   #print(text)
   return text  
   
+def BUILD_STATE_NAME(c_ast_node, post_text=""):
+  return "L" + str(c_ast_node.coord.line) + "_C" + str(c_ast_node.coord.column) + "_" + str(type(c_ast_node).__name__) + post_text
   
 def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, next_state_info=None):
   if curr_state_info is None:
@@ -611,7 +613,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
       name_c_ast_node = c_ast_node.block_items[0]
     else:
       name_c_ast_node = c_ast_node
-    curr_state_info.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
+    curr_state_info.name = BUILD_STATE_NAME(name_c_ast_node)
     curr_state_info.always_next_state = next_state_info
   # Collect chunks
   # Chunks are list of comb cast nodes that go into one state
@@ -649,7 +651,7 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
           name_c_ast_node = next_c_ast_node.block_items[0]
         else:
           name_c_ast_node = next_c_ast_node
-        curr_state_info.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node)
+        curr_state_info.name = BUILD_STATE_NAME(name_c_ast_node)
   # Final comb logic chunk
   if len(curr_state_info.c_ast_nodes) > 0:
     #print("state",curr_state_info.name)
@@ -822,7 +824,7 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
     curr_state_info = FsmStateInfo()
     curr_state_info.always_next_state = old_current_state_info.always_next_state
     old_current_state_info.always_next_state = curr_state_info
-    curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_ENTRY"
+    curr_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_ENTRY"
     #if next_state_info is None:
     #  print("No next state entering func ",curr_state_info.name,"from old",old_current_state_info.name)
     #  sys.exit(-1)
@@ -880,7 +882,7 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
     next_state_info = FsmStateInfo()
     next_state_info.always_next_state = future_next_state_info
     curr_state_info.always_next_state = next_state_info
-    next_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_EXIT"
+    next_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_EXIT"
     states.append(next_state_info)
   next_state_info.starts_w_fsm_func_return = c_ast_node
   next_state_info.starts_w_fsm_func_return_output_driven_things = output_driven_things
@@ -956,7 +958,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
     name_c_ast_node = c_ast_if.iftrue.block_items[0]
   else:
     name_c_ast_node = c_ast_if.iftrue
-  true_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_TRUE"
+  true_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_TRUE"
   if next_state_info is None:
       print("No next state entering if ",true_state.name,"from",curr_state_info.name)
       sys.exit(-1)
@@ -975,7 +977,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
       name_c_ast_node = c_ast_if.iffalse.block_items[0]
     else:
       name_c_ast_node = c_ast_if.iffalse
-    false_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FALSE"
+    false_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_FALSE"
     if next_state_info is None:
       print("No next state entering if ",false_state.name,"from",curr_state_info.name)
       sys.exit(-1)
@@ -1010,7 +1012,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
     # New curr state needed
     prev_curr_state_info = curr_state_info
     curr_state_info = FsmStateInfo()
-    curr_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_FOR_COND"
+    curr_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_COND"
     curr_state_info.always_next_state = None # Branching, no default
     states += [curr_state_info]
     # Prev state default goes to new state
@@ -1021,7 +1023,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
   # How to combine with other state is_ok_for_jump_back?
   prev_next_state_info = next_state_info
   next_state_info = FsmStateInfo() 
-  next_state_info.name = str(type(c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_node) + "_FOR_NEXT"
+  next_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_NEXT"
   next_state_info.c_ast_nodes.append(c_ast_node.next)
   next_state_info.always_next_state = curr_state_info # Always back to cond state
    
@@ -1033,7 +1035,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
     name_c_ast_node = c_ast_node.stmt.block_items[0]
   else:
     name_c_ast_node = c_ast_node.stmt
-  for_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_FOR_BODY"
+  for_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_FOR_BODY"
   for_state.always_next_state = next_state_info # Default do next iter/statement curr_state_info # Default staying in for body
   # Add mux sel calculation, and jumping to do current state muxing -> body logic (before evaluating body)
   curr_state_info.branch_nodes_tf_states = (c_ast_node, for_state, prev_next_state_info)
@@ -1065,7 +1067,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
     # New curr state needed
     prev_curr_state_info = curr_state_info
     curr_state_info = FsmStateInfo()
-    curr_state_info.name = str(type(c_ast_while).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(c_ast_while) + "_WHILE_COND"
+    curr_state_info.name = BUILD_STATE_NAME(c_ast_while) + "_WHILE_COND"
     curr_state_info.always_next_state = None # Branching, no default
     states += [curr_state_info]
     # Prev state default goes to new state
@@ -1078,7 +1080,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
     name_c_ast_node = c_ast_while.stmt.block_items[0]
   else:
     name_c_ast_node = c_ast_while.stmt
-  while_state.name = str(type(name_c_ast_node).__name__) + "_" + C_TO_LOGIC.C_AST_NODE_COORD_STR(name_c_ast_node) + "_WHILE"
+  while_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_WHILE"
   #if next_state_info is None:
   #  print("No next state entering while ",while_state.name,"from",curr_state_info.name)
   #  sys.exit(-1)
