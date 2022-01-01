@@ -175,14 +175,3 @@ uint32_t inference_fsm_shared_wrapper()
   }
   return max_act_label;
 }
-
-// Oh shit a pair of two single instance functions is need
-// A start and finish async kind of thing?
-// Need way to check out/lock a piece of memory
-
-
-/*
-todo even simpler inference loop
-neuron function version?
-then atomic memory version?
-*/
