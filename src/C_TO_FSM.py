@@ -697,7 +697,9 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
   
   return states
   
-def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=set()):
+def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
+  if visited_states is None:
+    visited_states = set()
   #print("start_state.name",start_state.name)
   #start_state.print()
   #print()
@@ -1101,7 +1103,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
   parser_state.existing_logic.first_user_state = states_list[0]
   
-  debug = False #parser_state.existing_logic.func_name == "inc_act"
+  debug = False
   
   if debug:
     print("func:",parser_state.existing_logic.func_name)
@@ -1120,15 +1122,15 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
       fsm_return_states_list.append(state)
   # Exclude pre fsm + fsm stuff (entry+fsm state)
   excluded_subentry_and_subfsm_states = True
-  # And exclude states that end with clock
+  ### And exclude states that end with clock
   states_ends_w_clk = set()
   for state in states_list:
     if state.ends_w_clk:
       states_ends_w_clk.add(state)
   post_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(fsm_return_states_list, 
     parser_state, 
-    excluded_subentry_and_subfsm_states=excluded_subentry_and_subfsm_states,
-    excluded_states=states_ends_w_clk)
+    excluded_subentry_and_subfsm_states=excluded_subentry_and_subfsm_states) #,
+    #excluded_states=states_ends_w_clk)
   if debug:
     print("Postfsm groups:")
     for i,post_fsms_group in enumerate(post_fsms_groups):
@@ -1190,10 +1192,10 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   for post_fsms_group in post_fsms_groups:
     all_post_states |= post_fsms_group
   #### Exclude states end with clk
-  all_post_and_ends_w_clk_states = all_post_states | states_ends_w_clk
+  ####all_post_and_ends_w_clk_states = all_post_states | states_ends_w_clk
   pre_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state, 
     excluded_subfsm_states_and_subreturn=excluded_subfsm_states_and_subreturn,
-    excluded_states=all_post_and_ends_w_clk_states)
+    excluded_states=all_post_states) #all_post_and_ends_w_clk_states)
   if debug:
     print("Prefsm groups:")
     for i,pre_fsms_group in enumerate(pre_fsms_groups):
@@ -1209,6 +1211,14 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   
   # Doing opposite of Ends with clock -> onward being a starting state
   # by making states that lead up to ending with a clock in the last group
+  
+  # Remove states ending with clock delay
+  for state_group in state_groups:
+    for state in list(state_group):
+      if state.ends_w_clk:
+        state_group.remove(state)
+  
+  # Add states ending with clock to last group
   last_state_group = state_groups[-1]
   # Unless that group is the FSMs group, skip that since might be FSM return that needs to come after
   if last_state_group==fsms_group:
@@ -1217,6 +1227,11 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   else:
     # Can safely add into last state group
     last_state_group |= states_ends_w_clk
+    
+  # Remove any empty groups from list
+  for state_group in list(state_groups):
+    if len(state_group)==0:
+      state_groups.remove(state_group)
 
   # Save return val
   parser_state.existing_logic.state_groups = state_groups
@@ -1243,6 +1258,9 @@ def GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state,
   excluded_subentry_and_subfsm_states=False,
   excluded_states = set()
   ):
+    
+  debug = False
+    
   # Get state lists of all cases so far
   all_state_trans_lists = []
   for start_state in start_states:
@@ -1276,7 +1294,8 @@ def GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state,
       if state_i > state_to_latest_index[state]:
         state_to_latest_index[state] = state_i
       state_i += 1
-    #print(text)
+    if debug:
+      print(text)
   
   if len(state_to_latest_index) <= 0:
     return []
@@ -1293,7 +1312,8 @@ def GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state,
       text = "State Group: "
       for state in state_group:
         text += state.name + ","
-      #print(text)
+      if debug:
+        print(text)
       
   return non_none_state_groups
 
