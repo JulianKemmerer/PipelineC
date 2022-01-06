@@ -113,16 +113,20 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 """
 TODO:
 Victor's RT
+  Try fixed point things from email
   See Discord chat
-Do struct init for statics! complex roms!
-Do video walkthrough of Pong demo?
-FSM style bug: Fix NN demo inner loop not taking 1 cycle
+  Get 24b pmod working
 Do announcement of some sort for __clk()
-  Basic NN?
-  Do MNIST example with minmal resource usage and then scale up. Even smallest single pipelines are huge.
+  MNIST How to do in hardware demo? 
+    Simple via ethernet send buffers, get buffers
+    Show image and prediction on VGA?
+  Mention FOSIX guessing game in __clk() style
+Single direction data handshaked clock crossing
+  Kinda like half of single inst arb as is
+  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
+Do video walkthrough of Pong demo?
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
-Get 24b pmod working
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -182,7 +186,6 @@ Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
-OPTIMIZE AWAY CONSTANTs: do as easy c ast manip? mult by 1 or neg 1, mult by 2^n and div by 2^n, (floats and ints!) I dont want to be a compiler
 Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
@@ -229,5 +232,6 @@ Make wire/var.h that just does same as clock_crossing/var.h?
 Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
 Add compound one = {1}; to init to all bits=1
 Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
+Slight optimization from not rendering binary ops with always matching signedness? (render i32 AND u16, as opposed to casting to i17)
 """
 
