@@ -41,7 +41,7 @@ _An easy to understand hardware description language with a powerful autopipelin
 * Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined - especially helpful for those new to digital logic design.
 * Integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays when moving data from host<->FPGA).
 * A full hardware description language replacement. Can start by cloning existing VHDL/Verilog designs or including raw VHDL - not forced to use entire language at all times.
-* Globally visible point-to-point wires, multi-rate/width clock domain crossings, inferred clock enable nested FSMs, are just some of the growing list of composability features inspired by real life hardware design requirements/tasks.
+* Globally visible point-to-point wires, multi-rate/width clock domain crossings, and complex derived FSMs, are just some of the growing list of composability features inspired by real life hardware design requirements/tasks.
 * Automatic pipelining as a feature of the compiler. Basic use of the tool can be to generate single pipelines to drop into existing designs elsewhere. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 
 Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc).
