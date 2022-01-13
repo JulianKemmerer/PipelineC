@@ -3732,7 +3732,16 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     return "to_signed(" + str(value_num) + ", " + str(width) + ")"
   elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
     e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)
-    return "to_slv(to_float(" + str(value_num) + ", " + str(e) + ", " + str(m) + "))"
+    f_str = str(value_num)
+    # VHDL needs dot for float literal
+    if "." not in f_str:
+      # Scientific notation?
+      if 'e' in f_str.lower():
+        f_str = "{:e}".format(value_num)
+      else:
+        f_str = "{:.1f}".format(value_num)
+      #print("new f_str",f_str,"was",value_num)
+    return "to_slv(to_float(" + f_str + ", " + str(e) + ", " + str(m) + "))"
   else:
     print("How to give const",val_str,"gen VHDL?")
     sys.exit(-1)

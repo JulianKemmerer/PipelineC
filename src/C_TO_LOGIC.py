@@ -263,16 +263,19 @@ def READ_FILE_REMOVE_COMMENTS(c_filename):
 def casthelp(arg):
   try:
     print(arg)
+    return
   except:
     pass;
   
   try:
     arg.show()
+    return
   except:
     pass;
   
   try:  
     print(dir(arg))
+    return
   except:
     pass; 
     
@@ -1773,7 +1776,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_stat
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
   # Check for double return
   if RETURN_WIRE_NAME in parser_state.existing_logic.wire_driven_by:
-    print("What, more than one return? Come on man don't make me sad...", str(c_ast_return.coord))
+    print("What, more than one return? Come on eh don't make me sad...", str(c_ast_return.coord))
     sys.exit(-1) 
   
   # Return is just connection to wire
@@ -4140,7 +4143,7 @@ def SUFFIX_C_TYPE_FROM_INT_LITERAL(int_lit):
     return None
 
 def STRIP_INT_LIT_SUFF(int_lit):
-  return int_lit.strip("LL").strip("U").strip("L")
+  return int_lit.strip("LL").strip("U").strip("u").strip("L")
   
 def C_CONST_STR_TO_STR_VALUE(c_const_str):
   s = c_const_str[:]
@@ -4150,9 +4153,9 @@ def C_CONST_STR_TO_STR_VALUE(c_const_str):
   
 def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
   value_str_no_suff = STRIP_INT_LIT_SUFF(value_str)
-  if value_str.startswith("0x"):
-    hex_str = value_str.replace("0x","")
-    suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(hex_str)
+  if value_str.lower().startswith("0x"):
+    hex_str = value_str_no_suff.lower().replace("0x","")
+    suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(value_str)
     c_type_str = None
     if suff_c_type:
       c_type_str = suff_c_type
@@ -4166,8 +4169,8 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
         c_type_str = "int" + str(bits+1) + "_t"
       else:
         c_type_str = "uint" + str(bits) + "_t"
-  elif value_str.startswith("0b"):
-    bin_str = value_str.replace("0b","")
+  elif value_str.lower().startswith("0b"):
+    bin_str = value_str.lower().replace("0b","")
     suff_c_type = SUFFIX_C_TYPE_FROM_INT_LITERAL(bin_str)
     c_type_str = None
     if suff_c_type:
@@ -4200,13 +4203,13 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     value = value_str.strip("'")
     c_type_str = "char"
     #print "Char val", value
-  elif ("." in value_str) or ("e-" in value_str) or (value_str.endswith("F")) or (value_str.endswith("L")):
-    value = float(value_str)
-    c_type_str = "float"
   elif value_str.startswith('"'): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='string':
     value = value_str.strip('"')
     actual_str = C_CONST_STR_TO_STR_VALUE(value)
     c_type_str = "char[" + str(len(actual_str)) + "]"
+  elif (type(c_ast_node)==c_ast.Constant and c_ast_node.type=='float') or ("." in value_str) or (value_str.lower().endswith("f")) or (value_str.lower().endswith("l")):
+    value = float(value_str)
+    c_type_str = "float"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
     print(0/0)
@@ -4214,6 +4217,8 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
   
   if is_negated:
     value = value * -1
+  
+  #print("value,c_type_str",value_str,value,c_type_str)
     
   return value,c_type_str
 
@@ -4358,7 +4363,10 @@ def C_AST_INIT_TO_LOGIC(c_ast_init, lhs_ref_toks, lhs_c_ast_node, c_type, prepen
           expr_type, 
           prepend_text, 
           parser_state
-        )     
+        )
+    elif type(c_ast_init) == c_ast.InitList:
+      print("Type",c_type,"does not appear to use initialization lists?", c_ast_init.coord)
+      sys.exit(-1)
     else:
       # Simple var
       expr_type = c_type
@@ -6490,6 +6498,18 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   #       VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
   #
   #
+  
+  # Can't cast float to from int in comb logic 
+  # No cast need for bit shifts
+  if not is_bit_shift:
+    if C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
+      #output_c_type = left_type
+      print("TODO: Float int ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
+      sys.exit(-1)
+    elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
+      #output_c_type = right_type
+      print("TODO: Int float ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
+      sys.exit(-1)
 
   # If types are integers then check signed/unsigned matches
   #   Change type from unsigned to sign by adding bit to type
@@ -6665,14 +6685,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
       # Float shifts (mult/div by pow2)
       elif is_bit_shift and C_TYPE_IS_FLOAT_TYPE(left_type) and VHDL.C_TYPES_ARE_INTEGERS([right_type]):
         output_c_type = left_type
-      elif C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
-        #output_c_type = left_type
-        print("TODO: Float int ops? shouldnt occur",left_type,right_type,c_ast_binary_op.coord)
-        sys.exit(-1)
-      elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
-        #output_c_type = right_type
-        print("TODO: Int float ops? shouldnt occur",left_type,right_type,c_ast_binary_op.coord)
-        sys.exit(-1)
       else:
         # Ints only
         if VHDL.C_TYPES_ARE_INTEGERS([left_type,right_type]):
@@ -6950,7 +6962,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
           print("RHS",driving_wire,"drives LHS",driven_wire_name,"with different types?", c_ast_node.coord)
           print(driven_wire_type, "!=", rhs_type)
           print("Implement nasty casty?") #Fat White Family - Tastes Good With The Money
-          #print(0/0)
+          print(0/0)
           sys.exit(-1)
     
         
@@ -7746,6 +7758,8 @@ def PARSE_FILE(c_filename):
       #print(parser_state.c_file_ast)
       print("Parsing non-function definitions...", flush=True)
       # Parse definitions first before code structure
+      # Warn about typedefs not being resolved
+      # Used too often to warn about? parser_state = WARN_NO_RENAMING_TYPEDEFS(parser_state.c_file_ast, parser_state)
       # Get the parsed enum info
       parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
       # Get the parsed struct def info
@@ -8492,6 +8506,26 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
   
   return rv
 
+'''
+_printed_NO_RENAMING_TYPEDEFS = False
+def WARN_NO_RENAMING_TYPEDEFS(c_file_ast, parser_state):
+  # Read in file with C parser and get function def nodes
+  type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
+  for type_def in type_defs:
+    #casthelp(type_def)
+    thing = type_def.children()[0][1].children()[0][1]
+    if type(thing) == c_ast.Struct:
+      continue
+    elif type(thing) == c_ast.Enum:
+      continue
+    global _printed_NO_RENAMING_TYPEDEFS
+    if not _printed_NO_RENAMING_TYPEDEFS:
+      print("WARNING: Simple renaming of types with typedefs is not supported! Use #define new_t old_t for now.")
+      _printed_NO_RENAMING_TYPEDEFS = True
+    print("WARNING: Skipped typedef that renames types:", type_def.coord)
+    continue
+'''
+
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
 def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
   # Read in file with C parser and get function def nodes
@@ -8506,6 +8540,7 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
   type member2;
 } struct_alias;''')
         _printed_GET_STRUCT_FIELD_TYPE_DICT = True
+      print("WARNING: Skipped struct def without alias:", struct_def.coord)
       continue
           
     #casthelp(struct_def)

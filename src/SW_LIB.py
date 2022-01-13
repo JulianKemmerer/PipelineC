@@ -2245,7 +2245,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 // FLOAT UINT32
 ''' + result_t + " " + float_const_func_name+"("+ in_t + ''' x)
 {
-  //TODO
+  //TODOs
 }
 '''
 
@@ -2278,7 +2278,31 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
 }
 '''
 
-
+  # Float sign, just return sign bit
+  # Regex search c_text
+  float_const_func_names = []
+  # float_sign(in);
+  for type_regex in ["float", "float_[0-9]+_[0-9]+_t"]:
+    p = re.compile(type_regex + '_sign\s?\(')
+    float_const_func_names = p.findall(c_text)
+    float_const_func_names = list(set(float_const_func_names))
+    for float_const_func_name in float_const_func_names:
+      float_const_func_name = float_const_func_name.strip("(").strip()
+      toks = float_const_func_name.split("_")
+      if len(toks)==2:
+        # float
+        in_t = type_regex
+      else:
+        # float_e_m_t
+        in_t = "float_"+toks[1]+"_"+toks[2]+"_t"
+        
+      text += '''
+// FLOAT SIGN
+''' + "uint1_t" + " " + float_const_func_name+"("+ in_t + ''' x)
+{
+  //TODO
+}
+'''
 
 
   # Byte swap, with same name as real C func

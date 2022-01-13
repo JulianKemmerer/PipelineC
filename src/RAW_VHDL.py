@@ -2149,6 +2149,12 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     elif toks[-1]=="abs":
        # float_e_m_t_abs
       return GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+    elif toks[-1]=="sign":
+       # float_e_m_t_sign
+      return GET_FLOAT_SIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)    
+    else:
+      print("0GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
+      sys.exit(-1)
     
   elif len(toks) == 3:
     if logic.func_name.startswith("float_") and not toks[1].isdigit() and not toks[2].isdigit():
@@ -2198,6 +2204,30 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state
     print("3GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ", logic.func_name, "?")
     sys.exit(-1)
 
+def GET_FLOAT_SIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  in_type = logic.wire_to_c_type[logic.inputs[0]]
+  in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
+  in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+  out_type = "uint1_t"
+  out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_type, parser_state)
+  
+  wires_decl_text = '''
+  --variable x : ''' + in_vhdl_type + ''';
+  variable return_output : ''' + out_vhdl_type + ''';
+'''
+
+  # Float sign must always be zero clock
+  if len(timing_params._slices) > 0:
+    print("Cannot do a float sign in multiple clocks!?")
+    sys.exit(-1)
+    
+  text = '''
+    return_output(0) := x(x'left); -- left most sign bit
+    return return_output;
+'''
+
+  return wires_decl_text, text
+
 def GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
   in_type = logic.wire_to_c_type[logic.inputs[0]]
   in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
@@ -2210,7 +2240,7 @@ def GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
   variable return_output : ''' + out_vhdl_type + ''';
 '''
 
-  # Float constrcut must always be zero clock
+  # Float abs must always be zero clock
   if len(timing_params._slices) > 0:
     print("Cannot do a float abs in multiple clocks!?")
     sys.exit(-1)
