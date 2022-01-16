@@ -2532,44 +2532,54 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
   // Building SEM to return
   ''' + mantissa_t + ''' mantissa;
   ''' + exponent_t + ''' biased_exponent;
-  ''' + sign_t + ''' sign;'''
+  ''' + sign_t + ''' sign;
+  
+  // Special case zero
+  ''' + out_t + ''' rv;
+  if(rhs==0)
+  {
+    rv = float_''' + exponent_t_prefix + "_" + mantissa_t_prefix + '''(0,0,0);
+  }
+  else
+  {
+  '''
   
   unsigned_t = "uint" + str(input_width) + "_t"
   if is_int:
     # Integer
     text += ''' 
-  // Record sign
-  sign = int''' + str(input_width) + "_" + str(input_width-1) + "_" + str(input_width-1) + '''(rhs);
-  // Take abs value
+    // Record sign
+    sign = int''' + str(input_width) + "_" + str(input_width-1) + "_" + str(input_width-1) + '''(rhs);
+    // Take abs value
   ''' + unsigned_t + ''' unsigned_rhs;
-  unsigned_rhs = int''' + str(input_width) + '''_abs(rhs);\n'''
+    unsigned_rhs = int''' + str(input_width) + '''_abs(rhs);\n'''
   else:
     # Unsigned
     text += ''' 
-  // Record sign
-  sign = 0;
-  // Abs value is just rhs
-  ''' + unsigned_t + ''' unsigned_rhs;
-  unsigned_rhs = rhs;\n'''
+    // Record sign
+    sign = 0;
+    // Abs value is just rhs
+    ''' + unsigned_t + ''' unsigned_rhs;
+    unsigned_rhs = rhs;\n'''
   
   
   # Count leading zeros
   num_zeros_bits = int(math.ceil(math.log(input_width+1,2)))
   num_zeros_t = "uint" + str(num_zeros_bits) + "_t"
   text += '''
-  // Count leading zeros
-  ''' + num_zeros_t + ''' num_zeros;
-  num_zeros = count0s''' + "_uint" + str(input_width) + '''(unsigned_rhs);'''
+    // Count leading zeros
+    ''' + num_zeros_t + ''' num_zeros;
+    num_zeros = count0s''' + "_uint" + str(input_width) + '''(unsigned_rhs);'''
   
   
   # Shift all the way left plus 1 to drop upper most bit
   shift_t = "uint" + str(num_zeros_bits+1) + "_t"
   text += '''
-  // Shift all the way left plus 1 to drop upper most bit
-  ''' + shift_t + ''' shift;
-  shift = num_zeros + 1;
-  ''' + unsigned_t + ''' shifted_unsigned_rhs;
-  shifted_unsigned_rhs = unsigned_rhs << shift;'''
+    // Shift all the way left plus 1 to drop upper most bit
+    ''' + shift_t + ''' shift;
+    shift = num_zeros + 1;
+    ''' + unsigned_t + ''' shifted_unsigned_rhs;
+    shifted_unsigned_rhs = unsigned_rhs << shift;'''
   
   
   # Might need to append zeros to right if rhs is smaller than mantissa
@@ -2580,46 +2590,49 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(partially_complete_logic, containing_func_
     # Pad right with zeros
     pad_size = mantissa_width - input_width
     text += '''
-    // Pad right with zeros
-    ''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
-    maybe_resized_rhs = uint''' + str(input_width) + "_uint" + str(pad_size) + '''(shifted_unsigned_rhs, 0);'''
+      // Pad right with zeros
+      ''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
+      maybe_resized_rhs = uint''' + str(input_width) + "_uint" + str(pad_size) + '''(shifted_unsigned_rhs, 0);'''
   else:
     # No resize
     maybe_resized_width = input_width
     maybe_resized_rhs_t = "uint" + str(maybe_resized_width) + "_t"
     text += '''
-    // No resize
-    ''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
-    maybe_resized_rhs = shifted_unsigned_rhs;'''
+      // No resize
+      ''' + maybe_resized_rhs_t + ''' maybe_resized_rhs;
+      maybe_resized_rhs = shifted_unsigned_rhs;'''
     
   # Take mantissa from upper bits
   top_index = maybe_resized_width - 1
   bottom_index = top_index - mantissa_width + 1
   text += '''
-  // Take mantissa from upper bits
-  mantissa = uint''' + str(maybe_resized_width) + "_" + str(top_index) + "_" + str(bottom_index) + '''(maybe_resized_rhs);'''
+    // Take mantissa from upper bits
+    mantissa = uint''' + str(maybe_resized_width) + "_" + str(top_index) + "_" + str(bottom_index) + '''(maybe_resized_rhs);'''
   
   # Exponent depends on position of leading zero in original number
   # Use that to calculate bit width needed
   text += '''
-  // Exponent depends on shift
-  // All zeros = leading zeros = width, shift=width+1
-  if(shift == ''' + str(input_width+1) +''')
-  {
-    biased_exponent = 0;
-  }
-  else
-  {
-    // Normal non zero case
-    ''' + exponent_t + ''' exponent;
-    exponent = ''' + str(input_width) + ''' - shift;
-    // Add bias
-    biased_exponent = exponent + ''' + str(exponent_bias) + ''';
-  }'''
+    // Exponent depends on shift
+    // All zeros = leading zeros = width, shift=width+1
+    if(shift == ''' + str(input_width+1) +''')
+    {
+      biased_exponent = 0;
+    }
+    else
+    {
+      // Normal non zero case
+      ''' + exponent_t + ''' exponent;
+      exponent = ''' + str(input_width) + ''' - shift;
+      // Add bias
+      biased_exponent = exponent + ''' + str(exponent_bias) + ''';
+    }'''
   
   # Construct float to return
   text += '''
-  return float_''' + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
+    rv = float_''' + exponent_t_prefix + "_" + mantissa_t_prefix + '''(sign, biased_exponent, mantissa);
+  }
+  
+  return rv;
 }'''
 
   #print(text)
@@ -2675,23 +2688,33 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
   ''' + exponent_t + ''' biased_exponent;
   biased_exponent = '''+fp_t+'''_''' + str(exponent_range[0]) + '''_''' + str(exponent_range[1]) + '''(rhs);
   ''' + sign_t + ''' sign;
-  sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(rhs);'''
+  sign = '''+fp_t+'''_''' + str(sign_index) + '''_''' + str(sign_index) + '''(rhs);
+  
+  ''' + out_t + ''' rv;
+  // Special case zero
+  if((mantissa==0) & (biased_exponent==0))
+  {
+    rv = 0;
+  }
+  else
+  {
+  '''
   
   # Get real unbiased exponent
   signed_exponent_t = "int" + str(exponent_width_plus1) + "_t"
   unbiased_exponent_t = "int" + str(exponent_width) + "_t"
   text += '''
-  ''' + signed_exponent_t + ''' signed_biased_exponent;
-  signed_biased_exponent = biased_exponent;
-  ''' + unbiased_exponent_t + ''' unbiased_exponent;
-  unbiased_exponent = signed_biased_exponent - ''' + str(exponent_bias) + ''';'''
+    ''' + signed_exponent_t + ''' signed_biased_exponent;
+    signed_biased_exponent = biased_exponent;
+    ''' + unbiased_exponent_t + ''' unbiased_exponent;
+    unbiased_exponent = signed_biased_exponent - ''' + str(exponent_bias) + ''';'''
   
   # Append the 1 in front of the manitissa
   mantissa_width_plus_1 = mantissa_width+1
   mantissa_normalized_t = "uint" + str(mantissa_width_plus_1) + "_t"
   text += '''
-  ''' + mantissa_normalized_t + ''' mantissa_normalized;
-  mantissa_normalized = uint1_''' + mantissa_t_prefix + '''(1, mantissa);'''
+    ''' + mantissa_normalized_t + ''' mantissa_normalized;
+    mantissa_normalized = uint1_''' + mantissa_t_prefix + '''(1, mantissa);'''
   
   # 24th bit is 1 so need to include that when shifting
   # Output width of cast limits how far we should bother shifting before overflowing into undefined output
@@ -2706,19 +2729,19 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
   interm_t = interm_prefix + "_t"
   # Extend mantissa with zeros
   text += '''
-  ''' + interm_t + ''' interm;
-  interm = mantissa_normalized;'''
+    ''' + interm_t + ''' interm;
+    interm = mantissa_normalized;'''
   # Shift mantissa with hidden bit if greater or equal to 0 and up a limit
   text += '''
-  if( (unbiased_exponent >= 0) & (unbiased_exponent <= ''' + str(total_shift_max) + ''') )
-  {
-    ''' + shift_t + ''' shift;
-    shift = unbiased_exponent;
-    interm = interm << shift;
-  }else if(unbiased_exponent < 0) // Round to zero?
-  {
-    interm = 0;
-  }'''
+    if( (unbiased_exponent >= 0) & (unbiased_exponent <= ''' + str(total_shift_max) + ''') )
+    {
+      ''' + shift_t + ''' shift;
+      shift = unbiased_exponent;
+      interm = interm << shift;
+    }else if(unbiased_exponent < 0) // Round to zero?
+    {
+      interm = 0;
+    }'''
   
   # Take result from top of shifted interm mantissa
   top_index = interm_size - 1
@@ -2726,17 +2749,20 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(partially_complete_logic, containing_func_logic
   unsigned_result_prefix = "uint" + str(unsigned_width)
   unsigned_result_t = unsigned_result_prefix  + "_t"
   text += '''
-  ''' + unsigned_result_t + ''' unsigned_result;
-  unsigned_result = ''' + interm_prefix + "_" + str(top_index) + "_" + str(bottom_index) + '''(interm);'''
+    ''' + unsigned_result_t + ''' unsigned_result;
+    unsigned_result = ''' + interm_prefix + "_" + str(top_index) + "_" + str(bottom_index) + '''(interm);'''
   
   # Negate if necessary
   text += '''
-  ''' + out_t + ''' rv;
-  rv = unsigned_result;
-  if(sign)
-  {
-    rv = ''' + unsigned_result_prefix + '''_negate(unsigned_result);
+  
+    rv = unsigned_result;
+    if(sign)
+    {
+      rv = ''' + unsigned_result_prefix + '''_negate(unsigned_result);
+    }
+  
   }
+  
   return rv;
 }
 '''
@@ -3280,7 +3306,12 @@ def GET_BIN_OP_SR_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_fun
   uint''' + str(exponent_width) + '''_t z_exponent;
   uint1_t z_sign;
   z_sign = left_sign;
-  z_exponent = left_exponent - right; // Div by pow2
+  z_exponent = 0;
+  // Div by pow2 with sub to exponent
+  if(left_exponent != 0) // Zero divided by anything still zero
+  {
+    z_exponent = left_exponent - right;
+  }
   z_mantissa = left_mantissa;
   // Assemble output  
   return float_uint'''+str(exponent_width) + "_uint" + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
@@ -3343,7 +3374,12 @@ def GET_BIN_OP_SL_FLOAT_C_CODE(partially_complete_logic, out_dir, containing_fun
   uint''' + str(exponent_width) + '''_t z_exponent;
   uint1_t z_sign;
   z_sign = left_sign;
-  z_exponent = left_exponent + right; // mult by pow2
+  z_exponent = 0;
+  // mult by pow2 with add to exponent
+  if(left_exponent != 0) // Zero times anything stays zero
+  {
+    z_exponent = left_exponent + right; 
+  }
   z_mantissa = left_mantissa;
   // Assemble output  
   return float_uint'''+str(exponent_width) + "_uint" + str(mantissa_width) + '''(z_sign, z_exponent, z_mantissa);
