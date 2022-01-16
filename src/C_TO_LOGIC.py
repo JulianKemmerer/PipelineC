@@ -6773,8 +6773,24 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
             output_c_type = "u" + output_c_type
         # Shifts
         elif c_ast_bin_op_str == "<<":
-          # Shifting left returns type of left operand
+          # Default type of left operand
           output_c_type = left_type
+          # Shifting left is has special integer promotion
+          # And will return type of driving wire if known and larger
+          if len(driven_wire_names) > 0 and driven_wire_names[0] in parser_state.existing_logic.wire_to_c_type:
+            driven_out_type = parser_state.existing_logic.wire_to_c_type[driven_wire_names[0]]
+            driven_out_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(driven_out_type)
+            left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+            if driven_out_width >= left_width:
+              output_c_type = driven_out_type
+              # And re-writes input port type (left arg)
+              parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = output_c_type
+              input_driver_types[0] = output_c_type
+          else:
+            # Only fail if not 32b as expected in C
+            if left_width < 32:
+              print("WARNING: Unclear output type for integer promoted bitshift left input arg.", c_ast_binary_op.coord)
+              #sys.exit(-1)
         elif c_ast_bin_op_str == ">>":
           # Shifting right returns type of left operand
           output_c_type = left_type
@@ -8156,7 +8172,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   for var_name in all_var_names:
     if var_name in parser_state.global_state_regs:
       if var_name not in var_to_write_func:
-        print("Warning: Missing clock cross write function for clock crossing named:",var_name)
+        print("WARNING: Missing clock cross write function for clock crossing named:",var_name)
         #sys.exit(-1)
       # Make up a read func if needed (unconnected output)
       if var_name not in var_to_read_func:
@@ -8199,7 +8215,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     
     # Final check per clock cross var
     if len(write_main_funcs) == 0:
-      print("Warning: Problem finding write side main functions for",var_name)
+      print("WARNING: Problem finding write side main functions for",var_name)
       #print("Missing or incorrect #pragma MAIN_MHZ ?")
       #sys.exit(-1)
     var_to_rw_main_funcs[var_name] = (read_main_funcs,write_main_funcs)
@@ -8230,7 +8246,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           if write_mhz is not None:
             write_mhz_group_tuples.add((write_mhz,write_group))
       if len(write_mhz_group_tuples) > 1:
-        print(f"Warning: Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!")
+        print(f"WARNING: Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!")
         inferring = True
       if len(write_mhz_group_tuples) == 1:
         write_mhz,write_group = list(write_mhz_group_tuples)[0]
@@ -8246,7 +8262,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           if read_mhz is not None:
             read_mhz_group_tuples.add((read_mhz,read_group))
       if len(read_mhz_group_tuples) > 1:
-        print(f"Warning: Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!")
+        print(f"WARNING: Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!")
         inferring = True
       if len(read_mhz_group_tuples) == 1:
         read_mhz,read_group = list(read_mhz_group_tuples)[0]

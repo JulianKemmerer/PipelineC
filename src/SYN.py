@@ -1350,7 +1350,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"Warning: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
         continue      
       f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n');
   else:
@@ -1358,7 +1358,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"Warning: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
         continue
       ns = (1000.0 / clock_mhz)
       f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");

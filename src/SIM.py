@@ -34,7 +34,7 @@ def DO_OPTIONAL_SIM(do_sim, parser_state, args, latency=0):
     if do_sim:
       VERILATOR.DO_SIM(latency, parser_state, args)
   else:
-    print("Warning: Unknown simulation tool:", SIM_TOOL.__name__)
+    print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)
 
 def GET_SIM_FILES(latency=0):
   # Get all vhd files in syn output
