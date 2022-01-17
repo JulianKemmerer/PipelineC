@@ -110,9 +110,9 @@ int main(int argc, char *argv[]) {
  
   # Identify tool versions
   import OPEN_TOOLS
-  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
-  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
-  print(C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)  
+  print(OPEN_TOOLS.GHDL_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
+  print(OPEN_TOOLS.YOSYS_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
+  print(VERILATOR_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)
   
   # Write a shell script to execute
   m_ghdl = ""

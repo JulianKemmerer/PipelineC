@@ -64,6 +64,8 @@ else:
 C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
+# Sim tool selection
+SIM.SET_SIM_TOOL(args)
 
 
 print("""
@@ -85,7 +87,6 @@ print("================== Writing Resulting Logic to File ======================
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 
 # Here is a good point to check basic single cycle/comb logic functionality before pipelining
-SIM.SET_SIM_TOOL(args)
 SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
   
 if not args.comb and not args.yosys_json:
@@ -113,17 +114,16 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
 """
 TODO:
 Victor's RT
-  Try fixed point things from email
-  See Discord chat
   Get 24b pmod working
 Do announcement of some sort for __clk()
   MNIST How to do in hardware demo? 
     Simple via ethernet send buffers, get buffers
-    Show image and prediction on VGA?
+    VGA prob too much...? Show image and prediction on VGA?
   Mention FOSIX guessing game in __clk() style
 Single direction data handshaked clock crossing
   Kinda like half of single inst arb as is
   just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
+  Want some want to share N resources among M callers
 Do video walkthrough of Pong demo?
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified

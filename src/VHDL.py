@@ -11,6 +11,9 @@ import C_TO_LOGIC
 import SW_LIB
 import RAW_VHDL
 import SYN
+import SIM
+import VERILATOR
+import CXXRTL
 import VIVADO
 import QUARTUS
 
@@ -3154,6 +3157,12 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
     process_sens_list = process_sens_list[0:len(process_sens_list)-2]
     rv += process_sens_list
     rv += ")\n"
+  else:
+    # Some tools assume wait is needed if empty sens list
+    # Use all in sens list if nothing else
+    # GHDL->Yosys needs?
+    if (SIM.SIM_TOOL == VERILATOR) or (SIM.SIM_TOOL == CXXRTL):
+      rv += "(all)\n"
 
   rv += "is \n"
   
@@ -3179,7 +3188,6 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
-  
   
   # Raw HDL functions are done differently
   if not(len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in):
@@ -3279,8 +3287,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
         rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "write_self_regs(PIPELINE_LATENCY)." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
     
   # Add wait statement if nothing in sensitivity list for simulation?
-  if process_sens_list == "":
-    rv += " " + "-- For simulation? \n"
+  # GHDL->Yosys doesnt like?
+  if process_sens_list == "" and (SIM.SIM_TOOL != VERILATOR) and (SIM.SIM_TOOL != CXXRTL):
+    rv += " " + f"-- For simulation? \n" 
     rv += " " + "wait;\n"
     
   rv += "end process;\n"
