@@ -33,6 +33,7 @@ type clk_cross_wire_name; \
 #include arrayn_header(type) \
 #include clkcross_header(clk_cross_wire_name)
 */
+#ifdef __PIPELINEC__
 
 // Read from a global clock cross same clock domain wire
 #define WIRE_READ(type, lhs, clk_cross_name) \
@@ -45,6 +46,11 @@ clk_cross_name##_write_t clk_cross_name##_clk_cross_write_array; \
 clk_cross_name##_clk_cross_write_array.data[0] = rhs; \
 clk_cross_name##_WRITE(clk_cross_name##_clk_cross_write_array);
 
+#else
+// No non wire clock crossings in regular C?
+#define WIRE_WRITE(a,b,c) b = c;
+#define WIRE_READ(a,b,c) b = c;
+#endif
 
 // Use global wires to connect up a new main func instance
 

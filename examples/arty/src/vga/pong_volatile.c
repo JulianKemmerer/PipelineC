@@ -48,13 +48,17 @@ inline user_input_t get_user_input()
 {
   // Read buttons wire/board IO port
   uint4_t btns;
-  WIRE_READ(uint4_t, btns, buttons)
   user_input_t i;
+  // TODO user IO for running as C code
+  // For now only exists in hardware
+  #ifdef __PIPELINEC__
+  WIRE_READ(uint4_t, btns, buttons)
   // Select which buttons are up and down
   i.paddle_r_up = btns >> 0;
   i.paddle_r_down = btns >> 1;
   i.paddle_l_up = btns >> 2;
   i.paddle_l_down = btns >> 3;
+  #endif
   return i;
 }
 

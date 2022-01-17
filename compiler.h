@@ -23,7 +23,13 @@ PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
 #define false 0
 #define and &
 #else
+#ifndef __cplusplus
 #define and &&
 #define uint1_t bool
 #endif
+#endif
 
+// Volatile does not mean what it means to software
+#ifndef __PIPELINEC__
+#define volatile 
+#endif

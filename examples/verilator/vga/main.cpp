@@ -18,12 +18,13 @@ $ ./sim
 */
 
 // VGA timing logic, frame size const, etc
+#include "../../../wire.h"
 #include "../../../uintN_t.h"
 #include "../../arty/src/vga/pixel.h"
 #include "../../arty/src/vga/vga_timing.h"
 
 // Verilator RTL based sim, or raw C?
-#define USE_VERILATOR
+//#define USE_VERILATOR
 
 // Code adapted from https://projectf.io/posts/verilog-sim-verilator-sdl/
 #ifdef USE_VERILATOR
@@ -116,7 +117,8 @@ void fb_deinit()
 
 // Application 'app()' func under test to run (instead of verilator model)
 #ifndef USE_VERILATOR
-#include "../../raytracer_fixed/pipelinec_app.c"
+//#include "../../raytracer_fixed/pipelinec_app.c"
+#include "../../arty/src/vga/pong_volatile.c"
 #endif
 
 // Main loop doing per clock:
