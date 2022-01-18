@@ -4208,7 +4208,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     actual_str = C_CONST_STR_TO_STR_VALUE(value)
     c_type_str = "char[" + str(len(actual_str)) + "]"
   elif (type(c_ast_node)==c_ast.Constant and c_ast_node.type=='float') or ("." in value_str) or (value_str.lower().endswith("f")) or (value_str.lower().endswith("l")):
-    value = float(value_str)
+    value = float(value_str.strip('f').strip('l').strip('F').strip('L'))
     c_type_str = "float"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
