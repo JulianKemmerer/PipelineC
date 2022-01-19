@@ -5,14 +5,22 @@
 #include "uintN_t.h"
 #include "float_e_m_t.h"
 // Access to board buttons
-#include "../buttons/buttons.c"
+//#include "../buttons/buttons.c"
 // Top level IO wiring + VGA resolution timing logic+types
 #include "vga_pmod.c"
+// Float is built in
+#define float_lshift(x,shift) ((x)<<(shift))
 // Variable width float stuff
 #define float float_8_23_t
 #define uint_to_float float_8_23_t_uint32
 #define float_to_uint float_8_23_t_31_0
 #define RSQRT_MAGIC 0x5f3759df
+/*
+#define float float_8_14_t
+#define uint_to_float float_8_14_t_uint23
+#define float_to_uint float_8_14_t_22_0
+#define RSQRT_MAGIC 0x2F9BAC
+*/
 
 #else // Regular C code (not PipelineC)
 // Software FP32
@@ -29,13 +37,17 @@ float uint_to_float(uint32_t a)
   conv.i = a;
   return conv.f;
 }
+float float_lshift(float x, int32_t shift)
+{
+  return shift > 0 ? x * (1 << shift) : x / (1 << -shift);
+}
 #define RSQRT_MAGIC 0x5f3759df
 #endif
 
 // https://en.wikipedia.org/wiki/Fast_inverse_square_root
 float fast_rsqrt(float number)
 {
-  float x2 = number*.5;
+  float x2 = float_lshift(number, -1); // number*.5;
   float conv_f = uint_to_float(RSQRT_MAGIC - (float_to_uint(number) >> 1));
   return conv_f*(1.5 - conv_f*conv_f*x2);
 }
@@ -44,8 +56,7 @@ float fast_sqrt(float number)
   return 1.0 / fast_rsqrt(number);
 }
 
-// Mandelbrot logic copied from
-// https://www.codingame.com/playgrounds/2358/how-to-plot-the-mandelbrot-set/mandelbrot-set
+// Complex math
 typedef struct complex_t
 {
   float re;
@@ -71,8 +82,9 @@ complex_t complex_add(complex_t x, complex_t y)
   return rv;
 }
 
-
-#define MAX_ITER 10
+// Mandelbrot logic copied from
+// https://www.codingame.com/playgrounds/2358/how-to-plot-the-mandelbrot-set/mandelbrot-set
+#define MAX_ITER 20
 uint32_t mandelbrot(complex_t c)
 {
   complex_t z = {0.0, 0.0};

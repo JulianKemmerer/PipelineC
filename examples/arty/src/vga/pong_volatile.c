@@ -311,7 +311,10 @@ game_state_t curr_state_buffer(game_state_t updated_state, uint1_t update_valid)
 inline game_state_t do_state_update(uint1_t reset, uint1_t end_of_frame)
 {
   // Volatile state registers
-  volatile static game_state_t state;
+  #ifdef __PIPELINEC__ // Not same as software volatile
+  volatile 
+  #endif
+  static game_state_t state;
   
   // Use 'slow' end of frame pulse as 'now' valid flag occuring 
   // every N cycles > pipeline depth/latency
