@@ -25,6 +25,7 @@ def DO_SIM(latency, parser_state, args):
   # Clocks
   clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True)
   if len(clock_name_to_mhz) > 1:
+    print("WARNING: Multiple clocks for Verilator probably won't work!", list(clock_name_to_mhz.keys()))
     for clock_name,mhz in clock_name_to_mhz.items():
       if mhz:
         names_text += f'#define {clock_name} {clock_name.replace("__","_")}\n'
