@@ -237,7 +237,7 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
       toks = clock_cross_header_str.split(".h")
       type_slash_var = toks[0]
       if "/" not in type_slash_var:
-        var_name = type_slash_var.split("_clock_crossing.h")[0]
+        var_name = type_slash_var.split("_clock_crossing")[0]
         print("")
         print("Please remove array include:")
         print(f'#include "<type>_array_N_t.h"')

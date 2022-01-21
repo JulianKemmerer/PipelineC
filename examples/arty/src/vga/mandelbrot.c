@@ -5,89 +5,44 @@
 #include "uintN_t.h"
 #include "float_e_m_t.h"
 // Access to board buttons
-//#include "../buttons/buttons.c"
+#include "../buttons/buttons.c"
+#include "../switches/switches.c"
 // Top level IO wiring + VGA resolution timing logic+types
 #include "vga_pmod.c"
-// Float is built in
+// Float shift is built in
 #define float_lshift(x,shift) ((x)<<(shift))
 // Variable width float stuff
-#define float float_8_23_t
-#define uint_to_float float_8_23_t_uint32
-#define float_to_uint float_8_23_t_31_0
-#define RSQRT_MAGIC 0x5f3759df
-/*
-#define float float_8_14_t
-#define uint_to_float float_8_14_t_uint23
-#define float_to_uint float_8_14_t_22_0
-#define RSQRT_MAGIC 0x2F9BAC
-*/
+//#define float float_8_23_t
+// Looks good
+//#define float float_8_14_t
+// Fine?
+#define float float_8_10_t
+// Chonky?
+//#define float float_8_9_t
+// Pretty bad (dsps not used lots of luts too)
+//#define float float_8_8_t
 
 #else // Regular C code (not PipelineC)
-// Software FP32
-typedef union fp_tlayout { float f; uint32_t i; struct  { uint32_t mantissa; uint32_t exp; uint32_t sign; } ;} fp_tlayout;
-uint32_t float_to_uint(float a)
-{
-  fp_tlayout conv;
-  conv.f = a;
-  return conv.i;
-}
-float uint_to_float(uint32_t a)
-{
-  fp_tlayout conv;
-  conv.i = a;
-  return conv.f;
-}
 float float_lshift(float x, int32_t shift)
 {
   return shift > 0 ? x * (1 << shift) : x / (1 << -shift);
 }
-#define RSQRT_MAGIC 0x5f3759df
 #endif
 
-// https://en.wikipedia.org/wiki/Fast_inverse_square_root
-float fast_rsqrt(float number)
-{
-  float x2 = float_lshift(number, -1); // number*.5;
-  float conv_f = uint_to_float(RSQRT_MAGIC - (float_to_uint(number) >> 1));
-  return conv_f*(1.5 - conv_f*conv_f*x2);
-}
-float fast_sqrt(float number)
-{
-  return 1.0 / fast_rsqrt(number);
-}
-
-// Complex math
+// Mandelbrot logic copied from
+// https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Optimized_escape_time_algorithms
 typedef struct complex_t
 {
   float re;
   float im;
 }complex_t;
-float complex_mag(complex_t c)
-{
-  return fast_sqrt((c.re*c.re)+(c.im*c.im));
-}
-complex_t complex_mult(complex_t cnum1, complex_t cnum2)
-{
-  complex_t rv = { (cnum1.re * cnum2.re) - (cnum1.im * cnum2.im),
-          (cnum1.re * cnum2.im) + (cnum2.re * cnum1.im) };
-  return rv;
-}
-complex_t complex_square(complex_t c)
-{
-  return complex_mult(c, c);
-}
-complex_t complex_add(complex_t x, complex_t y)
-{
-  complex_t rv = {x.re + y.re, x.im + y.im};
-  return rv;
-}
-
-// Mandelbrot logic copied from
-// https://www.codingame.com/playgrounds/2358/how-to-plot-the-mandelbrot-set/mandelbrot-set
 #define MAX_ITER 20
+#define ESCAPE 2.0
+// Optimized
 uint32_t mandelbrot(complex_t c)
 {
   complex_t z = {0.0, 0.0};
+  complex_t z_squared = {0.0, 0.0};
   uint32_t n = 0;
   // Mimic while loop with fixed for loop
   uint1_t not_found_n = 1;
@@ -97,9 +52,12 @@ uint32_t mandelbrot(complex_t c)
     // Mimic while loop
     if(not_found_n) 
     {
-      if(complex_mag(z) <= 2.0)
+      if((z_squared.re+z_squared.im) <= (ESCAPE*ESCAPE))
       {
-        z = complex_add(complex_square(z), c);
+        z.im = float_lshift((z.re*z.im), 1) + c.im;
+        z.re = z_squared.re - z_squared.im + c.re;
+        z_squared.re = z.re * z.re;
+        z_squared.im = z.im * z.im;
         n += 1;
       }
       else
@@ -157,13 +115,101 @@ inline pixel_t render_pixel(vga_pos_t pos, state_t state)
   return p;
 }
 
-// Logic for animating state over time
+// User input
+typedef struct user_input_t
+{
+  uint1_t up;
+  uint1_t down;
+  uint1_t left;
+  uint1_t right;
+  uint1_t zoom_in;
+  uint1_t zoom_out;
+}user_input_t;
+inline user_input_t get_user_input()
+{
+  user_input_t i;
+  // For now only exists in hardware
+  #ifdef __PIPELINEC__
+  // Read buttons wire/board IO port
+  uint4_t btns;
+  WIRE_READ(uint4_t, btns, buttons)
+  uint4_t sws;
+  WIRE_READ(uint4_t, sws, switches)
+  // Select which buttons and switches do what?
+  i.up = btns >> 0;
+  i.down = btns >> 1;
+  i.left = btns >> 2;
+  i.right = btns >> 3;
+  i.zoom_in = sws >> 0;
+  i.zoom_out = sws >> 1;
+  #else
+  // TODO user IO for running as C code
+  i.up = 1;
+  i.down = 0;
+  i.left = 1;
+  i.right = 0;
+  i.zoom_in = 1;
+  i.zoom_out = 0;
+  #endif
+  return i;
+}
+
+// Logic for animating state each frame
 inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t user_input)
 {
   // Next state starts off as keeping current state  
   state_t next_state = state;
   // Read input controls from user
-  //user_input_t user_input = get_user_input();
+  user_input_t i = get_user_input();
+  
+  float XY_SCALE = 0.001; // X-Y movement
+  float Z_SCALE = 0.001; // Zoom movement
+  
+  // Move window right left (flipped)
+  float re_dist = (state.RE_END - state.RE_START);
+  float re_inc = (XY_SCALE*re_dist);
+  // Negate to use single adder instead of add+sub
+  if(i.right)
+  {
+    re_inc = -re_inc;
+  }
+  if(i.left|i.right)
+  {
+    next_state.RE_START += re_inc;
+    next_state.RE_END += re_inc;
+  }
+  
+  // Move window up down
+  float im_dist = (state.IM_END - state.IM_START);
+  float im_inc = (XY_SCALE*im_dist);
+  // Negate to use single adder instead of add+sub
+  if(i.down)
+  {
+    im_inc = -im_inc;
+  }
+  if(i.up|i.down)
+  {
+    next_state.IM_START += im_inc;
+    next_state.IM_END += im_inc;
+  }
+  
+  // Move window in and out
+  float zoom_mult;
+  if(i.zoom_in)
+  {
+    zoom_mult = (1.0-Z_SCALE);
+  }
+  else
+  {
+    zoom_mult = Z_SCALE;
+  }
+  if(i.zoom_in|i.zoom_out)
+  {
+    next_state.RE_START *= zoom_mult;
+    next_state.RE_END *= zoom_mult;
+    next_state.IM_START *= zoom_mult;
+    next_state.IM_END *= zoom_mult;
+  }
   
   return next_state;
 }

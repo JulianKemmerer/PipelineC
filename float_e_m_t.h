@@ -13,6 +13,8 @@ typedef float float_8_13_t;
 typedef float float_8_12_t;
 typedef float float_8_11_t;
 typedef float float_8_10_t;
+typedef float float_8_9_t;
+typedef float float_8_8_t;
 typedef float float_5_10_t;
 /*#ifdef __PIPELINEC__
 #define float float_8_23_t
