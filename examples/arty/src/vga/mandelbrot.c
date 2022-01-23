@@ -15,10 +15,13 @@
 //#define float float_8_23_t
 // Looks good
 //#define float float_8_14_t
+//#define float float_8_13_t // ~136%luts
+//#define float float_8_12_t // Run out of RAM?
+//#define float float_8_11_t // ~157%luts
 // Fine?
-#define float float_8_10_t
+#define float float_8_10_t // ~106%luts
 // Chonky?
-//#define float float_8_9_t
+//#define float float_8_9_t // ~104%
 // Pretty bad (dsps not used lots of luts too)
 //#define float float_8_8_t
 
@@ -36,7 +39,7 @@ typedef struct complex_t
   float re;
   float im;
 }complex_t;
-#define MAX_ITER 20
+#define MAX_ITER 19
 #define ESCAPE 2.0
 // Optimized
 uint32_t mandelbrot(complex_t c)
@@ -73,20 +76,20 @@ uint32_t mandelbrot(complex_t c)
 typedef struct state_t
 {
   // Plot window
-  float RE_START;
-  float RE_END;
-  float IM_START;
-  float IM_END;
+  float re_start;
+  float re_width;
+  float im_start;
+  float im_height;
 }state_t;
 
 // State to return to at reset
 inline state_t reset_values()
 {
   state_t state;
-  state.RE_START = -2.0;
-  state.RE_END = 1.0;
-  state.IM_START = -1.0;
-  state.IM_END = 1.0;
+  state.re_start = -2.0;
+  state.re_width = 3.0;
+  state.im_start = -1.0;
+  state.im_height = 2.0;
   return state;
 }
 
@@ -101,12 +104,12 @@ inline pixel_t render_pixel(vga_pos_t pos, state_t state)
   p.b = 0;
   
   // Convert pixel coordinate to complex number
-  complex_t c = {state.RE_START + ((float)pos.x * (1.0f/(float)FRAME_WIDTH)) * (state.RE_END - state.RE_START),
-              state.IM_START + ((float)pos.y * (1.0f/(float)FRAME_HEIGHT)) * (state.IM_END - state.IM_START)};
+  complex_t c = {state.re_start + ((float)pos.x * (1.0f/(float)FRAME_WIDTH)) * state.re_width,
+              state.im_start + ((float)pos.y * (1.0f/(float)FRAME_HEIGHT)) * state.im_height};
   // Compute the number of iterations
   uint32_t m = mandelbrot(c);
   // The color depends on the number of iterations
-  uint8_t color = 255 - (int32_t)(((float)m *(1.0/(float)MAX_ITER))*255.0);
+  uint8_t color = 255 - (int32_t)((float)m *(255.0/(float)MAX_ITER));
   
   p.r = color;
   p.g = color;
@@ -157,41 +160,45 @@ inline user_input_t get_user_input()
 // Logic for animating state each frame
 inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t user_input)
 {
-  // Next state starts off as keeping current state  
-  state_t next_state = state;
   // Read input controls from user
   user_input_t i = get_user_input();
   
   float XY_SCALE = 0.001; // X-Y movement
   float Z_SCALE = 0.001; // Zoom movement
   
-  // Move window right left (flipped)
-  float re_dist = (state.RE_END - state.RE_START);
-  float re_inc = (XY_SCALE*re_dist);
-  // Negate to use single adder instead of add+sub
-  if(i.right)
-  {
-    re_inc = -re_inc;
-  }
+  // Move window right left (flipped) or up down
+  // Using only a single FP adder
+  float re_inc = (XY_SCALE*state.re_width);
+  float im_inc = (XY_SCALE*state.im_height);
+  float val_to_inc;
+  float inc;
   if(i.left|i.right)
   {
-    next_state.RE_START += re_inc;
-    next_state.RE_END += re_inc;
+    if(i.right)
+    {
+      re_inc = -re_inc;
+    }
+    val_to_inc = state.re_start;
+    inc = re_inc;
   }
-  
-  // Move window up down
-  float im_dist = (state.IM_END - state.IM_START);
-  float im_inc = (XY_SCALE*im_dist);
-  // Negate to use single adder instead of add+sub
-  if(i.down)
+  else if(i.up|i.down)
   {
-    im_inc = -im_inc;
+    if(i.down)
+    {
+      im_inc = -im_inc;
+    }
+    val_to_inc = state.im_start;
+    inc = im_inc;
   }
-  if(i.up|i.down)
+  float incremented_val = val_to_inc + inc; 
+  if(i.left|i.right)
   {
-    next_state.IM_START += im_inc;
-    next_state.IM_END += im_inc;
+    state.re_start = incremented_val;
   }
+  else if(i.up|i.down)
+  {
+    state.im_start = incremented_val;
+  }  
   
   // Move window in and out
   float zoom_mult;
@@ -205,13 +212,11 @@ inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t use
   }
   if(i.zoom_in|i.zoom_out)
   {
-    next_state.RE_START *= zoom_mult;
-    next_state.RE_END *= zoom_mult;
-    next_state.IM_START *= zoom_mult;
-    next_state.IM_END *= zoom_mult;
+    state.re_width *= zoom_mult;
+    state.im_height *= zoom_mult;
   }
   
-  return next_state;
+  return state;
 }
 
 // Helper func with isolated local static var to hold state
@@ -251,7 +256,7 @@ inline state_t do_state_update(uint1_t reset, uint1_t end_of_frame)
   else if(end_of_frame)
   {
     // Normal next state update
-    state = next_state_func(reset, state);//, user_input);
+    state = next_state_func(reset, state);
   }  
   
   // Buffer/save state as it periodically is updated/output from above

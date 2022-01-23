@@ -2903,7 +2903,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         logic.delay = 0
         
       # Syn results are delay and clock 
-      print(f"{logic_func_name} Path delay: {path_report.path_delay_ns:.3f} ({mhz:.3f} MHz)")
+      print(f"{logic_func_name} Path delay: {path_report.path_delay_ns:.3f} ns ({mhz:.3f} MHz)")
       print("")
       # Record worst non slicable logic
       if not logic.CAN_BE_SLICED():
