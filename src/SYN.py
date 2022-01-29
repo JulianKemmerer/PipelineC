@@ -1792,6 +1792,9 @@ def DO_THROUGHPUT_SWEEP(
     print("Running synthesis on comb. logic only top level ...", flush=True)
     # Comb logic only AND coarse?
     if coarse_only:
+      print("Using --coarse and --comb doesnt make sense? TODO fix?")
+      sys.exit(-1)
+      '''
       if len(parser_state.main_mhz) > 1:
         raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
         sys.exit(-1)
@@ -1799,6 +1802,7 @@ def DO_THROUGHPUT_SWEEP(
       main_logic = parser_state.FuncLogicLookupTable[main_func]
       print(f"Comb. logic for single main '{main_func}' function only...", flush=True)
       timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(main_func, main_logic, parser_state, multimain_timing_params.TimingParamsLookupTable, total_latency=0)
+      '''
     else:
       # Regular multi main top comb logic
       timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
@@ -1825,23 +1829,40 @@ def DO_THROUGHPUT_SWEEP(
   if coarse_only:
     print("Doing coarse sweep only...", flush=True)
     if len(parser_state.main_mhz) > 1:
-      raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
-      sys.exit(-1)
-    main_func = list(parser_state.main_mhz.keys())[0]
-    if GET_TARGET_MHZ(main_func, parser_state) is None:
-      print("Main Function:",main_func,"does not have a set target frequency.")
+      # Try to guess at main func, find funcs with delay and can be sliced
+      possible_mains = []
+      for main_func in parser_state.main_mhz:
+        main_logic = parser_state.FuncLogicLookupTable[main_func]
+        if main_logic.delay != 0 and main_logic.CAN_BE_SLICED():
+          possible_mains.append(main_func)
+      if len(possible_mains)==1:
+        main_func = possible_mains[0]
+        print("Assuming coarse sweep is for main function:", main_func)
+      else:
+        raise Exception("Cannot do use a single coarse sweep with multiple pipelined main functions.")
+        sys.exit(-1)
+    else:
+      main_func = list(parser_state.main_mhz.keys())[0]
+    target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+    if target_mhz is None:
+      print("Main function:",main_func,"does not have a set target frequency.")
+      target_mhz = INF_MHZ
       if starting_guess_latency is None:
         print("Starting a coarse sweep incrementally from zero latency comb. logic.", flush=True)
         starting_guess_latency = 0
         do_incremental_guesses = False
-      parser_state.main_mhz[main_func] = INF_MHZ
     max_allowed_latency_mult=None
     stop_at_n_worse_result=None
     inst_sweep_state = InstSweepState()
     inst_sweep_state, working_slices, multimain_timing_params.TimingParamsLookupTable = DO_COARSE_THROUGHPUT_SWEEP(
-      list(parser_state.main_mhz.keys())[0], list(parser_state.main_mhz.values())[0],
+      main_func, target_mhz,
       inst_sweep_state, parser_state,
       starting_guess_latency, do_incremental_guesses, max_allowed_latency_mult, stop_at_n_worse_result, stop_at_latency)
+    
+    # Do update of top vhdl (not final though)
+    is_final_top = False
+    VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
+    
     return multimain_timing_params
   
   # Real middle out sweep which includes coarse sweep

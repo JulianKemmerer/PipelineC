@@ -15,7 +15,7 @@ if not os.path.exists(VERILATOR_BIN_PATH):
   if VERILATOR_EXE_PATH is not None:
     VERILATOR_BIN_PATH = os.path.abspath(os.path.dirname(VERILATOR_EXE_PATH))
 
-def DO_SIM(latency, parser_state, args):
+def DO_SIM(multimain_timing_params, parser_state, args):
   print("================== Doing Verilator Simulation ================================", flush=True)
   VERILATOR_OUT_DIR = SYN.SYN_OUTPUT_DIRECTORY + "/verilator"
   if not os.path.exists(VERILATOR_OUT_DIR):
@@ -47,12 +47,20 @@ def DO_SIM(latency, parser_state, args):
       debug_names.append(debug_name)
       debug_verilator_name = func.replace("__","_") + "_val"
       names_text += f'#define {debug_name} {debug_verilator_name}\n'
-      
   names_text += '''#define DUMP_PIPELINEC_DEBUG(top) \
 cout <<'''
   for debug_name in debug_names:
     names_text += '"' + debug_name + ': " << to_string(' +"top->" + debug_name + ") << " + '" " << '
   names_text += "endl;\n"
+  
+  # Main func latencies
+  for func in parser_state.main_mhz:
+    if multimain_timing_params is not None:
+      main_timing_params = multimain_timing_params.TimingParamsLookupTable[func]
+      main_latency = main_timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
+    else:
+      main_latency = 0
+    names_text += f'#define {func}_LATENCY {main_latency}\n'
       
   # Write names files
   names_h_path = VERILATOR_OUT_DIR + "/pipelinec_verilator.h"
@@ -122,7 +130,7 @@ int main(int argc, char *argv[]) {
   sh_text = f'''
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
 {VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 '''

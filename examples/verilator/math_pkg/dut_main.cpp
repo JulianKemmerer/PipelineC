@@ -10,6 +10,7 @@ int main(int argc, char *argv[]) {
     bool done = false;
     uint64_t test_num = 0;
     bool test_passed = true;
+    uint64_t pipeline_latency_counter = 0;
     
     // Vars for this test
     DUT_VARS_DECL
@@ -25,6 +26,12 @@ int main(int argc, char *argv[]) {
         
         // Clock rising edge
         DUT_RISING_EDGE(g_top)
+
+        // Wait as many more clocks as pipeline latency specifies
+        for(pipeline_latency_counter = 0; pipeline_latency_counter < test_bench_LATENCY; pipeline_latency_counter++)
+        {
+            DUT_RISING_EDGE(g_top)
+        }
         
         // Get result from sim + c code eval
         DUT_GET_OUTPUTS(g_top)

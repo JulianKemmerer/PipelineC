@@ -108,23 +108,33 @@ SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
 
 # Start simulation on final VHDL
-SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args)
+SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Solve issue of generating many FP pipelined slice variants same for raw hdl bits per stage
 Victor's RT
   Get 24b pmod working
 Do announcement of some sort for __clk()
+  Revive ethernet demo? (c code gen for struct sitll work? temac license?)
   MNIST How to do in hardware demo? 
     Simple via ethernet send buffers, get buffers
     VGA prob too much...? Show image and prediction on VGA?
   Mention FOSIX guessing game in __clk() style
+Mandelbrot
+  Publish, sigh is not impressive in iterations, zoom is weak at 15 iter
+  Need to scale down to fit for hardware demo
+  Is blurry/glitchy? Verilate pipelined mandelbrot?
+    Try incrementally pipeline, fake 1MHz target, for few stages (using fp32 for direct compare)
+    Couldnt do full pipeline, even small >4clk pipelines are too big to compile?
+    Try setting up math package pipelined verilator tests
 Single direction data handshaked clock crossing
   Kinda like half of single inst arb as is
   just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
   Want some want to share N resources among M callers
 Do video walkthrough of Pong demo?
+Do more basic tutorials like nandland+hdlbits
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
@@ -136,9 +146,9 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Can publish arbitrary with float points popular formats, i.e. wiki page
   Automate u24,rsqrtf demo cpp
 Guitar i2s audio visualizer of some sort?
-Try to go from PipelineC directly to Verilator (RTLIL probably)
+SiliconCompiler to automate runs of vivado+import of results into python (and other eda tools)
+Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
-Do more basic tutorials like nandland+hdlbits
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
@@ -170,7 +180,6 @@ Do CASE statements
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
-Sanity check signed mult you POS
 Come on do sanity check for reserved words. Append _restricted?
 Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?

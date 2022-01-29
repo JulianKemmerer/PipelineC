@@ -1,0 +1,8 @@
+float negate
+u/int negate
+float shift (by pos and neg)
+float gt/le
+
+ex. command
+TEST=u24add; LATENCY=0; reset; rm -rf ~/pipelinec_output/*; rm cProfile.log; python3 -m cProfile -o cProfile.log ./src/pipelinec --out_dir ~/pipelinec_output --coarse --start $LATENCY --stop $LATENCY --sim --verilator examples/verilator/math_pkg/$TEST/$TEST.c --main_cpp ./examples/verilator/math_pkg/$TEST/test.cpp 2>&1 | tee /home/julian/pipelinec_output/out.log
+
