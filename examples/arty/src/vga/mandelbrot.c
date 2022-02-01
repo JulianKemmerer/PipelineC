@@ -1,10 +1,10 @@
 #ifdef __PIPELINEC__
-// PiplineC types
+// PipelineC types
 #include "compiler.h"
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "float_e_m_t.h"
-// Access to board buttons
+// Access to board buttons and switches
 #include "../buttons/buttons.c"
 #include "../switches/switches.c"
 // Top level IO wiring + VGA resolution timing logic+types
@@ -15,15 +15,16 @@
 //#define float float_8_23_t
 // Looks good
 //#define float float_8_14_t
-//#define float float_8_13_t // ~136%luts
+//#define float float_8_13_t // ~136%luts 20 iter
 //#define float float_8_12_t // Run out of RAM?
-//#define float float_8_11_t // ~157%luts
+#define float float_8_11_t // 96%pnr 14 iter, 102% pnr 15 iter, ~157%luts 20 iter
 // Fine?
-#define float float_8_10_t // ~106%luts
+//#define float float_8_10_t // ~89% pnr luts 15 iter, ~106%luts 20 iter, 96%luts 18iter
 // Chonky?
-//#define float float_8_9_t // ~104%
+//#define float float_8_9_t // ~104% 20 iter
 // Pretty bad (dsps not used lots of luts too)
 //#define float float_8_8_t
+//#define float float_7_10_t // ~102%luts 20 iter
 
 #else // Regular C code (not PipelineC)
 float float_lshift(float x, int32_t shift)
@@ -39,7 +40,9 @@ typedef struct complex_t
   float re;
   float im;
 }complex_t;
-#define MAX_ITER 19
+// (not8),9,10,11,12,13,14,15,16,17(not18) iter 720p runs out of ram synthesizing?
+// 2 iter 1080p pipelined looks fine
+#define MAX_ITER 14
 #define ESCAPE 2.0
 // Optimized
 uint32_t mandelbrot(complex_t c)
@@ -86,10 +89,10 @@ typedef struct state_t
 inline state_t reset_values()
 {
   state_t state;
-  state.re_start = -2.0;
-  state.re_width = 3.0;
-  state.im_start = -1.0;
-  state.im_height = 2.0;
+  state.re_start = -2.1;
+  state.re_width = 3.0/8.0;
+  state.im_start = -0.12;
+  state.im_height = 2.0/8.0;
   return state;
 }
 
@@ -110,11 +113,13 @@ inline pixel_t render_pixel(vga_pos_t pos, state_t state)
   uint32_t m = mandelbrot(c);
   // The color depends on the number of iterations
   uint8_t color = 255 - (int32_t)((float)m *(255.0/(float)MAX_ITER));
-  
   p.r = color;
   p.g = color;
   p.b = color;
-
+  
+  /*if(pos.x==317&&pos.y==0)
+    printf("TEST!");*/
+    
   return p;
 }
 
@@ -147,11 +152,11 @@ inline user_input_t get_user_input()
   i.zoom_out = sws >> 1;
   #else
   // TODO user IO for running as C code
-  i.up = 1;
+  i.up = 0;
   i.down = 0;
-  i.left = 1;
+  i.left = 0;
   i.right = 0;
-  i.zoom_in = 1;
+  i.zoom_in = 0;
   i.zoom_out = 0;
   #endif
   return i;
@@ -163,8 +168,8 @@ inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t use
   // Read input controls from user
   user_input_t i = get_user_input();
   
-  float XY_SCALE = 0.001; // X-Y movement
-  float Z_SCALE = 0.001; // Zoom movement
+  float XY_SCALE = 0.002; // X-Y movement
+  float Z_SCALE = 0.002; // Zoom movement
   
   // Move window right left (flipped) or up down
   // Using only a single FP adder
@@ -208,7 +213,7 @@ inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t use
   }
   else
   {
-    zoom_mult = Z_SCALE;
+    zoom_mult = (1.0+Z_SCALE);
   }
   if(i.zoom_in|i.zoom_out)
   {
@@ -218,6 +223,8 @@ inline state_t next_state_func(uint1_t reset, state_t state)//, user_input_t use
   
   return state;
 }
+
+// ----------- /\ End of mandelbrot specific code /\ -----------
 
 // Helper func with isolated local static var to hold state
 // while do_state_update local volatile static state is updating.

@@ -113,7 +113,6 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Solve issue of generating many FP pipelined slice variants same for raw hdl bits per stage
 Victor's RT
   Get 24b pmod working
 Do announcement of some sort for __clk()
@@ -123,12 +122,7 @@ Do announcement of some sort for __clk()
     VGA prob too much...? Show image and prediction on VGA?
   Mention FOSIX guessing game in __clk() style
 Mandelbrot
-  Publish, sigh is not impressive in iterations, zoom is weak at 15 iter
-  Need to scale down to fit for hardware demo
-  Is blurry/glitchy? Verilate pipelined mandelbrot?
-    Try incrementally pipeline, fake 1MHz target, for few stages (using fp32 for direct compare)
-    Couldnt do full pipeline, even small >4clk pipelines are too big to compile?
-    Try setting up math package pipelined verilator tests
+  Publish
 Single direction data handshaked clock crossing
   Kinda like half of single inst arb as is
   just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
@@ -187,7 +181,8 @@ Finish chipscope+virtual io debug thing (write probes) + add w/ pass through reg
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
 Try small python ast parsing based example - Pypeline?
 How to remove excess io regs from middle out sweep?
-Redo and examine pipelining of basic c ops n cycle G/LT/E is known problem - write in PipelineC?
+Redo G/LT/E to use add/sub and <0==sign bit, write in PipelineC? better than hand pipelining vhdl
+^ Redo all add sub to use single pipelined adder with twos complement invert set carryin=1 stuff?
 ^ Maybe redo pipelined binary trees instead of equal bit sequential stages? Bad for slicing.. probably can work, test
 Gen flattened slv top level ports, w/ internal type conversions -W.
 Karatsuba algo for mult - need to recursive gen big mult funcs for differing bit widths
@@ -242,5 +237,6 @@ Add support for IO regs from timing params to primitives (fix intel mult to pref
 Add compound one = {1}; to init to all bits=1
 Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
 Slight optimization from not rendering binary ops with always matching signedness? (render i32 AND u16, as opposed to casting to i17)
+Solve issue of generating many FP pipelined slice variants same for raw hdl bits per stage
 """
 

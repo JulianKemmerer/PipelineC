@@ -512,7 +512,7 @@ end process;
 top_inst : entity work.top port map (   
     -- Main function clocks
     --clk_22p579 => clk_22p579,
-    clk_74p25 => vga_pixel_clk,
+    clk_148p5 => vga_pixel_clk,
     --clk_25p0_xil_temac_rx => clk_25_eth_rx,
     --clk_25p0_xil_temac_tx => clk_25_eth_tx,
     --clk_50p0 => clk_50,
@@ -537,7 +537,7 @@ top_inst : entity work.top port map (
     --led3_module_return_output(0) => led(3)
     
     -- Switches
-    --switches_module_sw => switches_wire,
+    switches_module_sw => unsigned(sw),
     
     -- Buttons
     buttons_module_btn => unsigned(btn),
