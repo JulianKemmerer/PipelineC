@@ -55,6 +55,10 @@ y = rand() % (int)pow(2, 24);
 DUT_SET_INPUT(top, x)\
 DUT_SET_INPUT(top, y)
 
+#define DUT_SET_NULL_INPUTS(top) \
+top->x = 0;\
+top->y = 0;
+
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_OUTPUT(top, result)\
 c_result = u24add(x, y);

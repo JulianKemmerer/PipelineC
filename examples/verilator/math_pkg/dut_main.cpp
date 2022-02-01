@@ -23,15 +23,19 @@ int main(int argc, char *argv[]) {
         
         // Drive inputs
         DUT_SET_INPUTS(g_top)
-        
-        // Clock rising edge
-        DUT_RISING_EDGE(g_top)
+        // And send through sim eval
+        g_top->eval();
 
-        // Wait as many more clocks as pipeline latency specifies
+        // Wait as many clocks as pipeline latency specifies
         for(pipeline_latency_counter = 0; pipeline_latency_counter < test_bench_LATENCY; pipeline_latency_counter++)
         {
             DUT_RISING_EDGE(g_top)
-        }
+            // Null out inputs to flush pipeline after first clock
+            if(pipeline_latency_counter==0)
+            {
+                DUT_SET_NULL_INPUTS(g_top)
+            }
+        }        
         
         // Get result from sim + c code eval
         DUT_GET_OUTPUTS(g_top)

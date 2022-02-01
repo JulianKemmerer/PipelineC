@@ -3192,7 +3192,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   # Raw HDL functions are done differently
   if not(len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in):
     rv += " " + "-- Default null read_pipe\n"
-    rv += " " + "-- NO DONT, hides tool problems? read_pipe := variables_NULL;\n"
+    rv += " " + "-- NO DONT, hides tool problems? read_pipe := variables_NULL;  \n"
   
   # Input regs
   if timing_params._has_input_regs:
@@ -3541,6 +3541,7 @@ def WIRES_TO_C_INT_BIT_WIDTH(wires,logic):
 def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParamsLookupTable, stage_ordered_submodule_list, stage):
   timing_params = TimingParamsLookupTable[inst_name]
   RHS = ""
+  '''
   # SUBMODULE PORT?
   if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire_to_handle, logic):    
     # Get submodule name
@@ -3556,35 +3557,20 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
       if driving_submodule_name in submodules_in_stage:
         driving_submodule_stage = stage_i
       
-    
-    # DO NOT USE write_pipe FOR SUBMOUDLE OUTPUT LATER LATENCY
-    '''
-    if STAGE = 0 then
-      write_pipe.BIN_OP_PLUS_main_c_7_left := write_pipe.x; -- main____BIN_OP_PLUS[main_c_7]____left <= main____x
-      write_pipe.BIN_OP_PLUS_main_c_7_right := write_pipe.y; -- main____BIN_OP_PLUS[main_c_7]____right <= main____y
-      -- BIN_OP_PLUS[main_c_7] LATENCY=2
-      main_BIN_OP_PLUS_main_c_7(write_pipe.BIN_OP_PLUS_main_c_7_right, write_pipe.BIN_OP_PLUS_main_c_7_left, write_submodule_regs.BIN_OP_PLUS_main_c_7_registers, write_pipe.BIN_OP_PLUS_main_c_7_return_output);
-    elsif STAGE = 1 then
-    elsif STAGE = 2 then
-      write_pipe.local_main_c_7_0 := write_pipe.BIN_OP_PLUS_main_c_7_return_output; -- main____local_main_c_7_0 <= main____BIN_OP_PLUS[main_c_7]____return_output
-      write_pipe.return_output := write_pipe.local_main_c_7_0; -- main____return_output <= main____local_main_c_7_0
-    end if;
-    '''
-    # In above example read of "write_pipe.BIN_OP_PLUS_main_c_7_return_output" in stage 2 is getting the value of BIN_OP_PLUS's output during stage 0 not what we want
-    if driving_submodule_stage == stage:
-      # Same stage / zero latency use regular write pipe
+    # Zero latency is special case and already assigned to write pipe (not use signal from submodule entity
+    if driving_submodule_latency==0:
+      # Special case already in write pipe
       RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
+    # Only use signal from submodule instance if latency delay matches current stage
+    elif driving_submodule_stage+driving_submodule_latency == stage:
+      # Use signal from submodule entity
+      RHS = WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
     else:
-      # Different, previous stage, use signal from submodule instance if latency > 0 
-      if driving_submodule_latency > 0:
-        # Use signal from submodule entity
-        RHS = WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
-      else:
-        RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)
-    
-  
+      # Otherwise regular, time aligned from pipeline regs write pipe
+      RHS = GET_WRITE_PIPE_WIRE_VHDL(driving_wire_to_handle, logic, parser_state)  
+  '''
   # Feedback vars wires
-  elif driving_wire_to_handle in logic.feedback_vars:
+  if driving_wire_to_handle in logic.feedback_vars:
     RHS = "feedback_vars." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
   
   # State regs?
@@ -3878,13 +3864,13 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name
     input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
     text += "   " + WIRE_TO_VHDL_NAME(input_port_wire, logic) + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
 
-  # Only do output connection if zero clk 
+  # Only do output connection now if zero clk 
   if submodule_latency_from_container_logic == 0:
     text += "   -- Outputs" + "\n"
     for output_port in submodule_logic.outputs:
       output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
       text +=  "   " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := " + WIRE_TO_VHDL_NAME(output_port_wire, logic) + ";\n"
-    
+  
   return text
 
 def GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name=None):

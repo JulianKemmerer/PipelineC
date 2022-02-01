@@ -486,6 +486,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     sys.exit(-1)
     
   # FORGIVE ME - never
+  # Back again bitch
   print_debug = False #inst_name=="posix_aws_fpga_dma" #False
   bad_inf_loop = False
   LogicInstLookupTable = parser_state.LogicInstLookupTable
@@ -706,6 +707,19 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if driving_wire in logic.wire_driven_by:
               driver_of_driver = logic.wire_driven_by[driving_wire]
             RECORD_DRIVEN_BY(driver_of_driver, driving_wire)
+            
+          # If driving wire is submodule output
+          # Then connect module wire to write pipe
+          if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire, logic):
+            sub_out_toks = driving_wire.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            submodule_inst = sub_out_toks[0]
+            submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+            submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+            submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
+            # Zero latency special case already in write pipe
+            if submodule_latency_from_container_logic > 0:
+              #output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+              submodule_level_text += " " + " " + " " + VHDL.GET_WRITE_PIPE_WIRE_VHDL(driving_wire, logic, parser_state) + " := " + VHDL.WIRE_TO_VHDL_NAME(driving_wire, logic) + ";\n"
 
           # Loop over what this wire drives
           if driving_wire in logic.wire_drives:
