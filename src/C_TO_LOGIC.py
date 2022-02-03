@@ -6498,18 +6498,6 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
   #       VHDL 0 CLK CAST OPERATIONS ONLY - i.e. signed to unsigned, resize, enum to unsigned, etc
   #
   #
-  
-  # Can't cast float to from int in comb logic 
-  # No cast need for bit shifts
-  if not is_bit_shift:
-    if C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
-      #output_c_type = left_type
-      print("TODO: Float int ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
-      sys.exit(-1)
-    elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
-      #output_c_type = right_type
-      print("TODO: Int float ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
-      sys.exit(-1)
 
   # If types are integers then check signed/unsigned matches
   #   Change type from unsigned to sign by adding bit to type
@@ -6593,7 +6581,19 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
     resized_prefix = "uint" + str(right_width)
     resized_t = resized_prefix + "_t"
     right_type = resized_t
-    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type 
+    parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+
+  # Can't cast float to from int in comb logic 
+  # No cast need for bit shifts
+  if not is_bit_shift:
+    if C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
+      #output_c_type = left_type
+      print("TODO: Float int ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
+      sys.exit(-1)
+    elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
+      #output_c_type = right_type
+      print("TODO: Int float ops? shouldnt occur. Add cast for now.",left_type,right_type,c_ast_binary_op.coord)
+      sys.exit(-1)
     
   # Hack in resizing single dim arrays to max size
   if C_TYPE_IS_ARRAY(left_type) and C_TYPE_IS_ARRAY(right_type):
