@@ -1,7 +1,7 @@
 #pragma once
 #include "uintN_t.h"
 #include "bit_manip.h"
-#include "axis.h"
+#include "axi/axis.h"
 
 typedef struct eth_header_t
 {
@@ -153,32 +153,26 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
       output.frame.payload.keep = uint2_uint2(slice0.keep,slice1_keep);
       // SOP from reg
       output.start_of_packet = start_of_packet;
+
+      // Shift slices by 2 for next time
+      // (need variable shift for back to back packets)
+      // slice0 <= slice2
+      slice0 = slice2;
+      // slice1 <= null
+      // slice2 <= null
+      // Slice1 and 2 are inputs next time so dont need to overwrite
       
-      // Only change state if was ready for frame data
-      if(frame_ready)
+      // Back to idle if this was last
+      if(is_last)
       {
-        // Shift slices by 2 for next time
-        // (need variable shift for back to back packets)
-        // slice0 <= slice2
-        slice0 = slice2;
-        // slice1 <= null
-        // slice2 <= null
-        // Slice1 and 2 are inputs next time so dont need to overwrite
-        
-        // Back to idle if this was last
-        if(is_last)
-        {
-          state = IDLE_DST_MAC_MSB;
-        }
-        
-        // Clear SOP always, set only for first word
-        start_of_packet = 0;
+        state = IDLE_DST_MAC_MSB;
       }
-      else
-      {
-        // Not ready for payload data output - overflow if data was incoming
-        output.overflow = mac_axis.valid;
-      }
+      
+      // Clear SOP always, set only for first word
+      start_of_packet = 0;
+
+      // Not ready for payload data output - overflow if data was incoming
+      output.overflow = mac_axis.valid & !frame_ready;
     }
   }
   

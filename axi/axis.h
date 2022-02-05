@@ -1,7 +1,7 @@
 #pragma once
 #include "uintN_t.h"
-#include "serializer.h"
-#include "deserializer.h"
+#include "stream/serializer.h"
+#include "stream/deserializer.h"
 
 // No generic sizes for now... :(
 // Woah AXIS spec is little endian - who knew?

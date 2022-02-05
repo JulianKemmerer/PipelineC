@@ -19,10 +19,9 @@
 #include "compiler.h"
 #include "wire.h"
 #include "uintN_t.h"
-#include "axis.h"
+#include "axi/axis.h"
 
 // Two clocks, rx and tx
-// TODO! Clock GROUPS!
 #define XIL_TEMAC_RX_MHZ 25.0
 #define XIL_TEMAC_TX_MHZ 25.0
 
@@ -82,24 +81,20 @@ typedef struct xil_temac_to_tx_t
 // RX
 // Input
 xil_rx_to_temac_t xil_rx_to_temac;
-#include "xil_rx_to_temac_t_array_N_t.h"
-#include "xil_rx_to_temac_clock_crossing.h"
+#include "clock_crossing/xil_rx_to_temac.h"
 // Output
 xil_temac_to_rx_t xil_temac_to_rx;
-#include "xil_temac_to_rx_t_array_N_t.h"
-#include "xil_temac_to_rx_clock_crossing.h"
+#include "clock_crossing/xil_temac_to_rx.h"
 // TX
 // Input
 xil_tx_to_temac_t xil_tx_to_temac;
-#include "xil_tx_to_temac_t_array_N_t.h"
-#include "xil_tx_to_temac_clock_crossing.h"
+#include "clock_crossing/xil_tx_to_temac.h"
 // Output
 xil_temac_to_tx_t xil_temac_to_tx;
-#include "xil_temac_to_tx_t_array_N_t.h"
-#include "xil_temac_to_tx_clock_crossing.h"
+#include "clock_crossing/xil_temac_to_tx.h"
 
 // RX
-MAIN_MHZ_GROUP(xil_temac_rx_module,XIL_TEMAC_RX_MHZ,xil_temac_rx) // Set clock freq and group
+MAIN_MHZ_GROUP(xil_temac_rx_module, XIL_TEMAC_RX_MHZ, xil_temac_rx) // Set clock freq and group
 xil_rx_to_temac_t xil_temac_rx_module(xil_temac_to_rx_t temac_to_rx)
 {
   xil_rx_to_temac_t rx_to_temac;
@@ -110,7 +105,7 @@ xil_rx_to_temac_t xil_temac_rx_module(xil_temac_to_rx_t temac_to_rx)
 
 // Top level io connection to board interface
 // TX
-MAIN_MHZ_GROUP(xil_temac_tx_module,XIL_TEMAC_TX_MHZ,xil_temac_tx) // Set clock freq and group
+MAIN_MHZ_GROUP(xil_temac_tx_module, XIL_TEMAC_TX_MHZ, xil_temac_tx) // Set clock freq and group
 xil_tx_to_temac_t xil_temac_tx_module(xil_temac_to_tx_t temac_to_tx)
 {
   xil_tx_to_temac_t tx_to_temac;

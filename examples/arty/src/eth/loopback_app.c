@@ -2,16 +2,16 @@
 #include "xil_temac.c"
 
 // Include logic for parsing ethernet frames from 32b AXIS
-#include "eth_32.c"
+#include "net/eth_32.c"
 
 // Include the mac address info we want the fpga to have
 #include "fpga_mac.h"
 
-// Loopback RX to TX with two async fifos
+// Loopback RX to TX with two clock crossing async fifos
 axis32_t loopback_payload_fifo[16]; // One to hold the payload data
 eth_header_t loopback_headers_fifo[2]; // another one to hold the headers
-#include "loopback_payload_fifo_clock_crossing.h"
-#include "loopback_headers_fifo_clock_crossing.h"
+#include "clock_crossing/loopback_payload_fifo.h"
+#include "clock_crossing/loopback_headers_fifo.h"
 
 // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 #pragma MAIN_GROUP rx_main xil_temac_rx 
@@ -73,8 +73,8 @@ void rx_main()
   to_mac.pause_req = 0;
   to_mac.pause_val = 0;
   to_mac.rx_configuration_vector = 0;
-  to_mac.rx_configuration_vector |= (1<<1); // RX enable
-  to_mac.rx_configuration_vector |= (1<<12); // 100Mb/s 
+  to_mac.rx_configuration_vector |= ((uint32_t)1<<1); // RX enable
+  to_mac.rx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
   WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac)  
 }
 
@@ -137,31 +137,7 @@ void tx_main()
   // Config bits
   to_mac.tx_ifg_delay = 0;
   to_mac.tx_configuration_vector = 0;
-  to_mac.tx_configuration_vector |= (1<<1); // TX enable
-  to_mac.tx_configuration_vector |= (1<<12); // 100Mb/s
+  to_mac.tx_configuration_vector |= ((uint32_t)1<<1); // TX enable
+  to_mac.tx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
   WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac)
 }
-
-
- /*
-#include "ip_32.c"
-#include "udp_32.c"
-
-	// Receive IP packet
-	ip32_frame_t ip_rx;
-	ip_rx = ip_32_rx(eth_rx.payload);
-	
-	// Receive UDP packet
-	udp32_frame_t udp_rx;
-	udp_rx = udp_32_rx(ip_rx.payload);
-
-	// Form Tx IP packet with UDP packet as payload
-	ip32_frame_t ip_tx;
-	ip_tx.header = ip_rx.header; // Copy header fields from RX
-	ip_tx.payload = udp_32_tx(udp_rx);
-	
-	// Form Tx ETH frame with ip packet as payload
-	
-	eth_tx.header = eth_rx.header; // Copy header fields from RX
-	eth_tx.payload = ip_32_tx(ip_tx); // Payload is IP tx packet
-  */

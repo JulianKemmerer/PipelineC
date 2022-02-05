@@ -121,8 +121,6 @@ Do announcement of some sort for __clk()
     Simple via ethernet send buffers, get buffers
     VGA prob too much...? Show image and prediction on VGA?
   Mention FOSIX guessing game in __clk() style
-Mandelbrot
-  Publish
 Single direction data handshaked clock crossing
   Kinda like half of single inst arb as is
   just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?

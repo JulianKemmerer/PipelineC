@@ -431,7 +431,7 @@ class Logic:
     # Wire names with a dot means sub module connection
     # func0.a  is a port on the func0 instance
     # Connections are given as two lists "drives" and "driven by"
-    self.wire_drives = dict() # wire_name -> set([driven,wire,names])
+    self.wire_drives = dict() # wire_name -> set([driven,wire,names]) 
     self.wire_driven_by = dict() # wire_name -> driving wire
     
     # To keep track of C execution over time in logic graph,
@@ -440,7 +440,7 @@ class Logic:
     # Need to keep dicts for variable names
     self.wire_aliases_over_time = dict() # orig var name -> [list,of,renamed,wire,names] # Further in list is further in time
     self.alias_to_orig_var_name = dict() # alias -> orig var name
-    self.alias_to_driven_ref_toks = dict() # alias -> [ref,toks]
+    self.alias_to_driven_ref_toks = dict() # alias -> [ref,toks] 
     
     # Need to look up types by wire name
     # wire_to_c_type[wire_name] -> c_type_str
@@ -1206,6 +1206,20 @@ class Logic:
           
     return None
   
+  def REMOVE_VAR_WIRE_DRIVE_HISTORY(self, var_name):
+    self.wire_drives.pop(var_name, None)
+    self.wire_driven_by.pop(var_name, None)
+    # Then do all alias stuff
+    if var_name in self.wire_aliases_over_time:
+      all_aliases = self.wire_aliases_over_time[var_name]
+      for alias in all_aliases:
+        self.wires.discard(alias)
+        self.wire_to_c_type.pop(alias, None)
+        self.wire_drives.pop(alias, None)
+        self.wire_driven_by.pop(alias, None)
+        self.alias_to_orig_var_name.pop(alias, None)
+        self.alias_to_driven_ref_toks.pop(alias, None)
+      self.wire_aliases_over_time[var_name] = []    
   
   def COPY_SUBMODULE_INFO(self, new_inst, old_inst):
     if old_inst in self.submodule_instances:
@@ -1735,14 +1749,16 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     #print "driven_wire_names=",driven_wire_names
     sys.exit(-1)
     
-def C_AST_PRAGMA_TO_LOGIC(c_ast_node,driven_wire_names,prepend_text, parser_state):
+def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
   toks = c_ast_node.string.split(" ")
   
   # FEEDBACK WIRES
   if toks[0] == "FEEDBACK":
     var_name = toks[1]
     parser_state.existing_logic.feedback_vars.add(var_name)
-    #print(c_ast_node)
+    # Clears all known aliases/drivers of this wire 
+    # (clears default null assignment, all aliases, so read comes from feedback wire)
+    parser_state.existing_logic.REMOVE_VAR_WIRE_DRIVE_HISTORY(var_name)
     
   # User instance name for next function call
   if toks[0] == "INST_NAME":    
