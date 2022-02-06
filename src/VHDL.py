@@ -35,7 +35,7 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
   # Single item / not list
   if type(c_ast_init) == c_ast.Constant:
     return CONST_VAL_STR_TO_VHDL(str(c_ast_init.value), c_type, parser_state)
-  elif type(c_ast_init) == c_ast.UnaryOp and str(init.op)=='-' and (type(c_ast_init.expr) == c_ast.Constant):
+  elif type(c_ast_init) == c_ast.UnaryOp and str(c_ast_init.op)=='-' and (type(c_ast_init.expr) == c_ast.Constant):
     negated_str = '-' + str(c_ast_init.expr.value)
     return CONST_VAL_STR_TO_VHDL(negated_str, c_type, parser_state)
   elif type(c_ast_init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(c_ast_init, logic, "", parser_state):
