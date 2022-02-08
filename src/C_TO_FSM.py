@@ -1217,21 +1217,34 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     for state in list(state_group):
       if state.ends_w_clk:
         state_group.remove(state)
+
+  # Remove any empty groups from list
+  for state_group in list(state_groups):
+    if len(state_group)==0:
+      state_groups.remove(state_group)
   
   # Add states ending with clock to last group
   last_state_group = state_groups[-1]
+  # Unless last state group has states transitioning to one of the ending with clock states
+  # (grouping in same group would force multiple clocks instead of pass through)
+  needs_separate_last_state_group = False
+  for start_state in last_state_group:
+    trans_lists = GET_STATE_TRANS_LISTS(start_state, parser_state)
+    for trans_list in trans_lists:
+      if len(states_ends_w_clk.intersection(set(trans_list))) > 0:
+         needs_separate_last_state_group = True
+         break
+    if needs_separate_last_state_group:
+      break
   # Unless that group is the FSMs group, skip that since might be FSM return that needs to come after
-  if last_state_group==fsms_group:
+  needs_separate_last_state_group |= (last_state_group==fsms_group)
+  # Separate last group?
+  if needs_separate_last_state_group:
     last_state_group = states_ends_w_clk
     state_groups.append(last_state_group)
   else:
     # Can safely add into last state group
     last_state_group |= states_ends_w_clk
-    
-  # Remove any empty groups from list
-  for state_group in list(state_groups):
-    if len(state_group)==0:
-      state_groups.remove(state_group)
 
   # Save return val
   parser_state.existing_logic.state_groups = state_groups
