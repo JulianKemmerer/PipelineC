@@ -3361,7 +3361,7 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
     # Get value from this constant
     maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(const_driving_wire, parser_state.existing_logic, parser_state)
     if not maybe_digit.isdigit():
-      print("Constant array ref with non integer index?", const_driving_wire)
+      print("Constant array ref with non integer index?", const_driving_wire, c_ast_array_ref)
       sys.exit(-1)
     #print "CONST",maybe_digit
     return int(maybe_digit), parser_state.existing_logic
@@ -6089,6 +6089,9 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     elif "_" + SW_LIB.RAM_SP_RF in func_name:
       # Hacky af remove def of original state reg local (is used by mangled func)
       local_static_var = func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
+      if local_static_var not in parser_state.existing_logic.state_regs:
+        print("Doesnt look like", local_static_var, "was recognized as correct", SW_LIB.RAM_SP_RF, "RAM template?", c_ast_func_call.coord)
+        sys.exit(-1)
       parser_state.existing_logic.state_regs.pop(local_static_var)
       num_non_vol_left = 0
       for state_var,state_var_info in parser_state.existing_logic.state_regs.items():
@@ -6101,6 +6104,9 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     elif "_" + SW_LIB.RAM_DP_RF in func_name:
       # Hacky af remove def of original state reg local (is used by mangled func)
       local_static_var = func_name.split("_"+SW_LIB.RAM_DP_RF)[0]
+      if local_static_var not in parser_state.existing_logic.state_regs:
+        print("Doesnt look like", local_static_var, "was recognized as correct", SW_LIB.RAM_DP_RF, "RAM template?", c_ast_func_call.coord)
+        sys.exit(-1)
       parser_state.existing_logic.state_regs.pop(local_static_var)
       num_non_vol_left = 0
       for state_var,state_var_info in parser_state.existing_logic.state_regs.items():

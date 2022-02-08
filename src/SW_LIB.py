@@ -549,7 +549,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(preprocessed_c_text,
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
-            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t_width = dim.bit_length()
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
             dim_var = field + "_dim_"+str(dim_i)
             text += dim_size_t + " " + dim_var + ";\n"
@@ -668,7 +668,7 @@ for(''' + type_t + "_to_bytes_i=0;" + type_t+"_to_bytes_i<"+type_t+"_SIZE;"+type
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
-            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t_width = dim.bit_length()
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
             dim_var = field + "_dim_"+str(dim_i)
             text += dim_size_t + " " + dim_var + ";\n"
@@ -817,7 +817,7 @@ void ''' + type_t + "_to_bytes(" + type_t + '''* x, uint8_t* bytes)
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
-            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t_width = dim.bit_length()
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
             dim_var = field+"_dim_"+str(dim_i)
             text += "size_t " + dim_var + ";\n"
@@ -911,7 +911,7 @@ void bytes_to_''' + type_t + "(uint8_t* bytes, " + type_t + '''* x)
           # nest for loop for each dim
           for dim_i in range(0,len(dims)):
             dim = dims[dim_i]
-            dim_size_t_width = int(math.ceil(math.log(dim,2)))
+            dim_size_t_width = dim.bit_length()
             dim_size_t = "uint"+str(dim_size_t_width)+"_t"
             dim_var = field+"_dim_"+str(dim_i)
             text += "size_t " + dim_var + ";\n"
@@ -1152,7 +1152,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
   func_name_was_global_def = dict()
   # _RAM_SP_RF
   # RAM_DP_RF_RF_2  MORE THAN ONE OUTPUT DATA NEEDS DUMB C STRUCT WRAPPER!!
-  ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2", RAM_DP_RF+"_2"] # TODO 1clk in OR out regs
+  ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2", RAM_DP_RF+"_0", RAM_DP_RF+"_2"] # TODO 1clk in OR out regs
   for ram_type in ram_types:
     for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
       # Get local static var info for this func
