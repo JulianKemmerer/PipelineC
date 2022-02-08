@@ -1,7 +1,7 @@
 #pragma once
 #include "arrays.h"
 
-// OUTSIZE must be divisible by INSIZE ??
+// OUTSIZE must be ?= or divisible by INSIZE ??
 #define deserializer_in_to_out(name, data_t, IN_SIZE, OUT_SIZE) \
 typedef struct name##_t \
 { \
@@ -32,8 +32,7 @@ name##_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_r
   if(rv.in_data_ready & in_data_valid) \
   { \
     /* Shift buffer down to make room for last incoming element in upper indices*/ \
-    uint32_t i; \
-    ARRAY_SHIFT_INTO_TOP(out_buffer, OUT_SIZE, in_data, IN_SIZE, i)\
+    ARRAY_SHIFT_INTO_TOP(out_buffer, OUT_SIZE, in_data, IN_SIZE)\
     out_counter += IN_SIZE; \
     \
     /* If the out buffer now has all data then valid/full*/ \
@@ -46,7 +45,7 @@ name##_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_r
   return rv; \
 }
 
-
+// Sizeof(out_t) needs be ?= or divislbe by in bytes? 
 #define type_byte_deserializer(name,IN_BYTES,out_t)\
 /* Need to deser to byte array*/ \
 deserializer_in_to_out(name##_deserializer_in_to_out, uint8_t, IN_BYTES, sizeof(out_t)) \

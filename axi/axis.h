@@ -221,8 +221,7 @@ axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
   ");
 }
 
-
-/* AXIS32 only right now...*/
+// sizeof(out_t) must be >= or divisble by axis_bits?
 #define axis_to_type(name,axis_bits,out_t) \
 /* Mostly just a deser instance */ \
 type_byte_deserializer(name##_type_byte_deserializer, (axis_bits/8), out_t) \
@@ -240,7 +239,6 @@ name##_t name(axis##axis_bits##_t payload, uint1_t output_ready) \
   uint32_t i; \
   for(i=0;i<(axis_bits/8);i+=1) \
   { \
-    /* AXIS32 only right now...*/ \
     input_data[i] = payload.data >> (i*8); \
   } \
   /* Deserialize byte stream to type */ \
