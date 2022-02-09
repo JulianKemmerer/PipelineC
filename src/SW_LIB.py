@@ -783,6 +783,11 @@ for(''' + type_t + "_to_bytes_i=0;" + type_t+"_to_bytes_i<"+type_t+"_SIZE;"+type
     
     # Fully generate a good header file for this type
     text = "#pragma once\n"
+
+    # Include bytes for any sub fields of this type
+    for type_to_include in types_to_include:
+      text += '#include "type_bytes_t.h/' + type_to_include + '_bytes_t.h/' +  type_to_include + '_bytes.h"\n'
+
     text += "#define " + type_t+"_SIZE" + " " + str(size) + "\n"
     
     # #define the _bytes_t to be the uint8_t_array_N_t type
