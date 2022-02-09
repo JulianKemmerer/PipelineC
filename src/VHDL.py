@@ -1502,12 +1502,13 @@ use xpm.vcomponents.all;
     # Flow control is async fifo
     if flow_control:
       text += '''
-      
 fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy;
 wr_return_output.ready(0) <= not full and not wr_rst_busy;
 din_slv <= ''' + to_slv_toks[0] + '''write_data''' + to_slv_toks[1] + ''';
-
-fifo_rd_enable <= read_enable(0) and out_clk_en(0) and not rd_rst_busy;
+fifo_rd_enable <= read_enable(0) and not rd_rst_busy'''
+      if read_func_logic is not None and C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+        text += ''' and out_clk_en(0)'''
+      text += ''';
 rd_return_output.valid(0) <= valid and not rd_rst_busy;
 rd_return_output.data <= ''' + from_slv_toks[0] + '''dout_slv''' + from_slv_toks[1] + ''';
       

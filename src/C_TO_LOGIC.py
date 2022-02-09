@@ -1215,10 +1215,23 @@ class Logic:
       for alias in all_aliases:
         self.wires.discard(alias)
         self.wire_to_c_type.pop(alias, None)
-        self.wire_drives.pop(alias, None)
-        self.wire_driven_by.pop(alias, None)
         self.alias_to_orig_var_name.pop(alias, None)
         self.alias_to_driven_ref_toks.pop(alias, None)
+
+        # Pop driven by, do corresponding wire drives
+        driving_wire = self.wire_driven_by.pop(alias, None)
+        if driving_wire is not None:
+          wires_driven_by_driving_wire = self.wire_drives[driving_wire]
+          wires_driven_by_driving_wire.remove(alias)
+          if len(wires_driven_by_driving_wire)==0:
+             self.wire_drives.pop(driving_wire)
+
+        # Pop wire_drives, do coresponding wire driven by
+        driven_wires = self.wire_drives.pop(alias, None)
+        if driven_wires is not None:
+          for driven_wire in driven_wires:
+            self.wire_driven_by.pop(driven_wire, None)
+
       self.wire_aliases_over_time[var_name] = []    
   
   def COPY_SUBMODULE_INFO(self, new_inst, old_inst):

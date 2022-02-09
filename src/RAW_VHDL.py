@@ -82,6 +82,8 @@ def GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
     return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
     return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
+  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF+"_0"):
+    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF+"_2"):
     return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
   else:
@@ -93,6 +95,8 @@ def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
     return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
     return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
+  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF + "_0"):
+    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 0)
   elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF + "_2"):
     return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
   else:
@@ -212,7 +216,8 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       rv += ";\n"
   
   if clocks == 0:
-    rv += '''
+    if sp_dp=="SP": # 0 clock
+      rv += '''
     process(clk) is
     begin
       if rising_edge(clk) then
@@ -226,9 +231,25 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     -- Read first
     return_output <= '''  + var_name + '''(to_integer(addr));
 '''
+    else: #DP  clock
+      rv += '''
+    process(clk) is
+    begin
+      if rising_edge(clk) then
+        if CLOCK_ENABLE(0)='1' then
+          if we(0) = '1' then
+            ''' + var_name + '''(to_integer(addr_w)) <= wd; 
+          end if;
+        end if;
+      end if;
+    end process;
+    -- Read first
+    return_output <= '''  + var_name + '''(to_integer(addr_r));
+'''
+
   elif clocks == 2:
     # In and out regs
-    if sp_dp=="SP":
+    if sp_dp=="SP": # 2 clock
       rv += '''
       process(clk) is
       begin
@@ -251,7 +272,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       -- Tie output reg to output
       return_output <= return_output_r;
       '''
-    else: # DP
+    else: # DP 2 clock
       rv += '''
         process(clk)
         begin
@@ -279,7 +300,8 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       
       
   else:
-    print("Do other clocks for RAMRF fool") # still a fool
+    # Built to Spill - When Not Being Stupid Is Not Enough
+    print("Do other clocks for RAMRF fool") # still a fool, fools knows a fool
     sys.exit(-1)
   
   return rv
