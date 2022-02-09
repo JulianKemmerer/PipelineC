@@ -7,9 +7,7 @@
 
 // Globally visible port/wire name
 uint4_t leds; 
-// This should be in a macro somehow TODO \/
-#include "uint4_t_array_N_t.h"
-#include "leds_clock_crossing.h"
+#include "clock_crossing/leds.h"
 
 // Declares leds_module as a module with top level ports, no set clock frequency
 // Return value is wire out to LEDs
