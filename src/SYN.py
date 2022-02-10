@@ -71,8 +71,11 @@ def PART_SET_TOOL(part_str, allow_fail=False):
         # Diamond fails to create proj for UMG5G part?
         if "um5g" in part_str.lower():
           SYN_TOOL = OPEN_TOOLS
+        # Default to open tools for non ice40 (nextpnr not support ooc mode yet)
+        elif "ice40" not in part_str.lower():
+          SYN_TOOL = OPEN_TOOLS
         else:
-          SYN_TOOL = DIAMOND #OPEN_TOOLS # Can replace with SYN_TOOL = DIAMOND
+          SYN_TOOL = DIAMOND
       elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
         SYN_TOOL = EFINITY
       else:
