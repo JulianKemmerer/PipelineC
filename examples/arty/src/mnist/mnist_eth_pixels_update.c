@@ -8,6 +8,8 @@
 // g++ mnist_eth_pixels_update.c -I ~/pipelinec_output -o mnist_eth_pixels_update
 
 #include "mnist-neural-network-plain-c-master/mnist_file.c"
+#include "mnist-neural-network-plain-c-master/neural_network.c"
+
 /**
  * Downloaded from: http://yann.lecun.com/exdb/mnist/
  */
@@ -62,6 +64,23 @@ int read_prediction_until_correct(pred_resp_t* output, uint8_t test_label)
 int main(int argc, char *argv[])
 {
     mnist_dataset_t * train_dataset, * test_dataset;
+    // Init trained network
+    neural_network_t network;
+    float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
+        #include "trained/weights.c"
+    ;
+    float bias[MNIST_LABELS] = 
+        #include "trained/biases.c"
+    ;
+    float activations[MNIST_LABELS];
+    int i, j;
+    for (i = 0; i < MNIST_LABELS; i++) {
+        network.b[i] = bias[i];
+
+        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+            network.W[i][j] = weight[i*MNIST_IMAGE_SIZE + j];
+        }
+    }
 
     // Read the datasets from the files
     train_dataset = mnist_get_dataset(train_images_file, train_labels_file);
@@ -73,12 +92,11 @@ int main(int argc, char *argv[])
     printf("Sending images...\n");
 
     int test_image_num;
-    for(test_image_num=0;test_image_num<32;test_image_num++)
+    for(test_image_num=0;test_image_num<128;test_image_num++)
     {
+        // Load and image and do software inference to compare to
         mnist_image_t test_image = test_dataset->images[test_image_num];
         uint8_t test_label = test_dataset->labels[test_image_num];
-        /*
-        float activations[MNIST_LABELS];
         neural_network_hypothesis(&test_image, &network, activations);
         int predict = 0;
         float max_activation = activations[0];
@@ -88,7 +106,7 @@ int main(int argc, char *argv[])
                 predict = j;
             }
         }
-        printf("# Inference predicts: %d\n", predict);*/
+        //printf("# Inference predicts: %d\n", predict);
         //printf("# Pixels for test image labeled as: %d\n", test_label);
         /*printf("pixels = [\n");
         for (i = 0; i < MNIST_IMAGE_SIZE; i++) {
@@ -113,10 +131,10 @@ int main(int argc, char *argv[])
 
         // Read responses until got matching one
         pred_resp_t resp;
-        if(read_prediction_until_correct(&resp, test_label))
+        if(read_prediction_until_correct(&resp, predict))
         {
             printf("Failed prediction for image num %d, predicted %d, was %d\n",
-                    test_image_num, resp.pred, test_label);
+                    test_image_num, resp.pred, predict);
         }
     }
 
