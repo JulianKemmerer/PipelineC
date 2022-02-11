@@ -2,6 +2,9 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
+// LEDs for signaling overflow
+#include "../leds/leds.c"
+
 // AXIS is how to stream data
 #include "axi/axis.h"
 
@@ -28,7 +31,7 @@
 // Helper functions to convert bytes to/from input type
 #include "pixels_update_t_bytes_t.h"
 
-// FIFO to hold ethernet header so can be used for reply address
+// FIFO to hold ethernet header so can be used for reply address (TODO: dont need)
 eth_header_t headers_fifo[2];
 #include "clock_crossing/headers_fifo.h"
 
@@ -38,9 +41,6 @@ axis_to_type(axis_to_input, 32, pixels_update_t)
 // FIFO to hold inputs buffered from the AXIS stream
 pixels_update_t inputs_fifo[16];
 #include "clock_crossing/inputs_fifo.h"
-
-// LEDs for signaling overflow
-#include "../leds/leds.c"
 
 // Receive logic
 // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
@@ -99,8 +99,8 @@ void rx_main()
   #pragma FEEDBACK deserializer_output_ready
   axis_to_input_t to_input = axis_to_input(frame.payload,deserializer_output_ready);
 
-  // Frame was ready if axis32_to_inputs+header fifo was ready
-  eth_rx_out_ready = to_input.payload_ready & header_write.ready; // FEEDBACK
+  // Frame was ready if axis32_to_inputs was ready (header fifo not really used as fifo)
+  eth_rx_out_ready = to_input.payload_ready; // & header_write.ready; // FEEDBACK
 
   // Write inputs into fifo
   pixels_update_t input_wr_data[1];
@@ -190,6 +190,7 @@ void pixel_writer()
         uint16_t counter = 0;
         while(counter < N_PIXELS_PER_UPDATE)
         {
+            // TEMP HARD CODED TO 1 PIXEL WIDE MEM
             // Write the pixel
             pixel_mem_write(addr, pixels_update.pixels[0], 1);
             // Shift pixels array down by 1 so next pixel is at [0]
@@ -197,13 +198,16 @@ void pixel_writer()
             // And increment pointers
             addr += 1;
             counter += 1;
+            //// Done?
+            //uint1_t done = addr >= (MNIST_IMAGE_SIZE-1);
+            //WIRE_WRITE(uint1_t, pixel_writer_done,  done)
             __clk();
         }
     }
 }
 // Derived fsm from func
 #include "pixel_writer_FSM.h"
-// Wrap up inference FSM as top level
+// Wrap up FSM as top level
 MAIN_MHZ(pixel_writer_FSM_wrapper, NN_CLOCK_MHZ)
 void pixel_writer_FSM_wrapper()
 {
@@ -214,36 +218,51 @@ void pixel_writer_FSM_wrapper()
   //return o.output_valid;
 }
 
-// Neural network specific code
-#include "neural_network_eth_app.c"
+// Output response of prediciton
+#include "pred_resp.h"
 
-// DUMMY TX FOR NOW
-// Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
-#pragma MAIN_GROUP tx_main xil_temac_tx 
+// Helper functions to convert bytes to/from output type
+#include "pred_resp_t_bytes_t.h"
+
+// Declare function to convert the output type to axis32 
+type_to_axis(output_to_axis, pred_resp_t, 32) // macro
+
+// Outputs fifo of prediction responses
+pred_resp_t outputs_fifo[16];
+#include "clock_crossing/outputs_fifo.h"
+
+// Transmit logic
+#pragma MAIN_GROUP tx_main xil_temac_tx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void tx_main()
 {
   // Read wires from TX MAC
   xil_temac_to_tx_t from_mac;
-  WIRE_READ(xil_temac_to_tx_t, from_mac, xil_temac_to_tx)
+  WIRE_READ(xil_temac_to_tx_t, from_mac, xil_temac_to_tx) // from_mac = xil_temac_to_tx
   uint1_t mac_ready = from_mac.tx_axis_mac_ready;
   
   // TODO stats+reset+enable
   
-  // Try to read from fifos if ready to tx eth frame
-  // Only read header out of fifo, dropping on floor, at end of packet
-  uint1_t payload_read_en;
-  //#pragma FEEDBACK payload_read_en
-  uint1_t header_read_en = 1; //DUMMY
+  // Read outputs from fifo
+  uint1_t outputs_fifo_read_en;
+  #pragma FEEDBACK outputs_fifo_read_en
+  outputs_fifo_read_t output_read = outputs_fifo_READ_1(outputs_fifo_read_en);
+  
+  // Serialize outputs to axis
+  uint1_t serializer_output_ready;
+  #pragma FEEDBACK serializer_output_ready
+  output_to_axis_t to_axis = output_to_axis(output_read.data[0], output_read.valid, serializer_output_ready);
+  // Read outputs from fifo if serializer is ready
+  outputs_fifo_read_en = to_axis.input_data_ready; // FEEDBACK
+  
+  // Use header from fifo output, but dont read it out ever (not used as fifo)
+  uint1_t header_read_en = 0;
   //#pragma FEEDBACK header_read_en
-  //loopback_payload_fifo_read_t payload_read = loopback_payload_fifo_READ_1(payload_read_en);
   headers_fifo_read_t header_read = headers_fifo_READ_1(header_read_en);  
   
 	// Wire up the ETH frame to send
-  uint1_t eth_tx_out_ready;
-  #pragma FEEDBACK eth_tx_out_ready
   eth32_frame_t frame;
   // Header matches what was sent other than SRC+DST macs
-  //frame.header = header_read.data[0];
+  frame.header = header_read.data[0];
   uint8_t FPGA_MAC_BYTES[6];
   FPGA_MAC_BYTES[0] = FPGA_MAC0;
   FPGA_MAC_BYTES[1] = FPGA_MAC1;
@@ -255,20 +274,26 @@ void tx_main()
   frame.header.dst_mac = frame.header.src_mac; // Send back to where came from
   frame.header.src_mac = FPGA_MAC; // From FPGA
   // Header and payload need to be valid to send
-  //frame.payload = payload_read.data[0];
-  //frame.payload.valid = payload_read.valid & header_read.valid;
+  frame.payload = to_axis.payload;
+  frame.payload.valid = to_axis.payload.valid & header_read.valid;
   
   // The tx module
+  uint1_t eth_tx_out_ready;
+  #pragma FEEDBACK eth_tx_out_ready
   eth_32_tx_t eth_tx = eth_32_tx(frame, eth_tx_out_ready);
   axis32_t axis_tx = eth_tx.mac_axis;
-  // Read payload if was ready
-  payload_read_en = eth_tx.frame_ready & frame.payload.valid; // FEEDBACK
-  // Ready header if was ready at end of packet
+  
+  // Serializer axis output is ready if tx module is ready
+  serializer_output_ready = eth_tx.frame_ready & frame.payload.valid; // FEEDBACK
+  
+  // Read header if was ready, dropping on floor, at end of packet
   //header_read_en = eth_tx.frame_ready & frame.payload.last & frame.payload.valid; // FEEDBACK
     
 	// Convert axis32 to axis8
   axis32_to_axis8_t to_axis8 = axis32_to_axis8(axis_tx, mac_ready);
   axis8_t mac_axis_tx = to_axis8.axis_out;
+  
+  // Tx module ready if axis width converter ready
   eth_tx_out_ready = to_axis8.axis_in_ready; // FEEDBACK
   
   // Write wires back into TX MAC 
@@ -279,5 +304,8 @@ void tx_main()
   to_mac.tx_configuration_vector = 0;
   to_mac.tx_configuration_vector |= ((uint32_t)1<<1); // TX enable
   to_mac.tx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
-  WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac)
+  WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac) // xil_tx_to_temac = to_mac
 }
+
+// Neural network specific code
+#include "neural_network_eth_app.c"

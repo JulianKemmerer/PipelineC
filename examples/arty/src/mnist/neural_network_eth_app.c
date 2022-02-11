@@ -6,13 +6,14 @@ uint32_t inference_fsm_basic()
 {
   static uint32_t i; // Label
   static uint32_t j; // Per image pixel
+  // Pixels are shared with logic to load over ethernet
+  // Weights, biases, activations
   static float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
     #include "trained/weights.c"
   ;
   static float bias[MNIST_LABELS] = 
     #include "trained/biases.c"
   ;
-  // Pixels are shared with logic to load over ethernet
   static float activation[MNIST_LABELS]; // init to zeros
   
   // Loop computing activation for each label
@@ -51,16 +52,15 @@ uint32_t inference_fsm_basic()
 #include "inference_fsm_basic_FSM.h"
 // Wrap up inference FSM as top level
 MAIN_MHZ(inference_fsm_basic_wrapper, NN_CLOCK_MHZ)
-uint1_t inference_fsm_basic_wrapper()
+void inference_fsm_basic_wrapper()
 {
   inference_fsm_basic_INPUT_t i;
-  i.input_valid = 1;
+  // Run repeatedly
+  i.input_valid = 1; 
   i.output_ready = 1;
   inference_fsm_basic_OUTPUT_t o = inference_fsm_basic_FSM(i);
-  static uint32_t pred;
-  static uint1_t pred_valid;
-  uint1_t rv = pred > 0 & pred_valid;
-  pred = o.return_output;
-  pred_valid = o.output_valid;
-  return rv;
+  // Write output predictions into fifo
+  pred_resp_t resp[1];
+  resp[0].pred = o.return_output;
+  outputs_fifo_write_t output_write = outputs_fifo_WRITE_1(resp, o.output_valid);
 }
