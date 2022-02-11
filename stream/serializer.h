@@ -29,7 +29,7 @@ name##_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_r
   if(out_data_ready) \
   { \
     /* Shift buffer down to bring next elems to front */ \
-    ARRAY_SHIFT_DOWN(in_buffer,IN_SIZE,OUT_SIZE,i) \
+    ARRAY_SHIFT_DOWN(in_buffer,IN_SIZE,OUT_SIZE) \
     out_counter += OUT_SIZE; \
     \
     /* If output all the elems then clear buffer */ \

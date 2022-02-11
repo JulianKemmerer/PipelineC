@@ -37,17 +37,24 @@ void init_eth()
 	/* Open RAW socket to send on */
 	if ((write_sockfd = socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW)) == -1) {
 	    perror("socket");
+		exit(-1);
 	}
 	/* Get the index of the interface  */
 	memset(&write_if_idx, 0, sizeof(struct ifreq));
 	strncpy(write_if_idx.ifr_name, ifName, IFNAMSIZ-1);
 	if (ioctl(write_sockfd, SIOCGIFINDEX, &write_if_idx) < 0)
+	{
 	    perror("SIOCGIFINDEX");
+		exit(-1);
+	}
 	/* Get the MAC address of the interface  */
 	memset(&write_if_mac, 0, sizeof(struct ifreq));
 	strncpy(write_if_mac.ifr_name, ifName, IFNAMSIZ-1);
 	if (ioctl(write_sockfd, SIOCGIFHWADDR, &write_if_mac) < 0)
-	    perror("SIOCGIFHWADDR");
+	{
+	   perror("SIOCGIFHWADDR");
+	   exit(-1);
+	}
   /* Index of the network device */
 	write_socket_address.sll_ifindex = write_if_idx.ifr_ifindex;
 	/* Address length*/
@@ -72,7 +79,10 @@ void init_eth()
 	memset(&read_if_idx, 0, sizeof(struct ifreq));
 	strncpy(read_if_idx.ifr_name, ifName, IFNAMSIZ-1);
 	if (ioctl(read_sockfd, SIOCGIFINDEX, &read_if_idx) < 0)
+	{
 	    perror("SIOCGIFINDEX");
+		exit(-1);
+	}
   // Set the interface number for socket
   read_socket_address.sll_family = PF_PACKET;
   /* Index of the network device */
