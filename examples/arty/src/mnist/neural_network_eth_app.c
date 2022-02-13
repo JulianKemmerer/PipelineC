@@ -24,7 +24,7 @@ uint32_t inference_fsm_basic()
       for(j = 0; j < MNIST_IMAGE_SIZE; j+=1)
       {
         __clk(); // Combinatorial logic dividing marker
-        pixel_t p = pixel_mem_read(j); // ROM lookup
+        pixel_t p = pixel_mem_read(j); // RAM lookup
         float scaled_pixel = (float)p * (1.0/255.0); // FP mul
         float w = weight_RAM_SP_RF_0(i*MNIST_IMAGE_SIZE + j, 0.0, 0); // ROM lookup
         float act_inc = w * scaled_pixel; // FP mul
@@ -59,8 +59,20 @@ void inference_fsm_basic_wrapper()
   i.input_valid = 1; 
   i.output_ready = 1;
   inference_fsm_basic_OUTPUT_t o = inference_fsm_basic_FSM(i);
-  // Write output predictions into fifo
+
+  // Assemble output prediction to write into fifo
   pred_resp_t resp[1];
   resp[0].pred = o.return_output;
+  
+  // Get count of how many nanosec between predictions
+  static uint32_t nanosec_counter;
+  resp[0].nanosec_since = nanosec_counter;
+  nanosec_counter += (uint32_t)(1000.0/NN_CLOCK_MHZ);
+  if(o.output_valid)
+  {
+    nanosec_counter = 0;
+  }
+
+  // Write output predictions into fifo
   outputs_fifo_write_t output_write = outputs_fifo_WRITE_1(resp, o.output_valid);
 }

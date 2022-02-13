@@ -38,7 +38,7 @@ eth_header_t headers_fifo[2];
 // Declare function to convert axis32 to input type
 axis_to_type(axis_to_input, 32, pixels_update_t)
 
-// FIFO to hold inputs buffered from the AXIS stream
+// FIFO to hold inputs buffered from the TEMAC AXIS stream
 pixels_update_t inputs_fifo[16];
 #include "clock_crossing/inputs_fifo.h"
 
@@ -167,7 +167,7 @@ pixel_t pixel_mem_read(uint16_t addr)
     return rdata;
 }
 
-// Logic to read from inputs fifo and use the RW port to write to pixel memory
+// Logic to read from inputs fifo and use the write port to write to pixel memory
 void pixel_writer()
 {
     // Inf loop
@@ -215,7 +215,6 @@ void pixel_writer_FSM_wrapper()
   i.input_valid = 1;
   i.output_ready = 1;
   pixel_writer_OUTPUT_t o = pixel_writer_FSM(i);
-  //return o.output_valid;
 }
 
 // Output response of prediciton

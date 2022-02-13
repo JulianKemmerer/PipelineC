@@ -9,6 +9,18 @@
 // Build like:
 // g++ pixels_to_eth.c -I ~/pipelinec_output -o pixels_to_eth
 
+
+#include "mnist-neural-network-plain-c-master/mnist_file.c"
+#include "mnist-neural-network-plain-c-master/neural_network.c"
+/**
+ * Downloaded from: http://yann.lecun.com/exdb/mnist/
+ */
+const char * train_images_file = "mnist-neural-network-plain-c-master/data/train-images-idx3-ubyte";
+const char * train_labels_file = "mnist-neural-network-plain-c-master/data/train-labels-idx1-ubyte";
+const char * test_images_file = "mnist-neural-network-plain-c-master/data/t10k-images-idx3-ubyte";
+const char * test_labels_file = "mnist-neural-network-plain-c-master/data/t10k-labels-idx1-ubyte";
+
+
 // 'Software' side of ethernet
 #include "../eth/eth_sw.c"
 
@@ -25,6 +37,30 @@ void write_update(pixels_update_t* input)
 
 int main(int argc, char *argv[])
 {
+    mnist_dataset_t * train_dataset, * test_dataset;
+    // Init trained network
+    neural_network_t network;
+    float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
+        #include "trained/weights.c"
+    ;
+    float bias[MNIST_LABELS] = 
+        #include "trained/biases.c"
+    ;
+    float activations[MNIST_LABELS];
+    int i, j;
+    for (i = 0; i < MNIST_LABELS; i++) {
+        network.b[i] = bias[i];
+
+        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+            network.W[i][j] = weight[i*MNIST_IMAGE_SIZE + j];
+        }
+    }
+
+    // Read the datasets from the files
+    train_dataset = mnist_get_dataset(train_images_file, train_labels_file);
+    test_dataset = mnist_get_dataset(test_images_file, test_labels_file);
+
+
     // Open stdin for reading pixels from video_to_pixels.py
     FILE* stdin_file = freopen(NULL, "rb", stdin);
     
@@ -43,12 +79,35 @@ int main(int argc, char *argv[])
         }
         // Write pixels to FPGA
         write_update(&update);
-        usleep(1); // Temp for no overflow
+        usleep(6); // Temp for no overflow
+
+        // Keep own copy of pixels and run against software network on camera image too
+        mnist_image_t test_image;
+        int addr = update.addr;
+        int last_pixel = 0;
+        for(i=0;i<N_PIXELS_PER_UPDATE;i++)
+        {
+            test_image.pixels[addr+i] = update.pixels[i];
+            last_pixel = (addr+i) == (MNIST_IMAGE_SIZE-1);
+        }
+        if(last_pixel)
+        {
+            neural_network_hypothesis(&test_image, &network, activations);
+            int predict = 0;
+            float max_activation = activations[0];
+            for (j = 0; j < MNIST_LABELS; j++) {
+                if (max_activation < activations[j]) {
+                    max_activation = activations[j];
+                    predict = j;
+                }
+            }
+            printf("Software prediction: %d\n", predict);
+        }
     }
     fclose(stdin_file);
 
     // Close eth to/from FPGA
-	  close_eth();
+	close_eth();
 
     return 0;
 }

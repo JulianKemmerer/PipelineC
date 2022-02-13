@@ -7,6 +7,7 @@ import requests
 import cv2
 import numpy as np
 import imutils
+from imutils import adjust_brightness_contrast
 
 # Package as a struct that C code can decode
 from ctypes import *
@@ -48,15 +49,20 @@ with os.fdopen(sys.stdout.fileno(), "wb", closefd=False) as stdout:
         gray_img = cv2.cvtColor(sq_img, cv2.COLOR_BGR2GRAY)
         # Resized for mnist
         mnist_img = imutils.resize(gray_img, width=28, height=28)
+        # Increase contrast
+        #adjusted_mnist_img = adjust_brightness_contrast(mnist_img, contrast=50.0, brightness=0.0)
+        #mnist_img_filtered = cv2.inRange(mnist_img, 100, 255)
+        ret, mnist_img_filtered = cv2.threshold(mnist_img, 128, 255, cv2.THRESH_TOZERO)
+        
         # Resized for display
-        large_mnist = imutils.resize(mnist_img, width=1000, height=1000)
+        large_mnist = imutils.resize(mnist_img_filtered, width=1000, height=1000)
         cv2.imshow("mnist", large_mnist)
 
         # Send the bytes of pixel updates over std out
         update = pixels_update_t()
         for i in range(0, 28):
             for j in range(0, 28):
-                update.pixels[0] = mnist_img[i][j]
+                update.pixels[0] = mnist_img_filtered[i][j]
                 update.addr = i*28 + j
                 stdout.write(convert_struct_to_bytes(update))   
         stdout.flush()
