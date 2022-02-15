@@ -16,23 +16,12 @@ def convert_struct_to_bytes(st):
     memmove(buffer, addressof(st), sizeof(st))
     return buffer.raw
 # TODO Code gen python stuff based on C struct defs?
-N_PIXELS_PER_UPDATE = 8
-'''
-#define N_PIXELS_PER_UPDATE 8
-#define pixel_t uint8_t
-typedef struct pixels_update_t
-{
-    pixel_t pixels[N_PIXELS_PER_UPDATE];
-    uint16_t addr;
-    uint8_t pad11; // Temp must be >=4 bytes and mult of 4 bytes in size
-    uint8_t pad12;
-}pixels_update_t;
-'''
+N_PIXELS_PER_UPDATE = 16
 class pixels_update_t(Structure):
     _fields_ = [('pixels', c_uint8 * N_PIXELS_PER_UPDATE),
                 ('addr', c_uint16),
-                ('pad11', c_uint8),
-                ('pad12', c_uint8)
+                ('pad19', c_uint8),
+                ('pad20', c_uint8)
                 ]
 
 
@@ -64,11 +53,6 @@ with os.fdopen(sys.stdout.fileno(), "wb", closefd=False) as stdout:
         cv2.imshow("mnist", large_mnist)
 
         # Send the bytes of pixel updates over std out
-        all_pixels = []
-        for i in range(0, 28):
-            for j in range(0, 28):
-                all_pixels.append(mnist_img_filtered[i][j])
-
         # Make groups of N and write them
         addr = 0
         group_of_n = []

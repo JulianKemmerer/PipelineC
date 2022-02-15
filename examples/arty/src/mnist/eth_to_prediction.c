@@ -38,7 +38,6 @@ int main(int argc, char *argv[])
     {
         pred_resp_t resp;
         read_prediction(&resp);
-        //printf("FPGA Prediction: %d\n", resp.pred);
         float fps = (1000.0/(float)resp.nanosec_since)*1.0e6;
         printf("FPGA Prediction: %d (%f inferences per second)\n", resp.pred, fps); 
     }

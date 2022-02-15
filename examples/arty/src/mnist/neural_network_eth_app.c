@@ -9,7 +9,7 @@ uint32_t inference_fsm_basic()
   // Pixels are shared with logic to load over ethernet
   // Weights, biases, activations
   static n_floats_t weight[MNIST_LABELS*(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)] = 
-    #include "trained/weights_by_8.c"
+    #include "trained/weights_by_16.c"
   ;
   static float bias[MNIST_LABELS] = 
     #include "trained/biases.c"

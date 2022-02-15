@@ -1,5 +1,6 @@
 -- Top level file connecting board to PipelineC generated code
 
+-- Standard libs
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use ieee.numeric_std.all;
@@ -55,7 +56,7 @@ end board;
 architecture arch of board is
 
 -- General clocks+reset based off of the board's CLK100MHZ
-signal clk_25, clk_50, clk_100, clk_200, clk_400 : std_logic;
+signal clk_6p25, clk_12p5, clk_25, clk_50, clk_100, clk_200, clk_300 : std_logic;
 signal clks_ready: std_logic;
 signal rst : std_logic;
 signal rst_n : std_logic;
@@ -67,7 +68,9 @@ port
   clk_50          : out    std_logic;
   clk_100         : out    std_logic;
   clk_200         : out    std_logic;
-  clk_400         : out    std_logic;
+  clk_300         : out    std_logic;
+  clk_12p5        : out    std_logic;
+  clk_6p25        : out    std_logic;
   -- Status and control signals
   locked          : out    std_logic;
   -- Clock in ports
@@ -92,7 +95,7 @@ port
  );
 end component;
 
--- VGA clock+reset based off of the board's CLK100MHZ
+-- Adjustable VGA clock+reset based off of the board's CLK100MHZ
 signal vga_pixel_clk : std_logic;
 signal vga_clocks_ready : std_logic;
 signal pixel_clk_reset_n : std_logic;
@@ -274,10 +277,10 @@ signal sys_clk_100 : std_logic;
 --signal mig_to_app : xil_mig_to_app_t;
 --signal app_to_mig : xil_app_to_mig_t;
 -- Ethernet
---signal temac_to_rx : xil_temac_to_rx_t;
---signal rx_to_temac : xil_rx_to_temac_t;
---signal temac_to_tx : xil_temac_to_tx_t;
---signal tx_to_temac : xil_tx_to_temac_t;
+signal temac_to_rx : xil_temac_to_rx_t;
+signal rx_to_temac : xil_rx_to_temac_t;
+signal temac_to_tx : xil_temac_to_tx_t;
+signal tx_to_temac : xil_tx_to_temac_t;
 
 begin
 
@@ -291,12 +294,14 @@ port map (
 -- General clocks based off of the board's CLK100MHZ
 clks_sys_clk_100_inst : clks_sys_clk_100
    port map ( 
-  -- Clock out ports  
+   -- Clock out ports
+   clk_6p25 => clk_6p25,  
+   clk_12p5 => clk_12p5,
    clk_25 => clk_25,
    clk_50 => clk_50,
    clk_100 => clk_100,
    clk_200 => clk_200,
-   clk_400 => clk_400,
+   clk_300 => clk_300,
   -- Status and control signals                
    locked => clks_ready,
    -- Clock in ports
@@ -325,19 +330,19 @@ rst_n <= clks_ready;
 -- i2s_rst_n <= i2s_clks_ready;
 
 
--- VGA clocks based off of the board's CLK100MHZ 
-vga_clocks_inst : vga_clocks
-port map
- (
-  -- Clock out ports
-  pixel_clk => vga_pixel_clk,
-  -- Status and control signals
-  locked => vga_clocks_ready,
-  -- Clock in ports
-  sys_clk_100 => sys_clk_100
- );
--- Hold in reset until clocks are ready
-pixel_clk_reset_n <= vga_clocks_ready;
+-- -- VGA clocks based off of the board's CLK100MHZ 
+-- vga_clocks_inst : vga_clocks
+-- port map
+--  (
+--   -- Clock out ports
+--   pixel_clk => vga_pixel_clk,
+--   -- Status and control signals
+--   locked => vga_clocks_ready,
+--   -- Clock in ports
+--   sys_clk_100 => sys_clk_100
+--  );
+-- -- Hold in reset until clocks are ready
+-- pixel_clk_reset_n <= vga_clocks_ready;
 
 -- -- DDR clocks based off of the board's CLK100MHZ 
 -- ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
@@ -400,51 +405,51 @@ pixel_clk_reset_n <= vga_clocks_ready;
 --      );
 -- clk_83p33 <= ui_clk;
 
--- -- The board's ethernet MAC
--- eth_ref_clk <= clk_25;
--- eth_rstn <= rst_n;
--- eth_mdc <= '0';
--- --eth_mdio <= '0';
--- tri_mode_ethernet_mac_0_inst : tri_mode_ethernet_mac_0
---   PORT MAP (
---     glbl_rstn => rst_n,
---     rx_axi_rstn => rst_n,
---     tx_axi_rstn => rst_n,
---     rx_statistics_vector => rx_statistics_vector,
---     rx_statistics_valid => rx_statistics_valid,
---     rx_mac_aclk => clk_25_eth_rx,
---     rx_reset => rx_reset,
---     rx_enable => rx_enable,
---     rx_axis_mac_tdata => rx_axis_mac_tdata,
---     rx_axis_mac_tvalid => rx_axis_mac_tvalid,
---     rx_axis_mac_tlast => rx_axis_mac_tlast,
---     rx_axis_mac_tuser => rx_axis_mac_tuser,
---     tx_ifg_delay => tx_ifg_delay,
---     tx_statistics_vector => tx_statistics_vector,
---     tx_statistics_valid => tx_statistics_valid,
---     tx_mac_aclk => clk_25_eth_tx,
---     tx_reset => tx_reset,
---     tx_enable => tx_enable,
---     tx_axis_mac_tdata => tx_axis_mac_tdata,
---     tx_axis_mac_tvalid => tx_axis_mac_tvalid,
---     tx_axis_mac_tlast => tx_axis_mac_tlast,
---     tx_axis_mac_tuser => tx_axis_mac_tuser,
---     tx_axis_mac_tready => tx_axis_mac_tready,
---     pause_req => pause_req,
---     pause_val => pause_val,
---     speedis100 => speedis100,
---     speedis10100 => speedis10100,
---     mii_tx_clk => eth_tx_clk,
---     mii_txd => eth_txd,
---     mii_tx_en => eth_tx_en,
---     mii_tx_er => open,
---     mii_rxd => eth_rxd,
---     mii_rx_dv => eth_rx_dv,
---     mii_rx_er => eth_rxerr,
---     mii_rx_clk => eth_rx_clk,
---     rx_configuration_vector => rx_configuration_vector,
---     tx_configuration_vector => tx_configuration_vector
---   );
+-- The board's ethernet MAC
+eth_ref_clk <= clk_25;
+eth_rstn <= rst_n;
+eth_mdc <= '0';
+--eth_mdio <= '0';
+tri_mode_ethernet_mac_0_inst : tri_mode_ethernet_mac_0
+  PORT MAP (
+    glbl_rstn => rst_n,
+    rx_axi_rstn => rst_n,
+    tx_axi_rstn => rst_n,
+    rx_statistics_vector => rx_statistics_vector,
+    rx_statistics_valid => rx_statistics_valid,
+    rx_mac_aclk => clk_25_eth_rx,
+    rx_reset => rx_reset,
+    rx_enable => rx_enable,
+    rx_axis_mac_tdata => rx_axis_mac_tdata,
+    rx_axis_mac_tvalid => rx_axis_mac_tvalid,
+    rx_axis_mac_tlast => rx_axis_mac_tlast,
+    rx_axis_mac_tuser => rx_axis_mac_tuser,
+    tx_ifg_delay => tx_ifg_delay,
+    tx_statistics_vector => tx_statistics_vector,
+    tx_statistics_valid => tx_statistics_valid,
+    tx_mac_aclk => clk_25_eth_tx,
+    tx_reset => tx_reset,
+    tx_enable => tx_enable,
+    tx_axis_mac_tdata => tx_axis_mac_tdata,
+    tx_axis_mac_tvalid => tx_axis_mac_tvalid,
+    tx_axis_mac_tlast => tx_axis_mac_tlast,
+    tx_axis_mac_tuser => tx_axis_mac_tuser,
+    tx_axis_mac_tready => tx_axis_mac_tready,
+    pause_req => pause_req,
+    pause_val => pause_val,
+    speedis100 => speedis100,
+    speedis10100 => speedis10100,
+    mii_tx_clk => eth_tx_clk,
+    mii_txd => eth_txd,
+    mii_tx_en => eth_tx_en,
+    mii_tx_er => open,
+    mii_rxd => eth_rxd,
+    mii_rx_dv => eth_rx_dv,
+    mii_rx_er => eth_rxerr,
+    mii_rx_clk => eth_rx_clk,
+    rx_configuration_vector => rx_configuration_vector,
+    tx_configuration_vector => tx_configuration_vector
+  );
 
 
 -- Un/pack IO struct types to/from flattened SLV board pins
@@ -480,67 +485,62 @@ process(all) begin
     -- mig_to_app.init_calib_complete(0) <= init_calib_complete;
     
     -- Ethernet     
-    -- temac_to_rx.rx_statistics_vector <= unsigned(rx_statistics_vector) ;
-    -- temac_to_rx.rx_statistics_valid(0) <= rx_statistics_valid ;                     
-    -- temac_to_rx.rx_reset(0)<= rx_reset ;                             
-    -- temac_to_rx.rx_enable(0)<= rx_enable ;                               
-    -- temac_to_rx.rx_axis_mac.data(0) <= unsigned(rx_axis_mac_tdata) ;
-    -- temac_to_rx.rx_axis_mac.valid(0) <= rx_axis_mac_tvalid ;                
-    -- temac_to_rx.rx_axis_mac.last(0) <= rx_axis_mac_tlast ;                   
-    -- --temac_to_rx.<= rx_axis_mac_tuser ;                        
-    -- tx_ifg_delay <= std_logic_vector(tx_to_temac.tx_ifg_delay);     
-    -- temac_to_tx.tx_statistics_vector<= unsigned(tx_statistics_vector);
-    -- temac_to_tx.tx_statistics_valid(0)<= tx_statistics_valid ;                                        
-    -- temac_to_tx.tx_reset(0)<= tx_reset ;                                
-    -- temac_to_tx.tx_enable(0)<= tx_enable ;                               
-    -- tx_axis_mac_tdata <= std_logic_vector(tx_to_temac.tx_axis_mac.data(0));  
-    -- tx_axis_mac_tvalid <= tx_to_temac.tx_axis_mac.valid(0);                    
-    -- tx_axis_mac_tlast <= tx_to_temac.tx_axis_mac.last(0);                       
-    -- tx_axis_mac_tuser <= (others => '0');     
-    -- temac_to_tx.tx_axis_mac_ready(0)<= tx_axis_mac_tready ;            
-    -- pause_req <= rx_to_temac.pause_req(0);                                 
-    -- pause_val <= std_logic_vector(rx_to_temac.pause_val);                                                
-    -- rx_configuration_vector <= std_logic_vector(rx_to_temac.rx_configuration_vector);
-    -- tx_configuration_vector <= std_logic_vector(tx_to_temac.tx_configuration_vector);
-    -- temac_to_rx.speedis100(0)<= speedis100 ;                           
-    -- temac_to_rx.speedis10100(0)<= speedis10100 ;
-    -- temac_to_tx.speedis100(0)<= speedis100 ;                              
-    -- temac_to_tx.speedis10100(0)<= speedis10100 ;
+    temac_to_rx.rx_statistics_vector <= unsigned(rx_statistics_vector) ;
+    temac_to_rx.rx_statistics_valid(0) <= rx_statistics_valid ;                     
+    temac_to_rx.rx_reset(0)<= rx_reset ;                             
+    temac_to_rx.rx_enable(0)<= rx_enable ;                               
+    temac_to_rx.rx_axis_mac.data(0) <= unsigned(rx_axis_mac_tdata) ;
+    temac_to_rx.rx_axis_mac.valid(0) <= rx_axis_mac_tvalid ;                
+    temac_to_rx.rx_axis_mac.last(0) <= rx_axis_mac_tlast ;                   
+    --temac_to_rx.<= rx_axis_mac_tuser ;                        
+    tx_ifg_delay <= std_logic_vector(tx_to_temac.tx_ifg_delay);     
+    temac_to_tx.tx_statistics_vector<= unsigned(tx_statistics_vector);
+    temac_to_tx.tx_statistics_valid(0)<= tx_statistics_valid ;                                        
+    temac_to_tx.tx_reset(0)<= tx_reset ;                                
+    temac_to_tx.tx_enable(0)<= tx_enable ;                               
+    tx_axis_mac_tdata <= std_logic_vector(tx_to_temac.tx_axis_mac.data(0));  
+    tx_axis_mac_tvalid <= tx_to_temac.tx_axis_mac.valid(0);                    
+    tx_axis_mac_tlast <= tx_to_temac.tx_axis_mac.last(0);                       
+    tx_axis_mac_tuser <= (others => '0');     
+    temac_to_tx.tx_axis_mac_ready(0)<= tx_axis_mac_tready ;            
+    pause_req <= rx_to_temac.pause_req(0);                                 
+    pause_val <= std_logic_vector(rx_to_temac.pause_val);                                                
+    rx_configuration_vector <= std_logic_vector(rx_to_temac.rx_configuration_vector);
+    tx_configuration_vector <= std_logic_vector(tx_to_temac.tx_configuration_vector);
+    temac_to_rx.speedis100(0)<= speedis100 ;                           
+    temac_to_rx.speedis10100(0)<= speedis10100 ;
+    temac_to_tx.speedis100(0)<= speedis100 ;                              
+    temac_to_tx.speedis10100(0)<= speedis10100 ;
 end process;
     
 -- The PipelineC generated entity
 top_inst : entity work.top port map (   
-    -- Main function clocks
+    -- Generic main function clocks
+    clk_6p25 => clk_6p25,
     --clk_22p579 => clk_22p579,
-    clk_148p5 => vga_pixel_clk,
-    --clk_25p0_xil_temac_rx => clk_25_eth_rx,
-    --clk_25p0_xil_temac_tx => clk_25_eth_tx,
+    --clk_148p5 => vga_pixel_clk,
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
     --clk_150p0 => clk_100,
     --clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
-    --clk_400p0 => clk_400,
+    --clk_300p0 => clk_300,
         
     -- Each main function's inputs and outputs
-    --app_reset_n(0) => rst_n, --i2s_rst_n,
-    ---main_wrapper_return_output(0) => led(0),
-    --main_wrapper_return_output(1) => led(1),
-    --main_wrapper_return_output(2) => led(2),
-    --main_wrapper_return_output(3) => led(3)
+    --app_reset_n(0) => rst_n,   
     
     -- LEDs
-    --led0_module_return_output(0) => led(0),
-    --led1_module_return_output(0) => led(1),
-    --led2_module_return_output(0) => led(2),
-    --led3_module_return_output(0) => led(3)
+    led0_module_return_output(0) => led(0),
+    led1_module_return_output(0) => led(1),
+    led2_module_return_output(0) => led(2),
+    led3_module_return_output(0) => led(3),
     
     -- Switches
-    switches_module_sw => unsigned(sw),
+    --switches_module_sw => unsigned(sw),
     
     -- Buttons
-    buttons_module_btn => unsigned(btn),
+    --buttons_module_btn => unsigned(btn),
 
     -- UART
     --uart_module_data_in(0) => uart_txd_in,
@@ -556,33 +556,35 @@ top_inst : entity work.top port map (
     --pmod_ja_return_output.ja6(0) => ja(6),
     --pmod_ja_inputs.ja7(0) => ja(7),
     -- PMODB
-    pmod_jb_return_output.jb0(0) => jb(0),
-    pmod_jb_return_output.jb1(0) => jb(1),
-    pmod_jb_return_output.jb2(0) => jb(2),
-    pmod_jb_return_output.jb3(0) => jb(3),
-    pmod_jb_return_output.jb4(0) => jb(4),
-    pmod_jb_return_output.jb5(0) => jb(5),
-    pmod_jb_return_output.jb6(0) => jb(6),
-    pmod_jb_return_output.jb7(0) => jb(7),
-    -- PMODC
-    pmod_jc_return_output.jc0(0) => jc(0),
-    pmod_jc_return_output.jc1(0) => jc(1),
-    pmod_jc_return_output.jc2(0) => jc(2),
-    pmod_jc_return_output.jc3(0) => jc(3),
-    pmod_jc_return_output.jc4(0) => jc(4),
-    pmod_jc_return_output.jc5(0) => jc(5),
-    pmod_jc_return_output.jc6(0) => jc(6),
-    pmod_jc_return_output.jc7(0) => jc(7)
+    -- pmod_jb_return_output.jb0(0) => jb(0),
+    -- pmod_jb_return_output.jb1(0) => jb(1),
+    -- pmod_jb_return_output.jb2(0) => jb(2),
+    -- pmod_jb_return_output.jb3(0) => jb(3),
+    -- pmod_jb_return_output.jb4(0) => jb(4),
+    -- pmod_jb_return_output.jb5(0) => jb(5),
+    -- pmod_jb_return_output.jb6(0) => jb(6),
+    -- pmod_jb_return_output.jb7(0) => jb(7),
+    -- -- PMODC
+    -- pmod_jc_return_output.jc0(0) => jc(0),
+    -- pmod_jc_return_output.jc1(0) => jc(1),
+    -- pmod_jc_return_output.jc2(0) => jc(2),
+    -- pmod_jc_return_output.jc3(0) => jc(3),
+    -- pmod_jc_return_output.jc4(0) => jc(4),
+    -- pmod_jc_return_output.jc5(0) => jc(5),
+    -- pmod_jc_return_output.jc6(0) => jc(6),
+    -- pmod_jc_return_output.jc7(0) => jc(7)
     
     -- DDR3
     --xil_mig_module_mig_to_app => mig_to_app,
     --xil_mig_module_return_output => app_to_mig,
     
     -- Ethernet
-    --xil_temac_rx_module_temac_to_rx => temac_to_rx,
-    --xil_temac_rx_module_return_output => rx_to_temac,
-    --xil_temac_tx_module_temac_to_tx => temac_to_tx, 
-    --xil_temac_tx_module_return_output => tx_to_temac    
+    clk_25p0_xil_temac_rx => clk_25_eth_rx,
+    clk_25p0_xil_temac_tx => clk_25_eth_tx,
+    xil_temac_rx_module_temac_to_rx => temac_to_rx,
+    xil_temac_rx_module_return_output => rx_to_temac,
+    xil_temac_tx_module_temac_to_tx => temac_to_tx, 
+    xil_temac_tx_module_return_output => tx_to_temac    
 );
 
 end arch;

@@ -9,17 +9,8 @@
 // Build like:
 // g++ pixels_to_eth.c -I ~/pipelinec_output -o pixels_to_eth
 
-
 #include "mnist-neural-network-plain-c-master/mnist_file.c"
 #include "mnist-neural-network-plain-c-master/neural_network.c"
-/**
- * Downloaded from: http://yann.lecun.com/exdb/mnist/
- */
-const char * train_images_file = "mnist-neural-network-plain-c-master/data/train-images-idx3-ubyte";
-const char * train_labels_file = "mnist-neural-network-plain-c-master/data/train-labels-idx1-ubyte";
-const char * test_images_file = "mnist-neural-network-plain-c-master/data/t10k-images-idx3-ubyte";
-const char * test_labels_file = "mnist-neural-network-plain-c-master/data/t10k-labels-idx1-ubyte";
-
 
 // 'Software' side of ethernet
 #include "../eth/eth_sw.c"
@@ -37,7 +28,6 @@ void write_update(pixels_update_t* input)
 
 int main(int argc, char *argv[])
 {
-    mnist_dataset_t * train_dataset, * test_dataset;
     // Init trained network
     neural_network_t network;
     float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
@@ -55,11 +45,6 @@ int main(int argc, char *argv[])
             network.W[i][j] = weight[i*MNIST_IMAGE_SIZE + j];
         }
     }
-
-    // Read the datasets from the files
-    train_dataset = mnist_get_dataset(train_images_file, train_labels_file);
-    test_dataset = mnist_get_dataset(test_images_file, test_labels_file);
-
 
     // Open stdin for reading pixels from video_to_pixels.py
     FILE* stdin_file = freopen(NULL, "rb", stdin);
