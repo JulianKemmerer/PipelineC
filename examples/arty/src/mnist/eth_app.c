@@ -17,6 +17,7 @@
 // Include logic for parsing ethernet frames from 32b AXIS
 #include "net/eth_32.c"
 
+// Some constants related to the neural net
 #define NN_CLOCK_MHZ 6.25
 #define MNIST_IMAGE_WIDTH 28
 #define MNIST_IMAGE_HEIGHT 28
@@ -121,49 +122,49 @@ void rx_main()
   WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac) // xil_rx_to_temac = to_mac
 }
 
-// A shared single instance main function for the dual port pixel memory
+// A shared single instance main function for the dual port N-pixel wide memory
 // With global wires and helper functions for individual ports
 // Read port
 uint16_t pixel_mem_raddr;
 #include "clock_crossing/pixel_mem_raddr.h"
-pixel_t pixel_mem_rdata;
+n_pixels_t pixel_mem_rdata;
 #include "clock_crossing/pixel_mem_rdata.h"
 // Write port
 uint16_t pixel_mem_waddr;
 #include "clock_crossing/pixel_mem_waddr.h"
-pixel_t pixel_mem_wdata;
+n_pixels_t pixel_mem_wdata;
 #include "clock_crossing/pixel_mem_wdata.h"
 uint1_t pixel_mem_we;
 #include "clock_crossing/pixel_mem_we.h"
 MAIN_MHZ(shared_pixel_mem, NN_CLOCK_MHZ)
 void shared_pixel_mem()
 {
-    static pixel_t pixel[MNIST_IMAGE_SIZE];
+    static n_pixels_t pixel[(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)];
     // Read port
     uint16_t raddr;
-    pixel_t rdata;
+    n_pixels_t rdata;
     // Write port
     uint16_t waddr;
-    pixel_t wdata;
+    n_pixels_t wdata;
     uint1_t we;
     WIRE_READ(uint16_t, raddr, pixel_mem_raddr)
     WIRE_READ(uint16_t, waddr, pixel_mem_waddr)
-    WIRE_READ(pixel_t, wdata, pixel_mem_wdata)
+    WIRE_READ(n_pixels_t, wdata, pixel_mem_wdata)
     WIRE_READ(uint1_t, we, pixel_mem_we)
-    uint8_t rdata = pixel_RAM_DP_RF_0(raddr, waddr, wdata, we); // ROM lookup, built in function template
-    WIRE_WRITE(pixel_t, pixel_mem_rdata, rdata)
+    n_pixels_t rdata = pixel_RAM_DP_RF_0(raddr, waddr, wdata, we); // ROM lookup, built in function template
+    WIRE_WRITE(n_pixels_t, pixel_mem_rdata, rdata)
 }
-void pixel_mem_write(uint16_t addr, pixel_t data, uint1_t enable)
+void pixel_mem_write(uint16_t addr, n_pixels_t data, uint1_t enable)
 {
     WIRE_WRITE(uint16_t, pixel_mem_waddr, addr)
-    WIRE_WRITE(pixel_t, pixel_mem_wdata, data)
+    WIRE_WRITE(n_pixels_t, pixel_mem_wdata, data)
     WIRE_WRITE(uint1_t, pixel_mem_we, enable)
 }
-pixel_t pixel_mem_read(uint16_t addr)
+n_pixels_t pixel_mem_read(uint16_t addr)
 {
     WIRE_WRITE(uint16_t, pixel_mem_raddr, addr)
-    pixel_t rdata;
-    WIRE_READ(pixel_t, rdata, pixel_mem_rdata)
+    n_pixels_t rdata;
+    WIRE_READ(n_pixels_t, rdata, pixel_mem_rdata)
     return rdata;
 }
 
@@ -185,24 +186,13 @@ void pixel_writer()
             __clk();   
         }
 
-        // Then write each individual updated pixel
+        // Then write pixel update
         uint16_t addr = pixels_update.addr;
-        uint16_t counter = 0;
-        while(counter < N_PIXELS_PER_UPDATE)
-        {
-            // TEMP HARD CODED TO 1 PIXEL WIDE MEM
-            // Write the pixel
-            pixel_mem_write(addr, pixels_update.pixels[0], 1);
-            // Shift pixels array down by 1 so next pixel is at [0]
-            ARRAY_SHIFT_DOWN(pixels_update.pixels, N_PIXELS_PER_UPDATE, 1)
-            // And increment pointers
-            addr += 1;
-            counter += 1;
-            //// Done?
-            //uint1_t done = addr >= (MNIST_IMAGE_SIZE-1);
-            //WIRE_WRITE(uint1_t, pixel_writer_done,  done)
-            __clk();
-        }
+        n_pixels_t n_pixels;
+        n_pixels.data = pixels_update.pixels;
+        // Write the pixels
+        pixel_mem_write(addr, n_pixels, 1);
+        __clk();
     }
 }
 // Derived fsm from func

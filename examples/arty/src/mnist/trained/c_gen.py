@@ -7904,7 +7904,7 @@ print("")
 #    print(f"weight[{i}][{j}] = {random.uniform(0, 1)};")
 #print("")
 
-N=16
+N=8
 print(f"WEIGHTS BY {N}:")
 m = 0
 for k in range(0,MNIST_LABELS*int(MNIST_IMAGE_SIZE/N)):

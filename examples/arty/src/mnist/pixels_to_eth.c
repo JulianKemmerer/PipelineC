@@ -79,7 +79,6 @@ int main(int argc, char *argv[])
         }
         // Write pixels to FPGA
         write_update(&update);
-        usleep(6); // Temp for no overflow
 
         // Keep own copy of pixels and run against software network on camera image too
         mnist_image_t test_image;
@@ -87,8 +86,8 @@ int main(int argc, char *argv[])
         int last_pixel = 0;
         for(i=0;i<N_PIXELS_PER_UPDATE;i++)
         {
-            test_image.pixels[addr+i] = update.pixels[i];
-            last_pixel = (addr+i) == (MNIST_IMAGE_SIZE-1);
+            test_image.pixels[(addr*N_PIXELS_PER_UPDATE)+i] = update.pixels[i];
+            last_pixel = ((addr*N_PIXELS_PER_UPDATE)+i) == (MNIST_IMAGE_SIZE-1);
         }
         if(last_pixel)
         {

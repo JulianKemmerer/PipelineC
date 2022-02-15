@@ -1,4 +1,4 @@
-// Modified version of original MNIST example to support 
+// Modified version of N-pixels wide MNIST example to support 
 // pixel memory being shared/loaded over ethernet 
 // and predicitions being sent back over ethernet
 
@@ -8,27 +8,41 @@ uint32_t inference_fsm_basic()
   static uint32_t j; // Per image pixel
   // Pixels are shared with logic to load over ethernet
   // Weights, biases, activations
-  static float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
-    #include "trained/weights.c"
+  static n_floats_t weight[MNIST_LABELS*(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)] = 
+    #include "trained/weights_by_8.c"
   ;
   static float bias[MNIST_LABELS] = 
     #include "trained/biases.c"
   ;
   static float activation[MNIST_LABELS]; // init to zeros
+
+  // Null consts for unused write data ports on RAMs
+  n_floats_t null_floats;
   
   // Loop computing activation for each label
   for(i = 0; i < MNIST_LABELS; i+=1) 
   {
       float b = bias_RAM_SP_RF_0(i, 0.0, 0); // ROM lookup
       activation[i] = b; // Array write
-      for(j = 0; j < MNIST_IMAGE_SIZE; j+=1)
+      for(j = 0; j < (MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER); j+=1)
       {
         __clk(); // Combinatorial logic dividing marker
-        pixel_t p = pixel_mem_read(j); // RAM lookup
-        float scaled_pixel = (float)p * (1.0/255.0); // FP mul
-        float w = weight_RAM_SP_RF_0(i*MNIST_IMAGE_SIZE + j, 0.0, 0); // ROM lookup
-        float act_inc = w * scaled_pixel; // FP mul
-        activation[i] = activation[i] + act_inc; // Array RMW (FP add)
+        n_pixels_t pixels = pixel_mem_read(j); // RAM lookup
+        // ROM lookup
+        n_floats_t weights = weight_RAM_SP_RF_0(i*(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER) + j, null_floats, 0); 
+        // Compute N activation increments, W*Pixel in parallel
+        float act_increments[N_PIXELS_PER_ITER];
+        uint32_t n_iter;
+        for(n_iter=0; n_iter<N_PIXELS_PER_ITER; n_iter+=1)
+        {
+          float scaled_pixel = (float)pixels.data[n_iter] * (1.0/255.0); // FP mul
+          float act_inc = weights.data[n_iter] * scaled_pixel; // FP mul
+          act_increments[n_iter] = act_inc;
+        }
+        // Sum the increments (built in binary tree function)
+        float act_inc_total = per_iter_float_array_sum(act_increments);
+        // And do the final Array RMW (FP add)
+        activation[i] = activation[i] + act_inc_total;
       }
   }
   

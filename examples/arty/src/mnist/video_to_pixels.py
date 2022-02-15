@@ -16,26 +16,32 @@ def convert_struct_to_bytes(st):
     memmove(buffer, addressof(st), sizeof(st))
     return buffer.raw
 # TODO Code gen python stuff based on C struct defs?
+N_PIXELS_PER_UPDATE = 8
 '''
-#define N_PIXELS_PER_UPDATE 1
+#define N_PIXELS_PER_UPDATE 8
 #define pixel_t uint8_t
 typedef struct pixels_update_t
 {
     pixel_t pixels[N_PIXELS_PER_UPDATE];
     uint16_t addr;
-    uint8_t pad0; // temp need to be >= 4 bytes
+    uint8_t pad11; // Temp must be >=4 bytes and mult of 4 bytes in size
+    uint8_t pad12;
 }pixels_update_t;
 '''
 class pixels_update_t(Structure):
-    _fields_ = [('pixels', c_uint8 * 1),
+    _fields_ = [('pixels', c_uint8 * N_PIXELS_PER_UPDATE),
                 ('addr', c_uint16),
-                ('pad0', c_uint8)]
+                ('pad11', c_uint8),
+                ('pad12', c_uint8)
+                ]
 
 
-# Small resolution from IP camera phone
+# Small resolution from setup on IP camera phone
 url = "http://192.168.86.85:8080/shot.jpg"
 x_res = 176
 y_res = 144
+
+# Write binary data to standard out, C program will be listening
 with os.fdopen(sys.stdout.fileno(), "wb", closefd=False) as stdout:
     # While loop to continuously fetching data from the Url
     while True:
@@ -49,22 +55,34 @@ with os.fdopen(sys.stdout.fileno(), "wb", closefd=False) as stdout:
         gray_img = cv2.cvtColor(sq_img, cv2.COLOR_BGR2GRAY)
         # Resized for mnist
         mnist_img = imutils.resize(gray_img, width=28, height=28)
-        # Increase contrast
+        # Increase contrast/filter
         #adjusted_mnist_img = adjust_brightness_contrast(mnist_img, contrast=50.0, brightness=0.0)
         #mnist_img_filtered = cv2.inRange(mnist_img, 100, 255)
         ret, mnist_img_filtered = cv2.threshold(mnist_img, 128, 255, cv2.THRESH_TOZERO)
-        
-        # Resized for display
+        # Resize for display
         large_mnist = imutils.resize(mnist_img_filtered, width=1000, height=1000)
         cv2.imshow("mnist", large_mnist)
 
         # Send the bytes of pixel updates over std out
-        update = pixels_update_t()
+        all_pixels = []
         for i in range(0, 28):
             for j in range(0, 28):
-                update.pixels[0] = mnist_img_filtered[i][j]
-                update.addr = i*28 + j
-                stdout.write(convert_struct_to_bytes(update))   
+                all_pixels.append(mnist_img_filtered[i][j])
+
+        # Make groups of N and write them
+        addr = 0
+        group_of_n = []
+        for i in range(0, 28):
+            for j in range(0, 28):
+                group_of_n.append(mnist_img_filtered[i][j])
+                if len(group_of_n)==N_PIXELS_PER_UPDATE:
+                    update = pixels_update_t()
+                    update.addr = addr
+                    for n in range(0, N_PIXELS_PER_UPDATE):
+                        update.pixels[n] = group_of_n[n]
+                    group_of_n = []
+                    addr += 1
+                    stdout.write(convert_struct_to_bytes(update))   
         stdout.flush()
 
         # Press Esc key to exit
