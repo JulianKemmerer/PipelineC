@@ -70,6 +70,16 @@ int main()
   f=open(main_cpp_path,"w")
   f.write(main_cpp_text)
   f.close()
+
+  # Identify tool versions
+  if os.path.exists(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl"):
+    print(OPEN_TOOLS.GHDL_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
+  else:
+    raise Exception("ghdl executable not found!")
+  if os.path.exists(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys"):
+    print(OPEN_TOOLS.YOSYS_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
+  else:
+    raise Exception("yosys executable not found!")
   
   # Generate+compile sim .cpp from output VHDL
   # Get all vhd files in syn output

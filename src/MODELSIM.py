@@ -639,24 +639,29 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
   '''
   # Do vsim too?
   # vsim work.main_bin_op_sl_main_c_7_top
+
+  # Identify tool versions
+  if os.path.exists(MODELSIM_PATH):
+    print(MODELSIM_PATH, flush=True)
+  else:
+    raise Exception("vsim executable not found!")
   
-  if do_debug:
-    ini_filepath = proj_dir + "pipelinec_modelsim.ini"
-    f=open(ini_filepath,"w")
-    f.write(MODEL_SIM_INI_TEXT)
-    f.close()
-    do_filename = proj_name + ".do"
-    do_filepath = proj_dir + do_filename
-    f=open(do_filepath,"w")
-    f.write(text)
-    f.close()
-    
-    # Run modelsim
-    bash_cmd = (
-      MODELSIM_PATH + " " + "-modelsimini " + ini_filepath + " " + "-do 'source {" + do_filepath + "}' " )
-    print(bash_cmd, flush=True)  
-    
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
-    print(log_text, flush=True)
-    sys.exit(-1)
+  ini_filepath = proj_dir + "pipelinec_modelsim.ini"
+  f=open(ini_filepath,"w")
+  f.write(MODEL_SIM_INI_TEXT)
+  f.close()
+  do_filename = proj_name + ".do"
+  do_filepath = proj_dir + do_filename
+  f=open(do_filepath,"w")
+  f.write(text)
+  f.close()
+  
+  # Run modelsim
+  bash_cmd = (
+    MODELSIM_PATH + " " + "-modelsimini " + ini_filepath + " " + "-do 'source {" + do_filepath + "}' " )
+  print(bash_cmd, flush=True)  
+  
+  log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
+  print(log_text, flush=True)
+  sys.exit(-1)
   

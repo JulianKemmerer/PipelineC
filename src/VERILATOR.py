@@ -118,10 +118,18 @@ int main(int argc, char *argv[]) {
   vhd_files = SIM.GET_SIM_FILES(latency=0)
  
   # Identify tool versions
-  import OPEN_TOOLS
-  print(OPEN_TOOLS.GHDL_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
-  print(OPEN_TOOLS.YOSYS_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
-  print(VERILATOR_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)
+  if os.path.exists(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl"):
+    print(OPEN_TOOLS.GHDL_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"), flush=True)
+  else:
+    raise Exception("ghdl executable not found!")
+  if os.path.exists(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys"):
+    print(OPEN_TOOLS.YOSYS_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"), flush=True)
+  else:
+    raise Exception("yosys executable not found!")
+  if os.path.exists(f"{VERILATOR_BIN_PATH}/verilator"):
+    print(VERILATOR_BIN_PATH + "\n" + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"), flush=True)
+  else:
+    raise Exception("verilator executable not found!")  
   
   # Write a shell script to execute
   m_ghdl = ""
