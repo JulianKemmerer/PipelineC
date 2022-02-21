@@ -363,9 +363,9 @@ set_global_assignment -name SDC_FILE ''' + constraints_filepath + '''
 ''')
 
     # IEEE proposed since quartus lite doesnt include vhdl 2008
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n")
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n")
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n")   
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n")
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n")
+    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n")   
 
     # Do compile
     f.write('''
