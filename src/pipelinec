@@ -114,21 +114,9 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 """
 TODO:
 Victor's RT
-  Get 24b pmod working
-Do announcement of some sort for __clk()
-  Revive ethernet demo? (c code gen for struct sitll work? temac license?)
-  MNIST How to do in hardware demo? 
-    Simple via ethernet send buffers, get buffers
-    VGA prob too much...? Show image and prediction on VGA?
-  Mention FOSIX guessing game in __clk() style
-Single direction data handshaked clock crossing
-  Kinda like half of single inst arb as is
-  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
-  Want some want to share N resources among M callers
-Do video walkthrough of Pong demo?
-Do more basic tutorials like nandland+hdlbits
-Do BROM support
-  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
+  Get RT code syn(and pnr) running for ECP5 85F device
+    Try to build yosys with out pass that runs out of RAM?
+  Victor trying to syn themselves
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -137,14 +125,27 @@ Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Setup final packaging (single file vhdl?)
   Can publish arbitrary with float points popular formats, i.e. wiki page
   Automate u24,rsqrtf demo cpp
-Guitar i2s audio visualizer of some sort?
-SiliconCompiler to automate runs of vivado+import of results into python (and other eda tools)
+Do video walkthrough of Pong demo?
+Next ML demo?
+  Email TinyML/HLS4ML?
+  Recreate mnist demo using hls4ml or idk some CIRCT stuff?
+Single direction data handshaked clock crossing
+  Kinda like half of single inst arb as is
+  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
+  Want some want to share N resources among M callers
+Do more basic tutorials like nandland+hdlbits
+Do BROM support
+  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
+Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
+SiliconCompiler/edalize to automate runs of vivado+import of results into python (and other eda tools)
 Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
+Guitar i2s audio visualizer of some sort?
+Get 24b pmod working
+Put a risc(v? CHIPS2.0?) core (in pipelinec) along side accelerator in pipeline, + host OS on FOSIX NoC
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
-Put a risc(v? CHIPS2.0?) core (in pipelinec) along side accelerator in pipeline, + host OS on FOSIX NoC
 Implement break; in clk step style?
 How does multiple ins and out over time work in clk step style?  (not hdl wrapper)
 First refactor fosix stuff:
@@ -235,6 +236,6 @@ Add support for IO regs from timing params to primitives (fix intel mult to pref
 Add compound one = {1}; to init to all bits=1
 Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
 Slight optimization from not rendering binary ops with always matching signedness? (render i32 AND u16, as opposed to casting to i17)
-Solve issue of generating many FP pipelined slice variants same for raw hdl bits per stage
+Solve issue include all in modelsim: generating many pipelined slice variants same for raw hdl bits per stage
 """
 
