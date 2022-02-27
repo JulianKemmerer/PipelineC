@@ -58,7 +58,11 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
   LPM_PIPELINE = len(timing_params._slices)
   INPUT_A_IS_CONSTANT = "NO"
   INPUT_B_IS_CONSTANT = "NO"
-  USE_EAB = "NO"  
+  USE_EAB = "NO"
+
+  if timing_params._has_input_regs or timing_params._has_output_regs:
+    raise Exception("TODO: Cyclone prim IO regs!")
+
   text = f'''
   
 --LIBRARY lpm;

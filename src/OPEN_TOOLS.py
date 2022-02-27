@@ -381,7 +381,15 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
   # Assume ECP5_MUL18X18
   needs_clk = VHDL.LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   timing_params = TimingParamsLookupTable[inst_name]
-  
+
+  # IO regs
+  n_extra_input_regs = 0
+  n_extra_output_regs = 0
+  if timing_params._has_input_regs:
+    n_extra_input_regs = 1
+  if timing_params._has_output_regs:
+    n_extra_output_regs = 1
+
   # Simple mapping of any slicing?
   in_reg = "NONE"
   pipe_reg = "NONE"
@@ -406,10 +414,20 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     in_reg = "CLK0"
     pipe_reg = "CLK0"
   else:
-    # 4+=? auto switch to comb logic version?
-    print("Cannot pipeline ECP5_MUL18X18 further than 3 clocks!")
-    print(inst_name)
-    sys.exit(-1)  
+    # 4+= determine additions to n_extra_input_regs n_extra_output_regs
+    # Start with all 3 pipeline regs and do in,out extra regs evenly
+    slice_latency = len(timing_params._slices)
+    out_reg = "CLK0"
+    in_reg = "CLK0"
+    pipe_reg = "CLK0"
+    slice_latency -= 3
+    while slice_latency > 0:
+      if slice_latency > 0:
+        n_extra_input_regs += 1
+        slice_latency -= 1
+      if slice_latency > 0:
+        n_extra_output_regs += 1
+        slice_latency -= 1
   
   text = '''
   
@@ -682,8 +700,48 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SIGNEDP :   out  std_logic  
     );
 end component; 
-  
+
+  constant N_EXTRA_INPUT_REGS : integer := ''' + str(n_extra_input_regs) + ''';
+  constant N_EXTRA_OUTPUT_REGS : integer := ''' + str(n_extra_output_regs) + ''';
+  type input_array_t is array(0 to N_EXTRA_INPUT_REGS-1) of unsigned(17 downto 0);
+  type output_array_t is array(0 to N_EXTRA_OUTPUT_REGS-1) of unsigned(35 downto 0);
+
+  signal a_in_r : input_array_t;
+  signal b_in_r : input_array_t;
+  signal p_out_r : output_array_t;
+
+  -- Mult instance ports
+  signal a_i : unsigned(17 downto 0);
+  signal b_i : unsigned(17 downto 0);
+  signal p_o : unsigned(35 downto 0);
+
+  -- Maybe with extra io regs
+  --signal a_c : unsigned(17 downto 0);
+  --signal b_c : unsigned(17 downto 0);
+  --signal return_output_c : unsigned(35 downto 0);
+
   begin
+
+  in_extra_regs : if N_EXTRA_INPUT_REGS>0 generate
+    -- Delay regs
+    process(clk) is
+    begin
+      if rising_edge(clk) then
+        a_in_r(0) <= a;
+        b_in_r(0) <= b;
+        for i in 1 to N_EXTRA_INPUT_REGS-1 loop
+          a_in_r(i) <= a_in_r(i-1);
+          b_in_r(i) <= b_in_r(i-1);
+        end loop;
+      end if;
+    end process;
+    a_i <= a_in_r(N_EXTRA_INPUT_REGS-1);
+    b_i <= b_in_r(N_EXTRA_INPUT_REGS-1);
+  else generate
+    -- No extra regs
+    a_i <= a;
+    b_i <= b;
+  end generate;
   
   mult18x18d_inst : MULT18X18D
   generic map (
@@ -720,42 +778,42 @@ end component;
     RESETMODE => "ASYNC"  
   )
   port map(
-    A17 => a(17),
-    A16 => a(16),
-    A15 => a(15),
-    A14 => a(14),
-    A13 => a(13),
-    A12 => a(12),
-    A11 => a(11),
-    A10 => a(10),
-    A9 => a(9),
-    A8 => a(8),
-    A7 => a(7),
-    A6 => a(6),
-    A5 => a(5),
-    A4 => a(4),
-    A3 => a(3),
-    A2 => a(2),
-    A1 => a(1),
-    A0 => a(0),
-    B17 => b(17),
-    B16 => b(16),
-    B15 => b(15),
-    B14 => b(14),
-    B13 => b(13),
-    B12 => b(12),
-    B11 => b(11),
-    B10 => b(10),
-    B9 => b(9),
-    B8 => b(8),
-    B7 => b(7),
-    B6 => b(6),
-    B5 => b(5),
-    B4 => b(4),
-    B3 => b(3),
-    B2 => b(2),
-    B1 => b(1),
-    B0 => b(0),
+    A17 => a_i(17),
+    A16 => a_i(16),
+    A15 => a_i(15),
+    A14 => a_i(14),
+    A13 => a_i(13),
+    A12 => a_i(12),
+    A11 => a_i(11),
+    A10 => a_i(10),
+    A9 => a_i(9),
+    A8 => a_i(8),
+    A7 => a_i(7),
+    A6 => a_i(6),
+    A5 => a_i(5),
+    A4 => a_i(4),
+    A3 => a_i(3),
+    A2 => a_i(2),
+    A1 => a_i(1),
+    A0 => a_i(0),
+    B17 => b_i(17),
+    B16 => b_i(16),
+    B15 => b_i(15),
+    B14 => b_i(14),
+    B13 => b_i(13),
+    B12 => b_i(12),
+    B11 => b_i(11),
+    B10 => b_i(10),
+    B9 => b_i(9),
+    B8 => b_i(8),
+    B7 => b_i(7),
+    B6 => b_i(6),
+    B5 => b_i(5),
+    B4 => b_i(4),
+    B3 => b_i(3),
+    B2 => b_i(2),
+    B1 => b_i(1),
+    B0 => b_i(0),
     C17 => '0',
     C16 => '0',
     C15 => '0',
@@ -925,44 +983,63 @@ end component;
     ROC2 => open,
     ROC1 => open,
     ROC0 => open,
-    P35 => return_output(35),
-    P34 => return_output(34),
-    P33 => return_output(33),
-    P32 => return_output(32),
-    P31 => return_output(31),
-    P30 => return_output(30),
-    P29 => return_output(29),
-    P28 => return_output(28),
-    P27 => return_output(27),
-    P26 => return_output(26),
-    P25 => return_output(25),
-    P24 => return_output(24),
-    P23 => return_output(23),
-    P22 => return_output(22),
-    P21 => return_output(21),
-    P20 => return_output(20),
-    P19 => return_output(19),
-    P18 => return_output(18),
-    P17 => return_output(17),
-    P16 => return_output(16),
-    P15 => return_output(15),
-    P14 => return_output(14),
-    P13 => return_output(13),
-    P12 => return_output(12),
-    P11 => return_output(11),
-    P10 => return_output(10),
-    P9 => return_output(9),
-    P8 => return_output(8),
-    P7 => return_output(7),
-    P6 => return_output(6),
-    P5 => return_output(5),
-    P4 => return_output(4),
-    P3 => return_output(3),
-    P2 => return_output(2),
-    P1 => return_output(1),
-    P0 => return_output(0),
+    P35 => p_o(35),
+    P34 => p_o(34),
+    P33 => p_o(33),
+    P32 => p_o(32),
+    P31 => p_o(31),
+    P30 => p_o(30),
+    P29 => p_o(29),
+    P28 => p_o(28),
+    P27 => p_o(27),
+    P26 => p_o(26),
+    P25 => p_o(25),
+    P24 => p_o(24),
+    P23 => p_o(23),
+    P22 => p_o(22),
+    P21 => p_o(21),
+    P20 => p_o(20),
+    P19 => p_o(19),
+    P18 => p_o(18),
+    P17 => p_o(17),
+    P16 => p_o(16),
+    P15 => p_o(15),
+    P14 => p_o(14),
+    P13 => p_o(13),
+    P12 => p_o(12),
+    P11 => p_o(11),
+    P10 => p_o(10),
+    P9 => p_o(9),
+    P8 => p_o(8),
+    P7 => p_o(7),
+    P6 => p_o(6),
+    P5 => p_o(5),
+    P4 => p_o(4),
+    P3 => p_o(3),
+    P2 => p_o(2),
+    P1 => p_o(1),
+    P0 => p_o(0),
     SIGNEDP => open
   );
+
+
+  out_extra_regs : if N_EXTRA_OUTPUT_REGS>0 generate
+    -- Delay regs
+    process(clk) is
+    begin
+      if rising_edge(clk) then
+        p_out_r(0) <= p_o;
+        for i in 1 to N_EXTRA_OUTPUT_REGS-1 loop
+          p_out_r(i) <= p_out_r(i-1);
+        end loop;
+      end if;
+    end process;
+    return_output <= p_out_r(N_EXTRA_OUTPUT_REGS-1);
+  else generate
+    -- No extra regs
+    return_output <= p_o;
+  end generate;
+
 '''
   
   return text
