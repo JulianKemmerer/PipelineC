@@ -722,7 +722,9 @@ end component;
 
   begin
 
-  in_extra_regs : if N_EXTRA_INPUT_REGS>0 generate
+  '''
+  if n_extra_input_regs > 0:
+    text += '''
     -- Delay regs
     process(clk) is
     begin
@@ -737,12 +739,15 @@ end component;
     end process;
     a_i <= a_in_r(N_EXTRA_INPUT_REGS-1);
     b_i <= b_in_r(N_EXTRA_INPUT_REGS-1);
-  else generate
+    '''
+  else:
+    text += '''
     -- No extra regs
     a_i <= a;
     b_i <= b;
-  end generate;
+    '''
   
+  text += '''
   mult18x18d_inst : MULT18X18D
   generic map (
     REG_INPUTA_CLK => "''' + in_reg + '''",
@@ -1021,9 +1026,10 @@ end component;
     P0 => p_o(0),
     SIGNEDP => open
   );
+  '''
 
-
-  out_extra_regs : if N_EXTRA_OUTPUT_REGS>0 generate
+  if n_extra_output_regs > 0:
+    text += '''
     -- Delay regs
     process(clk) is
     begin
@@ -1035,12 +1041,13 @@ end component;
       end if;
     end process;
     return_output <= p_out_r(N_EXTRA_OUTPUT_REGS-1);
-  else generate
+    '''
+  else:
+    text += '''
     -- No extra regs
     return_output <= p_o;
-  end generate;
+    '''
 
-'''
   
   return text
   
