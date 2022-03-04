@@ -115,8 +115,8 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 TODO:
 Victor's RT
   Get RT code syn(and pnr) running for ECP5 85F device
-    Try to build yosys with out pass that runs out of RAM?
-  Victor trying to syn themselves
+Try to fix/refresh AWS DMA demo
+  Solve AWS multithreaded off by one or two problem...
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
     Does incremental coarse sweep from 0
@@ -189,7 +189,6 @@ Check for non global functions that call global functions when evaluating const
 ^ Dont store timing params for zero clocks - no timing params assumed default, save ram, probably faster might not need to do below.
 Parallelize parsing of func def bodies since indepdent of other func def bodies?
 Reorg ref tok cover checking and removal (collapsing,etc too?) into tree based data struct
-Solve AWS multithreaded off by one or two problem...
 Support AWS PCIM port - need to write kernel driver and maybe user space wrapper?
 Relative/'local' clock crossings - not absolute specified in main/pragmas? Can point at any non-single-inst function to run in requested relative clock...?
 Expose latencies of each instance as a constant for use in external vhdl package - not for use in pipelinec code
