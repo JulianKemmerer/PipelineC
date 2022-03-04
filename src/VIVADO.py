@@ -22,6 +22,7 @@ TOOL_EXE = "vivado"
 ENV_TOOL_PATH = C_TO_LOGIC.GET_TOOL_PATH(TOOL_EXE)
 if ENV_TOOL_PATH:
   VIVADO_PATH = ENV_TOOL_PATH
+  VIVADO_DIR = os.path.abspath(os.path.dirname(VIVADO_PATH)+"/../")
 else:
   # Environment variable maybe?
   ENV_VIVADO_DIR = os.environ.get('XILINX_VIVADO')
