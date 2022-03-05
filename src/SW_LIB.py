@@ -3475,6 +3475,8 @@ def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
   right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]] 
   if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
     return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
+  elif VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
+    return GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
   elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t,right_t]):
     return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
   else:
@@ -5291,4 +5293,55 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
   
   return text 
     
+# TODO do something better than absolute value uint division and sign correction
+def GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):  
+  left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+  right_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[1]]
+  output_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.outputs[0]]
+  left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+  right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+  max_input_width = max(left_width,right_width)
+  resized_prefix = "int" + str(max_input_width)
+  unsigned_resized_prefix = "u"+resized_prefix #"uint" + str(max_input_width-1)
+  resized_t = resized_prefix + "_t"
+  unsigned_resized_t = unsigned_resized_prefix + "_t"
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t) 
+  output_prefix = "int" + str(output_width)
+  
+  text = ""
+  
+  text += '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "''' + BIT_MANIP_HEADER_FILE + '''"
+
+// ''' + str(left_width) + '''b / ''' + str(right_width) + '''b div
+''' + output_t + ''' ''' + partially_complete_logic.func_name + '''(''' + left_t + ''' left, ''' + right_t + ''' right)
+{
+  
+  // Record sign bits
+  uint1_t l_signed = '''+resized_prefix+"_"+str(left_width-1)+'''_'''+str(left_width-1)+'''(left);
+  uint1_t r_signed = '''+resized_prefix+"_"+str(right_width-1)+'''_'''+str(right_width-1)+'''(right);
+
+  // Resize to unsigned values of same width 
+  ''' + unsigned_resized_t + ''' left_resized = '''+resized_prefix+'''_abs(left);
+  ''' + unsigned_resized_t + ''' right_resized = '''+resized_prefix+'''_abs(right);
+
+  // Do div on uints
+  ''' + unsigned_resized_t + ''' unsigned_result = left_resized / right_resized;
+
+  // Adjust sign
+  ''' + output_t + ''' output = unsigned_result;
+  if(l_signed ^ r_signed)
+  {
+    output = -unsigned_result;
+  }
+
+  return output;
+}'''
+  
+  #print(text)
+  #sys.exit(-1)
+  
+  return text
   
