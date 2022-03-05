@@ -3238,6 +3238,8 @@ def C_FLOAT_TYPES_TO_COMMON_TYPE(c_types):
     e,m=C_FLOAT_E_M_TYPE_TO_E_M(c_type)
     min_e = min(min_e,e)
     min_m = min(min_m,m)
+  if e==8 and min_m==23:
+    return "float"
   return "float_" + str(min_e) + "_" + str(min_m) + "_t"
   
 def C_TYPE_IS_USER_TYPE(c_type,parser_state):
