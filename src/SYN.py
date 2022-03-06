@@ -1355,7 +1355,14 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name=None, allow_no_s
     
   clock_name_to_mhz = dict()
   if inst_name:
+    # Default instances get max fmax
     clock_name_to_mhz["clk"] = INF_MHZ
+    '''
+    # Unless happens to be main with fixed freq
+    if inst_name in parser_state.main_mhz:
+      clock_mhz = GET_TARGET_MHZ(inst_name, parser_state, allow_no_syn_tool)
+      clock_name_to_mhz["clk"] = clock_mhz
+    '''
     out_filename = "clock" + ext
     Logic = parser_state.LogicInstLookupTable[inst_name]
     output_dir = GET_OUTPUT_DIRECTORY(Logic)
@@ -2650,7 +2657,7 @@ def GET_OUTPUT_DIRECTORY(Logic):
     # # hacky catch files from same dir as script?
     # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
     repo_dir = C_TO_LOGIC.REPO_ABS_DIR()
-    if src_file.startswith(repo_dir):
+    if src_file.startswith(repo_dir+"/"):
       # hacky
       src_file = src_file.replace(repo_dir + "/src/../","")
       src_file = src_file.replace(repo_dir + "/","")      
