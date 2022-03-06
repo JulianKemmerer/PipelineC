@@ -540,7 +540,7 @@ top_inst : entity work.top port map (
     --switches_module_sw => unsigned(sw),
     
     -- Buttons
-    --buttons_module_btn => unsigned(btn),
+    buttons_module_btn => unsigned(btn),
 
     -- UART
     --uart_module_data_in(0) => uart_txd_in,
