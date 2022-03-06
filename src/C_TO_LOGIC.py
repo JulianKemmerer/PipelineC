@@ -5267,6 +5267,24 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     is_global_func = len(func_logic.state_regs) > 0 or func_logic.uses_nonvolatile_state_regs
   if is_global_func:
     return None
+
+  # Pass through cast of same type?
+  if func_base_name.startswith(CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
+    # Assume one input wire
+    driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_names[0]
+    input_driver_wire_name = parser_state.existing_logic.wire_driven_by[driven_input_port_wire]
+    # And one output
+    output_driven_wire_name = output_driven_wire_names[0]
+    # Compare types
+    input_cast_type = parser_state.existing_logic.wire_to_c_type[input_driver_wire_name]
+    output_cast_type = parser_state.existing_logic.wire_to_c_type[output_driven_wire_name]
+    if input_cast_type==output_cast_type:
+      # Remove old submodule instance
+      #print("Replacing cast:",func_inst_name,"with direct wire...")
+      parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state)
+      # Directly connect input driver to output
+      APPLY_CONNECT_WIRES_LOGIC(parser_state, input_driver_wire_name, output_driven_wire_names, prepend_text, func_c_ast_node)
+      return parser_state.existing_logic
       
   # Check if can be replaced by constant output wire
   # Or reduced function due to partial constant inputs
