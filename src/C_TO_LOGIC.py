@@ -4182,7 +4182,7 @@ def C_CONST_STR_TO_STR_VALUE(c_const_str):
   s = s.replace("\\t",'\t')
   return s
   
-def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False):
+def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negated=False, expected_c_type=None):
   value_str_no_suff = STRIP_INT_LIT_SUFF(value_str)
   if value_str.lower().startswith("0x"):
     hex_str = value_str_no_suff.lower().replace("0x","")
@@ -4238,7 +4238,13 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
     value = value_str.strip('"')
     actual_str = C_CONST_STR_TO_STR_VALUE(value)
     c_type_str = "char[" + str(len(actual_str)) + "]"
-  elif (type(c_ast_node)==c_ast.Constant and c_ast_node.type=='float') or ("." in value_str) or (value_str.lower().endswith("f")) or (value_str.lower().endswith("l")):
+  elif( 
+        (type(c_ast_node)==c_ast.Constant and c_ast_node.type=='float') or 
+        ("." in value_str) or 
+        (value_str.lower().endswith("f")) or 
+        (value_str.lower().endswith("l")) or
+        (expected_c_type is not None and C_TYPE_IS_FLOAT_TYPE(expected_c_type))
+      ):
     value = float(value_str.strip('f').strip('l').strip('F').strip('L'))
     c_type_str = "float"
   else:

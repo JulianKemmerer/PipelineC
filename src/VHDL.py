@@ -3697,7 +3697,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     return "to_byte_array("+C_CONST_STR_TO_VHDL_CONST_STR(val_str)+")"
   
   #print("CONST_VAL_STR_TO_VHDL val_str",val_str)
-  value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(no_neg_val_str, None, is_negated)
+  expected_c_type=c_type
+  value_num, unused_c_type_str = C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(no_neg_val_str, None, is_negated, expected_c_type)
   # c_type_str is small gen'd type based on constant literal
   # c_type is what ever...user?...upper level intended and already knows - use that
   #if c_type_str != c_type:
