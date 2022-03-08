@@ -5336,6 +5336,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       return x
     
     const_val_str = None
+    const_val_str_known_c_type = None
     # BINARY OPERATIONS
     if func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX) and not base_name_is_name:
       lhs_wire = const_input_wires[0]
@@ -5493,6 +5494,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif func_base_name.startswith(CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
       in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
       out_t = parser_state.existing_logic.wire_to_c_type[output_driven_wire_names[0]]
+      const_val_str_known_c_type = out_t
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
       if C_TYPES_ARE_FLOAT_TYPES([in_t,out_t]):
         const_val_str = str(float(in_val_str))
@@ -5517,7 +5519,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       else:
         print("How to cast? ", in_t,in_val_str,"->",out_t, func_c_ast_node.coord, prepend_text)
         sys.exit(-1) 
-        
+      
+
     # MATH FUNCS
     elif func_base_name == "sqrt" and base_name_is_name:
       in_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_input_wires[0], parser_state.existing_logic, parser_state)
@@ -5575,7 +5578,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     parser_state.existing_logic.REMOVE_SUBMODULE(func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state)
         
     # Do connection using real parser state and logic
-    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated) #, known_c_type=output_c_type)
+    parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(const_val_str, func_c_ast_node, output_driven_wire_names, prepend_text, parser_state, is_negated, const_val_str_known_c_type)
     
     return parser_state.existing_logic
   
