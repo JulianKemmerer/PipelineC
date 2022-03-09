@@ -46,7 +46,7 @@
 */
 
 ////***1280x720@60Hz***// Requires 74.25 MHz clock
-/*
+#if FRAME_HEIGHT == 720
 #define PIXEL_CLK_MHZ 74.25
 #define FRAME_WIDTH 1280
 #define FRAME_HEIGHT 720
@@ -61,7 +61,7 @@
 
 #define H_POL 1
 #define V_POL 1
-*/
+#endif
 
 ////***1280x1024@60Hz***// Requires 108 MHz clock
 //#define PIXEL_CLK_MHZ 108.0
