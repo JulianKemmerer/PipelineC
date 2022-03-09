@@ -5557,9 +5557,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif len(input_drivers) == 0:
       return None
     else:
-      print("WARNING: Not reducing constant function call:", end=' ')
-      print(func_inst_name, end=' ')
-      print(func_base_name, func_c_ast_node.coord)
+      # Only warn about const funcs if not marked wires
+      if func_base_name not in parser_state.func_marked_wires:
+        print("WARNING: Not reducing constant function call:", end=' ')
+        print(func_inst_name, end=' ')
+        print(func_base_name, func_c_ast_node.coord)
       #sys.exit(-1)
       return None
       
