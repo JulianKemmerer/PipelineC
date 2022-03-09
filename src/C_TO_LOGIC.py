@@ -4296,6 +4296,8 @@ def C_AST_STATIC_NON_CONST_DECL_TO_LOGIC(c_ast_static_decl, prepend_text, parser
   return parser_state.existing_logic
     
 def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
+  if not hasattr(c_ast_decl,'type'):
+    raise Exception(f"No type on variable?: {c_ast_decl.coord}")
   if type(c_ast_decl.type) == c_ast.ArrayDecl:
     c_ast_array_decl = c_ast_decl.type
     name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(c_ast_array_decl, parser_state)
