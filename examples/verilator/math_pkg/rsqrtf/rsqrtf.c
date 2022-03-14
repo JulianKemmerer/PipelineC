@@ -116,6 +116,9 @@ x = rand_float(false);
 #define DUT_SET_INPUTS(top) \
 DUT_SET_FLOAT_INPUT(top, x)
 
+#define DUT_SET_NULL_INPUTS(top) \
+top->x = 0;
+
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
 c_result = llvm_dis_Z11float_rsqrtf(x);\
