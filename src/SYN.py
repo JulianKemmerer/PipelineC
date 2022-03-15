@@ -159,12 +159,22 @@ class TimingParams:
     self.hash_ext = None
     #self.timing_report_stage_range = None
     
+  
   # I was dumb and used get latency all over
   # mAKE CACHED VERSION
   def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):    
     if self.calcd_total_latency is None:
       self.calcd_total_latency = self.CALC_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     return self.calcd_total_latency
+
+  def GET_PIPELINE_LOGIC_LATENCY(self, parser_state, TimingParamsLookupTable):
+    total_latency = self.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    pipeline_latency = total_latency
+    if self._has_input_regs:
+      pipeline_latency -= 1
+    if self._has_output_regs:
+      pipeline_latency -= 1
+    return pipeline_latency
         
   # Haha why uppercase everywhere ...
   def CALC_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
@@ -196,6 +206,7 @@ class TimingParams:
       latency += 1
 
     return latency
+  
     
   def RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(self, inst_name, Logic, TimingParamsLookupTable, parser_state):
     # All modules include IO reg flags
@@ -277,36 +288,6 @@ class TimingParams:
     if value != self._has_output_regs:
       self._has_output_regs = value
       self.INVALIDATE_CACHE()
-  
-  '''
-  # Returns if add was success
-  def ADD_SUBMODULE_END_STAGE(self, end_submodule, end_stage):
-    if end_submodule not in self.submodule_to_end_stage:
-      self.submodule_to_end_stage[end_submodule] = end_stage
-      self.INVALIDATE_CACHE() 
-    else:
-      if end_stage != self.submodule_to_end_stage[end_submodule]:
-        # not allowed like that?
-        return False
-        #print 0/0
-        #sys.exit(-1)
-        
-    return True
-    
-  # Returns if add was success
-  def ADD_SUBMODULE_START_STAGE(self, start_submodule, start_stage):
-    if start_submodule not in self.submodule_to_start_stage:
-      self.submodule_to_start_stage[start_submodule] = start_stage
-      self.INVALIDATE_CACHE() 
-    else:
-      if start_stage != self.submodule_to_start_stage[start_submodule]:
-        # not allowed like that?
-        return False
-        #print 0/0
-        #sys.exit(-1)
-        
-    return True
-  '''
     
   def GET_SUBMODULE_LATENCY(self, submodule_inst_name, parser_state, TimingParamsLookupTable):
     submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
@@ -419,6 +400,28 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
   
   return zero_clk_pipeline_map
 
+class SubmoduleLevelInfo:
+  def __init__(self, level_num):
+    self.level_num = level_num
+
+    # Starts with wires driving other wires
+    self.driver_driven_wire_pairs = []
+    # Ends with submodule logic connections
+    self.submodule_insts = []
+
+  def IS_EMPTY(self):
+    return (len(self.driver_driven_wire_pairs)==0 and 
+            len(self.submodule_insts)==0)
+
+class StageInfo:
+  def __init__(self, stage_num):
+    self.stage_num = stage_num
+
+    # Submodule output wires first
+    self.submodule_output_ports = []
+    # Then sequence of per submodule level information
+    self.submodule_level_infos = []
+
 # This started off as just code writing VHDL
 # Then the logic of how the VHDL was written was highjacked for latency calculation
 # Then latency calculations were highjacked for logic delay calculations
@@ -426,9 +429,11 @@ class PipelineMap:
   def __init__(self, logic):
     self.logic = logic
     # Any logic will have
-    self.per_stage_texts = dict() # VHDL texts dict[stage_num]=[per,submodule,level,texts]
-    self.stage_ordered_submodule_list = dict()
+    #self.per_stage_texts = dict() # VHDL texts dict[stage_num]=[per,submodule,level,texts]
     self.num_stages = 1 # Comb logic
+
+    # New per stage info class
+    self.stage_infos = []
     
     # DELAY STUFF ONLY MAKES SENSE TO TALK ABOUT WHEN:
     # - 0 CLKS
@@ -456,61 +461,33 @@ class PipelineMap:
       rv += str(delay) + ": " + str(sorted(submodule_func_names)) + "\n"
     rv = rv.strip("\n")
     return rv
-    
-# This code is so dumb that I dont want to touch it
-# Forgive me
-# im such a bitch
-#                   .---..---.                                                                                
-#               .--.|   ||   |                                                                                
-#        _     _|__||   ||   |                                                                                
-#  /\    \\   //.--.|   ||   |                                                                                
-#  `\\  //\\ // |  ||   ||   |                                                                                
-#    \`//  \'/  |  ||   ||   |                                                                                
-#     \|   |/   |  ||   ||   |                                                                                
-#      '        |  ||   ||   |                                                                                
-#               |__||   ||   |                                                                                
-#                   '---''---'                                                                                
-#                                                                                                             
-#                                                                                                                                                                                                                     
-#               .---.                                                                                         
-# .--.          |   |.--..----.     .----.   __.....__                                                        
-# |__|          |   ||__| \    \   /    /.-''         '.                                                      
-# .--.          |   |.--.  '   '. /'   //     .-''"'-.  `.                                                    
-# |  |          |   ||  |  |    |'    //     /________\   \                                                   
-# |  |          |   ||  |  |    ||    ||                  |                                                   
-# |  |          |   ||  |  '.   `'   .'\    .-------------'                                                   
-# |  |          |   ||  |   \        /  \    '-.____...---.                                                   
-# |__|          |   ||__|    \      /    `.             .'                                                    
-#               '---'         '----'       `''-...... -'                                                      
-#                                                                                                                                                                                                                     
-#               .-'''-.                                                                         .-''''-..     
-#              '   _    \                                                                     .' .'''.   `.   
-#            /   /` '.   \               __.....__   .----.     .----.   __.....__           /    \   \    `. 
-#      _.._ .   |     \  '           .-''         '.  \    \   /    /.-''         '.         \    '   |     | 
-#    .' .._||   '      |  '.-,.--.  /     .-''"'-.  `. '   '. /'   //     .-''"'-.  `. .-,.--.`--'   /     /  
-#    | '    \    \     / / |  .-. |/     /________\   \|    |'    //     /________\   \|  .-. |    .'  ,-''   
-#  __| |__   `.   ` ..' /  | |  | ||                  ||    ||    ||                  || |  | |    |  /       
-# |__   __|     '-...-'`   | |  | |\    .-------------''.   `'   .'\    .-------------'| |  | |    | '        
-#    | |                   | |  '-  \    '-.____...---. \        /  \    '-.____...---.| |  '-     '-'        
-#    | |                   | |       `.             .'   \      /    `.             .' | |        .--.        
-#    | |                   | |         `''-...... -'      '----'       `''-...... -'   | |       /    \       
-#    | |                   |_|                                                         |_|       \    /       
-#    |_|
-# 
-def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):  
-  # RAW HDL doesnt need this
-  if len(logic.submodule_instances) <= 0 and logic.is_c_built_in: #logic.func_name not in parser_state.main_mhz:
-    print("DONT USE GET_PIPELINE_MAP ON RAW HDL LOGIC!")
-    print(0/0)
-    sys.exit(-1)
-    
+
+
+'''
+___          ___     __   __   ___  __       . ___ 
+ |  |  |\/| |__     |  \ /  \ |__  /__` |\ | '  |  
+ |  |  |  | |___    |__/ \__/ |___ .__/ | \|    |  
+                                                   
+ ___        __  ___              ___       ___     
+|__  \_/ | /__`  |     | |\ |     |  |__| |__      
+|___ / \ | .__/  |     | | \|     |  |  | |___     
+                                                   
+ __        __   ___        ___      ___            
+|__)  /\  /__` |__   |\/| |__  |\ |  |             
+|__) /~~\ .__/ |___  |  | |___ | \|  |             
+'''
+# So for ~now the answer is yes, forever
+def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable): 
   # FORGIVE ME - never
-  # Back again bitch
+  
   print_debug = False #inst_name=="posix_aws_fpga_dma" #False
   bad_inf_loop = False
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   timing_params = TimingParamsLookupTable[inst_name]
   rv = PipelineMap(logic)
+  # Non submodule modules like dont need this
+  if len(logic.submodule_instances) <= 0 or logic.is_vhdl_text_module or logic.func_name in parser_state.func_marked_blackbox:
+    return rv
   #print("Get pipeline map inst_name",inst_name,flush=True)
   # Shouldnt need debug for zero clock? You wish you sad lazy person
   #print_debug = print_debug and (est_total_latency>0)
@@ -695,11 +672,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     if print_debug:
       print("STAGE NUM =", stage_num)
 
-    rv.per_stage_texts[stage_num] = []
+    #rv.per_stage_texts[stage_num] = []
+    stage_info = StageInfo(stage_num)
     submodule_level = 0
     # DO WHILE LOOP FOR PER COMB LOGIC SUBMODULE LEVELS
     while True: # DO
-      submodule_level_text = ""
+      submodule_level_info = SubmoduleLevelInfo(submodule_level)
+      #submodule_level_text = ""
             
       if print_debug:
         print("SUBMODULE LEVEL",submodule_level)
@@ -738,7 +717,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             # Zero latency special case already in write pipe
             if submodule_latency_from_container_logic > 0:
               #output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
-              submodule_level_text += " " + " " + " " + VHDL.GET_WRITE_PIPE_WIRE_VHDL(driving_wire, logic, parser_state) + " := " + VHDL.WIRE_TO_VHDL_NAME(driving_wire, logic) + ";\n"
+              #submodule_level_text += " " + " " + " " + VHDL.GET_WRITE_PIPE_WIRE_VHDL(driving_wire, logic, parser_state) + " := " + VHDL.WIRE_TO_VHDL_NAME(driving_wire, logic) + ";\n"
+              stage_info.submodule_output_ports.append(driving_wire)
 
           # Loop over what this wire drives
           if driving_wire in logic.wire_drives:
@@ -775,7 +755,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 # Record reaching another wire
                 next_wires_to_follow.append(driven_wire)
               
-              
+              '''
               # Dont write text connecting VHDL input ports
               # (connected directly in func call params)
               if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
@@ -786,7 +766,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               ### WRITE VHDL TEXT
               # If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
               # as way to ensure correct multi clock behavior 
-              RHS = VHDL.GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable, rv.stage_ordered_submodule_list, stage_num)
+              RHS = VHDL.GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
               # Submodule or not LHS is write pipe wire
               LHS = VHDL.GET_LHS(driven_wire, logic, parser_state)
               #print "logic.func_name",logic.func_name
@@ -799,7 +779,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               if driven_wire in logic.feedback_vars:
                 ass_op = "<="
               submodule_level_text += " " + " " + " " + LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n" # + " -- " + driven_wire + " <= " + driving_wire + 
-                
+              '''
+              submodule_level_info.driver_driven_wire_pairs.append((driving_wire,driven_wire))
+
                 
         wires_to_follow=next_wires_to_follow[:]
         next_wires_to_follow=[]
@@ -970,21 +952,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       for submodule_inst in fully_driven_submodule_inst_this_level_2_logic:
         submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-        
-        # Record this submodule in this stage
-        if stage_num not in rv.stage_ordered_submodule_list:
-          rv.stage_ordered_submodule_list[stage_num] = []
-        if submodule_inst not in rv.stage_ordered_submodule_list[stage_num]:
-          rv.stage_ordered_submodule_list[stage_num].append(submodule_inst)
           
         # Get latency
         submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
         
         # Use submodule logic to write vhdl
         # REGULAR ENTITY CONNECITON
-        submodule_level_text += " " + " " + " -- " + C_TO_LOGIC.LEAF_NAME(submodule_inst, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
-        entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic, rv.stage_ordered_submodule_list, stage_num)     
-        submodule_level_text += entity_connection_text + "\n"
+        #submodule_level_text += " " + " " + " -- " + C_TO_LOGIC.LEAF_NAME(submodule_inst, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
+        #entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)     
+        #submodule_level_text += entity_connection_text + "\n"
+        submodule_level_info.submodule_insts.append(submodule_inst)
 
         # Add output wires of this submodule to wires driven so far after latency
         for output_port in submodule_logic.outputs:
@@ -1030,6 +1007,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       # This ends one submodule level iteration
       # Record text from this iteration
       submodule_level_prepend_text = "  " + " " + "-- SUBMODULE LEVEL " + str(submodule_level) + "\n"
+      if not submodule_level_info.IS_EMPTY():
+        stage_info.submodule_level_infos.append(submodule_level_info)
+      '''
       if submodule_level_text != "":
         # Init dict entries
         if stage_num not in rv.per_stage_texts:
@@ -1043,7 +1023,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         rv.per_stage_texts[stage_num][submodule_level] += submodule_level_text
         if print_debug:
           print(submodule_level_text)
-          
+      '''
       # Sometimes submodule levels iterations dont have submodules as we iterate driving wires / for multiple clks
       # Only update counters if was real submodule level with submodules
       if submodule_level_iteration_has_submodules:        
@@ -1098,6 +1078,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # PER CLOCK decrement latencies
     stage_num = stage_num +1
+    rv.stage_infos.append(stage_info)
     for wire in wire_to_remaining_clks_before_driven:
       #if wire_to_remaining_clks_before_driven[wire] >= 0:
       wire_to_remaining_clks_before_driven[wire]=wire_to_remaining_clks_before_driven[wire]-1
@@ -3144,56 +3125,3 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
     inst_names = set(next_inst_names)
   
   return files_txt,top_entity_name
-
-
-def GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, inst_name, logic, parser_state, TimingParamsLookupTable):
-  # Start at containing logic
-  absolute_stage = 0
-  curr_submodule_inst_name = submodule_inst_name
-
-  # Stop once at top level
-  # DO
-  while curr_submodule_inst_name != inst_name:
-    curr_container_inst_name = C_TO_LOGIC.GET_CONTAINER_INST(curr_submodule_inst_name)
-    curr_container_logic = parser_state.LogicInstLookupTable[curr_container_inst_name]
-    containing_timing_params = TimingParamsLookupTable[curr_container_inst_name]
-    curr_submodule_inst = curr_submodule_inst_name.replace(curr_container_inst_name+C_TO_LOGIC.SUBMODULE_MARKER,"")
-    local_stage_when_used = GET_LOCAL_SUBMODULE_STAGE_WHEN_USED(curr_submodule_inst, curr_container_inst_name, curr_container_logic, parser_state, TimingParamsLookupTable)
-    absolute_stage += local_stage_when_used
-    
-    # Update vars for next iter
-    curr_submodule_inst_name = curr_container_inst_name
-    
-  return absolute_stage
-    
-
-def GET_LOCAL_SUBMODULE_STAGE_WHEN_USED(submodule_inst, container_inst_name, container_logic, parser_state, TimingParamsLookupTable): 
-  timing_params = TimingParamsLookupTable[container_inst_name]  
-  
-  pipeline_map = GET_PIPELINE_MAP(container_inst_name, container_logic, parser_state, TimingParamsLookupTable)
-  per_stage_time_order = pipeline_map.stage_ordered_submodule_list
-  #per_stage_time_order = VHDL.GET_PER_STAGE_LOCAL_TIME_ORDER_SUBMODULE_INSTANCE_NAMES(container_logic, parser_state, TimingParamsLookupTable)
-  
-  # Find earliest occurance of this submodule inst in per stage order
-  earliest_stage = TimingParamsLookupTable[container_inst_name].GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-  earliest_match = None
-  for stage in per_stage_time_order:
-    for c_built_in_inst in per_stage_time_order[stage]:
-      if submodule_inst in c_built_in_inst:
-        if stage <= earliest_stage:
-          earliest_match = c_built_in_inst
-          earliest_stage = stage
-  
-  if earliest_match is None:
-    print("What stage when submodule used?", submodule_inst)
-    print("per_stage_time_order",per_stage_time_order)
-    sys.exit(-1)
-    
-  return earliest_stage
-
-def GET_ABS_SUBMODULE_STAGE_WHEN_COMPLETE(submodule_inst_name, inst_name, logic, LogicInstLookupTable, TimingParamsLookupTable):
-  # Add latency to when sued
-  used = GET_ABS_SUBMODULE_STAGE_WHEN_USED(submodule_inst_name, inst_name, logic, parser_state, TimingParamsLookupTable)
-  
-  return used + TimingParamsLookupTable[submodule_inst_name].GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-
