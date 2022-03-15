@@ -47,7 +47,7 @@ float allowed_err;\
 float err;
 
 #define DUT_SET_NEXT_INPUTS \
-if(test_num==(100000000-1))\
+if(test_num==(10000000-1))\
 {\
   done = true; \
 }\
@@ -57,6 +57,10 @@ rand_two_floats(&x, &y);
 #define DUT_SET_INPUTS(top) \
 DUT_SET_FLOAT_INPUT(top, x)\
 DUT_SET_FLOAT_INPUT(top, y)
+
+#define DUT_SET_NULL_INPUTS(top) \
+top->x = 0;\
+top->y = 0;
 
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
