@@ -2725,7 +2725,8 @@ class PiplineHDLParams:
     for wire in self.wire_to_reg_stage_start_end:
       curr_start,curr_end = self.wire_to_reg_stage_start_end[wire]
       if curr_start is None and curr_end is None:
-        if not Logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state):
+        # Constants handled special outside pipeline, wont have start end
+        if not Logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state) and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, Logic) is None:
           wires_to_rm.append(wire)
     for wire_to_rm in wires_to_rm:
       self.wires_to_decl.remove(wire_to_rm)    
@@ -3308,7 +3309,34 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   -- Default write contents of regs
   write_state_regs := read_state_regs;
 '''
-  
+
+  # Constant wire propogation
+  const_wire_prop_driver_driven_wire_pairs = []
+  for wire in Logic.wires:
+    if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+      # Do loop propogating constant values into
+      wires_to_follow = [wire]
+      while len(wires_to_follow) > 0:
+        next_wires_to_follow = []
+        for wire_to_follow in wires_to_follow:
+          if wire_to_follow in Logic.wire_drives:
+            wire_to_follow_driven_wires = Logic.wire_drives[wire_to_follow]
+            for wire_to_follow_driven_wire in wire_to_follow_driven_wires:
+              const_wire_prop_driver_driven_wire_pairs.append((wire_to_follow, wire_to_follow_driven_wire))
+              # Follow wire if didnt hit submodule
+              if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow_driven_wire, Logic):
+                next_wires_to_follow.append(wire_to_follow_driven_wire)
+        wires_to_follow = next_wires_to_follow[:]
+  # Write out vhdl
+  if len(const_wire_prop_driver_driven_wire_pairs) > 0:
+    rv += " " + "-- Constants\n"
+  for const_wire_prop_driver_driven_wire_pair in const_wire_prop_driver_driven_wire_pairs:
+    const_wire_prop_driver_wire, const_wire_prop_driven_wire = const_wire_prop_driver_driven_wire_pair
+    pair_text = RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(const_wire_prop_driver_wire, const_wire_prop_driven_wire, inst_name, Logic, parser_state, TimingParamsLookupTable)
+    if pair_text is not None:
+      rv += " " + pair_text
+
+  rv += "\n"
   rv += " -- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
   rv += " -- LATENCY=0 is combinational Logic\n"
   rv += " " + "for STAGE in 0 to PIPELINE_LATENCY loop\n"
@@ -3511,37 +3539,41 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
   
   return text
 
+def RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(driving_wire, driven_wire, inst_name, logic, parser_state, TimingParamsLookupTable):
+  # Dont write text connecting VHDL input ports
+  # (connected directly in func call params)
+  if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
+    return None
+  if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
+    return None
+  
+  ### WRITE VHDL TEXT
+  # If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
+  # as way to ensure correct multi clock behavior 
+  RHS = GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
+  # Submodule or not LHS is write pipe wire
+  LHS = GET_LHS(driven_wire, logic, parser_state)
+  #print "logic.func_name",logic.func_name
+  #print "driving_wire, driven_wire",driving_wire, driven_wire
+  # Need VHDL conversions for this type assignment?
+  TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state)
+  
+  # Typical wires using := assignment, but feedback wires need <=
+  ass_op = ":="
+  if driven_wire in logic.feedback_vars:
+    ass_op = "<="
+  text = LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n"
+  return text
+
 def GET_SUBMODULE_LEVEL_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, submodule_level_info, pipeline_hdl_params):
   timing_params = TimingParamsLookupTable[inst_name]
   # Starts with wires driving other wires
   text = f"     -- Submodule level {submodule_level_info.level_num}\n"
   for driver_driven_wire_pair in submodule_level_info.driver_driven_wire_pairs:
     driving_wire, driven_wire = driver_driven_wire_pair
-    
-    # Dont write text connecting VHDL input ports
-    # (connected directly in func call params)
-    if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
-      continue
-    if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
-      continue
-    
-    ### WRITE VHDL TEXT
-    # If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
-    # as way to ensure correct multi clock behavior 
-    RHS = GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
-    # Submodule or not LHS is write pipe wire
-    LHS = GET_LHS(driven_wire, logic, parser_state)
-    #print "logic.func_name",logic.func_name
-    #print "driving_wire, driven_wire",driving_wire, driven_wire
-    # Need VHDL conversions for this type assignment?
-    TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state)
-    
-    # Typical wires using := assignment, but feedback wires need <=
-    ass_op = ":="
-    if driven_wire in logic.feedback_vars:
-      ass_op = "<="
-    text += "     " + LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n"
-      
+    pair_text = RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(driving_wire, driven_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
+    if pair_text is not None:
+      text += "     " + pair_text
 
   # Ends with submodule logic connections
   for submodule_inst in submodule_level_info.submodule_insts:

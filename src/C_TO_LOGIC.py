@@ -919,6 +919,8 @@ class Logic:
     
   # Allow a wire not to be driven
   def WIRE_ALLOW_NO_DRIVEN_BY(self, wire, FuncLogicLookupTable):
+    if WIRE_IS_CONSTANT(wire):
+      return True
     if wire in self.variable_names:
       return True
     if wire in self.inputs:

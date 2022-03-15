@@ -568,13 +568,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
+  
+  # Dont drive const from stage0 - makes lots of dumb delay regs
+  '''
   # Also "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
     #print "wire=",wire
     if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
       #print "CONST->",wire
       RECORD_DRIVEN_BY(None, wire)
-      
+  '''
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
   delay_offset_when_driven = dict()
@@ -638,7 +641,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     
     # All other wires driven?
     for wire in logic.wires:
-      if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire,parser_state.FuncLogicLookupTable): # None is OK? since only use for globals and inputs and such?
+      if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire,parser_state.FuncLogicLookupTable) and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is None:
         if print_debug:
           print("Pipeline not done wire.",wire)
         return False
@@ -831,14 +834,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             ce_wire = submodule_inst+ C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
             ce_driving_wire = logic.wire_driven_by[ce_wire]
             submodule_input_port_driving_wires.append(ce_driving_wire)
-            if ce_driving_wire not in wires_driven_by_so_far:
+            ce_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(ce_wire, logic)
+            if ce_driving_wire not in wires_driven_by_so_far and ce_const_driving_wire is None:
               submodule_has_all_inputs_driven = False
           # Check each input
           if submodule_has_all_inputs_driven:
             for input_port_name in submodule_logic.inputs:
               driving_wire = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst,input_port_name)
               submodule_input_port_driving_wires.append(driving_wire)
-              if driving_wire not in wires_driven_by_so_far:
+              input_port_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(driving_wire, logic)
+              if driving_wire not in wires_driven_by_so_far and input_port_const_driving_wire is None:
                 submodule_has_all_inputs_driven = False
                 if bad_inf_loop:
                   print("!! " + submodule_inst + " input wire " + input_port_name + " not driven yet")
@@ -864,8 +869,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               # Start with 0 since submodule can have no inputs and this no input port delay offset
               input_port_delay_offsets = [0]
               for submodule_input_port_driving_wire in submodule_input_port_driving_wires:
-                delay_offset = delay_offset_when_driven[submodule_input_port_driving_wire]
-                input_port_delay_offsets.append(delay_offset)
+                # Some inputs might be constant, dont contribute to delay offset
+                if C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(submodule_input_port_driving_wire, logic) is None:
+                  delay_offset = delay_offset_when_driven[submodule_input_port_driving_wire]
+                  input_port_delay_offsets.append(delay_offset)
               max_input_port_delay_offset = max(input_port_delay_offsets)
               
               # All submodules should be driven at some offset right?
@@ -952,10 +959,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       for submodule_inst in fully_driven_submodule_inst_this_level_2_logic:
         submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-          
-        # Get latency
-        submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
-        
+      
         # Use submodule logic to write vhdl
         # REGULAR ENTITY CONNECITON
         #submodule_level_text += " " + " " + " -- " + C_TO_LOGIC.LEAF_NAME(submodule_inst, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
@@ -963,6 +967,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         #submodule_level_text += entity_connection_text + "\n"
         submodule_level_info.submodule_insts.append(submodule_inst)
 
+        # Get latency
+        submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
         # Add output wires of this submodule to wires driven so far after latency
         for output_port in submodule_logic.outputs:
           # Construct the name of this wire in the original logic
