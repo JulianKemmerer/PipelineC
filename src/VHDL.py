@@ -2629,7 +2629,7 @@ class PiplineHDLParams:
     self.wire_to_reg_stage_start_end = dict() # Same as comb range too
 
     # Not needed for no submodule things like raw hdl
-    if len(Logic.submodule_instances) <= 0 or Logic.is_vhdl_text_module or Logic.func_name in parser_state.func_marked_blackbox:
+    if LOGIC_IS_RAW_HDL(Logic) or Logic.is_vhdl_func or Logic.is_vhdl_expr or Logic.is_vhdl_text_module or Logic.func_name in parser_state.func_marked_blackbox:
       return
     timing_params = TimingParamsLookupTable[inst_name]
 
@@ -2649,7 +2649,7 @@ class PiplineHDLParams:
         continue
       self.wires_to_decl.append(wire_name)
       self.wire_to_reg_stage_start_end[wire_name] = [None, None]
-
+    
     # Arrange into list of driven(write) wires per stage, and list of driver(read) wires
     stage_to_driver_wires = dict()
     stage_to_driven_wires = dict()
@@ -2749,11 +2749,7 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     print(0/0,flush=True)
     sys.exit(-1)
   timing_params = TimingParamsLookupTable[inst_name]
-  pipeline_map = SYN.GET_PIPELINE_MAP(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  pipeline_hdl_params = PiplineHDLParams(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_map)
   filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
-
-  latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
   needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
@@ -2845,6 +2841,9 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     rv += GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
   else:
     # Get declarations for this arch
+    pipeline_map = SYN.GET_PIPELINE_MAP(inst_name, Logic, parser_state, TimingParamsLookupTable)
+    pipeline_hdl_params = PiplineHDLParams(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_map)
+    latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     rv += GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params)
     
     rv += "begin" + "\n"
@@ -2901,7 +2900,12 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
           
     # Get the text that is actually the pipeline logic in this entity
     rv += "\n"
-    rv += GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params)
+    # Special case logic that does not do usage pipeline
+    if SW_LIB.IS_MEM(Logic):
+      rv += RAW_VHDL.GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
+    else:
+      # Regular comb logic pipeline
+      rv += GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params)
   
   # Done with entity
   rv += "\n" + "end arch;" + "\n"
@@ -2913,18 +2917,18 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   f = open(output_directory+ "/" + filename,"w")
   f.write(rv)
   f.close()
-  
-def GET_PIPELINE_LOGIC_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params):
-  # Special case logic that does not do usage pipeline
-  if SW_LIB.IS_MEM(Logic):
-    return RAW_VHDL.GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable)
-  else:
-    # Regular comb logic pipeline
-    return GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params)
 
 def LOGIC_IS_RAW_HDL(Logic):
-  is_raw_hdl = len(Logic.submodule_instances) <= 0 and Logic.is_c_built_in
-  return is_raw_hdl
+  if Logic.is_c_built_in:
+    input_types = []
+    for in_port in Logic.inputs:
+      input_types.append(Logic.wire_to_c_type[in_port])
+    output_type = Logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+    return C_BUILT_IN_FUNC_IS_RAW_HDL(Logic.func_name, input_types, output_type)
+  else:
+    if SW_LIB.IS_BIT_MANIP(Logic):
+      return True
+  return False
 
 def LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
@@ -3354,7 +3358,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
       rv += " " + " " + " " + "-- Mux in inputs\n"
       for input_wire in Logic.inputs:
         if timing_params._has_input_regs:
-          rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := registers_r.input_regs." + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
+          rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := manual_registers_r.input_regs." + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"
         else:
           rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"      
       
@@ -3451,7 +3455,6 @@ end process;
   return rv
 
 def GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params):
-  pipeline_map = pipeline_hdl_params.pipeline_map
   timing_params = TimingParamsLookupTable[inst_name]
   pipeline_latency = timing_params.GET_PIPELINE_LOGIC_LATENCY(parser_state, TimingParamsLookupTable)
   text = "  " + " " 
@@ -3459,6 +3462,8 @@ def GET_C_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, TimingParam
     is_first_stage = stage==0
     is_last_stage = stage==pipeline_latency
     text += f"if STAGE = {stage} then\n"
+    if len(pipeline_hdl_params.pipeline_map.stage_infos) <= stage:
+      raise Exception(f"There is no stage {stage} in {logic.func_name} pipeline_latency={pipeline_latency}")
     stage_info = pipeline_hdl_params.pipeline_map.stage_infos[stage]
     text += GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stage_info, pipeline_hdl_params, is_first_stage, is_last_stage)
     if is_last_stage:

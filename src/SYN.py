@@ -479,18 +479,22 @@ ___          ___     __   __   ___  __       . ___
 # So for ~now the answer is yes, forever
 def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable): 
   # FORGIVE ME - never
-  
-  print_debug = False #inst_name=="posix_aws_fpga_dma" #False
-  bad_inf_loop = False
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   timing_params = TimingParamsLookupTable[inst_name]
   rv = PipelineMap(logic)
+  
   # Non submodule modules like dont need this
-  if len(logic.submodule_instances) <= 0 or logic.is_vhdl_text_module or logic.func_name in parser_state.func_marked_blackbox:
+  # Dont check just dont call this func in that case?
+  if VHDL.LOGIC_IS_RAW_HDL(logic) or logic.is_vhdl_func or logic.is_vhdl_expr or logic.is_vhdl_text_module or logic.func_name in parser_state.func_marked_blackbox:
     return rv
+  
+  print_debug = False #inst_name=="posix_aws_fpga_dma" #False
+  bad_inf_loop = False
   #print("Get pipeline map inst_name",inst_name,flush=True)
   # Shouldnt need debug for zero clock? You wish you sad lazy person
   #print_debug = print_debug and (est_total_latency>0)
+  #print_debug = True
+  #bad_inf_loop = True
   if print_debug:
     print("==============================Getting pipeline map=======================================")
     print("GET_PIPELINE_MAP:")
@@ -568,15 +572,18 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
-  
-  # Dont drive const from stage0 - makes lots of dumb delay regs
   '''
+  # Dont drive const from stage0 - makes lots of dumb delay regs
   # Also "CONST" wires representing constants like '2' are already driven
+  # And any wire resolving to constant
   for wire in logic.wires:
     #print "wire=",wire
     if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
       #print "CONST->",wire
       RECORD_DRIVEN_BY(None, wire)
+    elif C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is not None and C_TO_LOGIC.SUBMODULE_MARKER not in wire:
+      driver_of_wire = logic.wire_driven_by[wire]
+      RECORD_DRIVEN_BY(driver_of_wire, wire)
   '''
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
@@ -641,7 +648,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     
     # All other wires driven?
     for wire in logic.wires:
-      if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire,parser_state.FuncLogicLookupTable) and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is None:
+      if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(wire, parser_state.FuncLogicLookupTable) and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is None:
         if print_debug:
           print("Pipeline not done wire.",wire)
         return False
@@ -650,7 +657,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         if wire in wires_driven_by_so_far:
           driven_by = wires_driven_by_so_far[wire]
         print("Wire driven ", wire, "<=",driven_by)
-        
+    if print_debug:
+      print("Pipeline stages done...")
     return True
   
   # WHILE LOOP FOR MULTI STAGE/CLK
@@ -1058,7 +1066,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       # WHILE CHECK for when to stop try for submodule levels in this stage
       if not( len(wires_starting_level)>0 ):
         # Break out of this loop trying to do submodule level iterations for this stage
-        break;
+        break
       else:
         # Record these last wires starting level and loop again
         # This is dumb and probably doesnt work?
@@ -1085,6 +1093,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # PER CLOCK decrement latencies
     stage_num = stage_num +1
     rv.stage_infos.append(stage_info)
+    if print_debug:
+      print("Appending stage info...",len(rv.stage_infos))
     for wire in wire_to_remaining_clks_before_driven:
       #if wire_to_remaining_clks_before_driven[wire] >= 0:
       wire_to_remaining_clks_before_driven[wire]=wire_to_remaining_clks_before_driven[wire]-1
@@ -1131,6 +1141,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
       #print "timing_params.submodule_to_start_stage",timing_params.submodule_to_start_stage
       sys.exit(-1)
     
+  if print_debug:
+    print("Stage infos count:",len(rv.stage_infos))
+
   return rv
   
 # Returns updated TimingParamsLookupTable
