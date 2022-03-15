@@ -1284,6 +1284,8 @@ def GET_MEM_NAME(logic):
     return RAM_SP_RF+"_0"
   elif logic.func_name.endswith("_" + RAM_SP_RF+"_2"):
     return RAM_SP_RF+"_2"
+  elif logic.func_name.endswith("_" + RAM_DP_RF+"_0"):
+    return RAM_DP_RF+"_0"
   elif logic.func_name.endswith("_" + RAM_DP_RF+"_2"):
     return RAM_DP_RF+"_2"
   else:
