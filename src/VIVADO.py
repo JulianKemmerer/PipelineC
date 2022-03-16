@@ -79,22 +79,22 @@ class ParsedTimingReport:
       
       # OK so apparently mult by self results in constants
       # See scratch notes "wtf_multiply_by_self" dir
-      if ( (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_output_reg_reg" in syn_output_line)) or
-           (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_intput_reg_reg" in syn_output_line)) ):
-        print(syn_output_line)
+      #if ( (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_output_reg_reg" in syn_output_line)) or
+      #     (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_intput_reg_reg" in syn_output_line)) ):
+      #print(syn_output_line)
         
         
       # Constant outputs? 
-      if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
-        #print single_timing_report
-        #print "Unconnected or constant ports!? Wtf man"
-        print(syn_output_line)
-        # Do debug?
-        #latency=1
-        #do_debug=True
-        #print "ASSUMING LATENCY=",latency
-        #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-        #sys.exit(-1)
+      #if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
+      #  #print single_timing_report
+      #  #print "Unconnected or constant ports!? Wtf man"
+      #  #print(syn_output_line)
+      #  # Do debug?
+      #  #latency=1
+      #  #do_debug=True
+      #  #print "ASSUMING LATENCY=",latency
+      #  #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
+      #  #sys.exit(-1)
 
       # Unconnected ports are maybe problem?
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):

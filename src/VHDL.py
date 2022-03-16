@@ -2928,6 +2928,8 @@ def LOGIC_IS_RAW_HDL(Logic):
   else:
     if SW_LIB.IS_BIT_MANIP(Logic):
       return True
+    if SW_LIB.IS_MEM(Logic):
+      return True
   return False
 
 def LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
@@ -3446,7 +3448,7 @@ begin
 end process;
 '''
     
-  # Connect registers_r.output_regs. to output port
+  # Connect manual_registers_r.output_regs. to output port
   if timing_params._has_output_regs:
     rv += " -- Output regs\n"
     for output_wire in Logic.outputs:

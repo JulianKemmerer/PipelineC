@@ -6920,12 +6920,12 @@ def GET_C_TYPE_FROM_WIRE_NAMES(wire_names, logic, allow_fail=False):
 def FIND_CONST_DRIVING_WIRE(wire, logic):
   if WIRE_IS_CONSTANT(wire):
     return wire
-  else:
-    if wire in logic.wire_driven_by:
-      driving_wire = logic.wire_driven_by[wire]
+  elif wire in logic.wire_driven_by:
+    driving_wire = logic.wire_driven_by[wire]
+    # Wtf some wires like state vars driven themselves?
+    if driving_wire != wire:
       return FIND_CONST_DRIVING_WIRE(driving_wire, logic)
-    else:
-      return None   
+  return None
 
 #def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
 def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, prepend_text, c_ast_node, check_types_do_cast=True): #print "driving_wire",driving_wire,"=>",driven_wire_names
