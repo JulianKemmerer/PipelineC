@@ -30,7 +30,10 @@ A C-like(1) hardware description language (HDL)(2) adding high level synthesis(H
 # What is PipelineC not?
 
 * High level synthesis of arbitrary C code with a global memory model / threads / etc.
+  * Cannot do 'nested loops to a memory architecture' for you.
 * Meta-programming hardware-generator (ex. uses C type system and preprocessor).
+* Stitching tool automating the build flow from code/modules to bitstream.
+  * Tool does partially automate synthesis runs but automation to final bitstream is left to the user.
 
 # Core Features/Benefits
 
@@ -44,10 +47,9 @@ _An easy to understand hardware description language with a powerful autopipelin
 * Globally visible point-to-point wires, multi-rate/width clock domain crossings, and complex derived FSMs, are just some of the growing list of composability features inspired by real life hardware design requirements/tasks.
 * Automatic pipelining as a feature of the compiler. Basic use of the tool can be to generate single pipelines to drop into existing designs elsewhere. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
 
-Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc).
+Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc). Designs can be structured to look like 'communicating sequential processes/threads' as needed.
 
 By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PipelineC designs do not need to be rewritten for each new target device / operating frequency.
 The hope is to build shared, high performance, device agnostic, hardware designs described in a familiar and powerfully composable C language look.
 
-For software folks I want writing PipelineC to feel like solving a programming puzzle in C, not a whole new paradigm of programming languages.
-The rules of the puzzle hide/imply hardware concepts. For hardware folks I want PipelineC to be a better hardware description language (it is my language of choice as an FPGA engineer :) ).
+For software folks writing PipelineC should feel like solving a programming puzzle in C - the rules of the puzzle hide/imply hardware concepts. For hardware folks PipelineC is a better hardware description language trying to find middle ground between traditional RTL and HLS. It is my language of choice as an FPGA engineer :).
