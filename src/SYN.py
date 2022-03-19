@@ -1791,6 +1791,143 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
         
   return main_insts
 
+def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingParamsLookupTable, ff_est_cache):
+  timing_params = TimingParamsLookupTable[inst_name]
+  hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+
+  cache_key = (logic.func_name, hash_ext)
+  if cache_key in ff_est_cache:
+    cache_text,cache_ffs = ff_est_cache[cache_key]
+    return cache_text,cache_ffs
+
+  total_ffs = 0
+  text = f"{C_TO_LOGIC.LEAF_NAME(inst_name)} ({logic.func_name})\n"
+
+  input_ffs = 0
+  inputs_text = ""
+  for input_port in logic.inputs:
+    input_type = logic.wire_to_c_type[input_port]
+    inputs_text += input_type + " " + input_port + ","
+    input_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(input_type, parser_state)
+    input_ffs += input_bits
+  inputs_text += "\n"
+  if timing_params._has_input_regs:
+    text += f"  {input_ffs} Input FFs: " + inputs_text
+    total_ffs += input_ffs
+  
+  output_ffs = 0
+  outputs_text = ""
+  for output_port in logic.outputs:
+    output_type = logic.wire_to_c_type[output_port]
+    outputs_text += output_type + " " + output_port + ","
+    output_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(output_type, parser_state)
+    output_ffs += output_bits
+  outputs_text += "\n"
+  if timing_params._has_output_regs:
+    text += f"  {output_ffs} Output FFs: " + outputs_text
+    total_ffs += output_ffs
+
+  if len(logic.state_regs) > 0:
+    state_reg_ffs = 0
+    state_regs_text = ""
+    for state_reg_info in logic.state_regs:
+      state_reg_type = logic.wire_to_c_type[state_reg_info.type_name]
+      state_regs_text += state_reg_type + " " + state_reg_info.name + ","
+      state_reg_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(state_reg_type, parser_state)
+      state_reg_ffs += state_reg_bits
+    state_regs_text += "\n"
+    text += f"  {state_reg_ffs} State Register FFs: " + state_regs_text
+    total_ffs += state_reg_ffs
+
+  latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+  if latency > 0:
+    if VHDL.LOGIC_IS_RAW_HDL(logic):
+      # Raw vhdl estimate func of N bits input -> M bits output as using
+      # (N+M)/2 bits per pipeline stage
+      avg_regs = int((input_bits + output_bits)/2)
+      #raw_hdl_ffs = avg_regs * (latency)
+      #text += f"  {avg_regs} average width * {latency} pipeline register stages = ~ {raw_hdl_ffs} FFs\n"
+      raw_hdl_ffs = avg_regs
+      text += f"  ~ {avg_regs} average bit width = ~ {raw_hdl_ffs} FFs\n"
+      total_ffs += raw_hdl_ffs
+    else:
+      non_io_vars = set(logic.variable_names) - set(logic.inputs) - set(logic.outputs)
+      if len(non_io_vars) > 0:
+        variable_ffs = 0
+        variables_text = ""
+        for variable_name in non_io_vars:
+          variable_type = logic.wire_to_c_type[variable_name]
+          variables_text += variable_type + " " + variable_name + ", "
+          variable_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(variable_type, parser_state)
+          variable_ffs += variable_bits
+        variables_text += "\n"
+        pipeline_ffs = variable_ffs * (latency)
+        text += f"  {pipeline_ffs} FFs = {variable_ffs} variable bits: " + variables_text
+        text += f"      x {latency} pipeline register stages\n"
+        total_ffs += pipeline_ffs
+        #text += f"  {variable_ffs} variable FFs: (not including multiplier for N pipeline stages) " + variables_text
+        #total_ffs += variable_ffs
+
+  
+  sub_mod_reg_ffs = 0
+  sub_mod_regs_text = ""
+  for sub_inst in logic.submodule_instances:
+    sub_func_name = logic.submodule_instances[sub_inst]
+    sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+    sub_full_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst
+    sub_inst_text, sub_inst_ffs = GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(sub_logic, sub_full_inst, parser_state, TimingParamsLookupTable, ff_est_cache)
+    sub_inst_text = sub_inst_text.strip("\n")
+    if sub_inst_ffs > 0:
+      for sub_inst_text_line in sub_inst_text.split("\n"):
+        sub_mod_regs_text += "    " + sub_inst_text_line + "\n"
+      #sub_mod_regs_text = sub_mod_regs_text.strip("\n")
+    sub_mod_reg_ffs += sub_inst_ffs
+  #sub_mod_regs_text += "\n"
+  if sub_mod_reg_ffs > 0:
+    text += f"  {sub_mod_reg_ffs} total submodule FFs: \n"
+    text += sub_mod_regs_text
+    total_ffs += sub_mod_reg_ffs
+
+  text = f"{total_ffs} FFs " + text
+
+  ff_est_cache[cache_key] = (text,total_ffs)
+  return text,total_ffs
+  
+
+def WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params_or_TimingParamsLookupTable, inst_name=None):
+  if inst_name is None:
+    # Multi main
+    multimain_timing_params = multimain_timing_params_or_TimingParamsLookupTable
+    TimingParamsLookupTable = multimain_timing_params.TimingParamsLookupTable
+    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+    output_dir = SYN_OUTPUT_DIRECTORY + "/" + "top"
+    output_file =  output_dir + "/" + "top" + hash_ext + "_registers.log"
+  else:
+    # Specific inst
+    TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
+    logic = parser_state.LogicInstLookupTable[inst_name]
+    output_dir = GET_OUTPUT_DIRECTORY(logic)
+    timing_params = TimingParamsLookupTable[inst_name]
+    hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+    latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    output_file = output_dir + "/" + f"{logic.func_name}_{latency}CLK" + hash_ext + "_registers.log"
+
+  # Start cache of info for recursive process
+  ff_est_cache = dict()
+
+  # For each main func write text
+  text = ""
+  for main_func in parser_state.main_mhz:
+    main_logic = parser_state.LogicInstLookupTable[main_func]
+    main_func_text, main_func_ffs = GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(main_logic, main_func, parser_state, TimingParamsLookupTable, ff_est_cache)
+    text += main_func_text
+    text += "\n"
+
+  print(f"Estimated register usage: {output_file}")
+  f=open(output_file,'w')
+  f.write(text)
+  f.close()
+
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
 def DO_THROUGHPUT_SWEEP(
@@ -1919,7 +2056,6 @@ def DO_THROUGHPUT_SWEEP(
 # Not because it is easy, but because we thought it would be easy
 
 # Do I like Joe Walsh?
-
 
 # Inside out timing params
 # Kinda like "make all adds N cycles" as in original thinking
@@ -2185,7 +2321,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
           wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
           if not os.path.exists(wr_filename):
             VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, sweep_state.multimain_timing_params.TimingParamsLookupTable)
-      
+    # Write estimate of FF usage
+    WRITE_REGISTERS_ESTIMATE_FILE(parser_state, sweep_state.multimain_timing_params)
+
     # Run syn on multi main top
     print("Running syn w timing params...",flush=True)
     for main_func in parser_state.main_mhz:
@@ -2394,7 +2532,8 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
           wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
           if not os.path.exists(wr_filename):
             VHDL.WRITE_LOGIC_ENTITY(inst_name_to_wr, wr_logic, wr_syn_out_dir, parser_state, TimingParamsLookupTable)
-          
+    # Write estimate of FF usage
+    WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)   
     
     # Run syn on multi main top
     print("Running syn w slices...",flush=True)

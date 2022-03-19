@@ -526,7 +526,7 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
       "-journal " + output_directory + "/vivado.jou" + " " + 
       "-mode batch")  # Quotes since I want to keep brackets in inst names
     
-    print("Running:", syn_imp_bash_cmd, flush=True)
+    print("Running:", log_path, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
 
   return ParsedTimingReport(log_text)
@@ -583,7 +583,7 @@ def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTabl
       "-journal " + output_directory + "/vivado.jou" + " " +
       "-mode batch" )
     
-    print("Running:", syn_imp_bash_cmd, flush=True)
+    print("Running:", log_path, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
     
   return ParsedTimingReport(log_text)

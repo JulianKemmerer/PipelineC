@@ -4139,6 +4139,8 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
     sys.exit(-1)    
   
 # Oh boy lets recurse a bunch because otherwise is calculated in vhdl compile time fuck lazy past me
+# Past me is like not so bad...
+#   God? - The Dodos
 def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
   width = GET_WIDTH_FROM_C_TYPE_STR(parser_state,c_type_str,allow_fail=True)
   if width is not None:

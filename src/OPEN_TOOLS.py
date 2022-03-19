@@ -356,7 +356,7 @@ export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
 
     # Execute the command
     syn_imp_bash_cmd = "bash " + sh_file 
-    print("Running:", sh_path, flush=True)
+    print("Running:", log_path, flush=True)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")
     log_text = f.read()
