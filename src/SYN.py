@@ -1830,9 +1830,10 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
   if len(logic.state_regs) > 0:
     state_reg_ffs = 0
     state_regs_text = ""
-    for state_reg_info in logic.state_regs:
-      state_reg_type = logic.wire_to_c_type[state_reg_info.type_name]
-      state_regs_text += state_reg_type + " " + state_reg_info.name + ","
+    for state_reg_name in logic.state_regs:
+      state_reg_info = logic.state_regs[state_reg_name]
+      state_reg_type = state_reg_info.type_name
+      state_regs_text += state_reg_type + " " + state_reg_name + ","
       state_reg_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(state_reg_type, parser_state)
       state_reg_ffs += state_reg_bits
     state_regs_text += "\n"
