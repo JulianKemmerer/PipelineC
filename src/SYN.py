@@ -1801,7 +1801,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
     return cache_text,cache_ffs
 
   total_ffs = 0
-  text = f"{C_TO_LOGIC.LEAF_NAME(inst_name)} ({logic.func_name})\n"
+  text = f"Function: {C_TO_LOGIC.LEAF_NAME(inst_name)} ({logic.func_name})\n"
 
   input_ffs = 0
   inputs_text = ""
@@ -1852,23 +1852,30 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
       text += f"  ~ {avg_regs} average bit width = ~ {raw_hdl_ffs} FFs\n"
       total_ffs += raw_hdl_ffs
     else:
-      non_io_vars = set(logic.variable_names) - set(logic.inputs) - set(logic.outputs)
-      if len(non_io_vars) > 0:
-        variable_ffs = 0
-        variables_text = ""
-        for variable_name in non_io_vars:
-          variable_type = logic.wire_to_c_type[variable_name]
-          variables_text += variable_type + " " + variable_name + ", "
-          variable_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(variable_type, parser_state)
-          variable_ffs += variable_bits
-        variables_text += "\n"
-        pipeline_ffs = variable_ffs * (latency)
-        text += f"  {pipeline_ffs} FFs = {variable_ffs} variable bits: " + variables_text
-        text += f"      x {latency} pipeline register stages\n"
-        total_ffs += pipeline_ffs
-        #text += f"  {variable_ffs} variable FFs: (not including multiplier for N pipeline stages) " + variables_text
-        #total_ffs += variable_ffs
-
+      # use range size from PiplineHDLParams to get regs for each wire
+      # do per stage - how many regs from wires in each stage
+      pipeline_map = GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable)
+      pipeline_hdl_params = VHDL.PiplineHDLParams(inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_map)
+      pipeline_ffs = 0
+      pipeline_text = ""
+      for stage in range(0,latency): # Last stage never has regs, dont print
+        stage_ffs = 0
+        stage_wires_text = ""
+        for wire in pipeline_hdl_params.wires_to_decl:
+          wire_start_stage,wire_end_stage = pipeline_hdl_params.wire_to_reg_stage_start_end[wire]
+          if wire_start_stage is None or wire_end_stage is None:
+            continue
+          if stage in range(wire_start_stage, wire_end_stage+1):
+            wire_type = logic.wire_to_c_type[wire]
+            wire_ffs = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(wire_type, parser_state)
+            stage_ffs += wire_ffs
+            stage_wires_text += f"{wire_type} {wire}, "
+        stage_text = "    " + f"{stage_ffs} FFs for stage {stage}: " + stage_wires_text + "\n"
+        pipeline_text += stage_text
+        pipeline_ffs += stage_ffs
+      text += f"  {pipeline_ffs} FFs for {latency+1} autopipeline stages:\n"
+      text += pipeline_text
+      total_ffs += pipeline_ffs
   
   sub_mod_reg_ffs = 0
   sub_mod_regs_text = ""
