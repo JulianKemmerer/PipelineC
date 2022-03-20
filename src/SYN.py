@@ -1845,7 +1845,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
     if VHDL.LOGIC_IS_RAW_HDL(logic):
       # Raw vhdl estimate func of N bits input -> M bits output as using
       # (N+M)/2 bits per pipeline stage
-      avg_regs = int((input_bits + output_bits)/2)
+      avg_regs = int((input_ffs + output_ffs)/2)
       #raw_hdl_ffs = avg_regs * (latency)
       #text += f"  {avg_regs} average width * {latency} pipeline register stages = ~ {raw_hdl_ffs} FFs\n"
       raw_hdl_ffs = avg_regs
