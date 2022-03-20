@@ -1869,7 +1869,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
             wire_type = logic.wire_to_c_type[wire]
             wire_ffs = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(wire_type, parser_state)
             stage_ffs += wire_ffs
-            stage_wires_text += f"{wire_type} {wire}, "
+            stage_wires_text += f"{wire_type}({wire_ffs} bits) {wire}, "
         stage_text = "    " + f"{stage_ffs} FFs for stage {stage}: " + stage_wires_text + "\n"
         pipeline_text += stage_text
         pipeline_ffs += stage_ffs
