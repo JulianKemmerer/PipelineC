@@ -572,10 +572,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
-  '''
-  # Dont drive const from stage0 - makes lots of dumb delay regs
-  # Also "CONST" wires representing constants like '2' are already driven
-  # And any wire resolving to constant
+  # "CONST" wires representing constants like '2' are already driven
+  # Propogate these constants by recording drivers for
+  # any wires that have constant drivers
   for wire in logic.wires:
     #print "wire=",wire
     if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
@@ -584,7 +583,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     elif C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is not None and C_TO_LOGIC.SUBMODULE_MARKER not in wire:
       driver_of_wire = logic.wire_driven_by[wire]
       RECORD_DRIVEN_BY(driver_of_wire, wire)
-  '''
+  
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
   delay_offset_when_driven = dict()
