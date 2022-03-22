@@ -147,10 +147,19 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   
     
 def CLK_EXT_STR(main_func, parser_state):
-  text = ""
   mhz = parser_state.main_mhz[main_func]
+  num = mhz
+  unit = "" # assumed MHz, todo always have units, dont assume
+  if num < 1.0:
+    num = mhz * 1e3
+    unit = "khz"
+    if num < 1.0:
+      num = mhz * 1e6
+      unit = "hz"
+
   # Start with mhz
-  text += str(mhz).replace(".","p")
+  text = ""
+  text += str(num).replace(".","p") + unit
   
   # Maybe add clock group
   group = parser_state.main_clk_group[main_func]
