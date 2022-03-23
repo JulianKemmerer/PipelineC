@@ -1978,15 +1978,6 @@ def DO_THROUGHPUT_SWEEP(
     if coarse_only:
       print("Using --coarse and --comb doesnt make sense? TODO fix?")
       sys.exit(-1)
-      '''
-      if len(parser_state.main_mhz) > 1:
-        raise Exception("Cannot do use a single coarse sweep with multiple main functions.")
-        sys.exit(-1)
-      main_func = list(parser_state.main_mhz.keys())[0]
-      main_logic = parser_state.FuncLogicLookupTable[main_func]
-      print(f"Comb. logic for single main '{main_func}' function only...", flush=True)
-      timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(main_func, main_logic, parser_state, multimain_timing_params.TimingParamsLookupTable, total_latency=0)
-      '''
     else:
       # Regular multi main top comb logic
       timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
@@ -2022,8 +2013,10 @@ def DO_THROUGHPUT_SWEEP(
       if len(possible_mains)==1:
         main_func = possible_mains[0]
         print("Assuming coarse sweep is for main function:", main_func)
+      elif len(possible_mains)==0:
+        raise Exception(f"No main functions are elligible for pipelining.")
       else:
-        raise Exception("Cannot do use a single coarse sweep with multiple pipelined main functions.")
+        raise Exception(f"Cannot do use a single coarse sweep with multiple pipelined main functions. Possible main functions: {possible_mains}")
         sys.exit(-1)
     else:
       main_func = list(parser_state.main_mhz.keys())[0]
