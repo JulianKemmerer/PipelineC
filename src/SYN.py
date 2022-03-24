@@ -2948,6 +2948,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Record stats on functions with globals - TODO per main func?
   min_mhz = 999999999
   min_mhz_func_name = None
+  import datetime
+  from timeit import default_timer as timer
+  start_time = timer()
   
   #bAAAAAAAAAAAhhhhhhh need to recursively do this 
   # Do depth first 
@@ -2978,6 +2981,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
           inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
         if inst_name is None:
           #print("Warning?: No logic instance for function:", logic.func_name, "never used?")
+          func_names_done_so_far.append(logic_func_name) # Helps with % printout?
           continue
         # All dependencies met?
         all_dep_met = True
@@ -3042,8 +3046,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         out_path = out_dir + "/pipeline_map.log"
         f=open(out_path,'w')
         f.write(zero_clk_pipeline_map_str)
-        f.close()      
-      
+        f.close()
+    
     # Start parallel syn for parallel_func_names
     # Parallelized
     NUM_PROCESSES = int(open(C_TO_LOGIC.EXE_ABS_DIR() + "/../num_processes.cfg",'r').readline())
@@ -3123,6 +3127,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       
       # Save logic with delay into lookup
       parser_state.FuncLogicLookupTable[logic_func_name] = logic
+
+      # Print some kind of progress
+      print(f"Function {len(func_names_done_so_far)}/{len(parser_state.FuncLogicLookupTable)}, elapsed time {str(datetime.timedelta(seconds=(timer() - start_time)))}...")
       
       # Done
       func_names_done_so_far.append(logic_func_name)
