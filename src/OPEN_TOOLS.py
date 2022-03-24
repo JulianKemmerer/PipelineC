@@ -167,7 +167,12 @@ class ParsedTimingReport:
         path_report = PathReport(path_text)
         # Set things only parsed once not per report
         path_report.path_delay_ns = 1000.0 / clock_to_act_tar_mhz[path_report.path_group][0]
-        path_report.source_ns_per_clock = 1000.0 / clock_to_act_tar_mhz[path_report.path_group][1]
+        # Lolz really slow clocks come back as zero
+        # nextpnr reports with two decimals 0.00 MHz
+        tar_mhz = clock_to_act_tar_mhz[path_report.path_group][1]
+        if tar_mhz < 0.01:
+          tar_mhz = 0.01
+        path_report.source_ns_per_clock = 1000.0 / tar_mhz
         # Save in dict
         self.path_reports[path_report.path_group] = path_report
         
