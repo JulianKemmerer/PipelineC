@@ -7585,6 +7585,7 @@ class ParserState:
     self.marked_onehot = set()
     self.part = None
     self.io_pairs = set()
+    self.async_wires = set()
     
     # Clock crossing info
     self.clk_cross_var_info = dict() # var name -> clk cross var info
@@ -7641,6 +7642,7 @@ class ParserState:
     rv.marked_onehot = set(self.marked_onehot)
     rv.part = self.part
     rv.io_pairs = set(self.io_pairs)
+    rv.async_wires = set(self.async_wires)
     
     rv.clk_cross_var_info = dict(self.clk_cross_var_info)
     rv.arb_handshake_infos = set(self.arb_handshake_infos)
@@ -8381,11 +8383,18 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       #print("Missing or incorrect #pragma MAIN_MHZ ?")
       #sys.exit(-1)
     
-    # Async fifo with flow control uses sized READ and WRITE
+    # Info to record
     flow_control = False
     read_func_name = var_to_read_func[var_name]
     write_func_name = var_to_write_func[var_name]
-    if not read_func_name.endswith("_READ") or not write_func_name.endswith("_WRITE"):
+    
+    # Async wires yreat like a same clock domain wire
+    if var_name in parser_state.async_wires:
+      ratio = 1
+      write_size = 1
+      read_size = 1
+    # Async fifo with flow control uses sized READ and WRITE
+    elif not read_func_name.endswith("_READ") or not write_func_name.endswith("_WRITE"):
       # Async sized read and write
       read_size = int(read_func_name.split("_READ_")[1])
       write_size = int(write_func_name.split("_WRITE_")[1])
@@ -8946,6 +8955,11 @@ def APPEND_PRAGMA_INFO(parser_state):
       i_wire = toks[1]
       o_wire = toks[2]
       parser_state.io_pairs.add((i_wire,o_wire))
+    
+    # ASYNC_WIRE
+    elif name=="ASYNC_WIRE":
+      thing = toks[1]
+      parser_state.async_wires.add(thing)
       
     # FEEDBACK
     elif name=="FEEDBACK":
