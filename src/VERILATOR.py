@@ -5,6 +5,7 @@ import shutil
 import SIM
 import SYN
 import C_TO_LOGIC
+import VHDL
 import OPEN_TOOLS
 
 VERILATOR_EXE="verilator"
@@ -23,9 +24,14 @@ def DO_SIM(multimain_timing_params, parser_state, args):
   # Generate helpful include of verilator names
   names_text = ""
   # Clocks
-  clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True)
+  clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True) 
+  # Which ones are not from the user internal
+  for clk_mhz in parser_state.clk_mhz.values():
+    clk_name =  "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+    # Remove user clocks from dict
+    clock_name_to_mhz.pop(clk_name, None)
   if len(clock_name_to_mhz) > 1:
-    print("WARNING: Multiple clocks for Verilator probably won't work!", list(clock_name_to_mhz.keys()))
+    print("WARNING: Multiple external clocks for Verilator. Not setup for this, probably won't work!", list(clock_name_to_mhz.keys()))
     for clock_name,mhz in clock_name_to_mhz.items():
       if mhz:
         names_text += f'#define {clock_name} {clock_name.replace("__","_")}\n'
