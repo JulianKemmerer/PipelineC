@@ -1744,41 +1744,55 @@ def SLICES_EQ(slices_a, slices_b, epsilon):
   
   return all_eq
 
+# Wow this is hack AF
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_params):
   main_insts = set()
   all_main_insts = list(reversed(sorted(list(parser_state.main_mhz.keys()), key=len)))
-  #print("all_main_insts",all_main_insts)
-  # Include start and end regs in search 
-  all_netlist_resources = set(path_report.netlist_resources)
-  if path_report.start_reg_name is None:
-    raise Exception("No start reg name")
-  all_netlist_resources.add(path_report.start_reg_name)
-  if path_report.end_reg_name is None:
-    raise Exception("No end reg name")
-  all_netlist_resources.add(path_report.end_reg_name)
-  for netlist_resource in all_netlist_resources:
-    #toks = netlist_resource.split("/")
-    #if toks[0] in parser_state.main_mhz:
-    #  main_inst_funcs.add(toks[0])
-    # If in the top level - no '/'? then look for main funcs like a dummy
-    #if "/" not in netlist_resource:
-    # Main funcs sorted by len for best match
-    match_main = None
-    #print("netlist_resource",netlist_resource)
-    for main_inst in all_main_insts:
-      main_logic = parser_state.LogicInstLookupTable[main_inst]
-      main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
-      #print(main_vhdl_entity_name,"?")
-      if netlist_resource.startswith(main_vhdl_entity_name):
-        match_main = main_inst
-        break
-      # OPEN_TOOLs reports in lower case
-      if netlist_resource.lower().startswith(main_vhdl_entity_name.lower()):
-        match_main = main_inst
-        break
-        
-    if match_main:
-      main_insts.add(match_main)
+  # Try to go off of just start and end registers being in single top level main
+  start_reg_main = None
+  end_reg_main = None
+  for main_inst in all_main_insts:
+    main_logic = parser_state.LogicInstLookupTable[main_inst]
+    main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
+    if path_report.start_reg_name.startswith(main_vhdl_entity_name):
+      start_reg_main = main_inst
+    if path_report.end_reg_name.startswith(main_vhdl_entity_name):
+      end_reg_main = main_inst
+    if start_reg_main==end_reg_main and start_reg_main is not None:
+      main_insts.add(start_reg_main)
+  
+  # If nothing was found try hacky netlist resource check?
+  if len(main_insts)==0:
+    # Include start and end regs in search 
+    all_netlist_resources = set(path_report.netlist_resources)
+    if path_report.start_reg_name is None:
+      raise Exception("No start reg name")
+    all_netlist_resources.add(path_report.start_reg_name)
+    if path_report.end_reg_name is None:
+      raise Exception("No end reg name")
+    all_netlist_resources.add(path_report.end_reg_name)
+    for netlist_resource in all_netlist_resources:
+      #toks = netlist_resource.split("/")
+      #if toks[0] in parser_state.main_mhz:
+      #  main_inst_funcs.add(toks[0])
+      # If in the top level - no '/'? then look for main funcs like a dummy
+      #if "/" not in netlist_resource:
+      # Main funcs sorted by len for best match
+      match_main = None
+      #print("netlist_resource",netlist_resource)
+      for main_inst in all_main_insts:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
+        #print(main_vhdl_entity_name,"?")
+        if netlist_resource.startswith(main_vhdl_entity_name):
+          match_main = main_inst
+          break
+        # OPEN_TOOLs reports in lower case
+        if netlist_resource.lower().startswith(main_vhdl_entity_name.lower()):
+          match_main = main_inst
+          break
+      if match_main:
+        main_insts.add(match_main)
   
   # If nothing was found try hacky clock cross check?
   if len(main_insts)==0:
@@ -1793,7 +1807,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
       start_write_mains, start_read_mains = start_info.write_read_main_funcs
       end_write_mains, end_read_mains = end_info.write_read_main_funcs
       #print(start_read_main,end_write_main)
-      in_both_mains = start_read_mains & end_write_main
+      in_both_mains = start_read_mains & end_write_mains
       if len(in_both_mains) > 0:
         main_insts |= in_both_mains
         
@@ -2333,18 +2347,19 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     # Write estimate of FF usage
     WRITE_REGISTERS_ESTIMATE_FILE(parser_state, sweep_state.multimain_timing_params)
 
-    # Run syn on multi main top
+    # Print info on main funcs being synthesized in top
     print("Running syn w timing params...",flush=True)
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       main_func_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
       print(main_func,":",main_func_timing_params.GET_TOTAL_LATENCY(parser_state,sweep_state.multimain_timing_params.TimingParamsLookupTable),"clocks latency...", flush=True)
-      # Then run syn
-      sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, sweep_state.multimain_timing_params)
-      if len(sweep_state.timing_report.path_reports) == 0:
-        print(sweep_state.timing_report.orig_text)
-        print("Using a bad syn log file?")
-        sys.exit(-1)
+    
+    # Run syn on multi main top
+    sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, sweep_state.multimain_timing_params)
+    if len(sweep_state.timing_report.path_reports) == 0:
+      print(sweep_state.timing_report.orig_text)
+      print("Using a bad syn log file?")
+      sys.exit(-1)
     
     # Did it meet timing? Make adjusments as checking
     made_adj = False
@@ -2352,6 +2367,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     sweep_state.met_timing = has_paths
     for reported_clock_group in sweep_state.timing_report.path_reports:
       path_report = sweep_state.timing_report.path_reports[reported_clock_group]
+      #print("Path report:")
+      #print(path_report.start_reg_name)
+      #print(path_report.end_reg_name)
+      #print(path_report.netlist_resources)
       curr_mhz = 1000.0 / path_report.path_delay_ns
       # Oh boy old log files can still be used if target freq changes right?
       # Do a little hackery to get actual target freq right now, not from log
