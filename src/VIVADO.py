@@ -271,9 +271,11 @@ class PathReport:
         
       # CLOCK PERIOD
       tok1="Source:                 "
-      tok2="                            (rising edge-triggered"
+      #tok2="                            (rising edge-triggered"
+      tok2="{rise@0.000ns fall@"
       tok3="period="
       if (tok1 in prev_line) and (tok2 in syn_output_line):
+        #print("Start reg?",prev_line)
         toks = syn_output_line.split(tok3)
         per_and_trash = toks[len(toks)-1]
         period = per_and_trash.strip("ns})")
@@ -283,6 +285,7 @@ class PathReport:
         # Remove everything after last "/"
         toks = self.start_reg_name.split("/")
         self.start_reg_name = "/".join(toks[0:len(toks)-1])
+        #print("self.start_reg_name",self.start_reg_name)
         
         
       
@@ -401,6 +404,10 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   rv += "set_msg_config -id {Synth 8-614} -new_severity ERROR" + "\n"
   # ERROR WARNING: [Synth 8-2489] overwriting existing secondary unit arch
   rv += "set_msg_config -id {Synth 8-2489} -new_severity ERROR" + "\n"
+  # ERROR WARNING: [Vivado 12-584] No ports matched
+  rv += "set_msg_config -id {Vivado 12-584} -new_severity ERROR" + "\n"
+  # ERROR WARNING: [Vivado 12-507] No nets matched
+  rv += "set_msg_config -id {Vivado 12-507} -new_severity ERROR" + "\n"
   
   # CRITICAL WARNING WARNING: [Synth 8-326] inferred exception to break timing loop:
   rv += 'set_msg_config -id {Synth 8-326} -new_severity "CRITICAL WARNING"' + "\n"

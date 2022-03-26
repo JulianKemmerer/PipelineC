@@ -7586,6 +7586,7 @@ class ParserState:
     self.part = None
     self.io_pairs = set()
     self.async_wires = set()
+    self.clk_mhz = dict()
     
     # Clock crossing info
     self.clk_cross_var_info = dict() # var name -> clk cross var info
@@ -7643,6 +7644,7 @@ class ParserState:
     rv.part = self.part
     rv.io_pairs = set(self.io_pairs)
     rv.async_wires = set(self.async_wires)
+    rv.clk_mhz = dict(self.clk_mhz)
     
     rv.clk_cross_var_info = dict(self.clk_cross_var_info)
     rv.arb_handshake_infos = set(self.arb_handshake_infos)
@@ -8960,6 +8962,13 @@ def APPEND_PRAGMA_INFO(parser_state):
     elif name=="ASYNC_WIRE":
       thing = toks[1]
       parser_state.async_wires.add(thing)
+
+    # CLK_MHZ
+    elif name=="CLK_MHZ":
+      toks = pragma.string.split(" ")
+      clk = toks[1]
+      mhz = float(toks[2])
+      parser_state.clk_mhz[clk] = mhz
       
     # FEEDBACK
     elif name=="FEEDBACK":

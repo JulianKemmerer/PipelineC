@@ -145,9 +145,7 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   # Default handle c code
   return INIT_C_AST_NODE_TO_VHDL_INIT_STR(init, c_type, logic, parser_state)
   
-    
-def CLK_EXT_STR(main_func, parser_state):
-  mhz = parser_state.main_mhz[main_func]
+def CLK_MHZ_GROUP_TEXT(mhz, group):
   num = mhz
   unit = "" # assumed MHz, todo always have units, dont assume
   if num < 1.0:
@@ -162,11 +160,15 @@ def CLK_EXT_STR(main_func, parser_state):
   text += str(num).replace(".","p") + unit
   
   # Maybe add clock group
-  group = parser_state.main_clk_group[main_func]
   if group:
     text += "_" + group
     
   return text
+
+def CLK_EXT_STR(main_func, parser_state):
+  mhz = parser_state.main_mhz[main_func]
+  group = parser_state.main_clk_group[main_func]
+  return CLK_MHZ_GROUP_TEXT(mhz, group)  
   
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
   text = ""
@@ -196,6 +198,11 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
   entity ''' + entity_name + ''' is
 port(
 '''
+  # All user generated clocks, no groups for now
+  all_user_clks = set()
+  for clk_mhz in parser_state.clk_mhz.values():
+    clk_name =  "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+    all_user_clks.add(clk_name)
 
   # All the clocks
   all_clks = set()
@@ -204,7 +211,12 @@ port(
     clk_name = "clk_" + clk_ext_str
     all_clks.add(clk_name)
   for clk_name in sorted(list(all_clks)):
-    text += clk_name + " : in std_logic;\n"
+    # User clocks declared internally and are outputs
+    if clk_name in all_user_clks:
+      text += clk_name + "_out : out std_logic;\n"
+    else:
+      # Regular clocks are inputs
+      text += clk_name + " : in std_logic;\n"
 
   main_func_io_text = ""
   # IO
@@ -233,7 +245,21 @@ port(
   );
 end ''' + entity_name + ''';
 architecture arch of ''' + entity_name + ''' is
+
+attribute syn_keep : boolean;
+attribute keep : string;
+attribute dont_touch : string;
+
 '''
+
+  # User defined clocks
+  if len(all_user_clks) > 0:
+    text += '''-- User defined clocks\n'''
+    for clk_name in sorted(list(all_user_clks)):
+      text += "signal " + clk_name + " : std_logic;\n"
+      text += "attribute syn_keep of " + clk_name + ''': signal is true;\n'''
+      text += "attribute keep of " + clk_name + ''': signal is "true";\n'''
+      text += "attribute dont_touch of " + clk_name + ''': signal is "true";\n'''
 
   # Clock cross wires
   has_clk_cross = False
@@ -260,10 +286,7 @@ signal module_to_clk_cross : module_to_clk_cross_t;
         text += "signal clk_cross_" + var_name + "_" + out_port + " : " + vhdl_type_str + ";\n"
  
   # Dont touch IO
-  if not is_final_top:
-    text += "attribute syn_keep : boolean;\n"
-    text += "attribute keep : string;\n"
-    text += "attribute dont_touch : string;\n"    
+  if not is_final_top:    
     # IO
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.LogicInstLookupTable[main_func]
@@ -298,6 +321,32 @@ signal module_to_clk_cross : module_to_clk_cross_t;
   text += '''
 begin
 '''
+
+  # Connect user defined clocks from clock crossing wires
+  if len(parser_state.clk_mhz) > 0:
+    text += "-- User defined clocks\n"
+    for clk_var_name,clk_mhz in parser_state.clk_mhz.items():
+      # Get info on this var
+      clk_name =  "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+      write_func, read_func = parser_state.clk_cross_var_info[clk_var_name].write_read_funcs
+      write_mains, read_mains = parser_state.clk_cross_var_info[clk_var_name].write_read_main_funcs
+      write_func_insts = parser_state.FuncToInstances[write_func]
+      if len(write_func_insts) > 1:
+        raise Exception(f"Multiple write side connections to clock wire" + clk_var_name + " not supported. {write_func_insts}")
+      write_func_inst = list(write_func_insts)[0]
+      write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+      # Start with main func then apply hier instances
+      write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(write_func_inst, parser_state)
+      for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)-1]:
+        write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+        write_text += "." + write_func_inst_str
+      write_text += "." + write_func
+      # Signal used is data from pipeline output module_to_clk_cross
+      input_port = "in_data"
+      # Is struct wrapped array of 1 unsigned 0 downto 0
+      text += clk_name + " <= " + "module_to_clk_cross." + write_text + "_" + input_port + ".data(0)(0);\n"
+      # Also connect to output
+      text += clk_name + "_out <= " + clk_name + ";\n"
 
   # IO regs
   if not is_final_top:
@@ -542,7 +591,7 @@ begin
       write_func_logic = parser_state.FuncLogicLookupTable[write_func]
       
       # Read
-      # Do not even write instance if done have read side func
+      # Do not even write instance if dont have read side func
       if read_func in parser_state.FuncToInstances:
         read_func_logic = parser_state.FuncLogicLookupTable[read_func]
         read_func_insts = parser_state.FuncToInstances[read_func]

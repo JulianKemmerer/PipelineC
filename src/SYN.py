@@ -1391,7 +1391,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
       if clock_mhz is None:
         print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
         continue      
-      f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n');
+      f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n')
   else:
     # Standard sdc like constraints
     for clock_name in clock_name_to_mhz:
@@ -1400,7 +1400,10 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
         print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
         continue
       ns = (1000.0 / clock_mhz)
-      f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_ports " + clock_name + "]\n");
+      f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets " + clock_name + "]\n")
+      #f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets -hierarchical -filter {NAME =~ " + clock_name + "}]\n")
+      #f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets -filter {NAME =~ " + clock_name + "}]\n")
+      #f.write("puts [get_nets *]\n")
       
     # All clock assumed async? Doesnt matter for internal syn
     # Rely on generated/board provided constraints for real hardware
@@ -1747,7 +1750,11 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
   #print("all_main_insts",all_main_insts)
   # Include start and end regs in search 
   all_netlist_resources = set(path_report.netlist_resources)
+  if path_report.start_reg_name is None:
+    raise Exception("No start reg name")
   all_netlist_resources.add(path_report.start_reg_name)
+  if path_report.end_reg_name is None:
+    raise Exception("No end reg name")
   all_netlist_resources.add(path_report.end_reg_name)
   for netlist_resource in all_netlist_resources:
     #toks = netlist_resource.split("/")
@@ -1761,6 +1768,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
     for main_inst in all_main_insts:
       main_logic = parser_state.LogicInstLookupTable[main_inst]
       main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
+      #print(main_vhdl_entity_name,"?")
       if netlist_resource.startswith(main_vhdl_entity_name):
         match_main = main_inst
         break
@@ -1774,6 +1782,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
   
   # If nothing was found try hacky clock cross check?
   if len(main_insts)==0:
+    #print("No mains form path reportS?")
     start_inst = path_report.start_reg_name.split("/")[0]
     end_inst = path_report.end_reg_name.split("/")[0]
     #print(start_inst,end_inst)
