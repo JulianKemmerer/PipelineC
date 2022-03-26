@@ -1754,9 +1754,10 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
   for main_inst in all_main_insts:
     main_logic = parser_state.LogicInstLookupTable[main_inst]
     main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
-    if path_report.start_reg_name.startswith(main_vhdl_entity_name):
+    # OPEN_TOOLs reports in lower case
+    if path_report.start_reg_name.lower().startswith(main_vhdl_entity_name.lower()):
       start_reg_main = main_inst
-    if path_report.end_reg_name.startswith(main_vhdl_entity_name):
+    if path_report.end_reg_name.lower().startswith(main_vhdl_entity_name.lower()):
       end_reg_main = main_inst
     if start_reg_main==end_reg_main and start_reg_main is not None:
       main_insts.add(start_reg_main)
@@ -1784,9 +1785,6 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
         main_logic = parser_state.LogicInstLookupTable[main_inst]
         main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, multimain_timing_params.TimingParamsLookupTable, parser_state)
         #print(main_vhdl_entity_name,"?")
-        if netlist_resource.startswith(main_vhdl_entity_name):
-          match_main = main_inst
-          break
         # OPEN_TOOLs reports in lower case
         if netlist_resource.lower().startswith(main_vhdl_entity_name.lower()):
           match_main = main_inst
