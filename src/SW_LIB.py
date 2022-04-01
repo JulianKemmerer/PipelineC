@@ -278,7 +278,7 @@ def C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
   return is_array_type
   
 def C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(array_struct_c_type, parser_state):
-  s = array_struct_c_type.strip("_t")
+  s = array_struct_c_type[:len(array_struct_c_type)-2] # Remove last two chars _t
   toks = s.split("_array_")
   elem_t = toks[0]
   dims = toks[1].split("_")

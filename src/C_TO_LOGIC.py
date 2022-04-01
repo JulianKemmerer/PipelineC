@@ -4249,6 +4249,14 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
       ):
     value = float(value_str.strip('f').strip('l').strip('F').strip('L'))
     c_type_str = "float"
+  elif 'e' in value_str:
+    # Scientific notation
+    float_val = float(value_str)
+    if float_val.is_integer():
+      raise Exception(f"TODO unhandled exponent integer constant.. {value_str} {type(c_ast_node)} {c_ast_node}")
+    else:
+      value = float_val
+      c_type_str = "float"
   else:
     print("What type of constant is?", value_str, type(c_ast_node), c_ast_node)
     print(0/0)

@@ -113,8 +113,14 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Put slides together for talk
+  When is conf registration open?
 Victor's RT
-  Get RT code syn(and pnr) running for ECP5 85F device
+  Seems ready for hardware test ECP5 85F device at 480p?
+  Maybe buy larger Arty?
+Do UART in clk() style, compare to original style
+  make video?
+Move state regs out of manual regs struct so easier to find/preserve
 Try to fix/refresh AWS DMA demo
   Solve AWS multithreaded off by one or two problem...
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
@@ -137,6 +143,8 @@ Do more basic tutorials like nandland+hdlbits
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
+Can XLS C++ -> XLS IR be used to map XLS IR to PipelineC / replace it?
+Can XLA for GPU/TPU partitioning help with PipelineC?
 SiliconCompiler/edalize to automate runs of vivado+import of results into python (and other eda tools)
 Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
@@ -155,13 +163,12 @@ First refactor fosix stuff:
 MAIN pragmas that take hier names/namesspaces -   main.multiclkdomain1 ?
 Static locals inside {} with #pragma global or something? infer state reg submodule ports into and out of {}, etc
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
-volatile static FEEDBACK makes sense just like regular vol static - just removes reg
+volatile FEEDBACK makes sense just like regular vol static - just removes reg
 Only syn modules that are used in modules that need pipelining (will need pipeline map of delay)
 Check auto pipeline and clock crossing read+write behavior
   Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
-CANNOT PROPOGATE CONSTANTS through all compound references (structs, arrays) - can sometimes if have recent constant assignments/ref toks
 Make reset module for Arty
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
@@ -208,7 +215,6 @@ Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <fun
 Syn each pipeline stage ... this is hard... like slicing zero clock logic 
 Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b
 Const SR/SL as vhdl funcs instead of modules..thought this was done...
-Progate constants through constant bit manip, ex. uint32_uint1_31
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 Extern keyword for (same-clock?) clock crossings?
@@ -227,7 +233,6 @@ Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
 Do built in Q number types
-Propogate null values for constant folding
 Could make an undefined/Xs constant only meaningful in synthesis
 Default dont put IO regs around single inst funcs in mid out sweep?
 Make wire/var.h that just does same as clock_crossing/var.h?
@@ -236,5 +241,8 @@ Add compound one = {1}; to init to all bits=1
 Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
 Slight optimization from not rendering binary ops with always matching signedness? (render i32 AND u16, as opposed to casting to i17)
 Solve issue include all in modelsim: generating many pipelined slice variants same for raw hdl bits per stage
+Remove extra regs that appear in funcs that had RAM prim funcs in them(now regs inside ram module)
+Optimize away constant-enabled instances of funcs w/ clock enables through long pipelines? CE on pipelines make sense even?
+Make WIRE_READ return a value, 'wire_read(...);'
 """
 
