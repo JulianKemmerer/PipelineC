@@ -147,18 +147,19 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   
 def CLK_MHZ_GROUP_TEXT(mhz, group):
   num = mhz
-  unit = "" # assumed MHz, todo always have units, dont assume
-  if num < 1.0:
-    num = mhz * 1e3
-    unit = "khz"
-    if num < 1.0:
-      num = mhz * 1e6
-      unit = "hz"
-
-  # Start with mhz
   text = ""
-  text += str(num).replace(".","p") + unit
-  
+  if num is not None:
+    unit = "" # assumed MHz, todo always have units, dont assume
+    if num < 1.0:
+      num = mhz * 1e3
+      unit = "khz"
+      if num < 1.0:
+        num = mhz * 1e6
+        unit = "hz"
+    text += str(num).replace(".","p") + unit
+  else:
+    text += str(num) # None
+
   # Maybe add clock group
   if group:
     text += "_" + group
