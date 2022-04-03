@@ -426,7 +426,8 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
         else: # No next state, just start over?
           text += "    else\n"
           text += "    {\n"
-          text += "      FSM_STATE = ENTRY_REG; // No next state, start over?\n"
+          text += "      FSM_STATE = RETURN_REG; // No next state, return and start over?\n"
+          text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
           text += "    }\n"
         text += "  }\n"
         continue
