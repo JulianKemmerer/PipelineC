@@ -113,12 +113,16 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Put slides together for talk
-  When is conf registration open?
+Put slides together for FCCM workshop talk
+  Buy Arty 100t for demo (and for SIGGRAPH) #pragma PART "xc7a100tcsg324-1" // Arty 100T
 Victor's RT
+  Having glitch in Arty small RT LITEX demo w/ latency delay fixes?
+    Still shows issue with 0 latency configured?
   Seems ready for hardware test ECP5 85F device at 480p?
-  Maybe buy larger Arty?
+  Try to squeeze in 720p on ecp5?
 Do UART in clk() style, compare to original style
+  Need to simulate+debug __clk style FSMs
+    Now good time to make FSM timing consistent (forward flow always clk-less)
   make video?
 Move state regs out of manual regs struct so easier to find/preserve
 Try to fix/refresh AWS DMA demo
@@ -145,7 +149,7 @@ Do BROM support
 Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
 Can XLS C++ -> XLS IR be used to map XLS IR to PipelineC / replace it?
 Can XLA for GPU/TPU partitioning help with PipelineC?
-SiliconCompiler/edalize to automate runs of vivado+import of results into python (and other eda tools)
+SiliconCompiler/edalize to automate/cloud runs of vivado+import of results into python (and other eda tools)
 Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Guitar i2s audio visualizer of some sort?
@@ -174,7 +178,6 @@ Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
-Parallelize sweeps better - aws support?
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P

@@ -7056,7 +7056,7 @@ def APPLY_CONNECT_WIRES_LOGIC(parser_state, driving_wire, driven_wire_names, pre
           print("RHS",driving_wire,"drives LHS",driven_wire_name,"with different types?", c_ast_node.coord)
           print(driven_wire_type, "!=", rhs_type)
           print("Implement nasty casty?") #Fat White Family - Tastes Good With The Money
-          print(0/0)
+          #print(0/0)
           sys.exit(-1)
     
         

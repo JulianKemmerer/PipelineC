@@ -11,6 +11,9 @@ import hashlib
 import getpass
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Lock
+import datetime
+from timeit import default_timer as timer
+START_TIME = timer()
 
 import C_TO_LOGIC
 import VHDL
@@ -2347,6 +2350,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
 
     # Print info on main funcs being synthesized in top
     print("Running syn w timing params...",flush=True)
+    print(f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
     for main_func in parser_state.main_mhz:
       main_func_logic = parser_state.FuncLogicLookupTable[main_func]
       main_func_timing_params = sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
@@ -2563,6 +2567,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(inst_name, target_mhz,
     
     # Run syn on multi main top
     print("Running syn w slices...",flush=True)
+    print(f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
     inst_sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(inst_name, logic, parser_state, TimingParamsLookupTable)
     
     # Did it meet timing? Make adjusments as checking
@@ -2974,9 +2979,6 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
   # Record stats on functions with globals - TODO per main func?
   min_mhz = 999999999
   min_mhz_func_name = None
-  import datetime
-  from timeit import default_timer as timer
-  start_time = timer()
   
   #bAAAAAAAAAAAhhhhhhh need to recursively do this 
   # Do depth first 
@@ -3155,7 +3157,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
       parser_state.FuncLogicLookupTable[logic_func_name] = logic
 
       # Print some kind of progress
-      print(f"Function {len(func_names_done_so_far)}/{len(parser_state.FuncLogicLookupTable)}, elapsed time {str(datetime.timedelta(seconds=(timer() - start_time)))}...")
+      print(f"Function {len(func_names_done_so_far)}/{len(parser_state.FuncLogicLookupTable)}, elapsed time {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
       
       # Done
       func_names_done_so_far.append(logic_func_name)
