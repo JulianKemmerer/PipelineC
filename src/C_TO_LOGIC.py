@@ -8037,6 +8037,8 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
   # Write report of floating point module use - hi Victor!
   WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+  # Integers too..
+  WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
   print("Writing VHDL files for all functions (as combinatorial logic)...", flush=True)
   SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
   print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
@@ -8046,7 +8048,49 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
   
- 
+def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+  # Find all matching funcs by name
+  func_types = [BIN_OP_PLUS_NAME, BIN_OP_MINUS_NAME, BIN_OP_MULT_NAME, 
+                BIN_OP_INFERRED_MULT_NAME, BIN_OP_DIV_NAME]
+  # Keep just math ops
+  selected_funcs = set()
+  for func_name in parser_state.FuncToInstances:
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    print("func_name",func_name)
+    for func_type in func_types:
+      if func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX+"_"+func_type):
+          selected_funcs.add(func_name)
+          break
+  # Keep just integer ops
+  int_funcs = []
+  for func_name in selected_funcs:
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    func_types = []
+    for input_port in func_logic.inputs:
+      input_c_type = func_logic.wire_to_c_type[input_port]
+      func_types.append(input_c_type)
+    for output_port in func_logic.outputs:
+      output_c_type = func_logic.wire_to_c_type[output_port]
+      func_types.append(output_c_type)
+    if VHDL.C_TYPES_ARE_INTEGERS(func_types):
+      int_funcs.append(func_name)
+
+  if len(int_funcs) <= 0:
+    return
+  text = ""
+  for func_name in sorted(int_funcs):
+    instances = sorted(parser_state.FuncToInstances[func_name])
+    text += f"{func_name} {len(instances)} instances:\n"
+    for instance in instances:
+      text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
+    text += "\n"
+    
+  out_file = SYN.SYN_OUTPUT_DIRECTORY + "/integer_module_instances.log"
+  print(f"Writing log of integer math module instances: {out_file}")
+  f=open(out_file,'w')
+  f.write(text)
+  f.close()
+
 def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
   # Collect float func names dumb way 
   # looking for any built in funcs with 'float' in the name
@@ -8063,7 +8107,7 @@ def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
   
   if len(float_funcs) <= 0:
     return
-  print("Writing log of floating point module instances...")
+  
   text = ""
   for func_name in sorted(float_funcs):
     instances = sorted(parser_state.FuncToInstances[func_name])
@@ -8073,6 +8117,7 @@ def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
     text += "\n"
     
   out_file = SYN.SYN_OUTPUT_DIRECTORY + "/float_module_instances.log"
+  print(f"Writing log of floating point module instances: {out_file}")
   f=open(out_file,'w')
   f.write(text)
   f.close()
