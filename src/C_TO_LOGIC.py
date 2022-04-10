@@ -8056,7 +8056,6 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
   selected_funcs = set()
   for func_name in parser_state.FuncToInstances:
     func_logic = parser_state.FuncLogicLookupTable[func_name]
-    print("func_name",func_name)
     for func_type in func_types:
       if func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX+"_"+func_type):
           selected_funcs.add(func_name)
