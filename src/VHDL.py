@@ -2708,14 +2708,37 @@ class PiplineHDLParams:
         continue
       self.wires_to_decl.append(wire_name)
       self.wire_to_reg_stage_start_end[wire_name] = [None, None]
-    
+
     # Arrange into list of driven(write) wires per stage, and list of driver(read) wires
     stage_to_driver_wires = dict()
     stage_to_driven_wires = dict()
+
+    # Init non-stages stuff, inputs including CE and outputs
+    # In wires include ce
+    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state):
+      input_wires = [C_TO_LOGIC.CLOCK_ENABLE_NAME]
+    else:
+      input_wires = []
+    for input_port in Logic.inputs:
+      input_wires.append(input_port)
+    # Inputs written in first stage
+    for input_wire in input_wires:
+      if 0 not in stage_to_driven_wires:
+        stage_to_driven_wires[0] = []
+      stage_to_driven_wires[0].append(input_wire)
+    # Outputs read in final stage
+    for output_port in Logic.outputs:
+      if self.pipeline_map.num_stages-1 not in stage_to_driver_wires:
+        stage_to_driver_wires[self.pipeline_map.num_stages-1] = []
+      stage_to_driver_wires[self.pipeline_map.num_stages-1].append(output_port)
+    
+    # Loop over all stages
     for stage in range(0, self.pipeline_map.num_stages):
       stage_info = pipeline_map.stage_infos[stage]
-      stage_to_driver_wires[stage] = []
-      stage_to_driven_wires[stage] = []
+      if stage not in stage_to_driver_wires:
+        stage_to_driver_wires[stage] = []
+      if stage not in stage_to_driven_wires:
+        stage_to_driven_wires[stage] = []
       # Sub output ports when module latency >0 pipeline wires are whats driven from submodule
       for submodule_output_port_wire in stage_info.submodule_output_ports:
         stage_to_driven_wires[stage].append(submodule_output_port_wire)
@@ -2735,20 +2758,20 @@ class PiplineHDLParams:
           # CE, inputs are read at instantiation
           # In wires include ce
           if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
-            in_wires = [sub_inst+C_TO_LOGIC.SUBMODULE_MARKER+C_TO_LOGIC.CLOCK_ENABLE_NAME]
+            sub_in_wires = [sub_inst+C_TO_LOGIC.SUBMODULE_MARKER+C_TO_LOGIC.CLOCK_ENABLE_NAME]
           else:
-            in_wires = []
+            sub_in_wires = []
           for input_port in sub_logic.inputs:
             in_wire = sub_inst+C_TO_LOGIC.SUBMODULE_MARKER+input_port
-            in_wires.append(in_wire)
-          for in_wire in in_wires:
+            sub_in_wires.append(in_wire)
+          for in_wire in sub_in_wires:
             if in_wire in self.wires_to_decl:
               stage_to_driver_wires[stage].append(in_wire)
           # HACK AF for VHDL expr and func since input wires dont get named
           # So need to manually see reading of driver of input ports
           # Mock Orange - Song in D
           if sub_logic.is_vhdl_func or sub_logic.is_vhdl_expr:
-            for in_wire in in_wires:
+            for in_wire in sub_in_wires:
               driver_of_in_wire = Logic.wire_driven_by[in_wire]
               if driver_of_in_wire in self.wires_to_decl:
                 stage_to_driver_wires[stage].append(driver_of_in_wire)
@@ -2774,6 +2797,7 @@ class PiplineHDLParams:
           curr_end = stage-1
           self.wire_to_reg_stage_start_end[driver_wire] = [curr_start, curr_end]
       driven_wires = stage_to_driven_wires[stage]
+      #print("stage drivne wires", stage, driven_wires)
       for driven_wire in driven_wires:
         curr_start,curr_end = self.wire_to_reg_stage_start_end[driven_wire]
         if curr_start is None:
@@ -2783,6 +2807,7 @@ class PiplineHDLParams:
     wires_to_rm = []
     for wire in self.wire_to_reg_stage_start_end:
       curr_start,curr_end = self.wire_to_reg_stage_start_end[wire]
+      #print("wire, curr_start, curr_end", wire, curr_start, curr_end)
       if curr_start is None and curr_end is None:
         # Constants handled special outside pipeline, wont have start end
         if not Logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state) and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, Logic) is None:
