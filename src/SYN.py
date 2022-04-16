@@ -793,6 +793,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 ass_op = "<="
               submodule_level_text += " " + " " + " " + LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n" # + " -- " + driven_wire + " <= " + driving_wire + 
               '''
+
+              # Driving of vol wires is delayed to last stage and done manually in other vhdl
+              # do not record the final driving of vol wires
+              if driven_wire in logic.state_regs and logic.state_regs[driven_wire].is_volatile:
+                continue
+              
+              # Record wire pair for rendering in vhdl
               submodule_level_info.driver_driven_wire_pairs.append((driving_wire,driven_wire))
 
                 

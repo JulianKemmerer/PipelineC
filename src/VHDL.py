@@ -2713,8 +2713,11 @@ class PiplineHDLParams:
     stage_to_driver_wires = dict()
     stage_to_driven_wires = dict()
 
-    # Init non-stages stuff, inputs including CE and outputs
-    # In wires include ce
+    # Init non-stages stuff,
+    #   inputs
+    #   clockenable
+    #   outputs
+    #   volatiles being input in first state, output in final
     if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state):
       input_wires = [C_TO_LOGIC.CLOCK_ENABLE_NAME]
     else:
@@ -2731,6 +2734,22 @@ class PiplineHDLParams:
       if self.pipeline_map.num_stages-1 not in stage_to_driver_wires:
         stage_to_driver_wires[self.pipeline_map.num_stages-1] = []
       stage_to_driver_wires[self.pipeline_map.num_stages-1].append(output_port)
+    # Vol written at input read at output
+    vol_state_regs = []
+    for state_reg in Logic.state_regs:
+      if Logic.state_regs[state_reg].is_volatile:
+        vol_state_regs.append(state_reg)
+    for state_reg in vol_state_regs:
+      # Input write
+      if 0 not in stage_to_driven_wires:
+        stage_to_driven_wires[0] = []
+      stage_to_driven_wires[0].append(state_reg)
+      # Do final read of vol wire, includes driver wire of vol too
+      driver_of_vol_wire = Logic.wire_driven_by[state_reg]
+      if self.pipeline_map.num_stages-1 not in stage_to_driver_wires:
+        stage_to_driver_wires[self.pipeline_map.num_stages-1] = []
+      stage_to_driver_wires[self.pipeline_map.num_stages-1].append(driver_of_vol_wire)
+      stage_to_driver_wires[self.pipeline_map.num_stages-1].append(state_reg)
     
     # Loop over all stages
     for stage in range(0, self.pipeline_map.num_stages):
@@ -2797,7 +2816,6 @@ class PiplineHDLParams:
           curr_end = stage-1
           self.wire_to_reg_stage_start_end[driver_wire] = [curr_start, curr_end]
       driven_wires = stage_to_driven_wires[stage]
-      #print("stage drivne wires", stage, driven_wires)
       for driven_wire in driven_wires:
         curr_start,curr_end = self.wire_to_reg_stage_start_end[driven_wire]
         if curr_start is None:
@@ -3563,6 +3581,10 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
   timing_params = TimingParamsLookupTable[inst_name]
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)
   text = ""
+  vol_state_regs = []
+  for state_reg in logic.state_regs:
+    if logic.state_regs[state_reg].is_volatile:
+      vol_state_regs.append(state_reg)
   if is_first_stage:
     # First stage reads from inputs 
     if needs_clk_en:
@@ -3578,8 +3600,9 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
           text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(input_wire, logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, logic) + ";\n"      
       
     # Also mux volatile global regs into wire - act like regular wire
-    for state_reg in logic.state_regs:
-      if logic.state_regs[state_reg].is_volatile:
+    if len(vol_state_regs) > 0:
+      text += "     " + "-- Volatiles read from regs, written to pipe in first stage\n"
+      for state_reg in vol_state_regs:
         text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
   else:
     # Not first stage typical reg from prev stage
@@ -3605,9 +3628,14 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
 
   if is_last_stage:
     # -- Last stage of pipeline volatile global wires write to function volatile global regs
-    for state_reg in logic.state_regs:
-      if logic.state_regs[state_reg].is_volatile:
-        text += "     " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, logic) + " := VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + "; -- Volatile\n"
+    if len(vol_state_regs) > 0:
+      text += "     " + "-- Volatiles read from pipe written to regs in last stage\n"
+      for state_reg in vol_state_regs:
+        # Do final read of vol wire 
+        driver_of_vol_wire = logic.wire_driven_by[state_reg]
+        text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := " + GET_RHS(driver_of_vol_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
+        # Do final write into reg
+        text += "     " + "write_state_regs." + WIRE_TO_VHDL_NAME(state_reg, logic) + " := VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
 
     # Outputs
     if len(logic.outputs) > 0:
@@ -3898,9 +3926,11 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
     # Use write side as expected, RHS is special case using read side
     LHS = "write_state_regs." + WIRE_TO_VHDL_NAME(driven_wire_to_handle, logic)
   
-  # Volatile globals are like regular wires
-  #elif
-  
+  # Volatile globals are are driven from last stage always
+  elif driven_wire_to_handle in logic.state_regs and logic.state_regs[driven_wire_to_handle].is_volatile:
+    raise Exception("Volatile state regs shouldnt auto render LHS!?")
+    #LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
+    #LHS = "-- Volatile final write delayed to last stage: " + LHS
   else:
     # Otherwise use regular wire connection
     LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
