@@ -435,6 +435,9 @@ class PipelineMap:
     #self.per_stage_texts = dict() # VHDL texts dict[stage_num]=[per,submodule,level,texts]
     self.num_stages = 1 # Comb logic
 
+    # Pairs of wires propogating constants
+    self.const_wire_prop_driver_driven_wire_pairs = []
+
     # New per stage info class
     self.stage_infos = []
     
@@ -576,16 +579,28 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
   # "CONST" wires representing constants like '2' are already driven
-  # Propogate these constants by recording drivers for
-  # any wires that have constant drivers
   for wire in logic.wires:
     #print "wire=",wire
     if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
       #print "CONST->",wire
       RECORD_DRIVEN_BY(None, wire)
-    elif C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is not None and C_TO_LOGIC.SUBMODULE_MARKER not in wire:
-      driver_of_wire = logic.wire_driven_by[wire]
-      RECORD_DRIVEN_BY(driver_of_wire, wire)
+  # Constant wire propogation
+  for wire in logic.wires:
+    if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+      # Do loop propogating constant values into
+      wires_to_follow = [wire]
+      while len(wires_to_follow) > 0:
+        next_wires_to_follow = []
+        for wire_to_follow in wires_to_follow:
+          if wire_to_follow in logic.wire_drives:
+            wire_to_follow_driven_wires = logic.wire_drives[wire_to_follow]
+            for wire_to_follow_driven_wire in wire_to_follow_driven_wires: 
+              rv.const_wire_prop_driver_driven_wire_pairs.append((wire_to_follow, wire_to_follow_driven_wire))
+              RECORD_DRIVEN_BY(wire_to_follow, wire_to_follow_driven_wire)
+              # Follow wire if didnt hit submodule
+              if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow_driven_wire, logic):
+                next_wires_to_follow.append(wire_to_follow_driven_wire)
+        wires_to_follow = next_wires_to_follow[:]
   
   # Keep track of delay offset when wire is driven
   # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
@@ -721,17 +736,18 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             
           # If driving wire is submodule output
           # Then connect module wire to write pipe
-          if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire, logic):
+          if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driving_wire, logic): # is output checked next
             sub_out_toks = driving_wire.split(C_TO_LOGIC.SUBMODULE_MARKER)
             submodule_inst = sub_out_toks[0]
+            output_port = sub_out_toks[1]
             submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
             submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
-            submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
-            # Zero latency special case already in write pipe
-            if submodule_latency_from_container_logic > 0:
-              #output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
-              #submodule_level_text += " " + " " + " " + VHDL.GET_WRITE_PIPE_WIRE_VHDL(driving_wire, logic, parser_state) + " := " + VHDL.WIRE_TO_VHDL_NAME(driving_wire, logic) + ";\n"
-              stage_info.submodule_output_ports.append(driving_wire)
+            # Make sure is output
+            if output_port in submodule_logic.outputs:
+              # Zero latency special case already in write pipe
+              submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(submodule_inst_name, parser_state, TimingParamsLookupTable)
+              if submodule_latency_from_container_logic > 0:
+                stage_info.submodule_output_ports.append(driving_wire)
 
           # Loop over what this wire drives
           if driving_wire in logic.wire_drives:
@@ -767,32 +783,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
               if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire, logic):
                 # Record reaching another wire
                 next_wires_to_follow.append(driven_wire)
-              
-              '''
-              # Dont write text connecting VHDL input ports
-              # (connected directly in func call params)
-              if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
-                continue
-              if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(driven_wire, logic, parser_state):
-                continue
-              
-              ### WRITE VHDL TEXT
-              # If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style 
-              # as way to ensure correct multi clock behavior 
-              RHS = VHDL.GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
-              # Submodule or not LHS is write pipe wire
-              LHS = VHDL.GET_LHS(driven_wire, logic, parser_state)
-              #print "logic.func_name",logic.func_name
-              #print "driving_wire, driven_wire",driving_wire, driven_wire
-              # Need VHDL conversions for this type assignment?
-              TYPE_RESOLVED_RHS = VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_state)
-              
-              # Typical wires using := assignment, but feedback wires need <=
-              ass_op = ":="
-              if driven_wire in logic.feedback_vars:
-                ass_op = "<="
-              submodule_level_text += " " + " " + " " + LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n" # + " -- " + driven_wire + " <= " + driving_wire + 
-              '''
 
               # Driving of vol wires is delayed to last stage and done manually in other vhdl
               # do not record the final driving of vol wires

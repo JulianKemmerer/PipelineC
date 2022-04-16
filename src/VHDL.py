@@ -3418,27 +3418,10 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   write_state_regs := read_state_regs;
 '''
 
-  # Constant wire propogation
-  const_wire_prop_driver_driven_wire_pairs = []
-  for wire in Logic.wires:
-    if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
-      # Do loop propogating constant values into
-      wires_to_follow = [wire]
-      while len(wires_to_follow) > 0:
-        next_wires_to_follow = []
-        for wire_to_follow in wires_to_follow:
-          if wire_to_follow in Logic.wire_drives:
-            wire_to_follow_driven_wires = Logic.wire_drives[wire_to_follow]
-            for wire_to_follow_driven_wire in wire_to_follow_driven_wires:
-              const_wire_prop_driver_driven_wire_pairs.append((wire_to_follow, wire_to_follow_driven_wire))
-              # Follow wire if didnt hit submodule
-              if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow_driven_wire, Logic):
-                next_wires_to_follow.append(wire_to_follow_driven_wire)
-        wires_to_follow = next_wires_to_follow[:]
   # Write out vhdl
-  if len(const_wire_prop_driver_driven_wire_pairs) > 0:
+  if len(pipeline_hdl_params.pipeline_map.const_wire_prop_driver_driven_wire_pairs) > 0:
     rv += " " + "-- Constants\n"
-  for const_wire_prop_driver_driven_wire_pair in const_wire_prop_driver_driven_wire_pairs:
+  for const_wire_prop_driver_driven_wire_pair in pipeline_hdl_params.pipeline_map.const_wire_prop_driver_driven_wire_pairs:
     const_wire_prop_driver_wire, const_wire_prop_driven_wire = const_wire_prop_driver_driven_wire_pair
     pair_text = RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(const_wire_prop_driver_wire, const_wire_prop_driven_wire, inst_name, Logic, parser_state, TimingParamsLookupTable)
     if pair_text is not None:
