@@ -1,6 +1,13 @@
 #pragma once
+
+// Wire 24b DVI signals to pmod
+// https://digilent.com/reference/_media/arty:arty_sch.pdf
+// https://github.com/icebreaker-fpga/icebreaker-pmod/blob/master/dvi-24bit/v1.0b/dvi-24bit-sch.pdf
+// DVI PMOD J1 = Arty PMOD JD
+// DVI PMOD J2 = Arty PMOD JC
+
 // Constants and logic to produce DVI signals at fixed resolution
-#include "vga/vga_timing.h"
+#include "vga/vga_timing.h" // timing is same as VGA
 typedef struct pixel_t{
  uint8_t a, b, g, r; 
 }pixel_t; // 24bpp color
@@ -8,12 +15,11 @@ typedef struct pixel_t{
 #ifdef __PIPELINEC__
 #include "wire.h"
 #include "uintN_t.h"
+#include "io/oddr.h"
 
-// Include PMOD still Arty specific for now
-// IO (FAKED FOR NOW UNTIL READ DVI PIN MAPPING + PMOD IS READY)
-#include "../examples/arty/src/pmod/pmod_ja.c"
-#include "../examples/arty/src/pmod/pmod_jb.c"
+// Include Arty specific PMOD ports for now
 #include "../examples/arty/src/pmod/pmod_jc.c"
+#include "../examples/arty/src/pmod/pmod_jd.c"
 
 // Add/remove pmod pins as in vs out below
 // Inputs
@@ -24,8 +30,7 @@ typedef struct pixel_t{
 // Outputs
 typedef struct app_to_dvi_t
 {
-  uint1_t hs;
-  uint1_t vs;
+  vga_signals_t vga_timing;
   pixel_t color;
 }app_to_dvi_t;
 
@@ -42,41 +47,73 @@ void dvi()
   app_to_dvi_t dvi;
   WIRE_READ(app_to_dvi_t, dvi, app_to_dvi)
   //WIRE_WRITE(dvi_to_app_t, dvi_to_app, inputs)
-  
-  // Convert the DVI type to PMOD types
-  // FAKED FOR NOW
-  app_to_pmod_ja_t a;
-  a.ja0 = dvi.color.r >> 0;
-  a.ja1 = dvi.color.r >> 1;
-  a.ja2 = dvi.color.r >> 2;
-  a.ja3 = dvi.color.r >> 3;
-  a.ja4 = dvi.color.r >> 4;
-  a.ja5 = dvi.color.r >> 5;
-  a.ja6 = dvi.color.r >> 6;
-  a.ja7 = dvi.color.r >> 7;
-  app_to_pmod_jb_t b;
-  b.jb0 = dvi.color.g >> 0;
-  b.jb1 = dvi.color.g >> 1;
-  b.jb2 = dvi.color.g >> 2;
-  b.jb3 = dvi.color.g >> 3;
-  b.jb4 = dvi.color.g >> 4;
-  b.jb5 = dvi.color.g >> 5;
-  b.jb6 = dvi.color.g >> 6;
-  b.jb7 = dvi.color.g >> 7;
-  app_to_pmod_jc_t c;
-  c.jc0 = dvi.color.b >> 0;
-  c.jc1 = dvi.color.b >> 1;
-  c.jc2 = dvi.color.b >> 2;
-  c.jc3 = dvi.color.b >> 3;
-  c.jc4 = dvi.color.b >> 4;
-  c.jc5 = dvi.color.b >> 5;
-  c.jc6 = dvi.color.b >> 6;
-  c.jc7 = dvi.color.b >> 7;
-  // FAKED NO HS VS CONNECTED
 
-  WIRE_WRITE(app_to_pmod_ja_t, app_to_pmod_ja, a)
-  WIRE_WRITE(app_to_pmod_jb_t, app_to_pmod_jb, b)
+  // Convert 8b rgb values to 24b
+  uint24_t color_data;
+  color_data = uint24_uint8_16(color_data, dvi.color.r); // [23:16] = r
+  color_data = uint24_uint8_8(color_data, dvi.color.g); // [15:8] = g
+  color_data = uint24_uint8_0(color_data, dvi.color.b); // [7:0] = b
+  
+  // ~"Convert" 24b color data to double data rate 12b
+  uint12_t data0 = color_data >> 12; // MSBs
+  uint12_t data1 = color_data; // LSBs
+  uint1_t ddr_data[12];
+  uint32_t i;
+  for(i=0;i<12;i+=1)
+  {
+    ddr_data[i] = oddr_same_edge(data0>>i, data1>>i);
+  }
+
+  // ~"Convert" hsync, vsync, and active/valid/enable signal to double data rate
+  uint1_t ddr_hsync = oddr_same_edge(dvi.vga_timing.hsync, dvi.vga_timing.hsync);
+  uint1_t ddr_vsync = oddr_same_edge(dvi.vga_timing.vsync, dvi.vga_timing.vsync);
+  uint1_t ddr_active = oddr_same_edge(dvi.vga_timing.active, dvi.vga_timing.active);
+
+  // Make a double rate clock signal using an ODDR and constant toggled data bits
+  uint1_t edge = 0;
+  uint1_t ddr_clk = oddr_same_edge(!edge, edge);
+
+  // Connect double data rate signals to PMOD connector
+  // A layers of tracing schematic wires here:
+  // Arty PMOD JD = DVI PMOD J1
+  app_to_pmod_jd_t d;
+  // pmod pin1: dvi pmod sch d3 -> arty sch jd1 -> jd0
+  d.jd0 = ddr_data[3];
+  // pmod pin2: dvi pmod sch d1 -> arty sch jd2 -> jd1
+  d.jd1 = ddr_data[1];
+  // pmod pin3: dvi pmod sch clk -> arty sch jd3 -> jd2
+  d.jd2 = ddr_clk;
+  // pmod pin4: dvi pmod sch hs -> arty sch jd4 -> jd3
+  d.jd3 = ddr_hsync;
+  // pmod pin7: dvi pmod sch d2 -> arty sch jd7 -> jd4
+  d.jd4 = ddr_data[2];
+  // pmod pin8: dvi pmod sch d0 -> arty sch jd8 -> jd5
+  d.jd5 = ddr_data[0];
+  // pmod pin9: dvi pmod sch de -> arty sch jd9 -> jd6
+  d.jd6 = ddr_active;
+  // pmod pin10: dvi pmod sch vs -> arty sch jd10 -> jd7
+  d.jd7 = ddr_vsync;
+  // Arty PMOD JC = DVI PMOD J2
+  app_to_pmod_jc_t c;
+  // pmod pin1: dvi pmod sch d11 -> arty sch jc1_p -> jc0
+  c.jc0 = ddr_data[11];
+  // pmod pin2: dvi pmod sch d9 -> arty sch jc1_n -> jc1
+  c.jc1 = ddr_data[9];
+  // pmod pin3: dvi pmod sch d7 -> arty sch jc2_p -> jc2
+  c.jc2 = ddr_data[7];
+  // pmod pin4: dvi pmod sch d5 -> arty sch jc2_n -> jc3
+  c.jc3 = ddr_data[5];
+  // pmod pin7: dvi pmod sch d10 -> arty sch jc3_p -> jc4
+  c.jc4 = ddr_data[10];
+  // pmod pin8: dvi pmod sch d8 -> arty sch jc3_n -> jc5
+  c.jc5 = ddr_data[8];
+  // pmod pin9: dvi pmod sch d6 -> arty sch jc4_p -> jc6
+  c.jc6 = ddr_data[6];
+  // pmod pin10: dvi pmod sch d4 -> arty sch jc4_n -> jc7
+  c.jc7 = ddr_data[4];
+
   WIRE_WRITE(app_to_pmod_jc_t, app_to_pmod_jc, c)
+  WIRE_WRITE(app_to_pmod_jd_t, app_to_pmod_jd, d)
 }
 
 // Logic for connecting outputs/sim debug wires
@@ -100,6 +137,7 @@ DEBUG_OUTPUT_DECL(uint12_t, dvi_x)
 #include "clock_crossing/dvi_y_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, dvi_y)
 
+// TODO organize to use vga_signals_t reg type instead
 void pmod_register_outputs(vga_signals_t vga, pixel_t color)
 {
   // Registers
@@ -114,20 +152,21 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   
   // Connect to DVI PMOD board IO via app_to_dvi wire
   app_to_dvi_t o;
-  o.hs = h_sync_dly_reg;
-  o.vs = v_sync_dly_reg;
+  o.vga_timing.hsync = h_sync_dly_reg;
+  o.vga_timing.vsync = v_sync_dly_reg;
+  o.vga_timing.active = active_reg;
   o.color.r = dvi_red_reg;
   o.color.g = dvi_green_reg;
   o.color.b = dvi_blue_reg;
   WIRE_WRITE(app_to_dvi_t, app_to_dvi, o)
   
   // Connect to Verilator debug ports
-  vsync(o.vs);
-  hsync(o.hs);
+  vsync(o.vga_timing.vsync);
+  hsync(o.vga_timing.hsync);
   dvi_red(o.color.r);
   dvi_green(o.color.g);
   dvi_blue(o.color.b);
-  dvi_active(active_reg);
+  dvi_active(o.vga_timing.active);
   dvi_x(x_reg);
   dvi_y(y_reg);
   
@@ -137,6 +176,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   {
     active_color = color;
   }
+
   // Output delay regs
   dvi_red_reg = active_color.r;
   dvi_green_reg = active_color.g;
