@@ -55,8 +55,10 @@ void dvi()
   color_data = uint24_uint8_0(color_data, dvi.color.b); // [7:0] = b
   
   // ~"Convert" 24b color data to double data rate 12b
-  uint12_t data0 = color_data >> 12; // MSBs
-  uint12_t data1 = color_data; // LSBs
+  //uint12_t data0 = color_data >> 12; // MSBs R[7:0] G[7:4]
+  //uint12_t data1 = color_data;       // LSBs G[3:0] B[7:0]  
+  uint12_t data0 = color_data;       // LSBs G[3:0] B[7:0] 
+  uint12_t data1 = color_data >> 12; // MSBs R[7:0] G[7:4]
   uint1_t ddr_data[12];
   uint32_t i;
   for(i=0;i<12;i+=1)
@@ -74,7 +76,7 @@ void dvi()
   uint1_t ddr_clk = oddr_same_edge(!edge, edge);
 
   // Connect double data rate signals to PMOD connector
-  // A layers of tracing schematic wires here:
+  // A layer of tracing schematic wires here:
   // Arty PMOD JD = DVI PMOD J1
   app_to_pmod_jd_t d;
   // pmod pin1: dvi pmod sch d3 -> arty sch jd1 -> jd0
