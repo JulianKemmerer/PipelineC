@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-from email import parser
 import sys
 import os
 import copy
-import math
 import math
 import hashlib
 from pycparser import c_ast
@@ -2578,7 +2576,9 @@ def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     text = c_ast_node.args.exprs[0].value.strip('"')[:]
     # hacky replace two chars \n with single char '\n'
     text = text.replace('\\' + 'n', '\n')
-    #print text
+    # similar hacky for strings
+    text = text.replace('\\' + '"', '"')
+    #print(text)
     return text
     
 def GET_ARCH_DECL_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params):
@@ -4264,8 +4264,16 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
     
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
   # Check for int types
-  if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str) or (c_type_str == C_TO_LOGIC.BOOL_C_TYPE) or C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
-    return "(others => '0')"
+  if C_TYPE_IS_INT_N(c_type_str):
+    width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
+    return f"to_signed(0, {width})"
+  elif C_TYPE_IS_UINT_N(c_type_str):
+    width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
+    return f"to_unsigned(0, {width})"
+  elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+    e,m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    width = 1 + e + m
+    return f"std_logic_vector(to_unsigned(0, {width}))"
   elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
     # Use same type from C
     return c_type_str + "_NULL"
