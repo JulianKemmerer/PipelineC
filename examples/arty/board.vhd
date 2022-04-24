@@ -22,21 +22,22 @@ entity board is
     ja : inout std_logic_vector(7 downto 0);
     jb : inout std_logic_vector(7 downto 0);
     jc : inout std_logic_vector(7 downto 0);
-    ddr3_dq       : inout std_logic_vector(15 downto 0);
-    ddr3_dqs_p    : inout std_logic_vector(1 downto 0);
-    ddr3_dqs_n    : inout std_logic_vector(1 downto 0);
-    ddr3_addr     : out   std_logic_vector(13 downto 0);
-    ddr3_ba       : out   std_logic_vector(2 downto 0);
-    ddr3_ras_n    : out   std_logic;
-    ddr3_cas_n    : out   std_logic;
-    ddr3_we_n     : out   std_logic;
-    ddr3_reset_n  : out   std_logic;
-    --ddr3_ck_p     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
-    --ddr3_ck_n     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
-    ddr3_cke      : out   std_logic_vector(0 downto 0);
-    ddr3_cs_n     : out   std_logic_vector(0 downto 0);
-    ddr3_dm       : out   std_logic_vector(1 downto 0);
-    ddr3_odt      : out   std_logic_vector(0 downto 0);
+    jd : inout std_logic_vector(7 downto 0);
+    -- ddr3_dq       : inout std_logic_vector(15 downto 0);
+    -- ddr3_dqs_p    : inout std_logic_vector(1 downto 0);
+    -- ddr3_dqs_n    : inout std_logic_vector(1 downto 0);
+    -- ddr3_addr     : out   std_logic_vector(13 downto 0);
+    -- ddr3_ba       : out   std_logic_vector(2 downto 0);
+    -- ddr3_ras_n    : out   std_logic;
+    -- ddr3_cas_n    : out   std_logic;
+    -- ddr3_we_n     : out   std_logic;
+    -- ddr3_reset_n  : out   std_logic;
+    -- --ddr3_ck_p     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
+    -- --ddr3_ck_n     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
+    -- ddr3_cke      : out   std_logic_vector(0 downto 0);
+    -- ddr3_cs_n     : out   std_logic_vector(0 downto 0);
+    -- ddr3_dm       : out   std_logic_vector(1 downto 0);
+    -- ddr3_odt      : out   std_logic_vector(0 downto 0);
     eth_col     : in std_logic;
     eth_crs     : in std_logic;
     eth_mdc     : out std_logic;
@@ -108,6 +109,21 @@ port
   locked            : out    std_logic;
   -- Clock in ports
   sys_clk_100       : in     std_logic
+ );
+end component;
+
+-- Phase/delay adjusted pixel clock
+signal vga_pixel_clk_delayed : std_logic;
+signal pixel_clk_delayed_reset_n : std_logic;
+signal vga_clocks_delayed_ready : std_logic;
+component vga_clock_shift
+port
+ (-- Clock in ports
+  -- Clock out ports
+  pixel_clk_shifted          : out    std_logic;
+  -- Status and control signals
+  locked            : out    std_logic;
+  pixel_clk           : in     std_logic
  );
 end component;
 
@@ -344,6 +360,19 @@ port map
 -- Hold in reset until clocks are ready
 pixel_clk_reset_n <= vga_clocks_ready;
 
+-- Phase shifted/delayed pixel clock
+vga_clock_shift_inst : vga_clock_shift
+   port map ( 
+   -- Clock out ports  
+   pixel_clk_shifted => vga_pixel_clk_delayed,
+   -- Status and control signals                
+   locked => vga_clocks_delayed_ready,
+   -- Clock in ports
+   pixel_clk => vga_pixel_clk
+ );
+-- Hold in reset until clocks are ready
+pixel_clk_delayed_reset_n <= vga_clocks_delayed_ready;
+
 -- -- DDR clocks based off of the board's CLK100MHZ 
 -- ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
 --    port map ( 
@@ -518,33 +547,40 @@ top_inst : entity work.top port map (
     -- Generic main function clocks
     --clk_6p25 => clk_6p25,
     --clk_22p579 => clk_22p579,
-    clk_148p5 => vga_pixel_clk,
+    --clk_25p0 => vga_pixel_clk,
+    --clk_74p25 => vga_pixel_clk,
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
+    clk_148p5 => vga_pixel_clk,
     --clk_150p0 => clk_100,
     --clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
     --clk_300p0 => clk_300,
-        
+
     -- Each main function's inputs and outputs
     --app_reset_n(0) => rst_n,   
     
-    -- LEDs
-    --led0_module_return_output(0) => led(0),
-    --led1_module_return_output(0) => led(1),
-    --led2_module_return_output(0) => led(2),
-    --led3_module_return_output(0) => led(3),
+    -- -- LEDs
+    -- led0_module_return_output(0) => led(0),
+    -- led1_module_return_output(0) => led(1),
+    -- led2_module_return_output(0) => led(2),
+    -- led3_module_return_output(0) => led(3),
     
-    -- Switches
-    --switches_module_sw => unsigned(sw),
+    -- -- Switches
+    -- switches_module_sw => unsigned(sw),
     
-    -- Buttons
-    buttons_module_btn => unsigned(btn),
+    -- -- Buttons
+    -- buttons_module_btn => unsigned(btn),
 
     -- UART
     --uart_module_data_in(0) => uart_txd_in,
     --uart_module_return_output(0) => uart_rxd_out
+    
+    -- DVI PMOD on PMODB+C specific
+    clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
+    -- PMODC[2] c.jc2 = ddr_clk;
+    dvi_pmod_shifted_clock_return_output(0) => jc(2),
     
     -- PMODA
     ----pmod_ja_return_output.ja0(0) => ja(0),
@@ -555,7 +591,7 @@ top_inst : entity work.top port map (
     --pmod_ja_return_output.ja5(0) => ja(5),
     --pmod_ja_return_output.ja6(0) => ja(6),
     --pmod_ja_inputs.ja7(0) => ja(7),
-    -- PMODB
+    -- PMODB (High Speed)
     pmod_jb_return_output.jb0(0) => jb(0),
     pmod_jb_return_output.jb1(0) => jb(1),
     pmod_jb_return_output.jb2(0) => jb(2),
@@ -564,15 +600,24 @@ top_inst : entity work.top port map (
     pmod_jb_return_output.jb5(0) => jb(5),
     pmod_jb_return_output.jb6(0) => jb(6),
     pmod_jb_return_output.jb7(0) => jb(7),
-    -- PMODC
+    -- PMODC (High Speed)
     pmod_jc_return_output.jc0(0) => jc(0),
     pmod_jc_return_output.jc1(0) => jc(1),
-    pmod_jc_return_output.jc2(0) => jc(2),
+    pmod_jc_return_output.jc2(0) => open, --jc(2), -- Unused for DVI PMOD
     pmod_jc_return_output.jc3(0) => jc(3),
     pmod_jc_return_output.jc4(0) => jc(4),
     pmod_jc_return_output.jc5(0) => jc(5),
     pmod_jc_return_output.jc6(0) => jc(6),
     pmod_jc_return_output.jc7(0) => jc(7)
+    -- -- PMODD
+    -- pmod_jd_return_output.jd0(0) => jd(0),
+    -- pmod_jd_return_output.jd1(0) => jd(1),
+    -- pmod_jd_return_output.jd2(0) => jd(2),
+    -- pmod_jd_return_output.jd3(0) => jd(3),
+    -- pmod_jd_return_output.jd4(0) => jd(4),
+    -- pmod_jd_return_output.jd5(0) => jd(5),
+    -- pmod_jd_return_output.jd6(0) => jd(6),
+    -- pmod_jd_return_output.jd7(0) => jd(7)
     
     -- DDR3
     --xil_mig_module_mig_to_app => mig_to_app,
