@@ -8,7 +8,7 @@
 //
 // https://github.com/icebreaker-fpga/icebreaker-pmod/blob/master/dvi-24bit/v1.0b/dvi-24bit-sch.pdf
 // https://github.com/smunaut/ice40-playground/blob/avi/projects/avi_pmod/rtl/hdmi_phy_ddr_1x.v
-// Per hdmi_phy_ddr_1x and @tnt EDGE=0 Falling edge first (match Sil9022 config!)
+// Per hdmi_phy_ddr_1x and @tnt EDGE=0 "Falling edge first (match Sil9022 config!)"
 // "On ice 40 the D_OUT_1 is the falling edge and this is what's going to get out first
 // since the input to that port is clocked on rising edge 
 // and after a rising edge the first thing that occurs is the falling edge and not another rising edge."
@@ -50,6 +50,12 @@
 // Because of the above results the ~center point in the good region
 // around 146.25 degrees phase shift is what is specified below.
 
+// Constants and logic to produce DVI signals at fixed resolution
+#include "vga/vga_timing.h" // timing is same as VGA
+typedef struct pixel_t{
+ uint8_t a, b, g, r; 
+}pixel_t; // 24bpp color
+
 #ifdef __PIPELINEC__
 #include "compiler.h"
 #include "wire.h"
@@ -60,12 +66,6 @@
 // Include Arty specific PMOD ports for now
 #include "../examples/arty/src/pmod/pmod_jb.c"
 #include "../examples/arty/src/pmod/pmod_jc.c"
-
-// Constants and logic to produce DVI signals at fixed resolution
-#include "vga/vga_timing.h" // timing is same as VGA
-typedef struct pixel_t{
- uint8_t a, b, g, r; 
-}pixel_t; // 24bpp color
 
 // DVI pmod DDR clock signal needs to be separate
 // so it can be manually phase aligned with the DDR data 
