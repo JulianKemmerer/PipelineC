@@ -67,6 +67,8 @@ typedef struct pixel_t{
 #include "../examples/arty/src/pmod/pmod_jb.c"
 #include "../examples/arty/src/pmod/pmod_jc.c"
 
+// Verilator cannot sim Xilinx ODDRs used below
+#ifndef USE_VERILATOR 
 // DVI pmod DDR clock signal needs to be separate
 // so it can be manually phase aligned with the DDR data 
 // Connect output to PMODC[2]: c.jc2 = ddr_clk;
@@ -77,6 +79,7 @@ uint1_t dvi_pmod_shifted_clock()
   uint1_t ddr_clk = oddr_same_edge(edge, !edge);
   return ddr_clk;
 }
+#endif // not verilator
 
 // Add/remove pmod pins as in vs out below
 // Inputs
@@ -104,6 +107,9 @@ void dvi()
   app_to_dvi_t dvi;
   WIRE_READ(app_to_dvi_t, dvi, app_to_dvi)
   //WIRE_WRITE(dvi_to_app_t, dvi_to_app, inputs)
+
+  // Verilator cannot sim Xilinx ODDRs used below
+  #ifndef USE_VERILATOR 
   
   // Convert 8b rgb values to 24b
   uint24_t color_data;
@@ -166,6 +172,11 @@ void dvi()
   b.jb6 = ddr_data[6];
   // pmod pin10: dvi pmod sch d4 -> arty sch jb4_n -> jb7
   b.jb7 = ddr_data[4];
+  #else
+  // Verilator dummy connections
+  app_to_pmod_jc_t c;
+  app_to_pmod_jb_t b;
+  #endif // not verilator
   
   WIRE_WRITE(app_to_pmod_jc_t, app_to_pmod_jc, c)
   WIRE_WRITE(app_to_pmod_jb_t, app_to_pmod_jb, b)
