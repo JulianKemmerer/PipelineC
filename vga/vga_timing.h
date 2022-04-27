@@ -138,40 +138,48 @@ vga_signals_t vga_timing()
   o.start_of_frame = (h_cntr_reg==0) & (v_cntr_reg==0);
   o.end_of_frame = (h_cntr_reg==(FRAME_WIDTH-1)) & (v_cntr_reg==(FRAME_HEIGHT-1));
   
-  if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
+  // External VGA can request a stall
+  uint1_t stall_req = 0;
+  #ifdef EXT_VGA_TIMING
+  WIRE_READ(uint1_t, stall_req, external_vga_req_stall)
+  #endif
+  if(!stall_req)
   {
-    h_sync_reg = H_POL;
-  }
-  else
-  {
-    h_sync_reg = !(H_POL);
-  }
+    if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
+    {
+      h_sync_reg = H_POL;
+    }
+    else
+    {
+      h_sync_reg = !(H_POL);
+    }
 
-  if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) & (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
-  {
-    v_sync_reg = V_POL;
-  }
-  else
-  {
-    v_sync_reg = !(V_POL);
-  }
+    if((v_cntr_reg >= (V_FP + FRAME_HEIGHT - 1)) & (v_cntr_reg < (V_FP + FRAME_HEIGHT + V_PW - 1)))
+    {
+      v_sync_reg = V_POL;
+    }
+    else
+    {
+      v_sync_reg = !(V_POL);
+    }
 
-  if((h_cntr_reg == (H_MAX - 1)) & (v_cntr_reg == (V_MAX - 1)))
-  {
-    v_cntr_reg = 0;
-  }
-  else if(h_cntr_reg == (H_MAX - 1))
-  {
-    v_cntr_reg = v_cntr_reg + 1;
-  }
+    if((h_cntr_reg == (H_MAX - 1)) & (v_cntr_reg == (V_MAX - 1)))
+    {
+      v_cntr_reg = 0;
+    }
+    else if(h_cntr_reg == (H_MAX - 1))
+    {
+      v_cntr_reg = v_cntr_reg + 1;
+    }
 
-  if(h_cntr_reg == (H_MAX - 1))
-  {
-    h_cntr_reg = 0;
-  }
-  else
-  {
-    h_cntr_reg = h_cntr_reg + 1;
+    if(h_cntr_reg == (H_MAX - 1))
+    {
+      h_cntr_reg = 0;
+    }
+    else
+    {
+      h_cntr_reg = h_cntr_reg + 1;
+    }
   }
   
   return o;
