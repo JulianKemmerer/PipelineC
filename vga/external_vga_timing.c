@@ -1,9 +1,10 @@
 #pragma once
-#include "vga_timing.h"
-
 // Module that allows internal VGA timing to be aligned with 
 // externally supplied VGA signals
 #define EXT_VGA_TIMING
+
+// Include regular VGA timing module now with external timing hooks turned on
+#include "vga_timing.h"
 
 // Wire from output of pixel render pipeline
 // that needs to be aligned with corresponding external signal
@@ -80,13 +81,16 @@ void ext_vga(uint1_t active, uint16_t x, uint16_t y)
   else if(state == MONITOR_ALIGNMENT)
   {
     // Expect that feedback and external signals are aligned
-    uint1_t active_mismatch = active != vga_timing_feedback.active;
-    uint1_t x_mismatch = x != vga_timing_feedback.pos.x;
-    uint1_t y_mismatch = y != vga_timing_feedback.pos.y;
-    // If any mismatch, restart
-    if(active_mismatch | x_mismatch | y_mismatch)
+    if(active)
     {
-      state = STALL_AT_FEEDBACK_SOF;
+      uint1_t active_mismatch = vga_timing_feedback.active != 1;
+      uint1_t x_mismatch = x != vga_timing_feedback.pos.x;
+      uint1_t y_mismatch = y != vga_timing_feedback.pos.y;
+      // If any mismatch, restart
+      if(active_mismatch | x_mismatch | y_mismatch)
+      {
+        state = STALL_AT_FEEDBACK_SOF;
+      }
     }
   }
 
