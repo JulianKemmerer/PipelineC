@@ -2,9 +2,7 @@
 // Module that allows internal VGA timing to be aligned with 
 // externally supplied VGA signals
 #define EXT_VGA_TIMING
-
-// Include regular VGA timing module now with external timing hooks turned on
-#include "vga_timing.h"
+#include "vga_signals.h"
 
 // Wire from output of pixel render pipeline
 // that needs to be aligned with corresponding external signal
@@ -15,6 +13,9 @@ vga_signals_t external_vga_timing_feedback;
 // that signals to stall/stop incrementing counters, etc
 uint1_t external_vga_req_stall;
 #include "clock_crossing/external_vga_req_stall.h"
+
+// Include regular VGA timing module now with external timing hooks enabled and visible
+#include "vga_timing.h"
 
 // This code uses start of frame for alignment, but any position could work
 
