@@ -21,7 +21,7 @@ external_vga_output_t external_vga_output;
 
 // External vga output global wire connected to top level outputs
 #pragma MAIN vga // No associated clock domain yet
-external_vga_output_t vga()
+pixel_t vga()
 {
   external_vga_output_t o;
   WIRE_READ(external_vga_output_t, o, external_vga_output)
@@ -31,7 +31,7 @@ external_vga_output_t vga()
   WIRE_WRITE(vga_signals_t, external_vga_timing_feedback, o.vga_timing)
   #endif // ifdef EXT_VGA_TIMING
 
-  return o;
+  return o.color;
 }
 
 // Logic for connecting outputs/sim debug wires

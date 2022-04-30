@@ -113,18 +113,19 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Put slides together for FCCM workshop talk
-  Buy Arty 100t for demo (and for SIGGRAPH) #pragma PART "xc7a100tcsg324-1" // Arty 100T
+Finalize how to run demo for FCCM workshop
 Victor's RT
-  Having glitch in Arty small RT LITEX demo w/ latency delay fixes?
-    Still shows issue with 0 latency configured?
-  Seems ready for hardware test ECP5 85F device at 480p?
+  Seems ready for hardware test ECP5 85F device at 480p..
   Try to squeeze in 720p on ecp5?
+  Increase size of sphere
+    Make tech demo slow movement+even bigger sphere? (buttons for interation user moving sphere anywhere?)
+  Remove button slow 60hz cdc2
+  Make repo public before fccm
+Move state regs out of manual regs struct so easier to find/preserve
 Do UART in clk() style, compare to original style
   Need to simulate+debug __clk style FSMs
     Now good time to make FSM timing consistent (forward flow always clk-less)
   make video?
-Move state regs out of manual regs struct so easier to find/preserve
 Try to fix/refresh AWS DMA demo
   Solve AWS multithreaded off by one or two problem...
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices

@@ -34,7 +34,7 @@ typedef enum ext_vga_state_t
 
 // Top level external vga connections
 #pragma MAIN ext_vga
-void ext_vga(uint1_t active, uint16_t x, uint16_t y)
+void ext_vga(uint16_t x, uint16_t y)
 {
   // Stall the internal timing to become aligned with external timing based on output timing feedback
   vga_signals_t vga_timing_feedback;
@@ -42,15 +42,15 @@ void ext_vga(uint1_t active, uint16_t x, uint16_t y)
 
   // SOF from feedback signal
   uint1_t feedback_sof = vga_timing_feedback.active & vga_timing_feedback.start_of_frame;
-  // SOF from external signal
-  uint1_t external_sof = active & (x == 0) & (y == 0);
+  // SOF from external signal naively from just x==0 and y==0
+  uint1_t external_sof = (x == 0) & (y == 0);
 
   // Little state machine to manage stalling/pausing for vga timing alignment
   static ext_vga_state_t state;
   uint1_t stall_req = 0;
   if(state == STALL_AT_FEEDBACK_SOF)
   {
-    // Wait for feedback signals to have start of frame
+    // Wait for feedback signal to have start of frame
     if(feedback_sof)
     {
       // Then stall
@@ -71,7 +71,7 @@ void ext_vga(uint1_t active, uint16_t x, uint16_t y)
       state = WAIT_PIPELINE_FLUSH;
     }
   }
-  else if (state == WAIT_PIPELINE_FLUSH)
+  else if(state == WAIT_PIPELINE_FLUSH)
   {
     // Waiting a whole frame is more than enough...
     if(external_sof)
@@ -82,16 +82,10 @@ void ext_vga(uint1_t active, uint16_t x, uint16_t y)
   else if(state == MONITOR_ALIGNMENT)
   {
     // Expect that feedback and external signals are aligned
-    if(active)
+    if(external_sof != feedback_sof)
     {
-      uint1_t active_mismatch = vga_timing_feedback.active != 1;
-      uint1_t x_mismatch = x != vga_timing_feedback.pos.x;
-      uint1_t y_mismatch = y != vga_timing_feedback.pos.y;
-      // If any mismatch, restart
-      if(active_mismatch | x_mismatch | y_mismatch)
-      {
-        state = STALL_AT_FEEDBACK_SOF;
-      }
+      // If not, restart
+      state = STALL_AT_FEEDBACK_SOF;
     }
   }
 
