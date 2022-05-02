@@ -407,6 +407,7 @@ class Logic:
     self.uses_nonvolatile_state_regs = False
     self.submodule_instances = dict() # instance name -> logic func_name
     self.next_user_inst_name = None # User name for func
+    self.debug_names = set() # Names MARK_DEBUG
     self.c_ast_node = None
     # Is this logic a c built in C function?
     self.is_c_built_in = False
@@ -479,6 +480,7 @@ class Logic:
     rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
     rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
     rv.next_user_inst_name = self.next_user_inst_name
+    rv.debug_names = set(self.debug_names)
     rv.c_ast_node = copy.copy(self.c_ast_node)
     rv.is_c_built_in = self.is_c_built_in
     rv.is_vhdl_func = self.is_vhdl_func
@@ -621,6 +623,7 @@ class Logic:
     self.state_regs = UNIQUE_KEY_DICT_MERGE(self.state_regs, logic_b.state_regs)
     self.variable_names = self.variable_names | logic_b.variable_names
     self.feedback_vars = self.feedback_vars | logic_b.feedback_vars
+    self.debug_names = self.debug_names | logic_b.debug_names
     
     # I/O order matters - check that
     # If one is empty then thats fine
@@ -1801,6 +1804,11 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
     init_file = toks[2]
     state_reg_info = parser_state.existing_logic.state_regs[var_name]
     state_reg_info.init = init_file
+
+  # Name to mark debug for
+  if toks[0] == "MARK_DEBUG":   
+    var_name = toks[1]
+    parser_state.existing_logic.debug_names.add(var_name)
   
   return parser_state.existing_logic
   
@@ -7648,6 +7656,7 @@ class ParserState:
     rv.func_mult_style = dict(self.func_mult_style)
     rv.func_marked_wires = set(self.func_marked_wires)
     rv.func_marked_blackbox = set(self.func_marked_blackbox)
+    rv.func_marked_debug = set(self.func_marked_debug)
     rv.marked_onehot = set(self.marked_onehot)
     rv.part = self.part
     rv.io_pairs = set(self.io_pairs)
@@ -9035,6 +9044,11 @@ def APPEND_PRAGMA_INFO(parser_state):
     # VAR_VHDL_INIT
     elif name=="VAR_VHDL_INIT":
       # Not handled here, done in func def parsing for local statics only first
+      pass
+
+    # MARK_DEBUG
+    elif name=="MARK_DEBUG":
+      # Not handled here, done in func def parsing
       pass
     
     else:

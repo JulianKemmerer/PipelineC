@@ -121,7 +121,6 @@ Victor's RT
     Make tech demo slow movement+even bigger sphere? (buttons for interation user moving sphere anywhere?)
   Remove button slow 60hz cdc2
   Make repo public before fccm
-Move state regs out of manual regs struct so easier to find/preserve
 Do UART in clk() style, compare to original style
   Need to simulate+debug __clk style FSMs
     Now good time to make FSM timing consistent (forward flow always clk-less)
