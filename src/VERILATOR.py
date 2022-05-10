@@ -24,23 +24,29 @@ def DO_SIM(multimain_timing_params, parser_state, args):
   # Generate helpful include of verilator names
   names_text = ""
   # Clocks
-  clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True) 
+  clock_name_to_mhz,out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, None, True)
   # Which ones are not from the user internal
+  clock_port_is_clk = True
   for clk_mhz in parser_state.clk_mhz.values():
     clk_name =  "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
     # Remove user clocks from dict
     clock_name_to_mhz.pop(clk_name, None)
   if len(clock_name_to_mhz) > 1:
-    print("WARNING: Multiple external clocks for Verilator. Not setup for this, probably won't work!", list(clock_name_to_mhz.keys()))
+    clock_port_is_clk = False
     for clock_name,mhz in clock_name_to_mhz.items():
       if mhz:
         names_text += f'#define {clock_name} {clock_name.replace("__","_")}\n'
       else:
         names_text += f'#define clk {clock_name.replace("__","_")}\n'
-  else:
+  elif len(clock_name_to_mhz) == 1:
     clock_name,mhz = list(clock_name_to_mhz.items())[0]
     names_text += f'#define clk {clock_name.replace("__","_")}\n'
-    
+  else:
+    # All clocks are not auto generated, no idea what input ports are clocks?
+    # Probably user clocks with user known constant names handled by user
+    # Issue warning?
+    clock_port_is_clk = False
+
   # Debug ports
   debug_names = []
   for func in parser_state.main_mhz:
@@ -91,8 +97,11 @@ using namespace std;
 int main(int argc, char *argv[]) {
     Vtop* g_top = new Vtop;
     
-    // Run the simulation for 10 cycles
-    uint64_t cycle = 0;
+    // Run the simulation for 10 cycles\n'''
+  # Comment out sim cycles if clock is not known
+  if not clock_port_is_clk:
+    main_cpp_text += '''    /* User needs to specify how to drive clock(s)\n'''
+  main_cpp_text += '''    uint64_t cycle = 0;
     while (cycle < 10)
     {
         // Print the PipelineC debug vars
@@ -105,9 +114,10 @@ int main(int argc, char *argv[]) {
         g_top->clk = 1;
         g_top->eval();
         ++cycle;
-    }
-
-    return 0;
+    }\n'''
+  if not clock_port_is_clk:
+    main_cpp_text += '''    */\n'''
+    main_cpp_text += '''  return 0;
 }
 '''
   main_cpp_path = VERILATOR_OUT_DIR + "/" + "main.cpp"
@@ -145,7 +155,7 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
+{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 '''
   # --report-unoptflat
