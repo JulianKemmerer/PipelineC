@@ -552,7 +552,7 @@ top_inst : entity work.top port map (
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
     --clk_100p0 => clk_100,
-    clk_148p5 => vga_pixel_clk,
+    --clk_148p5 => vga_pixel_clk,
     --clk_150p0 => clk_100,
     --clk_166p66 => clk_166p66,
     --clk_200p0 => clk_200,
@@ -570,16 +570,17 @@ top_inst : entity work.top port map (
     -- -- Switches
     -- switches_module_sw => unsigned(sw),
     
-    -- -- Buttons
-    -- buttons_module_btn => unsigned(btn),
+    -- Buttons
+    buttons_module_btn => unsigned(btn),
 
     -- UART
     --uart_module_data_in(0) => uart_txd_in,
     --uart_module_return_output(0) => uart_rxd_out
     
     -- DVI PMOD on PMODB+C specific
+    pixel_clock(0) => vga_pixel_clk,
     clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
-    -- PMODC[2] c.jc2 = ddr_clk;
+    -- Double rate DVI PMOD clock, PMODC[2] c.jc2 = ddr_clk;
     dvi_pmod_shifted_clock_return_output(0) => jc(2),
     
     -- PMODA
@@ -603,7 +604,7 @@ top_inst : entity work.top port map (
     -- PMODC (High Speed)
     pmod_jc_return_output.jc0(0) => jc(0),
     pmod_jc_return_output.jc1(0) => jc(1),
-    pmod_jc_return_output.jc2(0) => open, --jc(2), -- Unused for DVI PMOD
+    pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
     pmod_jc_return_output.jc3(0) => jc(3),
     pmod_jc_return_output.jc4(0) => jc(4),
     pmod_jc_return_output.jc5(0) => jc(5),

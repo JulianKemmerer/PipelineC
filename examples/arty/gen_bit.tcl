@@ -1,3 +1,4 @@
+remove_files /home/julian/pipelinec_output/*;
 remove_files /media/1TB/Dropbox/PipelineC/git/PipelineC-Graphics/build/*; 
 remove_files /media/1TB/Dropbox/PipelineC/git/PipelineC-Graphics/fullsynth/*;
 source /media/1TB/Dropbox/PipelineC/git/PipelineC-Graphics/fullsynth/read_vhdl.tcl;
