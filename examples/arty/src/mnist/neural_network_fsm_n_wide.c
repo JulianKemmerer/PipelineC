@@ -27,19 +27,18 @@ typedef struct n_pixels_t
   pixel_t data[N_PIXELS_PER_ITER];
 }n_pixels_t;
 
-
 uint32_t inference_fsm_n_wide()
 {
   static uint32_t i; // Label
   static uint32_t j; // Per N image pixels
   static n_floats_t weight[MNIST_LABELS*(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)] = 
-    #include "random_weights_by_16.c"
+    #include "random/random_weights_by_16.c"
     ;
   static float bias[MNIST_LABELS] = 
-    #include "random_biases.c"
+    #include "random/random_biases.c"
   ;
   static n_pixels_t pixel[(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)] = 
-    #include "random_pixels_by_16.c"
+    #include "random/random_pixels_by_16.c"
   ;
   static float activation[MNIST_LABELS]; // init to zeros
   

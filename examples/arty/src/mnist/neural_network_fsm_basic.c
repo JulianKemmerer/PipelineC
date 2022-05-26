@@ -14,13 +14,13 @@ uint32_t inference_fsm_basic()
   static uint32_t i; // Label
   static uint32_t j; // Per image pixel
   static float weight[MNIST_LABELS*MNIST_IMAGE_SIZE] = 
-    #include "random_weights.c"
+    #include "trained/weights.c"
   ;
   static float bias[MNIST_LABELS] = 
-    #include "random_biases.c"
+    #include "trained/biases.c"
   ;
   static pixel_t pixel[MNIST_IMAGE_SIZE] = 
-    #include "random_pixels.c"
+    #include "trained/test_image_0_pixels.c"
   ;
   static float activation[MNIST_LABELS]; // init to zeros
   
