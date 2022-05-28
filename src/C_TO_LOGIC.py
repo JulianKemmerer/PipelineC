@@ -6779,7 +6779,7 @@ def C_AST_BINARY_OP_TO_LOGIC(c_ast_binary_op,driven_wire_names,prepend_text, par
            max_width, max_unsigned_width, left_max_val, 
            left_min_val, right_max_val, right_min_val) = GET_INTEGER_MAX_SIZE_INFO([left_type,right_type])
         else:
-          print("Cannot do binary operation between two different types (explicit cast required for now):", left_type,right_type,c_ast_binary_op.coord)
+          print(f"Unsupported binary operation between types (explicit casting required for now):", left_type, c_ast_bin_op_str, right_type, c_ast_binary_op.coord)
           sys.exit(-1)
       
         # Operator determines output type
