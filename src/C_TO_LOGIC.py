@@ -8056,20 +8056,38 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-  
-def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+
+def INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, inst_name):
+  container_inst = GET_CONTAINER_INST(inst_name)
+  if container_inst:
+    container_func_logic = parser_state.LogicInstLookupTable[container_inst]
+    if container_func_logic.is_c_built_in:
+      return True
+    else:
+      return INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, container_inst)
+  return False
+
+def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state, exclude_built_in_op_insides=True):
   # Easier to just exclude non integer ops
   # Even FPGA wires like "shift by constant" are considered integer ops, like in a CPU
 
   # Keep just integer ops that are built in
   int_funcs = []
-  int_func_to_max_width = dict()
+  int_func_to_max_in_width = dict()
   for func_name in parser_state.FuncToInstances:
     func_logic = parser_state.FuncLogicLookupTable[func_name]
     func_types = []
+    # INputs types
     for input_port in func_logic.inputs:
       input_c_type = func_logic.wire_to_c_type[input_port]
       func_types.append(input_c_type)
+    max_in_width = 0
+    if VHDL.C_TYPES_ARE_INTEGERS(func_types):
+      for func_type in func_types:
+        width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
+        if width > max_in_width:
+          max_in_width = width
+    # Outputs types
     for output_port in func_logic.outputs:
       output_c_type = func_logic.wire_to_c_type[output_port]
       func_types.append(output_c_type)
@@ -8077,13 +8095,8 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     if func_name.startswith(CAST_FUNC_NAME_PREFIX+"_"):
       continue
     if func_logic.is_c_built_in and VHDL.C_TYPES_ARE_INTEGERS(func_types):
-      max_width = 0
-      for func_type in func_types:
-        width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
-        if width > max_width:
-          max_width = width
-      int_func_to_max_width[func_name] = max_width
       int_funcs.append(func_name)
+      int_func_to_max_in_width[func_name] = max_in_width
 
   if len(int_funcs) <= 0:
     return
@@ -8091,8 +8104,18 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
   # Write instance of each func
   text = ""
   for func_name in sorted(int_funcs):
-    instances = sorted(parser_state.FuncToInstances[func_name])
-    max_width = int_func_to_max_width[func_name]
+    instances = parser_state.FuncToInstances[func_name]
+    max_in_width = int_func_to_max_in_width[func_name]
+
+    # Filter instances to ones that dont occur inside another built in operation
+    if exclude_built_in_op_insides:
+      instances_to_keep = []
+      for instance in instances:
+        if not INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, instance):
+          instances_to_keep.append(instance)
+      instances = instances_to_keep
+    if len(instances) <= 0:
+      continue
 
     # Sort by main func
     main_to_insts = dict()
@@ -8103,10 +8126,10 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
       main_to_insts[main_func].append(instance)
 
     # Print total and then by main func
-    text += f"{func_name}, MaxWidth={max_width}, {len(instances)} instances:\n"
+    text += f"{func_name} MaxInputWidth= {max_in_width} num_instances= {len(instances)} :\n"
     for main_func in sorted(main_to_insts):
       this_main_insts = main_to_insts[main_func]
-      text += f"{func_name}, main:{main_func}, MaxWidth={max_width}, {len(this_main_insts)} instances:\n"
+      text += f"{func_name} main: {main_func} MaxInputWidth= {max_in_width} num_instances= {len(this_main_insts)} :\n"
       for instance in sorted(this_main_insts):
         text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
     text += "\n"
