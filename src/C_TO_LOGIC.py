@@ -8058,20 +8058,13 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
   
 def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
-  # Find all matching funcs by name
-  func_types = [BIN_OP_PLUS_NAME, BIN_OP_MINUS_NAME, BIN_OP_MULT_NAME, 
-                BIN_OP_INFERRED_MULT_NAME, BIN_OP_DIV_NAME]
-  # Keep just math ops
-  selected_funcs = set()
-  for func_name in parser_state.FuncToInstances:
-    func_logic = parser_state.FuncLogicLookupTable[func_name]
-    for func_type in func_types:
-      if func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX+"_"+func_type):
-          selected_funcs.add(func_name)
-          break
-  # Keep just integer ops
+  # Easier to just exclude non integer ops
+  # Even FPGA wires like "shift by constant" are considered integer ops, like in a CPU
+
+  # Keep just integer ops that are built in
   int_funcs = []
-  for func_name in selected_funcs:
+  int_func_to_max_width = dict()
+  for func_name in parser_state.FuncToInstances:
     func_logic = parser_state.FuncLogicLookupTable[func_name]
     func_types = []
     for input_port in func_logic.inputs:
@@ -8080,21 +8073,46 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     for output_port in func_logic.outputs:
       output_c_type = func_logic.wire_to_c_type[output_port]
       func_types.append(output_c_type)
-    if VHDL.C_TYPES_ARE_INTEGERS(func_types):
+    # Skip casts
+    if func_name.startswith(CAST_FUNC_NAME_PREFIX+"_"):
+      continue
+    if func_logic.is_c_built_in and VHDL.C_TYPES_ARE_INTEGERS(func_types):
+      max_width = 0
+      for func_type in func_types:
+        width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
+        if width > max_width:
+          max_width = width
+      int_func_to_max_width[func_name] = max_width
       int_funcs.append(func_name)
 
   if len(int_funcs) <= 0:
     return
+
+  # Write instance of each func
   text = ""
   for func_name in sorted(int_funcs):
     instances = sorted(parser_state.FuncToInstances[func_name])
-    text += f"{func_name} {len(instances)} instances:\n"
+    max_width = int_func_to_max_width[func_name]
+
+    # Sort by main func
+    main_to_insts = dict()
     for instance in instances:
-      text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
+      main_func = instance.split(SUBMODULE_MARKER)[0]
+      if main_func not in main_to_insts:
+        main_to_insts[main_func] = []
+      main_to_insts[main_func].append(instance)
+
+    # Print total and then by main func
+    text += f"{func_name}, MaxWidth={max_width}, {len(instances)} instances:\n"
+    for main_func in sorted(main_to_insts):
+      this_main_insts = main_to_insts[main_func]
+      text += f"{func_name}, main:{main_func}, MaxWidth={max_width}, {len(this_main_insts)} instances:\n"
+      for instance in sorted(this_main_insts):
+        text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
     text += "\n"
     
   out_file = SYN.SYN_OUTPUT_DIRECTORY + "/integer_module_instances.log"
-  print(f"Writing log of integer math module instances: {out_file}")
+  print(f"Writing log of integer module instances: {out_file}")
   f=open(out_file,'w')
   f.write(text)
   f.close()
