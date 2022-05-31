@@ -14,9 +14,10 @@ float fadd(float a, float b) {
 }
 
 #pragma MAIN forward
+// float* var_arg1_0, Assumed output
 float forward(
   float var_arg0_0_0, float var_arg0_0_1, float var_arg0_0_2, float var_arg0_1_0, 
-  float var_arg0_1_1, float var_arg0_1_2, /*float* var_arg1_0, Assumed output*/ 
+  float var_arg0_1_1, float var_arg0_1_2,  
   float var_constant_4x3xf32_0_0, float var_constant_4x3xf32_0_1, 
   float var_constant_4x3xf32_0_2, float var_constant_4x3xf32_1_0, 
   float var_constant_4x3xf32_1_1, float var_constant_4x3xf32_1_2, 
@@ -59,6 +60,6 @@ float forward(
   float var_val_52 = fadd(var_val_39, var_val_51);
   float var_val_53 = fadd(var_val_42, var_val_52);
   float var_val_54 = fadd(var_val_45, var_val_53);
-  //*var_arg1_0 = var_val_54;
+  //var_arg1_0 = var_val_54;
   return var_val_54;
 }
