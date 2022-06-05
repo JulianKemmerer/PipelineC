@@ -1,6 +1,8 @@
+#include "arrays.h"
 // UART top level IO
 #include "uart.c"
-#include "arrays.h"
+// Fixed size UART message buffers of N bytes
+#include "uart_msg.h"
 
 /* LOOPBACK TEST works: sudo screen /dev/ttyUSB1 115200
 MAIN_MHZ(main, UART_CLK_MHZ)
@@ -66,41 +68,27 @@ void transmit_byte(uint8_t the_byte)
 }
 //#include "transmit_byte_SINGLE_INST.h" // Needed? Wanted?
 
-/*
-#define TEXT_BUFFER_SIZE 16
-void transmit_text(char text[TEXT_BUFFER_SIZE], uint16_t len)
+void transmit_msg(uart_msg_t msg)
 {
   // Setup first data byte
-  uint8_t the_byte = text[0];
+  uint8_t the_byte = msg.data[0];
   // Loop sending each byte
   uint16_t i;
-  for(i=0;i<len;i+=1)
+  for(i=0;i<UART_MSG_SIZE;i+=1)
   {
     transmit_byte(the_byte);
     // Setup next byte
-    ARRAY_SHIFT_DOWN(text, TEXT_BUFFER_SIZE, 1)
-    the_byte = text[0];
+    ARRAY_SHIFT_DOWN(msg.data, UART_MSG_SIZE, 1)
+    the_byte = msg.data[0];
   }
 }
-
-// Main func driving test that sends hello world over and over
-void main()
-{
-  // Text to send
-  #define TEXT "Hello World!\n"
-  // Send repeatedly
-  while(1)
-  {
-    transmit_text(TEXT, strlen(TEXT));
-  }
-}
-*/
+//#include "transmit_msg_SINGLE_INST.h" // Needed? Wanted?
 
 void wait_clks(uint16_t clks)
 {
-  uint16_t i;
-  for(i=0;i<clks;i+=1)
+  while(clks > 0)
   {
+    clks -= 1;
     __clk();
   }
 }
@@ -148,7 +136,6 @@ uint1_t receive_bit()
 #include "receive_bit_SINGLE_INST.h"
 
 
-
 uint8_t receive_byte()
 {
   // Wait for start bit
@@ -174,42 +161,33 @@ uint8_t receive_byte()
 }
 //#include "receive_byte_SINGLE_INST.h" // Needed? Wanted?
 
-/*
-typedef struct text_buffer_t{
-  char chars[TEXT_BUFFER_SIZE];
-} text_buffer_t;
-text_buffer_t receive_text(uint16_t len)
+uart_msg_t receive_msg()
 {
-  text_buffer_t text;
-
-  // Receive the request number of bytes
+  uart_msg_t msg;
+  // Receive the number of bytes for message
   uint16_t i;
-  for(i=0;i<len;i+=1)
+  for(i=0;i<UART_MSG_SIZE;i+=1)
   {
-    char the_byte = receive_byte();
-
-    // TODO shift reg doesnt work for not full buffer?
-    order of chars on wire? [0] first makes sense...
-
+    uint8_t the_byte = receive_byte();
     // Shift buffer down to make room for next byte
-    ARRAY_SHIFT_DOWN(text.chars, TEXT_BUFFER_SIZE, 1)
-    // Save byte at top of shift reg [TEXT_BUFFER_SIZE-1]
-    text.chars[TEXT_BUFFER_SIZE-1] = the_byte;
+    ARRAY_SHIFT_DOWN(msg.data, UART_MSG_SIZE, 1)
+    // Save byte at top of shift reg [UART_MSG_SIZE-1]
+    msg.data[UART_MSG_SIZE-1] = the_byte;
   }
-  
-  return text;
-}*/
+  return msg;
+}
+//#include "receive_msg_SINGLE_INST.h" // Needed? Wanted?
 
 // Use uart msg for loopback test
 // Receive a uart msg, and then send it back
 void main()
 {
-  todo
-
-  
-
+  while(1)
+  {
+    uart_msg_t msg = receive_msg();
+    transmit_msg(msg);
+  }
 }
-
 
 // Derived fsm from main
 #include "main_FSM.h"
