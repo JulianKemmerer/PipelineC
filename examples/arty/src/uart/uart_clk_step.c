@@ -31,6 +31,7 @@ void transmit_bit(uint1_t the_bit)
     __clk();
   }
 }
+// Need to specify single instance so only one driver of uart wire at a time
 #include "transmit_bit_SINGLE_INST.h"
 
 void transmit_start_bit()
@@ -133,8 +134,7 @@ uint1_t receive_bit()
   wait_clks(UART_CLKS_PER_BIT);
   return the_bit;
 }
-#include "receive_bit_SINGLE_INST.h"
-
+//#include "receive_bit_SINGLE_INST.h" // Needed? Wanted?
 
 uint8_t receive_byte()
 {
@@ -178,6 +178,18 @@ uart_msg_t receive_msg()
 }
 //#include "receive_msg_SINGLE_INST.h" // Needed? Wanted?
 
+
+// Do byte level loopback test
+void main()
+{
+  while(1)
+  {
+    uint8_t the_byte = receive_byte();
+    transmit_byte(the_byte);
+  }
+}
+
+/*
 // Use uart msg for loopback test
 // Receive a uart msg, and then send it back
 void main()
@@ -188,6 +200,7 @@ void main()
     transmit_msg(msg);
   }
 }
+*/
 
 // Derived fsm from main
 #include "main_FSM.h"
