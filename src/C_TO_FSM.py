@@ -417,12 +417,14 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "    {\n"
           text += "      FSM_STATE = " + false_state.name + ";\n"
           text += "    }\n"
+          '''
         elif state_info.always_next_state is not None:
           # OK to use default?
           text += "    else\n"
           text += "    {\n"
           text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
           text += "    }\n"
+          '''
         else: # No next state, just start over?
           text += "    else\n"
           text += "    {\n"
@@ -430,6 +432,9 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
           text += "    }\n"
         text += "  }\n"
+        #if state_info.always_next_state is not None:
+        #  print("ERROR: Always next state set for branching state " + state_info.name)
+        #  sys.exit(-1)
         continue
 
       # Func call entry
@@ -506,8 +511,11 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       if state_info.ends_w_clk:
         # Go to next state, but delayed
         if state_info.always_next_state is None:
+          # No next state 
           print("No next state for")
           state_info.print()
+          #text += "  }\n"
+          #continue
           sys.exit(-1)
         if state_info.clk_end_is_user:
           text += "    // __clk(); // Go to next state in next clock cycle \n"
@@ -549,8 +557,15 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       # Default next
       if state_info.always_next_state is not None:
         text += "    // DEFAULT NEXT\n"
-        text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n";
-      text += "  }\n"  
+        text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
+        text += "  }\n"
+        continue
+
+      # At this point the stage is absolutely empty, assume to be delay state for delaying return
+      text += "    // ASSUMED EMPTY DELAY STATE FOR RETURN\n"
+      text += "    FSM_STATE = RETURN_REG;\n"
+      text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+      text += "  }\n"
   
   
   text += '''
@@ -761,13 +776,16 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
   
   # Make a return state list for each state
   states_trans_lists = []
-  for poss_next_state in poss_next_states:
-    start_states_trans_list = [start_state]
-    visited_states.add(start_state)
-    new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state, parser_state, visited_states)
-    for new_states_trans_list in new_states_trans_lists:
-      combined_state_trans_list = start_states_trans_list + new_states_trans_list
-      states_trans_lists.append(combined_state_trans_list)
+  if len(poss_next_states) == 0:
+    return [[start_state]]
+  else:
+    for poss_next_state in poss_next_states:
+      start_states_trans_list = [start_state]
+      visited_states.add(start_state)
+      new_states_trans_lists = GET_STATE_TRANS_LISTS(poss_next_state, parser_state, visited_states)
+      for new_states_trans_list in new_states_trans_lists:
+        combined_state_trans_list = start_states_trans_list + new_states_trans_list
+        states_trans_lists.append(combined_state_trans_list)
     
   #print("start_state.name",start_state.name,states_trans_lists)
   return states_trans_lists
@@ -905,6 +923,15 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(c_ast_clk_func_call, curr_state_info
   # Update curr state as ending with clk()
   curr_state_info.ends_w_clk = True
 
+  # Need to introduce empty next state if none there to absorb default of no next state being to return, but need cycle delay
+  if next_state_info is None:
+    next_state_info = FsmStateInfo()
+    #next_state_info.always_next_state = curr_state_info
+    next_state_info.name = BUILD_STATE_NAME(c_ast_clk_func_call) + "_DELAY_STATE"
+    # Current state goes to this delay state next
+    curr_state_info.always_next_state = next_state_info
+    states.append(next_state_info)
+
   return states
   
 def C_AST_CTRL_FLOW_RETURN_TO_STATES(c_ast_node, curr_state_info, next_state_info, parser_state):
@@ -962,9 +989,9 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
   else:
     name_c_ast_node = c_ast_if.iftrue
   true_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_TRUE"
-  if next_state_info is None:
-      print("No next state entering if ",true_state.name,"from",curr_state_info.name)
-      sys.exit(-1)
+  #if next_state_info is None:
+  #    print("No next state entering if ",true_state.name,"from",curr_state_info.name)
+  #    sys.exit(-1)
   true_state.always_next_state = next_state_info
   true_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iftrue, parser_state, true_state, next_state_info)
   #new_true_states = true_states[:].remove(true_state)
@@ -981,14 +1008,16 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(c_ast_if, curr_state_info, next_state_info, par
     else:
       name_c_ast_node = c_ast_if.iffalse
     false_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_FALSE"
-    if next_state_info is None:
-      print("No next state entering if ",false_state.name,"from",curr_state_info.name)
-      sys.exit(-1)
+    #if next_state_info is None:
+    #  print("No next state entering if ",false_state.name,"from",curr_state_info.name)
+    #  sys.exit(-1)
     false_state.always_next_state = next_state_info
     false_states = C_AST_NODE_TO_STATES_LIST(c_ast_if.iffalse, parser_state, false_state, next_state_info)
     #new_false_states = false_states[:].remove(false_state)
     states += false_states
-  
+  else:
+    # No false branch, default is to go to next state
+    false_state = next_state_info  
   
   # Add mux sel calculation, and jumping to true or false states 
   # to current state after comb logic
@@ -1016,10 +1045,11 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(c_ast_node, curr_state_info, next_state_info, 
     prev_curr_state_info = curr_state_info
     curr_state_info = FsmStateInfo()
     curr_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_COND"
-    curr_state_info.always_next_state = None # Branching, no default
     states += [curr_state_info]
     # Prev state default goes to new state
     prev_curr_state_info.always_next_state = curr_state_info
+  # Whether new state info, or using old, null out default next state, must use branch_nodes_tf_states
+  curr_state_info.always_next_state = None # Branching, no default
     
   # Next increment needs own state?
   # Kinda like condition state but for next state?
@@ -1071,10 +1101,11 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
     prev_curr_state_info = curr_state_info
     curr_state_info = FsmStateInfo()
     curr_state_info.name = BUILD_STATE_NAME(c_ast_while) + "_WHILE_COND"
-    curr_state_info.always_next_state = None # Branching, no default
     states += [curr_state_info]
     # Prev state default goes to new state
     prev_curr_state_info.always_next_state = curr_state_info
+  # Whether new state info, or using old, null out default next state, must use branch_nodes_tf_states
+  curr_state_info.always_next_state = None # Branching, no default
   
   # Create a state for while body logic and insert it into return list of states
   while_state = FsmStateInfo()
@@ -1192,8 +1223,18 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
   all_post_states = set()
   for post_fsms_group in post_fsms_groups:
     all_post_states |= post_fsms_group
+  
   #### Exclude states end with clk
   ####all_post_and_ends_w_clk_states = all_post_states | states_ends_w_clk
+  if debug:
+    print("Start states:")
+    for state in start_states:
+      state.print()
+      print("=====", flush=True)
+    print("All post states:")
+    for state in all_post_states:
+      state.print()
+      print("=====", flush=True)
   pre_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state, 
     excluded_subfsm_states_and_subreturn=excluded_subfsm_states_and_subreturn,
     excluded_states=all_post_states) #all_post_and_ends_w_clk_states)
@@ -1225,20 +1266,23 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
       state_groups.remove(state_group)
   
   # Add states ending with clock to last group
-  last_state_group = state_groups[-1]
   # Unless last state group has states transitioning to one of the ending with clock states
   # (grouping in same group would force multiple clocks instead of pass through)
   needs_separate_last_state_group = False
-  for start_state in last_state_group:
-    trans_lists = GET_STATE_TRANS_LISTS(start_state, parser_state)
-    for trans_list in trans_lists:
-      if len(states_ends_w_clk.intersection(set(trans_list))) > 0:
-         needs_separate_last_state_group = True
-         break
-    if needs_separate_last_state_group:
-      break
-  # Unless that group is the FSMs group, skip that since might be FSM return that needs to come after
-  needs_separate_last_state_group |= (last_state_group==fsms_group)
+  if len(state_groups) > 0:
+    last_state_group = state_groups[-1]
+    for start_state in last_state_group:
+      trans_lists = GET_STATE_TRANS_LISTS(start_state, parser_state)
+      for trans_list in trans_lists:
+        if len(states_ends_w_clk.intersection(set(trans_list))) > 0:
+          needs_separate_last_state_group = True
+          break
+      if needs_separate_last_state_group:
+        break
+    # Unless that group is the FSMs group, skip that since might be FSM return that needs to come after
+    needs_separate_last_state_group |= (last_state_group==fsms_group)
+  else:
+    needs_separate_last_state_group = True # No groups, so need to add to last group
   # Separate last group?
   if needs_separate_last_state_group:
     last_state_group = states_ends_w_clk
