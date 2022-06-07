@@ -19,10 +19,13 @@ void drive_uart_wire(uint1_t the_bit)
   WIRE_WRITE(uint1_t, uart_data_out, the_bit)
 }
 
+// TODO 
+//  Could make a UART output register stand alone "module" 
+//  so its 'set once and wait' as opposed as is below 'drive constantly in while loop'
 void transmit_bit(uint1_t the_bit)
 {
   // Sending a bit in uart just means
-  // setting logic level for a bit period
+  // setting logic level for a bit period 
   uint16_t clk_counter = 0;
   while(clk_counter < (UART_CLKS_PER_BIT-1))
   {
@@ -31,25 +34,11 @@ void transmit_bit(uint1_t the_bit)
     __clk();
   }
 }
-// Need to specify single instance so only one driver of uart wire at a time
-#include "transmit_bit_SINGLE_INST.h"
-
-void transmit_start_bit()
-{
-  transmit_bit(UART_START);
-}
-//#include "transmit_start_bit_SINGLE_INST.h" // Needed? Wanted?
-
-void transmit_stop_bit()
-{
-  transmit_bit(UART_STOP);
-}
-//#include "transmit_stop_bit_SINGLE_INST.h" // Needed? Wanted?
 
 void transmit_byte(uint8_t the_byte)
 {
   // Send start bit
-  transmit_start_bit();
+  transmit_bit(UART_START);
 
   // Setup first data bit
   uint1_t the_bit = the_byte; // Drops msbs
@@ -65,9 +54,9 @@ void transmit_byte(uint8_t the_byte)
   }
 
   // Send stop bit
-  transmit_stop_bit();
+  transmit_bit(UART_STOP);
 }
-//#include "transmit_byte_SINGLE_INST.h" // Needed? Wanted?
+//#include "transmit_byte_SINGLE_INST.h" // If not using msgs at highest level
 
 void transmit_msg(uart_msg_t msg)
 {
@@ -83,7 +72,10 @@ void transmit_msg(uart_msg_t msg)
     the_byte = msg.data[0];
   }
 }
-//#include "transmit_msg_SINGLE_INST.h" // Needed? Wanted?
+// Need to specify single instance so only one driver of uart wire at a time
+// Only one "transmit_bit" instance per instance of "transmit_byte", etc
+// so single instance can be marked at 'highest level abstraction' possible
+#include "transmit_msg_SINGLE_INST.h"
 
 void wait_clks(uint16_t clks)
 {
@@ -93,6 +85,7 @@ void wait_clks(uint16_t clks)
     __clk();
   }
 }
+//#include "wait_clks_SINGLE_INST.h" // Wanted?
 
 // For those who dont like the WIRE macros...
 uint1_t read_uart_wire()
@@ -102,64 +95,45 @@ uint1_t read_uart_wire()
   return rv;
 }
 
-// Returns once the entire start bit period has elapsed
-// (cycle after return is start of first data bit)
-void receive_start_bit()
+uint8_t receive_byte()
 {
-  // Wait for UART_IDLE
+  // Wait for start bit transition
+  // First wait for UART_IDLE
   uint1_t the_bit = !UART_IDLE;
   while(the_bit != UART_IDLE)
   {
     the_bit = read_uart_wire();
     __clk();
   }
-
-  // Then wait for the start bit
+  // Then wait for the start bit start
   while(the_bit != UART_START)
   {
     the_bit = read_uart_wire();
     __clk();
   }
 
-  // Then wait entire start bit period
-  wait_clks(UART_CLKS_PER_BIT);
-}
-//#include "receive_start_bit_SINGLE_INST.h" // Needed? Wanted?
-
-uint1_t receive_bit()
-{
-  // Just read the wire
-  uint1_t the_bit = read_uart_wire();
-  // And wait a full bit period so next bit is ready to receive next
-  wait_clks(UART_CLKS_PER_BIT);
-  return the_bit;
-}
-//#include "receive_bit_SINGLE_INST.h" // Needed? Wanted?
-
-uint8_t receive_byte()
-{
-  // Wait for start bit
-  receive_start_bit();
-
-  // Wait for half of bit period to align to center of data
-  wait_clks(UART_CLKS_PER_BIT/2);
+  // Wait for 1.5 bit periods to align to center of first data bit
+  wait_clks(UART_CLKS_PER_BIT+UART_CLKS_PER_BIT_DIV2);
   
   // Loop sampling each data bit into 8b shift register
   uint8_t the_byte = 0;
   uint16_t i;
   for(i=0;i<8;i+=1)
   {
-    uint1_t the_bit = receive_bit();
+    // Read the wire
+    the_bit = read_uart_wire();
     // Shift buffer down to make room for next bit
     the_byte = the_byte >> 1;
-    // Save bit at top of shift reg [7]
+    // Save sampled bit at top of shift reg [7]
     the_byte |= ( (uint8_t)the_bit << 7 );
+    // And wait a full bit period so next bit is ready to receive next
+    wait_clks(UART_CLKS_PER_BIT);
   }
 
   // Dont need to wait for stop bit
   return the_byte;
 }
-//#include "receive_byte_SINGLE_INST.h" // Needed? Wanted?
+//#include "receive_byte_SINGLE_INST.h" // Wanted?
 
 uart_msg_t receive_msg()
 {
@@ -176,7 +150,7 @@ uart_msg_t receive_msg()
   }
   return msg;
 }
-//#include "receive_msg_SINGLE_INST.h" // Needed? Wanted?
+//#include "receive_msg_SINGLE_INST.h" // Wanted?
 
 /*
 // Do byte level loopback test
