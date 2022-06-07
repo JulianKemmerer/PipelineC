@@ -1,3 +1,5 @@
+#include "uintN_t.h"
+#include "wire.h"
 #include "compiler.h"
 #include "cdc.h"
 
@@ -10,7 +12,7 @@
 #define uart_word_t uint8_t
 #define uart_bit_count_t uint4_t
 #define uart_word_from_bits uint1_array8_le // PipelineC built in func
-#define UART_SEC_PER_BIT (1.0/UART_BAUD)
+#define UART_SEC_PER_BIT (1.0/(float)UART_BAUD)
 #define UART_CLKS_PER_BIT_FLOAT (UART_SEC_PER_BIT/SEC_PER_UART_CLK)
 #define UART_CLKS_PER_BIT ((uart_clk_count_t)UART_CLKS_PER_BIT_FLOAT)
 #define UART_CLKS_PER_BIT_DIV2 ((uart_clk_count_t)(UART_CLKS_PER_BIT_FLOAT/2.0))

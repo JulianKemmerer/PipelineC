@@ -178,7 +178,7 @@ uart_msg_t receive_msg()
 }
 //#include "receive_msg_SINGLE_INST.h" // Needed? Wanted?
 
-
+/*
 // Do byte level loopback test
 void main()
 {
@@ -188,8 +188,8 @@ void main()
     transmit_byte(the_byte);
   }
 }
+*/
 
-/*
 // Use uart msg for loopback test
 // Receive a uart msg, and then send it back
 void main()
@@ -200,7 +200,6 @@ void main()
     transmit_msg(msg);
   }
 }
-*/
 
 // Derived fsm from main
 #include "main_FSM.h"

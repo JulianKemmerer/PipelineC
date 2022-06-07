@@ -1,5 +1,5 @@
 // gcc uart_loopback_test.c -o uart_loopback_test -I ../../../../
-// sudo ./uart_loopback_test
+// sudo ./uart_loopback_test 100
 
 #include <math.h>
 #include <time.h> // TODO fix time measurements
