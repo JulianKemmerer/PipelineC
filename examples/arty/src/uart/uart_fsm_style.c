@@ -1,44 +1,25 @@
 #include "arrays.h"
 // UART top level IO
-#include "uart.c"
+#include "uart_w_out_reg.c"
 // Fixed size UART message buffers of N bytes
 #include "uart_msg.h"
 
-/* LOOPBACK TEST works: sudo screen /dev/ttyUSB1 115200
-MAIN_MHZ(main, UART_CLK_MHZ)
-void main()
+// Helper func to wait n clock cycles
+void wait_clks(uint16_t clks)
 {
-  uint1_t data_in;
-  WIRE_READ(uint1_t, data_in, uart_data_in)
-  WIRE_WRITE(uint1_t, uart_data_out, data_in)
-}*/
-
-// For those who dont like the WIRE macros...
-void drive_uart_wire(uint1_t the_bit)
-{
-  WIRE_WRITE(uint1_t, uart_data_out, the_bit)
-}
-
-// TODO 
-//  Could make a UART output register stand alone "module" 
-//  so its 'set once and wait' as opposed as is below 'drive constantly in while loop'
-void transmit_bit(uint1_t the_bit)
-{
-  // Sending a bit in uart just means
-  // setting logic level for a bit period 
-  uint16_t clk_counter = 0;
-  while(clk_counter < (UART_CLKS_PER_BIT-1))
+  while(clks > 0)
   {
-    drive_uart_wire(the_bit);
-    clk_counter += 1;
+    clks -= 1;
     __clk();
   }
 }
+//#include "wait_clks_SINGLE_INST.h" // Wanted?
 
 void transmit_byte(uint8_t the_byte)
 {
   // Send start bit
-  transmit_bit(UART_START);
+  set_uart_output(UART_START);
+  wait_clks(UART_CLKS_PER_BIT);
 
   // Setup first data bit
   uint1_t the_bit = the_byte; // Drops msbs
@@ -47,14 +28,17 @@ void transmit_byte(uint8_t the_byte)
   uint16_t i;
   for(i=0;i<8;i+=1)
   {
-    transmit_bit(the_bit);
+    // Transmit bit
+    set_uart_output(the_bit);
+    wait_clks(UART_CLKS_PER_BIT);
     // Setup next bit
     the_byte = the_byte >> 1;
     the_bit = the_byte;
   }
 
   // Send stop bit
-  transmit_bit(UART_STOP);
+  set_uart_output(UART_STOP);
+  wait_clks(UART_CLKS_PER_BIT);
 }
 //#include "transmit_byte_SINGLE_INST.h" // If not using msgs at highest level
 
@@ -77,24 +61,6 @@ void transmit_msg(uart_msg_t msg)
 // so single instance can be marked at 'highest level abstraction' possible
 #include "transmit_msg_SINGLE_INST.h"
 
-void wait_clks(uint16_t clks)
-{
-  while(clks > 0)
-  {
-    clks -= 1;
-    __clk();
-  }
-}
-//#include "wait_clks_SINGLE_INST.h" // Wanted?
-
-// For those who dont like the WIRE macros...
-uint1_t read_uart_wire()
-{
-  uint1_t rv;
-  WIRE_READ(uint1_t, rv, uart_data_in)
-  return rv;
-}
-
 uint8_t receive_byte()
 {
   // Wait for start bit transition
@@ -102,13 +68,13 @@ uint8_t receive_byte()
   uint1_t the_bit = !UART_IDLE;
   while(the_bit != UART_IDLE)
   {
-    the_bit = read_uart_wire();
+    the_bit = get_uart_input();
     __clk();
   }
   // Then wait for the start bit start
   while(the_bit != UART_START)
   {
-    the_bit = read_uart_wire();
+    the_bit = get_uart_input();
     __clk();
   }
 
@@ -121,7 +87,7 @@ uint8_t receive_byte()
   for(i=0;i<8;i+=1)
   {
     // Read the wire
-    the_bit = read_uart_wire();
+    the_bit = get_uart_input();
     // Shift buffer down to make room for next bit
     the_byte = the_byte >> 1;
     // Save sampled bit at top of shift reg [7]
