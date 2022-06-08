@@ -37,11 +37,3 @@ void set_uart_output(uint1_t data)
     __clk();
   }
 }
-
-// For those who dont like the WIRE macros...
-uint1_t get_uart_input()
-{
-  uint1_t rv;
-  WIRE_READ(uint1_t, rv, uart_data_in)
-  return rv;
-}

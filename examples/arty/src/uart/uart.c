@@ -44,3 +44,12 @@ uint1_t uart_module(uint1_t data_in)
   WIRE_READ(uint1_t, data_out, uart_data_out)
   return data_out;
 }
+
+// For those who dont like the WIRE macros...
+uint1_t get_uart_input()
+{
+  uint1_t rv;
+  WIRE_READ(uint1_t, rv, uart_data_in)
+  __clk();
+  return rv;
+}

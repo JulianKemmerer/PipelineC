@@ -69,13 +69,11 @@ uint8_t receive_byte()
   while(the_bit != UART_IDLE)
   {
     the_bit = get_uart_input();
-    __clk();
   }
   // Then wait for the start bit start
   while(the_bit != UART_START)
   {
     the_bit = get_uart_input();
-    __clk();
   }
 
   // Wait for 1.5 bit periods to align to center of first data bit
