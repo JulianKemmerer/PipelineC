@@ -8160,10 +8160,22 @@ def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
   text = ""
   for func_name in sorted(float_funcs):
     instances = sorted(parser_state.FuncToInstances[func_name])
-    text += f"{func_name} {len(instances)} instances:\n"
+    # Sort by main func
+    main_to_insts = dict()
     for instance in instances:
-      text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
-    text += "\n"
+      main_func = instance.split(SUBMODULE_MARKER)[0]
+      if main_func not in main_to_insts:
+        main_to_insts[main_func] = []
+      main_to_insts[main_func].append(instance)
+
+    # Print total and then by main func
+    text += f"{func_name} num_instances= {len(instances)} :\n"
+    for main_func in sorted(main_to_insts):
+      this_main_insts = main_to_insts[main_func]
+      text += f"{func_name} main: {main_func} num_instances= {len(this_main_insts)} :\n"
+      for instance in sorted(this_main_insts):
+        text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
+    text += "\n"    
     
   out_file = SYN.SYN_OUTPUT_DIRECTORY + "/float_module_instances.log"
   print(f"Writing log of floating point module instances: {out_file}")
