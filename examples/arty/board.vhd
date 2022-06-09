@@ -360,18 +360,18 @@ port map
 -- Hold in reset until clocks are ready
 pixel_clk_reset_n <= vga_clocks_ready;
 
--- Phase shifted/delayed pixel clock
-vga_clock_shift_inst : vga_clock_shift
-   port map ( 
-   -- Clock out ports  
-   pixel_clk_shifted => vga_pixel_clk_delayed,
-   -- Status and control signals                
-   locked => vga_clocks_delayed_ready,
-   -- Clock in ports
-   pixel_clk => vga_pixel_clk
- );
--- Hold in reset until clocks are ready
-pixel_clk_delayed_reset_n <= vga_clocks_delayed_ready;
+--  -- Phase shifted/delayed pixel clock
+--  vga_clock_shift_inst : vga_clock_shift
+--     port map ( 
+--     -- Clock out ports  
+--     pixel_clk_shifted => vga_pixel_clk_delayed,
+--     -- Status and control signals                
+--     locked => vga_clocks_delayed_ready,
+--     -- Clock in ports
+--     pixel_clk => vga_pixel_clk
+--   );
+--  -- Hold in reset until clocks are ready
+--  pixel_clk_delayed_reset_n <= vga_clocks_delayed_ready;
 
 -- -- DDR clocks based off of the board's CLK100MHZ 
 -- ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
@@ -547,7 +547,7 @@ top_inst : entity work.top port map (
     -- Generic main function clocks
     --clk_6p25 => clk_6p25,
     --clk_22p579 => clk_22p579,
-    --clk_25p0 => vga_pixel_clk,
+    clk_25p0 => clk_25,
     --clk_74p25 => vga_pixel_clk,
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
@@ -571,17 +571,17 @@ top_inst : entity work.top port map (
     -- switches_module_sw => unsigned(sw),
     
     -- Buttons
-    buttons_module_btn => unsigned(btn),
+    --buttons_module_btn => unsigned(btn),
 
     -- UART
-    --uart_module_data_in(0) => uart_txd_in,
-    --uart_module_return_output(0) => uart_rxd_out
+    uart_module_data_in(0) => uart_txd_in,
+    uart_module_return_output(0) => uart_rxd_out
     
     -- DVI PMOD on PMODB+C specific
-    pixel_clock(0) => vga_pixel_clk,
-    clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
+    --pixel_clock(0) => vga_pixel_clk,
+    --clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
     -- Double rate DVI PMOD clock, PMODC[2] c.jc2 = ddr_clk;
-    dvi_pmod_shifted_clock_return_output(0) => jc(2),
+    --dvi_pmod_shifted_clock_return_output(0) => jc(2),
     
     -- PMODA
     ----pmod_ja_return_output.ja0(0) => ja(0),
@@ -593,23 +593,23 @@ top_inst : entity work.top port map (
     --pmod_ja_return_output.ja6(0) => ja(6),
     --pmod_ja_inputs.ja7(0) => ja(7),
     -- PMODB (High Speed)
-    pmod_jb_return_output.jb0(0) => jb(0),
-    pmod_jb_return_output.jb1(0) => jb(1),
-    pmod_jb_return_output.jb2(0) => jb(2),
-    pmod_jb_return_output.jb3(0) => jb(3),
-    pmod_jb_return_output.jb4(0) => jb(4),
-    pmod_jb_return_output.jb5(0) => jb(5),
-    pmod_jb_return_output.jb6(0) => jb(6),
-    pmod_jb_return_output.jb7(0) => jb(7),
+    --  pmod_jb_return_output.jb0(0) => jb(0),
+    --  pmod_jb_return_output.jb1(0) => jb(1),
+    --  pmod_jb_return_output.jb2(0) => jb(2),
+    --  pmod_jb_return_output.jb3(0) => jb(3),
+    --  pmod_jb_return_output.jb4(0) => jb(4),
+    --  pmod_jb_return_output.jb5(0) => jb(5),
+    --  pmod_jb_return_output.jb6(0) => jb(6),
+    --  pmod_jb_return_output.jb7(0) => jb(7),
     -- PMODC (High Speed)
-    pmod_jc_return_output.jc0(0) => jc(0),
-    pmod_jc_return_output.jc1(0) => jc(1),
-    pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
-    pmod_jc_return_output.jc3(0) => jc(3),
-    pmod_jc_return_output.jc4(0) => jc(4),
-    pmod_jc_return_output.jc5(0) => jc(5),
-    pmod_jc_return_output.jc6(0) => jc(6),
-    pmod_jc_return_output.jc7(0) => jc(7)
+    --  pmod_jc_return_output.jc0(0) => jc(0),
+    --  pmod_jc_return_output.jc1(0) => jc(1),
+    --  pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
+    --  pmod_jc_return_output.jc3(0) => jc(3),
+    --  pmod_jc_return_output.jc4(0) => jc(4),
+    --  pmod_jc_return_output.jc5(0) => jc(5),
+    --  pmod_jc_return_output.jc6(0) => jc(6),
+    --  pmod_jc_return_output.jc7(0) => jc(7)
     -- -- PMODD
     -- pmod_jd_return_output.jd0(0) => jd(0),
     -- pmod_jd_return_output.jd1(0) => jd(1),
