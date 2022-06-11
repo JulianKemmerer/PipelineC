@@ -4,12 +4,12 @@
 #include "uintN_t.h"
 
 // Set FPGA part/synthesis tool see ../main.c for examples.
-//#pragma PART "LFE5UM5G-85F-8BG756C"
+#pragma PART "LFE5UM5G-85F-8BG756C"
 
 // The accumulation cannot be pipelined (need result in a single cycle)
 // So isolate the local state variable function doing just accumulate
-float accum(float inc){
-  static float total = 0.0;
+uint32_t accum(uint32_t inc){
+  static uint32_t total = 0;
   total += inc;
   return total;
 }
@@ -17,8 +17,8 @@ float accum(float inc){
 // Everything outside of 'accum' (the multiply) is autopipelined
 //#pragma MAIN_MHZ mult_accum 200.0
 #pragma MAIN mult_accum
-float mult_accum(float x, float y)
+uint32_t mult_accum(uint32_t x, uint32_t y)
 {
-  float prod = x * y;
+  uint32_t prod = x * y;
   return accum(prod);
 }
