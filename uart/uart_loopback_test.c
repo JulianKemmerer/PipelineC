@@ -1,4 +1,4 @@
-// gcc uart_loopback_test.c -o uart_loopback_test -I ../../../../
+// gcc uart_loopback_test.c -o uart_loopback_test -I ../
 // sudo ./uart_loopback_test 100
 
 #include <math.h>
