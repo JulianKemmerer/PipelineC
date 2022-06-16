@@ -50,6 +50,6 @@ uint1_t get_uart_input()
 {
   uint1_t rv;
   WIRE_READ(uint1_t, rv, uart_data_in)
-  __clk();
+  // __clk(); // Clock handling moved inside receive function
   return rv;
 }
