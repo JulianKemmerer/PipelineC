@@ -4241,9 +4241,12 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(value_str, c_ast_node, is_negat
       else:
         c_type_str = "uint" + str(bits) + "_t"
   elif value_str.startswith("'"): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='char':
+    # value is expected to be integer like for negating (doesnt make sense for str), for char it does
     value = value_str.strip("'")
-    c_type_str = "char"
+    #c_type_str = "char"
     #print "Char val", value
+    c_type_str = "uint8_t"
+    value = ord(value)
   elif value_str.startswith('"'): #type(c_ast_node) == c_ast.Constant and c_ast_node.type=='string':
     value = value_str.strip('"')
     actual_str = C_CONST_STR_TO_STR_VALUE(value)
@@ -5375,6 +5378,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       rhs_val_str_no_neg = rhs_val_str.strip('-')
       lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(lhs_val_str_no_neg, func_c_ast_node, lhs_negated)
       rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(rhs_val_str_no_neg, func_c_ast_node, rhs_negated)
+      #print("lhs_val, lhs_c_type",lhs_val, lhs_c_type)
+      #print("rhs_val, rhs_c_type",rhs_val, rhs_c_type)
       '''# Prefer exisitng type if set
       if lhs_wire in parser_state.existing_logic.wire_to_c_type:
         lhs_c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
