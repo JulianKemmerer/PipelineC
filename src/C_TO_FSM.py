@@ -31,12 +31,16 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.For:
     maybe_semicolon = ""
+  elif is_lhs:
+    maybe_semicolon = ""
+  '''
   elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.Decl and is_lhs:
     maybe_semicolon = ""
   elif type(c_ast_node) == c_ast.ID and is_lhs:
     maybe_semicolon = ""
+  '''
   #print(type(c_ast_node))
   text += maybe_semicolon
   

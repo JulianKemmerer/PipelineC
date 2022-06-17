@@ -465,9 +465,11 @@ begin
       clk_ext_strs = set()
       for main_i in all_mains:
         clk_ext_str_i = CLK_EXT_STR(main_i, parser_state)
+        if clk_ext_str_i not in clk_ext_strs and (len(clk_ext_strs)>0):
+          raise Exception(f"Cannot have multiple clock domains on the arbitrated clock crossing pair {arb_handshake_info.input_var_name} {arb_handshake_info.output_var_name} {all_mains} {clk_ext_strs} doesnt match other main clock for {main_i}={clk_ext_str_i}!")
         clk_ext_strs.add(clk_ext_str_i)
-      if len(clk_ext_strs) > 1:
-        raise Exception(f"Cannot have multiple clock domains on the arbitrated clock crossing pair {arb_handshake_info.input_var_name} {arb_handshake_info.output_var_name}!")
+      #if len(clk_ext_strs) > 1:
+      #  raise Exception(f"Cannot have multiple clock domains on the arbitrated clock crossing pair {arb_handshake_info.input_var_name} {arb_handshake_info.output_var_name} {clk_ext_strs}!")
       clk_ext_str = list(clk_ext_strs)[0]
 
     arb_inst_name = arb_handshake_info.input_var_name + '''_''' + arb_handshake_info.output_var_name
