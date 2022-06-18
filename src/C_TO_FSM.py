@@ -70,7 +70,10 @@ class FsmStateInfo:
     self.starts_w_fsm_func_return_output_driven_things = None
   
   # Is it ok to add a func return to this state?
-  def is_ok_for_return(self):
+  # Not sure this makes sense since asking about future states to be filled in, not past states
+  # next_state.is_ok_for_fsm_func_return not like curr_state.is_ok_for_jump_back 
+  '''
+  def is_ok_for_fsm_func_return(self):
     # Not ok to to add return to backwards cond jump
     if self.branch_nodes_tf_states is not None:
       c_ast_node,true_state, false_state = self.branch_nodes_tf_states
@@ -88,7 +91,10 @@ class FsmStateInfo:
       return False
     if self.starts_w_fsm_func_return is not None:
       return False
+    if self.return_node is not None:
+      return False
     return True
+  '''
   
   # Is ok to repeatedly come back to this state
   def is_ok_for_jump_back(self):
@@ -893,22 +899,18 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(c_ast_node, curr_state_info, next_state_
     
       
   # Make state after curr func, next_state_info, have func return logic
-  # Need new state if going to while loop condition
-  #if next_state_info is None:
-  #  print("No next state entering curr func ",curr_state_info.name)
-  #  sys.exit(-1)
-  #print("next_state_info")
-  #next_state_info.print()
-  #print("ok return?",next_state_info.is_ok_for_return())
-  #print("")
+  # Need new state if ...always? Cant tell?
+  # Not sure this makes sense since asking about future states to be filled in, not past states
+  # next_state.is_ok_for_fsm_func_return not like curr_state.is_ok_for_jump_back 
   next_state_info_was_none = next_state_info is None
-  if next_state_info_was_none or not next_state_info.is_ok_for_return():
-    future_next_state_info = next_state_info
-    next_state_info = FsmStateInfo()
-    next_state_info.always_next_state = future_next_state_info
-    curr_state_info.always_next_state = next_state_info
-    next_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_EXIT"
-    states.append(next_state_info)
+  #if next_state_info_was_none or not next_state_info.is_ok_for_fsm_func_return():
+  future_next_state_info = next_state_info
+  next_state_info = FsmStateInfo()
+  next_state_info.always_next_state = future_next_state_info
+  curr_state_info.always_next_state = next_state_info
+  next_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_EXIT"
+  states.append(next_state_info)
+  
   next_state_info.starts_w_fsm_func_return = c_ast_node
   next_state_info.starts_w_fsm_func_return_output_driven_things = output_driven_things
   # None next state means subroutine return goes right to fsm return after

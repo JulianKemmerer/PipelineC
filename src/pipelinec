@@ -7,6 +7,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import C_TO_LOGIC
+#import CLANG_TO_LOGIC
 import SYN
 import SIM
 import OPEN_TOOLS
@@ -82,6 +83,9 @@ print("================== Parsing C Code to Logical Hierarchy ==================
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
+#CLANG_TO_LOGIC.PARSE_FILE(c_file)
+#print("TEMP END")
+#sys.exit(0)
 
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
@@ -113,19 +117,30 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Finalize how to run demo for FCCM workshop
+Lemon's UART cmd+resp demo
+  See Discord picture
+How to fix FSM style resuse
+  Only single instance of any func per main function FSM top level should be default
+  Not SINGLE INST, but "THREAD_INST" - but default _FSM should be this way
+Allow global variables to be directly used (not as wires) to communicate between functions
+  Like another type of clock crossing (isnt wire, is delated clock output of reg)
 Victor's RT
-  Seems ready for hardware test ECP5 85F device at 480p..
-  Try to squeeze in 720p on ecp5?
-  Increase size of sphere
-    Make tech demo slow movement+even bigger sphere? (buttons for interation user moving sphere anywhere?)
-  Remove button slow 60hz cdc2
-  Make repo public before fccm
+  Victor UART based single x,y pixel dump
+  Victor mailing capture card for video from FPGA?
+  More power measurements?
+  Review article
+  Help make UART litex project demo too
+  ALT UI shows glitching in hardware test, prob pipeline problem, no verilator issue
+  Full RT Seems ready for hardware test ECP5 85F device at 480p...
+    Try to squeeze in 720p on ecp5?
+  Full gamepad, buttons/joystick rpi cover
 Do UART in clk() style, compare to original style
-  Need to simulate+debug __clk style FSMs
-    Now good time to make FSM timing consistent (forward flow always clk-less)
-  make video?
+  Do fsm style write up page, include hierarchy of function resuse/single instance
+  Refresh hdl-style original uart
+  make video out of comparison?
+  RX then a TX in half duplex loopback, but end saying best to have two always runing MAINs
 Try to fix/refresh AWS DMA demo
+  / use PCIe FPGA from Quarky for same demo?
   Solve AWS multithreaded off by one or two problem...
 Publish math packages 0,1,2..n clock versions of things for all sorts of devices
   Automate with --math_pkg <func name> --part <FPGA PART>
@@ -146,6 +161,8 @@ Single direction data handshaked clock crossing
 Do more basic tutorials like nandland+hdlbits
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
+Try to restructure FSM style parsing + building of states list to be bottom up ~ last states first
+  as opposed to top down, first states first, since asking next_state.is_something() isnt valid since next state is shell, to be filled in
 Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
 Can XLS C++ -> XLS IR be used to map XLS IR to PipelineC / replace it?
 Can XLA for GPU/TPU partitioning help with PipelineC?
@@ -160,7 +177,7 @@ Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 Implement break; in clk step style?
 How does multiple ins and out over time work in clk step style?  (not hdl wrapper)
-First refactor fosix stuff:
+Refactor fosix stuff:
   do demo 1b wide data bus
     ^ something stream based + varable length not uart fixed msg size
   Do VGA driven from NoC element
@@ -174,12 +191,15 @@ Check auto pipeline and clock crossing read+write behavior
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Make reset module for Arty
+Try small python ast parsing based example - Pypeline?
+Go AST? 
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do CASE statements
+Do tagged unions as union type w/ gen tag type, and gen funcs taking union type and tag, decoding to struct type
 Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
@@ -188,7 +208,6 @@ Add pragmas for syn tool command lines options
 Finish chipscope+virtual io debug thing (write probes) + add w/ pass through regular streaming uart io?
 ^Full board arty example using ddr, sw,leds, uart for debug+stream, etc
 Continue completing clock crossing features, tool support (volatile/pipelined logic wires w/ clock enable double check)
-Try small python ast parsing based example - Pypeline?
 How to remove excess io regs from middle out sweep?
 Redo G/LT/E to use add/sub and <0==sign bit, write in PipelineC? better than hand pipelining vhdl
 ^ Redo all add sub to use single pipelined adder with twos complement invert set carryin=1 stuff?
