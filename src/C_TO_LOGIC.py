@@ -8443,6 +8443,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         inferring = True
       if len(write_mhz_group_tuples) == 1:
         write_mhz,write_group = list(write_mhz_group_tuples)[0]
+      else:
+        write_mhz = None
+        write_group = None
       
       # Can only be one read side mhz,group
       read_mhz_group_tuples = set()
@@ -8459,11 +8462,16 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         inferring = True
       if len(read_mhz_group_tuples) == 1:
         read_mhz,read_group = list(read_mhz_group_tuples)[0]
+      else:
+        read_mhz = None
+        read_group = None
+
+      #print("var_name",var_name, "read_mhz", read_mhz, "read_main_funcs",read_main_funcs,"write_mhz",write_mhz, "write_main_funcs",write_main_funcs) 
      
       # Infer from each side
       for read_main_func in read_main_funcs:
         # Infer freqs to match if possible and same groups
-        if read_main_func is not None and read_mhz is None and write_mhz is not None and (read_group is None or read_group==write_group):
+        if read_main_func is not None and parser_state.main_mhz[read_main_func] is None and write_mhz is not None and (read_group is None or read_group==write_group):
           print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
           read_mhz = write_mhz
           parser_state.main_mhz[read_main_func] = read_mhz
@@ -8472,14 +8480,14 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           if read_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[read_main_func] is None:
             parser_state.main_syn_mhz[read_main_func] = read_mhz
           inferring = True
-      for write_main_func in write_main_funcs: 
-        if write_main_func is not None and read_mhz is not None and write_mhz is None and (write_group is None or write_group==read_group):
+      for write_main_func in write_main_funcs:
+        if write_main_func is not None and read_mhz is not None and parser_state.main_mhz[write_main_func] is None and (write_group is None or write_group==read_group):
           print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
           write_mhz = read_mhz
           parser_state.main_mhz[write_main_func] = write_mhz
           write_group = read_group
           parser_state.main_clk_group[write_main_func] = write_group
-          if write_main_func not in write_main_func or parser_state.main_syn_mhz[write_main_func] is None:
+          if write_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[write_main_func] is None:
             parser_state.main_syn_mhz[write_main_func] = write_mhz
           inferring = True
           
@@ -8489,6 +8497,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           
 
   # Then loop to construct each clock crossings info
+  #print("Clocks done: parser_state.main_mhz",parser_state.main_mhz)
   for var_name in var_names:
     # Skip temp during code gen disconnected write side
     if var_name not in var_to_rw_mhz_groups:
@@ -8497,6 +8506,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
     # Match mhz for disconnected read side - needed here?
     if write_mhz is not None and read_mhz is None:
+      #print("WARNING: Clock crossing {var_name} appears to be never read!")
       read_mhz = write_mhz
     # Sanity check
     if read_mhz is None and write_mhz is None:
