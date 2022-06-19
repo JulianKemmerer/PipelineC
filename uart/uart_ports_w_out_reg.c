@@ -11,7 +11,7 @@ uint1_t uart_out_reg_enable;
 MAIN_MHZ(uart_out_reg_module, UART_CLK_MHZ)
 void uart_out_reg_module()
 {
-  static uint1_t the_reg;
+  static uint1_t the_reg = UART_IDLE;
   WIRE_WRITE(uint1_t, uart_data_out, the_reg)
   uint1_t reg_data;
   uint1_t reg_enable;
@@ -23,17 +23,21 @@ void uart_out_reg_module()
   }
 }
 
-void set_uart_output(uint1_t data)
+void set_uart_out_reg_en(uint1_t en)
+{
+   WIRE_WRITE(uint1_t, uart_out_reg_enable, en)
+}
+// Single instance FSM because can only be one WIRE_WRITE instance
+#include "set_uart_out_reg_en_SINGLE_INST.h"
+
+void set_uart_out_reg(uint1_t data)
 {
   // Drive the output register for a clock cycle
+  // Set both data and enable
   WIRE_WRITE(uint1_t, uart_out_reg_data, data)
-  // Use loop to signal enable for a cycle, then clear
-  // (needs to be loop to work around having two wire write instances in code
-  //  PipelineC tool sees it as multiple drivers...)
-  int8_t en;
-  for(en=1; en>=0; en-=1)
-  {
-    WIRE_WRITE(uint1_t, uart_out_reg_enable, en)
-    __clk();
-  }
+  set_uart_out_reg_en(1);
+  // And then clear enable
+  set_uart_out_reg_en(0);
 }
+// Single instance FSM because can only be one WIRE_WRITE instance
+#include "set_uart_out_reg_SINGLE_INST.h"

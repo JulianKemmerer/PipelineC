@@ -46,10 +46,17 @@ uint1_t uart_module(uint1_t data_in)
 }
 
 // For those who dont like the WIRE macros...
-uint1_t get_uart_input()
+uint1_t read_uart_input_wire()
 {
   uint1_t rv;
   WIRE_READ(uint1_t, rv, uart_data_in)
   // __clk(); // Clock handling moved inside receive function
   return rv;
 }
+
+uint1_t get_uart_input()
+{
+  return read_uart_input_wire();
+}
+// FSM because using "get" to mean fsm style
+#include "get_uart_input_FSM.h"
