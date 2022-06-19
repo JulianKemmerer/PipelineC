@@ -1,4 +1,5 @@
 /*
+// Include PipelineC repo root and output directory from your run
 gcc uart_cmd_resp_demo_test.c -o uart_cmd_resp_demo_test -I ../../ -I ~/pipelinec_output
 sudo ./uart_cmd_resp_demo_test
 Baud: B115200 

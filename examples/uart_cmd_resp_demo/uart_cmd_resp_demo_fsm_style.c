@@ -99,7 +99,7 @@ uart_cmd_resp_t execute_bus_cmd(uart_cmd_resp_t cmd)
   return resp;
 }
 
-// Top level FSM that waits for commands, executes them, produces responses
+// Top level FSM that waits for commands to be received, executes them, transmits responses
 // (sequential, FSM style, one command in flight at a time)
 void bus_transactor()
 {

@@ -3,13 +3,13 @@
 #pragma once
 
 #include "uintN_t.h"
-#include "uart.c"
+#include "uart/uart_ports.c"
 
 // Convert framed async serial data to sync data+valid word stream
 // rule of thumb name "_s" 'stream' if has .valid and .data
 typedef struct uart_mac_s
 {
-  uart_word_t data;
+  uint8_t data;
   uint1_t valid;
 }uart_mac_s;
 
@@ -27,7 +27,7 @@ volatile uint1_t uart_rx_mac_overflow;
 #include "clock_crossing/uart_rx_mac_overflow.h"
 
 // Deserialize eight bits into one 8b byte
-#include "deserializer.h"
+#include "stream/deserializer.h"
 deserializer(uart_deserializer, uint1_t, UART_WORD_BITS) 
 
 // RX logic
@@ -143,7 +143,7 @@ uint1_t uart_tx_mac_in_ready;
 // is always slighty greater than RX bandwidth to avoid overflow
 #define UART_TX_CHEAT_CYCLES 1
 // Serialize one 8b byte into eight single bits
-#include "serializer.h"
+#include "stream/serializer.h"
 serializer(uart_serializer, uint1_t, UART_WORD_BITS)
 
 // TX logic

@@ -11,7 +11,6 @@
 
 #define UART_BAUD 115200
 #define UART_WORD_BITS 8
-#define uart_word_t uint8_t
 #define uart_bit_count_t uint4_t
 #define uart_word_from_bits uint1_array8_le // PipelineC built in func
 #define UART_SEC_PER_BIT (1.0/(float)UART_BAUD)
