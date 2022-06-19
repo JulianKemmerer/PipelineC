@@ -24,7 +24,7 @@ typedef struct uart_cmd_resp_buf_t{
 #include "uart_cmd_resp_demo_buffers.c"
 
 // Top level FSM that deserializes UART bytes to commands, writes to shared cmd buffer
-void uart_cmd_derser()
+void uart_cmd_deser()
 {
   while(1)
   {
