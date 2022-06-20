@@ -376,7 +376,7 @@ class PathReport:
       sys.exit(-1)
   
 # inst_name=None means multimain
-def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None):
+def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None, is_final_top=False):
   rv = ""
   
   # Add in VHDL 2008 fixed/float support?
@@ -387,7 +387,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, ins
   # Becuase dumb
   
   # Single read vhdl line
-  files_txt,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
+  files_txt,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name, is_final_top)
   rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n"
     
   # Write clock xdc and include it

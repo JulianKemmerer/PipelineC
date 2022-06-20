@@ -4186,15 +4186,18 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst_name
   
   return text
 
-def GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name=None):
+def GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name=None, is_final_top=False):
   if inst_name:
     Logic = parser_state.LogicInstLookupTable[inst_name]
     top_entity_name = GET_ENTITY_NAME(inst_name, Logic,multimain_timing_params.TimingParamsLookupTable, parser_state) + "_top"
   else:
-    # Hash for multi main is just hash of main pipes
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    # Entity and file name
-    top_entity_name = "top" + hash_ext
+    if is_final_top:
+      top_entity_name = "top"
+    else:
+      # Hash for multi main is just hash of main pipes
+      hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+      # Entity and file name
+      top_entity_name = "top" + hash_ext
     
   return top_entity_name
 

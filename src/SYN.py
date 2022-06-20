@@ -1477,10 +1477,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   
   # Do generic dump of vhdl files
   # Which vhdl files?
-  vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state)
-  # One more rvhdl line for the final entity  with constant name
-  top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
-  vhdl_files_texts += " " + top_file_path
+  vhdl_files_texts,top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name=None, is_final_top=is_final_top)
   out_filename = "vhdl_files.txt"
   out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
   out_text = vhdl_files_texts
@@ -1488,30 +1485,41 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
   f.write(out_text)
   f.close()
   
-  # read_vhdl.tcl only for Vivado for now
+  # TODO better GUI / tcl scripts support for other tools
+  # ^ incorporate into GET_VHDL_FILES_TCL_TEXT_AND_TOP instead of hacky below?
   if SYN_TOOL is VIVADO:
-    # TODO better GUI / tcl scripts support for other tools
     # Write read_vhdl.tcl
-    tcl = VIVADO.GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state)
+    tcl = VIVADO.GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None, is_final_top=is_final_top)
     rv_lines = []
     for line in tcl.split('\n'):
       # Hacky AF Built To Spill - Kicked It In The Sun
       if line.startswith("read_vhdl") or line.startswith("add_files") or line.startswith("set_property"):
-        rv_lines.append(line)
-    
+        rv_lines.append(line) 
     rv = ""
     for line in rv_lines:
       rv += line + "\n"
-    
-    # One more read_vhdl line for the final entity  with constant name
-    top_file_path = SYN_OUTPUT_DIRECTORY + "/top/top.vhd"
-    rv += "read_vhdl -library work {" + top_file_path + "}\n"
       
     # Write file
     out_filename = "read_vhdl.tcl"
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     out_text = rv
+  elif SYN_TOOL is QUARTUS:
+    # Pull set vhdl file assignment lines from file (gets ieee stuff too)
+    # I dont think its too hacky right? lolz Baby When I Close My Eyes -Sweet Spirit
+    constraints_filepath = "" # fine for this
+    tcl = QUARTUS.GET_SH_TCL(top_entity_name, vhdl_files_texts, constraints_filepath, parser_state)
+    rv_lines = []
+    for line in tcl.split('\n'):
+      if line.startswith("set_global_assignment -name VHDL_FILE"):
+        rv_lines.append(line)
+    rv = ""
+    for line in rv_lines:
+      rv += line + "\n"
     
+    # Write file
+    out_filename = "read_vhdl.tcl"
+    out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
+    out_text = rv
     
   print("Output VHDL files:", out_filepath)
   f=open(out_filepath,"w")
@@ -3241,8 +3249,9 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
   # And clock cross entities
   VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
   
+# Should this branch to call syn tool specific includes of like ieee files?
 # returns vhdl_files_txt,top_entity_name
-def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name=None):
+def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name=None, is_final_top=False):
   # Read in vhdl files with a single (faster than multiple) read_vhdl
   files_txt = ""
   
@@ -3269,7 +3278,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
     
   
   # Top not shared
-  top_entity_name = VHDL.GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name)
+  top_entity_name = VHDL.GET_TOP_ENTITY_NAME(parser_state, multimain_timing_params, inst_name, is_final_top)
   if inst_name:
     Logic = parser_state.LogicInstLookupTable[inst_name]
     output_directory = GET_OUTPUT_DIRECTORY(Logic)

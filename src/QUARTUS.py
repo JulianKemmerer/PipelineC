@@ -330,54 +330,9 @@ exit 0
     f.close()
     
     # sh.tcl
-    
     f=open(sh_tcl_path,'w')
-    f.write('''
-load_package flow
-
-# Thanks internet
-proc make_all_pins_virtual {} {
-
- execute_module -tool map
-
- set name_ids [get_names -filter * -node_type pin]
-
- foreach_in_collection name_id $name_ids {
-    set pin_name [get_name_info -info full_path $name_id]
-    post_message "Making VIRTUAL_PIN assignment to $pin_name"
-    set_instance_assignment -to $pin_name -name VIRTUAL_PIN ON
- }
- export_assignments
-}
-
-# Create the project
-project_new ''' + top_entity_name + ''' -overwrite
-# Set top level info
-set_global_assignment -name FAMILY "''' + PART_TO_FAMILY(parser_state.part) + '''"
-set_global_assignment -name DEVICE ''' + parser_state.part + '''
-set_global_assignment -name TOP_LEVEL_ENTITY ''' + top_entity_name + '''
-set_global_assignment -name SDC_FILE ''' + constraints_filepath + '''
-# All the generated vhdl includes
-''')
-    # All the generated vhdl files
-    for vhdl_file_text in vhdl_files_texts.split(" "): # hacky
-      vhdl_file_text = vhdl_file_text.strip()
-      if vhdl_file_text != "":
-        f.write('''set_global_assignment -name VHDL_FILE ''' + vhdl_file_text + '''
-''')
-
-    # IEEE proposed since quartus lite doesnt include vhdl 2008
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n")
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n")
-    f.write(f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n")   
-
-    # Do compile
-    f.write('''
-# compile the project
-make_all_pins_virtual
-execute_flow -compile
-project_close    
-''')
+    sh_tcl_text = GET_SH_TCL(top_entity_name, vhdl_files_texts, constraints_filepath, parser_state)
+    f.write(sh_tcl_text)
     f.close()
     
     #sta.tcl
@@ -409,3 +364,52 @@ project_close
     
   return ParsedTimingReport(log_text)
   
+def GET_SH_TCL(top_entity_name, vhdl_files_texts, constraints_filepath, parser_state):
+  text = '''
+load_package flow
+
+# Thanks internet
+proc make_all_pins_virtual {} {
+
+ execute_module -tool map
+
+ set name_ids [get_names -filter * -node_type pin]
+
+ foreach_in_collection name_id $name_ids {
+    set pin_name [get_name_info -info full_path $name_id]
+    post_message "Making VIRTUAL_PIN assignment to $pin_name"
+    set_instance_assignment -to $pin_name -name VIRTUAL_PIN ON
+ }
+ export_assignments
+}
+
+# Create the project
+project_new ''' + top_entity_name + ''' -overwrite
+# Set top level info
+set_global_assignment -name FAMILY "''' + PART_TO_FAMILY(parser_state.part) + '''"
+set_global_assignment -name DEVICE ''' + parser_state.part + '''
+set_global_assignment -name TOP_LEVEL_ENTITY ''' + top_entity_name + '''
+set_global_assignment -name SDC_FILE ''' + constraints_filepath + '''
+# All the generated vhdl includes
+'''
+
+  # All the generated vhdl files
+  for vhdl_file_text in vhdl_files_texts.split(" "): # hacky
+    vhdl_file_text = vhdl_file_text.strip()
+    if vhdl_file_text != "":
+      text += '''set_global_assignment -name VHDL_FILE ''' + vhdl_file_text + '''
+'''
+
+  # IEEE proposed since quartus lite doesnt include vhdl 2008
+  text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n"
+  text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n"
+  text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n"   
+
+  # Do compile
+  text += '''
+# compile the project
+make_all_pins_virtual
+execute_flow -compile
+project_close    
+'''
+  return text
