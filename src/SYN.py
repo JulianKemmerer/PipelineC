@@ -1504,20 +1504,24 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     out_text = rv
   elif SYN_TOOL is QUARTUS:
+    # Make a .qip file in the output dir
     # Pull set vhdl file assignment lines from file (gets ieee stuff too)
-    # I dont think its too hacky right? lolz Baby When I Close My Eyes -Sweet Spirit
+    # I dont think its too hacky right? lolz Baby When I Close My Eyes  -Sweet Spirit
     constraints_filepath = "" # fine for this
     tcl = QUARTUS.GET_SH_TCL(top_entity_name, vhdl_files_texts, constraints_filepath, parser_state)
     rv_lines = []
     for line in tcl.split('\n'):
       if line.startswith("set_global_assignment -name VHDL_FILE"):
+        # Ok getting hack hack
+        if SYN_OUTPUT_DIRECTORY in line:
+          line = line.replace(SYN_OUTPUT_DIRECTORY+"/",'[file join $::quartus(qip_path) "') + '"]'
         rv_lines.append(line)
     rv = ""
     for line in rv_lines:
       rv += line + "\n"
     
     # Write file
-    out_filename = "read_vhdl.tcl"
+    out_filename = "pipelinec_top.qip"
     out_filepath = SYN_OUTPUT_DIRECTORY+"/"+out_filename
     out_text = rv
     
