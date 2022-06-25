@@ -404,6 +404,7 @@ class Logic:
     self.inputs=[] # Ordered list of inputs ["a","b"] 
     self.outputs=[] # Ordered list of outputs ["return"]
     self.state_regs = dict() # name -> state reg info
+    self.read_only_global_regs = dict() # name -> state reg info (from list of global state vars)
     self.uses_nonvolatile_state_regs = False
     self.submodule_instances = dict() # instance name -> logic func_name
     self.next_user_inst_name = None # User name for func
@@ -476,6 +477,7 @@ class Logic:
     rv.inputs = self.inputs[:] #["a","b"]
     rv.outputs = self.outputs[:] #["return"]
     rv.state_regs = dict(self.state_regs) #self.DEEPCOPY_DICT_COPY(self.state_regs)
+    rv.read_only_global_regs = dict(self.read_only_global_regs)
     rv.feedback_vars = set(self.feedback_vars)
     rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
     rv.submodule_instances = dict(self.submodule_instances) # instance name -> logic func_name all IMMUTABLE types?
@@ -624,6 +626,14 @@ class Logic:
     self.variable_names = self.variable_names | logic_b.variable_names
     self.feedback_vars = self.feedback_vars | logic_b.feedback_vars
     self.debug_names = self.debug_names | logic_b.debug_names
+
+    # Hacky hack gah, A.M. 180 - Song by Grandaddy
+    # Auto remove read only regs promoted to local state regs
+    self.read_only_global_regs = UNIQUE_KEY_DICT_MERGE(self.read_only_global_regs, logic_b.read_only_global_regs)
+    read_only_reg_names = list(self.read_only_global_regs.keys())
+    for read_only_reg_name in read_only_reg_names:
+      if read_only_reg_name in self.state_regs:
+        self.read_only_global_regs.pop(read_only_reg_name)
     
     # I/O order matters - check that
     # If one is empty then thats fine
@@ -1032,11 +1042,11 @@ class Logic:
       # If self or any submodules uses clock crossings
       if sub_func_logic.is_clock_crossing:
         return True
-      #if VHDL.LOGIC_NEEDS_CLK_CROSS_TO_MODULE(sub_func_logic, parser_state)
+      #if VHDL.LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_func_logic, parser_state)
       #  return True
       # Only need to check if has outputs
       # inputs to something with no outputs still rips up
-      if VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(sub_func_logic, parser_state):
+      if VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_func_logic, parser_state):
         return True
     
     return False
@@ -2051,18 +2061,37 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 
-def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state):
-  # Regular globals (state regs)
+def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state, is_lhs_assign):
+  # Catch read only global regs
   # If has same name as global and hasnt been declared as (local) variable already
-  if (maybe_global_name in parser_state.global_state_regs) and (maybe_global_name not in parser_state.existing_logic.variable_names):
-    # Copy info into existing_logic
-    parser_state.existing_logic.state_regs[maybe_global_name] = parser_state.global_state_regs[maybe_global_name]
+  if not is_lhs_assign and (maybe_global_name in parser_state.global_state_regs) and (maybe_global_name not in parser_state.existing_logic.variable_names):
+    # Mark global def as used in this func
+    parser_state.global_state_regs[maybe_global_name].used_in_funcs.add(parser_state.existing_logic.func_name)
+    # Copy info into existing_logic read_only_global_regs
+    parser_state.existing_logic.read_only_global_regs[maybe_global_name] = parser_state.global_state_regs[maybe_global_name]
     parser_state.existing_logic.wire_to_c_type[maybe_global_name] = parser_state.global_state_regs[maybe_global_name].type_name
-    parser_state.existing_logic.variable_names.add(maybe_global_name)      
-    # Record using globals
-    if not parser_state.existing_logic.state_regs[maybe_global_name].is_volatile:
-      parser_state.existing_logic.uses_nonvolatile_state_regs = True
-      #print "rv.func_name",rv.func_name, rv.uses_nonvolatile_state_regs
+    parser_state.existing_logic.variable_names.add(maybe_global_name)
+
+  # Regular globals (state regs written in func)
+  # If has same name as global and hasnt been declared as (local) variable already
+  if (maybe_global_name in parser_state.global_state_regs):
+    # Promote read only to local static
+    read_only_promote_to_write = is_lhs_assign and maybe_global_name in parser_state.existing_logic.read_only_global_regs
+    if read_only_promote_to_write:
+      # Remove read only entry
+      parser_state.existing_logic.read_only_global_regs.pop(maybe_global_name)
+    # Copy global state reg to local if promoting or seeing for first time
+    if read_only_promote_to_write or maybe_global_name not in parser_state.existing_logic.variable_names:
+      # Mark global def as used in this func
+      parser_state.global_state_regs[maybe_global_name].used_in_funcs.add(parser_state.existing_logic.func_name)
+      # Copy info into existing_logic
+      parser_state.existing_logic.state_regs[maybe_global_name] = parser_state.global_state_regs[maybe_global_name]
+      parser_state.existing_logic.wire_to_c_type[maybe_global_name] = parser_state.global_state_regs[maybe_global_name].type_name
+      parser_state.existing_logic.variable_names.add(maybe_global_name)      
+      # Record using globals
+      if not parser_state.existing_logic.state_regs[maybe_global_name].is_volatile:
+        parser_state.existing_logic.uses_nonvolatile_state_regs = True
+        #print "rv.func_name",rv.func_name, rv.uses_nonvolatile_state_regs
   
   # Constant global values 
   if (maybe_global_name in parser_state.global_consts) and (maybe_global_name not in parser_state.existing_logic.variable_names):
@@ -2101,10 +2130,9 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
   # BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
   # BUT LEFT SIDE MUST RESULT IN VARIABLE ADDRESS / wire?
   #^^^^^^^^^^^^^^^^^
-  
-  #### GLOBALS \/
-  # This is the first place we should see a global reference in terms of this function/logic
-  #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(lhs_orig_var_name, parser_state)
+
+  # Special handling of writing to globals
+  parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(lhs_orig_var_name, parser_state, is_lhs_assign=True)
   
   # Sanity check
   if lhs_orig_var_name not in parser_state.existing_logic.wire_to_c_type:
@@ -3584,9 +3612,6 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   # The original variable name is the first tok
   base_var_name = ref_toks[0]
   
-  # This is the first place we could see a global reference in terms of this function/logic
-  #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(base_var_name, parser_state)
-  
   # What type is this reference?
   c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state)
   
@@ -3596,6 +3621,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
   #  ex. input, global, volatile global, or in wire driven by
   if ( (base_var_name in parser_state.existing_logic.inputs) or
        (base_var_name in parser_state.existing_logic.state_regs) or
+       (base_var_name in parser_state.existing_logic.read_only_global_regs) or
        (base_var_name in parser_state.existing_logic.wire_driven_by) or
        (base_var_name in parser_state.existing_logic.feedback_vars) ):
     driving_aliases_over_time += [base_var_name]
@@ -4057,7 +4083,7 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):
     return True
   elif base_name in existing_logic.inputs:
     return False
-  elif (base_name in existing_logic.state_regs): # or (base_name in parser_state.global_state_regs):
+  elif (base_name in existing_logic.state_regs) or (base_name in existing_logic.read_only_global_regs):
     return False
   elif base_name in existing_logic.variable_names:
     return False
@@ -4921,12 +4947,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   var_name_2_all_ref_toks_set = dict()
   ref_toks_id_str_to_output_wire = dict()
   #print "==== IF",file_coord_str,"======="
-  for var_name in merge_var_names:    
-    # Might be first place to see globals... is this getting out of hand?
-    #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
-    #parser_state_for_true.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_true)
-    #parser_state_for_false.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_false)
-      
+  for var_name in merge_var_names:      
     # Get aliases over time
     # original
     original_aliases = []
@@ -4952,6 +4973,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     # Scope? Whats scope oh no! Radiohead - Everything in its right place
     declared_in_this_if = None
     if var_name in parser_state.existing_logic.state_regs:
+      declared_in_this_if = False
+    elif var_name in parser_state.existing_logic.read_only_global_regs:
       declared_in_this_if = False
     elif var_name in parser_state.existing_logic.inputs:
       declared_in_this_if = False
@@ -5010,10 +5033,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
     # Now do MUX inst logic
     for ref_toks in all_ref_toks_set:
       # Might be first place to see globals... is this getting out of hand?
-      var_name = ref_toks[0]      
-      #parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
-      #parser_state_for_true.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_true)
-      #parser_state_for_false.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state_for_false)
+      var_name = ref_toks[0]
       
       # Get c type of ref
       c_type = C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_node, parser_state)
@@ -5145,7 +5165,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node,prepend_text, parser_state):
   # But since by def those drivings dont overlap then order doesnt really matter in aliases list
   for variable in merge_var_names:
     # vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
-    declared_in_this_if = not(variable in parser_state.existing_logic.variable_names) and (variable not in parser_state.existing_logic.state_regs)
+    declared_in_this_if = not(variable in parser_state.existing_logic.variable_names) and (variable not in parser_state.existing_logic.state_regs) and (variable not in parser_state.existing_logic.read_only_global_regs)
     if declared_in_this_if:
       continue
       
@@ -5879,9 +5899,9 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
   
   # Only async/flow control clock crossings (need clock enable to work with their write and read enable side fifos)
   # or WRITE side on wires that will default hold value
-  # Almost covered by LOGIC_NEEDS_MODULE_TO_CLK_CROSS but thats for submodules
+  # Almost covered by LOGIC_NEEDS_MODULE_TO_GLOBAL but thats for submodules
   if logic.is_clock_crossing:
-    #i_need = VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(logic, parser_state)
+    #i_need = VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(logic, parser_state)
     clk_cross_var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
     clk_cross_info = parser_state.clk_cross_var_info[clk_cross_var]
     i_need = ("_WRITE" in logic.func_name) or clk_cross_info.flow_control
@@ -7191,7 +7211,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
   all_ids = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_funcdef.body, c_ast.ID)
   for id_node in all_ids:
     var_name = str(id_node.name)
-    parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state)
+    parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state, is_lhs_assign=False)
   
   # Before doing anything with the func body
   # Need to decide what kind of func
@@ -7972,8 +7992,7 @@ def PARSE_FILE(c_filename):
             
           # Duplicate problem if global
           if func1_state_reg in parser_state.global_state_regs:
-            print("Heyo can't use global state regs in more than one function! See clock crossings/wires for moving data between main functions.")
-            print(func1_state_reg, "used in", func_name1, "and", func_name2)
+            print("ERROR: Cannot write to global state regs in more than one function!:", func1_state_reg, "written to in both", func_name1, "and", func_name2)
             sys.exit(-1)
             
     # Elaborate the logic down to raw vhdl modules
@@ -8057,8 +8076,8 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
   SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
   print("Writing the constant struct+enum definitions as defined from C code...", flush=True)
   VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-  print("Writing clock cross definitions as parsed from C code...", flush=True)
-  VHDL.WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state)
+  print("Writing global wire definitions as parsed from C code...", flush=True)
+  VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
   print("Writing finalized comb. logic synthesis tool files...", flush=True)
   SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 
@@ -8198,6 +8217,7 @@ class StateRegInfo:
     self.is_volatile = False
     self.is_static_local = False
     self.path_id = None # Use associated path id, for clk cross
+    self.used_in_funcs = set()
 
 def GET_GLOBAL_STATE_REG_INFO(parser_state):
   # Read in file with C parser and get function def nodes
@@ -8577,7 +8597,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
 
   '''
   # Loop over all funcs and get instances 
-  clk_cross_to_modulest_containing_inst_set = set()
+  global_to_modulest_containing_inst_set = set()
   for func_name in parser_state.FuncLogicLookupTable:
     logic = parser_state.FuncLogicLookupTable[func_name]
     if not logic.is_clock_crossing:
@@ -8599,7 +8619,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       print "More than one continer func instance for clock crossing instance?", func_name, insts
       sys.exit(-1)
     containing_inst = list(containing_insts)[0]
-    clk_cross_to_modulest_containing_inst_set.add((inst_name,containing_inst))
+    global_to_modulest_containing_inst_set.add((inst_name,containing_inst))
     '''   
 
   return parser_state

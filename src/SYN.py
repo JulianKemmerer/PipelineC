@@ -577,6 +577,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, logic.inputs)
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
+  RECORD_DRIVEN_BY(None, set(logic.read_only_global_regs.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
   # "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
@@ -1389,16 +1390,16 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
-        continue      
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report does not fail...")
+        clock_mhz = INF_MHZ     
       f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n')
   else:
     # Standard sdc like constraints
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ?")
-        continue
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report does not fail...")
+        clock_mhz = INF_MHZ
       ns = (1000.0 / clock_mhz)
       f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets " + clock_name + "]\n")
       #f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets -hierarchical -filter {NAME =~ " + clock_name + "}]\n")
@@ -3269,16 +3270,16 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_
     # Clock crossing entities
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " " 
       
-  needs_clk_cross_t = len(parser_state.clk_cross_var_info) > 0 and not inst_name # is multimain
+  needs_global_t = VHDL.NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state) and not inst_name # is multimain
   if inst_name:
     # Does inst need clk cross?
     Logic = parser_state.LogicInstLookupTable[inst_name]
-    needs_clk_cross_to_module = VHDL.LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_module_to_clk_cross = VHDL.LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    needs_clk_cross_t = needs_clk_cross_to_module or needs_module_to_clk_cross
-  if needs_clk_cross_t:
+    needs_global_to_module = VHDL.LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_module_to_global = VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    needs_global_t = needs_global_to_module or needs_module_to_global
+  if needs_global_t:
     # Clock crossing record
-    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL.VHDL_PKG_EXT + " "
+    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "global_wires_pkg" + VHDL.VHDL_PKG_EXT + " "
     
   
   # Top not shared

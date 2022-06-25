@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
     }\n'''
   if not clock_port_is_clk:
     main_cpp_text += '''    */\n'''
-    main_cpp_text += '''  return 0;
+  main_cpp_text += '''  return 0;
 }
 '''
   main_cpp_path = VERILATOR_OUT_DIR + "/" + "main.cpp"

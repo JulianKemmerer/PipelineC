@@ -179,8 +179,8 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
   # Include C defined structs
   text += "use work.c_structs_pkg.all;\n"
   # Include clock cross types
-  if len(parser_state.clk_cross_var_info) > 0:
-    text += "use work.clk_cross_t_pkg.all;\n"
+  if NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
+    text += "use work.global_wires_pkg.all;\n"
   
   # Hash for multi main is just hash of main pipes
   hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
@@ -264,14 +264,14 @@ attribute dont_touch : string;
   has_clk_cross = False
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.LogicInstLookupTable[main_func]
-    if LOGIC_NEEDS_CLK_CROSS_TO_MODULE(main_func_logic,parser_state) or LOGIC_NEEDS_MODULE_TO_CLK_CROSS(main_func_logic,parser_state):
+    if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic,parser_state) or LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic,parser_state):
       has_clk_cross = True
       break
   if has_clk_cross:
     text += '''
 -- Clock cross wires
-signal clk_cross_to_module : clk_cross_to_module_t;
-signal module_to_clk_cross : module_to_clk_cross_t;
+signal global_to_module : global_to_module_t;
+signal module_to_global : module_to_global_t;
 '''
   
   # Clock cross output intermediate wires
@@ -340,10 +340,10 @@ begin
         write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
         write_text += "." + write_func_inst_str
       write_text += "." + write_func
-      # Signal used is data from pipeline output module_to_clk_cross
+      # Signal used is data from pipeline output module_to_global
       input_port = "in_data"
       # Is struct wrapped array of 1 unsigned 0 downto 0
-      text += clk_name + " <= " + "module_to_clk_cross." + write_text + "_" + input_port + ".data(0)(0);\n"
+      text += clk_name + " <= " + "module_to_global." + write_text + "_" + input_port + ".data(0)(0);\n"
       # Also connect to output
       text += clk_name + "_out <= " + clk_name + ";\n"
 
@@ -383,6 +383,7 @@ begin
 
   text += '''
 -- Instantiate each main
+-- main functions are always clock enabled, always running
 '''
   # Main instances
   for main_func in parser_state.main_mhz:
@@ -394,11 +395,10 @@ begin
     main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func];
     main_needs_clk = LOGIC_NEEDS_CLOCK(main_func, main_func_logic, parser_state, multimain_timing_params.TimingParamsLookupTable)
     main_needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(main_func_logic, parser_state)
-    main_needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
-    main_needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    main_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
+    main_needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic, parser_state)#, multimain_timing_params.TimingParamsLookupTable)
     
     new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
-    text += "-- main functions always clock enabled\n"
     text += main_entity_name + " : entity work." + main_entity_name +" "
     port_start_text = "port map (\n"
     port_text = ""
@@ -410,11 +410,11 @@ begin
     if main_needs_clk_en:
       port_text += "to_unsigned(1,1),\n"
     # Clock cross in
-    if main_needs_clk_cross_to_module:
-      port_text += "clk_cross_to_module." + main_func + ",\n"
+    if main_needs_global_to_module:
+      port_text += "global_to_module." + main_func + ",\n"
     # Clock cross out 
-    if main_needs_module_to_clk_cross:
-      port_text += "module_to_clk_cross." + main_func + ",\n"
+    if main_needs_module_to_global:
+      port_text += "module_to_global." + main_func + ",\n"
     # Inputs
     for in_port in main_func_logic.inputs:
       if is_final_top: 
@@ -499,12 +499,12 @@ begin
         write_text += "." + write_func
         if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
           # Clk in enable
-          text += io_prefix + "in_clk_en_" + str(write_func_inst_i) + " => module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+          text += io_prefix + "in_clk_en_" + str(write_func_inst_i) + " => module_to_global." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
         # Clk cross in data from pipeline output
         for input_port in write_func_logic.inputs:
-          text += io_prefix + input_port + "_" + str(write_func_inst_i) + " => " + "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
+          text += io_prefix + input_port + "_" + str(write_func_inst_i) + " => " + "module_to_global." + write_text + "_" + input_port + ",\n"
         for output_port in write_func_logic.outputs:
-          text += io_prefix + "wr_" + output_port + "_" + str(write_func_inst_i) + " => " + "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
+          text += io_prefix + "wr_" + output_port + "_" + str(write_func_inst_i) + " => " + "global_to_module." + write_text + "_" + output_port + ",\n"
       # Clk cross out data to pipeline input
       for read_func_inst_i,read_func_inst in enumerate(sorted(read_func_insts)):
         read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
@@ -516,12 +516,12 @@ begin
         read_text += "." + read_func
         if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
           # Clk out enable
-          text += io_prefix + "out_clk_en_" + str(read_func_inst_i) + " => module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+          text += io_prefix + "out_clk_en_" + str(read_func_inst_i) + " => module_to_global." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
         for input_port in read_func_logic.inputs:
-          text += io_prefix + input_port + "_" + str(read_func_inst_i) + " => " + "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
+          text += io_prefix + input_port + "_" + str(read_func_inst_i) + " => " + "module_to_global." + read_text + "_" + input_port + ",\n"
         # Output ports
         for output_port in read_func_logic.outputs:
-          text += io_prefix + "rd_" + output_port + "_" + str(read_func_inst_i) + " => " + "clk_cross_to_module." + read_text + "_" + output_port + ",\n"
+          text += io_prefix + "rd_" + output_port + "_" + str(read_func_inst_i) + " => " + "global_to_module." + read_text + "_" + output_port + ",\n"
     
     text = text.strip("\n").strip(",")
     text += '''
@@ -615,12 +615,12 @@ begin
           write_text += "." + write_func
           if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
             # Clk in enable
-            text += "in_clk_en => module_to_clk_cross." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+            text += "in_clk_en => module_to_global." + write_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
           # Clk cross in data from pipeline output
           for input_port in write_func_logic.inputs:
-            text += input_port + " => " + "module_to_clk_cross." + write_text + "_" + input_port + ",\n"
+            text += input_port + " => " + "module_to_global." + write_text + "_" + input_port + ",\n"
           for output_port in write_func_logic.outputs:
-            text += "wr_" + output_port + " => " + "clk_cross_to_module." + write_text + "_" + output_port + ",\n"
+            text += "wr_" + output_port + " => " + "global_to_module." + write_text + "_" + output_port + ",\n"
         # Clk out input
         text += "out_clk => clk_" + read_clk_ext_str + ",\n"
         # Clk cross out data to pipeline input
@@ -634,9 +634,9 @@ begin
           read_text += "." + read_func
           if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
             # Clk out enable
-            text += "out_clk_en => module_to_clk_cross." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
+            text += "out_clk_en => module_to_global." + read_text + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + ",\n"
           for input_port in read_func_logic.inputs:
-            text += input_port + " => " + "module_to_clk_cross." + read_text + "_" + input_port + ",\n"
+            text += input_port + " => " + "module_to_global." + read_text + "_" + input_port + ",\n"
         # Output port intermediate wire
         for output_port in read_func_logic.outputs:
           text += "rd_" + output_port + " => clk_cross_" + var_name + "_" + output_port + ",\n"
@@ -655,9 +655,85 @@ begin
             read_text += "." + read_func_inst_str
           read_text += "." + read_func
           for output_port in read_func_logic.outputs:
-            text += "clk_cross_to_module." + read_text + "_" + output_port + " <= clk_cross_" + var_name + "_" + output_port + ";\n"
+            text += "global_to_module." + read_text + "_" + output_port + " <= clk_cross_" + var_name + "_" + output_port + ";\n"
         text += "\n"
   
+
+  # Connections for global regs used in multiple funcs
+  shared_global_vars = set()
+  for var_name,state_reg_info in parser_state.global_state_regs.items():
+    if len(state_reg_info.used_in_funcs)>1:
+      shared_global_vars.add(var_name)
+  if len(shared_global_vars) > 0:
+    text += '''
+-- Directly connected global register read wires
+'''
+  for var_name in shared_global_vars:
+    state_reg_info = parser_state.global_state_regs[var_name]
+    # Global var with one or more reader wires
+    # Get info on this var
+    # Find the one write func
+    write_func = None
+    for func_name in state_reg_info.used_in_funcs:
+      func_logic = parser_state.FuncLogicLookupTable[func_name]
+      if var_name in func_logic.state_regs:
+        write_func = func_name
+
+    # Find the one write inst
+    write_insts = parser_state.FuncToInstances[write_func]
+    if len(write_insts) > 1:
+      raise Exception(f"More than one instance trying to write to global {var_name}: {write_insts}!")
+    write_func_inst = list(write_insts)[0]
+    
+    # Find the many read funcs
+    read_funcs = set()
+    for func_name in state_reg_info.used_in_funcs:
+      func_logic = parser_state.FuncLogicLookupTable[func_name]
+      if var_name in func_logic.read_only_global_regs:
+        read_funcs.add(func_name)
+
+    # Find the many read insts
+    read_insts = set()
+    for read_func_name in read_funcs:
+      read_func_insts = parser_state.FuncToInstances[read_func_name]
+      read_insts |= read_func_insts
+
+    # Find main funcs for all insts
+    # Find clock names for all main funcs, can only be one clock
+    rw_func_insts = set()
+    rw_func_insts |= read_insts
+    rw_func_insts.add(write_func_inst)
+    rw_clk_names = set()
+    for rw_func_inst in rw_func_insts:
+      rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(rw_func_inst, parser_state)
+      rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
+      rw_clk_names.add(rw_clk_name)
+      if len(rw_clk_names) > 1 and var_name not in parser_state.async_wires:
+        raise Exception(f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names}") 
+
+    # Assemble driver write wire text
+    write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    # Start with main func then apply hier instances
+    write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(write_func_inst, parser_state)
+    for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)]:
+      write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+      write_text += "." + write_func_inst_str
+    write_text += "." + var_name
+    
+    # Write lines connecting write side to many read sides
+    for read_func_inst in read_insts:
+      # Assemble driven read wire text
+      read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+      # Start with main func then apply hier instances
+      read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(read_func_inst, parser_state)
+      for read_func_inst_tok in read_func_inst_toks[1:len(read_func_inst_toks)]:
+        read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+        read_text += "." + read_func_inst_str
+      read_text += "." + var_name
+      text += "global_to_module." + read_text + " <= module_to_global." + write_text + ";\n"
+    
+    text += "\n"
+
   text += '''
 end arch;
 '''
@@ -676,8 +752,8 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-  needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
-  needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
   entity_name = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state)
     
   rv = "-- BLACKBOX\n"
@@ -743,8 +819,8 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-  needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
-  needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
   entity_name = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state)
   
   if not is_final_top:
@@ -759,9 +835,9 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   rv += "use ieee.numeric_std.all;" + "\n"
   # Include C defined structs
   rv += "use work.c_structs_pkg.all;\n"
-  if needs_clk_cross_to_module or needs_module_to_clk_cross:
+  if needs_global_to_module or needs_module_to_global:
     # Include clock cross types
-    rv += "use work.clk_cross_t_pkg.all;\n"
+    rv += "use work.global_wires_pkg.all;\n"
   
   
   
@@ -774,10 +850,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   rv += " clk : in std_logic;" + "\n"
   
   # Clock cross as needed
-  if needs_clk_cross_to_module:
-    rv += " clk_cross_to_module : in " + Logic.func_name + "_clk_cross_to_module_t;\n"
-  if needs_module_to_clk_cross:
-    rv += " module_to_clk_cross : out " + Logic.func_name + "_module_to_clk_cross_t;\n"
+  if needs_global_to_module:
+    rv += " global_to_module : in " + Logic.func_name + "_global_to_module_t;\n"
+  if needs_module_to_global:
+    rv += " module_to_global : out " + Logic.func_name + "_module_to_global_t;\n"
     
   # The inputs of the logic
   for input_name in Logic.inputs:
@@ -846,11 +922,11 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   rv += "\n"
   
   # Clock cross regs and signals
-  if needs_clk_cross_to_module:
-    rv += "signal clk_cross_to_module_input_reg : " + Logic.func_name + "_clk_cross_to_module_t;" + "\n"
-  if needs_module_to_clk_cross:
-    rv += "signal module_to_clk_cross_output : " + Logic.func_name + "_module_to_clk_cross_t;" + "\n"
-    rv += "signal module_to_clk_cross_output_reg : " + Logic.func_name + "_module_to_clk_cross_t;" + "\n"
+  if needs_global_to_module:
+    rv += "signal global_to_module_input_reg : " + Logic.func_name + "_global_to_module_t;" + "\n"
+  if needs_module_to_global:
+    rv += "signal module_to_global_output : " + Logic.func_name + "_module_to_global_t;" + "\n"
+    rv += "signal module_to_global_output_reg : " + Logic.func_name + "_module_to_global_t;" + "\n"
   
   # Write vhdl func if needed
   if Logic.is_vhdl_func:
@@ -883,10 +959,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     if needs_clk_en:
       port_text += "to_unsigned(1,1),\n"
     # Clock cross as needed
-    if needs_clk_cross_to_module:
-      port_text += " clk_cross_to_module_input_reg,\n"
-    if needs_module_to_clk_cross:
-      port_text += " module_to_clk_cross_output,\n"
+    if needs_global_to_module:
+      port_text += " global_to_module_input_reg,\n"
+    if needs_module_to_global:
+      port_text += " module_to_global_output,\n"
     # Inputs from regs
     for in_port in Logic.inputs:
       port_text += WIRE_TO_VHDL_NAME(in_port, Logic) + "_input_reg"  + ",\n"
@@ -918,10 +994,10 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     rv += " " + " " + " " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output;" + "\n"
   
   # Clock cross registers
-  if needs_clk_cross_to_module:
-    rv += " " + " " + " " + "clk_cross_to_module_input_reg <= clk_cross_to_module;" + "\n"
-  if needs_module_to_clk_cross:
-    rv += " " + " " + " " + "module_to_clk_cross_output_reg <= module_to_clk_cross_output;" + "\n"
+  if needs_global_to_module:
+    rv += " " + " " + " " + "global_to_module_input_reg <= global_to_module;" + "\n"
+  if needs_module_to_global:
+    rv += " " + " " + " " + "module_to_global_output_reg <= module_to_global_output;" + "\n"
   
   rv += " " + " " + "end if;" + "\n"    
   rv += " " + "end process;" + "\n"
@@ -931,8 +1007,8 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
     rv += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) +" <= " + WIRE_TO_VHDL_NAME(out_wire, Logic) + "_output_reg;" + "\n"
     
   # Connect to top clk cross outputs
-  if needs_module_to_clk_cross:
-    rv += " " + "module_to_clk_cross <= module_to_clk_cross_output_reg;" + "\n" 
+  if needs_module_to_global:
+    rv += " " + "module_to_global <= module_to_global_output_reg;" + "\n" 
     
   rv += "end arch;" + "\n"
   
@@ -1817,9 +1893,19 @@ port map (
   f.close()    
     
 
+def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
+  # Do nothing if no clock crossings or no shared globals
+  found_multi_use_global = False
+  for global_var_name,state_reg_info in parser_state.global_state_regs.items():
+    if len(state_reg_info.used_in_funcs) > 1:
+      found_multi_use_global = True
+      break
+  if not found_multi_use_global and len(parser_state.clk_cross_var_info) <= 0:
+    return False
+  return True
 
-def WRITE_CLK_CROSS_VHDL_PACKAGE(parser_state):
-  if len(parser_state.clk_cross_var_info) <= 0:
+def WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
+  if not NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
     return
   text = ""
   text += '''
@@ -1828,7 +1914,7 @@ use IEEE.STD_LOGIC_1164.ALL;
 use ieee.numeric_std.all;
 use work.c_structs_pkg.all; -- User types
 -- Clock crossings
-package clk_cross_t_pkg is
+package global_wires_pkg is
 '''
   
   # Type for each func, with hierarchy
@@ -1839,9 +1925,9 @@ package clk_cross_t_pkg is
   # And funcs that are themselves the clock crossing (dont need port)
   for func_name in parser_state.FuncLogicLookupTable:
     func_logic = parser_state.FuncLogicLookupTable[func_name]   
-    if not LOGIC_NEEDS_CLK_CROSS_TO_MODULE(func_logic, parser_state):
+    if not LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
       read_funcs_written.add(func_name)
-    if not LOGIC_NEEDS_MODULE_TO_CLK_CROSS(func_logic, parser_state):
+    if not LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
       write_funcs_written.add(func_name)
     if func_logic.is_clock_crossing:
       if "_READ" in func_name: 
@@ -1858,7 +1944,7 @@ package clk_cross_t_pkg is
     for func_name in parser_state.FuncLogicLookupTable:
       func_logic = parser_state.FuncLogicLookupTable[func_name] 
       # Read?
-      if not LOGIC_NEEDS_CLK_CROSS_TO_MODULE(func_logic, parser_state):
+      if not LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
         continue 
       # Done already?
       if func_name in read_funcs_written:
@@ -1873,11 +1959,11 @@ package clk_cross_t_pkg is
       if not all_subs_written:
         continue
       #
-      # clk_cross _t for this func 
+      # global wires _t for this func 
       text += '''
-  type ''' + func_name + '''_clk_cross_to_module_t is record
+  type ''' + func_name + '''_global_to_module_t is record
     '''   
-      # READ+WRITE OUTPUTS
+      # Clock cross READ+WRITE OUTPUTS
       # Which submodules are clock crossings, get var name from sub
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
@@ -1888,6 +1974,10 @@ package clk_cross_t_pkg is
             #output_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + output_port
             c_type = sub_logic.wire_to_c_type[output_port]
             text += "     " + sub_func + "_" + output_port + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
+
+      # Read only global regs
+      for glob_var_name,state_reg_info in func_logic.read_only_global_regs.items():
+        text += "     " + glob_var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(state_reg_info.type_name, parser_state) + ";\n"
             
       # Then include types for submodules (not clock crossing submodules)
       for sub_inst in func_logic.submodule_instances:
@@ -1895,9 +1985,9 @@ package clk_cross_t_pkg is
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
         if sub_logic.is_clock_crossing:
           continue        
-        if LOGIC_NEEDS_CLK_CROSS_TO_MODULE(sub_logic, parser_state):
+        if LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_logic, parser_state):
           text += '''
-    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_clk_cross_to_module_t;"
+    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_global_to_module_t;"
   
       text += '''
   end record;
@@ -1910,7 +2000,7 @@ package clk_cross_t_pkg is
     for func_name in parser_state.FuncLogicLookupTable:
       func_logic = parser_state.FuncLogicLookupTable[func_name] 
       # Write?
-      if not LOGIC_NEEDS_MODULE_TO_CLK_CROSS(func_logic, parser_state):
+      if not LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
         continue 
       # Done already?
       if func_name in write_funcs_written:
@@ -1925,11 +2015,11 @@ package clk_cross_t_pkg is
       if not all_subs_written:
         continue
       #
-      # clk_cross _t for this func 
+      # global wires _t for this func 
       text += '''
-  type ''' + func_name + '''_module_to_clk_cross_t is record
+  type ''' + func_name + '''_module_to_global_t is record
     '''  
-      # READ+WRITE CLOCK EN + INPUTS
+      # Clock cross READ+WRITE CLOCK EN + INPUTS
       # Which submodules are clock crossings, get var name from sub
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
@@ -1944,16 +2034,22 @@ package clk_cross_t_pkg is
             # submodule instance name == Func name for clk cross since single instance?
             #input_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + input_port
             c_type = sub_logic.wire_to_c_type[input_port]
-            text += "     " + sub_func + "_" + input_port + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"   
+            text += "     " + sub_func + "_" + input_port + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n" 
+
+      # Global reg output for multiple read only consumers
+      for var_name,state_reg_info in func_logic.state_regs.items():
+        if len(state_reg_info.used_in_funcs) > 1:
+          text += "     " + var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(state_reg_info.type_name, parser_state) + ";\n"
+
       # Then include types for submodules (not clock crossing submodules)
       for sub_inst in func_logic.submodule_instances:
         sub_func = func_logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func]
         if sub_logic.is_clock_crossing:
           continue  
-        if LOGIC_NEEDS_MODULE_TO_CLK_CROSS(sub_logic, parser_state):
+        if LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_logic, parser_state):
           text += '''
-    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_module_to_clk_cross_t;"
+    ''' + WIRE_TO_VHDL_NAME(sub_inst) + " : " + sub_func + "_module_to_global_t;"
   
       text += '''
   end record;
@@ -1968,11 +2064,11 @@ package clk_cross_t_pkg is
   read_text = ""
   for main_func in parser_state.main_mhz:
     main_logic = parser_state.FuncLogicLookupTable[main_func]
-    if LOGIC_NEEDS_CLK_CROSS_TO_MODULE(main_logic, parser_state):
+    if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_logic, parser_state):
       read_text += '''
-    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_clk_cross_to_module_t;"
+    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_global_to_module_t;"
   if read_text != "":
-    text += '''type clk_cross_to_module_t is record'''
+    text += '''type global_to_module_t is record'''
     text += read_text
     text += '''
   end record;
@@ -1982,11 +2078,11 @@ package clk_cross_t_pkg is
   write_text = ""
   for main_func in parser_state.main_mhz:
     main_logic = parser_state.FuncLogicLookupTable[main_func]
-    if LOGIC_NEEDS_MODULE_TO_CLK_CROSS(main_logic, parser_state):
+    if LOGIC_NEEDS_MODULE_TO_GLOBAL(main_logic, parser_state):
       write_text += '''
-    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_module_to_clk_cross_t;"
+    ''' + WIRE_TO_VHDL_NAME(main_func) + " : " + main_func + "_module_to_global_t;"
   if write_text != "":
-    text += '''type module_to_clk_cross_t is record'''
+    text += '''type module_to_global_t is record'''
     text += write_text
     text += '''
   end record;
@@ -1994,13 +2090,13 @@ package clk_cross_t_pkg is
   '''
   
   text += '''
-end clk_cross_t_pkg;
+end global_wires_pkg;
 '''
   
   if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
     os.makedirs(SYN.SYN_OUTPUT_DIRECTORY) 
 
-  path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_t_pkg" + VHDL_PKG_EXT
+  path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "global_wires_pkg" + VHDL_PKG_EXT
   
   f=open(path,"w")
   f.write(text)
@@ -2452,29 +2548,10 @@ end c_structs_pkg;
   f.write(text)
   f.close()
 
-def LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state):
-  # Submodules determine if logic needs port    
-  needs_clk_cross_to_module = False
-  for inst in Logic.submodule_instances:
-    submodule_logic_name = Logic.submodule_instances[inst]
-    if submodule_logic_name in parser_state.FuncLogicLookupTable:
-      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-      if submodule_logic.is_clock_crossing:
-        var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
-        clk_cross_info = parser_state.clk_cross_var_info[var_name]
-        needs_clk_cross_to_module = needs_clk_cross_to_module or ("_READ" in submodule_logic_name) or clk_cross_info.flow_control
-      if needs_clk_cross_to_module:
-        return True
-      # Then check sub-sub modules
-      needs_clk_cross_to_module = needs_clk_cross_to_module or LOGIC_NEEDS_CLK_CROSS_TO_MODULE(submodule_logic, parser_state)
-      if needs_clk_cross_to_module:
-        return True
-        
-  return needs_clk_cross_to_module
+def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
+  needs_global_to_module = False
 
-def LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state):
-  # Submodules determine if logic needs port    
-  needs_module_to_clk_cross = False
+  # Submodules determine if logic needs clk cross port    
   for inst in Logic.submodule_instances:
     submodule_logic_name = Logic.submodule_instances[inst]
     if submodule_logic_name in parser_state.FuncLogicLookupTable:
@@ -2482,15 +2559,44 @@ def LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state):
       if submodule_logic.is_clock_crossing:
         var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
         clk_cross_info = parser_state.clk_cross_var_info[var_name]
-        needs_module_to_clk_cross = needs_module_to_clk_cross or ("_WRITE" in submodule_logic_name) or clk_cross_info.flow_control
-      if needs_module_to_clk_cross:
+        needs_global_to_module = needs_global_to_module or ("_READ" in submodule_logic_name) or clk_cross_info.flow_control
+      if needs_global_to_module:
         return True
       # Then check sub-sub modules
-      needs_module_to_clk_cross = needs_module_to_clk_cross or LOGIC_NEEDS_MODULE_TO_CLK_CROSS(submodule_logic, parser_state)
-      if needs_module_to_clk_cross:
+      needs_global_to_module = needs_global_to_module or LOGIC_NEEDS_GLOBAL_TO_MODULE(submodule_logic, parser_state)
+      if needs_global_to_module:
         return True
-    
-  return needs_module_to_clk_cross
+
+  # Or if logic is reading a global reg
+  if len(Logic.read_only_global_regs) > 0:
+    return True
+        
+  return needs_global_to_module
+
+def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
+  needs_module_to_global = False
+  # Submodules determine if logic needs clock cross port
+  for inst in Logic.submodule_instances:
+    submodule_logic_name = Logic.submodule_instances[inst]
+    if submodule_logic_name in parser_state.FuncLogicLookupTable:
+      submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+      if submodule_logic.is_clock_crossing:
+        var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+        clk_cross_info = parser_state.clk_cross_var_info[var_name]
+        needs_module_to_global = needs_module_to_global or ("_WRITE" in submodule_logic_name) or clk_cross_info.flow_control
+      if needs_module_to_global:
+        return True
+      # Then check sub-sub modules
+      needs_module_to_global = needs_module_to_global or LOGIC_NEEDS_MODULE_TO_GLOBAL(submodule_logic, parser_state)
+      if needs_module_to_global:
+        return True
+
+  # Or if logic is writing a global reg with muliple reads
+  for state_reg_var,state_reg_info in Logic.state_regs.items():
+    if len(state_reg_info.used_in_funcs) > 1:
+      return True
+
+  return needs_module_to_global
 
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
@@ -2752,6 +2858,12 @@ class PiplineHDLParams:
         stage_to_driver_wires[self.pipeline_map.num_stages-1] = []
       stage_to_driver_wires[self.pipeline_map.num_stages-1].append(driver_of_vol_wire)
       stage_to_driver_wires[self.pipeline_map.num_stages-1].append(state_reg)
+    # Read only shared globals written at input
+    for state_reg in Logic.read_only_global_regs:
+      # Input write
+      if 0 not in stage_to_driven_wires:
+        stage_to_driven_wires[0] = []
+      stage_to_driven_wires[0].append(state_reg)
     
     # Loop over all stages
     for stage in range(0, self.pipeline_map.num_stages):
@@ -2856,8 +2968,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   filename = GET_ENTITY_NAME(inst_name, Logic,TimingParamsLookupTable, parser_state) + ".vhd"
   needs_clk = LOGIC_NEEDS_CLOCK(inst_name,Logic, parser_state, TimingParamsLookupTable)
   needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-  needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
-  needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
     
   rv = ""
   rv += "-- Timing params:\n"
@@ -2874,8 +2986,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
   # Include C defined structs
   rv += "use work.c_structs_pkg.all;\n"
   # Include clock crossing type
-  if needs_clk_cross_to_module or needs_module_to_clk_cross:
-    rv += "use work.clk_cross_t_pkg.all;\n"
+  if needs_global_to_module or needs_module_to_global:
+    rv += "use work.global_wires_pkg.all;\n"
 
   # Debug
   if not Logic.is_vhdl_text_module:
@@ -2902,12 +3014,12 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
     port_text += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
     
   # Clock cross inputs?
-  if needs_clk_cross_to_module:
-    port_text += " clk_cross_to_module : in " + Logic.func_name + "_clk_cross_to_module_t;" + "\n"
+  if needs_global_to_module:
+    port_text += " global_to_module : in " + Logic.func_name + "_global_to_module_t;" + "\n"
   
   # Clock cross outputs?
-  if needs_module_to_clk_cross:
-    port_text += " module_to_clk_cross : out " + Logic.func_name + "_module_to_clk_cross_t;" + "\n"
+  if needs_module_to_global:
+    port_text += " module_to_global : out " + Logic.func_name + "_module_to_global_t;" + "\n"
     
   # The inputs of the Logic
   for input_name in Logic.inputs:
@@ -2976,8 +3088,8 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
         submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
         submodule_needs_clk = LOGIC_NEEDS_CLOCK(instance_name, submodule_logic, parser_state, TimingParamsLookupTable)
         submodule_needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
-        submodule_needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(submodule_logic, parser_state)
-        submodule_needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(submodule_logic, parser_state)
+        submodule_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(submodule_logic, parser_state)
+        submodule_needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(submodule_logic, parser_state)
         rv += new_inst_name+" : entity work." + GET_ENTITY_NAME(instance_name, submodule_logic,TimingParamsLookupTable, parser_state) +" port map (\n"
         if submodule_needs_clk:
           rv += "clk,\n"
@@ -2985,11 +3097,11 @@ def WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, TimingP
           ce_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
           rv += WIRE_TO_VHDL_NAME(ce_wire, Logic) + ",\n"
         # Clock cross in
-        if submodule_needs_clk_cross_to_module:
-          rv += "clk_cross_to_module." + WIRE_TO_VHDL_NAME(inst) + ",\n"
+        if submodule_needs_global_to_module:
+          rv += "global_to_module." + WIRE_TO_VHDL_NAME(inst) + ",\n"
         # Clock cross out 
-        if submodule_needs_module_to_clk_cross:
-          rv += "module_to_clk_cross." + WIRE_TO_VHDL_NAME(inst) + ",\n"
+        if submodule_needs_module_to_global:
+          rv += "module_to_global." + WIRE_TO_VHDL_NAME(inst) + ",\n"
         # Inputs
         for in_port in submodule_logic.inputs:
           in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
@@ -3280,6 +3392,8 @@ end function;\n
   
   return rv
 
+# TODO raw vhdl parts of this are a mess
+# Hey Ya! - OutKast
 def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params):
   # Comb Logic pipeline
   timing_params = TimingParamsLookupTable[inst_name]
@@ -3290,8 +3404,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
   needs_regs = LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
   is_raw_hdl = LOGIC_IS_RAW_HDL(Logic)
   needs_manual_regs = LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  needs_clk_cross_to_module = LOGIC_NEEDS_CLK_CROSS_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
-  #needs_module_to_clk_cross = LOGIC_NEEDS_MODULE_TO_CLK_CROSS(Logic, parser_state)#, TimingParamsLookupTable)
+  needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state)#, TimingParamsLookupTable)
+  #needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
   rv = ""
   rv += "\n"
   rv += "-- Combinatorial process for pipeline stages\n"
@@ -3327,9 +3441,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
             process_sens_list += " " + "REG_STAGE" + str(stage) + "_" + write_pipe_wire_var_vhdl + ",\n"
     if needs_manual_regs:
       process_sens_list += " " + "manual_registers_r,\n"
-  if needs_clk_cross_to_module:
+  if needs_global_to_module:
     process_sens_list += " -- Clock cross input\n"
-    process_sens_list += " " + "clk_cross_to_module,\n"
+    process_sens_list += " " + "global_to_module,\n"
   submodule_text = ""
   has_submodules_to_print = False
   if len(Logic.submodule_instances) > 0:
@@ -3466,6 +3580,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
           rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(input_wire, Logic) + " := " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ";\n"      
       
     # Also mux volatile global regs into wire - act like regular wire
+    # Does this make sense for raw vhdl? ever used?
     for state_reg in Logic.state_regs:
       if Logic.state_regs[state_reg].is_volatile:
         rv += " " + " " + " " + "read_pipe." + WIRE_TO_VHDL_NAME(state_reg, Logic) + " := REG_VAR_" + WIRE_TO_VHDL_NAME(state_reg, Logic) + ";\n"
@@ -3564,6 +3679,18 @@ end process;
     rv += " -- Output regs\n"
     for output_wire in Logic.outputs:
         rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "manual_registers_r.output_regs." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
+
+  # Connect shared globals to global bus
+  shared_globals = set()
+  for state_reg, state_reg_info in Logic.state_regs.items():
+    if len(state_reg_info.used_in_funcs) > 1:
+      shared_globals.add(state_reg)
+  if len(shared_globals) > 0:
+    rv += "-- Shared global regs\n"
+    for state_reg in shared_globals:
+      vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+      vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+      rv += "module_to_global." + vhdl_name + " <= " + "REG_COMB_" + vhdl_name + ";\n"
   
   return rv
 
@@ -3613,6 +3740,12 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
       text += "     " + "-- Volatiles read from regs, written to pipe in first stage\n"
       for state_reg in vol_state_regs:
         text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := REG_VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
+
+    # Read only globals read into pipeline at start like volatiles
+    if len(logic.read_only_global_regs) > 0:
+      text += "     " + "-- Shared read only globals read from regs, written to pipe in first stage\n"
+      for state_reg in logic.read_only_global_regs:
+        text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := global_to_module." + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
   else:
     # Not first stage typical reg from prev stage
     text += "     -- Read from prev stage\n"
@@ -3902,12 +4035,17 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
     RHS = "feedback_vars." + WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
   
   # State regs?
-  
+
   # GLOBAL?
   elif driving_wire_to_handle in logic.state_regs and not logic.state_regs[driving_wire_to_handle].is_volatile:          
     # Globals are special since can contain backwards logic, ex.
     # To clarify whats going on read directly from reg vhdl name
     RHS = WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
+
+  # Shared read only globals like other wires read into pipeline at start (not read from clk cross here)
+  #elif driving_wire_to_handle in logic.read_only_global_regs:
+  #  # Read directly from read only ports
+  #  RHS = "global_to_module."+WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
     
   # Volatile globals are like regular wires
   #elif
@@ -4144,19 +4282,19 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(submodule_logic, submodule_inst, inst
   if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
     text += "     -- Clock enable" + "\n"
     ce_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
-    text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
+    text += "     module_to_global." + submodule_logic.func_name + "_" + C_TO_LOGIC.CLOCK_ENABLE_NAME + " <= " + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state) + ";\n"
     
   if len(submodule_logic.inputs) > 0:
     text += "     -- Inputs" + "\n"
   for input_port in submodule_logic.inputs:
     input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
-    text += "     module_to_clk_cross." + submodule_logic.func_name + "_" + input_port + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
+    text += "     module_to_global." + submodule_logic.func_name + "_" + input_port + " <= " + GET_WRITE_PIPE_WIRE_VHDL(input_port_wire, logic, parser_state) + ";\n"
   
   if len(submodule_logic.outputs) > 0:
     text += "     -- Outputs" + "\n"
   for output_port in submodule_logic.outputs:
     output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
-    text +=  "     " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := clk_cross_to_module." + submodule_logic.func_name + "_" + output_port + ";\n"
+    text +=  "     " + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state) + " := global_to_module." + submodule_logic.func_name + "_" + output_port + ";\n"
   
   return text
 
