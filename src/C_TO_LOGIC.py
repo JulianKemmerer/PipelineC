@@ -2065,8 +2065,6 @@ def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state, is_lhs_assign):
   # Catch read only global regs
   # If has same name as global and hasnt been declared as (local) variable already
   if not is_lhs_assign and (maybe_global_name in parser_state.global_state_regs) and (maybe_global_name not in parser_state.existing_logic.variable_names):
-    # Mark global def as used in this func
-    parser_state.global_state_regs[maybe_global_name].used_in_funcs.add(parser_state.existing_logic.func_name)
     # Copy info into existing_logic read_only_global_regs
     parser_state.existing_logic.read_only_global_regs[maybe_global_name] = parser_state.global_state_regs[maybe_global_name]
     parser_state.existing_logic.wire_to_c_type[maybe_global_name] = parser_state.global_state_regs[maybe_global_name].type_name
@@ -2082,8 +2080,6 @@ def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state, is_lhs_assign):
       parser_state.existing_logic.read_only_global_regs.pop(maybe_global_name)
     # Copy global state reg to local if promoting or seeing for first time
     if read_only_promote_to_write or maybe_global_name not in parser_state.existing_logic.variable_names:
-      # Mark global def as used in this func
-      parser_state.global_state_regs[maybe_global_name].used_in_funcs.add(parser_state.existing_logic.func_name)
       # Copy info into existing_logic
       parser_state.existing_logic.state_regs[maybe_global_name] = parser_state.global_state_regs[maybe_global_name]
       parser_state.existing_logic.wire_to_c_type[maybe_global_name] = parser_state.global_state_regs[maybe_global_name].type_name
@@ -7994,53 +7990,6 @@ def PARSE_FILE(c_filename):
           if func1_state_reg in parser_state.global_state_regs:
             print("ERROR: Cannot write to global state regs in more than one function!:", func1_state_reg, "written to in both", func_name1, "and", func_name2)
             sys.exit(-1)
-
-    # Infer/check that write-read sides of shared globals are same clock freq
-    # Very similar to what happens for explicit clock crossings
-    # But ill write the code again because im dumb # Lover I Don’t Have to Love - Bright Eyes
-    # Is multiple passes even needed?
-    inferring_global_domains = True
-    while inferring_global_domains:
-      inferring_global_domains = False
-      # Do pass over all globals trying to make matches
-      for global_state_reg,global_state_reg_info in parser_state.global_state_regs.items():
-        # Cannot do inferring for async wires
-        if global_state_reg in parser_state.async_wires:
-          continue
-        # Only needed for shared globals
-        if len(global_state_reg_info.used_in_funcs) <= 1:
-          continue
-        # Need to find mains from funcs - hacky pre elab helper func also used for getting clock cross info
-        rw_mains = set()
-        for used_in_func in global_state_reg_info.used_in_funcs:
-          used_in_mains = RECURSIVE_FIND_MAIN_FUNCS(used_in_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
-          rw_mains |= used_in_mains
-        rw_clk_names = set()
-        for rw_main in rw_mains:
-          rw_clk_name = VHDL.CLK_EXT_STR(rw_main, parser_state)
-          rw_clk_names.add(rw_clk_name)
-        # Assume is all none, or none and some valid domain
-        if len(rw_clk_names) > 2:
-          raise Exception(f"Cannot have multiple clock domains for shared global {global_state_reg}! {rw_clk_names}")
-        # Look for first valid domain and try to match it to others
-        valid_main = None
-        valid_mhz = None
-        valid_group = None
-        for rw_main in rw_mains: 
-          if rw_main in parser_state.main_mhz and parser_state.main_mhz[rw_main] is not None:
-            valid_main = rw_main
-            valid_mhz = parser_state.main_mhz[rw_main]
-            valid_group = parser_state.main_clk_group[rw_main]
-            break
-        if valid_main:
-          for rw_main in rw_mains-set([valid_main]):
-            if (rw_main not in parser_state.main_mhz or parser_state.main_mhz[rw_main] is None) and (rw_main not in parser_state.main_clk_group or parser_state.main_clk_group[rw_main]==valid_group):
-              print("Matching clock domain for",rw_main,"based on shared global variable",global_state_reg,"to clock domain for",valid_main,"@",valid_mhz,"MHz, Group:", valid_group)
-              parser_state.main_mhz[rw_main] = valid_mhz
-              parser_state.main_clk_group[rw_main] = valid_group
-              if rw_main not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[rw_main] is None:
-                parser_state.main_syn_mhz[rw_main] = valid_mhz
-              inferring_global_domains = True
             
     # Elaborate the logic down to raw vhdl modules
     print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
@@ -8264,10 +8213,10 @@ class StateRegInfo:
     self.is_volatile = False
     self.is_static_local = False
     self.path_id = None # Use associated path id, for clk cross
-    self.used_in_funcs = set()
+    self.used_in_funcs = set() # Global id occurs in funcs
 
 def GET_GLOBAL_STATE_REG_INFO(parser_state):
-  # Read in file with C parser and get function def nodes
+  # Read in file with C parser to get global def nodes
   parser_state.global_state_regs = dict()
   global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
   for global_decl in global_decls:
@@ -8287,19 +8236,26 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
         
     # Save info
     parser_state.global_state_regs[state_reg_info.name] = state_reg_info
-      
+
+  # Update with where globals are used
+  # Hacky pre-parsing func body logic, determine what funcs contain use of the global
+  c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+  for c_ast_func_def in c_ast_func_defs:
+    func_name = c_ast_func_def.decl.name
+    if not SKIP_PARSING_FUNC(func_name, parser_state):
+      ids_in_func = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.ID)
+      for id_node in ids_in_func:
+        var_name = id_node.name
+        if var_name in parser_state.global_state_regs:
+          parser_state.global_state_regs[var_name].used_in_funcs.add(func_name)
+
   return parser_state
   
 def GET_LOCAL_STATE_REG_INFO(parser_state):
   parser_state.func_to_local_state_regs = dict()
   
   # Get all the func defs
-  # And look for statics 
-  
-  # TODO
-  
-  #parser_state.func_name_to_calls = dict()
-  #parser_state.func_names_to_called_from = dict()
+  # And look for statics
   c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for c_ast_func_def in c_ast_func_defs:
     func_name = c_ast_func_def.decl.name
@@ -8431,9 +8387,9 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   var_names = []
   for var_name in all_var_names:
     if var_name in parser_state.global_state_regs:
-      if var_name not in var_to_write_func:
-        print("WARNING: Missing clock cross write function for clock crossing named:",var_name)
-        #sys.exit(-1)
+      #if var_name not in var_to_write_func:
+      #  print("WARNING: Missing clock cross write function for clock crossing named:",var_name)
+      #  #sys.exit(-1)
       # Make up a read func if needed (unconnected output)
       if var_name not in var_to_read_func:
         var_to_read_func[var_name] = var_to_write_func[var_name].replace("_WRITE","_READ")
@@ -8474,10 +8430,10 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         write_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(func_name, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
     
     # Final check per clock cross var
-    if len(write_main_funcs) == 0:
-      print("WARNING: Problem finding write side main functions for",var_name)
-      #print("Missing or incorrect #pragma MAIN_MHZ ?")
-      #sys.exit(-1)
+    #if len(write_main_funcs) == 0:
+    #  print("WARNING: Problem finding write side main functions for",var_name)
+    #  #print("Missing or incorrect #pragma MAIN_MHZ ?")
+    #  #sys.exit(-1)
     var_to_rw_main_funcs[var_name] = (read_main_funcs,write_main_funcs)
     
   
@@ -8487,14 +8443,53 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
   var_to_rw_mhz_groups = dict()
   while inferring:
     inferring = False
+    # Do pass over all shared globals (same domain) trying to match domains
+    for global_var,global_var_state_reg_info in parser_state.global_state_regs.items():
+      # Shared globals only here
+      if len(global_var_state_reg_info.used_in_funcs) <= 1:
+        continue
+      # Cannot do inferring for async wires
+      if global_var in parser_state.async_wires:
+        continue
+      # Read+write mains for func
+      rw_mains = set()
+      for used_in_func in global_var_state_reg_info.used_in_funcs:
+        used_in_mains = RECURSIVE_FIND_MAIN_FUNCS(used_in_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+        rw_mains |= used_in_mains
+      # Look for a first valid main func domain and try to match it to others
+      valid_main = None
+      valid_mhz = None
+      valid_group = None
+      for rw_main in rw_mains: 
+        if rw_main in parser_state.main_mhz and parser_state.main_mhz[rw_main] is not None:
+          valid_main = rw_main
+          valid_mhz = parser_state.main_mhz[rw_main]
+          valid_group = parser_state.main_clk_group[rw_main]
+          break
+      if valid_main:
+        for rw_main in rw_mains-set([valid_main]):
+          if (rw_main not in parser_state.main_mhz or parser_state.main_mhz[rw_main] is None) and (rw_main not in parser_state.main_clk_group or parser_state.main_clk_group[rw_main]==valid_group):
+            print("Matching clock domain: main function",rw_main,"based on shared global variable",global_var,"used with clock domain for main function",valid_main,"@",valid_mhz,"MHz, Group:", valid_group)
+            parser_state.main_mhz[rw_main] = valid_mhz
+            parser_state.main_clk_group[rw_main] = valid_group
+            if rw_main not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[rw_main] is None:
+              parser_state.main_syn_mhz[rw_main] = valid_mhz
+            inferring = True
+    # Make sure global wires infer first
+    if inferring:
+      continue
+
+    # Do pass over all clk crossing vars trying to match domains
     for var_name in var_to_rw_main_funcs:
+      # Cannot do inferring for async wires
+      if var_name in parser_state.async_wires:
+        continue
       # Skip temp during code gen disconnected write side
       if var_name not in var_to_write_func:
         continue
       read_main_funcs,write_main_funcs = var_to_rw_main_funcs[var_name]
       read_func_name = var_to_read_func[var_name]
-      write_func_name = var_to_write_func[var_name]
-      
+      write_func_name = var_to_write_func[var_name]  
       # Can only be one write side mhz,group
       write_mhz_group_tuples = set()
       write_mhz = None
@@ -8513,7 +8508,6 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       else:
         write_mhz = None
         write_group = None
-      
       # Can only be one read side mhz,group
       read_mhz_group_tuples = set()
       read_mhz = None
@@ -8532,14 +8526,12 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       else:
         read_mhz = None
         read_group = None
-
-      #print("var_name",var_name, "read_mhz", read_mhz, "read_main_funcs",read_main_funcs,"write_mhz",write_mhz, "write_main_funcs",write_main_funcs) 
-     
+      #print("var_name",var_name, "read_mhz", read_mhz, "read_main_funcs",read_main_funcs,"write_mhz",write_mhz, "write_main_funcs",write_main_funcs)  
       # Infer from each side
       for read_main_func in read_main_funcs:
         # Infer freqs to match if possible and same groups
         if read_main_func is not None and parser_state.main_mhz[read_main_func] is None and write_mhz is not None and (read_group is None or read_group==write_group):
-          print("Matching clock domain for",read_main_func,"based on clk cross",var_name,"to clock domain for",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
+          print("Matching clock domain: read side main function",read_main_func,"based on clock crossing variable",var_name,"from clock domain with write side main function",write_main_func,"@",write_mhz,"MHz, Group:", write_group)
           read_mhz = write_mhz
           parser_state.main_mhz[read_main_func] = read_mhz
           read_group = write_group
@@ -8549,19 +8541,17 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
           inferring = True
       for write_main_func in write_main_funcs:
         if write_main_func is not None and read_mhz is not None and parser_state.main_mhz[write_main_func] is None and (write_group is None or write_group==read_group):
-          print("Matching clock domain for",write_main_func,"based on clk cross",var_name,"to clock domain for",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
+          print("Matching clock domain: write side main function",write_main_func,"based on clock crossing variable",var_name,"from clock domain with read side main function",read_main_func,"@",read_mhz,"MHz, Group:",read_group)
           write_mhz = read_mhz
           parser_state.main_mhz[write_main_func] = write_mhz
           write_group = read_group
           parser_state.main_clk_group[write_main_func] = write_group
           if write_main_func not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[write_main_func] is None:
             parser_state.main_syn_mhz[write_main_func] = write_mhz
-          inferring = True
-          
+          inferring = True       
       # Finally record mhz,group if set
       #if write_mhz is not None: # OK to have disconnected read side, read_mhz is not None and 
       var_to_rw_mhz_groups[var_name] = ( (read_mhz,read_group) , (write_mhz, write_group) )
-          
 
   # Then loop to construct each clock crossings info
   #print("Clocks done: parser_state.main_mhz",parser_state.main_mhz)
@@ -8576,10 +8566,10 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
       #print("WARNING: Clock crossing {var_name} appears to be never read!")
       read_mhz = write_mhz
     # Sanity check
-    if read_mhz is None and write_mhz is None:
-      print("No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_funcs,",",write_main_funcs)
-      #print("Missing or incorrect #pragma MAIN_MHZ ?")
-      #sys.exit(-1)
+    #if read_mhz is None and write_mhz is None:
+    #  print("WARNING: No clock frequencies asssociated with each side of the clock crossing for",var_name,"clock crossing: read, write:", read_main_funcs,",",write_main_funcs)
+    #  #print("Missing or incorrect #pragma MAIN_MHZ ?")
+    #  #sys.exit(-1)
     
     # Info to record
     flow_control = False
@@ -8857,6 +8847,9 @@ def FUNC_IS_PRIMITIVE(func_name, parser_state):
 def GET_FSM_CLK_FUNC_LOGICS(parser_state):
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
+    if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
+      print("Function skipped:",func_def.decl.name)
+      continue
     parser_state.existing_logic=None
     driven_wire_names=[]
     prepend_text=""
@@ -8864,7 +8857,7 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
     only_fsm_clk_funcs = True
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body, only_fsm_clk_funcs)
     if logic is not None:
-      print("Parsed __clk() function:", logic.func_name)
+      print("Parsed FSM style function:", logic.func_name)
       parser_state.FuncLogicLookupTable[logic.func_name] = logic
       #print(logic.c_ast_node)
     else:
@@ -8880,6 +8873,11 @@ def FUNC_IS_OP_OVERLOAD(func_name):
   elif func_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX+"_"):
     return True
   return False
+
+def SKIP_PARSING_FUNC(func_name, parser_state):
+  return ( (func_name not in parser_state.func_name_to_calls) and
+         (func_name not in parser_state.func_names_to_called_from) and 
+         (func_name not in parser_state.main_mhz) )
 
 # This will likely be called multiple times when loading multiple C files
 def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
@@ -8900,9 +8898,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
       print("Parsing operator overload function:",func_def.decl.name, flush=True)
     # Skip functions that are not found in the initial from-main hierarchy mapping
-    elif ( (func_def.decl.name not in parser_state.func_name_to_calls) and
-         (func_def.decl.name not in parser_state.func_names_to_called_from) and 
-         (func_def.decl.name not in parser_state.main_mhz) ):
+    elif SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
       print("Function skipped:",func_def.decl.name)
       continue
     # Prims

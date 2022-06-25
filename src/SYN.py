@@ -69,13 +69,13 @@ def PART_SET_TOOL(part_str, allow_fail=False):
       if part_str.lower().startswith("xc"):
         SYN_TOOL = VIVADO
         if os.path.exists(VIVADO.VIVADO_PATH):
-          print(VIVADO.VIVADO_PATH, flush=True)
+          print("Vivado:",VIVADO.VIVADO_PATH, flush=True)
         else:
           raise Exception("Vivado install not found!")
       elif part_str.lower().startswith("ep") or part_str.lower().startswith("10c") or part_str.lower().startswith("5c"):
         SYN_TOOL = QUARTUS
         if os.path.exists(QUARTUS.QUARTUS_PATH):
-          print(QUARTUS.QUARTUS_PATH, flush=True)
+          print("Quartus:",QUARTUS.QUARTUS_PATH, flush=True)
         else:
           raise Exception("Quartus install not found!")
       elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
@@ -88,13 +88,13 @@ def PART_SET_TOOL(part_str, allow_fail=False):
         else:
           SYN_TOOL = DIAMOND
           if os.path.exists(DIAMOND.DIAMOND_PATH):
-            print(DIAMOND.DIAMOND_PATH, flush=True)
+            print("Diamond:",DIAMOND.DIAMOND_PATH, flush=True)
           else:
             raise Exception("Diamond install not found!")
       elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
         SYN_TOOL = EFINITY
         if os.path.exists(EFINITY.EFINITY_PATH):
-          print(EFINITY.EFINITY_PATH, flush=True)
+          print("Efinity:",EFINITY.EFINITY_PATH, flush=True)
         else:
           raise Exception("Efinity install not found!")
       else:
@@ -3239,7 +3239,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
       # Dont write FSM funcs
       if logic.is_fsm_clk_func:
         continue      
-      print("Writing func",func_name,"...", flush=True)
+      print("Writing function:",func_name,"...", flush=True)
       syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
       if not os.path.exists(syn_out_dir):
         os.makedirs(syn_out_dir)
