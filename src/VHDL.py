@@ -695,8 +695,9 @@ begin
     # Find the many read insts
     read_insts = set()
     for read_func_name in read_funcs:
-      read_func_insts = parser_state.FuncToInstances[read_func_name]
-      read_insts |= read_func_insts
+      if read_func_name in parser_state.FuncToInstances:
+        read_func_insts = parser_state.FuncToInstances[read_func_name]
+        read_insts |= read_func_insts
 
     # Find main funcs for all insts
     # Find clock names for all main funcs, can only be one clock

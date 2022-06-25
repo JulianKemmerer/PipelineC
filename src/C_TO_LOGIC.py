@@ -7968,7 +7968,7 @@ def PARSE_FILE(c_filename):
     # Need to add array struct for old internal C code parsing?
     parser_state = APPEND_ARRAY_STRUCT_INFO(parser_state)
         
-    # Check for double use of globals+volatiles the dumb way to print useful info
+    # Check for double write of globals+volatiles the dumb way to print useful info
     for func_name1 in parser_state.FuncLogicLookupTable:
       func1_logic = parser_state.FuncLogicLookupTable[func_name1]
       for func_name2 in parser_state.FuncLogicLookupTable:
@@ -7994,6 +7994,53 @@ def PARSE_FILE(c_filename):
           if func1_state_reg in parser_state.global_state_regs:
             print("ERROR: Cannot write to global state regs in more than one function!:", func1_state_reg, "written to in both", func_name1, "and", func_name2)
             sys.exit(-1)
+
+    # Infer/check that write-read sides of shared globals are same clock freq
+    # Very similar to what happens for explicit clock crossings
+    # But ill write the code again because im dumb # Lover I Don’t Have to Love - Bright Eyes
+    # Is multiple passes even needed?
+    inferring_global_domains = True
+    while inferring_global_domains:
+      inferring_global_domains = False
+      # Do pass over all globals trying to make matches
+      for global_state_reg,global_state_reg_info in parser_state.global_state_regs.items():
+        # Cannot do inferring for async wires
+        if global_state_reg in parser_state.async_wires:
+          continue
+        # Only needed for shared globals
+        if len(global_state_reg_info.used_in_funcs) <= 1:
+          continue
+        # Need to find mains from funcs - hacky pre elab helper func also used for getting clock cross info
+        rw_mains = set()
+        for used_in_func in global_state_reg_info.used_in_funcs:
+          used_in_mains = RECURSIVE_FIND_MAIN_FUNCS(used_in_func, parser_state.func_name_to_calls, parser_state.func_names_to_called_from, list(parser_state.main_mhz.keys()))
+          rw_mains |= used_in_mains
+        rw_clk_names = set()
+        for rw_main in rw_mains:
+          rw_clk_name = VHDL.CLK_EXT_STR(rw_main, parser_state)
+          rw_clk_names.add(rw_clk_name)
+        # Assume is all none, or none and some valid domain
+        if len(rw_clk_names) > 2:
+          raise Exception(f"Cannot have multiple clock domains for shared global {global_state_reg}! {rw_clk_names}")
+        # Look for first valid domain and try to match it to others
+        valid_main = None
+        valid_mhz = None
+        valid_group = None
+        for rw_main in rw_mains: 
+          if rw_main in parser_state.main_mhz and parser_state.main_mhz[rw_main] is not None:
+            valid_main = rw_main
+            valid_mhz = parser_state.main_mhz[rw_main]
+            valid_group = parser_state.main_clk_group[rw_main]
+            break
+        if valid_main:
+          for rw_main in rw_mains-set([valid_main]):
+            if (rw_main not in parser_state.main_mhz or parser_state.main_mhz[rw_main] is None) and (rw_main not in parser_state.main_clk_group or parser_state.main_clk_group[rw_main]==valid_group):
+              print("Matching clock domain for",rw_main,"based on shared global variable",global_state_reg,"to clock domain for",valid_main,"@",valid_mhz,"MHz, Group:", valid_group)
+              parser_state.main_mhz[rw_main] = valid_mhz
+              parser_state.main_clk_group[rw_main] = valid_group
+              if rw_main not in parser_state.main_syn_mhz or parser_state.main_syn_mhz[rw_main] is None:
+                parser_state.main_syn_mhz[rw_main] = valid_mhz
+              inferring_global_domains = True
             
     # Elaborate the logic down to raw vhdl modules
     print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
@@ -8593,34 +8640,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     parser_state.clk_cross_var_info[var_name].flow_control = flow_control
     parser_state.clk_cross_var_info[var_name].write_read_funcs = (write_func_name,read_func_name)
     parser_state.clk_cross_var_info[var_name].write_read_main_funcs = (write_main_funcs,read_main_funcs)
-    parser_state.clk_cross_var_info[var_name].write_read_sizes = (write_size, read_size)
-
-  '''
-  # Loop over all funcs and get instances 
-  global_to_modulest_containing_inst_set = set()
-  for func_name in parser_state.FuncLogicLookupTable:
-    logic = parser_state.FuncLogicLookupTable[func_name]
-    if not logic.is_clock_crossing:
-      continue
-    # Should only be one instance:
-    insts = parser_state.FuncToInstances[func_name]
-    if len(insts) > 1:
-      print "More than one clock crossing instance?", func_name, insts
-      print "Screwed - Janelle Monae"
-      sys.exit(-1)
-    inst_name = list(insts)[0]
-    # And one containing instance
-    if len(logic.containing_funcs) > 1:
-      print "More than one continer func for clock crossing instance?", func_name, insts
-      sys.exit(-1)
-    containing_func_name = list(logic.containing_funcs)[0]
-    containing_insts = parser_state.FuncToInstances[containing_func_name]
-    if len(containing_insts) > 1:
-      print "More than one continer func instance for clock crossing instance?", func_name, insts
-      sys.exit(-1)
-    containing_inst = list(containing_insts)[0]
-    global_to_modulest_containing_inst_set.add((inst_name,containing_inst))
-    '''   
+    parser_state.clk_cross_var_info[var_name].write_read_sizes = (write_size, read_size) 
 
   return parser_state
   
