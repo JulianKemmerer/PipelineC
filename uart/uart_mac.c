@@ -19,12 +19,7 @@ typedef struct uart_mac_s
 uint1_t uart_rx_mac_out_ready;
 // Outputs
 uart_mac_s uart_rx_mac_word_out;
-// Volatile overflow since is not part of cycle-by-cycle signaling,
-// can read by another process with latency,datapath width adjustments
-volatile uint1_t uart_rx_mac_overflow;
-#include "clock_crossing/uart_rx_mac_out_ready.h"
-#include "clock_crossing/uart_rx_mac_word_out.h"
-#include "clock_crossing/uart_rx_mac_overflow.h"
+uint1_t uart_rx_mac_overflow;
 
 // Deserialize eight bits into one 8b byte
 #include "stream/deserializer.h"
@@ -46,12 +41,10 @@ void uart_rx_mac()
   static uart_bit_count_t bit_counter;
   
   // Read uart data_in input port
-  uint1_t data_in;
-  WIRE_READ(uint1_t, data_in, uart_data_in)
+  uint1_t data_in = uart_data_in;
   
   // Read output ready input port
-  uint1_t out_ready;
-  WIRE_READ(uint1_t, out_ready, uart_rx_mac_out_ready)
+  uint1_t out_ready = uart_rx_mac_out_ready;
   
   // Output wires
   uart_mac_s word_out;
@@ -118,15 +111,8 @@ void uart_rx_mac()
   overflow = data_sample_valid & !deser.in_data_ready;
   
   // Drive output ports
-  WIRE_WRITE(uart_mac_s, uart_rx_mac_word_out, word_out) //uart_rx_mac_word_out = word_out
-  // Volatile, wider width overflow port // uart_rx_mac_overflow = overflow
-  uart_rx_mac_overflow_write_t overflow_data;
-  uint32_t i;
-  for(i=0;i<uart_rx_mac_overflow_RATIO;i+=1)
-  {
-    overflow_data.data[i] = overflow;
-  }
-  uart_rx_mac_overflow_WRITE(overflow_data);
+  uart_rx_mac_word_out = word_out;
+  uart_rx_mac_overflow = overflow;
 }
 
 // TX side
@@ -135,8 +121,6 @@ void uart_rx_mac()
 uart_mac_s uart_tx_mac_word_in;
 // Outputs
 uint1_t uart_tx_mac_in_ready;
-#include "clock_crossing/uart_tx_mac_word_in.h"
-#include "clock_crossing/uart_tx_mac_in_ready.h"
 
 // Slight clock differences between RX and TX sides can occur.
 // Do a hacky off by one fewer clock cycles to ensure TX bandwidth
@@ -163,8 +147,7 @@ void uart_tx_mac()
   static uart_bit_count_t bit_counter;
   
   // Read input port
-  uart_mac_s word_in;
-  WIRE_READ(uart_mac_s, word_in, uart_tx_mac_word_in)
+  uart_mac_s word_in = uart_tx_mac_word_in;
  
   // Default no output
   uint1_t word_in_ready = 0;
@@ -253,7 +236,7 @@ void uart_tx_mac()
   }
   
   // Write output ports
-  WIRE_WRITE(uint1_t, uart_tx_mac_in_ready, word_in_ready)
-  WIRE_WRITE(uint1_t, uart_data_out, data_out)
+  uart_tx_mac_in_ready = word_in_ready;
+  uart_data_out = data_out;
 }
 

@@ -1,7 +1,6 @@
 // Top level UART ports
 
 #include "uintN_t.h"
-#include "wire.h"
 #include "compiler.h"
 #include "cdc.h"
 
@@ -24,9 +23,7 @@
 
 // Globally visible port/wire names
 uint1_t uart_data_in;
-uint1_t uart_data_out; 
-#include "clock_crossing/uart_data_in.h"
-#include "clock_crossing/uart_data_out.h"
+uint1_t uart_data_out;
 
 // Delcare as top level module io and connect to internal wires
 MAIN_MHZ(uart_module,UART_CLK_MHZ)
@@ -38,18 +35,15 @@ uint1_t uart_module(uint1_t data_in)
   CDC2(uint1_t, in_cdc, data_in_registered, data_in)
   
   // Connect to ports  
-  WIRE_WRITE(uint1_t, uart_data_in, data_in_registered)
-  uint1_t data_out;
-  WIRE_READ(uint1_t, data_out, uart_data_out)
+  uart_data_in = data_in_registered;
+  uint1_t data_out = uart_data_out;
   return data_out;
 }
 
-// For those who dont like the WIRE macros...
+// TODO delete
 uint1_t read_uart_input_wire()
 {
-  uint1_t rv;
-  WIRE_READ(uint1_t, rv, uart_data_in)
-  // __clk(); // Clock handling moved inside receive function
+  uint1_t rv = uart_data_in;
   return rv;
 }
 
