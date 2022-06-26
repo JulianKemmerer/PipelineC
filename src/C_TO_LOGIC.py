@@ -7888,6 +7888,8 @@ def PARSE_FILE(c_filename):
       # Parse definitions first before code structure
       # Warn about typedefs not being resolved
       # Used too often to warn about? parser_state = WARN_NO_RENAMING_TYPEDEFS(parser_state.c_file_ast, parser_state)
+      # Parse pragmas
+      parse_state = APPEND_PRAGMA_INFO(parser_state)
       # Get the parsed enum info
       parser_state.enum_info_dict = GET_ENUM_INFO_DICT(parser_state.c_file_ast, parser_state)
       # Get the parsed struct def info
@@ -7897,8 +7899,6 @@ def PARSE_FILE(c_filename):
       parser_state = GET_GLOBAL_CONST_INFO(parser_state)
       # Get global state regs (global regs, volatile globals) info
       parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
-      # Parse pragmas
-      parse_state = APPEND_PRAGMA_INFO(parser_state)
       # Build primative map of function use
       parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
       # Get local state reg info
@@ -8446,7 +8446,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Do pass over all shared globals (same domain) trying to match domains
     for global_var,global_var_state_reg_info in parser_state.global_state_regs.items():
       # Shared globals only here
-      if len(global_var_state_reg_info.used_in_funcs) <= 1:
+      if not VHDL.GLOBAL_VAR_IS_SHARED(global_var, parser_state):
         continue
       # Cannot do inferring for async wires
       if global_var in parser_state.async_wires:

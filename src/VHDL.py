@@ -261,17 +261,22 @@ attribute dont_touch : string;
       text += "attribute dont_touch of " + clk_name + ''': signal is "true";\n'''
 
   # Clock cross wires
-  has_clk_cross = False
+  has_global_to_module = False
+  has_module_to_global = False
   for main_func in parser_state.main_mhz:
     main_func_logic = parser_state.LogicInstLookupTable[main_func]
-    if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic,parser_state) or LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic,parser_state):
-      has_clk_cross = True
-      break
-  if has_clk_cross:
+    if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic,parser_state):
+      has_global_to_module = True
+    if LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic,parser_state):
+      has_module_to_global = True
+  if has_module_to_global:
     text += '''
--- Clock cross wires
+-- Global/clock crossing wires from modules to global area
+signal module_to_global : module_to_global_t;'''
+  if has_global_to_module:
+    text += '''
+-- Global/clock crossing wires from the global area to modules
 signal global_to_module : global_to_module_t;
-signal module_to_global : module_to_global_t;
 '''
   
   # Clock cross output intermediate wires
@@ -327,25 +332,33 @@ begin
     for clk_var_name,clk_mhz in parser_state.clk_mhz.items():
       # Get info on this var
       clk_name =  "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-      write_func, read_func = parser_state.clk_cross_var_info[clk_var_name].write_read_funcs
-      write_mains, read_mains = parser_state.clk_cross_var_info[clk_var_name].write_read_main_funcs
-      write_func_insts = parser_state.FuncToInstances[write_func]
-      if len(write_func_insts) > 1:
-        raise Exception(f"Multiple write side connections to clock wire" + clk_var_name + " not supported. {write_func_insts}")
-      write_func_inst = list(write_func_insts)[0]
+      if clk_var_name in parser_state.clk_cross_var_info:
+        raise Exception(f"User defined clock wire {clk_var_name} should not be marked as clock crossing! Use simple global wires instead.")
+      # Get info on write side (no read side)
+      state_reg_info = parser_state.global_state_regs[clk_var_name]
+      write_func = None
+      for func_name in state_reg_info.used_in_funcs:
+        func_logic = parser_state.FuncLogicLookupTable[func_name]
+        if clk_var_name in func_logic.state_regs:
+          write_func = func_name
+          break
+      write_insts = parser_state.FuncToInstances[write_func]
+      if len(write_insts) > 1:
+        raise Exception(f"More than one instance trying to write to global {var_name}: {write_insts}!")
+      write_func_inst = list(write_insts)[0]
+      # Assemble driver write wire text
       write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
       # Start with main func then apply hier instances
       write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(write_func_inst, parser_state)
-      for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)-1]:
+      for write_func_inst_tok in write_func_inst_toks[1:len(write_func_inst_toks)]:
         write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
         write_text += "." + write_func_inst_str
-      write_text += "." + write_func
-      # Signal used is data from pipeline output module_to_global
-      input_port = "in_data"
+      write_text += "." + clk_var_name + "(0)"
       # Is struct wrapped array of 1 unsigned 0 downto 0
-      text += clk_name + " <= " + "module_to_global." + write_text + "_" + input_port + ".data(0)(0);\n"
+      text += clk_name + " <= " + "module_to_global." + write_text + ";\n"
       # Also connect to output
       text += clk_name + "_out <= " + clk_name + ";\n"
+
 
   # IO regs
   if not is_final_top:
@@ -662,7 +675,7 @@ begin
   # Connections for global regs used in multiple funcs
   shared_global_vars = set()
   for var_name,state_reg_info in parser_state.global_state_regs.items():
-    if len(state_reg_info.used_in_funcs)>1:
+    if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
       shared_global_vars.add(var_name)
   if len(shared_global_vars) > 0:
     text += '''
@@ -1894,11 +1907,24 @@ port map (
   f.close()    
     
 
+def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+  # Async wires assumed shared
+  if var_name in parser_state.async_wires:
+    return True
+  # Clock wires assumed shared
+  if var_name in parser_state.clk_mhz:
+    return True
+  # Otherwise check where used
+  if var_name not in parser_state.global_state_regs:
+    return False
+  state_reg_info = parser_state.global_state_regs[var_name]
+  return len(state_reg_info.used_in_funcs) > 1
+
 def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
   # Do nothing if no clock crossings or no shared globals
   found_multi_use_global = False
   for global_var_name,state_reg_info in parser_state.global_state_regs.items():
-    if len(state_reg_info.used_in_funcs) > 1:
+    if GLOBAL_VAR_IS_SHARED(global_var_name, parser_state):
       found_multi_use_global = True
       break
   if not found_multi_use_global and len(parser_state.clk_cross_var_info) <= 0:
@@ -2039,7 +2065,7 @@ package global_wires_pkg is
 
       # Global reg output for multiple read only consumers
       for var_name,state_reg_info in func_logic.state_regs.items():
-        if len(state_reg_info.used_in_funcs) > 1:
+        if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
           text += "     " + var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(state_reg_info.type_name, parser_state) + ";\n"
 
       # Then include types for submodules (not clock crossing submodules)
@@ -2594,7 +2620,7 @@ def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
 
   # Or if logic is writing a global reg with muliple reads
   for state_reg_var,state_reg_info in Logic.state_regs.items():
-    if len(state_reg_info.used_in_funcs) > 1:
+    if GLOBAL_VAR_IS_SHARED(state_reg_var, parser_state):
       return True
 
   return needs_module_to_global
@@ -3684,7 +3710,7 @@ end process;
   # Connect shared globals to global bus
   shared_globals = set()
   for state_reg, state_reg_info in Logic.state_regs.items():
-    if len(state_reg_info.used_in_funcs) > 1:
+    if GLOBAL_VAR_IS_SHARED(state_reg, parser_state):
       shared_globals.add(state_reg)
   if len(shared_globals) > 0:
     rv += "-- Shared global regs\n"
