@@ -8847,9 +8847,9 @@ def FUNC_IS_PRIMITIVE(func_name, parser_state):
 def GET_FSM_CLK_FUNC_LOGICS(parser_state):
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
-    if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
-      print("Function skipped:",func_def.decl.name)
-      continue
+    #if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
+    #  print("Function skipped:",func_def.decl.name)
+    #  continue
     parser_state.existing_logic=None
     driven_wire_names=[]
     prepend_text=""
@@ -8861,7 +8861,7 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
       parser_state.FuncLogicLookupTable[logic.func_name] = logic
       #print(logic.c_ast_node)
     else:
-      #print("Skipped non __clk() function:", func_def.decl.name)
+      #print("Function skipped:",func_def.decl.name)
       pass
       
   return parser_state
