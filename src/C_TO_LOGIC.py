@@ -2062,6 +2062,11 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
 
 
 def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state, is_lhs_assign):
+  # Immediately not if early data from ID occurance says its local
+  if parser_state.existing_logic.func_name in parser_state.func_to_local_variables:
+    if maybe_global_name in parser_state.func_to_local_variables[parser_state.existing_logic.func_name]:
+      return parser_state.existing_logic
+
   # Catch read only global regs
   # If has same name as global and hasnt been declared as (local) variable already
   if not is_lhs_assign and (maybe_global_name in parser_state.global_state_regs) and (maybe_global_name not in parser_state.existing_logic.variable_names):
@@ -4351,7 +4356,7 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
     wire_name = c_ast_decl.name
     c_type = c_ast_typedecl.type.names[0]
   else:
-    raise Exception(f"C_AST_DECL_TO_C_TYPE_AND_VAR_NAME {c_ast_decl.type} {c_ast_decl.type.coord}")    
+    raise Exception(f"C_AST_DECL_TO_C_TYPE_AND_VAR_NAME {c_ast_decl} {c_ast_decl.type.coord}")    
   return c_type,wire_name
  
 def C_AST_NODE_IS_COMPOUND_NULL(c_ast_node):
@@ -7198,8 +7203,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
       #print "Append input", input_wire_name
       c_type,input_var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(param_decl, parser_state)
       parser_state.existing_logic.wire_to_c_type[input_wire_name] = c_type
-      
-      
+
   # In addition to inputs and outputs
   # All func bodys can see globally defined variable names
   # Instead of processing upon finding global names multiple times
@@ -7208,7 +7212,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
   for id_node in all_ids:
     var_name = str(id_node.name)
     parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(var_name, parser_state, is_lhs_assign=False)
-  
+
   # Before doing anything with the func body
   # Need to decide what kind of func
   # FSM style
@@ -7600,8 +7604,12 @@ class ParserState:
     self.enum_info_dict = dict()
     self.global_state_regs = dict() # name->state reg info
     self.global_consts = dict() #name->global const info
+    # The func body stuff here is hacky af damn
+    #   State regs only needed for GET_MEM_H_LOGIC_LOOKUP?
     self.func_to_local_state_regs = dict() #funcname-> [state,reg,infos]
-    
+    #   Local vars needed since doing MAYBE global all names in func body before parsing decls?
+    self.func_to_local_variables = dict() #funcname-> set(vars)
+
     # Parsed from function defintions
     # Function definitons as logic
     self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
@@ -7667,6 +7675,7 @@ class ParserState:
     rv.global_state_regs = dict(self.global_state_regs)
     rv.global_consts = dict(self.global_consts)
     rv.func_to_local_state_regs = dict(self.func_to_local_state_regs)
+    rv.func_to_local_variables = dict(self.func_to_local_variables)
     
     rv.func_name_to_calls = dict(self.func_name_to_calls)
     rv.func_names_to_called_from = dict(self.func_name_to_calls)
@@ -7895,14 +7904,14 @@ def PARSE_FILE(c_filename):
       # Get the parsed struct def info
       parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
       #print("struct_to_field_type_dict",parser_state.struct_to_field_type_dict)
+      # Get local state reg info (is needed to interpret global variable names appearing in functions)
+      parser_state = GET_LOCAL_VAR_INFO(parser_state)
       # Get globally defined consts
       parser_state = GET_GLOBAL_CONST_INFO(parser_state)
       # Get global state regs (global regs, volatile globals) info
       parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
       # Build primative map of function use
       parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
-      # Get local state reg info
-      parser_state = GET_LOCAL_STATE_REG_INFO(parser_state)
       # Elborate what the clock crossings look like
       parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
       parser_state = DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
@@ -8246,36 +8255,47 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
       ids_in_func = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.ID)
       for id_node in ids_in_func:
         var_name = id_node.name
-        if var_name in parser_state.global_state_regs:
+        # If name is from global names, and not from local then record global being used
+        if (var_name in parser_state.global_state_regs and 
+            (func_name not in parser_state.func_to_local_variables or 
+            var_name not in parser_state.func_to_local_variables[func_name])):
           parser_state.global_state_regs[var_name].used_in_funcs.add(func_name)
 
   return parser_state
   
-def GET_LOCAL_STATE_REG_INFO(parser_state):
+def GET_LOCAL_VAR_INFO(parser_state):
+  parser_state.func_to_local_variables = dict()
   parser_state.func_to_local_state_regs = dict()
   
   # Get all the func defs
-  # And look for statics
+  # And look for declarations in the func BODY
+  # INCLUDES INPUT PARAMs AND LOCALs
   c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for c_ast_func_def in c_ast_func_defs:
     func_name = c_ast_func_def.decl.name
-    decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.Decl)
+    local_decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def.body, c_ast.Decl)
+    param_decl_c_ast_nodes = []
+    if c_ast_func_def.decl.type.args is not None:
+      param_decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def.decl.type.args, c_ast.Decl)
+    decl_c_ast_nodes = local_decl_c_ast_nodes + param_decl_c_ast_nodes
     for decl_c_ast_node in decl_c_ast_nodes:
-      # Looking for state regs
+      c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(decl_c_ast_node, parser_state)
+      # Record all declared vars
+      if func_name not in parser_state.func_to_local_variables:
+        parser_state.func_to_local_variables[func_name] = set()
+      parser_state.func_to_local_variables[func_name].add(var_name)
+      # Record static state registers
       if 'static' not in decl_c_ast_node.storage:
         continue
       state_reg_info = StateRegInfo()
-      c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(decl_c_ast_node, parser_state)
       state_reg_info.name = var_name
       state_reg_info.type_name = c_type
       state_reg_info.init = decl_c_ast_node.init
       # Resolved when evaluating containing func
       #state_reg_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(decl_c_ast_node.init, "", parser_state)
-          
       # Save flags
       if 'volatile' in decl_c_ast_node.quals:
         state_reg_info.is_volatile = True
-      
       # Save info
       if func_name not in parser_state.func_to_local_state_regs:
         parser_state.func_to_local_state_regs[func_name] = dict()
