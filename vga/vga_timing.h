@@ -1,7 +1,7 @@
 #pragma once
 #ifndef __VGA_TIMING_H__
 #define __VGA_TIMING_H__
-
+#include "wire.h"
 
 #ifndef FRAME_WIDTH
 #define FRAME_WIDTH 1920
