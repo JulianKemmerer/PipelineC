@@ -1759,6 +1759,10 @@ def SLICES_EQ(slices_a, slices_b, epsilon):
 
 # Wow this is hack AF
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_params):
+  if path_report.start_reg_name is None:
+    raise Exception("No start reg name in timing report!")
+  if path_report.end_reg_name is None:
+    raise Exception("No end reg name in timing report!")
   main_insts = set()
   all_main_insts = list(reversed(sorted(list(parser_state.main_mhz.keys()), key=len)))
   # Try to go off of just start and end registers being in single top level main
@@ -1779,11 +1783,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
   if len(main_insts)==0:
     # Include start and end regs in search 
     all_netlist_resources = set(path_report.netlist_resources)
-    if path_report.start_reg_name is None:
-      raise Exception("No start reg name")
-    all_netlist_resources.add(path_report.start_reg_name)
-    if path_report.end_reg_name is None:
-      raise Exception("No end reg name")
+    all_netlist_resources.add(path_report.start_reg_name)  
     all_netlist_resources.add(path_report.end_reg_name)
     for netlist_resource in all_netlist_resources:
       #toks = netlist_resource.split("/")
@@ -2387,12 +2387,15 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       # Oh boy old log files can still be used if target freq changes right?
       # Do a little hackery to get actual target freq right now, not from log
       # Could be a clock crossing too right?
-      main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, sweep_state.multimain_timing_params)
+      if len(parser_state.main_mhz)==1: # hacky work around for pyrtl really...
+        main_insts = set([list(parser_state.main_mhz.keys())[0]])
+      else:
+        main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, sweep_state.multimain_timing_params)
       if len(main_insts) <= 0:
         print("No main functions in timing report for path group:",reported_clock_group)
-        print(path_report.start_reg_name)
-        print(path_report.end_reg_name)
-        print(path_report.netlist_resources)
+        #print(path_report.start_reg_name)
+        #print(path_report.end_reg_name)
+        #print(path_report.netlist_resources)
         for main_inst in parser_state.main_mhz:
           main_logic = parser_state.LogicInstLookupTable[main_inst]
           main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(main_inst, main_logic, sweep_state.multimain_timing_params.TimingParamsLookupTable, parser_state)
