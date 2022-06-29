@@ -68,8 +68,9 @@ OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args)
 
-
-print("""
+# Ugh some python versions dont obey the coding comment at top of file?
+try:
+  print("""
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
 ██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
 ██████╔╝██║██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
@@ -77,6 +78,9 @@ print("""
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 """, flush=True)
+except UnicodeEncodeError as e:
+  print("Old python versions do not obey utf-8 file encoding...")
+  print(e)
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
@@ -117,23 +121,15 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Lemon's UART cmd+resp demo
-  See Discord picture
-How to fix FSM style resuse
+Victor's RT
+  UART button fun
+Single direction data handshaked clock crossing - aka wire read that also returns clock enable/wire driven signal
+  Kinda like half of single inst arb as is
+  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
+  Want some want to share N resources among M callers
+How to fix FSM style reuse
   Only single instance of any func per main function FSM top level should be default
   Not SINGLE INST, but "THREAD_INST" - but default _FSM should be this way
-Allow global variables to be directly used (not as wires) to communicate between functions
-  Like another type of clock crossing (isnt wire, is delated clock output of reg)
-Victor's RT
-  Victor UART based single x,y pixel dump
-  Victor mailing capture card for video from FPGA?
-  More power measurements?
-  Review article
-  Help make UART litex project demo too
-  ALT UI shows glitching in hardware test, prob pipeline problem, no verilator issue
-  Full RT Seems ready for hardware test ECP5 85F device at 480p...
-    Try to squeeze in 720p on ecp5?
-  Full gamepad, buttons/joystick rpi cover
 Do UART in clk() style, compare to original style
   Do fsm style write up page, include hierarchy of function resuse/single instance
   Refresh hdl-style original uart
@@ -154,10 +150,6 @@ Do video walkthrough of Pong demo?
 Next ML demo?
   Email TinyML/HLS4ML?
   Recreate mnist demo using hls4ml or idk some CIRCT stuff?
-Single direction data handshaked clock crossing
-  Kinda like half of single inst arb as is
-  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
-  Want some want to share N resources among M callers
 Do more basic tutorials like nandland+hdlbits
 Do BROM support
   Do autopipelinable ROM func support looks like RAM funcs with no latency specified
@@ -265,6 +257,7 @@ Slight optimization from not rendering binary ops with always matching signednes
 Solve issue include all in modelsim: generating many pipelined slice variants same for raw hdl bits per stage
 Remove extra regs that appear in funcs that had RAM prim funcs in them(now regs inside ram module)
 Optimize away constant-enabled instances of funcs w/ clock enables through long pipelines? CE on pipelines make sense even?
-Make WIRE_READ return a value, 'wire_read(...);'
+Replace _all_ old WIRE use with new shared globals
+  Get rid of WIRE use in single inst fsm style arb gen code
 """
 
