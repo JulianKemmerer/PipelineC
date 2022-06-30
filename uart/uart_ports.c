@@ -4,11 +4,15 @@
 #include "compiler.h"
 #include "cdc.h"
 
+#ifndef UART_CLK_MHZ
 #define UART_CLK_MHZ 25.0
+#endif
+#ifndef UART_BAUD
+#define UART_BAUD 115200
+#endif
+
 #define UART_CLKS_PER_SEC (UART_CLK_MHZ*1000000.0)
 #define SEC_PER_UART_CLK (1.0/UART_CLKS_PER_SEC)
-
-#define UART_BAUD 115200
 #define UART_WORD_BITS 8
 #define uart_bit_count_t uint4_t
 #define uart_word_from_bits uint1_array8_le // PipelineC built in func
