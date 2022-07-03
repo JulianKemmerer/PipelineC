@@ -123,17 +123,11 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 TODO:
 Victor's RT
   UART button fun
-Single direction data handshaked clock crossing - aka wire read that also returns clock enable/wire driven signal
-  Kinda like half of single inst arb as is
-  just like sync fifo wires but is depth=0 comb logic, looks like async fifo flow control stuff?
-  Want some want to share N resources among M callers
-How to fix FSM style reuse
-  Only single instance of any func per main function FSM top level should be default
-  Not SINGLE INST, but "THREAD_INST" - but default _FSM should be this way
-Do UART in clk() style, compare to original style
+  See uart bin file
+  Film video w/ uart capture
+Do UART in clk() style, compare to original style VIDEO? make video out of comparison?
   Do fsm style write up page, include hierarchy of function resuse/single instance
   Refresh hdl-style original uart
-  make video out of comparison?
   RX then a TX in half duplex loopback, but end saying best to have two always runing MAINs
 Try to fix/refresh AWS DMA demo
   / use PCIe FPGA from Quarky for same demo?
@@ -151,8 +145,6 @@ Next ML demo?
   Email TinyML/HLS4ML?
   Recreate mnist demo using hls4ml or idk some CIRCT stuff?
 Do more basic tutorials like nandland+hdlbits
-Do BROM support
-  Do autopipelinable ROM func support looks like RAM funcs with no latency specified
 Try to restructure FSM style parsing + building of states list to be bottom up ~ last states first
   as opposed to top down, first states first, since asking next_state.is_something() isnt valid since next state is shell, to be filled in
 Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
@@ -162,12 +154,10 @@ SiliconCompiler/edalize to automate/cloud runs of vivado+import of results into 
 Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Guitar i2s audio visualizer of some sort?
-Get 24b pmod working
 Put a risc(v? CHIPS2.0?) core (in pipelinec) along side accelerator in pipeline, + host OS on FOSIX NoC
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
-Implement break; in clk step style?
 How does multiple ins and out over time work in clk step style?  (not hdl wrapper)
 Refactor fosix stuff:
   do demo 1b wide data bus
@@ -178,9 +168,6 @@ Static locals inside {} with #pragma global or something? infer state reg submod
 ^Allow mix of volatile and non-volatile globals by isolating logic using globals (with {}?) (as is done now by putting in other global func)?
 volatile FEEDBACK makes sense just like regular vol static - just removes reg
 Only syn modules that are used in modules that need pipelining (will need pipeline map of delay)
-Check auto pipeline and clock crossing read+write behavior
-  Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
-  ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Fix idenfiying C AST nodes with coord+hash - need to know full parent tree nodes path
 Make reset module for Arty
 Try small python ast parsing based example - Pypeline?
@@ -190,9 +177,7 @@ Aetherling style re/unrolling of logic into different timings/util
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
 Do write up on one or two optimizations to DKs riscv
 Fix fine grain sweep to work again after coarse/middle out sweep
-Do CASE statements
 Do tagged unions as union type w/ gen tag type, and gen funcs taking union type and tag, decoding to struct type
-Nexus try to beat Wolfs results. try retiming, try area opt setting, target identical fpga parts VU9P (different die) gets consistently worse results than VU33P or VU13P
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
 Long code with lots of ifs is slow because of deep copy of if logic graph branches - fix
 Come on do sanity check for reserved words. Append _restricted?
@@ -249,15 +234,17 @@ Do more DSP prim functions ideally with backing fabric c code for if on differen
 Do built in Q number types
 Could make an undefined/Xs constant only meaningful in synthesis
 Default dont put IO regs around single inst funcs in mid out sweep?
-Make wire/var.h that just does same as clock_crossing/var.h?
 Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
 Add compound one = {1}; to init to all bits=1
 Do auto switch of static array access (need ot look at RMW pattern) into RAMs?
 Slight optimization from not rendering binary ops with always matching signedness? (render i32 AND u16, as opposed to casting to i17)
-Solve issue include all in modelsim: generating many pipelined slice variants same for raw hdl bits per stage
+Solve generating many pipelined slice variants same for raw hdl bits per stage
 Remove extra regs that appear in funcs that had RAM prim funcs in them(now regs inside ram module)
 Optimize away constant-enabled instances of funcs w/ clock enables through long pipelines? CE on pipelines make sense even?
 Replace _all_ old WIRE use with new shared globals
-  Get rid of WIRE use in single inst fsm style arb gen code
+Get rid of WIRE use in single inst fsm style arb gen code
+Check auto pipeline and clock crossing read+write behavior
+Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
+  ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 """
 
