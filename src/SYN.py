@@ -1390,7 +1390,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report does not fail...")
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated...")
         clock_mhz = INF_MHZ     
       f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ')\n')
   else:
@@ -1398,7 +1398,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     for clock_name in clock_name_to_mhz:
       clock_mhz = clock_name_to_mhz[clock_name]
       if clock_mhz is None:
-        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report does not fail...")
+        print(f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated...")
         clock_mhz = INF_MHZ
       ns = (1000.0 / clock_mhz)
       f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets " + clock_name + "]\n")
