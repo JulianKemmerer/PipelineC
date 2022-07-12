@@ -8001,14 +8001,14 @@ def PARSE_FILE(c_filename):
       # Get the parsed struct def info
       parser_state = APPEND_STRUCT_FIELD_TYPE_DICT(parser_state.c_file_ast, parser_state)
       #print("struct_to_field_type_dict",parser_state.struct_to_field_type_dict)
+      # Build primative map of function use
+      parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
       # Get local state reg info (is needed to interpret global variable names appearing in functions)
       parser_state = GET_LOCAL_VAR_INFO(parser_state)
       # Get globally defined consts
       parser_state = GET_GLOBAL_CONST_INFO(parser_state)
       # Get global state regs (global regs, volatile globals) info
       parser_state = GET_GLOBAL_STATE_REG_INFO(parser_state)
-      # Build primative map of function use
-      parser_state.func_name_to_calls, parser_state.func_names_to_called_from = GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state)
       # Elborate what the clock crossings look like
       parser_state = GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
       parser_state = DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state)
