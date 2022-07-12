@@ -420,6 +420,10 @@ class Logic:
     self.is_vhdl_text_module = False
     # Is this logic the input or output of a clock crossing?
     self.is_clock_crossing = False
+    # TODO 'new style' is_? checks like below replacing SW_LIB stuff eventually
+    self.is_new_style_bit_manip = False
+    #self.is_new_style_mem_func = False
+    #self.is_new_style_bit_math = False
     
     # Mostly for c built in C functions
     self.submodule_instance_to_c_ast_node = dict()
@@ -488,6 +492,7 @@ class Logic:
     rv.is_vhdl_func = self.is_vhdl_func
     rv.is_vhdl_expr = self.is_vhdl_expr
     rv.is_vhdl_text_module = self.is_vhdl_text_module
+    rv.is_new_style_bit_manip = self.is_new_style_bit_manip
     rv.is_clock_crossing = self.is_clock_crossing
     rv.submodule_instance_to_c_ast_node = self.DEEPCOPY_DICT_COPY(self.submodule_instance_to_c_ast_node)  # dict(self.submodule_instance_to_c_ast_node) # IMMUTABLE types / dont care
     rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(self.submodule_instance_to_input_port_names)
@@ -619,6 +624,7 @@ class Logic:
     # Absorb true values of using globals
     self.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs or logic_b.uses_nonvolatile_state_regs
     self.is_clock_crossing = self.is_clock_crossing or logic_b.is_clock_crossing
+    self.is_new_style_bit_manip = self.is_new_style_bit_manip or logic_b.is_new_style_bit_manip
     
     # Merge sets
     self.wires = self.wires | logic_b.wires
@@ -3521,6 +3527,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # Constant array ref
         # Sanity check
         if not C_TYPE_IS_ARRAY(current_c_type):
+          #TODO Explore allowing uint/float to be C TYPE CAN BE BIT ARRAY?
           print("Looks like an array reference but not an array type?", current_c_type, remaining_toks, c_ast_ref.coord)
           sys.exit(-1)
         # Go to next tok      
@@ -3604,6 +3611,7 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
   
   return C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state)
   
+# Does c_ast_ref need to be a ref or just for coord?
 def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state):        
   
   # FUCK
@@ -5267,7 +5275,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     func_c_ast_node,
     func_base_name,
     base_name_is_name,
-    input_drivers, # Wires or C ast nodes
+    input_drivers, # List of Wires, c ast nodes, or ref toks
     input_driver_types, # Might be none if not known
     input_port_names, # Port names on submodule
     output_driven_wire_names,
@@ -5287,6 +5295,15 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       c_ast_node_2_driven_input_wire_names[input_driver] = [input_wire_name]
   parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(c_ast_node_2_driven_input_wire_names, prepend_text, parser_state)
   
+  # Allow ref toks as inputs too
+  for i in range(0, len(input_drivers)):
+    input_driver = input_drivers[i]
+    if type(input_driver) == tuple:
+      driver_ref_toks = input_driver
+      input_port_name = input_port_names[i]
+      driven_input_port_wire = func_inst_name+SUBMODULE_MARKER+input_port_name
+      parser_state.existing_logic = C_AST_REF_TOKS_TO_LOGIC(driver_ref_toks, func_c_ast_node, [driven_input_port_wire], prepend_text, parser_state)
+
   # Other input drivers are just wires so connect those
   for i in range(0, len(input_drivers)):
     input_driver = input_drivers[i]
@@ -5708,7 +5725,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     func_c_ast_node,
     func_base_name,
     base_name_is_name,
-    input_drivers, # Wires or C ast nodes
+    input_drivers, # List of Wires, c ast nodes, or ref toks
     input_driver_types, # Might be none if not known
     input_port_names, # Port names on submodule
     output_driven_wire_names,
@@ -6074,7 +6091,83 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_
   
   
   return parser_state.existing_logic
+
   
+# HACK AF variables as func names
+def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names,  prepend_text, parser_state):
+  # Try to evaluate all the input wires
+  # Use types, is constant to match to some kind of func signature
+  func_name = str(c_ast_func_call.name.name)
+  var_name = func_name
+  c_type = parser_state.existing_logic.wire_to_c_type[var_name]
+  args = c_ast_func_call.args.exprs
+
+  # As is tradition, do the easiest possible thing first
+  # and see what happens for future me
+  is_bit_sel = False
+  if VHDL.C_TYPES_ARE_INTEGERS([c_type]) or C_TYPES_ARE_FLOAT_TYPES([c_type]):
+    if len(args) == 1 or len(args) == 2:
+      is_bit_sel = True
+  if is_bit_sel:
+    # Bit select/slice
+    # Resolve constant values for args strs in bit manip built in funcs
+    arg_const_strs = []
+    for arg in args:
+      arg_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(arg, prepend_text, parser_state)
+      if arg_const_str is None:
+        raise Exception(f"Unsupported non-constant bit slicing! Use arrays of bits for now...\n{arg} {arg.coord}")
+      arg_const_strs.append(arg_const_str)
+    # Build func name starting with type info
+    if C_TYPES_ARE_FLOAT_TYPES([c_type]):
+      bit_manip_func_name = c_type
+    else:
+      int_prefix = c_type.replace("_t","")
+      bit_manip_func_name = int_prefix
+    # One arg/index is bit select repeated index for single bit [3:3]
+    if len(arg_const_strs)==1:
+      for i in range(0,2):
+        bit_manip_func_name += "_" + arg_const_strs[0]
+    # Two args is multi bit range
+    elif len(arg_const_strs)==2:
+      for arg_const_str in arg_const_strs:
+        bit_manip_func_name += "_" + arg_const_str
+    # Unlike SW_LIB generating C headers to parse and create func def objects,
+    # Do the same thing here, during function body parsing, as come across new funcs?
+    input_port_names, input_types, output_type = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+    input_port_name = input_port_names[0]
+    if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
+      bit_manip_func_logic = Logic()
+      bit_manip_func_logic.func_name = bit_manip_func_name
+      bit_manip_func_logic.inputs.append(input_port_name)
+      bit_manip_func_logic.wire_to_c_type[input_port_name] = c_type
+      bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
+      bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
+      bit_manip_func_logic.is_vhdl_func = True
+      bit_manip_func_logic.is_new_style_bit_manip = True
+      parser_state.FuncLogicLookupTable[bit_manip_func_name] = bit_manip_func_logic
+    # Make up a func call to eval, copying SW_LIB funcs? hacky hack
+    func_base_name = bit_manip_func_name
+    base_name_is_name = True # Dont need type into since base name has it
+    input_port_names = [input_port_name]
+    input_driver_types = [c_type]
+    input_drivers = [(var_name,)] # ref toks list
+    output_driven_wire_names = driven_wire_names
+    func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+    # Then regular narg func?
+    parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(prepend_text, 
+                                    c_ast_func_call, 
+                                    func_base_name, 
+                                    base_name_is_name,
+                                    input_drivers,
+                                    input_driver_types,
+                                    input_port_names,
+                                    output_driven_wire_names,
+                                    parser_state)
+    return parser_state.existing_logic
+  else:
+    raise Exception(f"Unsupported variable as function call! {var_name} {c_ast_func_call.coord}!")
+
+
 def C_AST_STRLEN_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   # Need to construct a function name, like hacky const ref funcs and printf
   # Make up a func call to eval
@@ -6170,6 +6263,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     # Dude - rad indeed, lets keep it going with printf
     # Aww can brams get in on this too?
     # Animal Collective - Sand That Moves
+    # Just wait and see how vars as func names works out!
     if func_name == VHDL_FUNC_NAME:
       return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state)
     elif func_name == PRINTF_FUNC_NAME:
@@ -6206,6 +6300,9 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
         parser_state.existing_logic.uses_nonvolatile_state_regs = False
       # Mangle to include local func name calling this func
       func_name = parser_state.existing_logic.func_name + "_" + func_name
+    elif func_name in parser_state.existing_logic.variable_names:
+      # Super hacky vars as func names
+      return C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names,  prepend_text, parser_state)
     else:
       # Ok panic
       print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '" + func_name + "' yet. Where does that function come from?")
@@ -7614,7 +7711,7 @@ class ParserState:
     # Function definitons as logic
     self.FuncLogicLookupTable=dict() #dict[func_name]=Logic() <--
     # Special primitive funcs
-    self.PrimFuncLogicLookupTable = dict()
+    self.PrimFuncLogicLookupTable = dict() # Why table vs .is_prim_func on logic?
     # Elaborated to instances
     self.LogicInstLookupTable=dict() #dict[inst_name]=Logic()  (^ same logic object as above)
     self.FuncToInstances=dict() #dict[func_name]=set([instance, name, usages, of , func)
@@ -7960,7 +8057,7 @@ def PARSE_FILE(c_filename):
     
     # Parse the function definitions for code structure
     print("Parsing function logic...", flush=True)
-    parser_state.FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
+    parser_state.FuncLogicLookupTable = APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state)
     # Sanity check main funcs are there + legal
     for main_func in list(parser_state.main_mhz.keys()):
       if main_func not in parser_state.FuncLogicLookupTable:
@@ -8898,19 +8995,14 @@ def SKIP_PARSING_FUNC(func_name, parser_state):
          (func_name not in parser_state.main_mhz) )
 
 # This will likely be called multiple times when loading multiple C files
-def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
-  existing_func_name_2_logic = parser_state.FuncLogicLookupTable
-  
-  # Build function name to logic from func defs from files
-  FuncLogicLookupTable = dict(existing_func_name_2_logic) # Was deep copy # Needed?
-  
+def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True): 
   # Each func def needs existing logic func name lookup
   # Read in file with C parser and get function def nodes
   func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
   for func_def in func_defs:
     # Silently skip fsm clk funcs 
     parse_func_body = parse_body
-    if func_def.decl.name in FuncLogicLookupTable and FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
+    if func_def.decl.name in parser_state.FuncLogicLookupTable and parser_state.FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func:
       continue    
     # Special overload funcs
     if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
@@ -8932,17 +9024,17 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body = True):
     driven_wire_names=[]
     prepend_text=""
     logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body=parse_func_body)
-    FuncLogicLookupTable[logic.func_name] = logic 
-    parser_state.FuncLogicLookupTable = FuncLogicLookupTable
+    parser_state.FuncLogicLookupTable[logic.func_name] = logic 
+    #parser_state.FuncLogicLookupTable = FuncLogicLookupTable
     
   # Do dumb? loops to find containing func
-  for func_logic in list(FuncLogicLookupTable.values()):
+  for func_logic in list(parser_state.FuncLogicLookupTable.values()):
     for submodule_inst in func_logic.submodule_instances:
       submodule_func_name = func_logic.submodule_instances[submodule_inst]
-      if submodule_func_name in FuncLogicLookupTable:
-        FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.func_name)
+      if submodule_func_name in parser_state.FuncLogicLookupTable:
+        parser_state.FuncLogicLookupTable[submodule_func_name].containing_funcs.add(func_logic.func_name)
               
-  return FuncLogicLookupTable
+  return parser_state.FuncLogicLookupTable
   
 def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(func_name, local_inst_name, parser_state, containing_logic_inst_name="", c_ast_node_when_used=None):
   #print("func_name",func_name,flush=True)

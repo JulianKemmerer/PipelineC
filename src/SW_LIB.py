@@ -1052,6 +1052,9 @@ def IS_AUTO_GENERATED(logic):
            
 # Bit manip occurs in bit manip fiel and is not the built in generated code
 def IS_BIT_MANIP(logic):
+  if logic.is_new_style_bit_manip:
+    return True
+  # ~ old style based on hack file gen in this sw lib
   rv = str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE) and not logic.is_c_built_in  
   return rv
   
@@ -1992,6 +1995,33 @@ typedef uint8_t ''' + result_t + '''; // FUCK
     # No code, no funcs
     return dict()
 
+def BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name):
+  toks = bit_sel_func_name.split("_")
+  if len(toks) == 3:
+    high = int(toks[1])
+    low = int(toks[2])
+    in_prefix = toks[0]
+    if in_prefix == "float":
+      in_t = "float"
+    else:
+      in_t = in_prefix + "_t"
+    func_name = in_prefix + "_"+str(high)+"_"+str(low)
+    # Catch reverse
+    if high < low:
+      temp = low
+      low = high
+      high = temp
+    result_width = high - low + 1
+    result_t = "uint" + str(result_width) + "_t"
+  else:
+    # New float_e_m_t_#_#
+    high = int(toks[4])
+    low = int(toks[5])
+    in_t = "_".join(toks[0:4])
+    result_width = high - low + 1
+    result_t = "uint" + str(result_width) + "_t"
+  return (["x"], [in_t], result_t)
+
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
   #TODO dont do string search at all - do 'in' list checks?
   c_text = "(".join(func_names)+"(" # hacky af to keep regex matches minimal
@@ -2023,36 +2053,11 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # uint16_t uintX_15_0(uintX_t)
     for bit_sel_func_name in bit_sel_func_names:
       bit_sel_func_name = bit_sel_func_name.strip("(").strip()
-      toks = bit_sel_func_name.split("_")
-      
-      if len(toks) == 3:
-        high = int(toks[1])
-        low = int(toks[2])
-        in_prefix = toks[0]
-        if type_regex == "float":
-          in_t = "float"
-        else:
-          in_t = in_prefix + "_t"
-        func_name = in_prefix + "_"+str(high)+"_"+str(low)
-        # Catch reverse
-        if high < low:
-          temp = low
-          low = high
-          high = temp
-        result_width = high - low + 1
-        result_t = "uint" + str(result_width) + "_t"
-      else:
-        # New float_e_m_t_#_#
-        high = int(toks[4])
-        low = int(toks[5])
-        in_t = "_".join(toks[0:4])
-        result_width = high - low + 1
-        result_t = "uint" + str(result_width) + "_t"
-      
-      
+      input_port_names, input_types, result_t = BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name)
+      # Only one input
       text += '''
 // BIT SELECT
-''' + result_t + " " + bit_sel_func_name+"("+ in_t + ''' x)
+''' + result_t + " " + bit_sel_func_name+"("+ input_types[0] + " " + input_port_names[0] + ''')
 {
   //TODO
 }

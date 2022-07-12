@@ -1150,8 +1150,9 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
     ( logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME) and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types))
     ):
     return False
+
   else:
-    print("Is logic_func_name",logic_func_name,"with input types",input_c_types,"raw VHDL or not?")
+    print("Is built in C function named",logic_func_name,"with input types",input_c_types,"raw VHDL or not?")
     sys.exit(-1)
   
   
@@ -2780,9 +2781,7 @@ function ''' + vhdl_func_logic.func_name + '''('''
   rv += RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, vhdl_func_logic, parser_state, timing_params)
   rv += "\n"
   # End func
-  rv += '''
-end function;
-  '''
+  rv += '''end function;\n'''
   
   return rv
   

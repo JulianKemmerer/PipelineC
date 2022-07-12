@@ -2526,10 +2526,8 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
   
   out_vhdl_type = "unsigned(" + str(out_width-1) + " downto 0)"
   
-  wires_decl_text = '''
-  --variable x : ''' + x_vhdl_type + ''';
-  variable return_output : ''' + out_vhdl_type + ''';
-'''
+  wires_decl_text = '''--variable x : ''' + x_vhdl_type + ''';
+  variable return_output : ''' + out_vhdl_type + ''';'''
 
   # Bit slice must always be zero clock
   if len(timing_params._slices) > 0:
@@ -2538,17 +2536,14 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_stat
     
   if high > low:
     # Regular slice
-    text = '''
-      return_output := unsigned(std_logic_vector(x(''' + str(high) + ''' downto ''' + str(low) + ''')));'''
+    text = '''return_output := unsigned(std_logic_vector(x(''' + str(high) + ''' downto ''' + str(low) + ''')));\n'''
   else:
     # Reverse slice
-    text = '''
-      for i in 0 to return_output'length-1 loop
+    text = '''for i in 0 to return_output'length-1 loop
         return_output(i) := x(''' + str(low) + '''- i);
-      end loop;
-    '''
+      end loop;\n'''
     
-  text += "return return_output;\n"
+  text += "return return_output;"
 
   return wires_decl_text, text
 
