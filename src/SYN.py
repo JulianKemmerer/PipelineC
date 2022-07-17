@@ -33,13 +33,13 @@ DO_SYN_FAIL_SIM = False # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
-MAX_N_WORSE_RESULTS = 6
-MAX_ALLOWED_LATENCY_MULT = 15
-HIER_SWEEP_MULT_MIN = 0.5
+MAX_N_WORSE_RESULTS = 6 # How many times failing to improve before moving on?
+MAX_ALLOWED_LATENCY_MULT = 15 # Multiplier limit for individual module coarse register insertion coarsely
+HIER_SWEEP_MULT_MIN = 0.5 # How big modules need to be for pipelining to be prioritized there
 HIER_SWEEP_MULT_INC = 0.001 # Intentionally very small, sweep tries to make largest possible steps
-COARSE_SWEEP_MULT_INC = 0.01
-BEST_GUESS_MUL_MAX = 25.0 # Between 20-30 is max
-COARSE_SWEEP_MULT_MAX = 2.0
+COARSE_SWEEP_MULT_INC = 0.01 # Multiplier increment for how many times fmax to try for compensating not meeting timing
+COARSE_SWEEP_MULT_MAX = 2.0 # Max multiplier for internal fmax 
+BEST_GUESS_MUL_MAX = 10.0 # Multiplier limit on top down register insertion coarsly during middle out sweep #25.0 # Between 20-30 is MAX?
 INF_MHZ = 1000 # Impossible timing goal
 INF_HIER_MULT = 999999.9 # Needed?
 MAX_CLK_INC_RATIO = 1.25 # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
@@ -2194,7 +2194,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
       # Do loop doing pipelining
       print("Pipelining modules...", flush=True)
       pipelining_worked = True
-      for func_inst in lowest_level_insts_to_pipeline:
+      for func_inst in sorted(list(lowest_level_insts_to_pipeline)): # Sorted for same order of execution
         func_logic = parser_state.LogicInstLookupTable[func_inst]
         func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
         main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
@@ -2434,10 +2434,20 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         if not main_met_timing:
           print_path = False
           if main_func_logic.CAN_BE_SLICED():
-            best_guess_sweep_mult_inc = 1.2 # 20% default
-            if not better_mhz:
-              best_guess_sweep_mult_inc = 2.0 # Big double jump
-            if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*best_guess_sweep_mult_inc) > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
+            # How would best guess mult increase?
+            # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
+            max_path_delay_ns = 1000.0 / curr_mhz
+            total_delay = max_path_delay_ns * (latency + 1)
+            # How many slices for that delay to meet timing
+            fake_one_clk_mhz = 1000.0 / total_delay
+            new_clks = target_mhz / fake_one_clk_mhz
+            latency_mult = new_clks/latency
+            new_best_guess_sweep_mult = sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult * latency_mult
+            #best_guess_sweep_mult_inc = 1.1 # 10% smalelr default? ....1.2 # 20% default
+            #if not better_mhz:
+            #  best_guess_sweep_mult_inc = 1.5 # smaller big jump? 2.0 # Big double jump
+            #if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*best_guess_sweep_mult_inc) > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
+            if new_best_guess_sweep_mult > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
               # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
               print("Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate...") 
               if (sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult+COARSE_SWEEP_MULT_INC) <= COARSE_SWEEP_MULT_MAX: #1.5: # MAGIC?
@@ -2461,7 +2471,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
               else:
                 print_path = True
             else:
-              sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= best_guess_sweep_mult_inc
+              #sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= best_guess_sweep_mult_inc
+              sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult = new_best_guess_sweep_mult
               print("Best guess sweep multiplier:",sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult)
               made_adj = True
           else:
