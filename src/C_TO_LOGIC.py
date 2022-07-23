@@ -8452,16 +8452,16 @@ def GET_GLOBAL_CONST_INFO(parser_state):
     name_str = str(global_decl.name)
     if (name_str in vars_w_no_write) and (name_str in vars_w_some_use):
       print(f"Marking global variable {name_str} as constant since never written...")
-    # Promoted const
-    info = GlobalConstInfo()
-    info.name = name_str
-    c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
-    info.type_name = c_type
-    #print(global_decl)
-    info.init = global_decl.init
-    info.lhs = global_decl
-    # Save info
-    parser_state.global_consts[info.name] = info 
+      # Promoted const
+      info = GlobalConstInfo()
+      info.name = name_str
+      c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
+      info.type_name = c_type
+      #print(global_decl)
+      info.init = global_decl.init
+      info.lhs = global_decl
+      # Save info
+      parser_state.global_consts[info.name] = info 
 
   return parser_state
 
