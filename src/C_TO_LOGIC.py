@@ -8326,11 +8326,12 @@ def GET_GLOBAL_STATE_REG_INFO(parser_state):
   parser_state.global_state_regs = dict()
   global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
   for global_decl in global_decls:
+    name_str = str(global_decl.name)
     # Skip consts, arent regs
-    if 'const' in global_decl.quals:
+    if ('const' in global_decl.quals) or (name_str in parser_state.global_consts):
       continue
     state_reg_info = StateRegInfo()
-    state_reg_info.name = str(global_decl.name)
+    state_reg_info.name = name_str
     c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
     state_reg_info.type_name = c_type
     state_reg_info.init = global_decl.init
@@ -8408,23 +8409,60 @@ class GlobalConstInfo:
     self.init = None
       
 def GET_GLOBAL_CONST_INFO(parser_state):
-  # Read in file with C parser and get function def nodes
+  # Collect all global defs marked const
   parser_state.global_consts = dict()
   global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
+  non_const_decls = dict()
   for global_decl in global_decls:
+    name_str = str(global_decl.name)
     if 'const' not in global_decl.quals:
+      non_const_decls[name_str] = global_decl
       continue
+    # Marked const
     info = GlobalConstInfo()
-    info.name = str(global_decl.name)
+    info.name = name_str
     c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
     info.type_name = c_type
     #print(global_decl)
     info.init = global_decl.init
     info.lhs = global_decl
-      
     # Save info
     parser_state.global_consts[info.name] = info
-      
+
+  # non_const_decls are checked for const via usage next
+  # Dont find and lhs assigns, and do find rhs use
+  # unused at all globals might be clcok cross bram stuff weird
+  vars_w_no_write = set(non_const_decls.keys())
+  c_ast_assignments = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.Assignment)
+  for c_ast_assignment in c_ast_assignments:
+    lhs_node = c_ast_assignment.lvalue
+    ids_assigned = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(lhs_node, c_ast.ID)
+    for id_assigned in ids_assigned:
+      var_name = id_assigned.name
+      if var_name in vars_w_no_write:
+        vars_w_no_write.remove(var_name)
+  vars_w_some_use = set()
+  all_ids = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.ID)
+  for id_node in all_ids:
+    var_name = id_node.name
+    vars_w_some_use.add(var_name)
+
+  # Promote non const decls to const as found
+  for global_decl in non_const_decls.values():
+    name_str = str(global_decl.name)
+    if (name_str in vars_w_no_write) and (name_str in vars_w_some_use):
+      print(f"Marking global variable {name_str} as constant since never written...")
+    # Promoted const
+    info = GlobalConstInfo()
+    info.name = name_str
+    c_type,var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
+    info.type_name = c_type
+    #print(global_decl)
+    info.init = global_decl.init
+    info.lhs = global_decl
+    # Save info
+    parser_state.global_consts[info.name] = info 
+
   return parser_state
 
 # Fuck me add struct info for array wrapper
