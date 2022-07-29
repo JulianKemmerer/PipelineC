@@ -1109,6 +1109,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
   if  (
       logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME or
       logic_func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME) or
+      logic_func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME) or
       logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_") or
     ( logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SL_NAME + "_") and C_TYPES_ARE_INTEGERS(input_c_types) )  or
     ( logic_func_name.startswith(C_TO_LOGIC.CONST_PREFIX+C_TO_LOGIC.BIN_OP_SR_NAME + "_") and C_TYPES_ARE_INTEGERS(input_c_types) )  or
@@ -2648,7 +2649,10 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
   
 def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
   timing_params = TimingParamsLookupTable[inst_name]
-  return timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) > 0 or len(Logic.state_regs) > 0
+  return ( timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) > 0 or
+           len(Logic.state_regs) > 0 or
+           Logic.func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME+"_") # hacky temp?
+          )
   
 def C_CONST_STR_TO_VHDL_CONST_STR(c_str):
   vhdl = c_str[:]

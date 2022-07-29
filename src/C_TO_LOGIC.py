@@ -51,6 +51,7 @@ BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
 STRLEN_FUNC_NAME = "strlen"
+ACCUM_FUNC_NAME = "accum"
 COMPOUND_NULL = "COMPOUND_NULL"
 # Unary Operators
 UNARY_OP_NOT_NAME = "NOT"
@@ -5313,6 +5314,23 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
       parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(parser_state, input_driver,[driven_input_port_wire], prepend_text, func_c_ast_node)   
   
   # Finally include types as passed in if able to
+
+  # Try to fill in type of input ports if not known in input_driver_types
+  for i in range(0, len(input_drivers)):
+    input_port_name = input_port_names[i]
+    input_driver_type = input_driver_types[i]
+    if input_driver_type is None:
+      input_port_name = input_port_names[i]
+      driven_input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
+      updated_input_driver_type = None
+      if driven_input_wire_name in parser_state.existing_logic.wire_to_c_type:
+        updated_input_driver_type = parser_state.existing_logic.wire_to_c_type[driven_input_wire_name]
+      elif driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
+        driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
+        if driving_wire in parser_state.existing_logic.wire_to_c_type:
+          updated_input_driver_type = parser_state.existing_logic.wire_to_c_type[driving_wire]
+          parser_state.existing_logic.wire_to_c_type[driven_input_wire_name] = updated_input_driver_type
+      input_driver_types[i] = updated_input_driver_type      
   
   # NOw inputs have been connected it is useful
   # Ex. FOR constant funcs x==1
@@ -5320,11 +5338,12 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   for i in range(0, len(input_drivers)):
     input_port_name = input_port_names[i]
     input_driver_type = input_driver_types[i]
-    driven_input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
-    if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
-      driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
-      if driving_wire not in parser_state.existing_logic.wire_to_c_type:
-        parser_state.existing_logic.wire_to_c_type[driving_wire] = input_driver_type
+    if input_driver_type is not None:
+      driven_input_wire_name = func_inst_name+SUBMODULE_MARKER+input_port_name
+      if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
+        driving_wire = parser_state.existing_logic.wire_driven_by[driven_input_wire_name]
+        if driving_wire not in parser_state.existing_logic.wire_to_c_type:
+          parser_state.existing_logic.wire_to_c_type[driving_wire] = input_driver_type
     
   # Global functions cannot optimize away
   is_global_func = False
@@ -5811,18 +5830,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   elif func_base_name==VHDL_FUNC_NAME:
     output_type = "void"
   
-  # Sanity check
-  if output_type is None:
-    print("Unknown output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
-    sys.exit(-1)
-  if None in input_driver_types:
-    print("Unknown input types for func",func_base_name, input_driver_types, func_c_ast_node.coord)
-    sys.exit(-1)
-  
   # Set this type for the driven wires if not set already? # This seems really hacky
-  for output_driven_wire_name in output_driven_wire_names:
-    if(not(output_driven_wire_name in parser_state.existing_logic.wire_to_c_type)):
-      parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
+  if output_type is not None:
+    for output_driven_wire_name in output_driven_wire_names:
+      if output_driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+        parser_state.existing_logic.wire_to_c_type[output_driven_wire_name] = output_type
    
   # Is this a constant or reduceable func call?
   const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
@@ -5838,7 +5850,6 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             parser_state)
   if const_reduced_logic is not None:
     return const_reduced_logic
-    
   
   # Build func name
   func_name = BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name)
@@ -5886,8 +5897,14 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
   ################################# INPUTS DONE ##########################################
   
   # Outputs
+  # Most special type inferring post input connections for implicit template kind of things?
+  if func_base_name==ACCUM_FUNC_NAME:
+    output_type = input_driver_types[0] # First increment is same as output type,storage
+
   # Only add output wire if there is one
-  # output_wire_name is made up for trying to get type earlier
+  if output_type is None:
+    print("Unknown output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
+    sys.exit(-1)
   if output_type != "void":
     # Add wire even if below it ends up driving nothing
     # need this to see the unconnected wire and rip up form there
@@ -5958,7 +5975,7 @@ def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_i
     for input_driver_type in input_driver_types:
       if input_driver_type is None:
         print("Oh no, dont know types building func name instance", func_base_name)
-        #print(0/0)
+        print(0/0)
         sys.exit(-1)
       # Input could be array type with brackets so remove for safe C func name
       types_str += "_" + input_driver_type.replace("[","_").replace("]","")
@@ -6253,6 +6270,47 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend
     input_port_names,
     output_driven_wire_names,
     parser_state)
+
+# TODO upon other 'implict template' functions refactor, for now demo with accum
+def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_text, parser_state):
+  
+  '''
+  # Unlike SW_LIB generating C headers to parse and create func def objects,
+  # Do the same thing here, during function body parsing, as come across new funcs?
+  input_port_names, input_types, output_type = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+  input_port_name = input_port_names[0]
+  if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
+    bit_manip_func_logic = Logic()
+    bit_manip_func_logic.func_name = bit_manip_func_name
+    bit_manip_func_logic.inputs.append(input_port_name)
+    bit_manip_func_logic.wire_to_c_type[input_port_name] = c_type
+    bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
+    bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
+    bit_manip_func_logic.is_vhdl_func = True
+    bit_manip_func_logic.is_new_style_bit_manip = True
+    parser_state.FuncLogicLookupTable[bit_manip_func_name] = bit_manip_func_logic
+  '''
+
+  # Tempalte/built in style 
+  base_name_is_name = False # DO NEED types appended
+  func_base_name = ACCUM_FUNC_NAME
+  input_port_names = ["increment", "reset"]
+  input_driver_types = [None, "uint1_t"] # Inc type unknown now is ok?
+  input_drivers = list(c_ast_func_call.args.exprs) # c ast nodes
+  output_driven_wire_names = driven_wire_names
+  func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+  # Then regular narg func?
+  parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(prepend_text, 
+                                  c_ast_func_call, 
+                                  func_base_name, 
+                                  base_name_is_name,
+                                  input_drivers,
+                                  input_driver_types,
+                                  input_port_names,
+                                  output_driven_wire_names,
+                                  parser_state)
+  return parser_state.existing_logic
+
   
 def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,parser_state):
   FuncLogicLookupTable = parser_state.FuncLogicLookupTable
@@ -6303,6 +6361,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(c_ast_func_call,driven_wire_names,prepend_text,pars
     elif func_name in parser_state.existing_logic.variable_names:
       # Super hacky vars as func names
       return C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names,  prepend_text, parser_state)
+    elif func_name == ACCUM_FUNC_NAME:
+      return C_AST_ACCUM_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_text, parser_state)
     else:
       # Ok panic
       print("C_AST_FUNC_CALL_TO_LOGIC Havent parsed func name '" + func_name + "' yet. Where does that function come from?")

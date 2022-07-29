@@ -21,6 +21,9 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
   elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return wires_decl_text
+  elif logic.func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_"):
+    wires_decl_text, package_stages_text = GET_ACCUM_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+    return wires_decl_text
   elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
     wires_decl_text, package_stages_text = GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return wires_decl_text
@@ -54,6 +57,9 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timin
   # Binary ops + , ==, > etc
   elif logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX):
     wires_decl_text, package_stages_text = GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
+    return package_stages_text
+  elif logic.func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_"):
+    wires_decl_text, package_stages_text = GET_ACCUM_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params)
     return package_stages_text
   # IF STATEMENTS
   elif logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME): 
@@ -1594,7 +1600,284 @@ def GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic
   '''
   
   return wires_decl_text, text 
- 
+
+def GET_ACCUM_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
+  # Accum only for uint for now?
+  if VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    return GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+  elif VHDL.WIRES_ARE_INT_N([logic.inputs[0]], logic):
+    return GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params)
+  else:
+    print("What kind of accum?", logic.wire_to_c_type)
+    sys.exit(-1)
+
+def GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  accum_type = logic.wire_to_c_type[logic.inputs[0]]
+  reset_type = logic.wire_to_c_type[logic.inputs[1]]
+  output_type = logic.wire_to_c_type[logic.outputs[0]]
+  accum_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
+  reset_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  # Reuses names from adder - 
+  # trying to fit state into stateless write_pipe style pipelines will be fucky...
+  # Oh shit theres no way to give the accum reg an initial value?
+  #   The Flaming Lips - Will You Return / When You Come Down 
+  max_input_width = accum_width
+  wires_decl_text = '''
+  carry : std_logic_vector(0 downto 0);
+  intermediate : std_logic_vector(''' + str(max_input_width) + ''' downto 0);
+  --left_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
+  right_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
+  accum_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
+  right_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
+  full_width_return_output : unsigned(''' + str(max_input_width) + ''' downto 0);
+  return_output : unsigned(''' + str(output_width-1) + ''' downto 0);
+  accum : unsigned(''' + str(output_width-1) + ''' downto 0);
+  reset : unsigned(''' + str(reset_width-1) + ''' downto 0);
+  increment : unsigned(''' + str(accum_width-1) + ''' downto 0);
+'''
+  
+  # Do each bit over a clock cycle
+  width = max_input_width
+  # How many bits per stage?
+  # 0th stage is combinatorial logic
+  num_stages = len(timing_params._slices) + 1
+  bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+  #print "num_stages",num_stages
+  #print "bits_per_stage_dict",bits_per_stage_dict
+  
+  # Write loops to do operation
+  text = ""
+  text += '''
+  --
+  -- Down to one bit accumulator adder with carry
+'''
+  
+  text += '''
+  -- width = ''' + str(width) + '''
+  -- num_stages = ''' + str(num_stages) + '''
+  -- bits per stage = ''' + str(bits_per_stage_dict) + '''
+  '''
+  text += '''
+    if STAGE = 0 then
+      -- This stuff must be in stage 0
+      write_pipe.carry := (others => '0'); -- One bit unsigned
+      -- Left is the accumulated value
+      -- Right increment
+      write_pipe.right_resized := resize(write_pipe.increment, ''' + str(width) + ''');
+      write_pipe.return_output := (others => '0');
+      write_pipe.full_width_return_output := (others => '0');
+      '''   
+    
+    
+      
+  # Write bound of loop per stage 
+  stage = 0
+  # Bottom start only increment low_bound, up_bound is calculated each iteration
+  low_bound = 0
+  for stage in range(0, num_stages):
+    # Bottom start moving upward
+    up_bound = low_bound + bits_per_stage_dict[stage] - 1
+    # Do stage logic / bit pos increment if > 0 bits this stage
+    if bits_per_stage_dict[stage] > 0:
+      text += '''
+        --  bits_per_stage_dict[''' + str(stage) + '''] = ''' + str(bits_per_stage_dict[stage]) + '''
+        write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := std_logic_vector(write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + '''));  
+        -- Adding unsigned values
+        write_pipe.intermediate := (others => '0'); -- Zero out for this stage'''
+      
+      # No carry for stage 0
+      if stage == 0:
+        text += '''
+        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) );'''
+      else:
+        text += '''
+        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) );'''
+      
+      text += '''
+        -- New carry is msb of intermediate
+        write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
+        -- Accum/output gets/is intermediate if not reset
+        if(write_pipe.reset > 0) then
+          write_pipe.accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := (others => '0');
+          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := (others => '0');
+        else
+          -- Accumulate
+          write_pipe.accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+          -- Assign output bits
+          -- Carry full_width_return_output(up_bound+1) will be overidden in next iteration and included as carry
+          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0));
+        end if;
+        
+      '''
+      
+    # More stages?
+    if stage == (num_stages - 1):
+      # Last stage
+      # sign is in last stage
+      # depends on carry
+      text += '''
+      write_pipe.return_output := resize(write_pipe.full_width_return_output(''' + str(max_input_width) + ''' downto 0), ''' + str(output_width) + ''');      
+'''
+      # Last stage so no else if
+      text += '''
+    end if;
+    '''
+      return wires_decl_text, text
+    else:
+      # Next stage
+      # Set next vals
+      stage = stage + 1
+      # Bottom start moving upward, increment low_bound only
+      low_bound = low_bound + bits_per_stage_dict[stage-1]
+      # More stages to go
+      text += '''   
+    elsif STAGE = ''' + str(stage) + ''' then '''    
+
+def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, parser_state, timing_params):
+  # This gets back to how much I hate twos complement
+  #   Rush - Vital Signs
+  # Fuck this
+  # Left accum
+  # Right is increment
+  accum_type = logic.wire_to_c_type[logic.inputs[0]]
+  reset_type = logic.wire_to_c_type[logic.inputs[1]]
+  output_type = logic.wire_to_c_type[logic.outputs[0]]
+  accum_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
+  reset_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  max_input_width = accum_width  
+  
+  # Do each bit over a clock cycle 
+  width = max_input_width + 1 # Extra bit for sign?
+  # YEah this whole business with signed numbers treated as unsigned is f'd below and in int add
+  # Especially with use of min(, accum_width-1) below
+  
+  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  wires_decl_text = '''
+  carry : std_logic_vector(0 downto 0);
+  intermediate : std_logic_vector(''' + str(max_input_width+1) + ''' downto 0);
+  right_resized : unsigned(''' + str(max_input_width) + ''' downto 0);
+  right_range_slv : std_logic_vector(''' + str(max_input_width) + ''' downto 0);
+  full_width_return_output : unsigned(''' + str(max_input_width+1) + ''' downto 0);
+  return_output : signed(''' + str(output_width-1) + ''' downto 0);
+  accum : unsigned(''' + str(accum_width-1) + ''' downto 0); -- Lie about accum being signed
+  increment : signed(''' + str(accum_width-1) + ''' downto 0);
+  reset : unsigned(''' + str(reset_width-1) + ''' downto 0);
+'''
+  
+  
+  # Output width must be 1 greater than max of input widths
+  # How many bits per stage?
+  # 0th stage is combinatorial logic
+  num_stages = len(timing_params._slices) + 1
+  bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+  
+  # Write loops to do operation
+  text = ""
+  text += '''
+  --
+  -- One bit adder with carry
+'''
+  
+  text += '''
+  -- num_stages = ''' + str(num_stages) + '''
+  '''
+  text += '''
+    if STAGE = 0 then
+      -- This stuff must be in stage 0
+      -- Left is the accumulated value
+      -- Right increment
+      write_pipe.carry := (others => '0'); -- One bit unsigned  
+      write_pipe.intermediate := (others => '0'); -- N bit unused depending on bits per stage
+      write_pipe.right_resized := unsigned(std_logic_vector(resize(write_pipe.increment, ''' + str(width) + ''')));
+      write_pipe.full_width_return_output := (others => '0');
+      write_pipe.return_output := (others => '0');
+      '''   
+    
+    # 1111111111111111111111111111111110000000000000000000000000000000
+    # +
+    # 1111111111111111111111111111111110000000000000000000000000000000
+    # ===============================================================
+    # 1111111111111111111111111111111100000000000000000000000000000000
+    
+      
+  # Write bound of loop per stage 
+  stage = 0
+  # Bottom start only increment low_bound, up_bound is calculated each iteration
+  low_bound = 0
+  for stage in range(0, num_stages):
+    # Bottom start moving upward
+    up_bound = low_bound + bits_per_stage_dict[stage] - 1
+    # Do stage logic / bit pos increment if > 0 bits this stage
+    if bits_per_stage_dict[stage] > 0:
+      text += '''
+        --  bits_per_stage_dict[''' + str(stage) + '''] = ''' + str(bits_per_stage_dict[stage]) + '''
+        write_pipe.right_range_slv := (others => '0');
+        write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := std_logic_vector(write_pipe.right_resized(''' + str(up_bound) + ''' downto ''' + str(low_bound) + '''));  
+
+        -- Adding unsigned values
+        write_pipe.intermediate := (others => '0'); -- Zero out for this stage
+        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) ); 
+        
+  '''     
+
+      text += '''
+        -- New carry is msb of intermediate
+        write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
+        -- Assign output bits
+        -- Accum/output gets/is intermediate if not reset
+        if(write_pipe.reset > 0) then
+          write_pipe.accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0) := (others => '0');
+          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := (others => '0');
+        else
+      '''
+      # Only last iteration writes carry into full_width_return_output?
+      if stage == (num_stages - 1):
+        text += '''
+          -- Only last iteration writes carry into full_width_return_output?
+          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0));
+      '''
+      else:
+        text += '''
+          -- Dont include carry since not last stage
+          write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+      '''
+    text += '''
+          -- Accumulate
+          write_pipe.accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0) := unsigned(write_pipe.intermediate(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0));
+       end if;'''
+
+    # More stages?
+    if stage == (num_stages - 1):
+      # Last stage
+      # sign is in last stage
+      # depends on carry
+      text += '''
+      -- ???Full width output last bit is always dropped since DOING SIGNED ADD, can't meanfully overflow
+      --???? SIGN EXTENSION DONE AS PART OF SIGNED RESIZED
+      write_pipe.full_width_return_output(''' + str(max_input_width+1) + ''') := '0';
+      -- Resize from full width to output width
+      write_pipe.return_output := resize(signed(std_logic_vector(write_pipe.full_width_return_output(''' + str(max_input_width) + ''' downto 0))), ''' + str(output_width) + ''');    
+
+'''
+      # Last stage so no else if
+      text += '''
+    end if;
+    '''
+      return wires_decl_text, text
+    else:
+      # Next stage
+      # Set next vals
+      stage = stage + 1
+      # Bottom start moving upward, increment low_bound only
+      low_bound = low_bound + bits_per_stage_dict[stage-1]
+      # More stages to go
+      text += '''   
+    elsif STAGE = ''' + str(stage) + ''' then '''
+  
+
+
 def GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(logic, parser_state, timing_params):
   LogicInstLookupTable = parser_state.LogicInstLookupTable
   # Binary operation between what two types?
