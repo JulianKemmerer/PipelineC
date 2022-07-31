@@ -1628,12 +1628,12 @@ def GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic,
   intermediate : std_logic_vector(''' + str(max_input_width) + ''' downto 0);
   --left_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
   right_resized : unsigned(''' + str(max_input_width-1) + ''' downto 0);
-  accum_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
+  --accum_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
   right_range_slv : std_logic_vector(''' + str(max_input_width-1) + ''' downto 0);
   full_width_return_output : unsigned(''' + str(max_input_width) + ''' downto 0);
   return_output : unsigned(''' + str(output_width-1) + ''' downto 0);
   accum : unsigned(''' + str(output_width-1) + ''' downto 0);
-  reset : unsigned(''' + str(reset_width-1) + ''' downto 0);
+  reset_and_read : unsigned(''' + str(reset_width-1) + ''' downto 0);
   increment : unsigned(''' + str(accum_width-1) + ''' downto 0);
 '''
   
@@ -1698,17 +1698,19 @@ def GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic,
         -- New carry is msb of intermediate
         write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
         -- Accum/output gets/is intermediate if not reset
-        if(write_pipe.reset > 0) then
-          write_pipe.accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := (others => '0');
-          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := (others => '0');
+        if(write_pipe.reset_and_read > 0) then
+          -- Reset the accumulated value to the input right ~increment/reset value
+          write_pipe.accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := unsigned(write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
+          -- Read output is accumulated value from register
+          write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0);
         else
+          -- Not reset and read, use accumlation value, and that value is output
           -- Accumulate
           write_pipe.accum(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0) := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
           -- Assign output bits
           -- Carry full_width_return_output(up_bound+1) will be overidden in next iteration and included as carry
           write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0));
         end if;
-        
       '''
       
     # More stages?
@@ -1763,7 +1765,7 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
   return_output : signed(''' + str(output_width-1) + ''' downto 0);
   accum : unsigned(''' + str(accum_width-1) + ''' downto 0); -- Lie about accum being signed
   increment : signed(''' + str(accum_width-1) + ''' downto 0);
-  reset : unsigned(''' + str(reset_width-1) + ''' downto 0);
+  reset_and_read : unsigned(''' + str(reset_width-1) + ''' downto 0);
 '''
   
   
@@ -1811,6 +1813,8 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
     up_bound = low_bound + bits_per_stage_dict[stage] - 1
     # Do stage logic / bit pos increment if > 0 bits this stage
     if bits_per_stage_dict[stage] > 0:
+      accum_upper_bound = min(bits_per_stage_dict[stage]-1, accum_width-1)
+      accum_bits_this_stage = accum_upper_bound + 1
       text += '''
         --  bits_per_stage_dict[''' + str(stage) + '''] = ''' + str(bits_per_stage_dict[stage]) + '''
         write_pipe.right_range_slv := (others => '0');
@@ -1818,7 +1822,7 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
 
         -- Adding unsigned values
         write_pipe.intermediate := (others => '0'); -- Zero out for this stage
-        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) ); 
+        write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''' downto 0) := std_logic_vector( unsigned('0' & read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(accum_upper_bound) + ''' downto 0)) + unsigned('0' & write_pipe.right_range_slv(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0)) + unsigned(write_pipe.carry) ); 
         
   '''     
 
@@ -1827,10 +1831,13 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
         write_pipe.carry(0) := write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]) + ''');
         -- Assign output bits
         -- Accum/output gets/is intermediate if not reset
-        if(write_pipe.reset > 0) then
-          write_pipe.accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0) := (others => '0');
-          write_pipe.full_width_return_output(''' + str(up_bound+1) + ''' downto ''' + str(low_bound) + ''') := (others => '0');
+        if(write_pipe.reset_and_read > 0) then
+          -- Reset accum to input value
+          write_pipe.accum(''' + str(accum_upper_bound) + ''' downto 0) := unsigned(write_pipe.right_range_slv(''' + str(accum_upper_bound) + ''' downto 0));
+          -- Read output is current accumulate value from reg
+          write_pipe.full_width_return_output(''' + str(low_bound+accum_bits_this_stage-1) + ''' downto ''' + str(low_bound) + ''') := read_raw_hdl_pipeline_regs(STAGE).accum(''' + str(accum_upper_bound) + ''' downto 0);
         else
+          -- Not reset, use accumualted value, and output is that value too
       '''
       # Only last iteration writes carry into full_width_return_output?
       if stage == (num_stages - 1):
@@ -1843,9 +1850,9 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(logic, 
           -- Dont include carry since not last stage
           write_pipe.full_width_return_output(''' + str(up_bound) + ''' downto ''' + str(low_bound) + ''') := unsigned(write_pipe.intermediate(''' + str(bits_per_stage_dict[stage]-1) + ''' downto 0));
       '''
-    text += '''
+      text += '''
           -- Accumulate
-          write_pipe.accum(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0) := unsigned(write_pipe.intermediate(''' + str(min(bits_per_stage_dict[stage]-1, accum_width-1)) + ''' downto 0));
+          write_pipe.accum(''' + str(accum_upper_bound) + ''' downto 0) := unsigned(write_pipe.intermediate(''' + str(accum_upper_bound) + ''' downto 0));
        end if;'''
 
     # More stages?

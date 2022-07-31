@@ -6294,7 +6294,7 @@ def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(c_ast_func_call, driven_wire_names, prepend_t
   # Tempalte/built in style 
   base_name_is_name = False # DO NEED types appended
   func_base_name = ACCUM_FUNC_NAME
-  input_port_names = ["increment", "reset"]
+  input_port_names = ["increment", "reset_and_read"]
   input_driver_types = [None, "uint1_t"] # Inc type unknown now is ok?
   input_drivers = list(c_ast_func_call.args.exprs) # c ast nodes
   output_driven_wire_names = driven_wire_names
