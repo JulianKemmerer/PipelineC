@@ -938,9 +938,19 @@ def WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, TimingPara
   # Clock cross regs and signals
   if needs_global_to_module:
     rv += "signal global_to_module_input_reg : " + Logic.func_name + "_global_to_module_t;" + "\n"
+    if not is_final_top:
+      # Dont touch
+      rv += '''attribute syn_keep of global_to_module_input_reg : signal is true;\n'''
+      rv += '''attribute keep of global_to_module_input_reg : signal is "true";\n'''
+      rv += '''attribute dont_touch of global_to_module_input_reg : signal is "true";\n'''
   if needs_module_to_global:
     rv += "signal module_to_global_output : " + Logic.func_name + "_module_to_global_t;" + "\n"
     rv += "signal module_to_global_output_reg : " + Logic.func_name + "_module_to_global_t;" + "\n"
+    if not is_final_top:
+      # Dont touch
+      rv += '''attribute syn_keep of module_to_global_output_reg : signal is true;\n'''
+      rv += '''attribute keep of module_to_global_output_reg : signal is "true";\n'''
+      rv += '''attribute dont_touch of module_to_global_output_reg : signal is "true";\n'''
   
   # Write vhdl func if needed
   if Logic.is_vhdl_func:
