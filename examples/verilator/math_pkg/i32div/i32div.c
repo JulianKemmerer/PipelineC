@@ -71,7 +71,6 @@ c_result = i32div(x, y);
 #define DUT_COMPARE_LOG(top) \
 if(c_result != result)\
 {\
-  DUMP_PIPELINEC_DEBUG(top) \
-  cout << "FAILED c_result: " << c_result << endl;\
+  cout << "Verilator result " << result << " C compare FAILED " << x << " / " << y << " c_result " << c_result << endl;\
   test_passed = false;\
 }
