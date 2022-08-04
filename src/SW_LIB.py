@@ -65,8 +65,8 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
   new_regenerate_files = set()
   # Write two funcs in a header for each var
   for var_name in parser_state.clk_cross_var_info:
-    c_type = parser_state.global_state_regs[var_name].type_name
-    #is_volatile = parser_state.global_state_regs[var_name].is_volatile
+    c_type = parser_state.global_vars[var_name].type_name
+    #is_volatile = parser_state.global_vars[var_name].is_volatile
     write_size,read_size = parser_state.clk_cross_var_info[var_name].write_read_sizes
     write_func_name, read_func_name = parser_state.clk_cross_var_info[var_name].write_read_funcs
     flow_control = parser_state.clk_cross_var_info[var_name].flow_control
@@ -82,7 +82,7 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
     
     if flow_control:
       # Flow control
-      c_type = parser_state.global_state_regs[var_name].type_name
+      c_type = parser_state.global_vars[var_name].type_name
       # Needs to be a 1 dim array for now
       elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
       if len(dims) > 1:
@@ -115,8 +115,8 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
     else:
       # No flow control, arrays
       c_type = None
-      if var_name in parser_state.global_state_regs:
-        c_type = parser_state.global_state_regs[var_name].type_name
+      if var_name in parser_state.global_vars:
+        c_type = parser_state.global_vars[var_name].type_name
       text += '#include "' + c_type + '_array_N_t.h"\n'
       new_regenerate_files.add(c_type + "_array_N_t.h")
       write_out_t = "void"
@@ -1184,10 +1184,10 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
             func_name = calling_func_name + "_" + var_name + "_" + ram_type
             func_name_to_state_reg_info[func_name] = local_state_reg_info_dict[var_name]
             func_name_was_global_def[func_name] = False
-          elif var_name in parser_state.global_state_regs:
-            c_type = parser_state.global_state_regs[var_name].type_name
+          elif var_name in parser_state.global_vars:
+            c_type = parser_state.global_vars[var_name].type_name
             func_name = var_name + "_" + ram_type
-            func_name_to_state_reg_info[func_name] = parser_state.global_state_regs[var_name]
+            func_name_to_state_reg_info[func_name] = parser_state.global_vars[var_name]
             func_name_was_global_def[func_name] = True
           else:
             print("Unknown RAM prim var", var_name)
@@ -1256,22 +1256,22 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
     # Apply hackyness
     for func_name in FuncLogicLookupTable:
       func_logic = FuncLogicLookupTable[func_name]
-      state_reg_info = func_name_to_state_reg_info[func_name]
+      var_info = func_name_to_state_reg_info[func_name]
       if func_name_was_global_def[func_name]:
         # Add global for this logic
         #print "RAM GLOBAL:",global_name
         parser_state_copy.existing_logic = func_logic
-        func_logic = C_TO_LOGIC.MAYBE_GLOBAL_DECL_TO_LOGIC(state_reg_info.name, parser_state_copy, is_lhs_assign=True)
+        func_logic = C_TO_LOGIC.MAYBE_GLOBAL_DECL_TO_LOGIC(var_info.name, parser_state_copy, is_lhs_assign=True)
         FuncLogicLookupTable[func_name] = func_logic
       elif not func_name_was_global_def[func_name]:
         # Copy into local special here similar to MAYBE_GLOBAL^ above
         # And special removing needing too?
         # Copy info into existing_logic
-        func_logic.state_regs[state_reg_info.name] = state_reg_info
-        func_logic.wire_to_c_type[state_reg_info.name] = state_reg_info.type_name
-        func_logic.variable_names.add(state_reg_info.name)      
+        func_logic.state_regs[var_info.name] = var_info
+        func_logic.wire_to_c_type[var_info.name] = var_info.type_name
+        func_logic.variable_names.add(var_info.name)      
         # Record using globals
-        if not func_logic.state_regs[state_reg_info.name].is_volatile:
+        if not func_logic.state_regs[var_info.name].is_volatile:
           func_logic.uses_nonvolatile_state_regs = True
           #print "rv.func_name",rv.func_name, rv.uses_nonvolatile_state_regs
         FuncLogicLookupTable[func_name] = func_logic      

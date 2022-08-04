@@ -335,16 +335,20 @@ begin
       if clk_var_name in parser_state.clk_cross_var_info:
         raise Exception(f"User defined clock wire {clk_var_name} should not be marked as clock crossing! Use simple global wires instead.")
       # Get info on write side (no read side)
-      state_reg_info = parser_state.global_state_regs[clk_var_name]
-      write_func = None
-      for func_name in state_reg_info.used_in_funcs:
+      var_info = parser_state.global_vars[clk_var_name]
+      write_funcs = set()
+      for func_name in var_info.used_in_funcs:
         func_logic = parser_state.FuncLogicLookupTable[func_name]
         if clk_var_name in func_logic.state_regs:
-          write_func = func_name
-          break
+          write_funcs.add(func_name)
+        if clk_var_name in func_logic.write_only_global_wires:
+          write_funcs.add(func_name)
+      if len(write_funcs) > 1:
+        raise Exception(f"More than one function trying to write to global {clk_var_name}: {write_funcs}!")
+      write_func = list(write_funcs)[0]
       write_insts = parser_state.FuncToInstances[write_func]
       if len(write_insts) > 1:
-        raise Exception(f"More than one instance trying to write to global {var_name}: {write_insts}!")
+        raise Exception(f"More than one instance trying to write to global {clk_var_name}: {write_insts}!")
       write_func_inst = list(write_insts)[0]
       # Assemble driver write wire text
       write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
@@ -461,12 +465,12 @@ begin
   for arb_handshake_info in parser_state.arb_handshake_infos:
     # Get info on the two vars
     # Input
-    input_state_reg_info = parser_state.global_state_regs[arb_handshake_info.input_var_name]
+    input_state_reg_info = parser_state.global_vars[arb_handshake_info.input_var_name]
     input_flow_control = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].flow_control
     input_write_func, input_read_func = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].write_read_funcs
     input_write_mains, input_read_mains = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].write_read_main_funcs
     # Output
-    output_state_reg_info = parser_state.global_state_regs[arb_handshake_info.output_var_name]
+    output_state_reg_info = parser_state.global_vars[arb_handshake_info.output_var_name]
     output_flow_control = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].flow_control
     output_write_func, output_read_func = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].write_read_funcs
     output_write_mains, output_read_mains = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].write_read_main_funcs
@@ -494,7 +498,7 @@ begin
     var_names = [(arb_handshake_info.input_var_name,"input_arb_"),(arb_handshake_info.output_var_name,"output_arb_")]
     for var_name,io_prefix in var_names:
       # Get info on this var
-      state_reg_info = parser_state.global_state_regs[var_name]
+      var_info = parser_state.global_vars[var_name]
       flow_control = parser_state.clk_cross_var_info[var_name].flow_control
       write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
       write_func_insts = parser_state.FuncToInstances[write_func]
@@ -552,7 +556,7 @@ begin
 '''
     for var_name in non_arb_clk_cross_vars:
       # Get info on this var
-      state_reg_info = parser_state.global_state_regs[var_name]
+      var_info = parser_state.global_vars[var_name]
       flow_control = parser_state.clk_cross_var_info[var_name].flow_control
       write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
       write_mains, read_mains = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
@@ -586,8 +590,8 @@ begin
         read_clk_ext_str = write_clk_ext_str
 
       # Try to resolve multiple matches
-      if state_reg_info.path_id is not None:
-        internal_path_id = state_reg_info.path_id.replace("/",C_TO_LOGIC.SUBMODULE_MARKER)
+      if var_info.path_id is not None:
+        internal_path_id = var_info.path_id.replace("/",C_TO_LOGIC.SUBMODULE_MARKER)
         # Try to resolve to a specific instance
         matching_insts = []
         for write_func_inst in write_func_insts:
@@ -674,7 +678,7 @@ begin
 
   # Connections for global regs used in multiple funcs
   shared_global_vars = set()
-  for var_name,state_reg_info in parser_state.global_state_regs.items():
+  for var_name,var_info in parser_state.global_vars.items():
     if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
       shared_global_vars.add(var_name)
   if len(shared_global_vars) > 0:
@@ -682,15 +686,20 @@ begin
 -- Directly connected global register read wires
 '''
   for var_name in shared_global_vars:
-    state_reg_info = parser_state.global_state_regs[var_name]
+    var_info = parser_state.global_vars[var_name]
     # Global var with one or more reader wires
     # Get info on this var
     # Find the one write func
-    write_func = None
-    for func_name in state_reg_info.used_in_funcs:
+    write_funcs = set()
+    for func_name in var_info.used_in_funcs:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
       if var_name in func_logic.state_regs:
-        write_func = func_name
+        write_funcs.add(func_name)
+      if var_name in func_logic.write_only_global_wires:
+        write_funcs.add(func_name)  
+    if len(write_funcs) > 1:
+      raise Exception(f"More than one function trying to write to global {var_name}: {write_funcs}!")
+    write_func = list(write_funcs)[0]
 
     # Find the one write inst
     write_insts = parser_state.FuncToInstances[write_func]
@@ -700,9 +709,9 @@ begin
     
     # Find the many read funcs
     read_funcs = set()
-    for func_name in state_reg_info.used_in_funcs:
+    for func_name in var_info.used_in_funcs:
       func_logic = parser_state.FuncLogicLookupTable[func_name]
-      if var_name in func_logic.read_only_global_regs:
+      if var_name in func_logic.read_only_global_wires:
         read_funcs.add(func_name)
 
     # Find the many read insts
@@ -1190,12 +1199,12 @@ def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
   for arb_handshake_info in parser_state.arb_handshake_infos:
     # Get info on the two vars
     # Input
-    input_state_reg_info = parser_state.global_state_regs[arb_handshake_info.input_var_name]
+    input_state_reg_info = parser_state.global_vars[arb_handshake_info.input_var_name]
     input_flow_control = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].flow_control
     input_write_func, input_read_func = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].write_read_funcs
     input_write_mains, input_read_mains = parser_state.clk_cross_var_info[arb_handshake_info.input_var_name].write_read_main_funcs
     # Output
-    output_state_reg_info = parser_state.global_state_regs[arb_handshake_info.output_var_name]
+    output_state_reg_info = parser_state.global_vars[arb_handshake_info.output_var_name]
     output_flow_control = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].flow_control
     output_write_func, output_read_func = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].write_read_funcs
     output_write_mains, output_read_mains = parser_state.clk_cross_var_info[arb_handshake_info.output_var_name].write_read_main_funcs
@@ -1235,7 +1244,7 @@ use work.c_structs_pkg.all; -- User types
     var_names = [(arb_handshake_info.input_var_name,"input_arb_"),(arb_handshake_info.output_var_name,"output_arb_")]
     for var_name,io_prefix in var_names:
       # Get info on this var
-      state_reg_info = parser_state.global_state_regs[var_name]
+      var_info = parser_state.global_vars[var_name]
       flow_control = parser_state.clk_cross_var_info[var_name].flow_control
       write_func, read_func = parser_state.clk_cross_var_info[var_name].write_read_funcs
       write_func_insts = parser_state.FuncToInstances[write_func]
@@ -1522,8 +1531,8 @@ end arch;
       CLK_RATIO = str(clk_ratio)
       CLK_RATIO_MINUS1 = str(clk_ratio - 1)
       
-      if var_name in parser_state.global_state_regs:
-        c_type = parser_state.global_state_regs[var_name].type_name    
+      if var_name in parser_state.global_vars:
+        c_type = parser_state.global_vars[var_name].type_name    
       data_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) 
       
       in_t = c_type + "_array_" + str(write_size) + "_t"
@@ -1532,7 +1541,7 @@ end arch;
       out_vhdl_t = C_TYPE_STR_TO_VHDL_TYPE_STR(out_t, parser_state)
     else:
       # With flow control
-      array_type = parser_state.global_state_regs[var_name].type_name
+      array_type = parser_state.global_vars[var_name].type_name
       c_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
       if len(dims) > 1:
         print("More than 1 dim for async flow control!?",var_name)
@@ -1920,22 +1929,22 @@ port map (
     
 
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
-  # Async wires assumed shared
-  if var_name in parser_state.async_wires:
-    return True
+  # # Async wires assumed shared
+  # if var_name in parser_state.async_wires:
+  #   return True
   # Clock wires assumed shared
   if var_name in parser_state.clk_mhz:
     return True
   # Otherwise check where used
-  if var_name not in parser_state.global_state_regs:
+  if var_name not in parser_state.global_vars:
     return False
-  state_reg_info = parser_state.global_state_regs[var_name]
-  return len(state_reg_info.used_in_funcs) > 1
+  var_info = parser_state.global_vars[var_name]
+  return len(var_info.used_in_funcs) > 1
 
 def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
   # Do nothing if no clock crossings or no shared globals
   found_multi_use_global = False
-  for global_var_name,state_reg_info in parser_state.global_state_regs.items():
+  for global_var_name,var_info in parser_state.global_vars.items():
     if GLOBAL_VAR_IS_SHARED(global_var_name, parser_state):
       found_multi_use_global = True
       break
@@ -2015,8 +2024,8 @@ package global_wires_pkg is
             text += "     " + sub_func + "_" + output_port + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n"
 
       # Read only global regs
-      for glob_var_name,state_reg_info in func_logic.read_only_global_regs.items():
-        text += "     " + glob_var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(state_reg_info.type_name, parser_state) + ";\n"
+      for glob_var_name,var_info in func_logic.read_only_global_wires.items():
+        text += "     " + glob_var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state) + ";\n"
             
       # Then include types for submodules (not clock crossing submodules)
       for sub_inst in func_logic.submodule_instances:
@@ -2076,9 +2085,12 @@ package global_wires_pkg is
             text += "     " + sub_func + "_" + input_port + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state) + ";\n" 
 
       # Global reg output for multiple read only consumers
-      for var_name,state_reg_info in func_logic.state_regs.items():
+      for var_name,var_info in func_logic.state_regs.items():
+        if var_info in parser_state.global_vars.values() and GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+          text += "     " + var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state) + ";\n"
+      for var_name,var_info in func_logic.write_only_global_wires.items():
         if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
-          text += "     " + var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(state_reg_info.type_name, parser_state) + ";\n"
+          text += "     " + var_name + " : " + C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state) + ";\n"
 
       # Then include types for submodules (not clock crossing submodules)
       for sub_inst in func_logic.submodule_instances:
@@ -2607,7 +2619,7 @@ def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
         return True
 
   # Or if logic is reading a global reg
-  if len(Logic.read_only_global_regs) > 0:
+  if len(Logic.read_only_global_wires) > 0:
     return True
         
   return needs_global_to_module
@@ -2631,7 +2643,10 @@ def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
         return True
 
   # Or if logic is writing a global reg with muliple reads
-  for state_reg_var,state_reg_info in Logic.state_regs.items():
+  for state_reg_var,var_info in Logic.state_regs.items():
+    if var_info in parser_state.global_vars.values() and GLOBAL_VAR_IS_SHARED(state_reg_var, parser_state):
+      return True
+  for state_reg_var,var_info in Logic.write_only_global_wires.items():
     if GLOBAL_VAR_IS_SHARED(state_reg_var, parser_state):
       return True
 
@@ -2899,11 +2914,20 @@ class PiplineHDLParams:
       stage_to_driver_wires[self.pipeline_map.num_stages-1].append(driver_of_vol_wire)
       stage_to_driver_wires[self.pipeline_map.num_stages-1].append(state_reg)
     # Read only shared globals written at input
-    for state_reg in Logic.read_only_global_regs:
+    for state_reg in Logic.read_only_global_wires:
       # Input write
       if 0 not in stage_to_driven_wires:
         stage_to_driven_wires[0] = []
       stage_to_driven_wires[0].append(state_reg)
+    # Global vars as wires read at output
+    for global_var in Logic.write_only_global_wires:
+      # Final read 
+      # #includes driver wire of vol too
+      # driver_of_vol_wire = Logic.wire_driven_by[global_var]
+      if self.pipeline_map.num_stages-1 not in stage_to_driver_wires:
+        stage_to_driver_wires[self.pipeline_map.num_stages-1] = []
+      # stage_to_driver_wires[self.pipeline_map.num_stages-1].append(driver_of_vol_wire)
+      stage_to_driver_wires[self.pipeline_map.num_stages-1].append(global_var)
     
     # Loop over all stages
     for stage in range(0, self.pipeline_map.num_stages):
@@ -3557,7 +3581,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(inst_name, Logic, parser_state, TimingP
       vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
       vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
       rv += "variable REG_VAR_" + vhdl_name + " : " + vhdl_type_str + ";\n"
-  
+
   # BEGIN BEGIN BEGIN
   rv += "begin\n"
   
@@ -3721,13 +3745,13 @@ end process;
         rv += " " + WIRE_TO_VHDL_NAME(output_wire, Logic) + " <= " + "manual_registers_r.output_regs." + WIRE_TO_VHDL_NAME(output_wire, Logic) + ";\n"
 
   # Connect shared globals to global bus
-  shared_globals = set()
-  for state_reg, state_reg_info in Logic.state_regs.items():
-    if GLOBAL_VAR_IS_SHARED(state_reg, parser_state):
-      shared_globals.add(state_reg)
-  if len(shared_globals) > 0:
+  shared_global_regs = set()
+  for state_reg, var_info in Logic.state_regs.items():
+    if var_info in parser_state.global_vars.values() and GLOBAL_VAR_IS_SHARED(state_reg, parser_state):
+      shared_global_regs.add(state_reg)
+  if len(shared_global_regs) > 0:
     rv += "-- Shared global regs\n"
-    for state_reg in shared_globals:
+    for state_reg in shared_global_regs:
       vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
       vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
       rv += "module_to_global." + vhdl_name + " <= " + "REG_COMB_" + vhdl_name + ";\n"
@@ -3782,9 +3806,9 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
         text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := REG_VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
 
     # Read only globals read into pipeline at start like volatiles
-    if len(logic.read_only_global_regs) > 0:
+    if len(logic.read_only_global_wires) > 0:
       text += "     " + "-- Shared read only globals read from regs, written to pipe in first stage\n"
-      for state_reg in logic.read_only_global_regs:
+      for state_reg in logic.read_only_global_wires:
         text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := global_to_module." + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
   else:
     # Not first stage typical reg from prev stage
@@ -3818,6 +3842,17 @@ def GET_STAGE_TEXT(inst_name, logic, parser_state, TimingParamsLookupTable, stag
         text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := " + GET_RHS(driver_of_vol_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
         # Do final write into reg
         text += "     " + "REG_VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + " := VAR_" + WIRE_TO_VHDL_NAME(state_reg, logic) + ";\n"
+
+    # Last stage of pipeline drives global wires
+    if len(logic.write_only_global_wires) > 0:
+      text += "     " + "-- Global wires driven from last stage\n"
+      for var_name in logic.write_only_global_wires:
+        # # Do final read of global wire 
+        # driver_of_global_wire = logic.wire_driven_by[var_name]
+        # text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(var_name, logic) + " := " + GET_RHS(driver_of_global_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
+        # Do final write into wire var
+        if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+          text += "     " + "module_to_global." + WIRE_TO_VHDL_NAME(var_name, logic) + " <= VAR_" + WIRE_TO_VHDL_NAME(var_name, logic) + ";\n"
 
     # Outputs
     if len(logic.outputs) > 0:
@@ -4083,7 +4118,7 @@ def GET_RHS(driving_wire_to_handle, inst_name, logic, parser_state, TimingParams
     RHS = WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
 
   # Shared read only globals like other wires read into pipeline at start (not read from clk cross here)
-  #elif driving_wire_to_handle in logic.read_only_global_regs:
+  #elif driving_wire_to_handle in logic.read_only_global_wires:
   #  # Read directly from read only ports
   #  RHS = "global_to_module."+WIRE_TO_VHDL_NAME(driving_wire_to_handle, logic)
     

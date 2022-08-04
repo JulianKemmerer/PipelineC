@@ -494,7 +494,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   if VHDL.LOGIC_IS_RAW_HDL(logic) or logic.is_vhdl_func or logic.is_vhdl_expr or logic.is_vhdl_text_module or logic.func_name in parser_state.func_marked_blackbox:
     return rv
   
-  print_debug = False #inst_name=="posix_aws_fpga_dma" #False
+  print_debug = False
   bad_inf_loop = False
   #print("Get pipeline map inst_name",inst_name,flush=True)
   # Shouldnt need debug for zero clock? You wish you sad lazy person
@@ -577,7 +577,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   RECORD_DRIVEN_BY(None, logic.inputs)
   RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
   RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
-  RECORD_DRIVEN_BY(None, set(logic.read_only_global_regs.keys()))
+  RECORD_DRIVEN_BY(None, set(logic.read_only_global_wires.keys()))
   RECORD_DRIVEN_BY(None, logic.feedback_vars)
   # "CONST" wires representing constants like '2' are already driven
   for wire in logic.wires:
@@ -648,6 +648,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
           return False
         if print_debug:
           print("Global driven ", global_wire, "<=",wires_driven_by_so_far[global_wire])
+    # All write only global var wires
+    for global_wire in logic.write_only_global_wires:
+      if (global_wire not in wires_driven_by_so_far) or (wires_driven_by_so_far[global_wire]==None):
+        if print_debug:
+          print("Pipeline not done write only global.", global_wire)
+        return False
+      if print_debug:
+        print("Write only global driven ", global_wire, "<=", wires_driven_by_so_far[global_wire])
     # ALl voltatile globals driven
     # Some volatiles are read only - ex. valid indicator bit
     # And thus are never driven
@@ -1427,8 +1435,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
         # ^ is wrong, makes 200mhx system clock?
         pass # rely on clock cross path detection error in timing report
       else:
-        print("What syn too for async clocks?")
-        sys.exit(-1)
+        raise Exception(f"How does tool {SYN_TOOL.__name__} deal with async clocks?")
   
   
   f.close()
@@ -1864,8 +1871,8 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(logic, inst_name, parser_state, TimingPa
     state_reg_ffs = 0
     state_regs_text = ""
     for state_reg_name in logic.state_regs:
-      state_reg_info = logic.state_regs[state_reg_name]
-      state_reg_type = state_reg_info.type_name
+      var_info = logic.state_regs[state_reg_name]
+      state_reg_type = var_info.type_name
       state_regs_text += state_reg_type + " " + state_reg_name + ","
       state_reg_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(state_reg_type, parser_state)
       state_reg_ffs += state_reg_bits
