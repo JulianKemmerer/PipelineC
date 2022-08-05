@@ -6,8 +6,7 @@
 #include "wire.h"
 
 #define data_t int16_t // Must be integer to use 'accum' primitive below
-#define MATRIX_DIM 4
-//#define PROC_IO_REG // Turn on manual in and out registers for each processor
+#define MATRIX_DIM 8
 
 typedef struct processor_io_t
 {
@@ -16,51 +15,27 @@ typedef struct processor_io_t
   uint1_t reset_and_read_result;
 }processor_io_t;
 
-#ifdef PROC_IO_REG
-#pragma FUNC_WIRES processor_io_buffer // Force seen as no delay
-processor_io_t processor_io_buffer(processor_io_t i)
-{
-  static processor_io_t buf;
-  processor_io_t o = buf;
-  buf = i;
-  return o;
-}
-#endif 
-
-processor_io_t processor(processor_io_t inputs_wire)
-{
-  #ifdef PROC_IO_REG
-  // Manual input regs (can try to make tool work harder by not adding manually...)
-  processor_io_t inputs = processor_io_buffer(inputs_wire);
-  #else
-  processor_io_t inputs = inputs_wire;
-  #endif
-  
+processor_io_t processor(processor_io_t inputs)
+{  
   // Logic to get outputs from inputs
   processor_io_t outputs;
   // Typically pass inputs to outputs
   outputs = inputs;
-  // And do multiply accumulate
+  // First do multiply, then accumulate
   data_t increment = inputs.a * inputs.b;
   // Except when resetting and reading out results
   if(inputs.reset_and_read_result)
   {
     increment = 0; // Reset to 0
   }
+  // The built in accumulate function
   data_t result = accum(increment, inputs.reset_and_read_result);
   // Read out of results through 'a' port
   if(inputs.reset_and_read_result)
   {
     outputs.a = result;
   }
-
-  #ifdef PROC_IO_REG
-  // Manual output regs (can try to make tool work harder by not adding manually...)
-  processor_io_t outputs_registered = processor_io_buffer(outputs);  
-  return outputs_registered;
-  #else
   return outputs;
-  #endif
 }
 
 // Do main func just instantiating N^2 processors 'flattened' 
