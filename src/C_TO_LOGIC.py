@@ -2848,14 +2848,27 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
         break
       
       # Remove children of this ref_tok
-      for maybe_child_ref_tok in loop_copy_rv_ref_toks_set:
-        if maybe_child_ref_tok != ref_toks:
+      # Do the faster of two options
+      # 1) Look through all ref toks for possible children of the current ref tok
+      # 2) Look through all children of the current ref tok for if they occur in all ref toks
+      all_branch_ref_toks = REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_node, parser_state) - set([ref_toks])
+      #print("Looking from",ref_toks,"for",all_branch_ref_toks)
+      #print("Could search",len(all_branch_ref_toks),"own_branch_ref_toks")
+      #print("Could search",len(loop_copy_rv_ref_toks_set),"loop_copy_rv_ref_toks_set")
+      if len(all_branch_ref_toks) < len(loop_copy_rv_ref_toks_set):
+        # Faster to search struct/array def branches than entire set of ref toks from code
+        for branch_ref_tok in all_branch_ref_toks:
+          if branch_ref_tok in rv_ref_toks_set:
+            rv_ref_toks_set.remove(branch_ref_tok)
+            still_removing_elements = True
+      else:
+        # Faster to search entire set of ref toks from code than all possible branches from ref tok 
+        for maybe_child_ref_tok in (loop_copy_rv_ref_toks_set - set([ref_toks])):
           if REF_TOKS_COVERED_BY(maybe_child_ref_tok, ref_toks, parser_state):
             rv_ref_toks_set.remove(maybe_child_ref_tok)
-            
+            still_removing_elements = True
       # Record if change was made and jump to next iteration
-      if rv_ref_toks_set != loop_copy_rv_ref_toks_set:
-        still_removing_elements = True
+      if still_removing_elements:
         break
               
       # Check if these ref_toks are a leaf with all sibling leafs driven
@@ -3843,7 +3856,7 @@ def C_AST_REF_TOKS_TO_LOGIC(ref_toks, c_ast_ref, driven_wire_names, prepend_text
     # Reduce
     reduced_driven_ref_toks_set = REDUCE_REF_TOKS_OR_STRS(driven_ref_toks_list, c_ast_ref , parser_state)
     sorted_reduced_driven_ref_toks_set = sorted(reduced_driven_ref_toks_set)
-    
+
     # Sanity
     if len(sorted_reduced_driven_ref_toks_set) <= 0:
       print("Wtf no sorted input ref toks for ref read @", c_ast_ref.coord)
@@ -7398,7 +7411,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(c_ast_funcdef, parser_state, parse_body = True, only
     if parse_body:
       body_logic = C_AST_NODE_TO_LOGIC(c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state)   
       parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
-      
+
     # Connect globals at end of func logic
     parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_funcdef)
 
