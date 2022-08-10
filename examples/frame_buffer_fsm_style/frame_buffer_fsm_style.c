@@ -32,12 +32,12 @@ void frame_buffer_display()
 
   // Convert VGA timing position
   // and application x,y pos to RAM addresses
-  // First port is for user application, is read+write
-  // Second port is read only for the frame buffer vga display
   uint32_t frame_buffer_addr = pos_to_addr(frame_buffer_x_in, frame_buffer_y_in);
-  uint32_t vga_addr = pos_to_addr(vga_signals.pos.x, vga_signals.pos.y);  
+  uint32_t vga_addr = pos_to_addr(vga_signals.pos.x, vga_signals.pos.y);
 
   // Do RAM lookups
+  // First port is for user application, is read+write
+  // Second port is read only for the frame buffer vga display
   frame_buf_outputs_t frame_buf_outputs
     = frame_buf_function(frame_buffer_addr, 
                          frame_buffer_wr_data_in, 
@@ -65,7 +65,7 @@ void main()
 {
   while(1)
   {
-    // Loop over all chunks of pixels
+    // Loop over all pixels
     uint32_t x, y;
     for(x=0; x<FRAME_WIDTH; x+=1)
     {
@@ -75,7 +75,7 @@ void main()
         uint1_t pixel = frame_buf_read(x, y);
         // Invert color
         pixel = !pixel;
-        // Write pixel values back
+        // Write pixel value back
         frame_buf_write(x, y, pixel);
       }
     }

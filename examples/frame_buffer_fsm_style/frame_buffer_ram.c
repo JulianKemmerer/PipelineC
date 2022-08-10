@@ -15,6 +15,9 @@ uint16_t frame_buffer_y_in;
 uint1_t frame_buffer_wr_enable_in; // 0=read
 uint1_t frame_buffer_rd_data_out;
 
+// RAM init data from file
+#include "frame_buf_init_data.h" //FRAME_BUF_INIT_DATA
+
 // Need a RAM with two read ports
 // need to manually write VHDL code the synthesis tool supports
 // since multiple read ports have not been built into PipelineC yet
@@ -34,7 +37,8 @@ frame_buf_outputs_t frame_buf_function(
   __vhdl__("\n\
   constant SIZE : integer := " xstr((FRAME_WIDTH*FRAME_HEIGHT)) "; \n\
   type ram_t is array(0 to SIZE-1) of std_logic; \n\
-  signal the_ram : ram_t; \n\
+  signal the_ram : ram_t := " FRAME_BUF_INIT_DATA "; \n\
+  --signal the_ram : std_logic_vector(SIZE-1 downto 0); \n\
 begin \n\
   return_output.read_data0(0) <= the_ram(to_integer(addr0)); \n\
   return_output.read_data1(0) <= the_ram(to_integer(addr1)); \n\
@@ -51,7 +55,7 @@ begin \n\
 ");
 }
 
-// Helper FSM func for read/writing the frame buffer
+// Helper FSM func for read/writing the frame buffer using global wires
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
 {
   // Supply user values to the RAM port, zero latency get result
