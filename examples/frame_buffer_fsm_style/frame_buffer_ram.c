@@ -16,7 +16,7 @@ uint1_t frame_buffer_wr_enable_in; // 0=read
 uint1_t frame_buffer_rd_data_out;
 
 // RAM init data from file
-#include "frame_buf_init_data.h" //FRAME_BUF_INIT_DATA
+#include "frame_buf_init_data.h"
 
 // Need a RAM with two read ports
 // need to manually write VHDL code the synthesis tool supports
@@ -69,8 +69,64 @@ uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr
   frame_buffer_wr_enable_in = 0;
   return rv;
 }
-// Derived fsm from main, there can only be a single instance of it
+// Derived fsm from func, there can only be a single instance of it
 #include "frame_buf_read_write_SINGLE_INST.h"
 // Use macros to help avoid nested multiple instances of function by inlining
 #define frame_buf_read(x, y) frame_buf_read_write(x, y, 0, 0)
 #define frame_buf_write(x, y, wr_data) frame_buf_read_write(x, y, wr_data, 1)
+
+
+// Line buffer is single read|write port
+// Is built in as _RAM_SP_RF_0 (single port, read first, 0 clocks)
+uint1_t line_buf_read_write(uint1_t line_sel, uint16_t x, uint1_t wr_data, uint1_t wr_en)
+{
+  // Two line buffers inside one func for now
+  static uint1_t line_buf0[FRAME_WIDTH];
+  static uint1_t line_buf1[FRAME_WIDTH];
+  uint1_t read_val;
+  if (line_sel) {
+    read_val = line_buf1_RAM_SP_RF_0(x, wr_data, wr_en);
+  } else {
+    read_val = line_buf0_RAM_SP_RF_0(x, wr_data, wr_en);
+  }
+  return read_val;
+}
+// Derived fsm from func, there can only be a single instance of it
+#include "line_buf_read_write_SINGLE_INST.h"
+// Use macros to help avoid nested multiple instances of function by inlining
+#define line_buf_read(line_sel, x) line_buf_read_write(line_sel, x, 0, 0)
+#define line_buf_write(line_sel, x, wr_data) line_buf_read_write(line_sel, x, wr_data, 1)
+
+
+/*// A very inefficient all LUTs/muxes (no BRAM) zero latency ~frame buffer
+  // https://github.com/JulianKemmerer/PipelineC/wiki/Arrays
+  // Array access implemented uses muxes, ex. 640x480=307200
+  // so read is implemented like a 307200->1 mux...
+  // Actually each index is rounded to power of 2, so 640x480 becomes 1024x512
+  //    frame_buffer_ram[10b x value][9b y value] 
+  // is same as
+  //    frame_buffer_ram[19b address]
+  // ...very big/inefficient/slow...
+  // 19b select for 524288->1 mux (only 307200 addresses used)...
+  static pixel_t frame_buffer_ram[FRAME_WIDTH][FRAME_HEIGHT];
+  pixel_t color = frame_buffer_ram[vga_signals.pos.x][vga_signals.pos.y];
+  // The additonal read/write port for the main application
+  frame_buffer_rd_data_out = frame_buffer_ram[frame_buffer_x_in][frame_buffer_y_in];
+  if(frame_buffer_wr_enable_in)
+  {
+    frame_buffer_ram[frame_buffer_x_in][frame_buffer_y_in] = frame_buffer_wr_data_in;
+  }
+*/
+
+/*// Allow for reading+writing N pixels at a time from a frame buffer port
+// (could be turned into a line buffer)
+#define FRAME_BUF_DATA_SIZE_PIXELS 1
+typedef struct frame_buf_data_t
+{
+    pixel_t pixels[FRAME_BUF_DATA_SIZE_PIXELS];
+}frame_buf_data_t; 
+// Frame buffer RAM stores all pixels in chunks of FRAME_BUF_DATA_SIZE_PIXELS
+#define TOTAL_PIXELS (FRAME_HEIGHT*FRAME_WIDTH)
+#define FRAME_BUF_NUM_ENTRIES (TOTAL_PIXELS/FRAME_BUF_DATA_SIZE_PIXELS)
+frame_buf_data_t frame_buffer[FRAME_BUF_NUM_ENTRIES];
+*/

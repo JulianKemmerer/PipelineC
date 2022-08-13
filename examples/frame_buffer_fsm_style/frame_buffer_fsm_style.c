@@ -20,6 +20,7 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 }
 
 // Include frame buffer RAM code and helper funcs
+// (also include 2-line buffer for Game of Life)
 #include "frame_buffer_ram.c"
 
 // Display side of frame buffer is always reading
@@ -60,8 +61,126 @@ void frame_buffer_display()
   pmod_register_outputs(vga_signals, color);
 }
 
-// Demo 'application' state machine that inverts pixels every second
+// Demo application that plays Conway's Game of Life
+// https://www.geeksforgeeks.org/program-for-conways-game-of-life/
+//returns the count of alive neighbours around x,y
+uint8_t count_live_neighbour_cells(uint32_t r, uint32_t c){
+  int32_t i, j;
+  uint8_t count=0;
+  for(i=r-1; i<=r+1; i+=1){
+      for(j=c-1;j<=c+1;j+=1){
+          if(!( ((i==r) & (j==c)) | ((i<0) | (j<0)) | ((i>=FRAME_WIDTH) | (j>=FRAME_HEIGHT)))){
+            uint1_t cell_alive = frame_buf_read(i, j);
+            if(cell_alive){
+              count+=1;
+            }
+          }
+      }
+  }
+  return count;
+}
+// Game of Life logic to determine if cell at x,y lives or dies
+uint1_t cell_next_state(uint16_t x, uint16_t y)
+{
+  uint8_t neighbour_live_cells = count_live_neighbour_cells(x, y);
+  uint1_t cell_alive = frame_buf_read(x, y);
+  uint1_t cell_alive_next;
+  if(cell_alive & ((neighbour_live_cells==2) | (neighbour_live_cells==3))){
+      cell_alive_next=1;
+  }
+  else if(!cell_alive & (neighbour_live_cells==3)){
+      cell_alive_next=1;
+  }
+  else{
+      cell_alive_next=0;
+  }
+  return cell_alive_next;
+}
+// Main function using one frame buffer and two line buffers
 void main()
+{
+  while(1)
+  {
+    // Loop over all pixels line by line
+    // y is current read line
+    // Writes of next state are delayed in two line buffers (index y-2)
+    /*
+           |----
+           |   Y-2 WRITE  , Line Select = 0 |...
+           |----
+           |   Y-1 CELLS  , Line Select = 1 |...
+           |----
+      y->  |   READ CELLS ,                 |...
+           |----  
+    */
+    uint32_t x, y;
+    uint1_t cell_alive_next;
+    
+    // Precompute+fill next state line buffers
+    // Line at y-2 is at line_sel=0, y-1 at line_sel=1
+    uint1_t y_minus_2_line_sel = 0;
+    uint1_t y_minus_1_line_sel = 1;
+    for(y=0; y<2; y+=1)
+    {
+      for(x=0; x<FRAME_WIDTH; x+=1)
+      {
+        cell_alive_next = cell_next_state(x, y);
+        line_buf_write(y, x, cell_alive_next);
+      }
+    }
+
+    // Starting with some next line buffers completed makes loop easier to write
+    uint16_t y_write;
+    for(y=2; y<FRAME_HEIGHT; y+=1)
+    { 
+      // Write line is 2 lines delayed
+      y_write = y - 2;
+      for(x=0; x<FRAME_WIDTH; x+=1)
+      {
+        cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
+        frame_buf_write(x, y_write, cell_alive_next);
+      }
+
+      // Use now available y_minus_2_line_sel line buffer
+      // to store next state from current reads
+      for(x=0; x<FRAME_WIDTH; x+=1)
+      {
+        cell_alive_next = cell_next_state(x, y);
+        line_buf_write(y_minus_2_line_sel, x, cell_alive_next);
+      }
+
+      // Swap buffers (flip sel bits)
+      y_minus_2_line_sel = !y_minus_2_line_sel;
+      y_minus_1_line_sel = !y_minus_1_line_sel;
+    }
+
+    // Write next states of final lines left in buffers
+    for(x=0; x<FRAME_WIDTH; x+=1)
+    {
+      y_write = FRAME_HEIGHT - 2;
+      cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
+      frame_buf_write(x, y_write, cell_alive_next);
+      y_write = FRAME_HEIGHT - 1;
+      cell_alive_next = line_buf_read(y_minus_1_line_sel, x);
+      frame_buf_write(x, y_write, cell_alive_next);
+    }
+  }
+}
+
+// Derived fsm from main (TODO code gen...)
+#include "main_FSM.h"
+// Wrap up main FSM as top level
+MAIN_MHZ(main_wrapper, PIXEL_CLK_MHZ)
+void main_wrapper()
+{
+  main_INPUT_t i;
+  i.input_valid = 1;
+  i.output_ready = 1;
+  main_OUTPUT_t o = main_FSM(i);
+}
+
+// Demo 'application' state machine that inverts pixels every second
+/*void main()
 {
   while(1)
   {
@@ -87,49 +206,4 @@ void main()
       __clk();
     }
   }
-}
-
-// Derived fsm from main (TODO code gen...)
-#include "main_FSM.h"
-// Wrap up main FSM as top level
-MAIN_MHZ(main_wrapper, PIXEL_CLK_MHZ)
-void main_wrapper()
-{
-  main_INPUT_t i;
-  i.input_valid = 1;
-  i.output_ready = 1;
-  main_OUTPUT_t o = main_FSM(i);
-}
-
-/*// A very inefficient all LUTs/muxes (no BRAM) zero latency ~frame buffer
-  // https://github.com/JulianKemmerer/PipelineC/wiki/Arrays
-  // Array access implemented uses muxes, ex. 640x480=307200
-  // so read is implemented like a 307200->1 mux...
-  // Actually each index is rounded to power of 2, so 640x480 becomes 1024x512
-  //    frame_buffer_ram[10b x value][9b y value] 
-  // is same as
-  //    frame_buffer_ram[19b address]
-  // ...very big/inefficient/slow...
-  // 19b select for 524288->1 mux (only 307200 addresses used)...
-  static pixel_t frame_buffer_ram[FRAME_WIDTH][FRAME_HEIGHT];
-  pixel_t color = frame_buffer_ram[vga_signals.pos.x][vga_signals.pos.y];
-  // The additonal read/write port for the main application
-  frame_buffer_rd_data_out = frame_buffer_ram[frame_buffer_x_in][frame_buffer_y_in];
-  if(frame_buffer_wr_enable_in)
-  {
-    frame_buffer_ram[frame_buffer_x_in][frame_buffer_y_in] = frame_buffer_wr_data_in;
-  }
-*/
-
-/*// Allow for reading+writing N pixels at a time from a frame buffer port
-// (could be turned into a line buffer)
-#define FRAME_BUF_DATA_SIZE_PIXELS 1
-typedef struct frame_buf_data_t
-{
-    pixel_t pixels[FRAME_BUF_DATA_SIZE_PIXELS];
-}frame_buf_data_t; 
-// Frame buffer RAM stores all pixels in chunks of FRAME_BUF_DATA_SIZE_PIXELS
-#define TOTAL_PIXELS (FRAME_HEIGHT*FRAME_WIDTH)
-#define FRAME_BUF_NUM_ENTRIES (TOTAL_PIXELS/FRAME_BUF_DATA_SIZE_PIXELS)
-frame_buf_data_t frame_buffer[FRAME_BUF_NUM_ENTRIES];
-*/
+}*/
