@@ -1354,15 +1354,10 @@ def show_graph_with_labels(adjacency_matrix, mylabels):
     plt.show()
     
 def make_label_dict(labels):
-    l = {}
-    for i, label in enumerate(labels):
-        l[i] = label
-    return l
+    return {i:l for i,l in enumerate(labels)}
+
 def make_rev_label_dict(labels):
-    l = {}
-    for i, label in enumerate(labels):
-        l[label] = i
-    return l   
+    return {l:i for i,l in enumerate(labels)}
 
 def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
   # Do for all submodules first
