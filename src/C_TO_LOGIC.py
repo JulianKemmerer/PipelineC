@@ -281,14 +281,7 @@ def casthelp(arg):
     pass; 
     
 def LIST_UNION(self_a,b):
-  # Ummm?
-  if self_a == b:
-    return self_a
-  
-  #return list( set().union(*[a,b]) )
-  # uhh faster?
-  self_a.extend(b)
-  return list(set(self_a))
+  return list(set(self_a + b))
   
 def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1,d2):
   # uh?
