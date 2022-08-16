@@ -2000,7 +2000,7 @@ def C_AST_CONSTANT_TO_ORIG_WIRE_NAME(c_ast_node):
 def GET_MOST_RECENT_ALIAS(logic,orig_var_name):
   if orig_var_name in logic.wire_aliases_over_time:
     aliases =  logic.wire_aliases_over_time[orig_var_name]
-    last_alias = aliases[len(aliases)-1]
+    last_alias = aliases[-1:]
     return last_alias
   else:
     return orig_var_name
