@@ -9493,12 +9493,5 @@ def GET_C_AST_GLOBAL_DECLS(c_file_ast):
     
   return variable_defs
 
-
-# Filter out a certain type from a list
-# Im dumb at python
 def GET_TYPE_FROM_LIST(py_type, l):
-  rv = []
-  for i in l:
-    if type(i) == py_type:
-      rv.append(i)
-  return rv
+  return [i for i in l if type(i) == py_type]
