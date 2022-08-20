@@ -13,43 +13,22 @@
 #include "intN_t.h"
 #include "vga/vga_pmod.c"
 
-// Helper function to flatten 2D x,y positions into 1D RAM addresses
-uint32_t pos_to_addr(uint16_t x, uint16_t y)
-{
-  return (x*FRAME_HEIGHT) + y;
-}
-
 // Include frame buffer RAM code and helper funcs
 // (also include 2-line buffer for Game of Life)
 #include "frame_buffer_ram.c"
 
 // Display side of frame buffer is always reading
-// TODO add valid signal for pipelining, must be --comb for now
 MAIN_MHZ(frame_buffer_display, PIXEL_CLK_MHZ)
 void frame_buffer_display()
 {
   // VGA timing for fixed resolution
   vga_signals_t vga_signals = vga_timing();
 
-  // Convert VGA timing position
-  // and application x,y pos to RAM addresses
-  uint32_t frame_buffer_addr = pos_to_addr(frame_buffer_x_in, frame_buffer_y_in);
-  uint32_t vga_addr = pos_to_addr(vga_signals.pos.x, vga_signals.pos.y);
-
-  // Do RAM lookups
-  // First port is for user application, is read+write
-  // Second port is read only for the frame buffer vga display
-  frame_buf_outputs_t frame_buf_outputs
-    = frame_buf_function(frame_buffer_addr, 
-                         frame_buffer_wr_data_in, 
-                         frame_buffer_wr_enable_in,
-                         vga_addr);
-
-  // Drive output signals with RAM values
-  frame_buffer_rd_data_out = frame_buf_outputs.read_data0;
+  // Do RAM lookup
+  uint1_t vga_pixel = frame_buf_function(vga_signals.pos.x, vga_signals.pos.y);
+  
   // Default black=0 unless pixel is white=1
   pixel_t color = {0};
-  uint1_t vga_pixel = frame_buf_outputs.read_data1;
   if(vga_pixel)
   {
     color.r = 255;

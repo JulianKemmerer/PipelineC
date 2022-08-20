@@ -8,12 +8,20 @@
 // essentially a 'chasing the beam' design reading 
 // from LUTs/LUTRAM instead of output from render_pixel pipeline
 // ...with an extra read/write port wires for the application too
+// The user/application RAM port will use a valid+ready handshake
+// to be compatible for other RAM styles later, BRAM, off chip memory, etc
 // Global wires for use once anywhere in code
+//  Inputs
 uint1_t frame_buffer_wr_data_in;
 uint16_t frame_buffer_x_in;
 uint16_t frame_buffer_y_in;
 uint1_t frame_buffer_wr_enable_in; // 0=read
+uint1_t frame_buffer_inputs_valid_in;
+uint1_t frame_buffer_outputs_ready_in;
+//  Outputs
 uint1_t frame_buffer_rd_data_out;
+uint1_t frame_buffer_outputs_valid_out;
+uint1_t frame_buffer_inputs_ready_out;
 
 // RAM init data from file
 #include "frame_buf_init_data.h"
@@ -22,13 +30,13 @@ uint1_t frame_buffer_rd_data_out;
 // need to manually write VHDL code the synthesis tool supports
 // since multiple read ports have not been built into PipelineC yet
 // https://github.com/JulianKemmerer/PipelineC/issues/93
-typedef struct frame_buf_outputs_t
+typedef struct frame_buf_ram_outputs_t
 {
   uint1_t read_data0;
   uint1_t read_data1;
-}frame_buf_outputs_t;
+}frame_buf_ram_outputs_t;
 #include "xstr.h" // xstr func for putting quotes around macro things
-frame_buf_outputs_t frame_buf_function(
+frame_buf_ram_outputs_t frame_buf_ram(
   uint32_t addr0,
   uint1_t wr_data0, uint1_t wr_en0, 
   uint32_t addr1
@@ -55,18 +63,97 @@ begin \n\
 ");
 }
 
+// Helper function to flatten 2D x,y positions into 1D RAM addresses
+uint32_t pos_to_addr(uint16_t x, uint16_t y)
+{
+  return (x*FRAME_HEIGHT) + y;
+}
+
+// Function argument input is VGA chasing the beam always reading
+// return value is read pixel data for display
+// User applicaiton uses frame_buffer_ wires directly
+// Needs to be --comb for valid+ready handshake for now
+uint1_t frame_buf_function(
+  uint16_t vga_x, uint16_t vga_y
+){
+  // RAM is 0 latency LUTRAM
+  // Connect handshake directly in 0 latency as well
+  frame_buffer_outputs_valid_out = frame_buffer_inputs_valid_in;
+  //frame_buffer_inputs_ready_out = frame_buffer_outputs_ready_in;
+  // ^ Can cause timing loops when combined with 0 latency...
+  // fake it always ready for now while RAM is simple 0 cycle
+  frame_buffer_inputs_ready_out = 1;
+
+  // Handshake validates write enable
+  uint1_t gated_wr_en = frame_buffer_wr_enable_in & (frame_buffer_inputs_valid_in & frame_buffer_outputs_ready_in);
+
+  // Convert x,y pos to addr
+  uint32_t vga_addr = pos_to_addr(vga_x, vga_y);
+  uint32_t frame_buffer_addr = pos_to_addr(frame_buffer_x_in, frame_buffer_y_in);
+
+  // Do RAM lookups
+  // First port is for user application, is read+write
+  // Second port is read only for the frame buffer vga display
+  frame_buf_ram_outputs_t ram_outputs 
+    = frame_buf_ram(frame_buffer_addr, 
+                    frame_buffer_wr_data_in, 
+                    gated_wr_en,
+                    vga_addr);
+
+  // Drive output signals with RAM values
+  frame_buffer_rd_data_out = ram_outputs.read_data0;
+  return ram_outputs.read_data1;
+}
+
 // Helper FSM func for read/writing the frame buffer using global wires
+// TODO simplify once RAM is not able to do 0 cycle latency
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
 {
-  // Supply user values to the RAM port, zero latency get result
+  // Start transaction by signalling valid inputs and ready for outputs
+  frame_buffer_inputs_valid_in = 1;
+  frame_buffer_outputs_ready_in = 1;
   frame_buffer_wr_data_in = wr_data;
   frame_buffer_x_in = x;
   frame_buffer_y_in = y;
   frame_buffer_wr_enable_in = wr_en;
-  uint1_t rv = frame_buffer_rd_data_out;
-  // Make sure not to leave write enable set by clearing it next clock
+  
+  // Wait for inputs to be accepted
+  while(!frame_buffer_inputs_ready_out)
+  {
+    // Werent accepted, then not yet ready for 0 latency output because waiting
+    frame_buffer_outputs_ready_in = 0;
+    __clk();
+  }
+  // Inputs are being accepted now, so ready for 0 latnecy output
+  uint1_t rv;
+  // Signal ready for output and check valid
+  frame_buffer_outputs_ready_in = 1;
+  if(frame_buffer_outputs_valid_out)
+  {
+    // Take output now
+    rv = frame_buffer_rd_data_out;
+  }
+  else
+  {
+    // Need to wait some clocks for output
+    // Make sure not to leave input valid/enable set while waiting
+    __clk();
+    frame_buffer_inputs_valid_in = 0;
+    frame_buffer_wr_enable_in = 0;
+    // Wait for output valid
+    while(!frame_buffer_outputs_valid_out)
+    {
+      __clk();
+    }
+    // Output valid now
+    rv = frame_buffer_rd_data_out;
+  }
+  // Make sure not to leave valid/enable/ready set by clearing it next clock
   __clk();
+  frame_buffer_inputs_valid_in = 0;
   frame_buffer_wr_enable_in = 0;
+  frame_buffer_outputs_ready_in = 0;
+  
   return rv;
 }
 // Derived fsm from func, there can only be a single instance of it
@@ -75,6 +162,7 @@ uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr
 #define frame_buf_read(x, y) frame_buf_read_write(x, y, 0, 0)
 #define frame_buf_write(x, y, wr_data) frame_buf_read_write(x, y, wr_data, 1)
 
+// TODO add handshake for line buf
 
 // Line buffer is single read|write port
 // Is built in as _RAM_SP_RF_0 (single port, read first, 0 clocks)
