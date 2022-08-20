@@ -105,6 +105,8 @@ uint1_t frame_buf_function(
   return ram_outputs.read_data1;
 }
 
+// TODO make macros for repeated code in frame_buf_read_write and line_buf_read_write
+
 // Helper FSM func for read/writing the frame buffer using global wires
 // TODO simplify once RAM is not able to do 0 cycle latency
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
@@ -124,7 +126,7 @@ uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr
     frame_buffer_outputs_ready_in = 0;
     __clk();
   }
-  // Inputs are being accepted now, so ready for 0 latnecy output
+  // Inputs are being accepted now, so ready for 0 latency output
   uint1_t rv;
   // Signal ready for output and check valid
   frame_buffer_outputs_ready_in = 1;
@@ -162,22 +164,101 @@ uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr
 #define frame_buf_read(x, y) frame_buf_read_write(x, y, 0, 0)
 #define frame_buf_write(x, y, wr_data) frame_buf_read_write(x, y, wr_data, 1)
 
-// TODO add handshake for line buf
+// Similar structure for two-line buffer RAM/s
+// Global wires for use once anywhere in code
+//  Inputs
+uint1_t line_bufs_line_sel_in;
+uint16_t line_bufs_x_in;
+uint1_t line_bufs_wr_data_in;
+uint1_t line_bufs_wr_enable_in; // 0=read
+uint1_t line_bufs_inputs_valid_in;
+uint1_t line_bufs_outputs_ready_in;
+//  Outputs
+uint1_t line_bufs_rd_data_out;
+uint1_t line_bufs_outputs_valid_out;
+uint1_t line_bufs_inputs_ready_out;
+
+// Line buffer used only by application via global wires (never called directly)
+// So need stand alone func to wire things up
+#pragma MAIN line_bufs_function
+void line_bufs_function()
+{
+  // RAM is 0 latency LUTRAM
+  // Connect handshake directly in 0 latency as well
+  line_bufs_outputs_valid_out = line_bufs_inputs_valid_in;
+  //line_bufs_inputs_ready_out = line_bufs_outputs_ready_in;
+  // ^ Can cause timing loops when combined with 0 latency...
+  // fake it always ready for now while RAM is simple 0 cycle
+  line_bufs_inputs_ready_out = 1;
+
+  // Handshake validates write enable
+  uint1_t gated_wr_en = line_bufs_wr_enable_in & (line_bufs_inputs_valid_in & line_bufs_outputs_ready_in);
+
+  // Do RAM lookup
+  // Two line buffers inside one func for now
+  static uint1_t line_buf0[FRAME_WIDTH];
+  static uint1_t line_buf1[FRAME_WIDTH];
+  uint1_t read_val;
+  if (line_bufs_line_sel_in) {
+    read_val = line_buf1_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
+  } else {
+    read_val = line_buf0_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
+  }
+  
+  // Drive output signal with RAM value
+  line_bufs_rd_data_out = read_val;
+}
 
 // Line buffer is single read|write port
 // Is built in as _RAM_SP_RF_0 (single port, read first, 0 clocks)
 uint1_t line_buf_read_write(uint1_t line_sel, uint16_t x, uint1_t wr_data, uint1_t wr_en)
 {
-  // Two line buffers inside one func for now
-  static uint1_t line_buf0[FRAME_WIDTH];
-  static uint1_t line_buf1[FRAME_WIDTH];
-  uint1_t read_val;
-  if (line_sel) {
-    read_val = line_buf1_RAM_SP_RF_0(x, wr_data, wr_en);
-  } else {
-    read_val = line_buf0_RAM_SP_RF_0(x, wr_data, wr_en);
+  // Start transaction by signalling valid inputs and ready for outputs
+  line_bufs_inputs_valid_in = 1;
+  line_bufs_outputs_ready_in = 1;
+  line_bufs_line_sel_in = line_sel;
+  line_bufs_wr_data_in = wr_data;
+  line_bufs_x_in = x;
+  line_bufs_wr_enable_in = wr_en;
+  
+  // Wait for inputs to be accepted
+  while(!line_bufs_inputs_ready_out)
+  {
+    // Werent accepted, then not yet ready for 0 latency output because waiting
+    line_bufs_outputs_ready_in = 0;
+    __clk();
   }
-  return read_val;
+  // Inputs are being accepted now, so ready for 0 latency output
+  uint1_t rv;
+  // Signal ready for output and check valid
+  line_bufs_outputs_ready_in = 1;
+  if(line_bufs_outputs_valid_out)
+  {
+    // Take output now
+    rv = line_bufs_rd_data_out;
+  }
+  else
+  {
+    // Need to wait some clocks for output
+    // Make sure not to leave input valid/enable set while waiting
+    __clk();
+    line_bufs_inputs_valid_in = 0;
+    line_bufs_wr_enable_in = 0;
+    // Wait for output valid
+    while(!line_bufs_outputs_valid_out)
+    {
+      __clk();
+    }
+    // Output valid now
+    rv = line_bufs_rd_data_out;
+  }
+  // Make sure not to leave valid/enable/ready set by clearing it next clock
+  __clk();
+  line_bufs_inputs_valid_in = 0;
+  line_bufs_wr_enable_in = 0;
+  line_bufs_outputs_ready_in = 0;
+  
+  return rv;
 }
 // Derived fsm from func, there can only be a single instance of it
 #include "line_buf_read_write_SINGLE_INST.h"
