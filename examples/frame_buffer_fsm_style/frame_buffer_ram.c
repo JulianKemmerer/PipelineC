@@ -139,58 +139,35 @@ frame_buf_outputs_t frame_buf_function(vga_signals_t vga_signals)
 }
 
 // TODO make macros for repeated code in frame_buf_read_write and line_buf_read_write
-// TODO simplify/update once RAMs arent not able to do 0 cycle latency?
-//      ^ can include clearing of input enables in now assumed at least 1 clk latency
 
 // Helper FSM func for read/writing the frame buffer using global wires
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
 {
-  // Start transaction by signalling valid inputs and ready for outputs
+  // Start transaction by signalling valid inputs into RAM
   frame_buffer_inputs_valid_in = 1;
-  frame_buffer_outputs_ready_in = 1;
   frame_buffer_wr_data_in = wr_data;
   frame_buffer_x_in = x;
   frame_buffer_y_in = y;
   frame_buffer_wr_enable_in = wr_en;
-  
+  // Not ready for output from RAM yet
+  frame_buffer_outputs_ready_in = 0;
   // Wait for inputs to be accepted
   while(!frame_buffer_inputs_ready_out)
   {
-    // Werent accepted, then not yet ready for 0 latency output because waiting
-    frame_buffer_outputs_ready_in = 0;
     __clk();
   }
-  // Inputs are being accepted now, so ready for 0 latency output
-  uint1_t rv;
-  // Signal ready for output and check valid
+  // Inputs are being accepted now, signal ready for upcoming output
   frame_buffer_outputs_ready_in = 1;
-  if(frame_buffer_outputs_valid_out)
-  {
-    // Take output now
-    rv = frame_buffer_rd_data_out;
-  }
-  else
-  {
-    // Need to wait some clocks for output
-    // Make sure not to leave input valid/enable set while waiting
-    __clk();
-    frame_buffer_inputs_valid_in = 0;
-    frame_buffer_wr_enable_in = 0;
-    // Wait for output valid
-    while(!frame_buffer_outputs_valid_out)
-    {
-      __clk();
-    }
-    // Output valid now
-    rv = frame_buffer_rd_data_out;
-  }
-  // Make sure not to leave valid/enable/ready set by clearing it next clock
+  // Make sure not to leave input valid set by clearing it next clock
   __clk();
   frame_buffer_inputs_valid_in = 0;
-  frame_buffer_wr_enable_in = 0;
-  frame_buffer_outputs_ready_in = 0;
-  
-  return rv;
+  // Wait for output valid
+  while(!frame_buffer_outputs_valid_out)
+  {
+    __clk();
+  }
+  // Output valid now, return the read data
+  return frame_buffer_rd_data_out;
 }
 // Derived fsm from func, there can only be a single instance of it
 #include "frame_buf_read_write_SINGLE_INST.h"
@@ -265,52 +242,31 @@ void line_bufs_function()
 // Line buffer is single read|write port
 uint1_t line_buf_read_write(uint1_t line_sel, uint16_t x, uint1_t wr_data, uint1_t wr_en)
 {
-  // Start transaction by signalling valid inputs and ready for outputs
+  // Start transaction by signalling valid inputs into RAM
   line_bufs_inputs_valid_in = 1;
-  line_bufs_outputs_ready_in = 1;
   line_bufs_line_sel_in = line_sel;
-  line_bufs_wr_data_in = wr_data;
   line_bufs_x_in = x;
+  line_bufs_wr_data_in = wr_data;
   line_bufs_wr_enable_in = wr_en;
-  
+  // Not ready for output from RAM yet
+  line_bufs_outputs_ready_in = 0;
   // Wait for inputs to be accepted
   while(!line_bufs_inputs_ready_out)
   {
-    // Werent accepted, then not yet ready for 0 latency output because waiting
-    line_bufs_outputs_ready_in = 0;
     __clk();
   }
-  // Inputs are being accepted now, so ready for 0 latency output
-  uint1_t rv;
-  // Signal ready for output and check valid
+  // Inputs are being accepted now, signal ready for upcoming output
   line_bufs_outputs_ready_in = 1;
-  if(line_bufs_outputs_valid_out)
-  {
-    // Take output now
-    rv = line_bufs_rd_data_out;
-  }
-  else
-  {
-    // Need to wait some clocks for output
-    // Make sure not to leave input valid/enable set while waiting
-    __clk();
-    line_bufs_inputs_valid_in = 0;
-    line_bufs_wr_enable_in = 0;
-    // Wait for output valid
-    while(!line_bufs_outputs_valid_out)
-    {
-      __clk();
-    }
-    // Output valid now
-    rv = line_bufs_rd_data_out;
-  }
-  // Make sure not to leave valid/enable/ready set by clearing it next clock
+  // Make sure not to leave input valid set by clearing it next clock
   __clk();
   line_bufs_inputs_valid_in = 0;
-  line_bufs_wr_enable_in = 0;
-  line_bufs_outputs_ready_in = 0;
-  
-  return rv;
+  // Wait for output valid
+  while(!line_bufs_outputs_valid_out)
+  {
+    __clk();
+  }
+  // Output valid now, return the read data
+  return line_bufs_rd_data_out;
 }
 // Derived fsm from func, there can only be a single instance of it
 #include "line_buf_read_write_SINGLE_INST.h"
