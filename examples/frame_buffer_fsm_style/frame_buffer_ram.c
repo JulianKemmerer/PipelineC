@@ -1,3 +1,12 @@
+// Uses VGA pmod signals
+#include "vga/vga_pmod.c"
+
+// Helper function to flatten 2D x,y positions into 1D RAM addresses
+uint32_t pos_to_addr(uint16_t x, uint16_t y)
+{
+  return (x*FRAME_HEIGHT) + y;
+}
+
 // Frame buffer is a RAM that both
 // 1) allows pixels to be read at full 'chasing the beam' 
 //    equivalent rate for streaming pixels for display
@@ -10,18 +19,6 @@
 // ...with an extra read/write port wires for the application too
 // The user/application RAM port will use a valid+ready handshake
 // to be compatible for other RAM styles later, BRAM, off chip memory, etc
-// Global wires for use once anywhere in code
-//  Inputs
-uint1_t frame_buffer_wr_data_in;
-uint16_t frame_buffer_x_in;
-uint16_t frame_buffer_y_in;
-uint1_t frame_buffer_wr_enable_in; // 0=read
-uint1_t frame_buffer_inputs_valid_in;
-uint1_t frame_buffer_outputs_ready_in;
-//  Outputs
-uint1_t frame_buffer_rd_data_out;
-uint1_t frame_buffer_outputs_valid_out;
-uint1_t frame_buffer_inputs_ready_out;
 
 // RAM init data from file
 #include "frame_buf_init_data.h"
@@ -38,7 +35,8 @@ typedef struct frame_buf_ram_outputs_t
 #include "xstr.h" // xstr func for putting quotes around macro things
 frame_buf_ram_outputs_t frame_buf_ram(
   uint32_t addr0,
-  uint1_t wr_data0, uint1_t wr_en0, 
+  uint1_t wr_data0, uint1_t wr_en0,
+  uint1_t out_reg_en0, 
   uint32_t addr1
   //uint1_t wr_data1, uint1_t wr_en1 // Port1 is read-only
 ){
@@ -48,8 +46,6 @@ frame_buf_ram_outputs_t frame_buf_ram(
   signal the_ram : ram_t := " FRAME_BUF_INIT_DATA "; \n\
   --signal the_ram : std_logic_vector(SIZE-1 downto 0); \n\
 begin \n\
-  return_output.read_data0(0) <= the_ram(to_integer(addr0)); \n\
-  return_output.read_data1(0) <= the_ram(to_integer(addr1)); \n\
   process(clk) \n\
   begin \n\
     if rising_edge(clk) then \n\
@@ -57,58 +53,96 @@ begin \n\
         if wr_en0(0) = '1' then \n\
           the_ram(to_integer(addr0)) <= wr_data0(0); \n\
         end if; \n\
+        if out_reg_en0(0)='1' then \n\
+          return_output.read_data0(0) <= the_ram(to_integer(addr0)); \n\
+        end if; \n\
+        return_output.read_data1(0) <= the_ram(to_integer(addr1)); \n\
       end if; \n\
     end if; \n\
   end process; \n\
 ");
 }
 
-// Helper function to flatten 2D x,y positions into 1D RAM addresses
-uint32_t pos_to_addr(uint16_t x, uint16_t y)
+// Frame buffer application/user global wires for use once anywhere in code
+//  Inputs
+uint1_t frame_buffer_wr_data_in;
+uint16_t frame_buffer_x_in;
+uint16_t frame_buffer_y_in;
+uint1_t frame_buffer_wr_enable_in; // 0=read
+uint1_t frame_buffer_inputs_valid_in;
+uint1_t frame_buffer_outputs_ready_in;
+//  Outputs
+uint1_t frame_buffer_rd_data_out;
+uint1_t frame_buffer_outputs_valid_out;
+uint1_t frame_buffer_inputs_ready_out;
+
+// Logic for wiring up VGA chasing the beam signals and user frame buffer wires
+// Function argument input is VGA chasing the beam always reading 
+// return value is vga read pixel data for display
+// User application uses frame_buffer_ wires directly
+typedef struct frame_buf_outputs_t{
+  uint1_t read_val;
+  vga_signals_t vga_signals;
+} frame_buf_outputs_t;
+frame_buf_outputs_t frame_buf_function(vga_signals_t vga_signals)
 {
-  return (x*FRAME_HEIGHT) + y;
-}
+  // RAM is 1 clk latency BRAM
+  // Use registers to delay VGA signals to be aligned with return value next cycle
+  static vga_signals_t vga_signals_delayed;
+  // Similarly delay reg for valid signal and used for ready status
+  static uint1_t frame_buf_delayed_signals_valid;
 
-// Function argument input is VGA chasing the beam always reading
-// return value is read pixel data for display
-// User applicaiton uses frame_buffer_ wires directly
-// Needs to be --comb for valid+ready handshake for now
-uint1_t frame_buf_function(
-  uint16_t vga_x, uint16_t vga_y
-){
-  // RAM is 0 latency LUTRAM
-  // Connect handshake directly in 0 latency as well
-  frame_buffer_outputs_valid_out = frame_buffer_inputs_valid_in;
-  //frame_buffer_inputs_ready_out = frame_buffer_outputs_ready_in;
-  // ^ Can cause timing loops when combined with 0 latency...
-  // fake it always ready for now while RAM is simple 0 cycle
-  frame_buffer_inputs_ready_out = 1;
+  // Only ready for new inputs if delay buffer isnt used
+  frame_buffer_inputs_ready_out = !frame_buf_delayed_signals_valid;
 
-  // Handshake validates write enable
-  uint1_t gated_wr_en = frame_buffer_wr_enable_in & (frame_buffer_inputs_valid_in & frame_buffer_outputs_ready_in);
+  // Input handshake validates RAM write enable
+  uint1_t input_xfer_now = frame_buffer_inputs_valid_in & frame_buffer_inputs_ready_out;
+  uint1_t gated_wr_en = frame_buffer_wr_enable_in & input_xfer_now;
+  
+  // RAMs output/delay reg is allowed to change
+  // for incoming inputs or outgoing outputs
+  uint1_t ram_out_reg_en = frame_buffer_inputs_ready_out | frame_buffer_outputs_ready_in;
 
-  // Convert x,y pos to addr
-  uint32_t vga_addr = pos_to_addr(vga_x, vga_y);
+  // Convert x,y pos to RAM addresses
+  uint32_t vga_addr = pos_to_addr(vga_signals.pos.x, vga_signals.pos.y);
   uint32_t frame_buffer_addr = pos_to_addr(frame_buffer_x_in, frame_buffer_y_in);
 
-  // Do RAM lookups
-  // First port is for user application, is read+write
-  // Second port is read only for the frame buffer vga display
+  // Do RAM lookups, 1 clk delay
+  // First port is for user application 'frame buffer', is read+write
+  // Second port is read only for the always reading vga display
   frame_buf_ram_outputs_t ram_outputs 
     = frame_buf_ram(frame_buffer_addr, 
-                    frame_buffer_wr_data_in, 
-                    gated_wr_en,
+                    frame_buffer_wr_data_in, gated_wr_en,
+                    ram_out_reg_en,
                     vga_addr);
 
-  // Drive output signals with RAM values
+  // Drive output signals with signals delayed 1 clk
   frame_buffer_rd_data_out = ram_outputs.read_data0;
-  return ram_outputs.read_data1;
+  frame_buffer_outputs_valid_out = frame_buf_delayed_signals_valid;
+  frame_buf_outputs_t rv;
+  rv.read_val = ram_outputs.read_data1;
+  rv.vga_signals = vga_signals_delayed;
+
+  // Input/delay regs
+  vga_signals_delayed = vga_signals;
+  // Valid delay reg is written by input ready, cleared by output ready
+  if(frame_buffer_inputs_ready_out)
+  {
+    frame_buf_delayed_signals_valid = frame_buffer_inputs_valid_in;
+  }
+  else if(frame_buffer_outputs_ready_in)
+  {
+    frame_buf_delayed_signals_valid = 0;
+  }
+
+  return rv;
 }
 
 // TODO make macros for repeated code in frame_buf_read_write and line_buf_read_write
+// TODO simplify/update once RAMs arent not able to do 0 cycle latency?
+//      ^ can include clearing of input enables in now assumed at least 1 clk latency
 
 // Helper FSM func for read/writing the frame buffer using global wires
-// TODO simplify once RAM is not able to do 0 cycle latency
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
 {
   // Start transaction by signalling valid inputs and ready for outputs
@@ -183,34 +217,52 @@ uint1_t line_bufs_inputs_ready_out;
 #pragma MAIN line_bufs_function
 void line_bufs_function()
 {
-  // RAM is 0 latency LUTRAM
-  // Connect handshake directly in 0 latency as well
-  line_bufs_outputs_valid_out = line_bufs_inputs_valid_in;
-  //line_bufs_inputs_ready_out = line_bufs_outputs_ready_in;
-  // ^ Can cause timing loops when combined with 0 latency...
-  // fake it always ready for now while RAM is simple 0 cycle
-  line_bufs_inputs_ready_out = 1;
+  // RAM is 1 clk latency BRAM
+  // Delay reg for valid signal and used for ready status
+  static uint1_t delayed_signals_valid;
 
-  // Handshake validates write enable
-  uint1_t gated_wr_en = line_bufs_wr_enable_in & (line_bufs_inputs_valid_in & line_bufs_outputs_ready_in);
+  // Only ready for new inputs if delay buffer isnt used
+  line_bufs_inputs_ready_out = !delayed_signals_valid;
 
-  // Do RAM lookup
+  // Input handshake validates RAM write enable
+  uint1_t input_xfer_now = line_bufs_inputs_valid_in & line_bufs_inputs_ready_out;
+  uint1_t gated_wr_en = line_bufs_wr_enable_in & input_xfer_now;
+  
+  // RAMs output/delay reg is allowed to change
+  // for incoming inputs or outgoing outputs
+  uint1_t ram_out_reg_en = line_bufs_inputs_ready_out | line_bufs_outputs_ready_in;
+
+  // Do RAM lookups, 1 clk delay
+  // Is built in as _RAM_SP_RF_1 (single port, read first, 1 clocks)
   // Two line buffers inside one func for now
   static uint1_t line_buf0[FRAME_WIDTH];
   static uint1_t line_buf1[FRAME_WIDTH];
   uint1_t read_val;
-  if (line_bufs_line_sel_in) {
-    read_val = line_buf1_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
-  } else {
-    read_val = line_buf0_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
+  if(ram_out_reg_en)
+  {
+    if (line_bufs_line_sel_in) {
+      read_val = line_buf1_RAM_SP_RF_1(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
+    } else {
+      read_val = line_buf0_RAM_SP_RF_1(line_bufs_x_in, line_bufs_wr_data_in, gated_wr_en);
+    }
   }
-  
-  // Drive output signal with RAM value
+
+  // Drive output signals with signals delayed 1 clk
   line_bufs_rd_data_out = read_val;
+  line_bufs_outputs_valid_out = delayed_signals_valid;
+  
+  // Valid delay reg is written by input ready, cleared by output ready
+  if(line_bufs_inputs_ready_out)
+  {
+    delayed_signals_valid = line_bufs_inputs_valid_in;
+  }
+  else if(line_bufs_outputs_ready_in)
+  {
+    delayed_signals_valid = 0;
+  }
 }
 
 // Line buffer is single read|write port
-// Is built in as _RAM_SP_RF_0 (single port, read first, 0 clocks)
 uint1_t line_buf_read_write(uint1_t line_sel, uint16_t x, uint1_t wr_data, uint1_t wr_en)
 {
   // Start transaction by signalling valid inputs and ready for outputs

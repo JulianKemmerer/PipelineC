@@ -25,7 +25,9 @@ void frame_buffer_display()
   vga_signals_t vga_signals = vga_timing();
 
   // Do RAM lookup
-  uint1_t vga_pixel = frame_buf_function(vga_signals.pos.x, vga_signals.pos.y);
+  frame_buf_outputs_t frame_buf_outputs = frame_buf_function(vga_signals);
+  uint1_t vga_pixel = frame_buf_outputs.read_val;
+  vga_signals = frame_buf_outputs.vga_signals;
   
   // Default black=0 unless pixel is white=1
   pixel_t color = {0};
@@ -42,7 +44,7 @@ void frame_buffer_display()
 
 // Demo application that plays Conway's Game of Life
 // https://www.geeksforgeeks.org/program-for-conways-game-of-life/
-//returns the count of alive neighbours around x,y
+//returns the count of alive neighbours around r,c
 uint8_t count_live_neighbour_cells(uint32_t r, uint32_t c){
   int32_t i, j;
   uint8_t count=0;
