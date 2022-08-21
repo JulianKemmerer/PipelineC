@@ -84,35 +84,35 @@ def GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(inst_name, logic, parser_state, timin
     
     
 def GET_MEM_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable):
-  if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
-    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_2"):
-    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF+"_0"):
-    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF+"_2"):
-    return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
-  else:
-    print("GET_MEM_ARCH_DECL_TEXT for func", Logic.func_name, "?")
-    sys.exit(-1)
+  for ram_prefix in [SW_LIB.RAM_SP_RF, SW_LIB.RAM_DP_RF]:
+    for ram_latency in range(0, 3):
+      ram_type = ram_prefix + "_" + str(ram_latency)
+      if Logic.func_name.endswith("_" + ram_type):
+        if ram_prefix==SW_LIB.RAM_SP_RF:
+          return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", ram_latency)
+        elif ram_prefix==SW_LIB.RAM_DP_RF:
+          return GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", ram_latency) 
+  
+  print("GET_MEM_ARCH_DECL_TEXT for func", Logic.func_name, "?")
+  sys.exit(-1)
       
 def GET_MEM_PIPELINE_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable):
-  if Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF+"_0"):
-    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_SP_RF + "_2"):
-    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", 2)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF + "_0"):
-    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 0)
-  elif Logic.func_name.endswith("_" + SW_LIB.RAM_DP_RF + "_2"):
-    return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", 2)
-  else:
-    print("GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?")
-    sys.exit(-1)
+  for ram_prefix in [SW_LIB.RAM_SP_RF, SW_LIB.RAM_DP_RF]:
+    for ram_latency in range(0, 3):
+      ram_type = ram_prefix + "_" + str(ram_latency)
+      if Logic.func_name.endswith("_" + ram_type):
+        if ram_prefix==SW_LIB.RAM_SP_RF:
+          return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "SP", ram_latency)
+        elif ram_prefix==SW_LIB.RAM_DP_RF:
+          return GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, "DP", ram_latency)
+  
+  print("GET_MEM_PIPELINE_LOGIC_TEXT for func", Logic.func_name, "?")
+  sys.exit(-1)
   
 def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, clocks):
   # Func is known to have made it look like is using var?
   var_name = list(Logic.state_regs.keys())[0]
-  #state_reg = Logic.state_regs[var_name]
+  reg_info = Logic.state_regs[var_name]
   c_type = Logic.wire_to_c_type[var_name]
   vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(c_type,parser_state)
   
@@ -121,7 +121,9 @@ def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_d
   # Need to overide type to 'unroll' arrays into single address BRAM
   # How many addresses
   elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+  out_t = elem_type
   elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_type,parser_state)
+  out_vhdl_type = elem_vhdl_type
   dim_end_index = (len(dims)-1)
   # How many address bits?
   addr_bits = 0
@@ -148,10 +150,28 @@ def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_d
   if len(dims) > 1:
     num_entries = 2**addr_bits
     unrolled_c_type = elem_type + "[" + str(num_entries) + "]"
-    unrolled_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(unrolled_c_type,parser_state)
+    #unrolled_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(unrolled_c_type,parser_state)
+    # Determine if possible to init - unrolled is special case of STATE_REG_TO_VHDL_INIT_STR essentially
+    unrolled_init_vhdl_str = None
+    # If none use null
+    if reg_info.init is None:
+      unrolled_init_vhdl_str = VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(unrolled_c_type, parser_state)
+    elif type(reg_info.init) == str:
+      # Raw VHDL init string?
+      init_file = reg_info.init
+      # Ugh need to todo some kind of relative file path support
+      f=open(init_file)
+      text=f.read()
+      f.close()
+      unrolled_init_vhdl_str = text
+    else:
+      raise Exception(f"Unsupport init for multi dim arrays!")
+    #elif reg_info.resolved_const_str is not None:
+    #  #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
+    #  unrolled_init_vhdl_str = VHDL.CONST_VAL_STR_TO_VHDL(reg_info.resolved_const_str, unrolled_c_type, parser_state)
     rv += '''
-  type ''' + vhdl_type + '''_unrolled is array(natural range <>) of ''' + elem_vhdl_type + ''';
-  signal ''' + var_name + ''' : ''' + vhdl_type + '''_unrolled(0 to ''' + str(num_entries-1) + ''') := ''' + VHDL.STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state) + ''';
+  type ''' + vhdl_type + '''_unrolled is array(0 to ''' + str(num_entries-1) + ''') of ''' + elem_vhdl_type + ''';
+  signal ''' + var_name + ''' : ''' + vhdl_type + '''_unrolled := ''' + unrolled_init_vhdl_str + ''';
 '''
   else:
     rv += '''
@@ -160,13 +180,12 @@ def GET_RAM_RF_ARCH_DECL_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_d
 
   # Include IO regs if needed
   if clocks == 0:
-    #rv += '''
-    #signal we : std_logic;
-    #'''
     pass
+  elif clocks == 1:
+    rv += '''
+    signal return_output_r : ''' + out_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(out_t,parser_state) + ''';
+'''
   elif clocks == 2:
-    out_t = elem_type
-    out_vhdl_type = elem_vhdl_type
     if sp_dp=="SP":
       rv += '''
     signal addr_r : ''' + addr_vhdl_type + ''' := ''' + VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(addr_t,parser_state) + ''';
@@ -237,7 +256,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     -- Read first
     return_output <= '''  + var_name + '''(to_integer(addr));
 '''
-    else: #DP  clock
+    else: #DP 0 clock
       rv += '''
     process(clk) is
     begin
@@ -252,6 +271,46 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     -- Read first
     return_output <= '''  + var_name + '''(to_integer(addr_r));
 '''
+
+  elif clocks == 1:
+    # Just out regs
+    if sp_dp=="SP": # 1 clock
+      rv += '''
+      process(clk) is
+      begin
+        if rising_edge(clk) then
+          if CLOCK_ENABLE(0)='1' then            
+            -- Read first
+            return_output_r <= '''  + var_name + '''(to_integer(addr));
+            -- RAM logic    
+            if we(0) = '1' then
+              ''' + var_name + '''(to_integer(addr)) <= wd; 
+            end if;
+          end if;
+        end if;
+      end process;
+      -- Tie output reg to output
+      return_output <= return_output_r;
+      '''
+    else: # DP 1 clock
+      rv += '''
+        process(clk)
+        begin
+          if rising_edge(clk) then
+            if CLOCK_ENABLE(0)='1' then
+              -- Write port
+              if we(0) = '1' then
+                '''  + var_name + '''(to_integer(addr_w)) <= wd;
+              end if;
+
+              -- Read port
+              return_output_r <= '''  + var_name + '''(to_integer(addr_r));
+            end if;
+          end if;
+        end process;
+        -- Tie output reg to output
+        return_output <= return_output_r;
+      '''
 
   elif clocks == 2:
     # In and out regs

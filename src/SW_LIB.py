@@ -1160,82 +1160,84 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
   func_name_was_global_def = dict()
   # _RAM_SP_RF
   # RAM_DP_RF_RF_2  MORE THAN ONE OUTPUT DATA NEEDS DUMB C STRUCT WRAPPER!!
-  ram_types = [RAM_SP_RF+"_0", RAM_SP_RF+"_2", RAM_DP_RF+"_0", RAM_DP_RF+"_2"] # TODO 1clk in OR out regs
-  for ram_type in ram_types:
-    for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
-      # Get local static var info for this func
-      local_state_reg_info_dict = dict()     
-      if calling_func_name in parser_state.func_to_local_state_regs:
-        local_state_reg_info_dict = parser_state.func_to_local_state_regs[calling_func_name]
-        #for local_state_reg_info in local_state_reg_infos_dict.values():
-        #  local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
-      for called_func_name in called_func_names:
-        if called_func_name.endswith(ram_type):
-          ram_func_name = called_func_name
-          var_name = ram_func_name.replace("_"+ram_type,"")
-          #print "var_name",var_name
-          # Lookup type, should be global/static, and array
-          c_type = None
-          # Local scope first
-          if var_name in local_state_reg_info_dict:
-            c_type = local_state_reg_info_dict[var_name].type_name
-            # BAAAHH locally typed/unique func name
-            # Mangle name to include calling func if local?
-            func_name = calling_func_name + "_" + var_name + "_" + ram_type
-            func_name_to_state_reg_info[func_name] = local_state_reg_info_dict[var_name]
-            func_name_was_global_def[func_name] = False
-          elif var_name in parser_state.global_vars:
-            c_type = parser_state.global_vars[var_name].type_name
-            func_name = var_name + "_" + ram_type
-            func_name_to_state_reg_info[func_name] = parser_state.global_vars[var_name]
-            func_name_was_global_def[func_name] = True
-          else:
-            print("Unknown RAM prim var", var_name)
-            sys.exit(-1)         
-          
-          
-          if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            print("Ram function on non array?",ram_func_name)
-            sys.exit(-1)
-          elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-          # Multiple addresses now folks # Starfucker - Girls Just Want To Have
-          #dim = dims[0]
-          #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"            
-          
-          text += '''
-    // ''' + ram_func_name + '''
-    '''
-          # In case type is actually user type - hacky
-          if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
-            text += '''typedef uint8_t ''' + elem_t + ";\n"
-          # Declare global var that matches user
-          text += elem_t + ''' ''' + var_name
-          for dim in dims:
-             text += "[" + str(dim) + "]"
-          text += ";\n"
-          text += elem_t+ " " + func_name + "("
-          if ram_type.startswith(RAM_SP_RF):
-            for i in range(0,len(dims)):
-              dim = dims[i]
-              addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-              text += addr_t + " addr" + str(i) + ", "
-          elif ram_type.startswith(RAM_DP_RF):
-            for port_postfix in ["r","w"]:
+  ram_types = []
+  for ram_prefix in [RAM_SP_RF, RAM_DP_RF]:
+    for ram_latency in range(0, 3):
+      ram_type = ram_prefix + "_" + str(ram_latency)
+      for calling_func_name,called_func_names in parser_state.func_name_to_calls.items():
+        # Get local static var info for this func
+        local_state_reg_info_dict = dict()     
+        if calling_func_name in parser_state.func_to_local_state_regs:
+          local_state_reg_info_dict = parser_state.func_to_local_state_regs[calling_func_name]
+          #for local_state_reg_info in local_state_reg_infos_dict.values():
+          #  local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
+        for called_func_name in called_func_names:
+          if called_func_name.endswith(ram_type):
+            ram_func_name = called_func_name
+            var_name = ram_func_name.replace("_"+ram_type,"")
+            #print "var_name",var_name
+            # Lookup type, should be global/static, and array
+            c_type = None
+            # Local scope first
+            if var_name in local_state_reg_info_dict:
+              c_type = local_state_reg_info_dict[var_name].type_name
+              # BAAAHH locally typed/unique func name
+              # Mangle name to include calling func if local?
+              func_name = calling_func_name + "_" + var_name + "_" + ram_type
+              func_name_to_state_reg_info[func_name] = local_state_reg_info_dict[var_name]
+              func_name_was_global_def[func_name] = False
+            elif var_name in parser_state.global_vars:
+              c_type = parser_state.global_vars[var_name].type_name
+              func_name = var_name + "_" + ram_type
+              func_name_to_state_reg_info[func_name] = parser_state.global_vars[var_name]
+              func_name_was_global_def[func_name] = True
+            else:
+              print("Unknown RAM prim var", var_name)
+              sys.exit(-1)         
+            
+            
+            if not C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+              print("Ram function on non array?",ram_func_name)
+              sys.exit(-1)
+            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            # Multiple addresses now folks # Starfucker - Girls Just Want To Have
+            #dim = dims[0]
+            #addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"            
+            
+            text += '''
+      // ''' + ram_func_name + '''
+      '''
+            # In case type is actually user type - hacky
+            if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
+              text += '''typedef uint8_t ''' + elem_t + ";\n"
+            # Declare global var that matches user
+            text += elem_t + ''' ''' + var_name
+            for dim in dims:
+              text += "[" + str(dim) + "]"
+            text += ";\n"
+            text += elem_t+ " " + func_name + "("
+            if ram_type.startswith(RAM_SP_RF):
               for i in range(0,len(dims)):
                 dim = dims[i]
                 addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
-                text += addr_t + " addr_" + port_postfix + str(i) + ", "
-          else:
-            print("Unknown ram type:", ram_type)
-            sys.exit(-1)
-          # DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL 
-          text += elem_t + " wd, uint1_t we)" + '''
-    {
-      /* 
-      // Need C code and VHDL equivalents, do VHDL as __vhdl__ literal?
-      */
-    }
-    '''
+                text += addr_t + " addr" + str(i) + ", "
+            elif ram_type.startswith(RAM_DP_RF):
+              for port_postfix in ["r","w"]:
+                for i in range(0,len(dims)):
+                  dim = dims[i]
+                  addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+                  text += addr_t + " addr_" + port_postfix + str(i) + ", "
+            else:
+              print("Unknown ram type:", ram_type)
+              sys.exit(-1)
+            # DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL 
+            text += elem_t + " wd, uint1_t we)" + '''
+      {
+        /* 
+        // Need C code and VHDL equivalents, do VHDL as __vhdl__ literal?
+        */
+      }
+      '''
 
   #print("MEM_HEADER_FILE")
   #print(text)   
