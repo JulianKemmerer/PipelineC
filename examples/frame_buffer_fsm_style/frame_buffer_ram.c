@@ -15,8 +15,8 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 
 // This demo starts off as basic as possible, 1 bit per pixel
 // essentially a 'chasing the beam' design reading 
-// from LUTs/LUTRAM instead of output from render_pixel pipeline
-// ...with an extra read/write port wires for the application too
+// from a RAM instead of output from render_pixel pipeline
+// Then adds a simultaneous extra read/write port wires for the "application" too
 // The user/application RAM port will use a valid+ready handshake
 // to be compatible for other RAM styles later, BRAM, off chip memory, etc
 
@@ -190,7 +190,7 @@ uint1_t line_bufs_outputs_valid_out;
 uint1_t line_bufs_inputs_ready_out;
 
 // Line buffer used only by application via global wires (never called directly)
-// So need stand alone func to wire things up
+// So need stand alone func to wire things up (very similar to frame buffer wiring)
 #pragma MAIN line_bufs_function
 void line_bufs_function()
 {
