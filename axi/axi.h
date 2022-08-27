@@ -14,11 +14,11 @@ typedef struct axi32_write_req_t
 {
   // Address
   //  "Write this stream to a location in memory"
-  //  Typically valid before data starts?
+  //  Must be valid before data starts
   axi_id_t awid;
   axi_addr_t awaddr; 
-  uint8_t awlen; // In cycles
-  uint3_t awsize; // 2^size = Transfer width in bytes, 8 to 1024 bits supported
+  uint8_t awlen; // Number of transfer cycles minus one
+  uint3_t awsize; // 2^size = Transfer width in bytes
   uint2_t awburst;
   uint1_t awvalid;
 }axi32_write_req_t;
@@ -61,11 +61,11 @@ typedef struct axi32_read_req_t
 {
   // Address
   //   "Give me a stream from a place in memory"
-  //   Should be valid before data starts
+  //   Must be valid before data starts
   axi_id_t arid;
   axi_addr_t araddr;
-  uint8_t arlen;
-  uint3_t arsize; // 2^size = Transfer width in bytes, 8 to 1024 bits supported
+  uint8_t arlen; // Number of transfer cycles minus one
+  uint3_t arsize; // 2^size = Transfer width in bytes
   uint2_t arburst;
   uint1_t arvalid;
 } axi32_read_req_t;
@@ -116,12 +116,15 @@ typedef struct axi32_dev_to_host_t
   axi32_read_dev_to_host_t read;
 } axi32_dev_to_host_t;
 
-typedef enum axi32_state_t
+// Write has two channels to begin request: address and data
+// Helpr func requires that inputs are valid/held constant
+// until data phase done (ready_for_inputs asserted)
+typedef enum axi32_write_state_t
 {
-  REQ,
+  ADDR_REQ,
+  DATA_REQ,
   RESP,
-}axi32_state_t;
-
+}axi32_write_state_t;
 typedef struct axi32_write_logic_outputs_t
 {
   axi32_host_to_dev_t to_dev;
@@ -135,22 +138,32 @@ axi32_write_logic_outputs_t axi32_write_logic(
   uint1_t ready_for_outputs,
   axi32_dev_to_host_t from_dev
 ){
-  static axi32_state_t state;
+  static axi32_write_state_t state;
   axi32_write_logic_outputs_t o;
-  if(state==REQ)
+  if(state==ADDR_REQ)
   {
-    // Wait device to be ready for write request and data
-    if(from_dev.write.awready & from_dev.write.wready)
+    // Wait device to be ready for write address first
+    if(from_dev.write.awready)
     {
-      // Signal ready for inputs
-      o.ready_for_inputs = 1;
-      // Use inputs to form valid request
+      // Use inputs to form valid address
       o.to_dev.write.req.awvalid = 1;
       o.to_dev.write.req.awaddr = addr;
       o.to_dev.write.req.awid = 0; // Just one constant AXI ID for now
-      o.to_dev.write.req.awlen = 1; // 1 transfer (non-burst)
+      o.to_dev.write.req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
       o.to_dev.write.req.awsize = 2; // 2^2=4 bytes per transfer
       o.to_dev.write.req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
+      // And then data next
+      state = DATA_REQ;
+    }
+  }
+  else if(state==DATA_REQ)
+  {
+    // Wait device to be ready for write data
+    if(from_dev.write.wready)
+    {
+      // Signal finally ready for inputs since data completes write request
+      o.ready_for_inputs = 1;
+      // Send valid data transfer
       o.to_dev.write.data.wvalid = 1;
       // All 4 bytes are being transfered (uint to array)
       uint32_t i;
@@ -177,13 +190,19 @@ axi32_write_logic_outputs_t axi32_write_logic(
         // Done (error code not checked, just returned)
         o.done = 1;
         o.bresp = from_dev.write.resp.bresp;
-        state = REQ;
+        state = ADDR_REQ;
       }
     }
   }
   return o;
 }
 
+// Read is slightly simpler than write
+typedef enum axi32_read_state_t
+{
+  REQ,
+  RESP,
+}axi32_read_state_t;
 typedef struct axi32_read_logic_outputs_t
 {
   axi32_host_to_dev_t to_dev;
@@ -197,7 +216,7 @@ axi32_read_logic_outputs_t axi32_read_logic(
   uint1_t ready_for_outputs,
   axi32_dev_to_host_t from_dev
 ){
-  static axi32_state_t state;
+  static axi32_read_state_t state;
   axi32_read_logic_outputs_t o;
   if(state==REQ)
   {
@@ -210,7 +229,7 @@ axi32_read_logic_outputs_t axi32_read_logic(
       o.to_dev.read.req.arvalid = 1;
       o.to_dev.read.req.araddr = addr;
       o.to_dev.read.req.arid = 0; // Just one constant AXI ID for now
-      o.to_dev.read.req.arlen = 1; // 1 transfer (non-burst)
+      o.to_dev.read.req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
       o.to_dev.read.req.arsize = 2; // 2^2=4 bytes per transfer
       o.to_dev.read.req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
       // And then begin waiting for response

@@ -2,6 +2,7 @@
 
 // LEDs for debug/output
 #include "leds/leds_port.c"
+#include "buttons/buttons.c"
 
 // Include logic for Xilinx Memory Interface Generator w/ AXI interface
 #include "axi_xil_mem.c" 
@@ -27,19 +28,22 @@ void app()
   static axi_addr_t test_addr;
   static uint32_t test_data;
 
-  // Output wire into memory controller
+  // Output wire into memory controller, default zeros
   app_to_xil_mem = NULL_APP_TO_XIL_MEM;
   
   // Next values
   axi_addr_t next_addr = test_addr + TEST_DATA_SIZE;
   uint32_t next_test_data = test_data + 1;
+
+  // Memory reset/calbration signalling
+  uint1_t mem_rst_done
+      = (buttons==0) & !xil_mem_to_app.ui_clk_sync_rst & xil_mem_to_app.init_calib_complete;
   
   // MEM TEST FSM
   if(mem_test_state==WAIT_RESET)
   {
+    leds = 0;
     // Wait for DDR reset+calibration to be done
-    uint1_t mem_rst_done
-      = !xil_mem_to_app.ui_clk_sync_rst & xil_mem_to_app.init_calib_complete;
     if(mem_rst_done)
     {
       // Start test
@@ -47,10 +51,10 @@ void app()
       test_addr = 0;
       test_data = 0;
     }
-    leds = 0;
   }
   else if(mem_test_state==WRITES)
   {
+    leds = 0b0011;
     // Use logic for AXI write of single 32b word 
     // (slow, not burst and waits for response)
     axi32_write_logic_outputs_t axi32_write_logic_outputs 
@@ -72,13 +76,14 @@ void app()
         // Done with address space
         // Begin test of reads
         test_addr = 0;
+        test_data = 0;
         mem_test_state = READS;
       }
     }
-    leds = 0b0011;
   }
   else if(mem_test_state==READS)
   {
+    leds = 0b1100;
     // Use logic for AXI read of single 32b word 
     // (slow, not burst and waits for response)
     axi32_read_logic_outputs_t axi32_read_logic_outputs 
@@ -118,7 +123,7 @@ void app()
   }
   
   // Resets
-  if(xil_mem_to_app.ui_clk_sync_rst)
+  if(!mem_rst_done)
   {
     mem_test_state = WAIT_RESET;
   }
