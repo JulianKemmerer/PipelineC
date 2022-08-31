@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "pipelinec"
+version = "0.1.0"
+description = ""
+authors = ["Julian Kemmerer"]
+license = "GPT-3.0"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+
+
+[tool.poetry.group.test.dependencies]
+hypothesis = "^6.54.4"
+green = "^3.4.2"
+pytest-golden = "^0.2.2"
+
+
+[tool.poetry.group.analysis.dependencies]
+prospector = "^1.7.7"
+vulture = "^2.5"
+
+
+[tool.poetry.group.types.dependencies]
+mypy = "^0.971"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
