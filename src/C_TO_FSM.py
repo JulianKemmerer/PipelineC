@@ -116,25 +116,25 @@ class FsmStateInfo:
             else:
                 print("FORCED DELAY __clk();")
 
-        if self.ends_w_fsm_func_entry is not None:
+        if self.ends_w_fsm_func_entry:
             print(self.ends_w_fsm_func_entry.name.name + "_FSM() // Entry;")
 
-        if self.is_fsm_func_call_state is not None:
+        if self.is_fsm_func_call_state:
             print(self.is_fsm_func_call_state.name.name + "_FSM() // State;")
 
-        if self.return_node is not None:
+        if self.return_node:
             print("Return, function end")
             return  # Return is always last
 
-        if self.input_func_call_node is not None:
+        if self.input_func_call_node:
             print("__input();")
             return
 
-        if self.yield_func_call_node is not None:
+        if self.yield_func_call_node:
             print("__yield();")
             return
 
-        if self.inout_func_call_node is not None:
+        if self.inout_func_call_node:
             print("__inout();")
             return
 
@@ -501,7 +501,7 @@ typedef struct """
                 text += "    {\n"
                 text += "      FSM_STATE = " + true_state.name + ";\n"
                 text += "    }\n"
-                if false_state is not None:
+                if false_state:
                     text += "    else\n"
                     text += "    {\n"
                     text += "      FSM_STATE = " + false_state.name + ";\n"
@@ -516,7 +516,7 @@ typedef struct """
                 continue
 
             # Func call entry
-            if state_info.ends_w_fsm_func_entry is not None:
+            if state_info.ends_w_fsm_func_entry:
                 func_call_node = state_info.ends_w_fsm_func_entry
                 called_func_name = func_call_node.name.name
                 entry_state, exit_state = fsm_logic.func_call_node_to_entry_exit_states[
@@ -569,7 +569,7 @@ typedef struct """
                 continue
 
             # Func call state
-            if state_info.is_fsm_func_call_state is not None:
+            if state_info.is_fsm_func_call_state:
                 called_func_name = state_info.is_fsm_func_call_state.name.name
                 # ok to use wires driving inputs, not regs (included in func)
                 text += (
