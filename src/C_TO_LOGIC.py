@@ -2487,7 +2487,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(c_ast_assignment,driven_wire_names,prepend_text, p
             # Add alias to list in existing logic
             existing_aliases = []
             if lhs_orig_var_name in parser_state.existing_logic.wire_aliases_over_time:
-            existing_aliases = parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name]
+            existing_aliases = parser_state.existing_logic.wire_aliases_over_time[ lhs_orig_var_name ]
             new_aliases = existing_aliases
 
             # Dont double add aliases
