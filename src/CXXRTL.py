@@ -1,10 +1,11 @@
-import sys
 import os
 import shutil
+import sys
 
+import C_TO_LOGIC
 import SIM
 import SYN
-import C_TO_LOGIC
+
 
 def DO_SIM(latency, parser_state):
   print("================== Doing CXXRTL Simulation ================================", flush=True)

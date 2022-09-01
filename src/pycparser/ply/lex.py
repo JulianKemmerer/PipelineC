@@ -34,12 +34,12 @@
 __version__    = '3.10'
 __tabversion__ = '3.10'
 
+import copy
+import inspect
+import os
 import re
 import sys
 import types
-import copy
-import os
-import inspect
 
 # This tuple contains known string types
 try:

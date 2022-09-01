@@ -1,14 +1,14 @@
-import os
-import sys
-import math
-import re
 import copy
-from pycparser import c_parser, c_ast, c_generator
+import math
+import os
+import re
+import sys
 
-import C_TO_LOGIC
-import VHDL
-import SYN
 import C_TO_FSM
+import C_TO_LOGIC
+import SYN
+import VHDL
+from pycparser import c_ast, c_generator, c_parser
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)

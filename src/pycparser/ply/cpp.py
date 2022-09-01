@@ -83,10 +83,10 @@ def t_error(t):
     t.lexer.skip(1)
     return t
 
-import re
 import copy
-import time
 import os.path
+import re
+import time
 
 # -----------------------------------------------------------------------------
 # trigraph()

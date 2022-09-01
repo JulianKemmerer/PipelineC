@@ -1,12 +1,12 @@
-import sys
 import os
 import shutil
+import sys
 
+import C_TO_LOGIC
+import OPEN_TOOLS
 import SIM
 import SYN
-import C_TO_LOGIC
 import VHDL
-import OPEN_TOOLS
 
 VERILATOR_EXE="verilator"
 VERILATOR_BIN_PATH = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"

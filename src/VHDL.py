@@ -1,21 +1,20 @@
 #!/usr/bin/env python
-import sys
-import os
 import copy
-import math
 import hashlib
-from pycparser import c_ast
+import math
+import os
+import sys
 
 import C_TO_LOGIC
-import SW_LIB
-import RAW_VHDL
-import SYN
-import SIM
-import VERILATOR
 import CXXRTL
-import VIVADO
 import QUARTUS
-
+import RAW_VHDL
+import SIM
+import SW_LIB
+import SYN
+import VERILATOR
+import VIVADO
+from pycparser import c_ast
 
 VHDL_FILE_EXT=".vhd"
 VHDL_PKG_EXT=".pkg"+VHDL_FILE_EXT

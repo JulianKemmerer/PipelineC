@@ -1,20 +1,18 @@
 #!/usr/bin/env python
 
-import sys
+import copy
+import hashlib
+import math
 import os
 import subprocess
-import math
-import hashlib
-import copy
+import sys
 
-import SIM
 import C_TO_LOGIC
-import VHDL
+import SIM
 import SW_LIB
 import SYN
+import VHDL
 import VIVADO
-
-
 
 # Default to env if there
 TOOL_EXE = "vsim"

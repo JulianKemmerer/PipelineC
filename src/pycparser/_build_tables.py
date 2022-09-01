@@ -12,10 +12,12 @@
 
 # Generate c_ast.py
 from _ast_gen import ASTCodeGenerator
+
 ast_gen = ASTCodeGenerator('_c_ast.cfg')
 ast_gen.generate(open('c_ast.py', 'w'))
 
 import sys
+
 sys.path[0:0] = ['.', '..']
 from pycparser import c_parser
 
@@ -26,8 +28,8 @@ c_parser.CParser(
     yacc_debug=False,
     yacc_optimize=True)
 
+import c_ast
 # Load to compile into .pyc
 #
 import lextab
 import yacctab
-import c_ast

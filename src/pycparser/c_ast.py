@@ -18,6 +18,7 @@
 
 import sys
 
+
 def _repr(obj):
     """
     Get the representation of an object, with dedicated pprint-like format for lists.

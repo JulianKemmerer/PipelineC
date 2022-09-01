@@ -1,9 +1,9 @@
-import sys
 import os
+import sys
 
+import C_TO_LOGIC
 import SYN
 import VHDL
-import C_TO_LOGIC
 
 TOOL_EXE = "efx_run.py"
 # Default to env if there
