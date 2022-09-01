@@ -27,6 +27,3 @@ def split_lines(string):
         return []
     else:
         return string.split("\n")
-
-
-
