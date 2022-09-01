@@ -12,17 +12,26 @@ python = "^3.8"
 
 [tool.poetry.group.test.dependencies]
 hypothesis = "^6.54.4"
-green = "^3.4.2"
 pytest-golden = "^0.2.2"
+pytest = "^7.1.2"
+coverage = "^6.4.4"
 
 
 [tool.poetry.group.analysis.dependencies]
-prospector = "^1.7.7"
 vulture = "^2.5"
 
 
 [tool.poetry.group.types.dependencies]
 mypy = "^0.971"
+
+
+[tool.poetry.group.lint.dependencies]
+wemake-python-styleguide = "^0.16.1"
+
+
+[tool.poetry.group.format.dependencies]
+yapf = "^0.32.0"
+isort = "^5.10.1"
 
 [build-system]
 requires = ["poetry-core"]
