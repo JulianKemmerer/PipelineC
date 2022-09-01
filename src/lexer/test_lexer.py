@@ -1,5 +1,9 @@
+from hypothesis import given
+from hypothesis.strategies import text
+
 from lexer import split_lines
 
 
-def test_split_lines(string):
-    assert len(split_lines("000\n0000")) == 2
+@given(text())
+def test_split_lines(s):
+    assert len(split_lines(s)) == len(s.split("\n"))

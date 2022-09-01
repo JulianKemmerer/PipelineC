@@ -23,7 +23,4 @@ class Token(Enum):
 
 
 def split_lines(string):
-    if len(string) == 0:
-        return []
-    else:
-        return string.split("\n")
+    return string.split("\n")
