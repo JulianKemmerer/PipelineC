@@ -48,7 +48,6 @@ class ParsedTimingReport:
     single_timing_report = split_marker_toks[0]
     
     self.orig_text = syn_output
-    #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
     self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
     self.has_loops = True
     self.has_latch_loops = True
@@ -65,36 +64,9 @@ class ParsedTimingReport:
       if "[Synth 8-295] found timing loop." in syn_output_line:
         #print single_timing_report
         print(syn_output_line)
-        #print "FOUND TIMING LOOPS!"
-        #print
-        # Do debug?
-        #latency=0
-        #do_debug=True
-        #print "ASSUMING LATENCY=",latency
-        #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-        #sys.exit(-1)
       if "inferred exception to break timing loop" in syn_output_line:
         print(syn_output_line)
-        #sys.exit(-1)
-      
-      # OK so apparently mult by self results in constants
-      # See scratch notes "wtf_multiply_by_self" dir
-      #if ( (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_output_reg_reg" in syn_output_line)) or
-      #     (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_intput_reg_reg" in syn_output_line)) ):
-      #print(syn_output_line)
-        
-        
-      # Constant outputs? 
-      #if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
-      #  #print single_timing_report
-      #  #print "Unconnected or constant ports!? Wtf man"
-      #  #print(syn_output_line)
-      #  # Do debug?
-      #  #latency=1
-      #  #do_debug=True
-      #  #print "ASSUMING LATENCY=",latency
-      #  #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #  #sys.exit(-1)
+
 
       # Unconnected ports are maybe problem?
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
@@ -150,8 +122,6 @@ class ParsedTimingReport:
           # What is signal base name?
           #print "width_str",width_str
           left_name_no_bitwidth = left_reg_text.replace("["+width_str+"]","")
-          #print left_reg_text
-          #print "left_name_no_bitwidth",left_name_no_bitwidth
           # Add to left names list
           for i in range(start_index,end_index+1):
             left_name_with_bit = left_name_no_bitwidth + "[" + str(i) + "]"
@@ -165,8 +135,6 @@ class ParsedTimingReport:
         right_names = []
         if right_has_bit_width:
           # What is bit width
-          #print right_reg_text
-          #print right_reg_toks
           width_str = right_reg_toks[len(right_reg_toks)-1].strip("]")
           width_toks = width_str.split(":")
           left_index = int(width_toks[0])
@@ -182,10 +150,6 @@ class ParsedTimingReport:
         else:
           # No bit width on signal
           right_names.append(right_reg_text)
-          
-          
-        #print left_names[0:2]
-        #print right_names[0:2]
         
         # Need same count
         if len(left_names) != len(right_names):
@@ -194,14 +158,7 @@ class ParsedTimingReport:
           print("right_names",right_names)
           sys.exit(-1)
         
-        for i in range(0, len(left_names)):
-          #if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
-          # print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
-          # sys.exit(-1)
-          
-          #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
-          #self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
-          #self.reg_merged_into[left_names[i]] = right_names[i]
+        for i in range(len(left_names)):
           if not(right_names[i] in self.reg_merged_with):
             self.reg_merged_with[right_names[i]] = []
           self.reg_merged_with[right_names[i]].append(left_names[i])
@@ -215,12 +172,6 @@ class ParsedTimingReport:
       #print single_timing_report
       #print syn_output_line
       print("TIMING LOOPS!")
-      ## Do debug?
-      #latency=0
-      #do_debug=True
-      #print "ASSUMING LATENCY=",latency
-      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #sys.exit(-1)
       
       
     # Parse multiple path reports
@@ -368,11 +319,7 @@ class PathReport:
     # Catch problems
     if self.slack_ns is None:
       print("Something is wrong with this timing report?")
-      print(single_timing_report)
-      #latency=0
-      #do_debug=True
-      #print "ASSUMING LATENCY=",latency
-      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)          
+      print(single_timing_report)        
       sys.exit(-1)
   
 # inst_name=None means multimain
