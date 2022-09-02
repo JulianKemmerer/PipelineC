@@ -117,7 +117,6 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   init = None
   if leaf in logic.state_regs:
     init = logic.state_regs[leaf].init
-  #print(logic.func_name,logic.state_regs,logic.state_regs[leaf].init)
   resolved_const_str = None
   if leaf in logic.state_regs:
     resolved_const_str = logic.state_regs[leaf].resolved_const_str  
@@ -137,7 +136,6 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
   
   # Try to use resolved to a constant string? ugh
   if resolved_const_str is not None:
-    #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
     return CONST_VAL_STR_TO_VHDL(resolved_const_str, c_type, parser_state)
     
   # Default handle c code
@@ -485,8 +483,6 @@ begin
         if clk_ext_str_i not in clk_ext_strs and (len(clk_ext_strs)>0):
           raise Exception(f"Cannot have multiple clock domains on the arbitrated clock crossing pair {arb_handshake_info.input_var_name} {arb_handshake_info.output_var_name} {all_mains} {clk_ext_strs} doesnt match other main clock for {main_i}={clk_ext_str_i}!")
         clk_ext_strs.add(clk_ext_str_i)
-      #if len(clk_ext_strs) > 1:
-      #  raise Exception(f"Cannot have multiple clock domains on the arbitrated clock crossing pair {arb_handshake_info.input_var_name} {arb_handshake_info.output_var_name} {clk_ext_strs}!")
       clk_ext_str = list(clk_ext_strs)[0]
 
     arb_inst_name = arb_handshake_info.input_var_name + '''_''' + arb_handshake_info.output_var_name

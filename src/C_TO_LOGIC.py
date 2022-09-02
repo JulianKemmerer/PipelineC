@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import sys
 import os
-from pycparser import c_parser, c_ast, c_generator
+
 import copy
 import pickle
 import math
@@ -10,21 +10,25 @@ import shlex
 import subprocess
 import signal
 import re
+
+from pycparser import c_parser, c_ast, c_generator
+from shutil import which
 from subprocess import Popen, PIPE
 from collections import OrderedDict
-
-def GET_TOOL_PATH(tool_exe_name):
-  from shutil import which
-  w = which(tool_exe_name)
-  if w is not None:
-    return str(w)
-  return None
 
 import VHDL
 import SW_LIB
 import SYN
 import SW_LIB
 import C_TO_FSM
+
+def GET_TOOL_PATH(tool_exe_name):
+  w = which(tool_exe_name)
+  if w is not None:
+      return str(w)
+  else:
+      return None
+
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -153,7 +157,6 @@ def preprocess_file(filename, cpp_path='cpp', cpp_args=''):
     print("Something went wrong preprocessing:")
     print("File:",filename)
     raise e
-  #print(text)
   return text
     
 
@@ -240,11 +243,6 @@ def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
   outs, errs = process.communicate()
   output_text = str(outs.decode(encoding="utf-8",errors="replace"))
   err_text = str(errs.decode(encoding="utf-8",errors="replace"))
-  #output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
-  #err_text = str(process.stderr.read().decode(encoding="utf-8",errors="replace"))
-  # For some reason vivado likes to stay alive? Be sure to kill?
-  #os.kill(process.pid, signal.SIGTERM)
-  #process.wait()
   if process.returncode != 0:
     e_text = ""
     e_text += "Command failed:" + "\n"
@@ -252,7 +250,6 @@ def GET_SHELL_CMD_OUTPUT(cmd_str,cwd="."):
     e_text += (err_text + "\n")
     e_text += (output_text + "\n")
     raise Exception(e_text)
-  #print("Reading DONE ",cmd_str, flush=True)
   return output_text
   
 # gcc -fpreprocessed -dD -E main.c
@@ -817,11 +814,6 @@ class Logic:
     if self == second_logic:
       return None
     
-    #print "===="
-    #print "self.wire_drives", self.wire_drives 
-    #print "self.wire_driven_by", self.wire_driven_by 
-    #print "second_logic.wire_drives", second_logic.wire_drives 
-    #print "second_logic.wire_driven_by", second_logic.wire_driven_by 
 
     # Driving wires need to reflect over time
     # Last alias from first logic replaces original wire name in second logic
@@ -1380,12 +1372,7 @@ def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state
     parser_state = RECURSIVE_RENAME_GLOBAL_INST(global_sub_inst, renamed_global_sub_inst, parser_state)
 
   # Then rename current inst
-  inst_func_name = func_logic.func_name
-  ## Prevent renames from doing weird double copy paste
-  #if inst_to_rename == global_dup_sub_inst_name:
-  #  renamed_inst_name = global_new_sub_inst_name
-  #else:
-  #  renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name+SUBMODULE_MARKER, global_new_sub_inst_name+SUBMODULE_MARKER)
+  inst_func_name = func_logic.func_name)
   parser_state.FuncToInstances[inst_func_name].remove(inst_to_rename)
   parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
   parser_state.LogicInstLookupTable[renamed_inst_name] = parser_state.LogicInstLookupTable[inst_to_rename]
@@ -1470,9 +1457,6 @@ def WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
   return False
 
 def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(containing_func_logic, submodule_inst, parser_state): 
-  #print "containing_func_logic.func_name, submodule_inst"
-  #print(containing_func_logic.func_name, "|", submodule_inst)
-  #print "====================================================================================="
   # Construct a fake 'submodule_logic' with correct name, inputs, outputs
   submodule_logic = Logic()
   submodule_logic.is_c_built_in = True

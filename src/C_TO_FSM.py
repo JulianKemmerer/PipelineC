@@ -44,11 +44,7 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent = "", generator=None, is_lhs=False):
   #print(type(c_ast_node))
   text += maybe_semicolon
   
-  lines = []
-  for line in text.split("\n"):
-    if line != "":
-      lines.append(indent + line)
-  # + "\n"
+  lines = [indent + line for line in text.split("\n") if line != ""]
   return "\n".join(lines)
 
 class FsmStateInfo:
@@ -183,7 +179,6 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
       if called_func in parser_state.FuncLogicLookupTable:
         called_func_logic = parser_state.FuncLogicLookupTable[called_func]
         if called_func_logic.is_fsm_clk_func:
-          #text += FSM_LOGIC_TO_C_CODE(called_func_logic, parser_state)
           text += '#include "' + called_func_logic.func_name + FSM_EXT + ".h" + '"\n'          
           
   text += '''
@@ -268,8 +263,6 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
 '''
   # Collect all decls
   local_decls = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(fsm_logic.c_ast_node.body, c_ast.Decl)
-  #print("fsm_logic.func_name",fsm_logic.func_name)
-  #print("local_decls",local_decls)
   for local_decl in local_decls:
     is_static = 'static' in local_decl.storage
     c_type,var_name = C_TO_LOGIC.C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(local_decl, parser_state)
@@ -285,13 +278,6 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
       text += " = " + C_AST_NODE_TO_C_CODE(local_decl.init, "", generator) + "\n"
     else:
       text += ";\n"
-    # Hacky ahhhhhh???
-    # Adjust static decls to not be static, and not do init later in code.
-    #if is_static:
-    #  local_decl.storage.remove('static')
-    #  local_decl.type = None
-    #  local_decl.name = None
-    #  local_decl.init = None     
       
   text +='''  // Output wires
   ''' + fsm_logic.func_name + '''_OUTPUT_t fsm_o = {0};
@@ -427,14 +413,6 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "    {\n"
           text += "      FSM_STATE = " + false_state.name + ";\n"
           text += "    }\n"
-          '''
-        elif state_info.always_next_state is not None:
-          # OK to use default?
-          text += "    else\n"
-          text += "    {\n"
-          text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
-          text += "    }\n"
-          '''
         else: # No next state, just start over?
           text += "    else\n"
           text += "    {\n"
@@ -442,9 +420,6 @@ typedef struct ''' + fsm_logic.func_name + '''_OUTPUT_t
           text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
           text += "    }\n"
         text += "  }\n"
-        #if state_info.always_next_state is not None:
-        #  print("ERROR: Always next state set for branching state " + state_info.name)
-        #  sys.exit(-1)
         continue
 
       # Func call entry
@@ -687,18 +662,6 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
   # Pass 2
   states = []
   new_curr_state_info = None
-  '''
-  print("==== comb_states_and_ctrl_flow_nodes")
-  for i,comb_state_or_ctrl_flow_node in enumerate(comb_states_and_ctrl_flow_nodes):
-    if type(comb_state_or_ctrl_flow_node) is FsmStateInfo:
-      print("comb state:")
-      comb_state_or_ctrl_flow_node.print()
-      print("")
-    else:
-      print("ctrl flow:",type(comb_state_or_ctrl_flow_node).__name__, comb_state_or_ctrl_flow_node.coord)
-      print("")
-  print("==== \n") 
-  '''
   for i,comb_state_or_ctrl_flow_node in enumerate(comb_states_and_ctrl_flow_nodes):
     if type(comb_state_or_ctrl_flow_node) is FsmStateInfo:
       #  Update default next state if possible
@@ -726,9 +689,6 @@ def C_AST_NODE_TO_STATES_LIST(c_ast_node, parser_state, curr_state_info=None, ne
 def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
   if visited_states is None:
     visited_states = set()
-  #print("start_state.name",start_state.name)
-  #start_state.print()
-  #print()
   if start_state in visited_states:
     return [[start_state]]
   
@@ -763,21 +723,6 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
       poss_next_states.add(false_state)
     elif false_state is None and start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?
       poss_next_states.add(start_state.always_next_state) # Default next if no false branch
-  
-    '''
-  # Multiple returns from single inst fsms
-  elif start_state.is_fsm_func_call_state is not None:
-    ### Since FSMs are handle separate, state trans list can see them as dead ends
-    ##return [[start_state]]
-    
-    func_name = start_state.is_fsm_func_call_state.name.name
-    # Different return state per entry
-    # Dumb search for matching func name
-    for func_call_node in parser_state.existing_logic.func_call_node_to_entry_exit_states:
-      if func_call_node.name.name == func_name:
-        entry_state,exit_state = parser_state.existing_logic.func_call_node_to_entry_exit_states[func_call_node]
-        poss_next_states.add(exit_state) 
-    '''
   
   # Normal single next state
   elif start_state.always_next_state is not None and start_state.always_next_state != start_state: # No loops?:
@@ -1121,14 +1066,10 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(c_ast_while, curr_state_info, next_state_inf
   else:
     name_c_ast_node = c_ast_while.stmt
   while_state.name = BUILD_STATE_NAME(name_c_ast_node) + "_WHILE"
-  #if next_state_info is None:
-  #  print("No next state entering while ",while_state.name,"from",curr_state_info.name)
-  #  sys.exit(-1)
+
   while_state.always_next_state = curr_state_info # Default staying in while
   # Add mux sel calculation, and jumping to do current state muxing -> body logic (before evaluating body)
   curr_state_info.branch_nodes_tf_states = (c_ast_while, while_state, next_state_info)
-  #print("While",curr_state_info.name,c_ast_while.coord)
-  #print(curr_state_info.branch_nodes_tf_states)
   
   # Eval body and accum states
   while_states = C_AST_NODE_TO_STATES_LIST(c_ast_while.stmt, parser_state, while_state, curr_state_info)
@@ -1329,7 +1270,6 @@ def GET_GROUPED_STATE_TRANSITIONS(start_states, parser_state,
   all_state_trans_lists = []
   for start_state in start_states:
     try:
-      #print("STARTING STATE: ====",start_state.name)
       state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(start_state, parser_state)
     except RecursionError as re:
       raise Exception(f"Function: {parser_state.existing_logic.func_name} could contain a data-dependent infinite combinatorial (__clk()-less) loop starting at {start_state.name}")
