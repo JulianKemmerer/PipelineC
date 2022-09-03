@@ -10,6 +10,7 @@
 
 import warnings
 
+
 class Coord(object):
     """ Coordinates of a syntactic element. Consists of:
             - File name

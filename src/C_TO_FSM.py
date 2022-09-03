@@ -1,10 +1,11 @@
-import sys
 import copy
-from pycparser import c_parser, c_ast, c_generator
+import sys
+
+import C_TO_LOGIC
+from pycparser import c_ast, c_generator, c_parser
 
 # FSM funcs cant be main functions
 
-import C_TO_LOGIC
 
 FSM_EXT = "_FSM"
 CLK_FUNC = "__clk"

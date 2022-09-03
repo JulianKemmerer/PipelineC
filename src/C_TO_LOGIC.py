@@ -1,17 +1,19 @@
 #!/usr/bin/env python
-import sys
-import os
-from pycparser import c_parser, c_ast, c_generator
 import copy
-import pickle
-import math
 import hashlib
-import shlex
-import subprocess
-import signal
+import math
+import os
+import pickle
 import re
-from subprocess import Popen, PIPE
+import shlex
+import signal
+import subprocess
+import sys
 from collections import OrderedDict
+from subprocess import PIPE, Popen
+
+from pycparser import c_ast, c_generator, c_parser
+
 
 def GET_TOOL_PATH(tool_exe_name):
   from shutil import which
@@ -20,11 +22,10 @@ def GET_TOOL_PATH(tool_exe_name):
     return str(w)
   return None
 
-import VHDL
+import C_TO_FSM
 import SW_LIB
 import SYN
-import SW_LIB
-import C_TO_FSM
+import VHDL
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"

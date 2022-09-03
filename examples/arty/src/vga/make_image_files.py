@@ -1,7 +1,8 @@
 # Helper script to write C and VHDL constants from image file
-from PIL import Image
-import sys
 import os
+import sys
+
+from PIL import Image
 
 # Sized to fit at min 640x480
 MAX_W = 320

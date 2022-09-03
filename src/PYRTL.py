@@ -1,10 +1,11 @@
-import sys
 import os
+import sys
 
-import SYN
-import VHDL
 import C_TO_LOGIC
 import OPEN_TOOLS
+import SYN
+import VHDL
+
 
 def IS_INSTALLED():
   try:

@@ -4,13 +4,14 @@
 import argparse
 import os
 import sys
+
 sys.dont_write_bytecode = True
 
 import C_TO_LOGIC
+import OPEN_TOOLS
+import SIM
 #import CLANG_TO_LOGIC
 import SYN
-import SIM
-import OPEN_TOOLS
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"

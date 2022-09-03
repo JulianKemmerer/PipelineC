@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 
-import sys
-import os
-import subprocess
-import math
 import copy
-import pickle
+import datetime
+import getpass
 import glob
 import hashlib
-import getpass
-from multiprocessing.pool import ThreadPool
+import math
+import os
+import pickle
+import subprocess
+import sys
 from multiprocessing import Lock
-import datetime
+from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
+
 START_TIME = timer()
 
 import C_TO_LOGIC
-import VHDL
-import SW_LIB
-import MODELSIM
-import VIVADO
-import QUARTUS
 import DIAMOND
-import OPEN_TOOLS
 import EFINITY
+import MODELSIM
+import OPEN_TOOLS
 import PYRTL
+import QUARTUS
+import SW_LIB
+import VHDL
+import VIVADO
 
 OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None # Auto created with pid and filename or from user
