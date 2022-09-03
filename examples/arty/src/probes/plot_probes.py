@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import sys
 import os
+import sys
 
 # Read from std in pipe
 text = sys.stdin.read()
@@ -33,9 +33,11 @@ for field_i in range(0,len(field_names)):
   #print(field_value_lists[field_i])
 
 import tempfile
+
 fp = tempfile.NamedTemporaryFile(mode='w')
 #fp = open("out.vcd",'w')
 from vcd import VCDWriter
+
 with VCDWriter(fp, timescale='1 ns', date='today') as writer:
   field_types = []
   field_vars = []

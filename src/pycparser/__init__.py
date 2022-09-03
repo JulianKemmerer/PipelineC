@@ -12,6 +12,7 @@ __version__ = '2.18'
 
 import io
 from subprocess import check_output
+
 from .c_parser import CParser
 
 

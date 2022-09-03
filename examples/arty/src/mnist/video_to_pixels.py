@@ -3,14 +3,16 @@
 # Import essential libraries
 import os
 import sys
-import requests
-import cv2
-import numpy as np
-import imutils
-from imutils import adjust_brightness_contrast
-
 # Package as a struct that C code can decode
 from ctypes import *
+
+import cv2
+import imutils
+import numpy as np
+import requests
+from imutils import adjust_brightness_contrast
+
+
 def convert_struct_to_bytes(st):
     buffer = create_string_buffer(sizeof(st))
     memmove(buffer, addressof(st), sizeof(st))

@@ -1,12 +1,12 @@
 
-import sys
 import os
 import shutil
+import sys
 
+import EDAPLAY
+import MODELSIM
 import SIM
 import SYN
-import MODELSIM
-import EDAPLAY
 
 
 def SETUP_EDAPLAY(latency=0):

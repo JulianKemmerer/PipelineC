@@ -1,14 +1,13 @@
 #!/usr/bin/env python
-import sys
-import os
 import copy
 import math
-from pycparser import c_parser, c_ast, c_generator # bleh for now
+import os
+import sys
 
 import C_TO_LOGIC
 import SW_LIB
 import VHDL
-
+from pycparser import c_ast, c_generator, c_parser  # bleh for now
 
 
 # Declare variables used internally to c built in C logic

@@ -10,6 +10,7 @@
 import os.path
 import shutil
 
+
 def get_source_range(lines, tag):
     srclines = enumerate(lines)
     start_tag = '#--! %s-start' % tag

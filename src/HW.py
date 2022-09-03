@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
-import sys
-import os
-import subprocess
 import math
-import struct
+import os
 import socket
+import struct
+import subprocess
+import sys
 
 # Source values for localhost
 INTERFACE = "enx0050b6248f73"

@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 
-import sys
-import os
-import subprocess
-import math
-import hashlib
 import copy
 import difflib
+import glob
+import hashlib
+import math
+import os
 #import Levenshtein
 import pickle
-import glob
+import subprocess
+import sys
 
 import C_TO_LOGIC
-import VHDL
-import SW_LIB
 import MODELSIM
+import SW_LIB
 import SYN
+import VHDL
 
 TOOL_EXE = "vivado"
 # Default to path if there
