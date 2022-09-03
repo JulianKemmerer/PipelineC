@@ -29,7 +29,7 @@ Working first, fast if needed, pretty in implementation almost never...
 
 But nothing was ever good enough for anyone (including myself) it seems. And now here we are years later. It's just years and years of 'ill add this last little feature X' that people seem to want/or to make this last demo work... and then done...repeated dozens and dozens of times...
 
-- Julian
+`- Julian`
 
 
 # General Information
