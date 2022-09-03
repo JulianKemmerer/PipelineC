@@ -62,7 +62,7 @@ But generally, in kinda easier first order:
 
 * Improved support for [FSM style](https://github.com/JulianKemmerer/PipelineC/wiki/FSM-Style) code
   * is the most hacky of recent hacking - another layer of dumb code gen
-* Template types+functions for ~C++ like syntax
+* Template types+functions for [~C++ like syntax](https://github.com/JulianKemmerer/PipelineC/discussions/32)
   * Open to other syntaxs+languages Rust, Python, Zig, Go...
 * Improvements to autopipelining, maybe with modes to also track area/resources (not just timing as is)
 * 'Just compile all the user code with a C compiler for fast simulation' built in
