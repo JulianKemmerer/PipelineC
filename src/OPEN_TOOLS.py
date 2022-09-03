@@ -236,12 +236,6 @@ class PathReport:
         
       # SAVE LAST LINE
       prev_line = line
-      
-      
-    #print("self.netlist_resources",self.netlist_resources)
-    #print("self.start_reg_name",self.start_reg_name)
-    #print("self.end_reg_name",self.end_reg_name)
-    #sys.exit(0)
 
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext = None, use_existing_log_file = True):
