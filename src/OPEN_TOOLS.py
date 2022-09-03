@@ -20,39 +20,39 @@ NEXTPNR_BIN_PATH = None
 GHDL_PREFIX = None
 
 if os.path.exists(OSS_CAD_SUITE_PATH):
-  YOSYS_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
-  GHDL_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
-  NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
-  GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
-  GHDL_PLUGIN_BUILT_IN = False
+    YOSYS_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+    GHDL_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+    NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+    GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
+    GHDL_PLUGIN_BUILT_IN = False
 else:
-  YOSYS_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(YOSYS_EXE)
-  if YOSYS_EXE_PATH is not None:
-    YOSYS_BIN_PATH = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
+    YOSYS_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(YOSYS_EXE)
+    if YOSYS_EXE_PATH is not None:
+        YOSYS_BIN_PATH = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
 
-  GHDL_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(GHDL_EXE)
-  if GHDL_EXE_PATH is not None:
-    GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
-    GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH)+"/../lib/ghdl")
-  GHDL_PLUGIN_BUILT_IN = False
+    GHDL_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(GHDL_EXE)
+    if GHDL_EXE_PATH is not None:
+        GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
+        GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH) + "/../lib/ghdl")
+    GHDL_PLUGIN_BUILT_IN = False
 
-  NEXTPNR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(NEXT_PNR_EXE)
-  if NEXTPNR_EXE_PATH is not None:
-    NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
-    
+    NEXTPNR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(NEXT_PNR_EXE)
+    if NEXTPNR_EXE_PATH is not None:
+        NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
+
 # Flag to skip pnr
 YOSYS_JSON_ONLY = False
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
-  opts = ""
-  if part_str.lower().startswith("lfe5u"):
-    #Ex. LFE5UM5G-85F-8BG756C
-    toks = part_str.split("-")
-    part = toks[0]
-    size = toks[1]
-    pkg = toks[2]
-    '''
+    opts = ""
+    if part_str.lower().startswith("lfe5u"):
+        # Ex. LFE5UM5G-85F-8BG756C
+        toks = part_str.split("-")
+        part = toks[0]
+        size = toks[1]
+        pkg = toks[2]
+        """
     --12k                             set device type to LFE5U-12F
     --25k                             set device type to LFE5U-25F
     --45k                             set device type to LFE5U-45F
@@ -66,27 +66,27 @@ def PART_TO_CMD_LINE_OPTS(part_str):
     --package arg                     select device package (defaults to 
                                       CABGA381)
     --speed arg                       select device speedgrade (6, 7 or 8)
-    '''
-    opts = ""
-    opts += "--"
-    if part == "LFE5UM":
-      opts += "um-"
-    elif part == "LFE5UM5G":
-      opts += "um5g-"
-    
-    size_num = size.strip("F")
-    opts += size_num + "k "
-    
-    speed_num = pkg[0]
-    opts += "--speed " + speed_num + " "
-    opts += "--out-of-context"
-    
-  elif part_str.lower().startswith("ice"):
-    # Ex. ICE40UP5K-SG48
-    toks = part_str.split("-")
-    part = toks[0]
-    pkg = toks[1]
-    '''
+    """
+        opts = ""
+        opts += "--"
+        if part == "LFE5UM":
+            opts += "um-"
+        elif part == "LFE5UM5G":
+            opts += "um5g-"
+
+        size_num = size.strip("F")
+        opts += size_num + "k "
+
+        speed_num = pkg[0]
+        opts += "--speed " + speed_num + " "
+        opts += "--out-of-context"
+
+    elif part_str.lower().startswith("ice"):
+        # Ex. ICE40UP5K-SG48
+        toks = part_str.split("-")
+        part = toks[0]
+        pkg = toks[1]
+        """
     --lp384                           set device type to iCE40LP384
     --lp1k                            set device type to iCE40LP1K
     --lp4k                            set device type to iCE40LP4K
@@ -99,336 +99,430 @@ def PART_TO_CMD_LINE_OPTS(part_str):
     --u1k                             set device type to iCE5LP1K
     --u2k                             set device type to iCE5LP2K
     --u4k                             set device type to iCE5LP4K
-    '''
-    if part_str.upper().startswith("ICE40LP384"):   
-      opts += "--lp384"
-    elif part_str.upper().startswith("ICE40LP1K"):  
-      opts += "--lp1k"
-    elif part_str.upper().startswith("ICE40LP4K"):  
-      opts += "--lp4k"
-    elif part_str.upper().startswith("ICE40LP8K"):  
-      opts += "--lp8k"
-    elif part_str.upper().startswith("ICE40HX1K"):  
-      opts += "--hx1k"
-    elif part_str.upper().startswith("ICE40HX4K"):  
-      opts += "--hx4k"
-    elif part_str.upper().startswith("ICE40HX8K"):  
-      opts += "--hx8k"
-    elif part_str.upper().startswith("ICE40UP3K"):  
-      opts += "--up3k"
-    elif part_str.upper().startswith("ICE40UP5K"):  
-      opts += "--up5k"
-    elif part_str.upper().startswith("ICE5LP1K"):   
-      opts += "--u1k"
-    elif part_str.upper().startswith("ICE5LP2K"):   
-      opts += "--u2k"
-    elif part_str.upper().startswith("ICE5LP4K"):   
-      opts += "--u4k"
-      
-    opts += " --pcf-allow-unconstrained"
-  
-  return opts
-    
+    """
+        if part_str.upper().startswith("ICE40LP384"):
+            opts += "--lp384"
+        elif part_str.upper().startswith("ICE40LP1K"):
+            opts += "--lp1k"
+        elif part_str.upper().startswith("ICE40LP4K"):
+            opts += "--lp4k"
+        elif part_str.upper().startswith("ICE40LP8K"):
+            opts += "--lp8k"
+        elif part_str.upper().startswith("ICE40HX1K"):
+            opts += "--hx1k"
+        elif part_str.upper().startswith("ICE40HX4K"):
+            opts += "--hx4k"
+        elif part_str.upper().startswith("ICE40HX8K"):
+            opts += "--hx8k"
+        elif part_str.upper().startswith("ICE40UP3K"):
+            opts += "--up3k"
+        elif part_str.upper().startswith("ICE40UP5K"):
+            opts += "--up5k"
+        elif part_str.upper().startswith("ICE5LP1K"):
+            opts += "--u1k"
+        elif part_str.upper().startswith("ICE5LP2K"):
+            opts += "--u2k"
+        elif part_str.upper().startswith("ICE5LP4K"):
+            opts += "--u4k"
+
+        opts += " --pcf-allow-unconstrained"
+
+    return opts
+
 
 # Convert nextpnr style paths with . /
-def NODE_TO_ELEM(node_str):  
-  # Struct dot is "\."  ?
-  node_str = node_str.replace("\\.","|")
-  # Regualr modules is .
-  node_str = node_str.replace(".","/")
-  # Fix structs
-  node_str = node_str.replace("|",".")
-  #print("node_str",node_str)
-  return node_str
+def NODE_TO_ELEM(node_str):
+    # Struct dot is "\."  ?
+    node_str = node_str.replace("\\.", "|")
+    # Regualr modules is .
+    node_str = node_str.replace(".", "/")
+    # Fix structs
+    node_str = node_str.replace("|", ".")
+    # print("node_str",node_str)
+    return node_str
+
 
 class ParsedTimingReport:
-  def __init__(self, syn_output):
-    # Clocks reported once at end
-    clock_to_act_tar_mhz = dict()
-    tok1 = "Max frequency for clock"
-    for line in syn_output.split("\n"):
-      if tok1 in line:
-        clk_str = line.split(tok1)[1]
-        clk_name = clk_str.split(":")[0].strip().strip("'")
-        freqs_str = clk_str.split(":")[1]
-        #print("clk_str",clk_str)
-        #print("freqs_str",freqs_str)
-        actual_mhz = float(freqs_str.split("MHz")[0])
-        target_mhz = float(freqs_str.split("at ")[1].replace(" MHz)",""))
-        #print(clk_name, actual_mhz, target_mhz)
-        clock_to_act_tar_mhz[clk_name] = (actual_mhz, target_mhz)
-    
-    self.path_reports = dict()   
-    PATH_SPLIT = "Info: Critical path report for "
-    maybe_path_texts = syn_output.split(PATH_SPLIT)
-    path_texts = []
-    for path_text in maybe_path_texts:
-      if "ns logic" in path_text and "(posedge -> posedge)" in path_text: # no async paths
-        path_report = PathReport(path_text)
-        # Set things only parsed once not per report
-        path_report.path_delay_ns = 1000.0 / clock_to_act_tar_mhz[path_report.path_group][0]
-        # Lolz really slow clocks come back as zero
-        # nextpnr reports with two decimals 0.00 MHz
-        tar_mhz = clock_to_act_tar_mhz[path_report.path_group][1]
-        if tar_mhz < 0.01:
-          tar_mhz = 0.01
-        path_report.source_ns_per_clock = 1000.0 / tar_mhz
-        # Save in dict
-        self.path_reports[path_report.path_group] = path_report
-        
-    if len(self.path_reports) == 0:
-      print("Bad synthesis log?:",syn_output)
-      sys.exit(-1)
-   
+    def __init__(self, syn_output):
+        # Clocks reported once at end
+        clock_to_act_tar_mhz = dict()
+        tok1 = "Max frequency for clock"
+        for line in syn_output.split("\n"):
+            if tok1 in line:
+                clk_str = line.split(tok1)[1]
+                clk_name = clk_str.split(":")[0].strip().strip("'")
+                freqs_str = clk_str.split(":")[1]
+                # print("clk_str",clk_str)
+                # print("freqs_str",freqs_str)
+                actual_mhz = float(freqs_str.split("MHz")[0])
+                target_mhz = float(freqs_str.split("at ")[1].replace(" MHz)", ""))
+                # print(clk_name, actual_mhz, target_mhz)
+                clock_to_act_tar_mhz[clk_name] = (actual_mhz, target_mhz)
+
+        self.path_reports = dict()
+        PATH_SPLIT = "Info: Critical path report for "
+        maybe_path_texts = syn_output.split(PATH_SPLIT)
+        path_texts = []
+        for path_text in maybe_path_texts:
+            if (
+                "ns logic" in path_text and "(posedge -> posedge)" in path_text
+            ):  # no async paths
+                path_report = PathReport(path_text)
+                # Set things only parsed once not per report
+                path_report.path_delay_ns = (
+                    1000.0 / clock_to_act_tar_mhz[path_report.path_group][0]
+                )
+                # Lolz really slow clocks come back as zero
+                # nextpnr reports with two decimals 0.00 MHz
+                tar_mhz = clock_to_act_tar_mhz[path_report.path_group][1]
+                if tar_mhz < 0.01:
+                    tar_mhz = 0.01
+                path_report.source_ns_per_clock = 1000.0 / tar_mhz
+                # Save in dict
+                self.path_reports[path_report.path_group] = path_report
+
+        if len(self.path_reports) == 0:
+            print("Bad synthesis log?:", syn_output)
+            sys.exit(-1)
+
+
 class PathReport:
-  def __init__(self, path_report_text):
-    #print(path_report_text)    
-    self.path_delay_ns = None # nanoseconds
-    #self.slack_ns = None
-    self.source_ns_per_clock = None  # From latch edge time
-    self.path_group = None # Clock name?
-    self.netlist_resources = set() # Set of strings
-    self.start_reg_name = None
-    self.end_reg_name = None
-    
-    prev_line = None
-    in_netlist_resources = False
-    is_first_net = True
-    last_net_name = None
-    for line in path_report_text.split("\n"):
-      
-      # Path delay ns
-      tok1 = "Max frequency for clock"
-      if tok1 in line:
-        toks = line.split(tok1)
-        toks = toks[1].split(":")
-        toks = toks[1].split("MHz")
-        mhz = float(toks[0])
-        ns = 1000.0 / mhz
-        self.path_delay_ns = ns
-        #print("mhz",mhz)
-        #print("ns",ns)
-        
-      # Clock name  /path group
-      tok1 = "(posedge -> posedge)"
-      if tok1 in line:
-        self.path_group = line.split("'")[1] #.strip().strip("'")
-        #print("self.path_group",self.path_group)
-        
-      # Netlist resources + start and end
-      if in_netlist_resources:
-        tok1 = "  Net "
-        if tok1 in line:
-          net_str = line.split(tok1)[1].strip()
-          net = net_str.split(" ")[0]
-          net_name = NODE_TO_ELEM(net)
-          self.netlist_resources.add(net_name)
-          if is_first_net:
-            self.start_reg_name = net_name
-            is_first_net = False
-          last_net_name = net_name
-      if "ns logic," in line and "ns routing" in line:
+    def __init__(self, path_report_text):
+        # print(path_report_text)
+        self.path_delay_ns = None  # nanoseconds
+        # self.slack_ns = None
+        self.source_ns_per_clock = None  # From latch edge time
+        self.path_group = None  # Clock name?
+        self.netlist_resources = set()  # Set of strings
+        self.start_reg_name = None
+        self.end_reg_name = None
+
+        prev_line = None
         in_netlist_resources = False
-        self.end_reg_name = last_net_name
-      tok1 = "Info: curr total"
-      if tok1 in line:
-        in_netlist_resources = True
-        
-      # SAVE LAST LINE
-      prev_line = line
+        is_first_net = True
+        last_net_name = None
+        for line in path_report_text.split("\n"):
+
+            # Path delay ns
+            tok1 = "Max frequency for clock"
+            if tok1 in line:
+                toks = line.split(tok1)
+                toks = toks[1].split(":")
+                toks = toks[1].split("MHz")
+                mhz = float(toks[0])
+                ns = 1000.0 / mhz
+                self.path_delay_ns = ns
+                # print("mhz",mhz)
+                # print("ns",ns)
+
+            # Clock name  /path group
+            tok1 = "(posedge -> posedge)"
+            if tok1 in line:
+                self.path_group = line.split("'")[1]  # .strip().strip("'")
+                # print("self.path_group",self.path_group)
+
+            # Netlist resources + start and end
+            if in_netlist_resources:
+                tok1 = "  Net "
+                if tok1 in line:
+                    net_str = line.split(tok1)[1].strip()
+                    net = net_str.split(" ")[0]
+                    net_name = NODE_TO_ELEM(net)
+                    self.netlist_resources.add(net_name)
+                    if is_first_net:
+                        self.start_reg_name = net_name
+                        is_first_net = False
+                    last_net_name = net_name
+            if "ns logic," in line and "ns routing" in line:
+                in_netlist_resources = False
+                self.end_reg_name = last_net_name
+            tok1 = "Info: curr total"
+            if tok1 in line:
+                in_netlist_resources = True
+
+            # SAVE LAST LINE
+            prev_line = line
+
 
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext = None, use_existing_log_file = True):
-  multimain_timing_params = SYN.MultiMainTimingParams()
-  multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
-  return SYN_AND_REPORT_TIMING_NEW(parser_state, multimain_timing_params, inst_name, total_latency, hash_ext, use_existing_log_file)
-  
+def SYN_AND_REPORT_TIMING(
+    inst_name,
+    Logic,
+    parser_state,
+    TimingParamsLookupTable,
+    total_latency=None,
+    hash_ext=None,
+    use_existing_log_file=True,
+):
+    multimain_timing_params = SYN.MultiMainTimingParams()
+    multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
+    return SYN_AND_REPORT_TIMING_NEW(
+        parser_state,
+        multimain_timing_params,
+        inst_name,
+        total_latency,
+        hash_ext,
+        use_existing_log_file,
+    )
+
+
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
-  return SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params)
-  
+    return SYN_AND_REPORT_TIMING_NEW(parser_state, multimain_timing_params)
+
+
 # MULTIMAIN OR SINGLE INSTANCE
 # Returns parsed timing report
-def SYN_AND_REPORT_TIMING_NEW(parser_state,  multimain_timing_params, inst_name = None, total_latency = None, hash_ext = None, use_existing_log_file = True):
-  # Single inst
-  if inst_name:
-    Logic = parser_state.LogicInstLookupTable[inst_name]
-    
-    # Timing params for this logic
-    timing_params = multimain_timing_params.TimingParamsLookupTable[inst_name]
-  
-    # First create syn/imp directory for this logic
-    output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)  
-    
-    # Set log path
-    if hash_ext is None:
-      hash_ext = timing_params.GET_HASH_EXT(multimain_timing_params.TimingParamsLookupTable, parser_state)
-    if total_latency is None:
-      total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
-    entity_file_ext = "_" +  str(total_latency) + "CLK" + hash_ext
-    log_file_name = "open_tools" + entity_file_ext + ".log"
-  else:
-    # Multimain
-    # First create directory for this logic
-    output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
-    
-    # Set log path
-    # Hash for multi main is just hash of main pipes
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    log_file_name = "open_tools" + hash_ext + ".log"
-  
-  
-  if not os.path.exists(output_directory):
-    os.makedirs(output_directory)
-    
-  log_path = output_directory + "/" + log_file_name
-      
-  # Use same configs based on to speed up run time?
-  log_to_read = log_path
-  
-  # If log file exists dont run syn
-  if os.path.exists(log_to_read) and use_existing_log_file:
-    #print "SKIPPED:", syn_imp_bash_cmd
-    print("Reading log", log_to_read)
-    f = open(log_path, "r")
-    log_text = f.read()
-    f.close()
-  else:
-    
-    # Write top level vhdl for this module/multimain
+def SYN_AND_REPORT_TIMING_NEW(
+    parser_state,
+    multimain_timing_params,
+    inst_name=None,
+    total_latency=None,
+    hash_ext=None,
+    use_existing_log_file=True,
+):
+    # Single inst
     if inst_name:
-      VHDL.WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
-      VHDL.WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
+        Logic = parser_state.LogicInstLookupTable[inst_name]
+
+        # Timing params for this logic
+        timing_params = multimain_timing_params.TimingParamsLookupTable[inst_name]
+
+        # First create syn/imp directory for this logic
+        output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+
+        # Set log path
+        if hash_ext is None:
+            hash_ext = timing_params.GET_HASH_EXT(
+                multimain_timing_params.TimingParamsLookupTable, parser_state
+            )
+        if total_latency is None:
+            total_latency = timing_params.GET_TOTAL_LATENCY(
+                parser_state, multimain_timing_params.TimingParamsLookupTable
+            )
+        entity_file_ext = "_" + str(total_latency) + "CLK" + hash_ext
+        log_file_name = "open_tools" + entity_file_ext + ".log"
     else:
-      VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
-    
-    # Generate files for this SYN
-    
-    # Constraints
-    # Write clock xdc and include it
-    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
-    clk_to_mhz,constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name)
-    
-    # Which vhdl files?
-    vhdl_files_texts,top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(multimain_timing_params, parser_state, inst_name)
-    
-      
-    if GHDL_PREFIX is None:
-      raise Exception("ghdl not installed?")
-    if YOSYS_BIN_PATH is None:
-      raise Exception("yosys not installed?")
-    if NEXTPNR_BIN_PATH is None:
-      raise Exception("nextpnr not installed?")
-    
-    # A single shell script build .sh
-    m_ghdl = ""
-    if not GHDL_PLUGIN_BUILT_IN:
-      m_ghdl = "-m ghdl "
-    sh_file = top_entity_name + ".sh"
-    sh_path = output_directory + "/" + sh_file
-    f=open(sh_path,'w')
-    # -v --debug
-    if not YOSYS_JSON_ONLY:
-      # Which exe?
-      if parser_state.part.lower().startswith("ice"):
-        exe_ext = "ice40"
-      else:
-        exe_ext = "ecp5"
-      f.write('''
+        # Multimain
+        # First create directory for this logic
+        output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+
+        # Set log path
+        # Hash for multi main is just hash of main pipes
+        hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+        log_file_name = "open_tools" + hash_ext + ".log"
+
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+    log_path = output_directory + "/" + log_file_name
+
+    # Use same configs based on to speed up run time?
+    log_to_read = log_path
+
+    # If log file exists dont run syn
+    if os.path.exists(log_to_read) and use_existing_log_file:
+        # print "SKIPPED:", syn_imp_bash_cmd
+        print("Reading log", log_to_read)
+        f = open(log_path, "r")
+        log_text = f.read()
+        f.close()
+    else:
+
+        # Write top level vhdl for this module/multimain
+        if inst_name:
+            VHDL.WRITE_LOGIC_ENTITY(
+                inst_name,
+                Logic,
+                output_directory,
+                parser_state,
+                multimain_timing_params.TimingParamsLookupTable,
+            )
+            VHDL.WRITE_LOGIC_TOP(
+                inst_name,
+                Logic,
+                output_directory,
+                parser_state,
+                multimain_timing_params.TimingParamsLookupTable,
+            )
+        else:
+            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+
+        # Generate files for this SYN
+
+        # Constraints
+        # Write clock xdc and include it
+        constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
+        clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+            parser_state, inst_name
+        )
+
+        # Which vhdl files?
+        vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
+            multimain_timing_params, parser_state, inst_name
+        )
+
+        if GHDL_PREFIX is None:
+            raise Exception("ghdl not installed?")
+        if YOSYS_BIN_PATH is None:
+            raise Exception("yosys not installed?")
+        if NEXTPNR_BIN_PATH is None:
+            raise Exception("nextpnr not installed?")
+
+        # A single shell script build .sh
+        m_ghdl = ""
+        if not GHDL_PLUGIN_BUILT_IN:
+            m_ghdl = "-m ghdl "
+        sh_file = top_entity_name + ".sh"
+        sh_path = output_directory + "/" + sh_file
+        f = open(sh_path, "w")
+        # -v --debug
+        if not YOSYS_JSON_ONLY:
+            # Which exe?
+            if parser_state.part.lower().startswith("ice"):
+                exe_ext = "ice40"
+            else:
+                exe_ext = "ecp5"
+            f.write(
+                """
 #!/usr/bin/env bash
-export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
+export GHDL_PREFIX="""
+                + GHDL_PREFIX
+                + f"""
 # Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth_''' + exe_ext + ''' -top ''' + top_entity_name + ''' -json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
+{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 """
+                + vhdl_files_texts
+                + """ -e """
+                + top_entity_name
+                + """; synth_"""
+                + exe_ext
+                + """ -top """
+                + top_entity_name
+                + """ -json """
+                + top_entity_name
+                + """.json' &>> """
+                + log_file_name
+                + f"""
 # P&R
-{NEXTPNR_BIN_PATH}/nextpnr-''' + exe_ext + ''' ''' + PART_TO_CMD_LINE_OPTS(parser_state.part) + ''' --json ''' + top_entity_name + '''.json --pre-pack ''' + constraints_filepath + ''' --timing-allow-fail &>> ''' + log_file_name + '''
-''')
-    else:
-      # YOSYS_JSON_ONLY
-      f.write('''
+{NEXTPNR_BIN_PATH}/nextpnr-"""
+                + exe_ext
+                + """ """
+                + PART_TO_CMD_LINE_OPTS(parser_state.part)
+                + """ --json """
+                + top_entity_name
+                + """.json --pre-pack """
+                + constraints_filepath
+                + """ --timing-allow-fail &>> """
+                + log_file_name
+                + """
+"""
+            )
+        else:
+            # YOSYS_JSON_ONLY
+            f.write(
+                """
 # Only output yosys json
 #!/usr/bin/env bash
-export GHDL_PREFIX=''' + GHDL_PREFIX + f'''
+export GHDL_PREFIX="""
+                + GHDL_PREFIX
+                + f"""
 # Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 ''' + vhdl_files_texts + ''' -e ''' + top_entity_name + '''; synth -top ''' + top_entity_name + '''; write_json ''' + top_entity_name + '''.json' &>> ''' + log_file_name + f'''
-''')
-    f.close()
+{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 """
+                + vhdl_files_texts
+                + """ -e """
+                + top_entity_name
+                + """; synth -top """
+                + top_entity_name
+                + """; write_json """
+                + top_entity_name
+                + """.json' &>> """
+                + log_file_name
+                + f"""
+"""
+            )
+        f.close()
 
-    # Execute the command
-    syn_imp_bash_cmd = "bash " + sh_file 
-    print("Running:", log_path, flush=True)
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
-    f = open(log_path, "r")
-    log_text = f.read()
-    f.close()
-    
-    # If just outputting json have to stop now?
-    if YOSYS_JSON_ONLY:
-      print("Stopping after json output in:",output_directory)
-      sys.exit(0)
-    
-  return ParsedTimingReport(log_text)
-  
+        # Execute the command
+        syn_imp_bash_cmd = "bash " + sh_file
+        print("Running:", log_path, flush=True)
+        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        f = open(log_path, "r")
+        log_text = f.read()
+        f.close()
+
+        # If just outputting json have to stop now?
+        if YOSYS_JSON_ONLY:
+            print("Stopping after json output in:", output_directory)
+            sys.exit(0)
+
+    return ParsedTimingReport(log_text)
+
+
 def FUNC_IS_PRIMITIVE(func_name):
-  if func_name == "ECP5_MUL18X18":
-    return True
-  return False
-  
+    if func_name == "ECP5_MUL18X18":
+        return True
+    return False
+
+
 def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-  if Logic.func_name != "ECP5_MUL18X18":
-    print("TODO other prims!")
-    sys.exit(-1)
-  # Assume ECP5_MUL18X18
-  needs_clk = VHDL.LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable)
-  timing_params = TimingParamsLookupTable[inst_name]
+    if Logic.func_name != "ECP5_MUL18X18":
+        print("TODO other prims!")
+        sys.exit(-1)
+    # Assume ECP5_MUL18X18
+    needs_clk = VHDL.LOGIC_NEEDS_CLOCK(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    timing_params = TimingParamsLookupTable[inst_name]
 
-  # IO regs
-  n_extra_input_regs = 0
-  n_extra_output_regs = 0
-  if timing_params._has_input_regs:
-    n_extra_input_regs = 1
-  if timing_params._has_output_regs:
-    n_extra_output_regs = 1
+    # IO regs
+    n_extra_input_regs = 0
+    n_extra_output_regs = 0
+    if timing_params._has_input_regs:
+        n_extra_input_regs = 1
+    if timing_params._has_output_regs:
+        n_extra_output_regs = 1
 
-  # Simple mapping of any slicing?
-  in_reg = "NONE"
-  pipe_reg = "NONE"
-  out_reg = "NONE"
-  # TODO UPDATE TO USE timing_params._has regs flags
-  # 0 slices = comb
-  if len(timing_params._slices) == 0:
-    pass
-  # 1 slice > 50% is output, < means input
-  elif len(timing_params._slices) == 1:
-    if timing_params._slices[0] > 0.5:
-      out_reg = "CLK0"
+    # Simple mapping of any slicing?
+    in_reg = "NONE"
+    pipe_reg = "NONE"
+    out_reg = "NONE"
+    # TODO UPDATE TO USE timing_params._has regs flags
+    # 0 slices = comb
+    if len(timing_params._slices) == 0:
+        pass
+    # 1 slice > 50% is output, < means input
+    elif len(timing_params._slices) == 1:
+        if timing_params._slices[0] > 0.5:
+            out_reg = "CLK0"
+        else:
+            in_reg = "CLK0"
+    # 2 slice is in and out
+    elif len(timing_params._slices) == 2:
+        out_reg = "CLK0"
+        in_reg = "CLK0"
+    # 3 slice is in,pipline,out regs
+    elif len(timing_params._slices) == 3:
+        out_reg = "CLK0"
+        in_reg = "CLK0"
+        pipe_reg = "CLK0"
     else:
-      in_reg = "CLK0"
-  # 2 slice is in and out
-  elif len(timing_params._slices) == 2:
-    out_reg = "CLK0"
-    in_reg = "CLK0"
-  # 3 slice is in,pipline,out regs
-  elif len(timing_params._slices) == 3:
-    out_reg = "CLK0"
-    in_reg = "CLK0"
-    pipe_reg = "CLK0"
-  else:
-    # 4+= determine additions to n_extra_input_regs n_extra_output_regs
-    # Start with all 3 pipeline regs and do in,out extra regs evenly
-    slice_latency = len(timing_params._slices)
-    out_reg = "CLK0"
-    in_reg = "CLK0"
-    pipe_reg = "CLK0"
-    slice_latency -= 3
-    while slice_latency > 0:
-      if slice_latency > 0:
-        n_extra_input_regs += 1
-        slice_latency -= 1
-      if slice_latency > 0:
-        n_extra_output_regs += 1
-        slice_latency -= 1
-  
-  text = '''
+        # 4+= determine additions to n_extra_input_regs n_extra_output_regs
+        # Start with all 3 pipeline regs and do in,out extra regs evenly
+        slice_latency = len(timing_params._slices)
+        out_reg = "CLK0"
+        in_reg = "CLK0"
+        pipe_reg = "CLK0"
+        slice_latency -= 3
+        while slice_latency > 0:
+            if slice_latency > 0:
+                n_extra_input_regs += 1
+                slice_latency -= 1
+            if slice_latency > 0:
+                n_extra_output_regs += 1
+                slice_latency -= 1
+
+    text = (
+        """
   
   component MULT18X18D is
   generic (
@@ -700,8 +794,12 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     );
 end component; 
 
-  constant N_EXTRA_INPUT_REGS : integer := ''' + str(n_extra_input_regs) + ''';
-  constant N_EXTRA_OUTPUT_REGS : integer := ''' + str(n_extra_output_regs) + ''';
+  constant N_EXTRA_INPUT_REGS : integer := """
+        + str(n_extra_input_regs)
+        + """;
+  constant N_EXTRA_OUTPUT_REGS : integer := """
+        + str(n_extra_output_regs)
+        + """;
   type input_array_t is array(0 to N_EXTRA_INPUT_REGS-1) of unsigned(17 downto 0);
   type output_array_t is array(0 to N_EXTRA_OUTPUT_REGS-1) of unsigned(35 downto 0);
 
@@ -721,9 +819,10 @@ end component;
 
   begin
 
-  '''
-  if n_extra_input_regs > 0:
-    text += '''
+  """
+    )
+    if n_extra_input_regs > 0:
+        text += """
     -- Delay regs
     process(clk) is
     begin
@@ -738,22 +837,27 @@ end component;
     end process;
     a_i <= a_in_r(N_EXTRA_INPUT_REGS-1);
     b_i <= b_in_r(N_EXTRA_INPUT_REGS-1);
-    '''
-  else:
-    text += '''
+    """
+    else:
+        text += """
     -- No extra regs
     a_i <= a;
     b_i <= b;
-    '''
-  
-  text += '''
+    """
+
+    text += (
+        '''
   mult18x18d_inst : MULT18X18D
   generic map (
-    REG_INPUTA_CLK => "''' + in_reg + '''",
+    REG_INPUTA_CLK => "'''
+        + in_reg
+        + '''",
     REG_INPUTA_CE => "CE0",
     REG_INPUTA_RST => "RST0",
     --
-    REG_INPUTB_CLK => "''' + in_reg + '''",
+    REG_INPUTB_CLK => "'''
+        + in_reg
+        + '''",
     REG_INPUTB_CE => "CE0",
     REG_INPUTB_RST => "RST0",
     --
@@ -761,11 +865,15 @@ end component;
     --reg_inputc_ce => "CE0",
     --reg_inputc_rst => "RST0",
     --
-    REG_PIPELINE_CLK => "''' + pipe_reg + '''",
+    REG_PIPELINE_CLK => "'''
+        + pipe_reg
+        + '''",
     REG_PIPELINE_CE => "CE0",
     REG_PIPELINE_RST => "RST0",
     --
-    REG_OUTPUT_CLK => "''' + out_reg + '''",
+    REG_OUTPUT_CLK => "'''
+        + out_reg
+        + """",
     --reg_output_ce => "CE0",
     --reg_output_rst => "RST0",
     --
@@ -843,16 +951,17 @@ end component;
     CLK3 => '0',
     CLK2 => '0',
     CLK1 => '0',
-    '''
-  if needs_clk:
-    text += '''
+    """
+    )
+    if needs_clk:
+        text += """
     CLK0 => clk,
-    '''
-  else:
-    text += '''
+    """
+    else:
+        text += """
     CLK0 => '0',
-    '''
-  text += '''
+    """
+    text += """
     CE3 => '1',
     CE2 => '1',
     CE1 => '1',
@@ -1025,10 +1134,10 @@ end component;
     P0 => p_o(0),
     SIGNEDP => open
   );
-  '''
+  """
 
-  if n_extra_output_regs > 0:
-    text += '''
+    if n_extra_output_regs > 0:
+        text += """
     -- Delay regs
     process(clk) is
     begin
@@ -1040,14 +1149,11 @@ end component;
       end if;
     end process;
     return_output <= p_out_r(N_EXTRA_OUTPUT_REGS-1);
-    '''
-  else:
-    text += '''
+    """
+    else:
+        text += """
     -- No extra regs
     return_output <= p_o;
-    '''
+    """
 
-  
-  return text
-  
-  
+    return text

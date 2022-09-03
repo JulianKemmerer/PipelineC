@@ -67,30 +67,30 @@ import sys
 import types
 import warnings
 
-__version__    = '3.10'
-__tabversion__ = '3.10'
+__version__ = "3.10"
+__tabversion__ = "3.10"
 
-#-----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 #                     === User configurable parameters ===
 #
 # Change these to modify the default behavior of yacc (if you wish)
-#-----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
-yaccdebug   = True             # Debugging mode.  If set, yacc generates a
-                               # a 'parser.out' file in the current directory
+yaccdebug = True  # Debugging mode.  If set, yacc generates a
+# a 'parser.out' file in the current directory
 
-debug_file  = 'parser.out'     # Default name of the debugging file
-tab_module  = 'parsetab'       # Default name of the table module
-default_lr  = 'LALR'           # Default LR table generation method
+debug_file = "parser.out"  # Default name of the debugging file
+tab_module = "parsetab"  # Default name of the table module
+default_lr = "LALR"  # Default LR table generation method
 
-error_count = 3                # Number of symbols that must be shifted to leave recovery mode
+error_count = 3  # Number of symbols that must be shifted to leave recovery mode
 
-yaccdevel   = False            # Set to True if developing yacc.  This turns off optimized
-                               # implementations of certain functions.
+yaccdevel = False  # Set to True if developing yacc.  This turns off optimized
+# implementations of certain functions.
 
-resultlimit = 40               # Size limit of results when running in debug mode.
+resultlimit = 40  # Size limit of results when running in debug mode.
 
-pickle_protocol = 0            # Protocol to use when writing pickle files
+pickle_protocol = 0  # Protocol to use when writing pickle files
 
 # String type-checking compatibility
 if sys.version_info[0] < 3:
@@ -106,22 +106,24 @@ MAXINT = sys.maxsize
 # information, they can create their own logging object and pass
 # it into PLY.
 
+
 class PlyLogger(object):
     def __init__(self, f):
         self.f = f
 
     def debug(self, msg, *args, **kwargs):
-        self.f.write((msg % args) + '\n')
+        self.f.write((msg % args) + "\n")
 
     info = debug
 
     def warning(self, msg, *args, **kwargs):
-        self.f.write('WARNING: ' + (msg % args) + '\n')
+        self.f.write("WARNING: " + (msg % args) + "\n")
 
     def error(self, msg, *args, **kwargs):
-        self.f.write('ERROR: ' + (msg % args) + '\n')
+        self.f.write("ERROR: " + (msg % args) + "\n")
 
     critical = debug
+
 
 # Null logger is used when no output is generated. Does nothing.
 class NullLogger(object):
@@ -131,29 +133,33 @@ class NullLogger(object):
     def __call__(self, *args, **kwargs):
         return self
 
+
 # Exception raised for yacc-related errors
 class YaccError(Exception):
     pass
 
+
 # Format the result message that the parser produces when running in debug mode.
 def format_result(r):
     repr_str = repr(r)
-    if '\n' in repr_str:
+    if "\n" in repr_str:
         repr_str = repr(repr_str)
     if len(repr_str) > resultlimit:
-        repr_str = repr_str[:resultlimit] + ' ...'
-    result = '<%s @ 0x%x> (%s)' % (type(r).__name__, id(r), repr_str)
+        repr_str = repr_str[:resultlimit] + " ..."
+    result = "<%s @ 0x%x> (%s)" % (type(r).__name__, id(r), repr_str)
     return result
+
 
 # Format stack entries when the parser is running in debug mode
 def format_stack_entry(r):
     repr_str = repr(r)
-    if '\n' in repr_str:
+    if "\n" in repr_str:
         repr_str = repr(repr_str)
     if len(repr_str) < 16:
         return repr_str
     else:
-        return '<%s @ 0x%x>' % (type(r).__name__, id(r))
+        return "<%s @ 0x%x>" % (type(r).__name__, id(r))
+
 
 # Panic mode error recovery support.   This feature is being reworked--much of the
 # code here is to offer a deprecation/backwards compatible transition
@@ -161,7 +167,7 @@ def format_stack_entry(r):
 _errok = None
 _token = None
 _restart = None
-_warnmsg = '''PLY: Don't use global functions errok(), token(), and restart() in p_error().
+_warnmsg = """PLY: Don't use global functions errok(), token(), and restart() in p_error().
 Instead, invoke the methods on the associated parser instance:
 
     def p_error(p):
@@ -170,19 +176,23 @@ Instead, invoke the methods on the associated parser instance:
         ...
 
     parser = yacc.yacc()
-'''
+"""
+
 
 def errok():
     warnings.warn(_warnmsg)
     return _errok()
 
+
 def restart():
     warnings.warn(_warnmsg)
     return _restart()
 
+
 def token():
     warnings.warn(_warnmsg)
     return _token()
+
 
 # Utility function to call the p_error() function with some deprecation hacks
 def call_errorfunc(errorfunc, token, parser):
@@ -197,13 +207,14 @@ def call_errorfunc(errorfunc, token, parser):
         pass
     return r
 
-#-----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 #                        ===  LR Parsing Engine ===
 #
 # The following classes are used for the LR parser itself.  These are not
 # used during table construction and are independent of the actual LR
 # table generation algorithm
-#-----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 # This class is used to hold non-terminal grammar symbols during parsing.
 # It normally has the following attributes set:
@@ -214,12 +225,14 @@ def call_errorfunc(errorfunc, token, parser):
 #        .lexpos     = Starting lex position
 #        .endlexpos  = Ending lex position (optional, set automatically)
 
+
 class YaccSymbol:
     def __str__(self):
         return self.type
 
     def __repr__(self):
         return str(self)
+
 
 # This class is a wrapper around the objects actually passed to each
 # grammar rule.   Index lookup and assignment actually assign the
@@ -229,6 +242,7 @@ class YaccSymbol:
 # a tuple of (startline,endline) representing the range of lines
 # for a symbol.  The lexspan() method returns a tuple (lexpos,endlexpos)
 # representing the range of positional information for a symbol.
+
 
 class YaccProduction:
     def __init__(self, s, stack=None):
@@ -255,32 +269,34 @@ class YaccProduction:
         return len(self.slice)
 
     def lineno(self, n):
-        return getattr(self.slice[n], 'lineno', 0)
+        return getattr(self.slice[n], "lineno", 0)
 
     def set_lineno(self, n, lineno):
         self.slice[n].lineno = lineno
 
     def linespan(self, n):
-        startline = getattr(self.slice[n], 'lineno', 0)
-        endline = getattr(self.slice[n], 'endlineno', startline)
+        startline = getattr(self.slice[n], "lineno", 0)
+        endline = getattr(self.slice[n], "endlineno", startline)
         return startline, endline
 
     def lexpos(self, n):
-        return getattr(self.slice[n], 'lexpos', 0)
+        return getattr(self.slice[n], "lexpos", 0)
 
     def lexspan(self, n):
-        startpos = getattr(self.slice[n], 'lexpos', 0)
-        endpos = getattr(self.slice[n], 'endlexpos', startpos)
+        startpos = getattr(self.slice[n], "lexpos", 0)
+        endpos = getattr(self.slice[n], "endlexpos", startpos)
         return startpos, endpos
 
     def error(self):
         raise SyntaxError
+
 
 # -----------------------------------------------------------------------------
 #                               == LRParser ==
 #
 # The LR Parsing engine.
 # -----------------------------------------------------------------------------
+
 
 class LRParser:
     def __init__(self, lrtab, errorf):
@@ -298,7 +314,7 @@ class LRParser:
         del self.statestack[:]
         del self.symstack[:]
         sym = YaccSymbol()
-        sym.type = '$end'
+        sym.type = "$end"
         self.symstack.append(sym)
         self.statestack.append(0)
 
@@ -320,7 +336,9 @@ class LRParser:
     def disable_defaulted_states(self):
         self.defaulted_states = {}
 
-    def parse(self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None):
+    def parse(
+        self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None
+    ):
         if debug or yaccdevel:
             if isinstance(debug, int):
                 debug = PlyLogger(sys.stderr)
@@ -329,7 +347,6 @@ class LRParser:
             return self.parseopt(input, lexer, debug, tracking, tokenfunc)
         else:
             return self.parseopt_notrack(input, lexer, debug, tracking, tokenfunc)
-
 
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # parsedebug().
@@ -345,24 +362,31 @@ class LRParser:
     #
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    def parsedebug(self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None):
-        #--! parsedebug-start
-        lookahead = None                         # Current lookahead symbol
-        lookaheadstack = []                      # Stack of lookahead symbols
-        actions = self.action                    # Local reference to action table (to avoid lookup on self.)
-        goto    = self.goto                      # Local reference to goto table (to avoid lookup on self.)
-        prod    = self.productions               # Local reference to production list (to avoid lookup on self.)
-        defaulted_states = self.defaulted_states # Local reference to defaulted states
-        pslice  = YaccProduction(None)           # Production object passed to grammar rules
-        errorcount = 0                           # Used during error recovery
+    def parsedebug(
+        self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None
+    ):
+        # --! parsedebug-start
+        lookahead = None  # Current lookahead symbol
+        lookaheadstack = []  # Stack of lookahead symbols
+        actions = (
+            self.action
+        )  # Local reference to action table (to avoid lookup on self.)
+        goto = self.goto  # Local reference to goto table (to avoid lookup on self.)
+        prod = (
+            self.productions
+        )  # Local reference to production list (to avoid lookup on self.)
+        defaulted_states = self.defaulted_states  # Local reference to defaulted states
+        pslice = YaccProduction(None)  # Production object passed to grammar rules
+        errorcount = 0  # Used during error recovery
 
-        #--! DEBUG
-        debug.info('PLY: PARSE DEBUG START')
-        #--! DEBUG
+        # --! DEBUG
+        debug.info("PLY: PARSE DEBUG START")
+        # --! DEBUG
 
         # If no lexer was given, we will try to use the lex module
         if not lexer:
             from . import lex
+
             lexer = lex.lexer
 
         # Set up the lexer and parser objects on pslice
@@ -384,19 +408,19 @@ class LRParser:
 
         # Set up the state and symbol stacks
 
-        statestack = []                # Stack of parsing states
+        statestack = []  # Stack of parsing states
         self.statestack = statestack
-        symstack   = []                # Stack of grammar symbols
+        symstack = []  # Stack of grammar symbols
         self.symstack = symstack
 
-        pslice.stack = symstack         # Put in the production
-        errtoken   = None               # Err token
+        pslice.stack = symstack  # Put in the production
+        errtoken = None  # Err token
 
         # The start state is assumed to be (0,$end)
 
         statestack.append(0)
         sym = YaccSymbol()
-        sym.type = '$end'
+        sym.type = "$end"
         symstack.append(sym)
         state = 0
         while True:
@@ -404,34 +428,39 @@ class LRParser:
             # is already set, we just use that. Otherwise, we'll pull
             # the next token off of the lookaheadstack or from the lexer
 
-            #--! DEBUG
-            debug.debug('')
-            debug.debug('State  : %s', state)
-            #--! DEBUG
+            # --! DEBUG
+            debug.debug("")
+            debug.debug("State  : %s", state)
+            # --! DEBUG
 
             if state not in defaulted_states:
                 if not lookahead:
                     if not lookaheadstack:
-                        lookahead = get_token()     # Get the next token
+                        lookahead = get_token()  # Get the next token
                     else:
                         lookahead = lookaheadstack.pop()
                     if not lookahead:
                         lookahead = YaccSymbol()
-                        lookahead.type = '$end'
+                        lookahead.type = "$end"
 
                 # Check the action table
                 ltype = lookahead.type
                 t = actions[state].get(ltype)
             else:
                 t = defaulted_states[state]
-                #--! DEBUG
-                debug.debug('Defaulted state %s: Reduce using %d', state, -t)
-                #--! DEBUG
+                # --! DEBUG
+                debug.debug("Defaulted state %s: Reduce using %d", state, -t)
+                # --! DEBUG
 
-            #--! DEBUG
-            debug.debug('Stack  : %s',
-                        ('%s . %s' % (' '.join([xx.type for xx in symstack][1:]), str(lookahead))).lstrip())
-            #--! DEBUG
+            # --! DEBUG
+            debug.debug(
+                "Stack  : %s",
+                (
+                    "%s . %s"
+                    % (" ".join([xx.type for xx in symstack][1:]), str(lookahead))
+                ).lstrip(),
+            )
+            # --! DEBUG
 
             if t is not None:
                 if t > 0:
@@ -439,9 +468,9 @@ class LRParser:
                     statestack.append(t)
                     state = t
 
-                    #--! DEBUG
-                    debug.debug('Action : Shift and goto state %s', t)
-                    #--! DEBUG
+                    # --! DEBUG
+                    debug.debug("Action : Shift and goto state %s", t)
+                    # --! DEBUG
 
                     symstack.append(lookahead)
                     lookahead = None
@@ -455,37 +484,51 @@ class LRParser:
                     # reduce a symbol on the stack, emit a production
                     p = prod[-t]
                     pname = p.name
-                    plen  = p.len
+                    plen = p.len
 
                     # Get production function
                     sym = YaccSymbol()
-                    sym.type = pname       # Production name
+                    sym.type = pname  # Production name
                     sym.value = None
 
-                    #--! DEBUG
+                    # --! DEBUG
                     if plen:
-                        debug.info('Action : Reduce rule [%s] with %s and goto state %d', p.str,
-                                   '['+','.join([format_stack_entry(_v.value) for _v in symstack[-plen:]])+']',
-                                   goto[statestack[-1-plen]][pname])
+                        debug.info(
+                            "Action : Reduce rule [%s] with %s and goto state %d",
+                            p.str,
+                            "["
+                            + ",".join(
+                                [
+                                    format_stack_entry(_v.value)
+                                    for _v in symstack[-plen:]
+                                ]
+                            )
+                            + "]",
+                            goto[statestack[-1 - plen]][pname],
+                        )
                     else:
-                        debug.info('Action : Reduce rule [%s] with %s and goto state %d', p.str, [],
-                                   goto[statestack[-1]][pname])
+                        debug.info(
+                            "Action : Reduce rule [%s] with %s and goto state %d",
+                            p.str,
+                            [],
+                            goto[statestack[-1]][pname],
+                        )
 
-                    #--! DEBUG
+                    # --! DEBUG
 
                     if plen:
-                        targ = symstack[-plen-1:]
+                        targ = symstack[-plen - 1 :]
                         targ[0] = sym
 
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
                             t1 = targ[1]
                             sym.lineno = t1.lineno
                             sym.lexpos = t1.lexpos
                             t1 = targ[-1]
-                            sym.endlineno = getattr(t1, 'endlineno', t1.lineno)
-                            sym.endlexpos = getattr(t1, 'endlexpos', t1.lexpos)
-                        #--! TRACKING
+                            sym.endlineno = getattr(t1, "endlineno", t1.lineno)
+                            sym.endlexpos = getattr(t1, "endlexpos", t1.lexpos)
+                        # --! TRACKING
 
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         # The code enclosed in this section is duplicated
@@ -500,20 +543,24 @@ class LRParser:
                             self.state = state
                             p.callable(pslice)
                             del statestack[-plen:]
-                            #--! DEBUG
-                            debug.info('Result : %s', format_result(pslice[0]))
-                            #--! DEBUG
+                            # --! DEBUG
+                            debug.info("Result : %s", format_result(pslice[0]))
+                            # --! DEBUG
                             symstack.append(sym)
                             state = goto[statestack[-1]][pname]
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            symstack.extend(targ[1:-1])         # Put the production slice back on the stack
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            symstack.extend(
+                                targ[1:-1]
+                            )  # Put the production slice back on the stack
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -523,11 +570,11 @@ class LRParser:
 
                     else:
 
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
                             sym.lineno = lexer.lineno
                             sym.lexpos = lexer.lexpos
-                        #--! TRACKING
+                        # --! TRACKING
 
                         targ = [sym]
 
@@ -542,19 +589,21 @@ class LRParser:
                             # Call the grammar rule with our special slice object
                             self.state = state
                             p.callable(pslice)
-                            #--! DEBUG
-                            debug.info('Result : %s', format_result(pslice[0]))
-                            #--! DEBUG
+                            # --! DEBUG
+                            debug.info("Result : %s", format_result(pslice[0]))
+                            # --! DEBUG
                             symstack.append(sym)
                             state = goto[statestack[-1]][pname]
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -564,19 +613,24 @@ class LRParser:
 
                 if t == 0:
                     n = symstack[-1]
-                    result = getattr(n, 'value', None)
-                    #--! DEBUG
-                    debug.info('Done   : Returning %s', format_result(result))
-                    debug.info('PLY: PARSE DEBUG END')
-                    #--! DEBUG
+                    result = getattr(n, "value", None)
+                    # --! DEBUG
+                    debug.info("Done   : Returning %s", format_result(result))
+                    debug.info("PLY: PARSE DEBUG END")
+                    # --! DEBUG
                     return result
 
             if t is None:
 
-                #--! DEBUG
-                debug.error('Error  : %s',
-                            ('%s . %s' % (' '.join([xx.type for xx in symstack][1:]), str(lookahead))).lstrip())
-                #--! DEBUG
+                # --! DEBUG
+                debug.error(
+                    "Error  : %s",
+                    (
+                        "%s . %s"
+                        % (" ".join([xx.type for xx in symstack][1:]), str(lookahead))
+                    ).lstrip(),
+                )
+                # --! DEBUG
 
                 # We have some kind of parsing error here.  To handle
                 # this, we are going to push the current token onto
@@ -592,10 +646,10 @@ class LRParser:
                     errorcount = error_count
                     self.errorok = False
                     errtoken = lookahead
-                    if errtoken.type == '$end':
-                        errtoken = None               # End of file!
+                    if errtoken.type == "$end":
+                        errtoken = None  # End of file!
                     if self.errorfunc:
-                        if errtoken and not hasattr(errtoken, 'lexer'):
+                        if errtoken and not hasattr(errtoken, "lexer"):
                             errtoken.lexer = lexer
                         self.state = state
                         tok = call_errorfunc(self.errorfunc, errtoken, self)
@@ -608,16 +662,21 @@ class LRParser:
                             continue
                     else:
                         if errtoken:
-                            if hasattr(errtoken, 'lineno'):
+                            if hasattr(errtoken, "lineno"):
                                 lineno = lookahead.lineno
                             else:
                                 lineno = 0
                             if lineno:
-                                sys.stderr.write('yacc: Syntax error at line %d, token=%s\n' % (lineno, errtoken.type))
+                                sys.stderr.write(
+                                    "yacc: Syntax error at line %d, token=%s\n"
+                                    % (lineno, errtoken.type)
+                                )
                             else:
-                                sys.stderr.write('yacc: Syntax error, token=%s' % errtoken.type)
+                                sys.stderr.write(
+                                    "yacc: Syntax error, token=%s" % errtoken.type
+                                )
                         else:
-                            sys.stderr.write('yacc: Parse error in input. EOF\n')
+                            sys.stderr.write("yacc: Parse error in input. EOF\n")
                             return
 
                 else:
@@ -627,7 +686,7 @@ class LRParser:
                 # entire parse has been rolled back and we're completely hosed.   The token is
                 # discarded and we just keep going.
 
-                if len(statestack) <= 1 and lookahead.type != '$end':
+                if len(statestack) <= 1 and lookahead.type != "$end":
                     lookahead = None
                     errtoken = None
                     state = 0
@@ -639,50 +698,50 @@ class LRParser:
                 # at the end of the file. nuke the top entry and generate an error token
 
                 # Start nuking entries on the stack
-                if lookahead.type == '$end':
+                if lookahead.type == "$end":
                     # Whoa. We're really hosed here. Bail out
                     return
 
-                if lookahead.type != 'error':
+                if lookahead.type != "error":
                     sym = symstack[-1]
-                    if sym.type == 'error':
+                    if sym.type == "error":
                         # Hmmm. Error is on top of stack, we'll just nuke input
                         # symbol and continue
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
-                            sym.endlineno = getattr(lookahead, 'lineno', sym.lineno)
-                            sym.endlexpos = getattr(lookahead, 'lexpos', sym.lexpos)
-                        #--! TRACKING
+                            sym.endlineno = getattr(lookahead, "lineno", sym.lineno)
+                            sym.endlexpos = getattr(lookahead, "lexpos", sym.lexpos)
+                        # --! TRACKING
                         lookahead = None
                         continue
 
                     # Create the error symbol for the first time and make it the new lookahead symbol
                     t = YaccSymbol()
-                    t.type = 'error'
+                    t.type = "error"
 
-                    if hasattr(lookahead, 'lineno'):
+                    if hasattr(lookahead, "lineno"):
                         t.lineno = t.endlineno = lookahead.lineno
-                    if hasattr(lookahead, 'lexpos'):
+                    if hasattr(lookahead, "lexpos"):
                         t.lexpos = t.endlexpos = lookahead.lexpos
                     t.value = lookahead
                     lookaheadstack.append(lookahead)
                     lookahead = t
                 else:
                     sym = symstack.pop()
-                    #--! TRACKING
+                    # --! TRACKING
                     if tracking:
                         lookahead.lineno = sym.lineno
                         lookahead.lexpos = sym.lexpos
-                    #--! TRACKING
+                    # --! TRACKING
                     statestack.pop()
                     state = statestack[-1]
 
                 continue
 
             # Call an error function here
-            raise RuntimeError('yacc: internal parser error!!!\n')
+            raise RuntimeError("yacc: internal parser error!!!\n")
 
-        #--! parsedebug-end
+        # --! parsedebug-end
 
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # parseopt().
@@ -692,21 +751,27 @@ class LRParser:
     # changes to the parsedebug() method instead.
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    def parseopt(self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None):
-        #--! parseopt-start
-        lookahead = None                         # Current lookahead symbol
-        lookaheadstack = []                      # Stack of lookahead symbols
-        actions = self.action                    # Local reference to action table (to avoid lookup on self.)
-        goto    = self.goto                      # Local reference to goto table (to avoid lookup on self.)
-        prod    = self.productions               # Local reference to production list (to avoid lookup on self.)
-        defaulted_states = self.defaulted_states # Local reference to defaulted states
-        pslice  = YaccProduction(None)           # Production object passed to grammar rules
-        errorcount = 0                           # Used during error recovery
-
+    def parseopt(
+        self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None
+    ):
+        # --! parseopt-start
+        lookahead = None  # Current lookahead symbol
+        lookaheadstack = []  # Stack of lookahead symbols
+        actions = (
+            self.action
+        )  # Local reference to action table (to avoid lookup on self.)
+        goto = self.goto  # Local reference to goto table (to avoid lookup on self.)
+        prod = (
+            self.productions
+        )  # Local reference to production list (to avoid lookup on self.)
+        defaulted_states = self.defaulted_states  # Local reference to defaulted states
+        pslice = YaccProduction(None)  # Production object passed to grammar rules
+        errorcount = 0  # Used during error recovery
 
         # If no lexer was given, we will try to use the lex module
         if not lexer:
             from . import lex
+
             lexer = lex.lexer
 
         # Set up the lexer and parser objects on pslice
@@ -728,19 +793,19 @@ class LRParser:
 
         # Set up the state and symbol stacks
 
-        statestack = []                # Stack of parsing states
+        statestack = []  # Stack of parsing states
         self.statestack = statestack
-        symstack   = []                # Stack of grammar symbols
+        symstack = []  # Stack of grammar symbols
         self.symstack = symstack
 
-        pslice.stack = symstack         # Put in the production
-        errtoken   = None               # Err token
+        pslice.stack = symstack  # Put in the production
+        errtoken = None  # Err token
 
         # The start state is assumed to be (0,$end)
 
         statestack.append(0)
         sym = YaccSymbol()
-        sym.type = '$end'
+        sym.type = "$end"
         symstack.append(sym)
         state = 0
         while True:
@@ -748,16 +813,15 @@ class LRParser:
             # is already set, we just use that. Otherwise, we'll pull
             # the next token off of the lookaheadstack or from the lexer
 
-
             if state not in defaulted_states:
                 if not lookahead:
                     if not lookaheadstack:
-                        lookahead = get_token()     # Get the next token
+                        lookahead = get_token()  # Get the next token
                     else:
                         lookahead = lookaheadstack.pop()
                     if not lookahead:
                         lookahead = YaccSymbol()
-                        lookahead.type = '$end'
+                        lookahead.type = "$end"
 
                 # Check the action table
                 ltype = lookahead.type
@@ -765,13 +829,11 @@ class LRParser:
             else:
                 t = defaulted_states[state]
 
-
             if t is not None:
                 if t > 0:
                     # shift a symbol on the stack
                     statestack.append(t)
                     state = t
-
 
                     symstack.append(lookahead)
                     lookahead = None
@@ -785,27 +847,26 @@ class LRParser:
                     # reduce a symbol on the stack, emit a production
                     p = prod[-t]
                     pname = p.name
-                    plen  = p.len
+                    plen = p.len
 
                     # Get production function
                     sym = YaccSymbol()
-                    sym.type = pname       # Production name
+                    sym.type = pname  # Production name
                     sym.value = None
 
-
                     if plen:
-                        targ = symstack[-plen-1:]
+                        targ = symstack[-plen - 1 :]
                         targ[0] = sym
 
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
                             t1 = targ[1]
                             sym.lineno = t1.lineno
                             sym.lexpos = t1.lexpos
                             t1 = targ[-1]
-                            sym.endlineno = getattr(t1, 'endlineno', t1.lineno)
-                            sym.endlexpos = getattr(t1, 'endlexpos', t1.lexpos)
-                        #--! TRACKING
+                            sym.endlineno = getattr(t1, "endlineno", t1.lineno)
+                            sym.endlexpos = getattr(t1, "endlexpos", t1.lexpos)
+                        # --! TRACKING
 
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         # The code enclosed in this section is duplicated
@@ -825,12 +886,16 @@ class LRParser:
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            symstack.extend(targ[1:-1])         # Put the production slice back on the stack
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            symstack.extend(
+                                targ[1:-1]
+                            )  # Put the production slice back on the stack
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -840,11 +905,11 @@ class LRParser:
 
                     else:
 
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
                             sym.lineno = lexer.lineno
                             sym.lexpos = lexer.lexpos
-                        #--! TRACKING
+                        # --! TRACKING
 
                         targ = [sym]
 
@@ -864,11 +929,13 @@ class LRParser:
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -878,11 +945,10 @@ class LRParser:
 
                 if t == 0:
                     n = symstack[-1]
-                    result = getattr(n, 'value', None)
+                    result = getattr(n, "value", None)
                     return result
 
             if t is None:
-
 
                 # We have some kind of parsing error here.  To handle
                 # this, we are going to push the current token onto
@@ -898,10 +964,10 @@ class LRParser:
                     errorcount = error_count
                     self.errorok = False
                     errtoken = lookahead
-                    if errtoken.type == '$end':
-                        errtoken = None               # End of file!
+                    if errtoken.type == "$end":
+                        errtoken = None  # End of file!
                     if self.errorfunc:
-                        if errtoken and not hasattr(errtoken, 'lexer'):
+                        if errtoken and not hasattr(errtoken, "lexer"):
                             errtoken.lexer = lexer
                         self.state = state
                         tok = call_errorfunc(self.errorfunc, errtoken, self)
@@ -914,16 +980,21 @@ class LRParser:
                             continue
                     else:
                         if errtoken:
-                            if hasattr(errtoken, 'lineno'):
+                            if hasattr(errtoken, "lineno"):
                                 lineno = lookahead.lineno
                             else:
                                 lineno = 0
                             if lineno:
-                                sys.stderr.write('yacc: Syntax error at line %d, token=%s\n' % (lineno, errtoken.type))
+                                sys.stderr.write(
+                                    "yacc: Syntax error at line %d, token=%s\n"
+                                    % (lineno, errtoken.type)
+                                )
                             else:
-                                sys.stderr.write('yacc: Syntax error, token=%s' % errtoken.type)
+                                sys.stderr.write(
+                                    "yacc: Syntax error, token=%s" % errtoken.type
+                                )
                         else:
-                            sys.stderr.write('yacc: Parse error in input. EOF\n')
+                            sys.stderr.write("yacc: Parse error in input. EOF\n")
                             return
 
                 else:
@@ -933,7 +1004,7 @@ class LRParser:
                 # entire parse has been rolled back and we're completely hosed.   The token is
                 # discarded and we just keep going.
 
-                if len(statestack) <= 1 and lookahead.type != '$end':
+                if len(statestack) <= 1 and lookahead.type != "$end":
                     lookahead = None
                     errtoken = None
                     state = 0
@@ -945,50 +1016,50 @@ class LRParser:
                 # at the end of the file. nuke the top entry and generate an error token
 
                 # Start nuking entries on the stack
-                if lookahead.type == '$end':
+                if lookahead.type == "$end":
                     # Whoa. We're really hosed here. Bail out
                     return
 
-                if lookahead.type != 'error':
+                if lookahead.type != "error":
                     sym = symstack[-1]
-                    if sym.type == 'error':
+                    if sym.type == "error":
                         # Hmmm. Error is on top of stack, we'll just nuke input
                         # symbol and continue
-                        #--! TRACKING
+                        # --! TRACKING
                         if tracking:
-                            sym.endlineno = getattr(lookahead, 'lineno', sym.lineno)
-                            sym.endlexpos = getattr(lookahead, 'lexpos', sym.lexpos)
-                        #--! TRACKING
+                            sym.endlineno = getattr(lookahead, "lineno", sym.lineno)
+                            sym.endlexpos = getattr(lookahead, "lexpos", sym.lexpos)
+                        # --! TRACKING
                         lookahead = None
                         continue
 
                     # Create the error symbol for the first time and make it the new lookahead symbol
                     t = YaccSymbol()
-                    t.type = 'error'
+                    t.type = "error"
 
-                    if hasattr(lookahead, 'lineno'):
+                    if hasattr(lookahead, "lineno"):
                         t.lineno = t.endlineno = lookahead.lineno
-                    if hasattr(lookahead, 'lexpos'):
+                    if hasattr(lookahead, "lexpos"):
                         t.lexpos = t.endlexpos = lookahead.lexpos
                     t.value = lookahead
                     lookaheadstack.append(lookahead)
                     lookahead = t
                 else:
                     sym = symstack.pop()
-                    #--! TRACKING
+                    # --! TRACKING
                     if tracking:
                         lookahead.lineno = sym.lineno
                         lookahead.lexpos = sym.lexpos
-                    #--! TRACKING
+                    # --! TRACKING
                     statestack.pop()
                     state = statestack[-1]
 
                 continue
 
             # Call an error function here
-            raise RuntimeError('yacc: internal parser error!!!\n')
+            raise RuntimeError("yacc: internal parser error!!!\n")
 
-        #--! parseopt-end
+        # --! parseopt-end
 
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # parseopt_notrack().
@@ -998,21 +1069,27 @@ class LRParser:
     # by the ply/ygen.py script. Make changes to the parsedebug() method instead.
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    def parseopt_notrack(self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None):
-        #--! parseopt-notrack-start
-        lookahead = None                         # Current lookahead symbol
-        lookaheadstack = []                      # Stack of lookahead symbols
-        actions = self.action                    # Local reference to action table (to avoid lookup on self.)
-        goto    = self.goto                      # Local reference to goto table (to avoid lookup on self.)
-        prod    = self.productions               # Local reference to production list (to avoid lookup on self.)
-        defaulted_states = self.defaulted_states # Local reference to defaulted states
-        pslice  = YaccProduction(None)           # Production object passed to grammar rules
-        errorcount = 0                           # Used during error recovery
-
+    def parseopt_notrack(
+        self, input=None, lexer=None, debug=False, tracking=False, tokenfunc=None
+    ):
+        # --! parseopt-notrack-start
+        lookahead = None  # Current lookahead symbol
+        lookaheadstack = []  # Stack of lookahead symbols
+        actions = (
+            self.action
+        )  # Local reference to action table (to avoid lookup on self.)
+        goto = self.goto  # Local reference to goto table (to avoid lookup on self.)
+        prod = (
+            self.productions
+        )  # Local reference to production list (to avoid lookup on self.)
+        defaulted_states = self.defaulted_states  # Local reference to defaulted states
+        pslice = YaccProduction(None)  # Production object passed to grammar rules
+        errorcount = 0  # Used during error recovery
 
         # If no lexer was given, we will try to use the lex module
         if not lexer:
             from . import lex
+
             lexer = lex.lexer
 
         # Set up the lexer and parser objects on pslice
@@ -1034,19 +1111,19 @@ class LRParser:
 
         # Set up the state and symbol stacks
 
-        statestack = []                # Stack of parsing states
+        statestack = []  # Stack of parsing states
         self.statestack = statestack
-        symstack   = []                # Stack of grammar symbols
+        symstack = []  # Stack of grammar symbols
         self.symstack = symstack
 
-        pslice.stack = symstack         # Put in the production
-        errtoken   = None               # Err token
+        pslice.stack = symstack  # Put in the production
+        errtoken = None  # Err token
 
         # The start state is assumed to be (0,$end)
 
         statestack.append(0)
         sym = YaccSymbol()
-        sym.type = '$end'
+        sym.type = "$end"
         symstack.append(sym)
         state = 0
         while True:
@@ -1054,16 +1131,15 @@ class LRParser:
             # is already set, we just use that. Otherwise, we'll pull
             # the next token off of the lookaheadstack or from the lexer
 
-
             if state not in defaulted_states:
                 if not lookahead:
                     if not lookaheadstack:
-                        lookahead = get_token()     # Get the next token
+                        lookahead = get_token()  # Get the next token
                     else:
                         lookahead = lookaheadstack.pop()
                     if not lookahead:
                         lookahead = YaccSymbol()
-                        lookahead.type = '$end'
+                        lookahead.type = "$end"
 
                 # Check the action table
                 ltype = lookahead.type
@@ -1071,13 +1147,11 @@ class LRParser:
             else:
                 t = defaulted_states[state]
 
-
             if t is not None:
                 if t > 0:
                     # shift a symbol on the stack
                     statestack.append(t)
                     state = t
-
 
                     symstack.append(lookahead)
                     lookahead = None
@@ -1091,18 +1165,16 @@ class LRParser:
                     # reduce a symbol on the stack, emit a production
                     p = prod[-t]
                     pname = p.name
-                    plen  = p.len
+                    plen = p.len
 
                     # Get production function
                     sym = YaccSymbol()
-                    sym.type = pname       # Production name
+                    sym.type = pname  # Production name
                     sym.value = None
 
-
                     if plen:
-                        targ = symstack[-plen-1:]
+                        targ = symstack[-plen - 1 :]
                         targ[0] = sym
-
 
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         # The code enclosed in this section is duplicated
@@ -1122,12 +1194,16 @@ class LRParser:
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            symstack.extend(targ[1:-1])         # Put the production slice back on the stack
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            symstack.extend(
+                                targ[1:-1]
+                            )  # Put the production slice back on the stack
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -1136,7 +1212,6 @@ class LRParser:
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                     else:
-
 
                         targ = [sym]
 
@@ -1156,11 +1231,13 @@ class LRParser:
                             statestack.append(state)
                         except SyntaxError:
                             # If an error was set. Enter error recovery state
-                            lookaheadstack.append(lookahead)    # Save the current lookahead token
-                            statestack.pop()                    # Pop back one state (before the reduce)
+                            lookaheadstack.append(
+                                lookahead
+                            )  # Save the current lookahead token
+                            statestack.pop()  # Pop back one state (before the reduce)
                             state = statestack[-1]
-                            sym.type = 'error'
-                            sym.value = 'error'
+                            sym.type = "error"
+                            sym.value = "error"
                             lookahead = sym
                             errorcount = error_count
                             self.errorok = False
@@ -1170,11 +1247,10 @@ class LRParser:
 
                 if t == 0:
                     n = symstack[-1]
-                    result = getattr(n, 'value', None)
+                    result = getattr(n, "value", None)
                     return result
 
             if t is None:
-
 
                 # We have some kind of parsing error here.  To handle
                 # this, we are going to push the current token onto
@@ -1190,10 +1266,10 @@ class LRParser:
                     errorcount = error_count
                     self.errorok = False
                     errtoken = lookahead
-                    if errtoken.type == '$end':
-                        errtoken = None               # End of file!
+                    if errtoken.type == "$end":
+                        errtoken = None  # End of file!
                     if self.errorfunc:
-                        if errtoken and not hasattr(errtoken, 'lexer'):
+                        if errtoken and not hasattr(errtoken, "lexer"):
                             errtoken.lexer = lexer
                         self.state = state
                         tok = call_errorfunc(self.errorfunc, errtoken, self)
@@ -1206,16 +1282,21 @@ class LRParser:
                             continue
                     else:
                         if errtoken:
-                            if hasattr(errtoken, 'lineno'):
+                            if hasattr(errtoken, "lineno"):
                                 lineno = lookahead.lineno
                             else:
                                 lineno = 0
                             if lineno:
-                                sys.stderr.write('yacc: Syntax error at line %d, token=%s\n' % (lineno, errtoken.type))
+                                sys.stderr.write(
+                                    "yacc: Syntax error at line %d, token=%s\n"
+                                    % (lineno, errtoken.type)
+                                )
                             else:
-                                sys.stderr.write('yacc: Syntax error, token=%s' % errtoken.type)
+                                sys.stderr.write(
+                                    "yacc: Syntax error, token=%s" % errtoken.type
+                                )
                         else:
-                            sys.stderr.write('yacc: Parse error in input. EOF\n')
+                            sys.stderr.write("yacc: Parse error in input. EOF\n")
                             return
 
                 else:
@@ -1225,7 +1306,7 @@ class LRParser:
                 # entire parse has been rolled back and we're completely hosed.   The token is
                 # discarded and we just keep going.
 
-                if len(statestack) <= 1 and lookahead.type != '$end':
+                if len(statestack) <= 1 and lookahead.type != "$end":
                     lookahead = None
                     errtoken = None
                     state = 0
@@ -1237,13 +1318,13 @@ class LRParser:
                 # at the end of the file. nuke the top entry and generate an error token
 
                 # Start nuking entries on the stack
-                if lookahead.type == '$end':
+                if lookahead.type == "$end":
                     # Whoa. We're really hosed here. Bail out
                     return
 
-                if lookahead.type != 'error':
+                if lookahead.type != "error":
                     sym = symstack[-1]
-                    if sym.type == 'error':
+                    if sym.type == "error":
                         # Hmmm. Error is on top of stack, we'll just nuke input
                         # symbol and continue
                         lookahead = None
@@ -1251,11 +1332,11 @@ class LRParser:
 
                     # Create the error symbol for the first time and make it the new lookahead symbol
                     t = YaccSymbol()
-                    t.type = 'error'
+                    t.type = "error"
 
-                    if hasattr(lookahead, 'lineno'):
+                    if hasattr(lookahead, "lineno"):
                         t.lineno = t.endlineno = lookahead.lineno
-                    if hasattr(lookahead, 'lexpos'):
+                    if hasattr(lookahead, "lexpos"):
                         t.lexpos = t.endlexpos = lookahead.lexpos
                     t.value = lookahead
                     lookaheadstack.append(lookahead)
@@ -1268,9 +1349,10 @@ class LRParser:
                 continue
 
             # Call an error function here
-            raise RuntimeError('yacc: internal parser error!!!\n')
+            raise RuntimeError("yacc: internal parser error!!!\n")
 
-        #--! parseopt-notrack-end
+        # --! parseopt-notrack-end
+
 
 # -----------------------------------------------------------------------------
 #                          === Grammar Representation ===
@@ -1280,7 +1362,7 @@ class LRParser:
 # -----------------------------------------------------------------------------
 
 # regex matching identifiers
-_is_identifier = re.compile(r'^[a-zA-Z0-9_-]+$')
+_is_identifier = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # -----------------------------------------------------------------------------
 # class Production:
@@ -1306,21 +1388,25 @@ _is_identifier = re.compile(r'^[a-zA-Z0-9_-]+$')
 #       usyms     - Set of unique symbols found in the production
 # -----------------------------------------------------------------------------
 
+
 class Production(object):
     reduced = 0
-    def __init__(self, number, name, prod, precedence=('right', 0), func=None, file='', line=0):
-        self.name     = name
-        self.prod     = tuple(prod)
-        self.number   = number
-        self.func     = func
+
+    def __init__(
+        self, number, name, prod, precedence=("right", 0), func=None, file="", line=0
+    ):
+        self.name = name
+        self.prod = tuple(prod)
+        self.number = number
+        self.func = func
         self.callable = None
-        self.file     = file
-        self.line     = line
-        self.prec     = precedence
+        self.file = file
+        self.line = line
+        self.prec = precedence
 
         # Internal settings used during table construction
 
-        self.len  = len(self.prod)   # Length of the production
+        self.len = len(self.prod)  # Length of the production
 
         # Create a list of unique production symbols used in the production
         self.usyms = []
@@ -1334,15 +1420,15 @@ class Production(object):
 
         # Create a string representation
         if self.prod:
-            self.str = '%s -> %s' % (self.name, ' '.join(self.prod))
+            self.str = "%s -> %s" % (self.name, " ".join(self.prod))
         else:
-            self.str = '%s -> <empty>' % self.name
+            self.str = "%s -> <empty>" % self.name
 
     def __str__(self):
         return self.str
 
     def __repr__(self):
-        return 'Production(' + str(self) + ')'
+        return "Production(" + str(self) + ")"
 
     def __len__(self):
         return len(self.prod)
@@ -1360,11 +1446,11 @@ class Production(object):
         p = LRItem(self, n)
         # Precompute the list of productions immediately following.
         try:
-            p.lr_after = Prodnames[p.prod[n+1]]
+            p.lr_after = Prodnames[p.prod[n + 1]]
         except (IndexError, KeyError):
             p.lr_after = []
         try:
-            p.lr_before = p.prod[n-1]
+            p.lr_before = p.prod[n - 1]
         except IndexError:
             p.lr_before = None
         return p
@@ -1374,25 +1460,26 @@ class Production(object):
         if self.func:
             self.callable = pdict[self.func]
 
+
 # This class serves as a minimal standin for Production objects when
 # reading table data from files.   It only contains information
 # actually used by the LR parsing engine, plus some additional
 # debugging information.
 class MiniProduction(object):
     def __init__(self, str, name, len, func, file, line):
-        self.name     = name
-        self.len      = len
-        self.func     = func
+        self.name = name
+        self.len = len
+        self.func = func
         self.callable = None
-        self.file     = file
-        self.line     = line
-        self.str      = str
+        self.file = file
+        self.line = line
+        self.str = str
 
     def __str__(self):
         return self.str
 
     def __repr__(self):
-        return 'MiniProduction(%s)' % self.str
+        return "MiniProduction(%s)" % self.str
 
     # Bind the production function name to a callable
     def bind(self, pdict):
@@ -1424,27 +1511,29 @@ class MiniProduction(object):
 #       lr_before   - Grammar symbol immediately before
 # -----------------------------------------------------------------------------
 
+
 class LRItem(object):
     def __init__(self, p, n):
-        self.name       = p.name
-        self.prod       = list(p.prod)
-        self.number     = p.number
-        self.lr_index   = n
+        self.name = p.name
+        self.prod = list(p.prod)
+        self.number = p.number
+        self.lr_index = n
         self.lookaheads = {}
-        self.prod.insert(n, '.')
-        self.prod       = tuple(self.prod)
-        self.len        = len(self.prod)
-        self.usyms      = p.usyms
+        self.prod.insert(n, ".")
+        self.prod = tuple(self.prod)
+        self.len = len(self.prod)
+        self.usyms = p.usyms
 
     def __str__(self):
         if self.prod:
-            s = '%s -> %s' % (self.name, ' '.join(self.prod))
+            s = "%s -> %s" % (self.name, " ".join(self.prod))
         else:
-            s = '%s -> <empty>' % self.name
+            s = "%s -> <empty>" % self.name
         return s
 
     def __repr__(self):
-        return 'LRItem(' + str(self) + ')'
+        return "LRItem(" + str(self) + ")"
+
 
 # -----------------------------------------------------------------------------
 # rightmost_terminal()
@@ -1459,6 +1548,7 @@ def rightmost_terminal(symbols, terminals):
         i -= 1
     return None
 
+
 # -----------------------------------------------------------------------------
 #                           === GRAMMAR CLASS ===
 #
@@ -1467,45 +1557,52 @@ def rightmost_terminal(symbols, terminals):
 # This data is used for critical parts of the table generation process later.
 # -----------------------------------------------------------------------------
 
+
 class GrammarError(YaccError):
     pass
 
+
 class Grammar(object):
     def __init__(self, terminals):
-        self.Productions  = [None]  # A list of all of the productions.  The first
-                                    # entry is always reserved for the purpose of
-                                    # building an augmented grammar
+        self.Productions = [None]  # A list of all of the productions.  The first
+        # entry is always reserved for the purpose of
+        # building an augmented grammar
 
-        self.Prodnames    = {}      # A dictionary mapping the names of nonterminals to a list of all
-                                    # productions of that nonterminal.
+        self.Prodnames = (
+            {}
+        )  # A dictionary mapping the names of nonterminals to a list of all
+        # productions of that nonterminal.
 
-        self.Prodmap      = {}      # A dictionary that is only used to detect duplicate
-                                    # productions.
+        self.Prodmap = {}  # A dictionary that is only used to detect duplicate
+        # productions.
 
-        self.Terminals    = {}      # A dictionary mapping the names of terminal symbols to a
-                                    # list of the rules where they are used.
+        self.Terminals = {}  # A dictionary mapping the names of terminal symbols to a
+        # list of the rules where they are used.
 
         for term in terminals:
             self.Terminals[term] = []
 
-        self.Terminals['error'] = []
+        self.Terminals["error"] = []
 
-        self.Nonterminals = {}      # A dictionary mapping names of nonterminals to a list
-                                    # of rule numbers where they are used.
+        self.Nonterminals = {}  # A dictionary mapping names of nonterminals to a list
+        # of rule numbers where they are used.
 
-        self.First        = {}      # A dictionary of precomputed FIRST(x) symbols
+        self.First = {}  # A dictionary of precomputed FIRST(x) symbols
 
-        self.Follow       = {}      # A dictionary of precomputed FOLLOW(x) symbols
+        self.Follow = {}  # A dictionary of precomputed FOLLOW(x) symbols
 
-        self.Precedence   = {}      # Precedence rules for each terminal. Contains tuples of the
-                                    # form ('right',level) or ('nonassoc', level) or ('left',level)
+        self.Precedence = (
+            {}
+        )  # Precedence rules for each terminal. Contains tuples of the
+        # form ('right',level) or ('nonassoc', level) or ('left',level)
 
-        self.UsedPrecedence = set() # Precedence rules that were actually used by the grammer.
-                                    # This is only used to provide error checking and to generate
-                                    # a warning about unused precedence rules.
+        self.UsedPrecedence = (
+            set()
+        )  # Precedence rules that were actually used by the grammer.
+        # This is only used to provide error checking and to generate
+        # a warning about unused precedence rules.
 
-        self.Start = None           # Starting symbol for the grammar
-
+        self.Start = None  # Starting symbol for the grammar
 
     def __len__(self):
         return len(self.Productions)
@@ -1522,11 +1619,15 @@ class Grammar(object):
     # -----------------------------------------------------------------------------
 
     def set_precedence(self, term, assoc, level):
-        assert self.Productions == [None], 'Must call set_precedence() before add_production()'
+        assert self.Productions == [
+            None
+        ], "Must call set_precedence() before add_production()"
         if term in self.Precedence:
-            raise GrammarError('Precedence already specified for terminal %r' % term)
-        if assoc not in ['left', 'right', 'nonassoc']:
-            raise GrammarError("Associativity must be one of 'left','right', or 'nonassoc'")
+            raise GrammarError("Precedence already specified for terminal %r" % term)
+        if assoc not in ["left", "right", "nonassoc"]:
+            raise GrammarError(
+                "Associativity must be one of 'left','right', or 'nonassoc'"
+            )
         self.Precedence[term] = (assoc, level)
 
     # -----------------------------------------------------------------------------
@@ -1546,60 +1647,79 @@ class Grammar(object):
     # are valid and that %prec is used correctly.
     # -----------------------------------------------------------------------------
 
-    def add_production(self, prodname, syms, func=None, file='', line=0):
+    def add_production(self, prodname, syms, func=None, file="", line=0):
 
         if prodname in self.Terminals:
-            raise GrammarError('%s:%d: Illegal rule name %r. Already defined as a token' % (file, line, prodname))
-        if prodname == 'error':
-            raise GrammarError('%s:%d: Illegal rule name %r. error is a reserved word' % (file, line, prodname))
+            raise GrammarError(
+                "%s:%d: Illegal rule name %r. Already defined as a token"
+                % (file, line, prodname)
+            )
+        if prodname == "error":
+            raise GrammarError(
+                "%s:%d: Illegal rule name %r. error is a reserved word"
+                % (file, line, prodname)
+            )
         if not _is_identifier.match(prodname):
-            raise GrammarError('%s:%d: Illegal rule name %r' % (file, line, prodname))
+            raise GrammarError("%s:%d: Illegal rule name %r" % (file, line, prodname))
 
         # Look for literal tokens
         for n, s in enumerate(syms):
             if s[0] in "'\"":
                 try:
                     c = eval(s)
-                    if (len(c) > 1):
-                        raise GrammarError('%s:%d: Literal token %s in rule %r may only be a single character' %
-                                           (file, line, s, prodname))
+                    if len(c) > 1:
+                        raise GrammarError(
+                            "%s:%d: Literal token %s in rule %r may only be a single character"
+                            % (file, line, s, prodname)
+                        )
                     if c not in self.Terminals:
                         self.Terminals[c] = []
                     syms[n] = c
                     continue
                 except SyntaxError:
                     pass
-            if not _is_identifier.match(s) and s != '%prec':
-                raise GrammarError('%s:%d: Illegal name %r in rule %r' % (file, line, s, prodname))
+            if not _is_identifier.match(s) and s != "%prec":
+                raise GrammarError(
+                    "%s:%d: Illegal name %r in rule %r" % (file, line, s, prodname)
+                )
 
         # Determine the precedence level
-        if '%prec' in syms:
-            if syms[-1] == '%prec':
-                raise GrammarError('%s:%d: Syntax error. Nothing follows %%prec' % (file, line))
-            if syms[-2] != '%prec':
-                raise GrammarError('%s:%d: Syntax error. %%prec can only appear at the end of a grammar rule' %
-                                   (file, line))
+        if "%prec" in syms:
+            if syms[-1] == "%prec":
+                raise GrammarError(
+                    "%s:%d: Syntax error. Nothing follows %%prec" % (file, line)
+                )
+            if syms[-2] != "%prec":
+                raise GrammarError(
+                    "%s:%d: Syntax error. %%prec can only appear at the end of a grammar rule"
+                    % (file, line)
+                )
             precname = syms[-1]
             prodprec = self.Precedence.get(precname)
             if not prodprec:
-                raise GrammarError('%s:%d: Nothing known about the precedence of %r' % (file, line, precname))
+                raise GrammarError(
+                    "%s:%d: Nothing known about the precedence of %r"
+                    % (file, line, precname)
+                )
             else:
                 self.UsedPrecedence.add(precname)
-            del syms[-2:]     # Drop %prec from the rule
+            del syms[-2:]  # Drop %prec from the rule
         else:
             # If no %prec, precedence is determined by the rightmost terminal symbol
             precname = rightmost_terminal(syms, self.Terminals)
-            prodprec = self.Precedence.get(precname, ('right', 0))
+            prodprec = self.Precedence.get(precname, ("right", 0))
 
         # See if the rule is already in the rulemap
-        map = '%s -> %s' % (prodname, syms)
+        map = "%s -> %s" % (prodname, syms)
         if map in self.Prodmap:
             m = self.Prodmap[map]
-            raise GrammarError('%s:%d: Duplicate rule %s. ' % (file, line, m) +
-                               'Previous definition at %s:%d' % (m.file, m.line))
+            raise GrammarError(
+                "%s:%d: Duplicate rule %s. " % (file, line, m)
+                + "Previous definition at %s:%d" % (m.file, m.line)
+            )
 
         # From this point on, everything is valid.  Create a new Production instance
-        pnumber  = len(self.Productions)
+        pnumber = len(self.Productions)
         if prodname not in self.Nonterminals:
             self.Nonterminals[prodname] = []
 
@@ -1634,7 +1754,7 @@ class Grammar(object):
         if not start:
             start = self.Productions[1].name
         if start not in self.Nonterminals:
-            raise GrammarError('start symbol %s undefined' % start)
+            raise GrammarError("start symbol %s undefined" % start)
         self.Productions[0] = Production(0, "S'", [start])
         self.Nonterminals[start].append(0)
         self.Start = start
@@ -1676,7 +1796,7 @@ class Grammar(object):
         for t in self.Terminals:
             terminates[t] = True
 
-        terminates['$end'] = True
+        terminates["$end"] = True
 
         # Nonterminals:
 
@@ -1717,7 +1837,7 @@ class Grammar(object):
         infinite = []
         for (s, term) in terminates.items():
             if not term:
-                if s not in self.Prodnames and s not in self.Terminals and s != 'error':
+                if s not in self.Prodnames and s not in self.Terminals and s != "error":
                     # s is used-but-not-defined, and we've already warned of that,
                     # so it would be overkill to say that it's also non-terminating.
                     pass
@@ -1740,7 +1860,7 @@ class Grammar(object):
                 continue
 
             for s in p.prod:
-                if s not in self.Prodnames and s not in self.Terminals and s != 'error':
+                if s not in self.Prodnames and s not in self.Terminals and s != "error":
                     result.append((s, p))
         return result
 
@@ -1753,7 +1873,7 @@ class Grammar(object):
     def unused_terminals(self):
         unused_tok = []
         for s, v in self.Terminals.items():
-            if s != 'error' and not v:
+            if s != "error" and not v:
                 unused_tok.append(s)
 
         return unused_tok
@@ -1807,7 +1927,7 @@ class Grammar(object):
 
             # Add all the non-<empty> symbols of First[x] to the result.
             for f in self.First[x]:
-                if f == '<empty>':
+                if f == "<empty>":
                     x_produces_empty = True
                 else:
                     if f not in result:
@@ -1824,7 +1944,7 @@ class Grammar(object):
             # There was no 'break' from the loop,
             # so x_produces_empty was true for all x in beta,
             # so beta produces empty as well.
-            result.append('<empty>')
+            result.append("<empty>")
 
         return result
 
@@ -1841,7 +1961,7 @@ class Grammar(object):
         for t in self.Terminals:
             self.First[t] = [t]
 
-        self.First['$end'] = ['$end']
+        self.First["$end"] = ["$end"]
 
         # Nonterminals:
 
@@ -1886,7 +2006,7 @@ class Grammar(object):
         if not start:
             start = self.Productions[1].name
 
-        self.Follow[start] = ['$end']
+        self.Follow[start] = ["$end"]
 
         while True:
             didadd = False
@@ -1895,15 +2015,15 @@ class Grammar(object):
                 for i, B in enumerate(p.prod):
                     if B in self.Nonterminals:
                         # Okay. We got a non-terminal in a production
-                        fst = self._first(p.prod[i+1:])
+                        fst = self._first(p.prod[i + 1 :])
                         hasempty = False
                         for f in fst:
-                            if f != '<empty>' and f not in self.Follow[B]:
+                            if f != "<empty>" and f not in self.Follow[B]:
                                 self.Follow[B].append(f)
                                 didadd = True
-                            if f == '<empty>':
+                            if f == "<empty>":
                                 hasempty = True
-                        if hasempty or i == (len(p.prod)-1):
+                        if hasempty or i == (len(p.prod) - 1):
                             # Add elements of follow(a) to follow(b)
                             for f in self.Follow[p.name]:
                                 if f not in self.Follow[B]:
@@ -1912,7 +2032,6 @@ class Grammar(object):
             if not didadd:
                 break
         return self.Follow
-
 
     # -----------------------------------------------------------------------------
     # build_lritems()
@@ -1941,11 +2060,11 @@ class Grammar(object):
                     lri = LRItem(p, i)
                     # Precompute the list of productions immediately following
                     try:
-                        lri.lr_after = self.Prodnames[lri.prod[i+1]]
+                        lri.lr_after = self.Prodnames[lri.prod[i + 1]]
                     except (IndexError, KeyError):
                         lri.lr_after = []
                     try:
-                        lri.lr_before = lri.prod[i-1]
+                        lri.lr_before = lri.prod[i - 1]
                     except IndexError:
                         lri.lr_before = None
 
@@ -1957,6 +2076,7 @@ class Grammar(object):
                 i += 1
             p.lr_items = lr_items
 
+
 # -----------------------------------------------------------------------------
 #                            == Class LRTable ==
 #
@@ -1965,8 +2085,10 @@ class Grammar(object):
 # in the derived class LRGeneratedTable.
 # -----------------------------------------------------------------------------
 
+
 class VersionError(YaccError):
     pass
+
 
 class LRTable(object):
     def __init__(self):
@@ -1979,11 +2101,11 @@ class LRTable(object):
         if isinstance(module, types.ModuleType):
             parsetab = module
         else:
-            exec('import %s' % module)
+            exec("import %s" % module)
             parsetab = sys.modules[module]
 
         if parsetab._tabversion != __tabversion__:
-            raise VersionError('yacc table file version is out of date')
+            raise VersionError("yacc table file version is out of date")
 
         self.lr_action = parsetab._lr_action
         self.lr_goto = parsetab._lr_goto
@@ -2002,18 +2124,18 @@ class LRTable(object):
             import pickle
 
         if not os.path.exists(filename):
-          raise ImportError
+            raise ImportError
 
-        in_f = open(filename, 'rb')
+        in_f = open(filename, "rb")
 
         tabversion = pickle.load(in_f)
         if tabversion != __tabversion__:
-            raise VersionError('yacc table file version is out of date')
+            raise VersionError("yacc table file version is out of date")
         self.lr_method = pickle.load(in_f)
-        signature      = pickle.load(in_f)
+        signature = pickle.load(in_f)
         self.lr_action = pickle.load(in_f)
-        self.lr_goto   = pickle.load(in_f)
-        productions    = pickle.load(in_f)
+        self.lr_goto = pickle.load(in_f)
+        productions = pickle.load(in_f)
 
         self.lr_productions = []
         for p in productions:
@@ -2052,6 +2174,7 @@ class LRTable(object):
 #          FP   - Set-valued function
 # ------------------------------------------------------------------------------
 
+
 def digraph(X, R, FP):
     N = {}
     for x in X:
@@ -2063,13 +2186,14 @@ def digraph(X, R, FP):
             traverse(x, N, stack, F, X, R, FP)
     return F
 
+
 def traverse(x, N, stack, F, X, R, FP):
     stack.append(x)
     d = len(stack)
     N[x] = d
-    F[x] = FP(x)             # F(X) <- F'(x)
+    F[x] = FP(x)  # F(X) <- F'(x)
 
-    rel = R(x)               # Get y's related to x
+    rel = R(x)  # Get y's related to x
     for y in rel:
         if N[y] == 0:
             traverse(y, N, stack, F, X, R, FP)
@@ -2086,8 +2210,10 @@ def traverse(x, N, stack, F, X, R, FP):
             F[stack[-1]] = F[x]
             element = stack.pop()
 
+
 class LALRError(YaccError):
     pass
+
 
 # -----------------------------------------------------------------------------
 #                             == LRGeneratedTable ==
@@ -2096,10 +2222,11 @@ class LALRError(YaccError):
 # public methods except for write()
 # -----------------------------------------------------------------------------
 
+
 class LRGeneratedTable(LRTable):
-    def __init__(self, grammar, method='LALR', log=None):
-        if method not in ['SLR', 'LALR']:
-            raise LALRError('Unsupported method %s' % method)
+    def __init__(self, grammar, method="LALR", log=None):
+        if method not in ["SLR", "LALR"]:
+            raise LALRError("Unsupported method %s" % method)
 
         self.grammar = grammar
         self.lr_method = method
@@ -2110,21 +2237,21 @@ class LRGeneratedTable(LRTable):
         self.log = log
 
         # Internal attributes
-        self.lr_action     = {}        # Action table
-        self.lr_goto       = {}        # Goto table
-        self.lr_productions  = grammar.Productions    # Copy of grammar Production array
-        self.lr_goto_cache = {}        # Cache of computed gotos
-        self.lr0_cidhash   = {}        # Cache of closures
+        self.lr_action = {}  # Action table
+        self.lr_goto = {}  # Goto table
+        self.lr_productions = grammar.Productions  # Copy of grammar Production array
+        self.lr_goto_cache = {}  # Cache of computed gotos
+        self.lr0_cidhash = {}  # Cache of closures
 
-        self._add_count    = 0         # Internal counter used to detect cycles
+        self._add_count = 0  # Internal counter used to detect cycles
 
         # Diagonistic information filled in by the table generator
-        self.sr_conflict   = 0
-        self.rr_conflict   = 0
-        self.conflicts     = []        # List of conflicts
+        self.sr_conflict = 0
+        self.rr_conflict = 0
+        self.conflicts = []  # List of conflicts
 
-        self.sr_conflicts  = []
-        self.rr_conflicts  = []
+        self.sr_conflicts = []
+        self.rr_conflicts = []
 
         # Build the tables
         self.grammar.build_lritems()
@@ -2144,7 +2271,7 @@ class LRGeneratedTable(LRTable):
             didadd = False
             for j in J:
                 for x in j.lr_after:
-                    if getattr(x, 'lr0_added', 0) == self._add_count:
+                    if getattr(x, "lr0_added", 0) == self._add_count:
                         continue
                     # Add B --> .G to J
                     J.append(x.lr_next)
@@ -2184,13 +2311,13 @@ class LRGeneratedTable(LRTable):
                     s[id(n)] = s1
                 gs.append(n)
                 s = s1
-        g = s.get('$end')
+        g = s.get("$end")
         if not g:
             if gs:
                 g = self.lr0_closure(gs)
-                s['$end'] = g
+                s["$end"] = g
             else:
-                s['$end'] = gs
+                s["$end"] = gs
         self.lr_goto_cache[(id(I), x)] = g
         return g
 
@@ -2285,7 +2412,7 @@ class LRGeneratedTable(LRTable):
         for stateno, state in enumerate(C):
             for p in state:
                 if p.lr_index < p.len - 1:
-                    t = (stateno, p.prod[p.lr_index+1])
+                    t = (stateno, p.prod[p.lr_index + 1])
                     if t[1] in self.grammar.Nonterminals:
                         if t not in trans:
                             trans.append(t)
@@ -2308,14 +2435,14 @@ class LRGeneratedTable(LRTable):
         g = self.lr0_goto(C[state], N)
         for p in g:
             if p.lr_index < p.len - 1:
-                a = p.prod[p.lr_index+1]
+                a = p.prod[p.lr_index + 1]
                 if a in self.grammar.Terminals:
                     if a not in terms:
                         terms.append(a)
 
         # This extra bit is to handle the start state
         if state == 0 and N == self.grammar.Productions[0].prod[0]:
-            terms.append('$end')
+            terms.append("$end")
 
         return terms
 
@@ -2369,8 +2496,8 @@ class LRGeneratedTable(LRTable):
     # -----------------------------------------------------------------------------
 
     def compute_lookback_includes(self, C, trans, nullable):
-        lookdict = {}          # Dictionary of lookback relations
-        includedict = {}       # Dictionary of include relations
+        lookdict = {}  # Dictionary of lookback relations
+        includedict = {}  # Dictionary of include relations
 
         # Make a dictionary of non-terminal transitions
         dtrans = {}
@@ -2403,7 +2530,7 @@ class LRGeneratedTable(LRTable):
                         li = lr_index + 1
                         while li < p.len:
                             if p.prod[li] in self.grammar.Terminals:
-                                break      # No forget it
+                                break  # No forget it
                             if p.prod[li] not in nullable:
                                 break
                             li = li + 1
@@ -2411,8 +2538,8 @@ class LRGeneratedTable(LRTable):
                             # Appears to be a relation between (j,t) and (state,N)
                             includes.append((j, t))
 
-                    g = self.lr0_goto(C[j], t)               # Go to next set
-                    j = self.lr0_cidhash.get(id(g), -1)      # Go to next state
+                    g = self.lr0_goto(C[j], t)  # Go to next set
+                    j = self.lr0_cidhash.get(id(g), -1)  # Go to next state
 
                 # When we get here, j is the final state, now we have to locate the production
                 for r in C[j]:
@@ -2423,7 +2550,7 @@ class LRGeneratedTable(LRTable):
                     i = 0
                     # This look is comparing a production ". A B C" with "A B C ."
                     while i < r.lr_index:
-                        if r.prod[i] != p.prod[i+1]:
+                        if r.prod[i] != p.prod[i + 1]:
                             break
                         i = i + 1
                     else:
@@ -2450,7 +2577,7 @@ class LRGeneratedTable(LRTable):
 
     def compute_read_sets(self, C, ntrans, nullable):
         FP = lambda x: self.dr_relation(C, x, nullable)
-        R =  lambda x: self.reads_relation(C, x, nullable)
+        R = lambda x: self.reads_relation(C, x, nullable)
         F = digraph(ntrans, R, FP)
         return F
 
@@ -2472,7 +2599,7 @@ class LRGeneratedTable(LRTable):
 
     def compute_follow_sets(self, ntrans, readsets, inclsets):
         FP = lambda x: readsets[x]
-        R  = lambda x: inclsets.get(x, [])
+        R = lambda x: inclsets.get(x, [])
         F = digraph(ntrans, R, FP)
         return F
 
@@ -2532,171 +2659,197 @@ class LRGeneratedTable(LRTable):
     # -----------------------------------------------------------------------------
     def lr_parse_table(self):
         Productions = self.grammar.Productions
-        Precedence  = self.grammar.Precedence
-        goto   = self.lr_goto         # Goto array
-        action = self.lr_action       # Action array
-        log    = self.log             # Logger for output
+        Precedence = self.grammar.Precedence
+        goto = self.lr_goto  # Goto array
+        action = self.lr_action  # Action array
+        log = self.log  # Logger for output
 
-        actionp = {}                  # Action production array (temporary)
+        actionp = {}  # Action production array (temporary)
 
-        log.info('Parsing method: %s', self.lr_method)
+        log.info("Parsing method: %s", self.lr_method)
 
         # Step 1: Construct C = { I0, I1, ... IN}, collection of LR(0) items
         # This determines the number of states
 
         C = self.lr0_items()
 
-        if self.lr_method == 'LALR':
+        if self.lr_method == "LALR":
             self.add_lalr_lookaheads(C)
 
         # Build the parser table, state by state
         st = 0
         for I in C:
             # Loop over each production in I
-            actlist = []              # List of actions
-            st_action  = {}
+            actlist = []  # List of actions
+            st_action = {}
             st_actionp = {}
-            st_goto    = {}
-            log.info('')
-            log.info('state %d', st)
-            log.info('')
+            st_goto = {}
+            log.info("")
+            log.info("state %d", st)
+            log.info("")
             for p in I:
-                log.info('    (%d) %s', p.number, p)
-            log.info('')
+                log.info("    (%d) %s", p.number, p)
+            log.info("")
 
             for p in I:
-                    if p.len == p.lr_index + 1:
-                        if p.name == "S'":
-                            # Start symbol. Accept!
-                            st_action['$end'] = 0
-                            st_actionp['$end'] = p
-                        else:
-                            # We are at the end of a production.  Reduce!
-                            if self.lr_method == 'LALR':
-                                laheads = p.lookaheads[st]
-                            else:
-                                laheads = self.grammar.Follow[p.name]
-                            for a in laheads:
-                                actlist.append((a, p, 'reduce using rule %d (%s)' % (p.number, p)))
-                                r = st_action.get(a)
-                                if r is not None:
-                                    # Whoa. Have a shift/reduce or reduce/reduce conflict
-                                    if r > 0:
-                                        # Need to decide on shift or reduce here
-                                        # By default we favor shifting. Need to add
-                                        # some precedence rules here.
-
-                                        # Shift precedence comes from the token
-                                        sprec, slevel = Precedence.get(a, ('right', 0))
-
-                                        # Reduce precedence comes from rule being reduced (p)
-                                        rprec, rlevel = Productions[p.number].prec
-
-                                        if (slevel < rlevel) or ((slevel == rlevel) and (rprec == 'left')):
-                                            # We really need to reduce here.
-                                            st_action[a] = -p.number
-                                            st_actionp[a] = p
-                                            if not slevel and not rlevel:
-                                                log.info('  ! shift/reduce conflict for %s resolved as reduce', a)
-                                                self.sr_conflicts.append((st, a, 'reduce'))
-                                            Productions[p.number].reduced += 1
-                                        elif (slevel == rlevel) and (rprec == 'nonassoc'):
-                                            st_action[a] = None
-                                        else:
-                                            # Hmmm. Guess we'll keep the shift
-                                            if not rlevel:
-                                                log.info('  ! shift/reduce conflict for %s resolved as shift', a)
-                                                self.sr_conflicts.append((st, a, 'shift'))
-                                    elif r < 0:
-                                        # Reduce/reduce conflict.   In this case, we favor the rule
-                                        # that was defined first in the grammar file
-                                        oldp = Productions[-r]
-                                        pp = Productions[p.number]
-                                        if oldp.line > pp.line:
-                                            st_action[a] = -p.number
-                                            st_actionp[a] = p
-                                            chosenp, rejectp = pp, oldp
-                                            Productions[p.number].reduced += 1
-                                            Productions[oldp.number].reduced -= 1
-                                        else:
-                                            chosenp, rejectp = oldp, pp
-                                        self.rr_conflicts.append((st, chosenp, rejectp))
-                                        log.info('  ! reduce/reduce conflict for %s resolved using rule %d (%s)',
-                                                 a, st_actionp[a].number, st_actionp[a])
-                                    else:
-                                        raise LALRError('Unknown conflict in state %d' % st)
-                                else:
-                                    st_action[a] = -p.number
-                                    st_actionp[a] = p
-                                    Productions[p.number].reduced += 1
+                if p.len == p.lr_index + 1:
+                    if p.name == "S'":
+                        # Start symbol. Accept!
+                        st_action["$end"] = 0
+                        st_actionp["$end"] = p
                     else:
-                        i = p.lr_index
-                        a = p.prod[i+1]       # Get symbol right after the "."
-                        if a in self.grammar.Terminals:
-                            g = self.lr0_goto(I, a)
-                            j = self.lr0_cidhash.get(id(g), -1)
-                            if j >= 0:
-                                # We are in a shift state
-                                actlist.append((a, p, 'shift and go to state %d' % j))
-                                r = st_action.get(a)
-                                if r is not None:
-                                    # Whoa have a shift/reduce or shift/shift conflict
-                                    if r > 0:
-                                        if r != j:
-                                            raise LALRError('Shift/shift conflict in state %d' % st)
-                                    elif r < 0:
-                                        # Do a precedence check.
-                                        #   -  if precedence of reduce rule is higher, we reduce.
-                                        #   -  if precedence of reduce is same and left assoc, we reduce.
-                                        #   -  otherwise we shift
+                        # We are at the end of a production.  Reduce!
+                        if self.lr_method == "LALR":
+                            laheads = p.lookaheads[st]
+                        else:
+                            laheads = self.grammar.Follow[p.name]
+                        for a in laheads:
+                            actlist.append(
+                                (a, p, "reduce using rule %d (%s)" % (p.number, p))
+                            )
+                            r = st_action.get(a)
+                            if r is not None:
+                                # Whoa. Have a shift/reduce or reduce/reduce conflict
+                                if r > 0:
+                                    # Need to decide on shift or reduce here
+                                    # By default we favor shifting. Need to add
+                                    # some precedence rules here.
 
-                                        # Shift precedence comes from the token
-                                        sprec, slevel = Precedence.get(a, ('right', 0))
+                                    # Shift precedence comes from the token
+                                    sprec, slevel = Precedence.get(a, ("right", 0))
 
-                                        # Reduce precedence comes from the rule that could have been reduced
-                                        rprec, rlevel = Productions[st_actionp[a].number].prec
+                                    # Reduce precedence comes from rule being reduced (p)
+                                    rprec, rlevel = Productions[p.number].prec
 
-                                        if (slevel > rlevel) or ((slevel == rlevel) and (rprec == 'right')):
-                                            # We decide to shift here... highest precedence to shift
-                                            Productions[st_actionp[a].number].reduced -= 1
-                                            st_action[a] = j
-                                            st_actionp[a] = p
-                                            if not rlevel:
-                                                log.info('  ! shift/reduce conflict for %s resolved as shift', a)
-                                                self.sr_conflicts.append((st, a, 'shift'))
-                                        elif (slevel == rlevel) and (rprec == 'nonassoc'):
-                                            st_action[a] = None
-                                        else:
-                                            # Hmmm. Guess we'll keep the reduce
-                                            if not slevel and not rlevel:
-                                                log.info('  ! shift/reduce conflict for %s resolved as reduce', a)
-                                                self.sr_conflicts.append((st, a, 'reduce'))
-
+                                    if (slevel < rlevel) or (
+                                        (slevel == rlevel) and (rprec == "left")
+                                    ):
+                                        # We really need to reduce here.
+                                        st_action[a] = -p.number
+                                        st_actionp[a] = p
+                                        if not slevel and not rlevel:
+                                            log.info(
+                                                "  ! shift/reduce conflict for %s resolved as reduce",
+                                                a,
+                                            )
+                                            self.sr_conflicts.append((st, a, "reduce"))
+                                        Productions[p.number].reduced += 1
+                                    elif (slevel == rlevel) and (rprec == "nonassoc"):
+                                        st_action[a] = None
                                     else:
-                                        raise LALRError('Unknown conflict in state %d' % st)
+                                        # Hmmm. Guess we'll keep the shift
+                                        if not rlevel:
+                                            log.info(
+                                                "  ! shift/reduce conflict for %s resolved as shift",
+                                                a,
+                                            )
+                                            self.sr_conflicts.append((st, a, "shift"))
+                                elif r < 0:
+                                    # Reduce/reduce conflict.   In this case, we favor the rule
+                                    # that was defined first in the grammar file
+                                    oldp = Productions[-r]
+                                    pp = Productions[p.number]
+                                    if oldp.line > pp.line:
+                                        st_action[a] = -p.number
+                                        st_actionp[a] = p
+                                        chosenp, rejectp = pp, oldp
+                                        Productions[p.number].reduced += 1
+                                        Productions[oldp.number].reduced -= 1
+                                    else:
+                                        chosenp, rejectp = oldp, pp
+                                    self.rr_conflicts.append((st, chosenp, rejectp))
+                                    log.info(
+                                        "  ! reduce/reduce conflict for %s resolved using rule %d (%s)",
+                                        a,
+                                        st_actionp[a].number,
+                                        st_actionp[a],
+                                    )
                                 else:
-                                    st_action[a] = j
-                                    st_actionp[a] = p
+                                    raise LALRError("Unknown conflict in state %d" % st)
+                            else:
+                                st_action[a] = -p.number
+                                st_actionp[a] = p
+                                Productions[p.number].reduced += 1
+                else:
+                    i = p.lr_index
+                    a = p.prod[i + 1]  # Get symbol right after the "."
+                    if a in self.grammar.Terminals:
+                        g = self.lr0_goto(I, a)
+                        j = self.lr0_cidhash.get(id(g), -1)
+                        if j >= 0:
+                            # We are in a shift state
+                            actlist.append((a, p, "shift and go to state %d" % j))
+                            r = st_action.get(a)
+                            if r is not None:
+                                # Whoa have a shift/reduce or shift/shift conflict
+                                if r > 0:
+                                    if r != j:
+                                        raise LALRError(
+                                            "Shift/shift conflict in state %d" % st
+                                        )
+                                elif r < 0:
+                                    # Do a precedence check.
+                                    #   -  if precedence of reduce rule is higher, we reduce.
+                                    #   -  if precedence of reduce is same and left assoc, we reduce.
+                                    #   -  otherwise we shift
+
+                                    # Shift precedence comes from the token
+                                    sprec, slevel = Precedence.get(a, ("right", 0))
+
+                                    # Reduce precedence comes from the rule that could have been reduced
+                                    rprec, rlevel = Productions[
+                                        st_actionp[a].number
+                                    ].prec
+
+                                    if (slevel > rlevel) or (
+                                        (slevel == rlevel) and (rprec == "right")
+                                    ):
+                                        # We decide to shift here... highest precedence to shift
+                                        Productions[st_actionp[a].number].reduced -= 1
+                                        st_action[a] = j
+                                        st_actionp[a] = p
+                                        if not rlevel:
+                                            log.info(
+                                                "  ! shift/reduce conflict for %s resolved as shift",
+                                                a,
+                                            )
+                                            self.sr_conflicts.append((st, a, "shift"))
+                                    elif (slevel == rlevel) and (rprec == "nonassoc"):
+                                        st_action[a] = None
+                                    else:
+                                        # Hmmm. Guess we'll keep the reduce
+                                        if not slevel and not rlevel:
+                                            log.info(
+                                                "  ! shift/reduce conflict for %s resolved as reduce",
+                                                a,
+                                            )
+                                            self.sr_conflicts.append((st, a, "reduce"))
+
+                                else:
+                                    raise LALRError("Unknown conflict in state %d" % st)
+                            else:
+                                st_action[a] = j
+                                st_actionp[a] = p
 
             # Print the actions associated with each terminal
             _actprint = {}
             for a, p, m in actlist:
                 if a in st_action:
                     if p is st_actionp[a]:
-                        log.info('    %-15s %s', a, m)
+                        log.info("    %-15s %s", a, m)
                         _actprint[(a, m)] = 1
-            log.info('')
+            log.info("")
             # Print the actions that were not used. (debugging)
             not_used = 0
             for a, p, m in actlist:
                 if a in st_action:
                     if p is not st_actionp[a]:
                         if not (a, m) in _actprint:
-                            log.debug('  ! %-15s [ %s ]', a, m)
+                            log.debug("  ! %-15s [ %s ]", a, m)
                             not_used = 1
                             _actprint[(a, m)] = 1
             if not_used:
-                log.debug('')
+                log.debug("")
 
             # Construct the goto table for this state
 
@@ -2710,7 +2863,7 @@ class LRGeneratedTable(LRTable):
                 j = self.lr0_cidhash.get(id(g), -1)
                 if j >= 0:
                     st_goto[n] = j
-                    log.info('    %-30s shift and go to state %d', n, j)
+                    log.info("    %-30s shift and go to state %d", n, j)
 
             action[st] = st_action
             actionp[st] = st_actionp
@@ -2723,16 +2876,17 @@ class LRGeneratedTable(LRTable):
     # This function writes the LR parsing tables to a file
     # -----------------------------------------------------------------------------
 
-    def write_table(self, tabmodule, outputdir='', signature=''):
+    def write_table(self, tabmodule, outputdir="", signature=""):
         if isinstance(tabmodule, types.ModuleType):
             raise IOError("Won't overwrite existing tabmodule")
 
-        basemodulename = tabmodule.split('.')[-1]
-        filename = os.path.join(outputdir, basemodulename) + '.py'
+        basemodulename = tabmodule.split(".")[-1]
+        filename = os.path.join(outputdir, basemodulename) + ".py"
         try:
-            f = open(filename, 'w')
+            f = open(filename, "w")
 
-            f.write('''
+            f.write(
+                """
 # %s
 # This file is automatically generated. Do not edit.
 _tabversion = %r
@@ -2740,7 +2894,14 @@ _tabversion = %r
 _lr_method = %r
 
 _lr_signature = %r
-    ''' % (os.path.basename(filename), __tabversion__, self.lr_method, signature))
+    """
+                % (
+                    os.path.basename(filename),
+                    __tabversion__,
+                    self.lr_method,
+                    signature,
+                )
+            )
 
             # Change smaller to 0 to go back to original tables
             smaller = 1
@@ -2758,32 +2919,34 @@ _lr_signature = %r
                         i[0].append(s)
                         i[1].append(v)
 
-                f.write('\n_lr_action_items = {')
+                f.write("\n_lr_action_items = {")
                 for k, v in items.items():
-                    f.write('%r:([' % k)
+                    f.write("%r:([" % k)
                     for i in v[0]:
-                        f.write('%r,' % i)
-                    f.write('],[')
+                        f.write("%r," % i)
+                    f.write("],[")
                     for i in v[1]:
-                        f.write('%r,' % i)
+                        f.write("%r," % i)
 
-                    f.write(']),')
-                f.write('}\n')
+                    f.write("]),")
+                f.write("}\n")
 
-                f.write('''
+                f.write(
+                    """
 _lr_action = {}
 for _k, _v in _lr_action_items.items():
    for _x,_y in zip(_v[0],_v[1]):
       if not _x in _lr_action:  _lr_action[_x] = {}
       _lr_action[_x][_k] = _y
 del _lr_action_items
-''')
+"""
+                )
 
             else:
-                f.write('\n_lr_action = { ')
+                f.write("\n_lr_action = { ")
                 for k, v in self.lr_action.items():
-                    f.write('(%r,%r):%r,' % (k[0], k[1], v))
-                f.write('}\n')
+                    f.write("(%r,%r):%r," % (k[0], k[1], v))
+                f.write("}\n")
 
             if smaller:
                 # Factor out names to try and make smaller
@@ -2798,46 +2961,56 @@ del _lr_action_items
                         i[0].append(s)
                         i[1].append(v)
 
-                f.write('\n_lr_goto_items = {')
+                f.write("\n_lr_goto_items = {")
                 for k, v in items.items():
-                    f.write('%r:([' % k)
+                    f.write("%r:([" % k)
                     for i in v[0]:
-                        f.write('%r,' % i)
-                    f.write('],[')
+                        f.write("%r," % i)
+                    f.write("],[")
                     for i in v[1]:
-                        f.write('%r,' % i)
+                        f.write("%r," % i)
 
-                    f.write(']),')
-                f.write('}\n')
+                    f.write("]),")
+                f.write("}\n")
 
-                f.write('''
+                f.write(
+                    """
 _lr_goto = {}
 for _k, _v in _lr_goto_items.items():
    for _x, _y in zip(_v[0], _v[1]):
        if not _x in _lr_goto: _lr_goto[_x] = {}
        _lr_goto[_x][_k] = _y
 del _lr_goto_items
-''')
+"""
+                )
             else:
-                f.write('\n_lr_goto = { ')
+                f.write("\n_lr_goto = { ")
                 for k, v in self.lr_goto.items():
-                    f.write('(%r,%r):%r,' % (k[0], k[1], v))
-                f.write('}\n')
+                    f.write("(%r,%r):%r," % (k[0], k[1], v))
+                f.write("}\n")
 
             # Write production table
-            f.write('_lr_productions = [\n')
+            f.write("_lr_productions = [\n")
             for p in self.lr_productions:
                 if p.func:
-                    f.write('  (%r,%r,%d,%r,%r,%d),\n' % (p.str, p.name, p.len,
-                                                          p.func, os.path.basename(p.file), p.line))
+                    f.write(
+                        "  (%r,%r,%d,%r,%r,%d),\n"
+                        % (
+                            p.str,
+                            p.name,
+                            p.len,
+                            p.func,
+                            os.path.basename(p.file),
+                            p.line,
+                        )
+                    )
                 else:
-                    f.write('  (%r,%r,%d,None,None,None),\n' % (str(p), p.name, p.len))
-            f.write(']\n')
+                    f.write("  (%r,%r,%d,None,None,None),\n" % (str(p), p.name, p.len))
+            f.write("]\n")
             f.close()
 
         except IOError as e:
             raise
-
 
     # -----------------------------------------------------------------------------
     # pickle_table()
@@ -2845,12 +3018,12 @@ del _lr_goto_items
     # This function pickles the LR parsing tables to a supplied file object
     # -----------------------------------------------------------------------------
 
-    def pickle_table(self, filename, signature=''):
+    def pickle_table(self, filename, signature=""):
         try:
             import cPickle as pickle
         except ImportError:
             import pickle
-        with open(filename, 'wb') as outf:
+        with open(filename, "wb") as outf:
             pickle.dump(__tabversion__, outf, pickle_protocol)
             pickle.dump(self.lr_method, outf, pickle_protocol)
             pickle.dump(signature, outf, pickle_protocol)
@@ -2860,10 +3033,13 @@ del _lr_goto_items
             outp = []
             for p in self.lr_productions:
                 if p.func:
-                    outp.append((p.str, p.name, p.len, p.func, os.path.basename(p.file), p.line))
+                    outp.append(
+                        (p.str, p.name, p.len, p.func, os.path.basename(p.file), p.line)
+                    )
                 else:
                     outp.append((str(p), p.name, p.len, None, None, None))
             pickle.dump(outp, outf, pickle_protocol)
+
 
 # -----------------------------------------------------------------------------
 #                            === INTROSPECTION ===
@@ -2880,12 +3056,14 @@ del _lr_goto_items
 # associated with the yacc() call if none was provided.
 # -----------------------------------------------------------------------------
 
+
 def get_caller_module_dict(levels):
     f = sys._getframe(levels)
     ldict = f.f_globals.copy()
     if f.f_globals != f.f_locals:
         ldict.update(f.f_locals)
     return ldict
+
 
 # -----------------------------------------------------------------------------
 # parse_grammar()
@@ -2904,7 +3082,7 @@ def parse_grammar(doc, file, line):
         if not p:
             continue
         try:
-            if p[0] == '|':
+            if p[0] == "|":
                 # This is a continuation of a previous rule
                 if not lastp:
                     raise SyntaxError("%s:%d: Misplaced '|'" % (file, dline))
@@ -2913,18 +3091,23 @@ def parse_grammar(doc, file, line):
             else:
                 prodname = p[0]
                 lastp = prodname
-                syms   = p[2:]
+                syms = p[2:]
                 assign = p[1]
-                if assign != ':' and assign != '::=':
-                    raise SyntaxError("%s:%d: Syntax error. Expected ':'" % (file, dline))
+                if assign != ":" and assign != "::=":
+                    raise SyntaxError(
+                        "%s:%d: Syntax error. Expected ':'" % (file, dline)
+                    )
 
             grammar.append((file, dline, prodname, syms))
         except SyntaxError:
             raise
         except Exception:
-            raise SyntaxError('%s:%d: Syntax error in rule %r' % (file, dline, ps.strip()))
+            raise SyntaxError(
+                "%s:%d: Syntax error in rule %r" % (file, dline, ps.strip())
+            )
 
     return grammar
+
 
 # -----------------------------------------------------------------------------
 # ParserReflect()
@@ -2935,13 +3118,13 @@ def parse_grammar(doc, file, line):
 # -----------------------------------------------------------------------------
 class ParserReflect(object):
     def __init__(self, pdict, log=None):
-        self.pdict      = pdict
-        self.start      = None
+        self.pdict = pdict
+        self.start = None
         self.error_func = None
-        self.tokens     = None
-        self.modules    = set()
-        self.grammar    = []
-        self.error      = False
+        self.tokens = None
+        self.modules = set()
+        self.grammar = []
+        self.error = False
 
         if log is None:
             self.log = PlyLogger(sys.stderr)
@@ -2973,15 +3156,15 @@ class ParserReflect(object):
             if self.start:
                 parts.append(self.start)
             if self.prec:
-                parts.append(''.join([''.join(p) for p in self.prec]))
+                parts.append("".join(["".join(p) for p in self.prec]))
             if self.tokens:
-                parts.append(' '.join(self.tokens))
+                parts.append(" ".join(self.tokens))
             for f in self.pfuncs:
                 if f[3]:
                     parts.append(f[3])
         except (TypeError, ValueError):
             pass
-        return ''.join(parts)
+        return "".join(parts)
 
     # -----------------------------------------------------------------------------
     # validate_modules()
@@ -2996,7 +3179,7 @@ class ParserReflect(object):
 
     def validate_modules(self):
         # Match def p_funcname(
-        fre = re.compile(r'\s*def\s+(p_[a-zA-Z_0-9]*)\(')
+        fre = re.compile(r"\s*def\s+(p_[a-zA-Z_0-9]*)\(")
 
         for module in self.modules:
             try:
@@ -3015,12 +3198,17 @@ class ParserReflect(object):
                         counthash[name] = linen
                     else:
                         filename = inspect.getsourcefile(module)
-                        self.log.warning('%s:%d: Function %s redefined. Previously defined on line %d',
-                                         filename, linen, name, prev)
+                        self.log.warning(
+                            "%s:%d: Function %s redefined. Previously defined on line %d",
+                            filename,
+                            linen,
+                            name,
+                            prev,
+                        )
 
     # Get the start symbol
     def get_start(self):
-        self.start = self.pdict.get('start')
+        self.start = self.pdict.get("start")
 
     # Validate the start symbol
     def validate_start(self):
@@ -3030,7 +3218,7 @@ class ParserReflect(object):
 
     # Look for error handler
     def get_error_func(self):
-        self.error_func = self.pdict.get('p_error')
+        self.error_func = self.pdict.get("p_error")
 
     # Validate the error function
     def validate_error_func(self):
@@ -3051,24 +3239,24 @@ class ParserReflect(object):
 
             argcount = self.error_func.__code__.co_argcount - ismethod
             if argcount != 1:
-                self.log.error('%s:%d: p_error() requires 1 argument', efile, eline)
+                self.log.error("%s:%d: p_error() requires 1 argument", efile, eline)
                 self.error = True
 
     # Get the tokens map
     def get_tokens(self):
-        tokens = self.pdict.get('tokens')
+        tokens = self.pdict.get("tokens")
         if not tokens:
-            self.log.error('No token list is defined')
+            self.log.error("No token list is defined")
             self.error = True
             return
 
         if not isinstance(tokens, (list, tuple)):
-            self.log.error('tokens must be a list or tuple')
+            self.log.error("tokens must be a list or tuple")
             self.error = True
             return
 
         if not tokens:
-            self.log.error('tokens is empty')
+            self.log.error("tokens is empty")
             self.error = True
             return
 
@@ -3077,7 +3265,7 @@ class ParserReflect(object):
     # Validate the tokens
     def validate_tokens(self):
         # Validate the tokens.
-        if 'error' in self.tokens:
+        if "error" in self.tokens:
             self.log.error("Illegal token name 'error'. Is a reserved word")
             self.error = True
             return
@@ -3085,63 +3273,69 @@ class ParserReflect(object):
         terminals = set()
         for n in self.tokens:
             if n in terminals:
-                self.log.warning('Token %r multiply defined', n)
+                self.log.warning("Token %r multiply defined", n)
             terminals.add(n)
 
     # Get the precedence map (if any)
     def get_precedence(self):
-        self.prec = self.pdict.get('precedence')
+        self.prec = self.pdict.get("precedence")
 
     # Validate and parse the precedence map
     def validate_precedence(self):
         preclist = []
         if self.prec:
             if not isinstance(self.prec, (list, tuple)):
-                self.log.error('precedence must be a list or tuple')
+                self.log.error("precedence must be a list or tuple")
                 self.error = True
                 return
             for level, p in enumerate(self.prec):
                 if not isinstance(p, (list, tuple)):
-                    self.log.error('Bad precedence table')
+                    self.log.error("Bad precedence table")
                     self.error = True
                     return
 
                 if len(p) < 2:
-                    self.log.error('Malformed precedence entry %s. Must be (assoc, term, ..., term)', p)
+                    self.log.error(
+                        "Malformed precedence entry %s. Must be (assoc, term, ..., term)",
+                        p,
+                    )
                     self.error = True
                     return
                 assoc = p[0]
                 if not isinstance(assoc, string_types):
-                    self.log.error('precedence associativity must be a string')
+                    self.log.error("precedence associativity must be a string")
                     self.error = True
                     return
                 for term in p[1:]:
                     if not isinstance(term, string_types):
-                        self.log.error('precedence items must be strings')
+                        self.log.error("precedence items must be strings")
                         self.error = True
                         return
-                    preclist.append((term, assoc, level+1))
+                    preclist.append((term, assoc, level + 1))
         self.preclist = preclist
 
     # Get all p_functions from the grammar
     def get_pfunctions(self):
         p_functions = []
         for name, item in self.pdict.items():
-            if not name.startswith('p_') or name == 'p_error':
+            if not name.startswith("p_") or name == "p_error":
                 continue
             if isinstance(item, (types.FunctionType, types.MethodType)):
-                line = getattr(item, 'co_firstlineno', item.__code__.co_firstlineno)
+                line = getattr(item, "co_firstlineno", item.__code__.co_firstlineno)
                 module = inspect.getmodule(item)
                 p_functions.append((line, module, name, item.__doc__))
 
         # Sort all of the actions by line number; make sure to stringify
         # modules to make them sortable, since `line` may not uniquely sort all
         # p functions
-        p_functions.sort(key=lambda p_function: (
-            p_function[0],
-            str(p_function[1]),
-            p_function[2],
-            p_function[3]))
+        p_functions.sort(
+            key=lambda p_function: (
+                p_function[0],
+                str(p_function[1]),
+                p_function[2],
+                p_function[3],
+            )
+        )
         self.pfuncs = p_functions
 
     # Validate all of the p_functions
@@ -3149,7 +3343,7 @@ class ParserReflect(object):
         grammar = []
         # Check for non-empty symbols
         if len(self.pfuncs) == 0:
-            self.log.error('no rules of the form p_rulename are defined')
+            self.log.error("no rules of the form p_rulename are defined")
             self.error = True
             return
 
@@ -3161,14 +3355,22 @@ class ParserReflect(object):
             else:
                 reqargs = 1
             if func.__code__.co_argcount > reqargs:
-                self.log.error('%s:%d: Rule %r has too many arguments', file, line, func.__name__)
+                self.log.error(
+                    "%s:%d: Rule %r has too many arguments", file, line, func.__name__
+                )
                 self.error = True
             elif func.__code__.co_argcount < reqargs:
-                self.log.error('%s:%d: Rule %r requires an argument', file, line, func.__name__)
+                self.log.error(
+                    "%s:%d: Rule %r requires an argument", file, line, func.__name__
+                )
                 self.error = True
             elif not func.__doc__:
-                self.log.warning('%s:%d: No documentation string specified in function %r (ignored)',
-                                 file, line, func.__name__)
+                self.log.warning(
+                    "%s:%d: No documentation string specified in function %r (ignored)",
+                    file,
+                    line,
+                    func.__name__,
+                )
             else:
                 try:
                     parsed_g = parse_grammar(doc, file, line)
@@ -3186,24 +3388,32 @@ class ParserReflect(object):
         # or functions that look like they might be grammar rules.
 
         for n, v in self.pdict.items():
-            if n.startswith('p_') and isinstance(v, (types.FunctionType, types.MethodType)):
+            if n.startswith("p_") and isinstance(
+                v, (types.FunctionType, types.MethodType)
+            ):
                 continue
-            if n.startswith('t_'):
+            if n.startswith("t_"):
                 continue
-            if n.startswith('p_') and n != 'p_error':
-                self.log.warning('%r not defined as a function', n)
-            if ((isinstance(v, types.FunctionType) and v.__code__.co_argcount == 1) or
-                   (isinstance(v, types.MethodType) and v.__func__.__code__.co_argcount == 2)):
+            if n.startswith("p_") and n != "p_error":
+                self.log.warning("%r not defined as a function", n)
+            if (isinstance(v, types.FunctionType) and v.__code__.co_argcount == 1) or (
+                isinstance(v, types.MethodType) and v.__func__.__code__.co_argcount == 2
+            ):
                 if v.__doc__:
                     try:
-                        doc = v.__doc__.split(' ')
-                        if doc[1] == ':':
-                            self.log.warning('%s:%d: Possible grammar rule %r defined without p_ prefix',
-                                             v.__code__.co_filename, v.__code__.co_firstlineno, n)
+                        doc = v.__doc__.split(" ")
+                        if doc[1] == ":":
+                            self.log.warning(
+                                "%s:%d: Possible grammar rule %r defined without p_ prefix",
+                                v.__code__.co_filename,
+                                v.__code__.co_firstlineno,
+                                n,
+                            )
                     except IndexError:
                         pass
 
         self.grammar = grammar
+
 
 # -----------------------------------------------------------------------------
 # yacc(module)
@@ -3211,9 +3421,22 @@ class ParserReflect(object):
 # Build a parser
 # -----------------------------------------------------------------------------
 
-def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, start=None,
-         check_recursion=True, optimize=False, write_tables=True, debugfile=debug_file,
-         outputdir=None, debuglog=None, errorlog=None, picklefile=None):
+
+def yacc(
+    method="LALR",
+    debug=yaccdebug,
+    module=None,
+    tabmodule=tab_module,
+    start=None,
+    check_recursion=True,
+    optimize=False,
+    write_tables=True,
+    debugfile=debug_file,
+    outputdir=None,
+    debuglog=None,
+    errorlog=None,
+    picklefile=None,
+):
 
     if tabmodule is None:
         tabmodule = tab_module
@@ -3233,8 +3456,8 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         _items = [(k, getattr(module, k)) for k in dir(module)]
         pdict = dict(_items)
         # If no __file__ attribute is available, try to obtain it from the __module__ instead
-        if '__file__' not in pdict:
-            pdict['__file__'] = sys.modules[pdict['__module__']].__file__
+        if "__file__" not in pdict:
+            pdict["__file__"] = sys.modules[pdict["__module__"]].__file__
     else:
         pdict = get_caller_module_dict(2)
 
@@ -3246,34 +3469,32 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         if isinstance(tabmodule, types.ModuleType):
             srcfile = tabmodule.__file__
         else:
-            if '.' not in tabmodule:
-                srcfile = pdict['__file__']
+            if "." not in tabmodule:
+                srcfile = pdict["__file__"]
             else:
-                parts = tabmodule.split('.')
-                pkgname = '.'.join(parts[:-1])
-                exec('import %s' % pkgname)
-                srcfile = getattr(sys.modules[pkgname], '__file__', '')
+                parts = tabmodule.split(".")
+                pkgname = ".".join(parts[:-1])
+                exec("import %s" % pkgname)
+                srcfile = getattr(sys.modules[pkgname], "__file__", "")
         outputdir = os.path.dirname(srcfile)
 
     # Determine if the module is package of a package or not.
     # If so, fix the tabmodule setting so that tables load correctly
-    pkg = pdict.get('__package__')
+    pkg = pdict.get("__package__")
     if pkg and isinstance(tabmodule, str):
-        if '.' not in tabmodule:
-            tabmodule = pkg + '.' + tabmodule
-
-
+        if "." not in tabmodule:
+            tabmodule = pkg + "." + tabmodule
 
     # Set start symbol if it's specified directly using an argument
     if start is not None:
-        pdict['start'] = start
+        pdict["start"] = start
 
     # Collect parser information from the dictionary
     pinfo = ParserReflect(pdict, log=errorlog)
     pinfo.get_all()
 
     if pinfo.error:
-        raise YaccError('Unable to build parser')
+        raise YaccError("Unable to build parser")
 
     # Check signature against table files (if any)
     signature = pinfo.signature()
@@ -3292,7 +3513,7 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
                 parse = parser.parse
                 return parser
             except Exception as e:
-                errorlog.warning('There was a problem loading the table file: %r', e)
+                errorlog.warning("There was a problem loading the table file: %r", e)
     except VersionError as e:
         errorlog.warning(str(e))
     except ImportError:
@@ -3301,23 +3522,23 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
     if debuglog is None:
         if debug:
             try:
-                debuglog = PlyLogger(open(os.path.join(outputdir, debugfile), 'w'))
+                debuglog = PlyLogger(open(os.path.join(outputdir, debugfile), "w"))
             except IOError as e:
                 errorlog.warning("Couldn't open %r. %s" % (debugfile, e))
                 debuglog = NullLogger()
         else:
             debuglog = NullLogger()
 
-    debuglog.info('Created by PLY version %s (http://www.dabeaz.com/ply)', __version__)
+    debuglog.info("Created by PLY version %s (http://www.dabeaz.com/ply)", __version__)
 
     errors = False
 
     # Validate the parser information
     if pinfo.validate_all():
-        raise YaccError('Unable to build parser')
+        raise YaccError("Unable to build parser")
 
     if not pinfo.error_func:
-        errorlog.warning('no p_error() function is defined')
+        errorlog.warning("no p_error() function is defined")
 
     # Create a grammar object
     grammar = Grammar(pinfo.tokens)
@@ -3327,7 +3548,7 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         try:
             grammar.set_precedence(term, assoc, level)
         except GrammarError as e:
-            errorlog.warning('%s', e)
+            errorlog.warning("%s", e)
 
     # Add productions to the grammar
     for funcname, gram in pinfo.grammar:
@@ -3335,7 +3556,7 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         try:
             grammar.add_production(prodname, syms, funcname, file, line)
         except GrammarError as e:
-            errorlog.error('%s', e)
+            errorlog.error("%s", e)
             errors = True
 
     # Set the grammar start symbols
@@ -3349,85 +3570,98 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
         errors = True
 
     if errors:
-        raise YaccError('Unable to build parser')
+        raise YaccError("Unable to build parser")
 
     # Verify the grammar structure
     undefined_symbols = grammar.undefined_symbols()
     for sym, prod in undefined_symbols:
-        errorlog.error('%s:%d: Symbol %r used, but not defined as a token or a rule', prod.file, prod.line, sym)
+        errorlog.error(
+            "%s:%d: Symbol %r used, but not defined as a token or a rule",
+            prod.file,
+            prod.line,
+            sym,
+        )
         errors = True
 
     unused_terminals = grammar.unused_terminals()
     if unused_terminals:
-        debuglog.info('')
-        debuglog.info('Unused terminals:')
-        debuglog.info('')
+        debuglog.info("")
+        debuglog.info("Unused terminals:")
+        debuglog.info("")
         for term in unused_terminals:
-            errorlog.warning('Token %r defined, but not used', term)
-            debuglog.info('    %s', term)
+            errorlog.warning("Token %r defined, but not used", term)
+            debuglog.info("    %s", term)
 
     # Print out all productions to the debug log
     if debug:
-        debuglog.info('')
-        debuglog.info('Grammar')
-        debuglog.info('')
+        debuglog.info("")
+        debuglog.info("Grammar")
+        debuglog.info("")
         for n, p in enumerate(grammar.Productions):
-            debuglog.info('Rule %-5d %s', n, p)
+            debuglog.info("Rule %-5d %s", n, p)
 
     # Find unused non-terminals
     unused_rules = grammar.unused_rules()
     for prod in unused_rules:
-        errorlog.warning('%s:%d: Rule %r defined, but not used', prod.file, prod.line, prod.name)
+        errorlog.warning(
+            "%s:%d: Rule %r defined, but not used", prod.file, prod.line, prod.name
+        )
 
     if len(unused_terminals) == 1:
-        errorlog.warning('There is 1 unused token')
+        errorlog.warning("There is 1 unused token")
     if len(unused_terminals) > 1:
-        errorlog.warning('There are %d unused tokens', len(unused_terminals))
+        errorlog.warning("There are %d unused tokens", len(unused_terminals))
 
     if len(unused_rules) == 1:
-        errorlog.warning('There is 1 unused rule')
+        errorlog.warning("There is 1 unused rule")
     if len(unused_rules) > 1:
-        errorlog.warning('There are %d unused rules', len(unused_rules))
+        errorlog.warning("There are %d unused rules", len(unused_rules))
 
     if debug:
-        debuglog.info('')
-        debuglog.info('Terminals, with rules where they appear')
-        debuglog.info('')
+        debuglog.info("")
+        debuglog.info("Terminals, with rules where they appear")
+        debuglog.info("")
         terms = list(grammar.Terminals)
         terms.sort()
         for term in terms:
-            debuglog.info('%-20s : %s', term, ' '.join([str(s) for s in grammar.Terminals[term]]))
+            debuglog.info(
+                "%-20s : %s", term, " ".join([str(s) for s in grammar.Terminals[term]])
+            )
 
-        debuglog.info('')
-        debuglog.info('Nonterminals, with rules where they appear')
-        debuglog.info('')
+        debuglog.info("")
+        debuglog.info("Nonterminals, with rules where they appear")
+        debuglog.info("")
         nonterms = list(grammar.Nonterminals)
         nonterms.sort()
         for nonterm in nonterms:
-            debuglog.info('%-20s : %s', nonterm, ' '.join([str(s) for s in grammar.Nonterminals[nonterm]]))
-        debuglog.info('')
+            debuglog.info(
+                "%-20s : %s",
+                nonterm,
+                " ".join([str(s) for s in grammar.Nonterminals[nonterm]]),
+            )
+        debuglog.info("")
 
     if check_recursion:
         unreachable = grammar.find_unreachable()
         for u in unreachable:
-            errorlog.warning('Symbol %r is unreachable', u)
+            errorlog.warning("Symbol %r is unreachable", u)
 
         infinite = grammar.infinite_cycles()
         for inf in infinite:
-            errorlog.error('Infinite recursion detected for symbol %r', inf)
+            errorlog.error("Infinite recursion detected for symbol %r", inf)
             errors = True
 
     unused_prec = grammar.unused_precedence()
     for term, assoc in unused_prec:
-        errorlog.error('Precedence rule %r defined for unknown symbol %r', assoc, term)
+        errorlog.error("Precedence rule %r defined for unknown symbol %r", assoc, term)
         errors = True
 
     if errors:
-        raise YaccError('Unable to build parser')
+        raise YaccError("Unable to build parser")
 
     # Run the LRGeneratedTable on the grammar
     if debug:
-        errorlog.debug('Generating %s tables', method)
+        errorlog.debug("Generating %s tables", method)
 
     lr = LRGeneratedTable(grammar, method, debuglog)
 
@@ -3436,40 +3670,53 @@ def yacc(method='LALR', debug=yaccdebug, module=None, tabmodule=tab_module, star
 
         # Report shift/reduce and reduce/reduce conflicts
         if num_sr == 1:
-            errorlog.warning('1 shift/reduce conflict')
+            errorlog.warning("1 shift/reduce conflict")
         elif num_sr > 1:
-            errorlog.warning('%d shift/reduce conflicts', num_sr)
+            errorlog.warning("%d shift/reduce conflicts", num_sr)
 
         num_rr = len(lr.rr_conflicts)
         if num_rr == 1:
-            errorlog.warning('1 reduce/reduce conflict')
+            errorlog.warning("1 reduce/reduce conflict")
         elif num_rr > 1:
-            errorlog.warning('%d reduce/reduce conflicts', num_rr)
+            errorlog.warning("%d reduce/reduce conflicts", num_rr)
 
     # Write out conflicts to the output file
     if debug and (lr.sr_conflicts or lr.rr_conflicts):
-        debuglog.warning('')
-        debuglog.warning('Conflicts:')
-        debuglog.warning('')
+        debuglog.warning("")
+        debuglog.warning("Conflicts:")
+        debuglog.warning("")
 
         for state, tok, resolution in lr.sr_conflicts:
-            debuglog.warning('shift/reduce conflict for %s in state %d resolved as %s',  tok, state, resolution)
+            debuglog.warning(
+                "shift/reduce conflict for %s in state %d resolved as %s",
+                tok,
+                state,
+                resolution,
+            )
 
         already_reported = set()
         for state, rule, rejected in lr.rr_conflicts:
             if (state, id(rule), id(rejected)) in already_reported:
                 continue
-            debuglog.warning('reduce/reduce conflict in state %d resolved using rule (%s)', state, rule)
-            debuglog.warning('rejected rule (%s) in state %d', rejected, state)
-            errorlog.warning('reduce/reduce conflict in state %d resolved using rule (%s)', state, rule)
-            errorlog.warning('rejected rule (%s) in state %d', rejected, state)
+            debuglog.warning(
+                "reduce/reduce conflict in state %d resolved using rule (%s)",
+                state,
+                rule,
+            )
+            debuglog.warning("rejected rule (%s) in state %d", rejected, state)
+            errorlog.warning(
+                "reduce/reduce conflict in state %d resolved using rule (%s)",
+                state,
+                rule,
+            )
+            errorlog.warning("rejected rule (%s) in state %d", rejected, state)
             already_reported.add((state, id(rule), id(rejected)))
 
         warned_never = []
         for state, rule, rejected in lr.rr_conflicts:
             if not rejected.reduced and (rejected not in warned_never):
-                debuglog.warning('Rule (%s) is never reduced', rejected)
-                errorlog.warning('Rule (%s) is never reduced', rejected)
+                debuglog.warning("Rule (%s) is never reduced", rejected)
+                errorlog.warning("Rule (%s) is never reduced", rejected)
                 warned_never.append(rejected)
 
     # Write the table file if requested
