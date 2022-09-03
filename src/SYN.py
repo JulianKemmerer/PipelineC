@@ -14,8 +14,6 @@ from multiprocessing import Lock
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
-START_TIME = timer()
-
 import C_TO_LOGIC
 import DIAMOND
 import EFINITY
@@ -26,6 +24,8 @@ import QUARTUS
 import SW_LIB
 import VHDL
 import VIVADO
+
+START_TIME = timer()
 
 OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None # Auto created with pid and filename or from user
@@ -497,11 +497,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
   
   print_debug = False
   bad_inf_loop = False
-  #print("Get pipeline map inst_name",inst_name,flush=True)
-  # Shouldnt need debug for zero clock? You wish you sad lazy person
-  #print_debug = print_debug and (est_total_latency>0)
-  #print_debug = True
-  #bad_inf_loop = True
   if print_debug:
     print("==============================Getting pipeline map=======================================")
     print("GET_PIPELINE_MAP:")

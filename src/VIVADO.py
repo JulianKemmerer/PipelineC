@@ -6,7 +6,6 @@ import glob
 import hashlib
 import math
 import os
-#import Levenshtein
 import pickle
 import subprocess
 import sys
@@ -48,7 +47,6 @@ class ParsedTimingReport:
     single_timing_report = split_marker_toks[0]
     
     self.orig_text = syn_output
-    #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
     self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
     self.has_loops = True
     self.has_latch_loops = True
@@ -75,26 +73,8 @@ class ParsedTimingReport:
         #sys.exit(-1)
       if "inferred exception to break timing loop" in syn_output_line:
         print(syn_output_line)
-        #sys.exit(-1)
-      
-      # OK so apparently mult by self results in constants
-      # See scratch notes "wtf_multiply_by_self" dir
-      #if ( (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_output_reg_reg" in syn_output_line)) or
-      #     (("propagating constant" in syn_output_line) and ("across sequential element" in syn_output_line) and ("_intput_reg_reg" in syn_output_line)) ):
-      #print(syn_output_line)
         
-        
-      # Constant outputs? 
-      #if (("port return_output[" in syn_output_line) and ("] driven by constant " in syn_output_line)):
-      #  #print single_timing_report
-      #  #print "Unconnected or constant ports!? Wtf man"
-      #  #print(syn_output_line)
-      #  # Do debug?
-      #  #latency=1
-      #  #do_debug=True
-      #  #print "ASSUMING LATENCY=",latency
-      #  #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #  #sys.exit(-1)
+      # Constant outputs?
 
       # Unconnected ports are maybe problem?
       if ("design " in syn_output_line) and (" has unconnected port " in syn_output_line):
@@ -195,13 +175,6 @@ class ParsedTimingReport:
           sys.exit(-1)
         
         for i in range(0, len(left_names)):
-          #if left_names[i] in self.reg_merged_into and (self.reg_merged_into[left_names[i]] != right_names[i]):
-          # print "How to deal with ",left_names[i], "merged in to " ,self.reg_merged_into[left_names[i]] , "and ", right_names[i]
-          # sys.exit(-1)
-          
-          #self.reg_merged_into = dict() # dict[orig_sig] = new_sig
-          #self.reg_merged_with = dict() # dict[new_sig] = [orig,sigs]
-          #self.reg_merged_into[left_names[i]] = right_names[i]
           if not(right_names[i] in self.reg_merged_with):
             self.reg_merged_with[right_names[i]] = []
           self.reg_merged_with[right_names[i]].append(left_names[i])
@@ -215,12 +188,6 @@ class ParsedTimingReport:
       #print single_timing_report
       #print syn_output_line
       print("TIMING LOOPS!")
-      ## Do debug?
-      #latency=0
-      #do_debug=True
-      #print "ASSUMING LATENCY=",latency
-      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)
-      #sys.exit(-1)
       
       
     # Parse multiple path reports
@@ -233,7 +200,7 @@ class ParsedTimingReport:
         
     if len(self.path_reports) == 0:
       print("Bad synthesis log?:",syn_output)
-      sys.exit(-1)
+      raise Exception(f"Bad synthesis log?:{syn_output}")
     
 class PathReport:
   def __init__(self, single_timing_report):    
@@ -367,13 +334,7 @@ class PathReport:
     
     # Catch problems
     if self.slack_ns is None:
-      print("Something is wrong with this timing report?")
-      print(single_timing_report)
-      #latency=0
-      #do_debug=True
-      #print "ASSUMING LATENCY=",latency
-      #MODELSIM.DO_OPTIONAL_DEBUG(do_debug, latency)          
-      sys.exit(-1)
+      raise Exception(f"Timing report error?\n{single_timing_report}")
   
 # inst_name=None means multimain
 def GET_SYN_IMP_AND_REPORT_TIMING_TCL(multimain_timing_params, parser_state, inst_name=None, is_final_top=False):

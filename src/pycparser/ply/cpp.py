@@ -7,7 +7,11 @@
 #
 # This module implements an ANSI-C style lexical preprocessor for PLY.
 # -----------------------------------------------------------------------------
+import copy
+import os.path
+import re
 import sys
+import time
 
 # Some Python 3 compatibility shims
 if sys.version_info.major < 3:
@@ -39,13 +43,6 @@ t_CPP_DPOUND = r'\#\#'
 # Identifier
 t_CPP_ID = r'[A-Za-z_][\w_]*'
 
-# Integer literal
-def CPP_INTEGER(t):
-    r'(((((0x)|(0X))[0-9a-fA-F]+)|(\d+))([uU][lL]|[lL][uU]|[uU]|[lL])?)'
-    return t
-
-t_CPP_INTEGER = CPP_INTEGER
-
 # Floating literal
 t_CPP_FLOAT = r'((\d+)(\.\d+)(e(\+|-)?(\d+))? | (\d+)e(\+|-)?(\d+))([lL]|[fF])?'
 
@@ -57,13 +54,11 @@ def t_CPP_STRING(t):
 
 # Character constant 'c' or L'c'
 def t_CPP_CHAR(t):
-    r'(L)?\'([^\\\n]|(\\(.|\n)))*?\''
     t.lexer.lineno += t.value.count("\n")
     return t
 
 # Comment
 def t_CPP_COMMENT1(t):
-    r'(/\*(.|\n)*?\*/)'
     ncr = t.value.count("\n")
     t.lexer.lineno += ncr
     # replace with one space or a number of '\n'
@@ -72,8 +67,6 @@ def t_CPP_COMMENT1(t):
 
 # Line comment
 def t_CPP_COMMENT2(t):
-    r'(//.*?(\n|$))'
-    # replace with '/n'
     t.type = 'CPP_WS'; t.value = '\n'
     return t
 
@@ -83,10 +76,6 @@ def t_error(t):
     t.lexer.skip(1)
     return t
 
-import copy
-import os.path
-import re
-import time
 
 # -----------------------------------------------------------------------------
 # trigraph()
