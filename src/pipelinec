@@ -122,10 +122,29 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+BUGS: Missing typedef support!?
+  Shouldnt be too bad, can hack around 
+Fix bug in FSM style extra clock
+  Extra clock when just func inside nested loops? ex. GoL count live neighbors
+PyRTL issue: https://github.com/UCSBarchlab/PyRTL/issues/422
+  More yosys optimizations? Const prop? Missing opts that pyrtl doesnt like in netlist?
+  Try to recreate unused wires with smaller examples
+  try just unused wires instead of unlistened nets?
+RISCV CPU and stuff?
+  Put a risc(v? CHIPS2.0?) core along side accelerator in pipelinec
+  host OS on FOSIX NoC?
+SDR project? Receive FM radio audio?
 Victor's RT
-  UART button fun
-  See uart bin file
-  Film video w/ uart capture
+  Try ECP5 flow again?
+    Too many FFs still for ECP5 720p 89076/83640
+    480p has been running nextpnr for days? never finished...
+  Try verilating whole pipeline?
+Victor's other secret thing
+Mandelbrot demo with frame buffer FSM style and pipelined iterations?
+Do more basic tutorials like nandland+hdlbits
+  NOT FULL tutorials just refresh basics categories?
+Make const SR SL into vhdl funcs not modules
+  Const SR/SL as vhdl funcs instead of modules..thought this was done...
 Do UART in clk() style, compare to original style VIDEO? make video out of comparison?
   Do fsm style write up page, include hierarchy of function resuse/single instance
   Refresh hdl-style original uart
@@ -145,7 +164,11 @@ Do video walkthrough of Pong demo?
 Next ML demo?
   Email TinyML/HLS4ML?
   Recreate mnist demo using hls4ml or idk some CIRCT stuff?
-Do more basic tutorials like nandland+hdlbits
+Make GoL demo faster, 
+  Multi thread GoL, try easy split in two from both sides of line?
+    Computed line next state can be done in arbitrary pieces line buffer
+    Just AND together done wires from n threads
+    Might have more a little read bandwidth but doesnt seem like 2x needed
 Try to restructure FSM style parsing + building of states list to be bottom up ~ last states first
   as opposed to top down, first states first, since asking next_state.is_something() isnt valid since next state is shell, to be filled in
 Cache sliced variants with some ~epsilon of equality for close slices to predict critical path?
@@ -155,7 +178,6 @@ SiliconCompiler/edalize to automate/cloud runs of vivado+import of results into 
 Try to go from PipelineC directly to Verilator (RTLIL probably)(what about LLHD?)
   Look into intermediate representation such FIRRTL (what Yosys uses?) instead, eventually get rid of VHDL...
 Guitar i2s audio visualizer of some sort?
-Put a risc(v? CHIPS2.0?) core (in pipelinec) along side accelerator in pipeline, + host OS on FOSIX NoC
 Let __vhdl__ (and wrapping func pragmad) be used to describe comb logic that plus IO regs the syn tool will auto pipeline
 Implement DIAMOND PNR run?
 Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
@@ -214,7 +236,6 @@ Built in raw vhdl funcs for array copy / manipulation instead of many const rek 
 Auto gen <func_name>_t type which is inputs to function func(x,y,z)  struct <func_name>_t {x,y,z}
 Syn each pipeline stage ... this is hard... like slicing zero clock logic 
 Uh ceil log2 stuff doesnt work for huge consts determining bit width in python? 0x800000000000008b
-Const SR/SL as vhdl funcs instead of modules..thought this was done...
 Redo old code to use for loops instead of generated code (ex. float div)
 Document fundamental time v.s space trade off (sum example?)
 Extern keyword for (same-clock?) clock crossings?
@@ -247,5 +268,7 @@ Get rid of WIRE use in single inst fsm style arb gen code
 Check auto pipeline and clock crossing read+write behavior
 Need to re-do clock crossings/wires used in pipelineable logic to be like volatiles reading inputs always in stage 0, outputs from last stage
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
+Macros using preprocessing integer math checks for sizes?
+  Software does this somehow? hold N value type?
 """
 
