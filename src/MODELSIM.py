@@ -24,8 +24,8 @@ else:
   MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
 
 MODEL_SIM_INI_TEXT = ""
-with open("text/model_sim_ini.txt","r") as ms_ini:
-    MODEL_SIM_INI_TEXT = read(ms_ini)
+with open("src/text/model_sim_ini.txt","r") as ms_ini:
+    MODEL_SIM_INI_TEXT = ms_ini.read()
 
 
 def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
