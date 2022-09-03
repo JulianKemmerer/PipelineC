@@ -19,7 +19,7 @@ There was no real plan in the design because it seemed so simple... and I was of
 
 I am familiar with large scale industry programming practices - good style+formatting, unit tests, documentation, continuous integration, code reviews, thought out organization into classes/interfaces/generators/factories, object oriented best practices, blah blah...
 
-![complexcode](https://imgur.com/YXJbawW.png)
+![complexcode](https://imgur.com/SFbwKhil.png)
 
 I saw this all at the large company I was working for, as I had to help maintain such a slow moving and bulky system. I have written code very much like the above - so highly abstracted and flexible it will take a whole meeting to explain. I just had no time for all that on Friday nights churning out some python scripts for some hobby that was already starting to take too long...
 
