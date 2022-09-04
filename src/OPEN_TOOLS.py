@@ -162,7 +162,6 @@ class ParsedTimingReport:
         self.path_reports = dict()
         PATH_SPLIT = "Info: Critical path report for "
         maybe_path_texts = syn_output.split(PATH_SPLIT)
-        path_texts = []
         for path_text in maybe_path_texts:
             if (
                 "ns logic" in path_text and "(posedge -> posedge)" in path_text
@@ -239,9 +238,6 @@ class PathReport:
             tok1 = "Info: curr total"
             if tok1 in line:
                 in_netlist_resources = True
-
-            # SAVE LAST LINE
-            prev_line = line
 
 
 # Returns parsed timing report

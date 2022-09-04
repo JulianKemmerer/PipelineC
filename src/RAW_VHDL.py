@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 import copy
-import math
-import os
 import sys
 
 import C_TO_LOGIC
 import SW_LIB
 import VHDL
-from pycparser import c_ast, c_generator, c_parser  # bleh for now
+from pycparser import c_ast, c_parser  # bleh for now
 
 
 # Declare variables used internally to c built in C logic
@@ -230,7 +228,6 @@ def GET_RAM_RF_ARCH_DECL_TEXT(
     out_t = elem_type
     elem_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(elem_type, parser_state)
     out_vhdl_type = elem_vhdl_type
-    dim_end_index = len(dims) - 1
     # How many address bits?
     addr_bits = 0
     for addr_i in range(0, len(dims)):
@@ -288,10 +285,8 @@ def GET_RAM_RF_ARCH_DECL_TEXT(
             f.close()
             unrolled_init_vhdl_str = text
         else:
-            raise Exception(f"Unsupport init for multi dim arrays!")
-        # elif reg_info.resolved_const_str is not None:
-        #  #print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
-        #  unrolled_init_vhdl_str = VHDL.CONST_VAL_STR_TO_VHDL(reg_info.resolved_const_str, unrolled_c_type, parser_state)
+            raise Exception("Unsupport init for multi dim arrays!")
+
         rv += (
             """
   type """
@@ -388,7 +383,6 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     # Func is known to have made it look like is using var?
     var_name = list(Logic.state_regs.keys())[0]
     c_type = Logic.wire_to_c_type[var_name]
-    vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
     # Is a clocked process assigning to global reg
     # global_name = Logic.func_name.split("_"+SW_LIB.RAM_SP_RF)[0]
     # global_c_type = Logic.wire_to_c_type[list(Logic.state_regs.keys())[0]]
@@ -696,7 +690,6 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # MAx clocks is input reg and output reg
     # max_clocks = 2
     latency = len(timing_params._slices)
-    num_stages = latency + 1
     # Which stage gets the 1 LL ?
     stage_for_1ll = None
     if latency == 0:

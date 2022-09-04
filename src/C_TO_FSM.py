@@ -2,7 +2,7 @@ import copy
 import sys
 
 import C_TO_LOGIC
-from pycparser import c_ast, c_generator, c_parser
+from pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
 
@@ -1187,7 +1187,6 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
     called_func_name = c_ast_node.name.name
     called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
     for i in range(0, len(called_func_logic.inputs)):
-        input_port_name = called_func_logic.inputs[i]
         input_c_ast_node = c_ast_node.args.exprs[i]
         if C_AST_NODE_USES_CTRL_FLOW_NODE(input_c_ast_node, parser_state):
             raise Exception(
@@ -1354,7 +1353,6 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(
 
     # Similar for false
     false_state = None
-    new_false_states = []
     if c_ast_if.iffalse is not None:
         false_state = FsmStateInfo()
         name_c_ast_node = None
@@ -1533,7 +1531,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
             fsm_return_states_list.append(state)
     # Exclude pre fsm + fsm stuff (entry+fsm state)
     excluded_subentry_and_subfsm_states = True
-    ### And exclude states that end with clock
+    # And exclude states that end with clock
     states_ends_w_clk = set()
     for state in states_list:
         if state.ends_w_clk:
@@ -1714,7 +1712,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
             state_trans_lists_starting_at_start_state = GET_STATE_TRANS_LISTS(
                 start_state, parser_state
             )
-        except RecursionError as re:
+        except RecursionError:
             raise Exception(
                 f"Function: {parser_state.existing_logic.func_name} could contain a data-dependent infinite combinatorial (__clk()-less) loop starting at {start_state.name}"
             )

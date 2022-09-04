@@ -2,22 +2,18 @@
 
 import copy
 import datetime
-import getpass
 import glob
 import hashlib
 import math
 import os
 import pickle
-import subprocess
 import sys
-from multiprocessing import Lock
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import C_TO_LOGIC
 import DIAMOND
 import EFINITY
-import MODELSIM
 import OPEN_TOOLS
 import PYRTL
 import QUARTUS
