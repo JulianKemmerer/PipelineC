@@ -19,7 +19,6 @@ VHDL_PKG_EXT = ".pkg" + VHDL_FILE_EXT
 
 
 def WIRE_TO_VHDL_TYPE_STR(wire_name, logic, parser_state=None):
-    # print "logic.wire_to_c_type",logic.wire_to_c_type
     c_type_str = logic.wire_to_c_type[wire_name]
     return C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state)
 
