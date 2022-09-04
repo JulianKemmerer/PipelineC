@@ -18,6 +18,8 @@ DIAMOND_TOOL = "synplify"  # lse|synplify
 #     https://electronics.stackexchange.com/questions/327527/lattice-icecube2-error-synplify-pro-321
 
 # Returns parsed timing report
+
+
 def SYN_AND_REPORT_TIMING(
     inst_name,
     Logic,
@@ -54,7 +56,6 @@ def SYN_AND_REPORT_TIMING_NEW(
     hash_ext=None,
     use_existing_log_file=True,
 ):
-    tool_name = "diamond"
     top_entity_name = VHDL.GET_TOP_ENTITY_NAME(
         parser_state, multimain_timing_params, inst_name
     )
@@ -62,9 +63,6 @@ def SYN_AND_REPORT_TIMING_NEW(
     # Single inst
     if inst_name:
         Logic = parser_state.LogicInstLookupTable[inst_name]
-
-        # Timing params for this logic
-        timing_params = multimain_timing_params.TimingParamsLookupTable[inst_name]
 
         # First create syn/imp directory for this logic
         output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
@@ -188,7 +186,6 @@ class ParsedTimingReport:
         self.path_reports = dict()
         PATH_SPLIT = "Logical Details:"
         maybe_path_texts = syn_output.split(PATH_SPLIT)
-        path_texts = []
         for path_text in maybe_path_texts:
             if "Source:" in path_text:
                 path_report = PathReport(path_text)
@@ -214,7 +211,6 @@ class ParsedTimingReport:
         self.path_reports = dict()
         PATH_SPLIT = "Path information for path number"
         maybe_path_texts = syn_output.split(PATH_SPLIT)
-        path_texts = []
         for path_text in maybe_path_texts:
             if "Number of logic level(s):" in path_text:
                 path_report = PathReport(path_text)
@@ -362,7 +358,6 @@ class PathReport:
         self.end_reg_name = None
 
         prev_line = None
-        in_netlist_resources = False
         for line in path_report_text.split("\n"):
 
             # DELAY
@@ -445,6 +440,3 @@ class PathReport:
                     if toks[len(toks) - 1] != "reg":
                         self.end_reg_name = "_".join(toks[0 : len(toks) - 1])
                     # print("end_reg_name",self.end_reg_name)
-
-            # SAVE LAST LINE
-            prev_line = line

@@ -6,28 +6,29 @@ import os
 import pickle
 import re
 import shlex
-import signal
 import subprocess
 import sys
 from collections import OrderedDict
+from shutil import which
 from subprocess import PIPE, Popen
 
-from pycparser import c_ast, c_generator, c_parser
-
-
-def GET_TOOL_PATH(tool_exe_name):
-    from shutil import which
-
-    w = which(tool_exe_name)
-    if w is not None:
-        return str(w)
-    return None
-
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 
 import C_TO_FSM
 import SW_LIB
 import SYN
 import VHDL
+from pycparser import c_ast, c_parser
+
+
+def GET_TOOL_PATH(tool_exe_name):
+    w = which(tool_exe_name)
+    if w is not None:
+        return str(w)
+    return None
+
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -102,7 +103,7 @@ def GET_CPP_INCLUDES_LIST():
                 isdir = True
                 try:
                     os.listdir(thing_path)
-                except:
+                except OSError:
                     isdir = False
                 if isdir:
                     path_list += ["-I" + thing_path]
@@ -807,14 +808,7 @@ class Logic:
             new_wire_drives[driving_wire] = new_driven_wires
         self.wire_drives = new_wire_drives
 
-        """   
-    # If one node is null then use other
-    if self.c_ast_node is None:
-      self.c_ast_node = logic_b.c_ast_node
-    if logic_b.c_ast_node is None:
-      self.c_ast_node = self.c_ast_node
-    """
-        # C ast must match if set
+        # If one node is null then use ot
         if (self.c_ast_node is not None) and (logic_b.c_ast_node is not None):
             if not C_AST_NODES_EQUAL(self.c_ast_node, logic_b.c_ast_node):
                 # EW WTF SLOW? if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
@@ -1482,9 +1476,6 @@ class Logic:
 # Thanks stack overflow
 # https://stackoverflow.com/questions/29572623/plot-networkx-graph-from-adjacency-matrix-in-csv-file
 def show_graph_with_labels(adjacency_matrix, mylabels):
-    import matplotlib.pyplot as plt
-    import networkx as nx
-    import numpy as np
 
     rows, cols = np.where(adjacency_matrix == 1)
     edges = list(zip(rows.tolist(), cols.tolist()))
@@ -1917,8 +1908,6 @@ def BUILD_LOGIC_AS_C_CODE(
         # print "partially_complete_logic.
         fake_filename = partially_complete_logic.func_name + ".c"
         # print "fake_filename",fake_filename
-        out_path = out_dir + "/" + fake_filename
-
         # Parse and return the only func def
         func_name = partially_complete_logic.func_name
         # print "... as C code...",partially_complete_logic.func_name
@@ -1983,8 +1972,6 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
             print("...", func_def.decl.name, flush=True)
         # Each func def produces a single logic item
         parser_state.existing_logic = None
-        driven_wire_names = []
-        prepend_text = ""
         logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
         FuncLogicLookupTable[logic.func_name] = logic
 
@@ -1992,20 +1979,10 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
 
 
 # WHY CAN I NEVER REMEMBER DICT() IS NOT IMMUTABLE (AKA needs copy operator)
-# BECAUSE YOU ARE A PIECE OF SHIT
 
 # Node needs context for variable renaming over time, can give existing logic
 # _node_record = dict()
 def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
-
-    """
-    key = (str(c_ast_node), str(c_ast_node.coord), prepend_text)
-    if key not in _node_record:
-      _node_record[key] = 0
-    _node_record[key] += 1
-    if _node_record[key] > 1:
-      print prepend_text, c_ast_node.coord, "AGAIN?", _node_record[key]
-    """
 
     # Cover logic as far up in c ast tree as possible
     # Each node will have function to deal with node type:

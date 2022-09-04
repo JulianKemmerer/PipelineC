@@ -1,5 +1,4 @@
 import os
-import sys
 
 import C_TO_LOGIC
 import OPEN_TOOLS
@@ -36,10 +35,6 @@ class PathReport:
         self.start_reg_name = None
         self.end_reg_name = None
 
-        prev_line = None
-        in_netlist_resources = False
-        is_first_net = True
-        last_net_name = None
         for line in path_report_text.split("\n"):
 
             # Path delay ns
@@ -48,9 +43,6 @@ class PathReport:
                 toks = line.split(tok1)
                 pyrtl_fmax = float(toks[1].strip())
                 self.path_delay_ns = 1000.0 / pyrtl_fmax
-
-            # SAVE LAST LINE
-            prev_line = line
 
 
 # Returns parsed timing report

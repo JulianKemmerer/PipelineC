@@ -8,7 +8,7 @@ import C_TO_FSM
 import C_TO_LOGIC
 import SYN
 import VHDL
-from pycparser import c_ast, c_generator, c_parser
+from pycparser import c_ast
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)

@@ -1,5 +1,4 @@
 import os
-import sys
 
 import C_TO_LOGIC
 import SYN
@@ -47,7 +46,6 @@ class ParsedTimingReport:
         # print(syn_output)
         # Clocks reported once at end
         clock_to_act_tar_mhz = dict()
-        tok1 = "Max frequency for clock"
         in_constraints = False
         in_freqs = False
         prev_line = ""
@@ -80,12 +78,6 @@ class ParsedTimingReport:
                 in_constraints = True
             if "Clock Name      Period (ns)   Frequency (MHz)   Edge" in line:
                 in_freqs = True
-            prev_line = line[:]
-
-        # for clk_name in clock_to_act_tar_mhz:
-        #  actual_mhz, target_mhz = clock_to_act_tar_mhz[clk_name]
-        #  print(clk_name, actual_mhz, target_mhz)
-        # sys.exit(-1)
 
         # Get max delay paths
         self.path_reports = dict()
@@ -167,9 +159,6 @@ class PathReport:
             tok1 = "Data Path"
             if line.startswith(tok1):
                 in_netlist_resources = True
-
-            # SAVE LAST LINE
-            prev_line = line
 
 
 # Returns parsed timing report

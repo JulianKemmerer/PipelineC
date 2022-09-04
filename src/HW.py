@@ -1,11 +1,7 @@
 #!/usr/bin/env python
 
-import math
-import os
 import socket
 import struct
-import subprocess
-import sys
 
 # Source values for localhost
 INTERFACE = "enx0050b6248f73"
@@ -43,7 +39,6 @@ def send_ip(
     IP_TOS = 0
     IP_TOL = 20 + len(payload)
     IP_IDT = 54331
-    IP_FLG = 2  # 0x02 DF
     IP_FOS = 0
     IP_TTL = 64
     IP_PROTO = proto

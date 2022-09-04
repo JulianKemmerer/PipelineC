@@ -1,9 +1,6 @@
 import os
 import shutil
-import sys
 
-import EDAPLAY
-import MODELSIM
 import SIM
 import SYN
 
@@ -22,5 +19,3 @@ def SETUP_EDAPLAY(latency=0):
     print("Login to EDAPlayground:")
     print(" Then go to:", "https://www.edaplayground.com/x/vWLi")
     print(" Drag VHDL files from:", out_dir)
-
-    sys.exit(0)

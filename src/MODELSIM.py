@@ -1,17 +1,11 @@
 #!/usr/bin/env python
 
-import copy
-import hashlib
-import math
 import os
-import subprocess
 import sys
 
 import C_TO_LOGIC
 import SIM
-import SW_LIB
 import SYN
-import VHDL
 import VIVADO
 
 # Default to env if there

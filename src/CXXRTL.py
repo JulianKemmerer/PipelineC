@@ -1,8 +1,8 @@
 import os
-import shutil
 import sys
 
 import C_TO_LOGIC
+import OPEN_TOOLS
 import SIM
 import SYN
 
@@ -105,12 +105,6 @@ int main()
         )
     else:
         raise Exception("yosys executable not found!")
-
-    # Generate+compile sim .cpp from output VHDL
-    # Get all vhd files in syn output
-    vhd_files = SIM.GET_SIM_FILES(latency=0)
-    # Write a shell script to execute
-    import OPEN_TOOLS
 
     m_ghdl = ""
     if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
