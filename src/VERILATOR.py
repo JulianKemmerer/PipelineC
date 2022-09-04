@@ -7,12 +7,13 @@ import OPEN_TOOLS
 import SIM
 import SYN
 import VHDL
+from utilities import GET_TOOL_PATH
 
 VERILATOR_EXE = "verilator"
 VERILATOR_BIN_PATH = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"
 
 if not os.path.exists(VERILATOR_BIN_PATH):
-    VERILATOR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(VERILATOR_EXE)
+    VERILATOR_EXE_PATH = GET_TOOL_PATH(VERILATOR_EXE)
     if VERILATOR_EXE_PATH is not None:
         VERILATOR_BIN_PATH = os.path.abspath(os.path.dirname(VERILATOR_EXE_PATH))
 

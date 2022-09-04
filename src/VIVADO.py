@@ -15,10 +15,11 @@ import MODELSIM
 import SW_LIB
 import SYN
 import VHDL
+from utilities import GET_TOOL_PATH
 
 TOOL_EXE = "vivado"
 # Default to path if there
-ENV_TOOL_PATH = C_TO_LOGIC.GET_TOOL_PATH(TOOL_EXE)
+ENV_TOOL_PATH = GET_TOOL_PATH(TOOL_EXE)
 if ENV_TOOL_PATH:
     VIVADO_PATH = ENV_TOOL_PATH
     VIVADO_DIR = os.path.abspath(os.path.dirname(VIVADO_PATH) + "/../")

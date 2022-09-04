@@ -3,10 +3,11 @@ import os
 import C_TO_LOGIC
 import SYN
 import VHDL
+from utilities import GET_TOOL_PATH
 
 TOOL_EXE = "efx_run.py"
 # Default to env if there
-ENV_TOOL_PATH = C_TO_LOGIC.GET_TOOL_PATH(TOOL_EXE)
+ENV_TOOL_PATH = GET_TOOL_PATH(TOOL_EXE)
 if ENV_TOOL_PATH:
     EFINITY_EFX_RUN_PATH = ENV_TOOL_PATH
     EFINITY_PATH = os.path.abspath(os.path.dirname(EFINITY_EFX_RUN_PATH) + "/../bin")

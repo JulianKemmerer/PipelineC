@@ -7,10 +7,11 @@ import C_TO_LOGIC
 import SIM
 import SYN
 import VIVADO
+from utilities import GET_TOOL_PATH
 
 # Default to env if there
 TOOL_EXE = "vsim"
-ENV_TOOL_PATH = C_TO_LOGIC.GET_TOOL_PATH(TOOL_EXE)
+ENV_TOOL_PATH = GET_TOOL_PATH(TOOL_EXE)
 if ENV_TOOL_PATH:
     MODELSIM_PATH = ENV_TOOL_PATH
 else:
