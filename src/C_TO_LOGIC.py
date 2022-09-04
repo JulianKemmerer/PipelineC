@@ -12,22 +12,17 @@ from collections import OrderedDict
 from shutil import which
 from subprocess import PIPE, Popen
 
-import matplotlib.pyplot as plt
-import networkx as nx
-import numpy as np
+def GET_TOOL_PATH(tool_exe_name):
+    w = which(tool_exe_name)
+    if w is not None:
+        return str(w)
+    return None
 
 import C_TO_FSM
 import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
-
-
-def GET_TOOL_PATH(tool_exe_name):
-    w = which(tool_exe_name)
-    if w is not None:
-        return str(w)
-    return None
 
 
 # Global default constants for inferring different VHDL implementations of operators
@@ -1415,88 +1410,6 @@ class Logic:
             return False
 
         return True
-
-    def SHOW(self):
-        # Make adjency matrix out of all wires and submodule isnts and own 'wire'/node in network
-        nodes = list(self.wires)
-        for submodule_inst in self.submodule_instances:
-            nodes.append(submodule_inst)
-        sorted_nodes = sorted(nodes)
-        num_nodes = len(sorted_nodes)
-        adjacency_matrix = np.zeros((num_nodes, num_nodes), dtype=np.int)
-        # Build labels
-        labels_dict = make_label_dict(sorted_nodes)
-        rev_labels_dict = make_rev_label_dict(sorted_nodes)
-
-        # Populate adjaceny matrix
-        for wire in self.wire_drives:
-            driver_num = rev_labels_dict[wire]
-            driven_wires = self.wire_drives[wire]
-
-            # Get what a submodule inst form this wire would look like
-            driving_submodule_inst_name = None
-            if SUBMODULE_MARKER in wire:
-                toks = wire.split(SUBMODULE_MARKER)
-                inst_name = SUBMODULE_MARKER.join(toks[0 : len(toks) - 1])
-                if inst_name in self.submodule_instances:
-                    driving_submodule_inst_name = inst_name
-
-            # Do driven wires
-            for driven_wire in driven_wires:
-                driven_num = rev_labels_dict[driven_wire]
-                adjacency_matrix[driver_num, driven_num] = 1
-
-                # Get what a submodule inst form this driven wire would look like
-                driven_submodule_inst_name = None
-                if SUBMODULE_MARKER in driven_wire:
-                    toks = driven_wire.split(SUBMODULE_MARKER)
-                    inst_name = SUBMODULE_MARKER.join(toks[0 : len(toks) - 1])
-                    if inst_name in self.submodule_instances:
-                        driven_submodule_inst_name = inst_name
-
-                # Assign IO for submodule insts
-                if not (driving_submodule_inst_name is None):
-                    # Mus tbe output add common driver from submodule inst to output driver wire
-                    driving_submodule_node_num = rev_labels_dict[
-                        driving_submodule_inst_name
-                    ]
-                    adjacency_matrix[driving_submodule_node_num, driver_num] = 1
-                # Assign IO for submodule insts
-                if not (driven_submodule_inst_name is None):
-                    # Msut be input
-                    # Add common inst driven by driver wire
-                    driven_submodule_node_num = rev_labels_dict[
-                        driven_submodule_inst_name
-                    ]
-                    adjacency_matrix[driven_num, driven_submodule_node_num] = 1
-
-        show_graph_with_labels(adjacency_matrix, labels_dict)
-
-
-# Thanks stack overflow
-# https://stackoverflow.com/questions/29572623/plot-networkx-graph-from-adjacency-matrix-in-csv-file
-def show_graph_with_labels(adjacency_matrix, mylabels):
-
-    rows, cols = np.where(adjacency_matrix == 1)
-    edges = list(zip(rows.tolist(), cols.tolist()))
-    gr = nx.Graph()
-    gr.add_edges_from(edges)
-    nx.draw(gr, node_size=500, labels=mylabels, with_labels=True)
-    plt.show()
-
-
-def make_label_dict(labels):
-    l = {}
-    for i, label in enumerate(labels):
-        l[i] = label
-    return l
-
-
-def make_rev_label_dict(labels):
-    l = {}
-    for i, label in enumerate(labels):
-        l[label] = i
-    return l
 
 
 def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
