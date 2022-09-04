@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-import copy
-import hashlib
-import math
+
 import os
 import sys
 
@@ -601,7 +599,6 @@ begin
         clk_ext_str = CLK_EXT_STR(main_func, parser_state)
 
         # ENTITY
-        main_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
         main_needs_clk = LOGIC_NEEDS_CLOCK(
             main_func,
             main_func_logic,
@@ -618,7 +615,6 @@ begin
             main_func_logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
 
-        new_inst_name = WIRE_TO_VHDL_NAME(main_func, main_func_logic)
         text += main_entity_name + " : entity work." + main_entity_name + " "
         port_start_text = "port map (\n"
         port_text = ""
@@ -1199,22 +1195,6 @@ end arch;
 
 
 def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    # Just like top with KEEP's and IO regs only though
-    timing_params = TimingParamsLookupTable[inst_name]
-    latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-    needs_clk = LOGIC_NEEDS_CLOCK(
-        inst_name, Logic, parser_state, TimingParamsLookupTable
-    )
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-    needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
-        Logic, parser_state
-    )  # , TimingParamsLookupTable)
-    needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
-        Logic, parser_state
-    )  # , TimingParamsLookupTable)
-    entity_name = GET_ENTITY_NAME(
-        inst_name, Logic, TimingParamsLookupTable, parser_state
-    )
 
     rv = "-- BLACKBOX\n"
 
@@ -1940,14 +1920,13 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
         return False
 
     else:
-        print(
+        raise Exception(
             "Is built in C function named",
             logic_func_name,
             "with input types",
             input_c_types,
             "raw VHDL or not?",
         )
-        sys.exit(-1)
 
 
 def GET_ENTITY_PROCESS_STAGES_TEXT(
@@ -2432,17 +2411,15 @@ end arch;
             if SYN.SYN_TOOL is None:
                 SYN.PART_SET_TOOL(parser_state.part)
             if SYN.SYN_TOOL is not VIVADO:
-                print(
+                raise Exception(
                     "Async fifos are only implemented for Xilinx parts, TODO!", var_name
                 )
-                # print(0/0)
-                sys.exit(-1)
+
             if write_size != read_size:
-                print(
+                raise Exception(
                     "Only equal read and write sizes for async fifos for now, TODO!",
                     var_name,
                 )
-                sys.exit(-1)
 
         if not flow_control:
             if write_size >= read_size:

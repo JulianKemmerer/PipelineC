@@ -178,7 +178,7 @@ class ParsedTimingReport:
                     print("Reg merge len(left_names) != len(right_names) ??")
                     print("left_names", left_names)
                     print("right_names", right_names)
-                    sys.exit(-1)
+                    raise Exception("Reg: same count error")
 
                 for i in range(0, len(left_names)):
                     if not (right_names[i] in self.reg_merged_with):

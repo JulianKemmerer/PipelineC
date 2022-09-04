@@ -9,21 +9,13 @@ import shlex
 import subprocess
 import sys
 from collections import OrderedDict
-from shutil import which
 from subprocess import PIPE, Popen
-
-def GET_TOOL_PATH(tool_exe_name):
-    w = which(tool_exe_name)
-    if w is not None:
-        return str(w)
-    return None
 
 import C_TO_FSM
 import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
-
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
