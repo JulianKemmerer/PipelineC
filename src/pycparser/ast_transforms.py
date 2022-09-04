@@ -1,65 +1,65 @@
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # pycparser: ast_transforms.py
 #
 # Some utilities used by the parser to create a friendlier AST.
 #
 # Eli Bendersky [https://eli.thegreenplace.net/]
 # License: BSD
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 from . import c_ast
 
 
 def fix_switch_cases(switch_node):
-    """ The 'case' statements in a 'switch' come out of parsing with one
-        child node, so subsequent statements are just tucked to the parent
-        Compound. Additionally, consecutive (fall-through) case statements
-        come out messy. This is a peculiarity of the C grammar. The following:
+    """The 'case' statements in a 'switch' come out of parsing with one
+    child node, so subsequent statements are just tucked to the parent
+    Compound. Additionally, consecutive (fall-through) case statements
+    come out messy. This is a peculiarity of the C grammar. The following:
 
-            switch (myvar) {
-                case 10:
-                    k = 10;
-                    p = k + 1;
-                    return 10;
-                case 20:
-                case 30:
-                    return 20;
-                default:
-                    break;
-            }
+        switch (myvar) {
+            case 10:
+                k = 10;
+                p = k + 1;
+                return 10;
+            case 20:
+            case 30:
+                return 20;
+            default:
+                break;
+        }
 
-        Creates this tree (pseudo-dump):
+    Creates this tree (pseudo-dump):
 
-            Switch
-                ID: myvar
-                Compound:
-                    Case 10:
-                        k = 10
-                    p = k + 1
-                    return 10
-                    Case 20:
-                        Case 30:
-                            return 20
-                    Default:
-                        break
-
-        The goal of this transform is to fix this mess, turning it into the
-        following:
-
-            Switch
-                ID: myvar
-                Compound:
-                    Case 10:
-                        k = 10
-                        p = k + 1
-                        return 10
-                    Case 20:
+        Switch
+            ID: myvar
+            Compound:
+                Case 10:
+                    k = 10
+                p = k + 1
+                return 10
+                Case 20:
                     Case 30:
                         return 20
-                    Default:
-                        break
+                Default:
+                    break
 
-        A fixed AST node is returned. The argument may be modified.
+    The goal of this transform is to fix this mess, turning it into the
+    following:
+
+        Switch
+            ID: myvar
+            Compound:
+                Case 10:
+                    k = 10
+                    p = k + 1
+                    return 10
+                Case 20:
+                Case 30:
+                    return 20
+                Default:
+                    break
+
+    A fixed AST node is returned. The argument may be modified.
     """
     assert isinstance(switch_node, c_ast.Switch)
     if not isinstance(switch_node.stmt, c_ast.Compound):
@@ -96,10 +96,9 @@ def fix_switch_cases(switch_node):
 
 
 def _extract_nested_case(case_node, stmts_list):
-    """ Recursively extract consecutive Case statements that are made nested
-        by the parser and add them to the stmts_list.
+    """Recursively extract consecutive Case statements that are made nested
+    by the parser and add them to the stmts_list.
     """
     if isinstance(case_node.stmts[0], (c_ast.Case, c_ast.Default)):
         stmts_list.append(case_node.stmts.pop())
         _extract_nested_case(stmts_list[-1], stmts_list)
-
