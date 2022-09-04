@@ -9,21 +9,13 @@ import shlex
 import subprocess
 import sys
 from collections import OrderedDict
-from shutil import which
 from subprocess import PIPE, Popen
-
-def GET_TOOL_PATH(tool_exe_name):
-    w = which(tool_exe_name)
-    if w is not None:
-        return str(w)
-    return None
 
 import C_TO_FSM
 import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
-
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -81,7 +73,7 @@ C_AST_NODE_HASH_LEN = 4
 TEMP_HACKY_C_AST_NODE_ID = True
 
 
-def GET_CPP_INCLUDES_LIST():
+def GET_CPP_INCLUDES_LIST() -> list[str]:
     path_list = []
     # Include output directory, and other generated output dir
     if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):
@@ -224,15 +216,6 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
     # print toks[1:]
     files = toks[1:]
     return set(files)
-    """
-  existing_files = []
-  for f in files:
-    if os.path.exists(f):
-      existing_files.append(f)
-
-  #sys.exit(-1)
-  return existing_files
-  """
 
 
 def GET_SHELL_CMD_OUTPUT(cmd_str, cwd="."):
@@ -377,12 +360,12 @@ def UNIQUE_KEY_DICT_MERGE(self_d1, d2):
     return rv
 
 
-def DICT_SET_VALUE_MERGE(self_d1, d2):
-    rv = self_d1
+def DICT_SET_VALUE_MERGE(d1, d2):
+    rv = d1
     for key in d2:
-        if key in self_d1:
+        if key in d1:
             # Result is union of two sets
-            rv[key] = self_d1[key] | d2[key]
+            rv[key] = d1[key] | d2[key]
         else:
             rv[key] = d2[key]
 
@@ -1489,8 +1472,7 @@ def WIRE_IS_CONSTANT(wire):
         print("wire", wire)
         print("new_wire", new_wire)
         print("WIRE_IS_CONSTANT   but is not?")
-        print(0 / 0)
-        sys.exit(-1)
+        raise Exception("This shouldn't happen")
 
     return rv
 
@@ -1532,9 +1514,6 @@ def WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
 def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     containing_func_logic, submodule_inst, parser_state
 ):
-    # print "containing_func_logic.func_name, submodule_inst"
-    # print(containing_func_logic.func_name, "|", submodule_inst)
-    # print "====================================================================================="
     # Construct a fake 'submodule_logic' with correct name, inputs, outputs
     submodule_logic = Logic()
     submodule_logic.is_c_built_in = True
@@ -1975,9 +1954,7 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
         print("Animal Collective - The Purple Bottle")
         print("Cannot parse c ast node to logic:", c_ast_node.coord)
         print(c_ast_node)
-        # casthelp(c_ast_node)
-        # print "driven_wire_names=",driven_wire_names
-        sys.exit(-1)
+        raise Exception("C ast node cannot be parsed to logic")
 
 
 def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):

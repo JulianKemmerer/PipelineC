@@ -3,7 +3,6 @@ import sys
 
 import C_TO_LOGIC
 import OPEN_TOOLS
-import SIM
 import SYN
 
 

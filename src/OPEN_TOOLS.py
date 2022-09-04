@@ -4,6 +4,7 @@ import sys
 import C_TO_LOGIC
 import SYN
 import VHDL
+from utilities import GET_TOOL_PATH
 
 # Tool names
 YOSYS_EXE = "yosys"
@@ -26,17 +27,17 @@ if os.path.exists(OSS_CAD_SUITE_PATH):
     GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
     GHDL_PLUGIN_BUILT_IN = False
 else:
-    YOSYS_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(YOSYS_EXE)
+    YOSYS_EXE_PATH = GET_TOOL_PATH(YOSYS_EXE)
     if YOSYS_EXE_PATH is not None:
         YOSYS_BIN_PATH = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
 
-    GHDL_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(GHDL_EXE)
+    GHDL_EXE_PATH = GET_TOOL_PATH(GHDL_EXE)
     if GHDL_EXE_PATH is not None:
         GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
         GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH) + "/../lib/ghdl")
     GHDL_PLUGIN_BUILT_IN = False
 
-    NEXTPNR_EXE_PATH = C_TO_LOGIC.GET_TOOL_PATH(NEXT_PNR_EXE)
+    NEXTPNR_EXE_PATH = GET_TOOL_PATH(NEXT_PNR_EXE)
     if NEXTPNR_EXE_PATH is not None:
         NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
 
