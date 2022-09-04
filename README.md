@@ -19,18 +19,20 @@ Get started by [reading the wiki](https://github.com/JulianKemmerer/PipelineC/wi
 
 A C-like(1) hardware description language (HDL)(2) adding high level synthesis(HLS)-like automatic pipelining(3) as a language construct/compiler feature.
 
-1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But mostly compileable by gcc for doing basic functional verification/'simulation'.
-   This is for convenience as a familiar bare minimum language prototype, not as an ideal end goal. Reach out to help develop something more complex together!
+1. [Not actually regular C](https://en.wikipedia.org/wiki/C_to_HDL). But can be partly compiled by gcc/llvm for doing basic functional verification/'simulation'. Reach out if interested in developing more complex language syntax!
 2. Can reasonably replace Verilog/VHDL. Compiler produces synthesizable and human readable+debuggable VHDL. Hooks exist for inserting raw VHDL / existing IP / black boxes.
 3. If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no global/static variables) then it will be autopipelined. 
    Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208)
    and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). 
-   Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/) and the [DFiantHDL language](https://dfianthdl.github.io/) as well.
+   Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
 
 # What is PipelineC not?
 
 * High level synthesis of arbitrary C code with a global memory model / threads / etc.
   * Cannot do 'nested loops to a memory architecture' for you.
+* Compiled C based hardware simulator
+  * Only _parts_ of PipelineC code can be compiled by C compilers and run (is encouraged)
+  * But entire multi-module, multi-clock-domain, etc whole designs cannot simply be compiled and run like regular C programs.
 * Meta-programming hardware-generator (ex. uses C type system and preprocessor).
 * Stitching tool automating the build flow from code/modules to bitstream.
   * Tool does partially automate synthesis runs but automation to final bitstream is left to the user.
@@ -40,7 +42,7 @@ A C-like(1) hardware description language (HDL)(2) adding high level synthesis(H
 _An easy to understand hardware description language with a powerful autopipelining compiler and growing set of real life hardware design inspired features._
 
 * Familiar C syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments, reasoning about the sequential ordering of combinatorial logic).
-* Simulate your code in seconds, debug with printf's (tool imports human readable+debuggable VHDL into Modelsim - can also imagine custom C based simulation is within reach as well)
+* Compatible with all HDL simulators (conversion to Verilog is included as needed). Ex. Can start modelsim in seconds and imports human readable+debuggable VHDL w/ working printf's for debug. Can also craft custom ultra-fast compiled C based 'simulations'.
 * Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined - especially helpful for those new to digital logic design.
 * Integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays when moving data from host<->FPGA).
 * A full hardware description language replacement. Can start by cloning existing VHDL/Verilog designs or including raw VHDL - not forced to use entire language at all times.
