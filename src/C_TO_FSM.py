@@ -25,32 +25,14 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent="", generator=None, is_lhs=False):
 
     # What nodes dont need semicolon?
     maybe_semicolon = ";"
-    if type(c_ast_node) == c_ast.Compound:
+    if (
+        type(c_ast_node) == (c_ast.Compound or c_ast.If or c_ast.While or c_ast.For)
+        or is_lhs
+    ):
         maybe_semicolon = ""
-    elif type(c_ast_node) == c_ast.If:
-        maybe_semicolon = ""
-    elif type(c_ast_node) == c_ast.While:
-        maybe_semicolon = ""
-    elif type(c_ast_node) == c_ast.For:
-        maybe_semicolon = ""
-    elif is_lhs:
-        maybe_semicolon = ""
-    """
-  elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
-    maybe_semicolon = ""
-  elif type(c_ast_node) == c_ast.Decl and is_lhs:
-    maybe_semicolon = ""
-  elif type(c_ast_node) == c_ast.ID and is_lhs:
-    maybe_semicolon = ""
-  """
-    # print(type(c_ast_node))
     text += maybe_semicolon
 
-    lines = []
-    for line in text.split("\n"):
-        if line != "":
-            lines.append(indent + line)
-    # + "\n"
+    lines = [indent + line for line in text.split("\n") if line != ""]
     return "\n".join(lines)
 
 
@@ -71,33 +53,6 @@ class FsmStateInfo:
         self.is_fsm_func_call_state = None  # C ast node of func call
         self.starts_w_fsm_func_return = None  # C ast node of func call
         self.starts_w_fsm_func_return_output_driven_things = None
-
-    # Is it ok to add a func return to this state?
-    # Not sure this makes sense since asking about future states to be filled in, not past states
-    # next_state.is_ok_for_fsm_func_return not like curr_state.is_ok_for_jump_back
-    """
-  def is_ok_for_fsm_func_return(self):
-    # Not ok to to add return to backwards cond jump
-    if self.branch_nodes_tf_states is not None:
-      c_ast_node,true_state, false_state = self.branch_nodes_tf_states
-      if type(c_ast_node) == c_ast.While:
-        return False
-    if self.input_func_call_node is not None:
-      return False
-    if self.yield_func_call_node is not None:
-      return False
-    if self.inout_func_call_node is not None:
-      return False      
-    if self.ends_w_fsm_func_entry is not None:
-      return False
-    if self.is_fsm_func_call_state is not None:
-      return False
-    if self.starts_w_fsm_func_return is not None:
-      return False
-    if self.return_node is not None:
-      return False
-    return True
-  """
 
     # Is ok to repeatedly come back to this state
     def is_ok_for_jump_back(self):
@@ -552,14 +507,7 @@ typedef struct """
                     text += "    {\n"
                     text += "      FSM_STATE = " + false_state.name + ";\n"
                     text += "    }\n"
-                    """
-        elif state_info.always_next_state is not None:
-          # OK to use default?
-          text += "    else\n"
-          text += "    {\n"
-          text += "      FSM_STATE = " + state_info.always_next_state.name + "; // DEFAULT NEXT\n"
-          text += "    }\n"
-          """
+
                 else:  # No next state, just start over?
                     text += "    else\n"
                     text += "    {\n"
@@ -567,9 +515,6 @@ typedef struct """
                     text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
                     text += "    }\n"
                 text += "  }\n"
-                # if state_info.always_next_state is not None:
-                #  print("ERROR: Always next state set for branching state " + state_info.name)
-                #  sys.exit(-1)
                 continue
 
             # Func call entry

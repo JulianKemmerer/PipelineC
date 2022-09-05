@@ -297,14 +297,10 @@ class TimingParams:
         if self._slices is None:
             self._slices = []
         if slice_point > 1.0:
-            print("Slice > 1.0?", slice_point)
-            sys.exit(-1)
+            raise Exception("Slice > 1.0?", slice_point)
             slice_point = 1.0
         if slice_point < 0.0:
-            print("Slice < 0.0?", slice_point)
-            print(0 / 0)
-            sys.exit(-1)
-            slice_point = 0.0
+            raise Exception("Slice < 0.0?", slice_point)
 
         if not (slice_point in self._slices):
             self._slices.append(slice_point)
@@ -316,9 +312,7 @@ class TimingParams:
             )
 
         if self.calcd_total_latency is not None:
-            print("WTF adding a slice and has latency cache?", self.calcd_total_latency)
-            print(0 / 0)
-            sys.exit(-1)
+            raise Exception("WTF adding a slice and has latency cache?", self.calcd_total_latency)
 
     def SET_SLICES(self, value):
         if value != self._slices:
@@ -419,8 +413,7 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
 
         # Sanity?
         if rv.logic != Logic:
-            print("Zero clock cache no mactho")
-            sys.exit(-1)
+            raise Exception("Zero clock cache no mactho")
 
         return rv
     except:

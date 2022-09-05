@@ -873,12 +873,6 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
       return return_output; """
     )
 
-    # print "=="
-    # print "logic.func_name",logic.func_name
-    # print wires_decl_text
-    # print  text
-    # sys.exit(-1)
-
     return wires_decl_text, text
 
 

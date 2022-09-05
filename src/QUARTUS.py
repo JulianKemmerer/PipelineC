@@ -34,7 +34,7 @@ def PART_TO_FAMILY(part_str):
         sys.exit(-1)
 
 
-def FUNC_IS_PRIMITIVE(func_name):
+def FUNC_IS_PRIMITIVE(func_name: str) -> bool:
     if func_name.startswith("LPM_MULT"):
         return True
     return False
@@ -44,8 +44,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     # TODO easy to support any width from prim name alone
     name = "LPM_MULT"
     if not Logic.func_name.startswith(name):
-        print("TODO other prims!")
-        sys.exit(-1)
+        raise Exception("TODO other prims!")
 
     toks = Logic.func_name.split(name)
     lxr_str = toks[1]

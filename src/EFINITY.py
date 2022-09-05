@@ -28,17 +28,6 @@ def PART_TO_FAMILY_TIMING_MODEL(part_str):
 def NODE_TO_ELEM(node_str):
     node_str = node_str.split("~")[0]
     node_str = node_str.replace("|", "/")
-    """
-  elem_str = node_str
-  if ":" in node_str:
-    # inst name is right tok, func name is left tok
-    hier_toks = node_str.split("/")
-    new_hier_toks = []
-    for hier_tok in hier_toks:
-      toks = hier_tok.split(":")
-      new_hier_toks.append(toks[len(toks)-1])
-    elem_str = "/".join(new_hier_toks)
-  """
     return node_str
 
 
@@ -528,7 +517,5 @@ exit
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
-    # print("log:",log_text)
-    # sys.exit(0)
 
     return ParsedTimingReport(log_text)

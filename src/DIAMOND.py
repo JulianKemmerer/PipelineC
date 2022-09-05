@@ -150,7 +150,6 @@ prj_strgy set_value -strategy Strategy1 syn_pipelining_retiming=None
         # Clock file
         f.write("prj_src add " + constraints_filepath + "\n")
         ## Do the prn
-        # f.write("prj_run PAR -impl impl1\n")
         if DIAMOND_TOOL == "lse":
             # Nah, need to settle for syn est for now
             f.write("prj_run Synthesis -impl impl1 -task Lattice_Synthesis\n")
@@ -345,10 +344,8 @@ class PathReport:
             prev_line = line
 
         self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-        # print("path_delay_ns",self.path_delay_ns)
 
     def init_lse(self, path_report_text):
-        # print("path_report_text",path_report_text)
 
         print("TODO multiple clock domains for LSE!!")
         self.path_delay_ns = None
@@ -378,43 +375,6 @@ class PathReport:
 
             # CLOCK NAME / PATH GROUP?
             self.path_group = "clk"
-            """
-      tok1 = "Launch Clock :"
-      if tok1 in line:
-        toks = line.split(tok1)
-        self.path_group = toks[1].strip()
-        #print("path_group",self.path_group)
-      """
-
-            """
-      tok1 = "Latch Clock  :"
-      if tok1 in line:
-        toks = line.split(tok1)
-        latch_clock = toks[1].strip()
-        if self.path_group != latch_clock:
-          print("Multiple clocks in path report?")
-          print(path_report_text)
-          sys.exit(-1)       
-        #print("path_group",self.path_group)
-      """
-
-            # Netlist resources
-            """
-      tok1 = ": Data Required Path:"  
-      if tok1 in line:
-        in_netlist_resources = False
-      if in_netlist_resources:
-        if "clock network delay" in line:
-          continue
-        toks = list(filter(None, line.split(" ")))
-        s = toks[len(toks)-1]
-        resource = NODE_TO_ELEM(s)
-        #print("resource",resource)
-        self.netlist_resources.add(resource)
-      tok1 = "0.000      0.000           launch edge time"
-      if tok1 in line:
-        in_netlist_resources = True       
-      """
 
             # Start reg
             if self.start_reg_name is None:
