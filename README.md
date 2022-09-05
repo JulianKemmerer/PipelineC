@@ -28,13 +28,13 @@ A C-like(1) hardware description language (HDL)(2) adding high level synthesis(H
 
 # What is PipelineC not?
 
-* High level synthesis of arbitrary C code with a global memory model / threads / etc.
+* High level synthesis of arbitrary C code with a global memory model / threads / etc:
   * Cannot do 'nested loops to a memory architecture' for you.
-* Compiled C based hardware simulator
-  * Only _parts_ of PipelineC code can be compiled by C compilers and run (is encouraged)
+* Compiled C based hardware simulator:
+  * Only _parts_ of PipelineC code can be compiled by C compilers and run (is encouraged).
   * But entire multi-module, multi-clock-domain, etc whole designs cannot simply be compiled and run like regular C programs.
 * Meta-programming hardware-generator (ex. uses C type system and preprocessor).
-* Stitching tool automating the build flow from code/modules to bitstream.
+* Stitching tool automating the build flow from code/modules to bitstream:
   * Tool does partially automate synthesis runs but automation to final bitstream is left to the user.
 
 # Core Features/Benefits
@@ -42,7 +42,7 @@ A C-like(1) hardware description language (HDL)(2) adding high level synthesis(H
 _An easy to understand hardware description language with a powerful autopipelining compiler and growing set of real life hardware design inspired features._
 
 * Familiar C syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments, reasoning about the sequential ordering of combinatorial logic).
-* Compatible with all HDL simulators (conversion to Verilog is included as needed). Ex. Can start modelsim in seconds and imports human readable+debuggable VHDL w/ working printf's for debug. Can also craft custom ultra-fast compiled C based 'simulations'.
+* Compatible with all HDL simulators. Ex. Can start Modelsim in seconds and imports human readable+debuggable VHDL w/ working printf's. Can also craft custom ultra-fast compiled C based 'simulations'. Conversion to Verilog is also included as needed, i.e. for Verilator.
 * Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined - especially helpful for those new to digital logic design.
 * Integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays when moving data from host<->FPGA).
 * A full hardware description language replacement. Can start by cloning existing VHDL/Verilog designs or including raw VHDL - not forced to use entire language at all times.
