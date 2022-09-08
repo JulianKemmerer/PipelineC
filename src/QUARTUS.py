@@ -4,7 +4,7 @@ import sys
 import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_TOOL_PATH, REPO_ABS_DIR
 
 TOOL_EXE = "quartus_sh"
 # Default to env if there
@@ -494,9 +494,9 @@ set_global_assignment -name SDC_FILE """
             )
 
     # IEEE proposed since quartus lite doesnt include vhdl 2008
-    text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n"
-    text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n"
-    text += f"set_global_assignment -name VHDL_FILE {C_TO_LOGIC.REPO_ABS_DIR()}/ieee/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n"
+    text += f"set_global_assignment -name VHDL_FILE {REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_float_types.vhdl -library ieee_proposed\n"
+    text += f"set_global_assignment -name VHDL_FILE {REPO_ABS_DIR()}/ieee/ieee_proposed.fixed_pkg.vhdl -library ieee_proposed\n"
+    text += f"set_global_assignment -name VHDL_FILE {REPO_ABS_DIR()}/ieee/ieee_proposed.float_pkg.vhdl -library ieee_proposed\n"
 
     # Do compile
     text += """

@@ -20,6 +20,7 @@ import QUARTUS
 import SW_LIB
 import VHDL
 import VIVADO
+from utilities import REPO_ABS_DIR
 
 START_TIME = timer()
 
@@ -3860,7 +3861,7 @@ def GET_OUTPUT_DIRECTORY(Logic):
         src_file = str(Logic.c_ast_node.coord.file)
         # # hacky catch files from same dir as script?
         # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
-        repo_dir = C_TO_LOGIC.REPO_ABS_DIR()
+        repo_dir = REPO_ABS_DIR()
         if src_file.startswith(repo_dir + "/"):
             # hacky
             src_file = src_file.replace(repo_dir + "/src/../", "")

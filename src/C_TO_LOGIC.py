@@ -16,6 +16,7 @@ import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
+from utilities import REPO_ABS_DIR
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -9245,19 +9246,6 @@ def EXE_ABS_DIR():
         return _EXE_ABS_DIR
     _EXE_ABS_DIR = os.path.dirname(os.path.realpath(__file__))
     return _EXE_ABS_DIR
-
-
-_REPO_ABS_DIR = None
-
-
-def REPO_ABS_DIR():
-    global _REPO_ABS_DIR
-    if _REPO_ABS_DIR:
-        return _REPO_ABS_DIR
-    _REPO_ABS_DIR = os.path.abspath(
-        os.path.dirname(os.path.realpath(__file__)) + "/../"
-    )
-    return _REPO_ABS_DIR
 
 
 # This class hold all the state obtained by parsing a single C file

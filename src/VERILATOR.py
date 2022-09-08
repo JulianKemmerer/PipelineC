@@ -7,7 +7,7 @@ import OPEN_TOOLS
 import SIM
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_TOOL_PATH, REPO_ABS_DIR
 
 VERILATOR_EXE = "verilator"
 VERILATOR_BIN_PATH = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"
@@ -193,8 +193,8 @@ int main(int argc, char *argv[]) {
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 top && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 top; proc; opt; fsm; opt; memory; opt; write_verilog ../top/top.v" && \
-{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()} && \
-make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{C_TO_LOGIC.REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
+{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module top -cc ../top/top.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()} && \
+make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()}" -j4 -C obj_dir -f Vtop.mk
 """
     # --report-unoptflat
     sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"

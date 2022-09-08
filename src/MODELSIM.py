@@ -7,7 +7,7 @@ import C_TO_LOGIC
 import SIM
 import SYN
 import VIVADO
-from utilities import GET_TOOL_PATH
+from utilities import GET_TOOL_PATH, REPO_ABS_DIR
 
 # Default to env if there
 TOOL_EXE = "vsim"
@@ -19,7 +19,7 @@ else:
     MODELSIM_PATH = "/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
 
 MODEL_SIM_INI_TEXT = ""
-with open("src/text/model_sim_ini.txt", "r") as ms_ini:
+with open(REPO_ABS_DIR() + "/src/text/model_sim_ini.txt", "r") as ms_ini:
     MODEL_SIM_INI_TEXT = ms_ini.read()
 
 
