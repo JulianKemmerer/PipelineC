@@ -212,9 +212,9 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
     # Entity and file name
     entity_name = ""
     if not is_final_top:
-        entity_name = "top" + hash_ext
+        entity_name = SYN.TOP_LEVEL_MODULE + hash_ext
     else:
-        entity_name = "top"
+        entity_name = SYN.TOP_LEVEL_MODULE
     filename = entity_name + VHDL_FILE_EXT
 
     text += (
@@ -1185,7 +1185,7 @@ begin
     text += """
 end arch;
 """
-    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     f = open(output_dir + "/" + filename, "w")
@@ -6573,12 +6573,12 @@ def GET_TOP_ENTITY_NAME(
         )
     else:
         if is_final_top:
-            top_entity_name = "top"
+            top_entity_name = SYN.TOP_LEVEL_MODULE
         else:
             # Hash for multi main is just hash of main pipes
             hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
             # Entity and file name
-            top_entity_name = "top" + hash_ext
+            top_entity_name = SYN.TOP_LEVEL_MODULE + hash_ext
 
     return top_entity_name
 

@@ -50,7 +50,7 @@ MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex.
 SLICE_EPSILON_MULTIPLIER = 5  # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3  # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
-
+TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 
 def PART_SET_TOOL(part_str, allow_fail=False):
     global SYN_TOOL
@@ -2056,7 +2056,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
 
 
 def GET_MOST_RECENT_CACHED_SWEEP_STATE():
-    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "top"
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE
     # Search for most recently modified
     sweep_files = [
         file for file in glob.glob(os.path.join(output_directory, "*.sweep"))
@@ -2076,10 +2076,10 @@ def GET_MOST_RECENT_CACHED_SWEEP_STATE():
 
 def WRITE_SWEEP_STATE_CACHE_FILE(sweep_state, parser_state):
     # TimingParamsLookupTable = state.TimingParamsLookupTable
-    output_directory = SYN_OUTPUT_DIRECTORY + "/" + "top"
+    output_directory = SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE
     # ONly write one sweep per clk for space sake?
     hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    filename = "top" + hash_ext + ".sweep"
+    filename = TOP_LEVEL_MODULE + hash_ext + ".sweep"
     filepath = output_directory + "/" + filename
 
     # Write dir first if needed
@@ -2419,8 +2419,8 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
         multimain_timing_params = multimain_timing_params_or_TimingParamsLookupTable
         TimingParamsLookupTable = multimain_timing_params.TimingParamsLookupTable
         hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-        output_dir = SYN_OUTPUT_DIRECTORY + "/" + "top"
-        output_file = output_dir + "/" + "top" + hash_ext + "_registers.log"
+        output_dir = SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE
+        output_file = output_dir + "/" + TOP_LEVEL_MODULE + hash_ext + "_registers.log"
     else:
         # Specific inst
         TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
@@ -4396,7 +4396,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
     else:
         # Entity and file name
         filename = top_entity_name + VHDL.VHDL_FILE_EXT
-        files_txt += SYN_OUTPUT_DIRECTORY + "/top/" + filename + " "
+        files_txt += SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE + "/" + filename + " "
 
     # Write all entities starting at this inst/multi main
     inst_names = set()

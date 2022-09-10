@@ -70,7 +70,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     else:
         # Multimain
         # First create directory for this logic
-        output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+        output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
