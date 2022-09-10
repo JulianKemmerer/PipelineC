@@ -10958,7 +10958,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(
         # Main never gets prepend text
         if containing_logic_inst_name != "":
             print(
-                "Woah there, are you calling a top level main function from within another funciton!?",
+                "Woah there, are you calling a top level main function from within another function!?",
                 func_name,
                 containing_logic_inst_name,
             )
