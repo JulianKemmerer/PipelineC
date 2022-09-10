@@ -7,11 +7,10 @@ import sys
 
 sys.dont_write_bytecode = True
 
-import C_TO_LOGIC
-import OPEN_TOOLS
-import SIM
-#import CLANG_TO_LOGIC
-import SYN
+from src import C_TO_LOGIC
+from src import OPEN_TOOLS
+from src import SIM
+from src import SYN
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"

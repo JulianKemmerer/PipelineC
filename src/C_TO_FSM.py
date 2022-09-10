@@ -6,7 +6,6 @@ from src.pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
 
-
 FSM_EXT = "_FSM"
 CLK_FUNC = "__clk"
 INPUT_FUNC = "__in"
