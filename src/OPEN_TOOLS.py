@@ -1,10 +1,10 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import SYN
-import VHDL
-from utilities import GET_TOOL_PATH
+from src import C_TO_LOGIC
+from src import SYN
+from src import VHDL
+from src.utilities import GET_TOOL_PATH
 
 # Tool names
 YOSYS_EXE = "yosys"

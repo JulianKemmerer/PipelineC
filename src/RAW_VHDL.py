@@ -2,10 +2,10 @@
 import copy
 import sys
 
-import C_TO_LOGIC
-import SW_LIB
-import VHDL
-from pycparser import c_ast, c_parser  # bleh for now
+from src import C_TO_LOGIC
+from src import SW_LIB
+from src import VHDL
+from src.pycparser import c_ast, c_parser  # bleh for now
 
 
 # Declare variables used internally to c built in C logic

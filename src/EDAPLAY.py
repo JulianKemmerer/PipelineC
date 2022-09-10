@@ -1,8 +1,8 @@
 import os
 import shutil
 
-import SIM
-import SYN
+from src import SIM
+from src import SYN
 
 
 def SETUP_EDAPLAY(latency=0):

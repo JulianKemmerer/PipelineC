@@ -10,12 +10,12 @@ import pickle
 import subprocess
 import sys
 
-import C_TO_LOGIC
-import MODELSIM
-import SW_LIB
-import SYN
-import VHDL
-from utilities import GET_TOOL_PATH
+from src import C_TO_LOGIC
+from src import MODELSIM
+from src import SW_LIB
+from src import SYN
+from src import VHDL
+from src.utilities import GET_TOOL_PATH
 
 TOOL_EXE = "vivado"
 # Default to path if there

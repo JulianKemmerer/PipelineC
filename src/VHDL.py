@@ -3,16 +3,16 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import CXXRTL
-import QUARTUS
-import RAW_VHDL
-import SIM
-import SW_LIB
-import SYN
-import VERILATOR
-import VIVADO
-from pycparser import c_ast
+from src import C_TO_LOGIC
+from src import CXXRTL
+from src import QUARTUS
+from src import RAW_VHDL
+from src import SIM
+from src import SW_LIB
+from src import SYN
+from src import VERILATOR
+from src import VIVADO
+from src.pycparser import c_ast
 
 VHDL_FILE_EXT = ".vhd"
 VHDL_PKG_EXT = ".pkg" + VHDL_FILE_EXT

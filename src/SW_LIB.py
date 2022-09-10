@@ -4,11 +4,11 @@ import os
 import re
 import sys
 
-import C_TO_FSM
-import C_TO_LOGIC
-import SYN
-import VHDL
-from pycparser import c_ast
+from src import C_TO_FSM
+from src import C_TO_LOGIC
+from src import SYN
+from src import VHDL
+from src.pycparser import c_ast
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)

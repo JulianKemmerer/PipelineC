@@ -1,8 +1,8 @@
 import copy
 import sys
 
-import C_TO_LOGIC
-from pycparser import c_ast, c_generator
+from src import C_TO_LOGIC
+from src.pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
 

@@ -11,16 +11,16 @@ import sys
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
-import C_TO_LOGIC
-import DIAMOND
-import EFINITY
-import OPEN_TOOLS
-import PYRTL
-import QUARTUS
-import SW_LIB
-import VHDL
-import VIVADO
-from utilities import REPO_ABS_DIR
+from src import C_TO_LOGIC
+from src import DIAMOND
+from src import EFINITY
+from src import OPEN_TOOLS
+from src import PYRTL
+from src import QUARTUS
+from src import SW_LIB
+from src import VHDL
+from src import VIVADO
+from src.utilities import REPO_ABS_DIR
 
 START_TIME = timer()
 

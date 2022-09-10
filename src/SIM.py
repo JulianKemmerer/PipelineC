@@ -1,10 +1,10 @@
 import os
 
-import CXXRTL
-import EDAPLAY
-import MODELSIM
-import SYN
-import VERILATOR
+from src import CXXRTL
+from src import EDAPLAY
+from src import MODELSIM
+from src import SYN
+from src import VERILATOR
 
 # Default simulation tool is free online edaplayground
 SIM_TOOL = EDAPLAY

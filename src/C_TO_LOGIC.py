@@ -11,12 +11,12 @@ import sys
 from collections import OrderedDict
 from subprocess import PIPE, Popen
 
-import C_TO_FSM
-import SW_LIB
-import SYN
-import VHDL
-from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR
+from src import C_TO_FSM
+from src import SW_LIB
+from src import SYN
+from src import VHDL
+from src.pycparser import c_ast, c_parser
+from src.utilities import REPO_ABS_DIR
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -74,7 +74,7 @@ C_AST_NODE_HASH_LEN = 4
 TEMP_HACKY_C_AST_NODE_ID = True
 
 
-def GET_CPP_INCLUDES_LIST(): # -> list[str]: needs typing library?
+def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
     path_list = []
     # Include output directory, and other generated output dir
     if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):
