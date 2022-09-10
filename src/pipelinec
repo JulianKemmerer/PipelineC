@@ -15,6 +15,7 @@ import SYN
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
+default_top_module = "top"
 
 # Parse args
 parser = argparse.ArgumentParser(description="PipelineC:")
@@ -39,6 +40,7 @@ parser.add_argument("--start", type=int, default=None, help="When doing a --coar
 parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
 parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
 parser.add_argument("--yosys_json", help="Just output the json from yosys.", action="store_true")
+parser.add_argument("--top", help=f"Set the name of the top-level module generated. Default is {default_top_module}.", type=str, default=default_top_module)
 args = parser.parse_args()
 
 # Combine certain args
@@ -68,6 +70,8 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args)
+# Set top level module name
+SYN.TOP_LEVEL_MODULE = args.top
 
 # Ugh some python versions dont obey the coding comment at top of file?
 try:

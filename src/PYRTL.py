@@ -106,7 +106,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     else:
         # Multimain
         # First create directory for this logic
-        output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+        output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
 
         # Set log path
         # Hash for multi main is just hash of main pipes

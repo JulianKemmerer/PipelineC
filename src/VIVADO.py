@@ -432,7 +432,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
         rv += "report_utilization\n"
     # Output dir
     if inst_name is None:
-        output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+        output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     else:
         output_dir = SYN.GET_OUTPUT_DIRECTORY(
             parser_state.LogicInstLookupTable[inst_name]
@@ -467,8 +467,8 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(
         multimain_timing_params, parser_state
     )
     hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    out_filename = "top" + hash_ext + ".tcl"
-    out_filepath = SYN.SYN_OUTPUT_DIRECTORY + "/top/" + out_filename
+    out_filename = SYN.TOP_LEVEL_MODULE + hash_ext + ".tcl"
+    out_filepath = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE + "/" + out_filename
     f = open(out_filepath, "w")
     f.write(syn_imp_and_report_timing_tcl)
     f.close()
@@ -505,7 +505,7 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
     # First create directory for this logic
-    output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + "top"
+    output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
