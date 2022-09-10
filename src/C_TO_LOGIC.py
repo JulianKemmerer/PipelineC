@@ -1566,12 +1566,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
             driving_wire = containing_func_logic.wire_driven_by[input_wire_name]
             c_type = containing_func_logic.wire_to_c_type[driving_wire]
 
-        """ Shouldnt need this here, is handled for general BIN OP?
-    # If driving wire c type is enum and this is BIN OP == then replace with input port wire with uint
-    if (C_TYPE_IS_ENUM(c_type, parser_state)) and (submodule_logic_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)):
-      c_type = ...
-    """
-
         # Record input info
         submodule_logic.wire_to_c_type[input_name] = c_type
         input_types.append(c_type)
@@ -2234,18 +2228,8 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
                 print("Oh no not an array?", c_array_type)
                 sys.exit(-1)
             # Get the dims from the array
-            # print "c_array_type",c_array_type
-            elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
-            # print "elem_type",elem_type
-            # print "dims",dims
-            # Want last dim?
-            """
-      last_dim = dims[len(dims)-1]
-      # Save
-      var_dim_ref_tok_indices.append(last_index)
-      var_dims.append(last_dim)   
-      var_dim_iter_types.append("uint" + str(int(math.ceil(math.log(last_dim,2)))) + "_t")
-      """
+            _, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+
             # Or wait want first dim?
             first_dim = dims[0]
             # Save
@@ -3323,22 +3307,6 @@ def TRIM_VAR_REF_TOKS(ref_toks):
 # Without cache: 47.065 seconds, 128.514 seconds
 # More testing: without cache: 141, with cache: 240
 def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
-
-    """
-    # Try for cache
-    if parser_state.existing_logic.func_name is None:
-      print "Wtf none??????"
-      sys.exit(-1)
-    cache_key = (parser_state.existing_logic.func_name, ref_toks, covering_ref_toks)
-    try:
-      return _REF_TOKS_COVERED_BY_cache[cache_key]
-    except:
-      pass
-    """
-
-    # Remove last variable tok since
-    # Ex. (a,1,c) covers same as (a,1,c,*), and makes len check easier below
-    # For both input ref toks
     covering_ref_toks = TRIM_VAR_REF_TOKS(covering_ref_toks)
     ref_toks = TRIM_VAR_REF_TOKS(ref_toks)
 
@@ -3348,16 +3316,6 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
     if len(covering_ref_toks) > len(ref_toks):
         rv = False
     else:
-        """
-        # Simple compare of range -  NOT faster
-        if ref_toks[0:len(covering_ref_toks)] == covering_ref_toks:
-          rv = True
-        else:
-        """
-        # Individual tok checking
-        # Likely mismatches are towards end? - Hell yeah for big arrays?
-        # Build Me Up Buttercup - The Foundatons
-        # for ref_tok_i in range(0, len(covering_ref_toks)):
         for ref_tok_i in range(len(covering_ref_toks) - 1, -1, -1):
             ref_tok = ref_toks[ref_tok_i]
             covering_ref_tok = covering_ref_toks[ref_tok_i]
@@ -3450,32 +3408,6 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(
         print("Wtf none??????")
         sys.exit(-1)
 
-    """
-  # Try for cache
-  cache_key = (parser_state.existing_logic.func_name, driven_ref_toks, frozenset(remaining_ref_toks_set))
-  remaining_ref_toks_set_cache = None
-  try:
-    remaining_ref_toks_set_cache = set(_REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]) # Copy since set is mutable + WILL be mutated
-  except:
-    pass
-  if remaining_ref_toks_set_cache:
-    if debug:
-      print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
-      print "orig driven_ref_toks",driven_ref_toks
-      print "remaining_ref_toks_set",remaining_ref_toks_set_cache
-      print "2" 
-    if driven_ref_toks in remaining_ref_toks_set_cache:
-      print parser_state.existing_logic.func_name
-      print "orig driven_ref_toks",driven_ref_toks
-      print "remaining_ref_toks_set",remaining_ref_toks_set_cache
-      print "pre remaining_ref_toks_set==remaining_ref_toks_set_cache",remaining_ref_toks_set==remaining_ref_toks_set_cache
-      print "WTF? driven_ref_toks in remaining_ref_toks_set_cache"
-      sys.exit(-1)
-      
-    remaining_ref_toks_set = remaining_ref_toks_set_cache
-    return remaining_ref_toks_set
-  """
-
     # Removed covered branches
     removed_something = False
     # Given alias wire (a,1,c) it covers any remaining wire (a,1,c) , (a,1,c,0) ,  (a,1,c,1)
@@ -3524,28 +3456,9 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(
             keep_root = (
                 len(own_branch_ref_toks.intersection(remaining_ref_toks_set)) > 0
             )
-            """
-      if len(own_branch_ref_toks) > 0:
-        # Has branches, are they all removed now?
-        keep_root = False # Assume all branches are gone
-        for branch_ref_toks in own_branch_ref_toks:
-          if branch_ref_toks in remaining_ref_toks_set:
-              # Found a remaining branch, root stays
-              keep_root = True
-              break
-      """
 
             if not keep_root:
-                # Remove root, and loop again
-                """
-                if root_toks not in remaining_ref_toks_set:
-                  print "orig_remaining_ref_toks_set",orig_remaining_ref_toks_set
-                  print "orig driven_ref_toks",driven_ref_toks
-                  print "Missing ref tok?",root_toks
-                  print "remaining_ref_toks_set",remaining_ref_toks_set
-                  print "ref_toks_removed",ref_toks_removed
-                  sys.exit(-1)
-                """
+
                 remaining_ref_toks_set.discard(root_toks)
                 ref_toks_removed = root_toks
             else:
@@ -3559,70 +3472,11 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(
             )
             print("")
 
-    """
-  # Update cache  
-  _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key] = frozenset(remaining_ref_toks_set) # Copy since set is mutable + WILL be mutated
-  if debug:
-    print "Updating cache", cache_key
-    print _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]
-  """
-
-    # WTF?
-    if (
-        driven_ref_toks in remaining_ref_toks_set
-    ):  # or (driven_ref_toks in _REMOVE_COVERED_REF_TOK_BRANCHES_cache[cache_key]):
+    if driven_ref_toks in remaining_ref_toks_set:
         print("WTF? driven_ref_toks in remaining_ref_toks_set2")
         sys.exit(-1)
 
     return remaining_ref_toks_set
-
-
-# Struct read is different from array read since:
-# At the time of struct read it is possible to narrow down the
-# renamed intermediate wires that of what the struct ref is referreing
-# for an array reference the "struct locations in memory / memory addrs" cannot be known ahead of time
-# Always need to input entire array unless constant, when constant do like struct ref?
-
-"""
-DID you do struct ref wrong?
-CANT PROCESS AS single x.y.z expression
-Need to recursively get X, with .y  ... then get output of that DOT z
-fuck
-
-ONly diff between constant array and dynamic is where the "branches" start in the structref/array search
-# Since arrays are written to like structs, COPY ON READ
-Structref and constant array look very similar
-"""
-
-# ID could be a struct ID which needs struct read logic
-# ID could also be an array ID which needs array read logic
-
-
-# x[i][1][k]
-# First need to select the i'th [n][n] array from 'x'
-# Then select the 1st [n] array from output of above
-# Then select k'th element from output of above
-# So out of all x only these elements are needed
-#
-# x 0 0 0
-# x 0 0 1
-# x 0 1 0     X
-# x 0 1 1     X
-# x 1 0 0
-# x 1 0 1
-# x 1 1 0     X
-# x 1 1 1     X
-
-# Need to expand struct, array to all branches?
-# Then evaluate  s.x[i][1] to be  s[x,i,1]
-# s.x[0][0]
-# s.x[0][1]   X
-# s.x[1][0]
-# s.x[1][1]   X
-# s.y[0][0]
-# s.y[0][1]
-# s.y[1][0]
-# s.y[1][1]
 
 
 def C_TYPE_IS_STRUCT(c_type_str, parser_state):
@@ -4031,16 +3885,6 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
                 print("What kind of reference is this?", c_ast_ref.coord)
                 sys.exit(-1)
 
-    # Sanity check on const ref must be array type
-    """
-  if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
-    if not C_TYPE_IS_ARRAY(current_c_type):
-      print "Ref toks are array type?"
-      print ref_toks
-      print current_c_type
-      sys.exit(-1)
-  """
-
     # Write cache
     _C_AST_REF_TOKS_TO_C_TYPE_cache[cache_key] = current_c_type
 
@@ -4202,14 +4046,6 @@ def C_AST_REF_TOKS_TO_LOGIC(
             c_ast_ref,
         )
     else:
-        """
-        print "ref_toks",ref_toks
-        print "c_type",c_type
-        print "first_driving_alias_c_type",first_driving_alias_c_type
-        print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
-        print "first_driving_alias",first_driving_alias
-        print "remaining_ref_toks_set",remaining_ref_toks_set
-        """
 
         # Create list of driving aliases
         driving_aliases = []
@@ -4222,20 +4058,6 @@ def C_AST_REF_TOKS_TO_LOGIC(
         i = len(driving_aliases_over_time) - 2
         while len(remaining_ref_toks_set) > 0:
             if i < 0:
-                """
-                print("Ran out of aliases?@@@@@@@")
-                print("func name",parser_state.existing_logic.func_name)
-                print("starting ref_toks",ref_toks)
-                print("c_type",c_type)
-                print("expanded entire_tree_ref_toks_set",entire_tree_ref_toks_set)
-                print("driving_aliases_over_time",driving_aliases_over_time)
-                print("remaining_ref_toks_set",remaining_ref_toks_set)
-                #print "="
-                #print "first_driving_alias",first_driving_alias
-                #print "first_driving_alias_c_type",first_driving_alias_c_type
-                print("=")
-                print("This is either my problem or your code doesnt drive all your local variables...")
-                """
                 print(
                     "It looks like struct/array variable like",
                     ref_toks,
@@ -6312,14 +6134,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
                 rhs_val_str_no_neg, func_c_ast_node, rhs_negated
             )
-            # print("lhs_val, lhs_c_type",lhs_val, lhs_c_type)
-            # print("rhs_val, rhs_c_type",rhs_val, rhs_c_type)
-            """# Prefer exisitng type if set
-      if lhs_wire in parser_state.existing_logic.wire_to_c_type:
-        lhs_c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
-      if rhs_wire in parser_state.existing_logic.wire_to_c_type:
-        rhs_c_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]"""
-
             # First check for integer arguments
             is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
 
@@ -7407,24 +7221,6 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(
 def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(
     c_ast_func_call, driven_wire_names, prepend_text, parser_state
 ):
-
-    """
-    # Unlike SW_LIB generating C headers to parse and create func def objects,
-    # Do the same thing here, during function body parsing, as come across new funcs?
-    input_port_names, input_types, output_type = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
-    input_port_name = input_port_names[0]
-    if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
-      bit_manip_func_logic = Logic()
-      bit_manip_func_logic.func_name = bit_manip_func_name
-      bit_manip_func_logic.inputs.append(input_port_name)
-      bit_manip_func_logic.wire_to_c_type[input_port_name] = c_type
-      bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
-      bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
-      bit_manip_func_logic.is_vhdl_func = True
-      bit_manip_func_logic.is_new_style_bit_manip = True
-      parser_state.FuncLogicLookupTable[bit_manip_func_name] = bit_manip_func_logic
-    """
-
     # Tempalte/built in style
     base_name_is_name = False  # DO NEED types appended
     func_base_name = ACCUM_FUNC_NAME
@@ -8529,15 +8325,8 @@ def APPLY_CONNECT_WIRES_LOGIC(
                         sys.exit(-1)
                     lhs_size = lhs_dims[0]
                     rhs_size = rhs_dims[0]
-                    """
-          if rhs_size > lhs_size:
-            # Unhandled
-            print(rhs_type, "array at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
-            sys.exit(-1)
-          """
                     # Allow it to be resolved in VHDL
                     continue
-                # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
                 elif (
                     SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type, parser_state)
                     and (
@@ -10756,26 +10545,6 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
 
     return rv
 
-
-"""
-_printed_NO_RENAMING_TYPEDEFS = False
-def WARN_NO_RENAMING_TYPEDEFS(c_file_ast, parser_state):
-  # Read in file with C parser and get function def nodes
-  type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
-  for type_def in type_defs:
-    #casthelp(type_def)
-    thing = type_def.children()[0][1].children()[0][1]
-    if type(thing) == c_ast.Struct:
-      continue
-    elif type(thing) == c_ast.Enum:
-      continue
-    global _printed_NO_RENAMING_TYPEDEFS
-    if not _printed_NO_RENAMING_TYPEDEFS:
-      print("WARNING: Simple renaming of types with typedefs is not supported! Use #define new_t old_t for now.")
-      _printed_NO_RENAMING_TYPEDEFS = True
-    print("WARNING: Skipped typedef that renames types:", type_def.coord)
-    continue
-"""
 
 _printed_GET_STRUCT_FIELD_TYPE_DICT = False
 

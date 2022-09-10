@@ -28,17 +28,6 @@ def PART_TO_FAMILY_TIMING_MODEL(part_str):
 def NODE_TO_ELEM(node_str):
     node_str = node_str.split("~")[0]
     node_str = node_str.replace("|", "/")
-    """
-  elem_str = node_str
-  if ":" in node_str:
-    # inst name is right tok, func name is left tok
-    hier_toks = node_str.split("/")
-    new_hier_toks = []
-    for hier_tok in hier_toks:
-      toks = hier_tok.split(":")
-      new_hier_toks.append(toks[len(toks)-1])
-    elem_str = "/".join(new_hier_toks)
-  """
     return node_str
 
 
@@ -412,118 +401,6 @@ efx_run.py """
     syn_imp_bash_cmd = (
         "bash " + sh_file
     )  # + ''' &> ''' + log_path  #"chmod +x " + "./" + sh_file + " && " + "./"
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
-    f = open(log_path, "r")
-    log_text = f.read()
-    f.close()
-    # print("log:",log_text)
-    # sys.exit(0)
-
-    return ParsedTimingReport(log_text)
-
-    # PYTHON API FOR STUFF? \/
-
-    # Generate python script that generates project file
-    # Based on https://github.com/Efinix-Inc/xyloni/blob/master/bsp/build.py
-    py_text = ""
-    py_text += (
-        '''
-#!/usr/bin/env python3
-
-# Get access to useful python package
-import os
-import sys
-import pprint
-
-# Tell python where to get Interface Designer's API package
-pt_home = os.environ['EFXPT_HOME']
-sys.path.append(pt_home + "/bin")
-
-from api_service.design import DesignAPI  # Get access to design database API
-from api_service.device import DeviceAPI  # Get access to device database API
-import api_service.excp.design_excp as APIExcp  # Get access to API exception
-
-is_verbose = False
-design = DesignAPI(is_verbose)
-device = DeviceAPI(is_verbose)
-
-# Create empty design
-device_name = "T8F81"  # Matches Device name from Efinity's Project Editor
-project_name = "'''
-        + top_entity_name
-        + '''"
-output_dir = "'''
-        + output_directory
-        + """"
-
-try:
-    design.create(project_name, device_name, output_dir)
-except APIExcp.PTAPIException as excp:
-    print("Fail to create design : {} Msg={}".format(excp.get_msg_level(), excp.get_msg()))
-    sys.exit(1)
-    
-"""
-    )
-
-    for vhdl_file in vhdl_files_texts.split(" "):
-        py_text += (
-            '''design.load("'''
-            + vhdl_file
-            + """")
-"""
-        )
-
-    py_text += """
-# Check design, generate constraints and reports
-try:
-    design.generate(enable_bitstream=True)
-except APIExcp.PTDsgCheckException as excp:
-    print("Design check fails : {} Msg={}".format(excp.get_msg_level(), excp.get_msg()))
-    sys.exit(1)
-except APIExcp.PTDsgGenConstException as excp:
-    print("Fail to generate constraint : {} Msg={}".format(excp.get_msg_level(), excp.get_msg()))
-    sys.exit(1)
-except APIExcp.PTDsgGenReportException as excp:
-    print("Fail to generate report : {} Msg={}".format(excp.get_msg_level(), excp.get_msg()))
-    sys.exit(1)
-
-# Save the configured periphery design
-design.save()
-"""
-
-    # Write build script to output
-    py_file = top_entity_name + ".py"
-    py_path = output_directory + "/" + py_file
-    f = open(py_path, "w")
-    f.write(py_text)
-    f.close()
-
-    # Generate build scripts that sources setup and runs local python3 instance
-    sh_text = ""
-    sh_text += (
-        """
-source """
-        + EFINITY_PATH
-        + """/setup.sh &> """
-        + log_path
-        + """;
-python3 """
-        + py_path
-        + """ &> """
-        + log_path
-        + """;
-exit
-"""
-    )
-    sh_file = top_entity_name + ".sh"
-    sh_path = output_directory + "/" + sh_file
-    f = open(sh_path, "w")
-    f.write(sh_text)
-    f.close()
-
-    # Run the build script to generate the project file
-    print("Running Efinity:", sh_path, flush=True)
-    syn_imp_bash_cmd = "bash " + sh_file  # + ''' &> ''' + log_path
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")
     log_text = f.read()

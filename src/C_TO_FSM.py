@@ -35,15 +35,6 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, indent="", generator=None, is_lhs=False):
         maybe_semicolon = ""
     elif is_lhs:
         maybe_semicolon = ""
-    """
-  elif type(c_ast_node) == c_ast.ArrayRef and is_lhs:
-    maybe_semicolon = ""
-  elif type(c_ast_node) == c_ast.Decl and is_lhs:
-    maybe_semicolon = ""
-  elif type(c_ast_node) == c_ast.ID and is_lhs:
-    maybe_semicolon = ""
-  """
-    # print(type(c_ast_node))
     text += maybe_semicolon
 
     lines = []
@@ -71,33 +62,6 @@ class FsmStateInfo:
         self.is_fsm_func_call_state = None  # C ast node of func call
         self.starts_w_fsm_func_return = None  # C ast node of func call
         self.starts_w_fsm_func_return_output_driven_things = None
-
-    # Is it ok to add a func return to this state?
-    # Not sure this makes sense since asking about future states to be filled in, not past states
-    # next_state.is_ok_for_fsm_func_return not like curr_state.is_ok_for_jump_back
-    """
-  def is_ok_for_fsm_func_return(self):
-    # Not ok to to add return to backwards cond jump
-    if self.branch_nodes_tf_states is not None:
-      c_ast_node,true_state, false_state = self.branch_nodes_tf_states
-      if type(c_ast_node) == c_ast.While:
-        return False
-    if self.input_func_call_node is not None:
-      return False
-    if self.yield_func_call_node is not None:
-      return False
-    if self.inout_func_call_node is not None:
-      return False      
-    if self.ends_w_fsm_func_entry is not None:
-      return False
-    if self.is_fsm_func_call_state is not None:
-      return False
-    if self.starts_w_fsm_func_return is not None:
-      return False
-    if self.return_node is not None:
-      return False
-    return True
-  """
 
     # Is ok to repeatedly come back to this state
     def is_ok_for_jump_back(self):
