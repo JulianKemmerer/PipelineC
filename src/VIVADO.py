@@ -468,7 +468,9 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(
     )
     hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
     out_filename = SYN.TOP_LEVEL_MODULE + hash_ext + ".tcl"
-    out_filepath = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE + "/" + out_filename
+    out_filepath = (
+        SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE + "/" + out_filename
+    )
     f = open(out_filepath, "w")
     f.write(syn_imp_and_report_timing_tcl)
     f.close()

@@ -74,7 +74,7 @@ C_AST_NODE_HASH_LEN = 4
 TEMP_HACKY_C_AST_NODE_ID = True
 
 
-def GET_CPP_INCLUDES_LIST(): # -> list[str]: needs typing library?
+def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
     path_list = []
     # Include output directory, and other generated output dir
     if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):

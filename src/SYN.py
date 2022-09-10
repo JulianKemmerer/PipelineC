@@ -52,6 +52,7 @@ SLICE_STEPS_BETWEEN_REGS = 3  # Multiplier for how narrow to start off the searc
 DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 
+
 def PART_SET_TOOL(part_str, allow_fail=False):
     global SYN_TOOL
     if SYN_TOOL is None:
@@ -4396,7 +4397,9 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
     else:
         # Entity and file name
         filename = top_entity_name + VHDL.VHDL_FILE_EXT
-        files_txt += SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE + "/" + filename + " "
+        files_txt += (
+            SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE + "/" + filename + " "
+        )
 
     # Write all entities starting at this inst/multi main
     inst_names = set()
