@@ -9,7 +9,10 @@ def GET_TOOL_PATH(tool_exe_name: str) -> Optional[str]:
         return str(w)
     return None
 
+
 _REPO_ABS_DIR = None
+
+
 def REPO_ABS_DIR():
     global _REPO_ABS_DIR
     if _REPO_ABS_DIR:

@@ -46,11 +46,13 @@ See the [How does the compiler work?](https://github.com/JulianKemmerer/Pipeline
 
 # Tests
 
-TODO fill in with info as added.
+We use hypothesis (property testing) mutmut (mutation testing) and pytest (general unit tests).
+Please add tests when you submit a PR.
+To ensure that your PR doesn't break anything, use the command `poetry run pytest`
 
 # Formatting/Style Guide
 
-TODO fill in with info as added.
+We use black for formatting. Before you submit a PR do `poetry run black src`
 
 # Future Goals
 
