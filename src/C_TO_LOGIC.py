@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import re
 from collections import OrderedDict
 from subprocess import PIPE, Popen
 
@@ -7100,7 +7101,6 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
     rv = []
     # Parse format string to get types of arguments
     # Thanks internet, https://stackoverflow.com/questions/30011379/how-can-i-parse-a-c-format-string-in-python
-    import re
 
     cfmt = """\
   (                                  # start of capture group 1
@@ -9765,27 +9765,6 @@ def PARSE_FILE(c_filename):
         DEL_ALL_CACHES()
         SYN.DEL_ALL_CACHES()
 
-        """
-    from pympler import muppy
-    allObjects = muppy.get_objects()
-    from pympler import summary
-    sum = summary.summarize(allObjects)
-    summary.print_(sum)
-    from pympler import asizeof
-    print("Parser state size:",asizeof.asizeof(parser_state))
-    print("LogicInstLookupTable size:",asizeof.asizeof(parser_state.LogicInstLookupTable))
-    print("LogicInstLookupTable num inst names:",len(parser_state.LogicInstLookupTable))
-    print("LogicInstLookupTable num logic elements:",len(set(parser_state.LogicInstLookupTable.values())))
-    print("FuncLogicLookupTable num logic elements:",len(parser_state.FuncLogicLookupTable))
-    max_len = 0
-    for inst_name in parser_state.LogicInstLookupTable:
-      l = len(inst_name)
-      if l > max_len:
-        max_len = l
-        print(inst_name)
-    sys.exit(0)
-    """
-
         return parser_state
 
     except c_parser.ParseError as pe:
@@ -11317,5 +11296,5 @@ def GET_C_AST_GLOBAL_DECLS(c_file_ast):
     return variable_defs
 
 
-def GET_TYPE_FROM_LIST(py_type, l):
-    return [i for i in l if type(i) == py_type]
+def GET_TYPE_FROM_LIST(py_type, list):
+    return [item for item in list if type(item) == py_type]
