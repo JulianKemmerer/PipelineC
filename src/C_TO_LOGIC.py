@@ -11296,5 +11296,5 @@ def GET_C_AST_GLOBAL_DECLS(c_file_ast):
     return variable_defs
 
 
-def GET_TYPE_FROM_LIST(py_type, l):
-    return [i for i in l if type(i) == py_type]
+def GET_TYPE_FROM_LIST(py_type, list):
+    return [item for item in list if type(item) == py_type]
