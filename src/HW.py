@@ -177,14 +177,8 @@ def send_memcached_set(key, value):
 
 
 TWO_NUMS = struct.pack("!QQ", 123, 456)
-# TWO_NUMS = struct.pack("!ff", 1.23, 4.56)
-# LONG_STR = "Hello this is a test of a longer packet since minimum frames sizes add padding it seems?" #struct.pack("!s",
-# print "LONG_STR",LONG_STR
-# send_udp(TWO_NUMS, 5678, "5.6.7.8", "\xFE\xED\xFA\xCE\xBE\xEF")
+
 print("Sending from:", INTERFACE)
-# send_memcached_set("hello", "world")
-# import time
-# time.sleep(1)
-# send_memcached_get("hello")
+
 dst_mac = bytes.fromhex("012345678901")
 send_eth(TWO_NUMS, dst_mac)
