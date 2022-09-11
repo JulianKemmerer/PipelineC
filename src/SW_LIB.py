@@ -1543,6 +1543,10 @@ def IS_BIT_MANIP(logic):
 
 
 def IS_MEM(logic):
+    # If logic is new bit manip style it wont have c_ast_node
+    # since doesnt have actual definition location in code
+    if logic.is_new_style_bit_manip:
+        return False
     rv = (
         str(logic.c_ast_node.coord).split(":")[0].endswith(MEM_HEADER_FILE)
         and not logic.is_c_built_in
