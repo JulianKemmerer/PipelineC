@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
+
 # Thanks for the fantastic help from: 
 # https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/elf2bin.py
-
-#!/usr/bin/env python3
 from elftools.elf.elffile import ELFFile
 import sys, itertools
 from collections import namedtuple

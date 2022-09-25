@@ -86,11 +86,11 @@ uint32_t risc_v()
 {
   // The shared instruction and data memory
   static uint32_t mem[MEM_NUM_WORDS] = {
-    #include "gcc_test/basic-c.hex"
+    #include "gcc_test/mem.hex"
   };
 
   // Program counter
-  static uint32_t pc = 30*4; // Hard coded to test basic-c.hex
+  static uint32_t pc = 0;
   uint32_t pc_plus4 = pc + 4;
   printf("PC = %d\n", pc);
 
