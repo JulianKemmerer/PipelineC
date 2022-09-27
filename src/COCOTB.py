@@ -1,8 +1,8 @@
 import os
 import sys
 
-from C_TO_LOGIC import GET_SHELL_CMD_OUTPUT
-from SYN import SYN_OUTPUT_DIRECTORY
+import C_TO_LOGIC
+import SYN
 from utilities import GET_TOOL_PATH
 
 def DO_SIM(multimain_timing_params, parser_state, args):
@@ -19,7 +19,7 @@ def DO_SIM(multimain_timing_params, parser_state, args):
 
     # Generate a template py script and make file
     # Or use user specified makefile(and .py)
-    COCOTB_OUT_DIR = SYN_OUTPUT_DIRECTORY + "/cocotb"
+    COCOTB_OUT_DIR = SYN.SYN_OUTPUT_DIRECTORY + "/cocotb"
     if not os.path.exists(COCOTB_OUT_DIR):
         os.makedirs(COCOTB_OUT_DIR)
     makefile_path = COCOTB_OUT_DIR + "/" + "Makefile"
@@ -35,7 +35,7 @@ def DO_SIM(multimain_timing_params, parser_state, args):
     # Run make in directory with makefile to do simulation
     print("Running make in:", makefile_dir, "...", flush=True)
     bash_cmd = f"make"
-    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=makefile_dir)
+    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=makefile_dir)
     print(log_text, flush=True)
     sys.exit(0)
 
