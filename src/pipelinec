@@ -28,6 +28,8 @@ parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
 parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.", action="store_true")
+parser.add_argument("--cocotb", help="Use cocotb to drive simulation. Specify simulator with additional flags.", action="store_true")
+parser.add_argument("--makefile", type=str, default=None,help=f"Specify an existing Makefile. Ex. For tools like --cocotb.")
 parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")
 parser.add_argument("--modelsim", help="Setup simulation files for use with Modelsim.", action="store_true")
 parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
