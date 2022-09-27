@@ -219,7 +219,7 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
     files = toks[1:]
     return set(files)
 
-
+# TODO move to utilities
 def GET_SHELL_CMD_OUTPUT(cmd_str, cwd="."):
     # Kill pid after
     process = subprocess.Popen(

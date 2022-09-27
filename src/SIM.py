@@ -1,5 +1,6 @@
 import os
 
+import COCOTB
 import CXXRTL
 import EDAPLAY
 import MODELSIM
@@ -12,7 +13,9 @@ SIM_TOOL = EDAPLAY
 
 def SET_SIM_TOOL(cmd_line_args):
     global SIM_TOOL
-    if cmd_line_args.edaplay:
+    if cmd_line_args.cocotb:
+        SIM_TOOL = COCOTB
+    elif cmd_line_args.edaplay:
         SIM_TOOL = EDAPLAY
     elif cmd_line_args.cxxrtl:
         SIM_TOOL = CXXRTL
@@ -23,7 +26,10 @@ def SET_SIM_TOOL(cmd_line_args):
 
 
 def DO_OPTIONAL_SIM(do_sim, parser_state, args, multimain_timing_params=None):
-    if SIM_TOOL is EDAPLAY:
+    if SIM_TOOL is COCOTB:
+        if do_sim:
+            COCOTB.DO_SIM(multimain_timing_params, parser_state, args)
+    elif SIM_TOOL is EDAPLAY:
         if do_sim:
             EDAPLAY.SETUP_EDAPLAY(0)
     elif SIM_TOOL is MODELSIM:

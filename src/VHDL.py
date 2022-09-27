@@ -6281,6 +6281,7 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic=None):  # TODO remove Logic
         .replace(".", "_")
         .replace("[", "_")
         .replace("]", "")
+        .replace("-", "_")
     )
     return rv
 
