@@ -420,5 +420,3 @@ efx_run.py """
     # sys.exit(0)
 
     return ParsedTimingReport(log_text)
-
-    

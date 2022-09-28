@@ -219,6 +219,7 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
     files = toks[1:]
     return set(files)
 
+
 # TODO move to utilities
 def GET_SHELL_CMD_OUTPUT(cmd_str, cwd="."):
     # Kill pid after
@@ -7179,7 +7180,11 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
         arg_c_types.append(f.c_type)
         arg_base.append(f.base)
     # Make up a func call to eval
-    func_base_name = PRINTF_FUNC_NAME + "_" + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
+    func_base_name = (
+        PRINTF_FUNC_NAME
+        + "_"
+        + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
+    )
     base_name_is_name = True  # Dont need type into if coord str is enough?
     input_drivers = format_args
     input_driver_types = arg_c_types
@@ -7311,7 +7316,11 @@ def C_AST_STRLEN_FUNC_CALL_TO_LOGIC(
 ):
     # Need to construct a function name, like hacky const ref funcs and printf
     # Make up a func call to eval
-    func_base_name = STRLEN_FUNC_NAME + "_" + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
+    func_base_name = (
+        STRLEN_FUNC_NAME
+        + "_"
+        + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
+    )
     base_name_is_name = True  # Dont need type into if coord str is enough?
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
     input_expr_c_ast_node = c_ast_func_call.args.exprs[0]

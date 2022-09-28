@@ -26,6 +26,7 @@ START_TIME = timer()
 
 OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None  # Auto created with pid and filename or from user
+TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 SYN_TOOL = None  # Attempts to figure out from part number
 DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 
@@ -50,7 +51,6 @@ MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex.
 SLICE_EPSILON_MULTIPLIER = 5  # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3  # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
 DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
-TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 
 
 def PART_SET_TOOL(part_str, allow_fail=False):
