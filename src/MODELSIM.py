@@ -37,6 +37,8 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
     # Get all vhd files in syn output
     vhd_files = SIM.GET_SIM_FILES(latency=0)
 
+    # TODO write some kind of helpers from commmon SimGenInfo?
+
     # .do FILE to execute:
     proj_name = "pipelinc_proj"
     proj_dir = SYN.SYN_OUTPUT_DIRECTORY + "/"

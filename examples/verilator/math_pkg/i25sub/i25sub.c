@@ -17,11 +17,8 @@ int26_t i25sub(int25_t x, int25_t y)
 #include "debug_port.h"
 
 // Debug ports, two inputs, one output
-#include "clock_crossing/x_DEBUG.h"
 DEBUG_INPUT_DECL(int25_t, x)
-#include "clock_crossing/y_DEBUG.h"
 DEBUG_INPUT_DECL(int25_t, y)
-#include "clock_crossing/result_DEBUG.h"
 DEBUG_OUTPUT_DECL(int26_t, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
@@ -30,7 +27,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, i25sub(DEBUG_GET(x), DEBUG_GET(y)));
+  result = i25sub(x, y);
 }
 #endif
 

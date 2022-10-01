@@ -6,6 +6,7 @@ import EDAPLAY
 import MODELSIM
 import SYN
 import VERILATOR
+import VHDL
 
 # Default simulation tool is free online edaplayground
 SIM_TOOL = EDAPLAY
@@ -68,3 +69,53 @@ def GET_SIM_FILES(latency=0):
                     vhd_files.append(abs_path)
 
     return vhd_files
+
+# Common info about what to generate for simulation
+class SimGenInfo:
+    def __init__(self):
+        self.clock_name_to_mhz = None
+        self.debug_input_to_vhdl_name = dict()
+        self.debug_output_to_vhdl_name = dict()
+        self.main_func_to_latency = dict()
+
+def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
+    sim_gen_info = SimGenInfo()
+    # Clocks
+    clock_name_to_mhz, out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+        parser_state, None, True
+    )
+    # Which ones are not from the user internal
+    for clk_mhz in parser_state.clk_mhz.values():
+        clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+        # Remove user clocks from dict
+        clock_name_to_mhz.pop(clk_name, None)
+    sim_gen_info.clock_name_to_mhz = clock_name_to_mhz
+
+    # Debug ports
+    for func in parser_state.main_mhz:
+        debug_name = func.split("_DEBUG")[0]
+        if func.endswith("_DEBUG"):
+            func_logic = parser_state.FuncLogicLookupTable[func]
+            if len(func_logic.inputs) >= 1:
+                # Input debug port
+                debug_vhdl_name = func.replace("__", "_") + "_input_val"
+                sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
+            else:
+                # Output debug port
+                debug_vhdl_name = func.replace("__", "_") + "_return_output"
+                sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
+
+    # Main func latencies
+    for func in parser_state.main_mhz:
+        if multimain_timing_params is not None:
+            main_timing_params = multimain_timing_params.TimingParamsLookupTable[func]
+            main_latency = main_timing_params.GET_TOTAL_LATENCY(
+                parser_state, multimain_timing_params.TimingParamsLookupTable
+            )
+        else:
+            main_latency = 0
+        sim_gen_info.main_func_to_latency[func] = main_latency
+
+    return sim_gen_info
+
+

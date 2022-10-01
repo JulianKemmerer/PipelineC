@@ -38,21 +38,13 @@ pixel_t vga()
 // Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
 // Verilator Debug wires
-#include "clock_crossing/dvi_red_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint8_t, dvi_red)
-#include "clock_crossing/dvi_green_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint8_t, dvi_green)
-#include "clock_crossing/dvi_blue_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint8_t, dvi_blue)
-#include "clock_crossing/vsync_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, vsync)
-#include "clock_crossing/hsync_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, hsync)
-#include "clock_crossing/dvi_active_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, dvi_active)
-#include "clock_crossing/dvi_x_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, dvi_x)
-#include "clock_crossing/dvi_y_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, dvi_y)
 
 // TODO rename pmod_register_outputs everywhere to be register_video_outputs
@@ -74,14 +66,14 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   WIRE_WRITE(external_vga_output_t, external_vga_output, o)
 
   // Connect to Verilator debug ports
-  vsync(o.vga_timing.vsync);
-  hsync(o.vga_timing.hsync);
-  dvi_red(o.color.r);
-  dvi_green(o.color.g);
-  dvi_blue(o.color.b);
-  dvi_active(o.vga_timing.active);
-  dvi_x(o.vga_timing.pos.x);
-  dvi_y(o.vga_timing.pos.y);
+  vsync = o.vga_timing.vsync;
+  hsync = o.vga_timing.hsync;
+  dvi_red = o.color.r;
+  dvi_green = o.color.g;
+  dvi_blue = o.color.b;
+  dvi_active = o.vga_timing.active;
+  dvi_x = o.vga_timing.pos.x;
+  dvi_y = o.vga_timing.pos.y;
   
   // Black color when inactive
   pixel_t active_color;

@@ -3,6 +3,7 @@ import sys
 
 import C_TO_LOGIC
 import OPEN_TOOLS
+import SIM
 import SYN
 
 
@@ -15,26 +16,25 @@ def DO_SIM(latency, parser_state):
     if not os.path.exists(CXXRTL_OUT_DIR):
         os.makedirs(CXXRTL_OUT_DIR)
     # Generate helpful include of cxxrtl names
+    # TODO use sim commmon SimGenInfo
     names_text = ""
     # Clocks
-    clock_name_to_mhz, out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-        parser_state, None, True
-    )
-    if len(clock_name_to_mhz) > 1:
+    sim_gen_info = SIM.GET_SIM_GEN_INFO(parser_state)
+    if len(sim_gen_info.clock_name_to_mhz) > 1:
         print(
             "WARNING: Multiple clocks for CXXRTL probably won't work!",
-            list(clock_name_to_mhz.keys()),
+            list(sim_gen_info.clock_name_to_mhz.keys()),
         )
-        for clock_name, mhz in clock_name_to_mhz.items():
+        for clock_name, mhz in sim_gen_info.clock_name_to_mhz.items():
             if mhz:
                 names_text += f'#define {clock_name} p_{clock_name.replace("_","__")}\n'
             else:
                 names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
     else:
-        clock_name, mhz = list(clock_name_to_mhz.items())[0]
+        clock_name, mhz = list(sim_gen_info.clock_name_to_mhz.items())[0]
         names_text += f'#define clk p_{clock_name.replace("_","__")}\n'
 
-    # Debug ports
+    # Debug ports # TODO replace with sim_gen_info stuff
     for func in parser_state.main_mhz:
         if func.endswith("_DEBUG_OUTPUT_MAIN"):
             debug_name = func.split("_DEBUG")[0]

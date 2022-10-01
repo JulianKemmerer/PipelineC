@@ -19,11 +19,8 @@ float fp32div(float x, float y)
 #include "debug_port.h"
 
 // Debug ports, two inputs, one output
-#include "clock_crossing/x_DEBUG.h"
 DEBUG_INPUT_DECL(float, x)
-#include "clock_crossing/y_DEBUG.h"
 DEBUG_INPUT_DECL(float, y)
-#include "clock_crossing/result_DEBUG.h"
 DEBUG_OUTPUT_DECL(float, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
@@ -32,7 +29,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, fp32div(DEBUG_GET(x), DEBUG_GET(y)));
+  result = fp32div(x, y);
 }
 #endif
 

@@ -27,45 +27,34 @@ def DO_SIM(multimain_timing_params, parser_state, args):
     if not os.path.exists(VERILATOR_OUT_DIR):
         os.makedirs(VERILATOR_OUT_DIR)
     # Generate helpful include of verilator names
+    sim_gen_info = SIM.GET_SIM_GEN_INFO(parser_state, multimain_timing_params)
     names_text = ""
     # Clocks
-    clock_name_to_mhz, out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-        parser_state, None, True
-    )
-    # Which ones are not from the user internal
     clock_port_is_clk = True
-    for clk_mhz in parser_state.clk_mhz.values():
-        clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-        # Remove user clocks from dict
-        clock_name_to_mhz.pop(clk_name, None)
-    if len(clock_name_to_mhz) > 1:
+    if len(sim_gen_info.clock_name_to_mhz) > 1:
         clock_port_is_clk = False
-        for clock_name, mhz in clock_name_to_mhz.items():
+        for clock_name, mhz in sim_gen_info.clock_name_to_mhz.items():
             if mhz:
                 names_text += f'#define {clock_name} {clock_name.replace("__","_")}\n'
             else:
                 names_text += f'#define clk {clock_name.replace("__","_")}\n'
-    elif len(clock_name_to_mhz) == 1:
-        clock_name, mhz = list(clock_name_to_mhz.items())[0]
+    elif len(sim_gen_info.clock_name_to_mhz) == 1:
+        clock_name, mhz = list(sim_gen_info.clock_name_to_mhz.items())[0]
         names_text += f'#define clk {clock_name.replace("__","_")}\n'
     else:
         # All clocks are not auto generated, no idea what input ports are clocks?
         # Probably user clocks with user known constant names handled by user
         # Issue warning?
         clock_port_is_clk = False
-
     # Debug ports
     debug_names = []
-    for func in parser_state.main_mhz:
-        debug_name = func.split("_DEBUG")[0]
-        if func.endswith("_DEBUG_OUTPUT_MAIN"):
-            debug_names.append(debug_name)
-            debug_verilator_name = func.replace("__", "_") + "_return_output"
-            names_text += f"#define {debug_name} {debug_verilator_name}\n"
-        if func.endswith("_DEBUG_INPUT_MAIN"):
-            debug_names.append(debug_name)
-            debug_verilator_name = func.replace("__", "_") + "_val"
-            names_text += f"#define {debug_name} {debug_verilator_name}\n"
+    for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
+        debug_names.append(debug_name)
+        names_text += f"#define {debug_name} {debug_vhdl_name}\n"
+    for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
+        debug_names.append(debug_name)
+        names_text += f"#define {debug_name} {debug_vhdl_name}\n"
+    # Dump all debug inputs and outputs
     names_text += """#define DUMP_PIPELINEC_DEBUG(top) \
 cout <<"""
     for debug_name in debug_names:
@@ -79,17 +68,9 @@ cout <<"""
             + '" " << '
         )
     names_text += "endl;\n"
-
     # Main func latencies
-    for func in parser_state.main_mhz:
-        if multimain_timing_params is not None:
-            main_timing_params = multimain_timing_params.TimingParamsLookupTable[func]
-            main_latency = main_timing_params.GET_TOTAL_LATENCY(
-                parser_state, multimain_timing_params.TimingParamsLookupTable
-            )
-        else:
-            main_latency = 0
-        names_text += f"#define {func}_LATENCY {main_latency}\n"
+    for main_func,latency in sim_gen_info.main_func_to_latency.items():
+        names_text += f"#define {main_func}_LATENCY {latency}\n"
 
     # Write names files
     names_h_path = VERILATOR_OUT_DIR + "/pipelinec_verilator.h"
@@ -121,7 +102,7 @@ int main(int argc, char *argv[]) {{
     main_cpp_text += """    uint64_t cycle = 0;
     while (cycle < 10)
     {
-        // Print the PipelineC debug vars
+        // Print the PipelineC debug ports
         cout << "cycle " << cycle << ": ";
         DUMP_PIPELINEC_DEBUG(g_top)
 

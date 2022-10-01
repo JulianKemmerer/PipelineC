@@ -19,9 +19,7 @@ int32_t fp32_to_i32(float x)
 #include "debug_port.h"
 
 // Debug ports, two inputs, one output
-#include "clock_crossing/x_DEBUG.h"
 DEBUG_INPUT_DECL(float, x)
-#include "clock_crossing/result_DEBUG.h"
 DEBUG_OUTPUT_DECL(int32_t, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
@@ -30,7 +28,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, fp32_to_i32(DEBUG_GET(x)));
+  result = fp32_to_i32(x);
 }
 #endif
 

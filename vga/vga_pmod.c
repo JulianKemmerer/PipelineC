@@ -77,21 +77,13 @@ void vga()
 // Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
 // Verilator Debug wires
-#include "clock_crossing/vga_red_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_red)
-#include "clock_crossing/vga_green_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_green)
-#include "clock_crossing/vga_blue_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint4_t, vga_blue)
-#include "clock_crossing/vsync_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, vsync)
-#include "clock_crossing/hsync_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, hsync)
-#include "clock_crossing/vga_active_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, vga_active)
-#include "clock_crossing/vga_x_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, vga_x)
-#include "clock_crossing/vga_y_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint12_t, vga_y)
 
 void pmod_register_outputs(vga_signals_t vga, pixel_t color)
@@ -116,14 +108,14 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   WIRE_WRITE(app_to_vga_t, app_to_vga, o)
   
   // Connect to Verilator debug ports
-  vsync(o.vs);
-  hsync(o.hs);
-  vga_red(o.color.r);
-  vga_green(o.color.g);
-  vga_blue(o.color.b);
-  vga_active(active_reg);
-  vga_x(x_reg);
-  vga_y(y_reg);
+  vsync = o.vs;
+  hsync = o.hs;
+  vga_red = o.color.r;
+  vga_green = o.color.g;
+  vga_blue = o.color.b;
+  vga_active = active_reg;
+  vga_x = x_reg;
+  vga_y = y_reg;
   
   // Black color when inactive
   color_12b_t active_color;

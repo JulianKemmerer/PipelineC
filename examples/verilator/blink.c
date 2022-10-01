@@ -5,16 +5,8 @@
 
 // Generate top level debug ports with associated pipelinec_verilator.h
 #include "debug_port.h"
-
-// Two lines needed to mark a signal for debug
-
-#include "clock_crossing/counter_debug_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint25_t, counter_debug)
-
-#include "clock_crossing/led_debug_DEBUG.h"
 DEBUG_OUTPUT_DECL(uint1_t, led_debug)
-
-//#include "clock_crossing/inc_debug_DEBUG.h"
 //DEBUG_INPUT_DECL(uint4_t, inc_debug)
 
 // Time counter registers
@@ -27,8 +19,8 @@ uint1_t led;
 uint1_t blink()
 {
   // Connect to verilator debug wires
-  counter_debug(counter);
-  led_debug(led);
+  counter_debug = counter;
+  led_debug = led;
   
   // If reached timeout (short for demo)
   if(counter==(3-1))
@@ -41,8 +33,6 @@ uint1_t blink()
   else
   {
     // TODO: Try setting inputs from verilator
-    //uint4_t inc = inc_debug();
-    //counter += inc;
     counter += 1;
   }  
   

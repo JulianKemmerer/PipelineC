@@ -2,6 +2,7 @@ import os
 import sys
 
 import C_TO_LOGIC
+import SIM
 import SYN
 import VHDL
 from utilities import GET_TOOL_PATH
@@ -66,37 +67,65 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
         f.write(makefile_text)
         f.close()
 
-        # Write template testbench (TODO make verilator compatible?)
-        # What clock is being used?
-        # Clocks
-        clock_name_to_mhz, out_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-            parser_state, None, True
-        )
-        # Which ones are not from the user internal
-        clock_port_is_clk = True
-        for clk_mhz in parser_state.clk_mhz.values():
-            clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-            # Remove user clocks from dict
-            clock_name_to_mhz.pop(clk_name, None)
+        # Write helper file to go with template testbench
+        py_text = ""
+        sim_gen_info = SIM.GET_SIM_GEN_INFO(parser_state, multimain_timing_params)  
         # Only support one clock for now (otherwise do multiple parallel clock gens)
-        if len(clock_name_to_mhz) != 1:
+        if len(sim_gen_info.clock_name_to_mhz) != 1:
             raise NotImplementedError(
                 "Only single clock designs supported for cocotb template testbench gen!"
             )
-        clock_name, mhz = list(clock_name_to_mhz.items())[0]
+        clock_name, mhz = list(sim_gen_info.clock_name_to_mhz.items())[0]
         ns = 1.0
         if mhz:
-            ns = 1000.0 / mhz
+          ns = 1000.0 / mhz
+        # Debug ports
+        # Inputs
+        for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
+          py_text += f'''
+def {debug_name}(dut, val_input=None):
+  if val_input:
+    dut.{debug_vhdl_name} = val_input
+  else:
+    return dut.{debug_vhdl_name}
+          '''
+        # Outputs
+        for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
+          py_text += f'''
+def {debug_name}(dut):
+  return dut.{debug_vhdl_name}
+          '''
+        # Dump all debug inputs and outputs
+        py_text += f'''
+def DUMP_PIPELINEC_DEBUG(dut):\n'''
+        for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
+          py_text += f'  print("{debug_name} =", {debug_name}(dut))\n'
+        for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
+          py_text += f'  print("{debug_name} =", {debug_name}(dut))\n'
+        py_text += "\n"
+        # Main func latencies
+        for main_func,latency in sim_gen_info.main_func_to_latency.items():
+            py_text += f'{main_func}_LATENCY = {latency}\n'
+
+        py_filepath = COCOTB_OUT_DIR + "/pipelinec_cocotb.py"
+        f = open(py_filepath, "w")
+        f.write(py_text)
+        f.close()
 
         # Testbench just does 10 clocks and done
         py_text = f'''
 import cocotb
 from cocotb.triggers import Timer
 
+from pipelinec_cocotb import * # Generated
+
 @cocotb.test()
 async def my_first_test(dut):
     """Try accessing the design."""
     for cycle in range(10):
+        # Print the PipelineC debug ports
+        print("cycle ", cycle)
+        DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 0
         await Timer({ns}, units="ns")
         dut.{clock_name}.value = 1

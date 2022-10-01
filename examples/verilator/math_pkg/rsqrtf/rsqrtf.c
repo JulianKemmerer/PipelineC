@@ -81,9 +81,7 @@ float llvm_dis_Z11float_rsqrtf_local_opt( FLOAT a0)
 #include "debug_port.h"
 
 // Debug ports
-#include "clock_crossing/x_DEBUG.h"
 DEBUG_INPUT_DECL(float, x)
-#include "clock_crossing/result_DEBUG.h"
 DEBUG_OUTPUT_DECL(float, result)
 // Mark as top level for synthesis
 #pragma MAIN test_bench
@@ -92,7 +90,7 @@ void test_bench()
   // Drive result debug port 
   // with the output of doing 
   // an operation on the two input ports
-  DEBUG_SET(result, llvm_dis_Z11float_rsqrtf(DEBUG_GET(x)));
+  result = llvm_dis_Z11float_rsqrtf(x);
 }
 #endif
 
