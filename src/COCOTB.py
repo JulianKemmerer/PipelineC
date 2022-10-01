@@ -33,39 +33,6 @@ def DO_SIM(multimain_timing_params, parser_state, args):
         # Generate makefile (and dummy tb)
         makefile_path = COCOTB_OUT_DIR + "/" + "Makefile"
         makefile_dir = COCOTB_OUT_DIR
-        py_basename = "test_" + SYN.TOP_LEVEL_MODULE
-        # What sim tool?
-        sim_make_args = ""
-        if args.ghdl:
-            sim_make_args += "SIM ?= ghdl\n"
-            sim_make_args += "EXTRA_ARGS += --std=08\n"
-            sim_tool_path = GET_TOOL_PATH("ghdl")
-            if sim_tool_path is None:
-                raise Exception("GHDL does not appear installed. ghdl not in path!")
-        else:
-            raise NotImplementedError("No supported cocotb simulator specified!")
-
-        # Write make file
-        makefile_text = f"""
-{sim_make_args}
-TOPLEVEL_LANG ?= vhdl
-
-#VERILOG_SOURCES += $(PWD)/my_design.sv
-# use VHDL_SOURCES for VHDL files
-VHDL_SOURCES += $(shell cat "{SYN.SYN_OUTPUT_DIRECTORY}/vhdl_files.txt")
-
-# TOPLEVEL is the name of the toplevel module in your Verilog or VHDL file
-TOPLEVEL = {SYN.TOP_LEVEL_MODULE}
-
-# MODULE is the basename of the Python test file
-MODULE = {py_basename}
-
-# include cocotb's make rules to take care of the simulator setup
-include $(shell cocotb-config --makefiles)/Makefile.sim
-      """
-        f = open(makefile_path, "w")
-        f.write(makefile_text)
-        f.close()
 
         # Write helper file to go with template testbench
         py_text = ""
@@ -116,6 +83,7 @@ def DUMP_PIPELINEC_DEBUG(dut):\n'''
         f.close()
 
         # Testbench just does 10 clocks and done
+        py_basename = "test_" + SYN.TOP_LEVEL_MODULE
         py_text = f'''
 import cocotb
 from cocotb.triggers import Timer
@@ -138,6 +106,40 @@ async def my_first_test(dut):
         f = open(py_filepath, "w")
         f.write(py_text)
         f.close()
+
+        # What sim tool?
+        sim_make_args = ""
+        if args.ghdl:
+            sim_make_args += "SIM ?= ghdl\n"
+            sim_make_args += "EXTRA_ARGS += --std=08\n"
+            sim_tool_path = GET_TOOL_PATH("ghdl")
+            if sim_tool_path is None:
+                raise Exception("GHDL does not appear installed. ghdl not in path!")
+        else:
+            raise NotImplementedError("No supported cocotb simulator specified!")
+
+        # Write make file
+        makefile_text = f"""
+{sim_make_args}
+TOPLEVEL_LANG ?= vhdl
+
+#VERILOG_SOURCES += $(PWD)/my_design.sv
+# use VHDL_SOURCES for VHDL files
+VHDL_SOURCES += $(shell cat "{SYN.SYN_OUTPUT_DIRECTORY}/vhdl_files.txt")
+
+# TOPLEVEL is the name of the toplevel module in your Verilog or VHDL file
+TOPLEVEL = {SYN.TOP_LEVEL_MODULE}
+
+# MODULE is the basename of the Python test file
+MODULE = {py_basename}
+
+# include cocotb's make rules to take care of the simulator setup
+include $(shell cocotb-config --makefiles)/Makefile.sim
+      """
+        f = open(makefile_path, "w")
+        f.write(makefile_text)
+        f.close()
+
 
     # Run make in directory with makefile to do simulation
     print("Running make in:", makefile_dir, "...", flush=True)
