@@ -98,10 +98,13 @@ def {debug_name}(dut):
         # Dump all debug inputs and outputs
         py_text += f'''
 def DUMP_PIPELINEC_DEBUG(dut):\n'''
-        for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
-          py_text += f'  print("{debug_name} =", {debug_name}(dut))\n'
-        for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
-          py_text += f'  print("{debug_name} =", {debug_name}(dut))\n'
+        if len(sim_gen_info.debug_input_to_vhdl_name) + len(sim_gen_info.debug_output_to_vhdl_name) > 0: 
+          for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
+            py_text += f'  print("{debug_name} =", {debug_name}(dut), flush=True)\n'
+          for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
+            py_text += f'  print("{debug_name} =", {debug_name}(dut), flush=True)\n'
+        else:
+          py_text += f' pass\n'
         py_text += "\n"
         # Main func latencies
         for main_func,latency in sim_gen_info.main_func_to_latency.items():
@@ -124,7 +127,7 @@ async def my_first_test(dut):
     """Try accessing the design."""
     for cycle in range(10):
         # Print the PipelineC debug ports
-        print("cycle ", cycle)
+        print("cycle ", cycle, flush=True)
         DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 0
         await Timer({ns}, units="ns")
