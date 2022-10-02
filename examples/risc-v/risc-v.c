@@ -9,11 +9,15 @@
 
 #define OP_ADD 0b0110011
 #define OP_JAL 0b1101111
+#define OP_IMM 0b0010011
+
+#define FUNCT3_ADDI 0b000
 
 // Sorta decode+control
 typedef struct decoded_t{
   uint5_t src2;
   uint5_t src1;
+  uint3_t funct3;
   uint5_t dest;
   uint7_t opcode;
   // Derived control flags from decode
@@ -38,6 +42,18 @@ decoded_t decode(uint32_t inst){
     rv.reg_wr = 1;
     rv.print_reg_reads = 1;
     printf("ADD: r%d + r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+  }else if(rv.opcode==OP_IMM){
+    int12_t imm11_0 = inst(31, 20);
+    rv.signed_immediate = imm11_0;
+    rv.src1 = inst(19, 15);
+    rv.funct3 = inst(14, 12);
+    rv.dest = inst(11, 7);
+    if(rv.funct3==FUNCT3_ADDI){
+      rv.reg_wr = 1;
+      printf("ADDI: r%d + %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    } else {
+      printf("Unsupported OP_IMM instruction: 0x%X\n", inst);
+    }
   }else if(rv.opcode==OP_JAL){
     // JAL - Jump and link
     uint1_t imm20 = inst(31);
@@ -71,13 +87,18 @@ typedef struct execute_t
 execute_t execute(uint32_t pc, decoded_t decoded, uint32_t reg1, uint32_t reg2)
 {
   execute_t rv;
-  // TODO resource sharing
+  // TODO resource sharing + more in decode logic to control fewer resources
   if(decoded.opcode==OP_ADD){
     rv.result = reg1 + reg2;
-    printf("ADD: %d + %d = %d \n", reg1, reg2, rv.result);
+    printf("ADD: %d + %d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+  }else if(decoded.opcode==OP_IMM){
+    if(decoded.funct3==FUNCT3_ADDI){
+      rv.result = reg1 + decoded.signed_immediate;
+      printf("ADDI: %d + %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }
   }else if(decoded.opcode==OP_JAL){
     rv.result = pc + decoded.signed_immediate;
-    printf("JAL: PC %d + %d = %d\n", pc, decoded.signed_immediate, (int32_t)rv.result);
+    printf("JAL: PC = %d + %d = %d\n", pc, decoded.signed_immediate, (int32_t)rv.result);
   }
   return rv;
 }

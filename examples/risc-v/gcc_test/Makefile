@@ -2,8 +2,8 @@
 # https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/basic-c/Makefile
 # export PATH=$PATH:/opt/riscv/bin
 
-all : main.c
-	riscv32-unknown-elf-gcc main.c -o main -march=rv32i -mabi=ilp32 -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments -T link.ld 
+all : main.c bootstrap.S
+	riscv32-unknown-elf-gcc bootstrap.S main.c -o main -march=rv32i -mabi=ilp32 -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments -T link.ld 
 	
 sim: all
 	riscv-vp --intercept-syscalls main
