@@ -70,6 +70,7 @@ def GET_SIM_FILES(latency=0):
 
     return vhd_files
 
+
 # Common info about what to generate for simulation
 class SimGenInfo:
     def __init__(self):
@@ -77,6 +78,7 @@ class SimGenInfo:
         self.debug_input_to_vhdl_name = dict()
         self.debug_output_to_vhdl_name = dict()
         self.main_func_to_latency = dict()
+
 
 def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
     sim_gen_info = SimGenInfo()
@@ -117,5 +119,3 @@ def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
         sim_gen_info.main_func_to_latency[func] = main_latency
 
     return sim_gen_info
-
-

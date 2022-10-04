@@ -48,10 +48,10 @@ def DO_SIM(multimain_timing_params, parser_state, args):
         clock_port_is_clk = False
     # Debug ports
     debug_names = []
-    for debug_name,debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
+    for debug_name, debug_vhdl_name in sim_gen_info.debug_input_to_vhdl_name.items():
         debug_names.append(debug_name)
         names_text += f"#define {debug_name} {debug_vhdl_name}\n"
-    for debug_name,debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
+    for debug_name, debug_vhdl_name in sim_gen_info.debug_output_to_vhdl_name.items():
         debug_names.append(debug_name)
         names_text += f"#define {debug_name} {debug_vhdl_name}\n"
     # Dump all debug inputs and outputs
@@ -69,7 +69,7 @@ cout <<"""
         )
     names_text += "endl;\n"
     # Main func latencies
-    for main_func,latency in sim_gen_info.main_func_to_latency.items():
+    for main_func, latency in sim_gen_info.main_func_to_latency.items():
         names_text += f"#define {main_func}_LATENCY {latency}\n"
 
     # Write names files
