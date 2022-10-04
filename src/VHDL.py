@@ -3248,6 +3248,12 @@ use ieee.numeric_std.all;
 
 package c_structs_pkg is
 """
+    # Type defs defining. ex. unsigned(31 downto 0)==uint32_t
+    max_bit_width=2048 # Stolen from GENERATE_INT_N_HEADERS that was once run
+    for i in range(max_bit_width):
+        text += f"subtype uint{i+1}_t is unsigned({i} downto 0);\n"
+        if i > 0:
+            text += f"subtype int{i+1}_t is signed({i} downto 0);\n"
 
     # Byte array type to be sub typed for u8 and char array
     # TODO for all other array types

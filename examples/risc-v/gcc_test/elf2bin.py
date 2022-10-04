@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# Script to write out a memory initialization file from an elf 
+
 # Thanks for the fantastic help from: 
 # https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/elf2bin.py
 from elftools.elf.elffile import ELFFile
@@ -34,6 +36,12 @@ class AddressSpace:
 		for i,x in enumerate(sec.data):
 			self.data[dst+i] = x
 
+# VHDL doesnt accept DECIMAL 32b unsigned value constants
+# since sees as signed 33b integer w/sign bit=0
+# so instead explictly convert 32b unsigned to 32b signed
+# Thanks https://stackoverflow.com/questions/24563786/conversion-from-hex-to-signed-dec-in-python
+def s32(value):
+    return -(value & 0x80000000) | (value & 0x7fffffff)
 
 with open(in_file, 'rb') as f:
 	##print("> process: {}".format(in_file))
@@ -66,23 +74,25 @@ with open(in_file, 'rb') as f:
 	mem = AddressSpace(left, right)
 	for x in itertools.chain(load, null):
 		mem.load(x)
-	
+
 	with open(out_file, "w") as of:
 		bytes = list(mem.data)
 		bytes.extend((MEM_SIZE_IN_BYTES - len(bytes))*[0])
 		if len(bytes) > MEM_SIZE_IN_BYTES:
 			raise RuntimeError("executable does not fit into memory -- len:" + str(len(bytes)))
 		# reformat so it represents how its loaded in memory as 32b words
-		s = ""
+		s = '#define MEM_INIT "(\\n\\\n'
 		i = 0
 		while i < len(bytes):
-			word_str = ""
+			word_hex = ""
 			for _ in range(4):
 				byte_str = "{:02X}".format(bytes[i])
-				word_str = byte_str + word_str
-				i += 1 
-			word_str = "0x" + word_str 
+				word_hex = byte_str + word_hex
+				i += 1
+			word_int = int(word_hex, 16)
+			word_str = f"unsigned(to_signed({str(s32(word_int))}, 32))"
 			if i!=len(bytes):
-				word_str += ",\n"
+				word_str += ",\\n\\\n"
 			s += word_str
+		s += ')"\n'
 		of.write(s)

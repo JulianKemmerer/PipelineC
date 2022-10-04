@@ -27,6 +27,7 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 // need to manually write VHDL code the synthesis tool supports
 // since multiple read ports have not been built into PipelineC yet
 // https://github.com/JulianKemmerer/PipelineC/issues/93
+// TODO: Use ram.h preprocessor macros for same as below decl...
 typedef struct frame_buf_ram_outputs_t
 {
   uint1_t read_data0;

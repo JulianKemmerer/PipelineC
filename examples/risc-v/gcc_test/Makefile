@@ -18,7 +18,7 @@ dump-comment: all
 	objdump -s --section .comment main
 
 hex: all
-	./elf2bin.py main mem.hex
+	./elf2bin.py main mem_init.h
     
 clean:
 	rm -f main

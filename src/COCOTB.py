@@ -93,14 +93,22 @@ from pipelinec_cocotb import * # Generated
 @cocotb.test()
 async def my_first_test(dut):
     """Try accessing the design."""
-    for cycle in range(10):
-        # Print the PipelineC debug ports
-        print("cycle ", cycle, flush=True)
-        DUMP_PIPELINEC_DEBUG(dut)
+    # Do first cycle print a little different
+    # to work around 'metavalue detected' warnings from ieee libs
+    cycle = 0
+    print("Clock: ", cycle, flush=True)
+    DUMP_PIPELINEC_DEBUG(dut)
+    dut.{clock_name}.value = 1
+    await Timer({ns/2}, units="ns")
+    print("^End Clock: ", cycle, flush=True)
+    for i in range(9):
         dut.{clock_name}.value = 0
-        await Timer({ns}, units="ns")
+        await Timer({ns/2}, units="ns")
+        print("")
+        print("Clock: ", i+1, flush=True)
+        DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 1
-        await Timer({ns}, units="ns")
+        await Timer({ns/2}, units="ns")
 '''
         py_filepath = COCOTB_OUT_DIR + "/" + py_basename + ".py"
         f = open(py_filepath, "w")
