@@ -235,7 +235,8 @@ uint32_t risc_v()
     printf("Write RegFile: PC+4->Reg...\n");
     reg_wr_inputs.wr_data = pc_plus4;
   }else{
-    printf("Write RegFile: Execute Result->Reg...\n");
+    if(decoded.reg_wr)
+      printf("Write RegFile: Execute Result->Reg...\n");
     reg_wr_inputs.wr_data = exe.result;
   }
   if(decoded.reg_wr){
@@ -243,7 +244,6 @@ uint32_t risc_v()
   }
   // Actual connection to reg file write port
   reg_write(reg_wr_inputs);
-  
 
   // Branch/Increment PC
   if(decoded.exe_to_pc){
