@@ -198,29 +198,28 @@ uint32_t risc_v()
   // Register file reads, from port0 and port1
   uint32_t rd_data1 = reg_read0(decoded.src1);
   uint32_t rd_data2 = reg_read1(decoded.src2);
-  if(decoded.print_rs1_read)
+  if(decoded.print_rs1_read){
     printf("Read RegFile[%d] = %d\n", decoded.src1, rd_data1);
-  if(decoded.print_rs2_read)
+  }
+  if(decoded.print_rs2_read){
     printf("Read RegFile[%d] = %d\n", decoded.src2, rd_data2);
+  }
 
   // Execute stage
   execute_t exe = execute(pc, decoded, rd_data1, rd_data2);
 
   // Memory stage, assemble inputs
   mem_rw_in_t mem_rw_in;
-  // TEMP addr always from execute module
-  if(decoded.mem_rd | decoded.mem_wr){
-    mem_rw_in.addr = exe.result; 
-    if(decoded.mem_wr){
-      mem_rw_in.wr_data = rd_data2;
-      mem_rw_in.wr_en = 1;
-      printf("Write Mem[0x%X] = %d\n", mem_rw_in.addr, mem_rw_in.wr_data);
-    }
-  }
+  mem_rw_in.addr = exe.result; // TEMP addr always from execute module
+  mem_rw_in.wr_data = rd_data2;
+  mem_rw_in.wr_en = decoded.mem_wr;
   // Actual connection to memory read+write port
   uint32_t data_mem_rd_val = mem_read_write(mem_rw_in);
+  if(decoded.mem_wr){
+    printf("Write Mem[0x%X] = %d\n", mem_rw_in.addr, mem_rw_in.wr_data);
+  }
   if(decoded.mem_rd){
-      printf("Read Mem[0x%X] = %d\n", mem_rw_in.addr, data_mem_rd_val);
+    printf("Read Mem[0x%X] = %d\n", mem_rw_in.addr, data_mem_rd_val);
   }  
 
   // Second half of reg file
@@ -229,21 +228,22 @@ uint32_t risc_v()
   reg_wr_inputs.wr_en = decoded.reg_wr;
   reg_wr_inputs.wr_addr = decoded.dest;
   // Determine data to write back
+  if(decoded.mem_to_reg){
+    printf("Write RegFile: MemRd->Reg...\n");
+    reg_wr_inputs.wr_data = data_mem_rd_val;
+  }else if(decoded.pc_plus4_to_reg){
+    printf("Write RegFile: PC+4->Reg...\n");
+    reg_wr_inputs.wr_data = pc_plus4;
+  }else{
+    printf("Write RegFile: Execute Result->Reg...\n");
+    reg_wr_inputs.wr_data = exe.result;
+  }
   if(decoded.reg_wr){
-    if(decoded.mem_to_reg){
-      printf("Write RegFile: MemRd->Reg...\n");
-      reg_wr_inputs.wr_data = data_mem_rd_val;
-    }else if(decoded.pc_plus4_to_reg){
-      printf("Write RegFile: PC+4->Reg...\n");
-      reg_wr_inputs.wr_data = pc_plus4;
-    }else{
-      printf("Write RegFile: Execute Result->Reg...\n");
-      reg_wr_inputs.wr_data = exe.result;
-    }
     printf("Write RegFile[%d] = %d\n", decoded.dest, reg_wr_inputs.wr_data);
   }
   // Actual connection to reg file write port
   reg_write(reg_wr_inputs);
+  
 
   // Branch/Increment PC
   if(decoded.exe_to_pc){
