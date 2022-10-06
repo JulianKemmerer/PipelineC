@@ -117,7 +117,7 @@ async def my_first_test(dut):
     dut.{clock_name}.value = 1
     await Timer({ns/2}, units="ns")
     print("^End Clock: ", cycle, flush=True)
-    for i in range(9):
+    for i in range({args.run-1}):
         dut.{clock_name}.value = 0
         await Timer({ns/2}, units="ns")
         print("")

@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {{
     if not clock_port_is_clk:
         main_cpp_text += """    /* User needs to specify how to drive clock(s)\n"""
     main_cpp_text += """    uint64_t cycle = 0;
-    while (cycle < 10)
+    while (cycle < """ + str(args.run) + """)
     {
         // Print the PipelineC debug ports
         cout << "cycle " << cycle << ": ";

@@ -28,6 +28,7 @@ parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
 parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.", action="store_true")
+parser.add_argument("--run", type=int, default=10, help="Argument for simulator run command. Default = '10' clock cycles.")
 parser.add_argument("--cocotb", help="Use cocotb to drive simulation. Specify simulator with additional flags.", action="store_true")
 parser.add_argument("--makefile", type=str, default=None,help=f"Specify an existing Makefile. Ex. For tools like --cocotb.")
 parser.add_argument("--ghdl", help="Setup simulation files for use with GHDL.", action="store_true")
@@ -129,6 +130,13 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+RISCV CPU and stuff?
+  Put a risc(v? CHIPS2.0?) core along side accelerator in pipelinec
+  host OS on FOSIX NoC?
+Victor's RT
+  Try ECP5 flow again?
+    nextpnr has bette packing now
+  Try verilating whole pipeline?
 BUGS: Missing typedef support!?
   Shouldnt be too bad, can hack around 
 Fix bug in FSM style extra clock
@@ -137,15 +145,9 @@ PyRTL issue: https://github.com/UCSBarchlab/PyRTL/issues/422
   More yosys optimizations? Const prop? Missing opts that pyrtl doesnt like in netlist?
   Try to recreate unused wires with smaller examples
   try just unused wires instead of unlistened nets?
-RISCV CPU and stuff?
-  Put a risc(v? CHIPS2.0?) core along side accelerator in pipelinec
-  host OS on FOSIX NoC?
-SDR project? Receive FM radio audio?
-Victor's RT
-  Try ECP5 flow again?
-    Too many FFs still for ECP5 720p 89076/83640
-    480p has been running nextpnr for days? never finished...
-  Try verilating whole pipeline?
+SDR project? 
+  Do FIR DEMO first
+  Receive FM radio audio?
 Victor's other secret thing
 Mandelbrot demo with frame buffer FSM style and pipelined iterations?
 Do more basic tutorials like nandland+hdlbits
