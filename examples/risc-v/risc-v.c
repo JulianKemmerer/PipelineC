@@ -18,6 +18,7 @@
 #define OP_JAL    0b1101111
 #define OP_JALR   0b1100111
 #define OP_LOAD   0b0000011
+#define OP_LUI    0b0110111
 #define OP_STORE  0b0100011
 #define FUNCT3_ADDI  0b000
 #define FUNCT3_BLT   0b100
@@ -57,7 +58,7 @@ decoded_t decode(uint32_t inst){
     printf("ADD: r%d + r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
   }else if(rv.opcode==OP_AUIPC){
     // AUIPC
-    int20_t imm31_12 = inst(31, 12);
+    uint20_t imm31_12 = inst(31, 12);
     rv.signed_immediate = int32_uint20_12(0, imm31_12);
     rv.reg_wr = 1;
     printf("AUIPC: PC + %d -> r%d \n", rv.signed_immediate, rv.dest);
@@ -107,8 +108,7 @@ decoded_t decode(uint32_t inst){
     jal_offset = int21_uint10_1(jal_offset, imm10_1);
     jal_offset = int21_uint1_11(jal_offset, imm11);
     jal_offset = int21_uint8_12(jal_offset, immm19_12);
-    int32_t sign_extended_offset = jal_offset;
-    rv.signed_immediate = sign_extended_offset;
+    rv.signed_immediate = jal_offset;
     // Execute stage does pc related math
     rv.exe_to_pc = 1;
     // And link
@@ -119,8 +119,7 @@ decoded_t decode(uint32_t inst){
     // JALR - Jump and link register
     int12_t jalr_offset = inst(31, 20);
     // Jump offset
-    int32_t sign_extended_offset = jalr_offset;
-    rv.signed_immediate = sign_extended_offset;
+    rv.signed_immediate = jalr_offset;
     // Execute stage does pc related math
     rv.print_rs1_read = 1;
     rv.exe_to_pc = 1;
@@ -143,6 +142,12 @@ decoded_t decode(uint32_t inst){
     } else {
       printf("Unsupported OP_LOAD instruction: 0x%X\n", inst);
     }
+  }else if(rv.opcode==OP_LUI){
+    // LUI
+    rv.reg_wr = 1;
+    uint20_t imm31_12 = inst(31, 12);
+    rv.signed_immediate = int32_uint20_12(0, imm31_12);
+    printf("LUI: %d -> r%d \n", rv.signed_immediate, rv.dest);
   }else if(rv.opcode==OP_STORE){
     if(rv.funct3==FUNCT3_LW_SW){
       // SW
@@ -209,6 +214,9 @@ execute_t execute(
       rv.result = reg1 + decoded.signed_immediate;
       printf("LW: addr = %d + %d = %d, mem[0x%X] -> r%d \n", reg1, decoded.signed_immediate, rv.result, rv.result, decoded.dest);
     }
+  }else if(decoded.opcode==OP_LUI){
+    rv.result = decoded.signed_immediate;
+    printf("LUI: exe result = %d \n", decoded.signed_immediate);
   }else if(decoded.opcode==OP_STORE){
     if(decoded.funct3==FUNCT3_LW_SW){
       rv.result = reg1 + decoded.signed_immediate;

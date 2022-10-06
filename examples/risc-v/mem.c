@@ -32,7 +32,11 @@ mem_out_t mem(
   uint32_t rd_addr,
   mem_rw_in_t mem_rw
 ){
-  the_mem_outputs_t ram_out = the_mem(mem_rw.addr, mem_rw.wr_data, mem_rw.wr_en, rd_addr);
+  // Convert byte addresses to 4-byte word address
+  uint32_t mem_rw_word_index = mem_rw.addr >> 2;
+  uint32_t rd_addr_word_index = rd_addr >> 2;
+  // The single RAM instance with connections splitting in two
+  the_mem_outputs_t ram_out = the_mem(mem_rw_word_index, mem_rw.wr_data, mem_rw.wr_en, rd_addr);
   mem_out_t mem_out;
   mem_out.mem_read_write = ram_out.rd_data0;
   mem_out.inst_read = ram_out.rd_data1;

@@ -12,7 +12,8 @@ dump-elf: all
 	riscv32-unknown-elf-readelf -a main
 	
 dump-code: all
-	riscv32-unknown-elf-objdump -D main
+	# -Mnumeric to use plain register numbers not software naming
+	riscv32-unknown-elf-objdump -D main -Mnumeric
 	
 dump-comment: all
 	objdump -s --section .comment main

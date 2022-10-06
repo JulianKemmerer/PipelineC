@@ -1,3 +1,6 @@
+#include <stdint.h>
+static volatile uint32_t *OUT_ADDR = (uint32_t *)0x01230;
+
 int fib(int n){
 	if (n <= 1)
 			return n;
@@ -5,6 +8,8 @@ int fib(int n){
 }
 
 int main() {
-	int n = 10;
-	return fib(n);
+	int n = 3; // 0 1 1 2 3 5
+	int rv = fib(n);
+	*OUT_ADDR = rv;
+	return rv;
 }
