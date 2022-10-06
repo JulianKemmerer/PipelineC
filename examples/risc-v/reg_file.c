@@ -25,15 +25,16 @@ typedef struct reg_file_out_t
   uint1_t reg_write; // Dummy output
 }reg_file_out_t;
 typedef struct reg_file_wr_in_t{
-  uint32_t wr_addr;
+  uint5_t wr_addr;
   uint32_t wr_data;
   uint1_t wr_en;
 }reg_file_wr_in_t;
 reg_file_out_t reg_file(
-  uint32_t rd_addr0,
-  uint32_t rd_addr1,
+  uint5_t rd_addr0,
+  uint5_t rd_addr1,
   reg_file_wr_in_t reg_write
 ){
+  reg_write.wr_en &= (reg_write.wr_addr!=0); // No writes to reg0, always 0
   the_reg_file_out_t ram_out = the_reg_file(rd_addr0, rd_addr1, 
                               reg_write.wr_addr, reg_write.wr_data, reg_write.wr_en);
   reg_file_out_t reg_file_out;
@@ -46,10 +47,10 @@ MAIN_SPLIT3(
   reg_file_out_t,
   reg_file,
   reg_read0,
-  uint32_t,
+  uint5_t,
   uint32_t,
   reg_read1,
-  uint32_t,
+  uint5_t,
   uint32_t,
   reg_write,
   reg_file_wr_in_t,
