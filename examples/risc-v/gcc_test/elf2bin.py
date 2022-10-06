@@ -15,7 +15,7 @@ if len(sys.argv) == 4:
 	# parse third argument as memory size given in hex (0xabc)
 	MEM_SIZE_IN_BYTES = int(sys.argv[3],16)
 else:
-	MEM_SIZE_IN_BYTES = 512
+	MEM_SIZE_IN_BYTES = 2048
 	print(f"Using {MEM_SIZE_IN_BYTES} bytes ({int(MEM_SIZE_IN_BYTES/4)} 32b words) default size for mem_size")
 
 Section = namedtuple("Section", ["header", "data"])

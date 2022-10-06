@@ -4,7 +4,7 @@
 #include "ram.h"
 
 // Combined instruction and data memory
-#define MEM_SIZE_IN_BYTES 512
+#define MEM_SIZE_IN_BYTES 2048
 #define MEM_NUM_WORDS (MEM_SIZE_IN_BYTES/4)
 #include "gcc_test/mem_init.h"
 
