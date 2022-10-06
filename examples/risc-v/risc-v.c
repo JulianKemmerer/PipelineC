@@ -11,14 +11,16 @@
 #include "mem.c"
 
 // OPCODES and such
-#define OP_ADD   0b0110011
-#define OP_AUIPC 0b0010111
-#define OP_IMM   0b0010011
-#define OP_JAL   0b1101111
-#define OP_JALR  0b1100111
-#define OP_LOAD  0b0000011
-#define OP_STORE 0b0100011
+#define OP_ADD    0b0110011
+#define OP_AUIPC  0b0010111
+#define OP_BRANCH 0b1100011
+#define OP_IMM    0b0010011
+#define OP_JAL    0b1101111
+#define OP_JALR   0b1100111
+#define OP_LOAD   0b0000011
+#define OP_STORE  0b0100011
 #define FUNCT3_ADDI  0b000
+#define FUNCT3_BLT   0b100
 #define FUNCT3_LW_SW 0b010
 
 // Sorta decode+control
@@ -59,6 +61,29 @@ decoded_t decode(uint32_t inst){
     rv.signed_immediate = int32_uint20_12(0, imm31_12);
     rv.reg_wr = 1;
     printf("AUIPC: PC + %d -> r%d \n", rv.signed_immediate, rv.dest);
+  }else if(rv.opcode==OP_BRANCH){
+    if(rv.funct3==FUNCT3_BLT){
+      // BLT
+      uint1_t imm12 = inst(31);
+      uint6_t imm10_5 = inst(30, 25);
+      uint4_t imm4_1 = inst(11, 8);
+      uint1_t imm11 = inst(7);
+      // BLT offset
+      int12_t blt_offset;
+      blt_offset = int12_uint1_12(blt_offset, imm12);
+      blt_offset = int12_uint6_5(blt_offset, imm10_5);
+      blt_offset = int12_uint4_1(blt_offset, imm4_1);
+      blt_offset = int12_uint1_11(blt_offset, imm11);
+      rv.signed_immediate = blt_offset;
+      // Compare two regs
+      rv.print_rs1_read = 1;
+      rv.print_rs2_read = 1;
+      // Execute stage does pc related math
+      rv.exe_to_pc = 1;
+      printf("BLT: PC = r%d < r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
+    } else {
+      printf("Unsupported OP_BRANCH instruction: 0x%X\n", inst);
+    }
   }else if(rv.opcode==OP_IMM){
     int12_t imm11_0 = inst(31, 20);
     rv.signed_immediate = imm11_0;
@@ -108,6 +133,7 @@ decoded_t decode(uint32_t inst){
       // LW
       rv.mem_rd = 1;
       rv.mem_to_reg = 1;
+      rv.reg_wr = 1;
       rv.print_rs1_read = 1;
       // Store offset
       int12_t lw_offset = inst(31, 20);
@@ -138,7 +164,6 @@ decoded_t decode(uint32_t inst){
   }else{
     printf("Unsupported instruction: 0x%X\n", inst);
   }
-  
   return rv;
 }
 
@@ -146,7 +171,9 @@ typedef struct execute_t
 {
   uint32_t result;
 }execute_t;
-execute_t execute(uint32_t pc, decoded_t decoded, uint32_t reg1, uint32_t reg2)
+execute_t execute(
+  uint32_t pc, uint32_t pc_plus4, 
+  decoded_t decoded, uint32_t reg1, uint32_t reg2)
 {
   execute_t rv;
   if(decoded.opcode==OP_ADD){
@@ -154,7 +181,17 @@ execute_t execute(uint32_t pc, decoded_t decoded, uint32_t reg1, uint32_t reg2)
     printf("ADD: %d + %d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
   }else if(decoded.opcode==OP_AUIPC){
     rv.result = pc + decoded.signed_immediate;
-    printf("AUIPC: PC %d + %d = %d -> r%d\n", pc, decoded.signed_immediate, (int32_t)rv.result, decoded.dest);
+    printf("AUIPC: PC %d + %d = 0x%X -> r%d\n", pc, decoded.signed_immediate, (int32_t)rv.result, decoded.dest);
+  }else if(decoded.opcode==OP_BRANCH){
+    if(decoded.funct3==FUNCT3_BLT){
+      int32_t pc_plus_imm = pc + decoded.signed_immediate;
+      if((int32_t)reg1 < (int32_t)reg2){
+        rv.result = pc_plus_imm;
+      } else {
+        rv.result = pc_plus4;
+      }
+      printf("BLT: PC = %d < %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
+    }
   }else if(decoded.opcode==OP_IMM){
     if(decoded.funct3==FUNCT3_ADDI){
       rv.result = reg1 + decoded.signed_immediate;
@@ -162,11 +199,11 @@ execute_t execute(uint32_t pc, decoded_t decoded, uint32_t reg1, uint32_t reg2)
     }
   }else if(decoded.opcode==OP_JAL){
     rv.result = pc + decoded.signed_immediate;
-    printf("JAL: PC = %d + %d = %d\n", pc, decoded.signed_immediate, (int32_t)rv.result);
+    printf("JAL: PC = %d + %d = 0x%X\n", pc, decoded.signed_immediate, (int32_t)rv.result);
   }else if(decoded.opcode==OP_JALR){
     rv.result = decoded.signed_immediate + reg1;
     rv.result = int32_uint1_0(rv.result, 0); // rv.result[0] = 0;
-    printf("JALR: PC = %d + %d = %d\n", decoded.signed_immediate, reg1, (int32_t)rv.result);
+    printf("JALR: PC = %d + %d = 0x%X\n", decoded.signed_immediate, reg1, (int32_t)rv.result);
   }else if(decoded.opcode==OP_LOAD){
     if(decoded.funct3==FUNCT3_LW_SW){
       rv.result = reg1 + decoded.signed_immediate;
@@ -206,7 +243,7 @@ uint32_t risc_v()
   }
 
   // Execute stage
-  execute_t exe = execute(pc, decoded, rd_data1, rd_data2);
+  execute_t exe = execute(pc, pc_plus4, decoded, rd_data1, rd_data2);
 
   // Memory stage, assemble inputs
   mem_rw_in_t mem_rw_in;
