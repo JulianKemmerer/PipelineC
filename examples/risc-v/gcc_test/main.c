@@ -1,5 +1,4 @@
-#include <stdint.h>
-static volatile uint32_t *OUT_ADDR = (uint32_t *)0x01230;
+#include "mem_map.h"
 
 int fib(int n){
 	if (n <= 1)
@@ -10,6 +9,6 @@ int fib(int n){
 int main() {
 	int n = 3; // 0 1 1 2 3 5
 	int rv = fib(n);
-	*OUT_ADDR = rv;
+	*RETURN_OUTPUT = rv;
 	return rv;
 }

@@ -4964,6 +4964,14 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
         c_ast_typedecl = c_ast_decl.type
         wire_name = c_ast_decl.name
         c_type = c_ast_typedecl.type.names[0]
+    elif type(c_ast_decl.type) == c_ast.PtrDecl:
+        c_ast_typedecl = c_ast_decl.type.type  # one type node lower down
+        wire_name = c_ast_decl.name
+        c_type = c_ast_typedecl.type.names[0]
+        print(
+            f"Ignoring pointer declaration: {c_type} {wire_name} {c_ast_decl.type.coord}"
+        )
+        c_type = None
     else:
         raise Exception(
             f"C_AST_DECL_TO_C_TYPE_AND_VAR_NAME {c_ast_decl} {c_ast_decl.type.coord}"
@@ -9968,18 +9976,19 @@ def GET_GLOBAL_VAR_INFO(parser_state):
         var_info = VariableInfo()
         var_info.name = name_str
         c_type, var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
-        var_info.type_name = c_type
-        var_info.init = global_decl.init
-        var_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(
-            global_decl.init, "", parser_state
-        )
+        if c_type:  # Pointer decls ignored could be none
+            var_info.type_name = c_type
+            var_info.init = global_decl.init
+            var_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(
+                global_decl.init, "", parser_state
+            )
 
-        # Save flags
-        if "volatile" in global_decl.quals:
-            var_info.is_volatile = True
+            # Save flags
+            if "volatile" in global_decl.quals:
+                var_info.is_volatile = True
 
-        # Save info
-        parser_state.global_vars[var_info.name] = var_info
+            # Save info
+            parser_state.global_vars[var_info.name] = var_info
 
     # Update with where globals are used
     # Hacky pre-parsing func body logic, determine what funcs contain use of the global

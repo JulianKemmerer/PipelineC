@@ -8,6 +8,12 @@
 #define MEM_NUM_WORDS (MEM_SIZE_IN_BYTES/4)
 #include "gcc_test/mem_init.h"
 
+// Memory mapped IO addresses to drive debug ports
+#include "mem_map.h"
+// Debug ports for simulation
+DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
+DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
+
 // Need a RAM with one read port for instructions, one r/w port for data mem
 DECL_RAM_DP_RW_R_0(
   uint32_t,
@@ -32,6 +38,17 @@ mem_out_t mem(
   uint32_t rd_addr,
   mem_rw_in_t mem_rw
 ){
+  // A single memory mapped peripheral
+  if(mem_rw.wr_en){
+    // The return/halt signal
+    if(mem_rw.addr==RETURN_OUTPUT_ADDR){
+      main_return = mem_rw.wr_data;
+      halt = 1;
+      // Mem map io does not write actual RAM memory
+      mem_rw.wr_en = 0;
+    }
+  }
+
   // Convert byte addresses to 4-byte word address
   uint32_t mem_rw_word_index = mem_rw.addr >> 2;
   uint32_t rd_addr_word_index = rd_addr >> 2;

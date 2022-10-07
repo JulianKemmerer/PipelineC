@@ -99,8 +99,11 @@ int main(int argc, char *argv[]) {{
     # Comment out sim cycles if clock is not known
     if not clock_port_is_clk:
         main_cpp_text += """    /* User needs to specify how to drive clock(s)\n"""
-    main_cpp_text += """    uint64_t cycle = 0;
-    while (cycle < """ + str(args.run) + """)
+    main_cpp_text += (
+        """    uint64_t cycle = 0;
+    while (cycle < """
+        + str(args.run)
+        + """)
     {
         // Print the PipelineC debug ports
         cout << "cycle " << cycle << ": ";
@@ -113,6 +116,7 @@ int main(int argc, char *argv[]) {{
         g_top->eval();
         ++cycle;
     }\n"""
+    )
     if not clock_port_is_clk:
         main_cpp_text += """    */\n"""
     main_cpp_text += """  return 0;

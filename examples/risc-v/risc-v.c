@@ -1,13 +1,14 @@
 #pragma MAIN risc_v
 #include "uintN_t.h"
 #include "intN_t.h"
+#include "debug_port.h"
 
 // TODO resource sharing + more in decode logic to control fewer resources
 
-// Register file read+write ports
+// Register file w/ read+write ports
 #include "reg_file.c"
 
-// Combined instruction and data memory ports
+// Combined instruction and data memory w/ ports
 #include "mem.c"
 
 // OPCODES and such
@@ -25,6 +26,8 @@
 #define FUNCT3_LW_SW 0b010
 
 // Sorta decode+control
+// Debug signal for simulation
+DEBUG_OUTPUT_DECL(uint1_t, unknown_op) // Unknown instruction
 typedef struct decoded_t{
   uint5_t src2;
   uint5_t src1;
@@ -84,6 +87,7 @@ decoded_t decode(uint32_t inst){
       printf("BLT: PC = r%d < r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
     } else {
       printf("Unsupported OP_BRANCH instruction: 0x%X\n", inst);
+      unknown_op = 1;
     }
   }else if(rv.opcode==OP_IMM){
     int12_t imm11_0 = inst(31, 20);
@@ -95,6 +99,7 @@ decoded_t decode(uint32_t inst){
       printf("ADDI: r%d + %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     } else {
       printf("Unsupported OP_IMM instruction: 0x%X\n", inst);
+      unknown_op = 1;
     }
   }else if(rv.opcode==OP_JAL){
     // JAL - Jump and link
@@ -141,6 +146,7 @@ decoded_t decode(uint32_t inst){
       printf("LW: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     } else {
       printf("Unsupported OP_LOAD instruction: 0x%X\n", inst);
+      unknown_op = 1;
     }
   }else if(rv.opcode==OP_LUI){
     // LUI
@@ -165,9 +171,11 @@ decoded_t decode(uint32_t inst){
       printf("SW: addr = r%d + %d, mem[addr] <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
     } else {
       printf("Unsupported OP_STORE instruction: 0x%X\n", inst);
+      unknown_op = 1;
     }
   }else{
     printf("Unsupported instruction: 0x%X\n", inst);
+    unknown_op = 1;
   }
   return rv;
 }
