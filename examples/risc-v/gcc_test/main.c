@@ -1,14 +1,23 @@
+#include <stdint.h>
 #include "../mem_map.h"
 
-int fib(int n){
-	if (n <= 1)
-			return n;
-	return fib(n - 1) + fib(n - 2);
+void main() {
+	int count = 0;
+	while(1){
+		// 4b leds get slow changing upper bits
+		*LEDS = count >> 22;
+		count += 1;
+	}
 }
 
-int main() {
-	int n = 5; // 0 1 1 2 3 5
-	int rv = fib(n);
-	*RETURN_OUTPUT = rv;
-	return rv;
-}
+// Sim debug version that doesnt run forever
+/*int main() {
+	int count = 0;
+	while(count < 10){
+		// 4b leds get slow changing upper bits
+		*LEDS = count >> 12;
+		count += 1;
+	}
+	*RETURN_OUTPUT = count;
+	return count;
+}*/

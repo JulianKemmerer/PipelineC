@@ -32,8 +32,8 @@ entity board is
     -- ddr3_cas_n    : out   std_logic;
     -- ddr3_we_n     : out   std_logic;
     -- ddr3_reset_n  : out   std_logic;
-    -- --ddr3_ck_p     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
-    -- --ddr3_ck_n     : out   std_logic_vector(0 downto 0); -- Uncomment to use DDR3
+    -- ddr3_ck_p     : out   std_logic_vector(0 downto 0); 
+    -- ddr3_ck_n     : out   std_logic_vector(0 downto 0);
     -- ddr3_cke      : out   std_logic_vector(0 downto 0);
     -- ddr3_cs_n     : out   std_logic_vector(0 downto 0);
     -- ddr3_dm       : out   std_logic_vector(1 downto 0);
@@ -146,73 +146,129 @@ port
 end component;
 
 -- The board's DDR3 controller
-signal app_addr                  :     std_logic_vector(27 downto 0);
-signal app_cmd                   :     std_logic_vector(2 downto 0);
-signal app_en                    :     std_logic;
-signal app_wdf_data              :     std_logic_vector(127 downto 0);
-signal app_wdf_end               :     std_logic;
-signal app_wdf_mask              :     std_logic_vector(15 downto 0);
-signal app_wdf_wren              :     std_logic;
-signal app_rd_data               :    std_logic_vector(127 downto 0);
-signal app_rd_data_end           :    std_logic;
-signal app_rd_data_valid         :    std_logic;
-signal app_rdy                   :    std_logic;
-signal app_wdf_rdy               :    std_logic;
-signal app_sr_req                :     std_logic;
-signal app_ref_req               :     std_logic;
-signal app_zq_req                :     std_logic;
-signal app_sr_active             :    std_logic;
-signal app_ref_ack               :    std_logic;
-signal app_zq_ack                :    std_logic;
-signal ui_clk                    :    std_logic; -- 83.33MHz 
 signal clk_83p33                 :    std_logic;
-signal ui_clk_sync_rst           :    std_logic;
-signal init_calib_complete       :    std_logic;
-component ddr3_0
-  port (
-      ddr3_dq       : inout std_logic_vector(15 downto 0);
-      ddr3_dqs_p    : inout std_logic_vector(1 downto 0);
-      ddr3_dqs_n    : inout std_logic_vector(1 downto 0);
-      ddr3_addr     : out   std_logic_vector(13 downto 0);
-      ddr3_ba       : out   std_logic_vector(2 downto 0);
-      ddr3_ras_n    : out   std_logic;
-      ddr3_cas_n    : out   std_logic;
-      ddr3_we_n     : out   std_logic;
-      ddr3_reset_n  : out   std_logic;
-      ddr3_ck_p     : out   std_logic_vector(0 downto 0);
-      ddr3_ck_n     : out   std_logic_vector(0 downto 0);
-      ddr3_cke      : out   std_logic_vector(0 downto 0);
-	  ddr3_cs_n     : out   std_logic_vector(0 downto 0);
-      ddr3_dm       : out   std_logic_vector(1 downto 0);
-      ddr3_odt      : out   std_logic_vector(0 downto 0);
-      app_addr                  : in    std_logic_vector(27 downto 0);
-      app_cmd                   : in    std_logic_vector(2 downto 0);
-      app_en                    : in    std_logic;
-      app_wdf_data              : in    std_logic_vector(127 downto 0);
-      app_wdf_end               : in    std_logic;
-      app_wdf_mask              : in    std_logic_vector(15 downto 0);
-      app_wdf_wren              : in    std_logic;
-      app_rd_data               : out   std_logic_vector(127 downto 0);
-      app_rd_data_end           : out   std_logic;
-      app_rd_data_valid         : out   std_logic;
-      app_rdy                   : out   std_logic;
-      app_wdf_rdy               : out   std_logic;
-      app_sr_req                : in    std_logic;
-      app_ref_req               : in    std_logic;
-      app_zq_req                : in    std_logic;
-      app_sr_active             : out   std_logic;
-      app_ref_ack               : out   std_logic;
-      app_zq_ack                : out   std_logic;
-      ui_clk                    : out   std_logic;
-      ui_clk_sync_rst           : out   std_logic;
-      init_calib_complete       : out   std_logic;
-      -- System Clock Ports
-      sys_clk_i                 : in    std_logic;
-      -- Reference Clock Ports
-      clk_ref_i                 : in    std_logic;
-      sys_rst                   : in    std_logic -- ACTIVE LOW - PORT NAME IS INCORRECT
+signal ddr_sys_clk_i :  STD_LOGIC;
+signal ddr_clk_ref_i :  STD_LOGIC;
+signal ddr_ui_clk :  STD_LOGIC; -- 83.33MHz 
+signal ddr_ui_clk_sync_rst :  STD_LOGIC;
+signal ddr_mmcm_locked :  STD_LOGIC;
+signal ddr_aresetn :  STD_LOGIC;
+signal ddr_app_sr_req :  STD_LOGIC;
+signal ddr_app_ref_req :  STD_LOGIC;
+signal ddr_app_zq_req :  STD_LOGIC;
+signal ddr_app_sr_active :  STD_LOGIC;
+signal ddr_app_ref_ack :  STD_LOGIC;
+signal ddr_app_zq_ack :  STD_LOGIC;
+signal ddr_s_axi_awid :  STD_LOGIC_VECTOR ( 15 downto 0 );
+signal ddr_s_axi_awaddr :  STD_LOGIC_VECTOR ( 27 downto 0 );
+signal ddr_s_axi_awlen :  STD_LOGIC_VECTOR ( 7 downto 0 );
+signal ddr_s_axi_awsize :  STD_LOGIC_VECTOR ( 2 downto 0 );
+signal ddr_s_axi_awburst :  STD_LOGIC_VECTOR ( 1 downto 0 );
+signal ddr_s_axi_awlock :  STD_LOGIC_VECTOR ( 0 to 0 );
+signal ddr_s_axi_awcache :  STD_LOGIC_VECTOR ( 3 downto 0 );
+signal ddr_s_axi_awprot :  STD_LOGIC_VECTOR ( 2 downto 0 );
+signal ddr_s_axi_awqos :  STD_LOGIC_VECTOR ( 3 downto 0 );
+signal ddr_s_axi_awvalid :  STD_LOGIC;
+signal ddr_s_axi_awready :  STD_LOGIC;
+signal ddr_s_axi_wdata :  STD_LOGIC_VECTOR ( 31 downto 0 );
+signal ddr_s_axi_wstrb :  STD_LOGIC_VECTOR ( 3 downto 0 );
+signal ddr_s_axi_wlast :  STD_LOGIC;
+signal ddr_s_axi_wvalid :  STD_LOGIC;
+signal ddr_s_axi_wready :  STD_LOGIC;
+signal ddr_s_axi_bready :  STD_LOGIC;
+signal ddr_s_axi_bid :  STD_LOGIC_VECTOR ( 15 downto 0 );
+signal ddr_s_axi_bresp :  STD_LOGIC_VECTOR ( 1 downto 0 );
+signal ddr_s_axi_bvalid :  STD_LOGIC;
+signal ddr_s_axi_arid :  STD_LOGIC_VECTOR ( 15 downto 0 );
+signal ddr_s_axi_araddr :  STD_LOGIC_VECTOR ( 27 downto 0 );
+signal ddr_s_axi_arlen :  STD_LOGIC_VECTOR ( 7 downto 0 );
+signal ddr_s_axi_arsize :  STD_LOGIC_VECTOR ( 2 downto 0 );
+signal ddr_s_axi_arburst :  STD_LOGIC_VECTOR ( 1 downto 0 );
+signal ddr_s_axi_arlock :  STD_LOGIC_VECTOR ( 0 to 0 );
+signal ddr_s_axi_arcache :  STD_LOGIC_VECTOR ( 3 downto 0 );
+signal ddr_s_axi_arprot :  STD_LOGIC_VECTOR ( 2 downto 0 );
+signal ddr_s_axi_arqos :  STD_LOGIC_VECTOR ( 3 downto 0 );
+signal ddr_s_axi_arvalid :  STD_LOGIC;
+signal ddr_s_axi_arready :  STD_LOGIC;
+signal ddr_s_axi_rready :  STD_LOGIC;
+signal ddr_s_axi_rid :  STD_LOGIC_VECTOR ( 15 downto 0 );
+signal ddr_s_axi_rdata :  STD_LOGIC_VECTOR ( 31 downto 0 );
+signal ddr_s_axi_rresp :  STD_LOGIC_VECTOR ( 1 downto 0 );
+signal ddr_s_axi_rlast :  STD_LOGIC;
+signal ddr_s_axi_rvalid :  STD_LOGIC;
+signal ddr_init_calib_complete :  STD_LOGIC;
+signal ddr_device_temp :  STD_LOGIC_VECTOR ( 11 downto 0 );
+component ddr_axi_32b
+  Port ( 
+    ddr3_dq : inout STD_LOGIC_VECTOR ( 15 downto 0 );
+    ddr3_dqs_n : inout STD_LOGIC_VECTOR ( 1 downto 0 );
+    ddr3_dqs_p : inout STD_LOGIC_VECTOR ( 1 downto 0 );
+    ddr3_addr : out STD_LOGIC_VECTOR ( 13 downto 0 );
+    ddr3_ba : out STD_LOGIC_VECTOR ( 2 downto 0 );
+    ddr3_ras_n : out STD_LOGIC;
+    ddr3_cas_n : out STD_LOGIC;
+    ddr3_we_n : out STD_LOGIC;
+    ddr3_reset_n : out STD_LOGIC;
+    ddr3_ck_p : out STD_LOGIC_VECTOR ( 0 to 0 );
+    ddr3_ck_n : out STD_LOGIC_VECTOR ( 0 to 0 );
+    ddr3_cke : out STD_LOGIC_VECTOR ( 0 to 0 );
+    ddr3_cs_n : out STD_LOGIC_VECTOR ( 0 to 0 );
+    ddr3_dm : out STD_LOGIC_VECTOR ( 1 downto 0 );
+    ddr3_odt : out STD_LOGIC_VECTOR ( 0 to 0 );
+    sys_clk_i : in STD_LOGIC;
+    clk_ref_i : in STD_LOGIC;
+    ui_clk : out STD_LOGIC;
+    ui_clk_sync_rst : out STD_LOGIC;
+    mmcm_locked : out STD_LOGIC;
+    aresetn : in STD_LOGIC;
+    app_sr_req : in STD_LOGIC;
+    app_ref_req : in STD_LOGIC;
+    app_zq_req : in STD_LOGIC;
+    app_sr_active : out STD_LOGIC;
+    app_ref_ack : out STD_LOGIC;
+    app_zq_ack : out STD_LOGIC;
+    s_axi_awid : in STD_LOGIC_VECTOR ( 15 downto 0 );
+    s_axi_awaddr : in STD_LOGIC_VECTOR ( 27 downto 0 );
+    s_axi_awlen : in STD_LOGIC_VECTOR ( 7 downto 0 );
+    s_axi_awsize : in STD_LOGIC_VECTOR ( 2 downto 0 );
+    s_axi_awburst : in STD_LOGIC_VECTOR ( 1 downto 0 );
+    s_axi_awlock : in STD_LOGIC_VECTOR ( 0 to 0 );
+    s_axi_awcache : in STD_LOGIC_VECTOR ( 3 downto 0 );
+    s_axi_awprot : in STD_LOGIC_VECTOR ( 2 downto 0 );
+    s_axi_awqos : in STD_LOGIC_VECTOR ( 3 downto 0 );
+    s_axi_awvalid : in STD_LOGIC;
+    s_axi_awready : out STD_LOGIC;
+    s_axi_wdata : in STD_LOGIC_VECTOR ( 31 downto 0 );
+    s_axi_wstrb : in STD_LOGIC_VECTOR ( 3 downto 0 );
+    s_axi_wlast : in STD_LOGIC;
+    s_axi_wvalid : in STD_LOGIC;
+    s_axi_wready : out STD_LOGIC;
+    s_axi_bready : in STD_LOGIC;
+    s_axi_bid : out STD_LOGIC_VECTOR ( 15 downto 0 );
+    s_axi_bresp : out STD_LOGIC_VECTOR ( 1 downto 0 );
+    s_axi_bvalid : out STD_LOGIC;
+    s_axi_arid : in STD_LOGIC_VECTOR ( 15 downto 0 );
+    s_axi_araddr : in STD_LOGIC_VECTOR ( 27 downto 0 );
+    s_axi_arlen : in STD_LOGIC_VECTOR ( 7 downto 0 );
+    s_axi_arsize : in STD_LOGIC_VECTOR ( 2 downto 0 );
+    s_axi_arburst : in STD_LOGIC_VECTOR ( 1 downto 0 );
+    s_axi_arlock : in STD_LOGIC_VECTOR ( 0 to 0 );
+    s_axi_arcache : in STD_LOGIC_VECTOR ( 3 downto 0 );
+    s_axi_arprot : in STD_LOGIC_VECTOR ( 2 downto 0 );
+    s_axi_arqos : in STD_LOGIC_VECTOR ( 3 downto 0 );
+    s_axi_arvalid : in STD_LOGIC;
+    s_axi_arready : out STD_LOGIC;
+    s_axi_rready : in STD_LOGIC;
+    s_axi_rid : out STD_LOGIC_VECTOR ( 15 downto 0 );
+    s_axi_rdata : out STD_LOGIC_VECTOR ( 31 downto 0 );
+    s_axi_rresp : out STD_LOGIC_VECTOR ( 1 downto 0 );
+    s_axi_rlast : out STD_LOGIC;
+    s_axi_rvalid : out STD_LOGIC;
+    init_calib_complete : out STD_LOGIC;
+    device_temp : out STD_LOGIC_VECTOR ( 11 downto 0 );
+    sys_rst : in STD_LOGIC
   );
-end component ddr3_0;
+end component;
 
 -- The boards ethernet mac
 signal clk_25_eth_rx : std_logic;
@@ -290,8 +346,8 @@ END COMPONENT;
 signal sys_clk_100 : std_logic;
 -- Modules with structs as IO
 -- DDR3
---signal mig_to_app : xil_mig_to_app_t;
---signal app_to_mig : xil_app_to_mig_t;
+--signal mem_to_app : xil_mem_to_app_t;
+--signal app_to_mem : app_to_xil_mem_t;
 -- Ethernet
 --signal temac_to_rx : xil_temac_to_rx_t;
 --signal rx_to_temac : xil_rx_to_temac_t;
@@ -360,79 +416,105 @@ port map
 -- Hold in reset until clocks are ready
 pixel_clk_reset_n <= vga_clocks_ready;
 
---  -- Phase shifted/delayed pixel clock
---  vga_clock_shift_inst : vga_clock_shift
---     port map ( 
---     -- Clock out ports  
---     pixel_clk_shifted => vga_pixel_clk_delayed,
---     -- Status and control signals                
---     locked => vga_clocks_delayed_ready,
---     -- Clock in ports
---     pixel_clk => vga_pixel_clk
---   );
---  -- Hold in reset until clocks are ready
---  pixel_clk_delayed_reset_n <= vga_clocks_delayed_ready;
+-- Phase shifted/delayed pixel clock
+vga_clock_shift_inst : vga_clock_shift
+   port map ( 
+   -- Clock out ports  
+   pixel_clk_shifted => vga_pixel_clk_delayed,
+   -- Status and control signals                
+   locked => vga_clocks_delayed_ready,
+   -- Clock in ports
+   pixel_clk => vga_pixel_clk
+ );
+-- Hold in reset until clocks are ready
+pixel_clk_delayed_reset_n <= vga_clocks_delayed_ready;
 
--- -- DDR clocks based off of the board's CLK100MHZ 
--- ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
---    port map ( 
---    ddr_sys_clk => ddr_sys_clk, -- 166.66MHz 
---    locked => ddr_clks_ready,
---    sys_clk_100 => sys_clk_100
+-- DDR clocks based off of the board's CLK100MHZ 
+ddr_clks_sys_clk_100_inst : ddr_clks_sys_clk_100
+   port map ( 
+   ddr_sys_clk => ddr_sys_clk, -- 166.66MHz 
+   locked => ddr_clks_ready,
+   sys_clk_100 => sys_clk_100
+ );
+clk_166p66 <= ddr_sys_clk;
+-- Hold in reset until clocks are ready
+ddr_sys_rst <= rst or not ddr_clks_ready;
+ddr_sys_rst_n <= not ddr_sys_rst;
+ 
+-- The board's DDR3 controller
+--  ddr_inst : ddr_axi_32b
+--  port map (
+--     s_axi_awid =>    ddr_s_axi_awid , 
+--     s_axi_awaddr =>  ddr_s_axi_awaddr , 
+--     s_axi_awlen =>   ddr_s_axi_awlen, 
+--     s_axi_awsize =>  ddr_s_axi_awsize , 
+--     s_axi_awburst => ddr_s_axi_awburst , 
+--     s_axi_awlock =>  (others => '0'), --ddr_s_axi_awlock , 
+--     s_axi_awcache => (others => '0'), --ddr_s_axi_awcache , 
+--     s_axi_awprot =>  (others => '0'), --ddr_s_axi_awprot , 
+--     s_axi_awqos =>   (others => '0'), --ddr_s_axi_awqos , 
+--     s_axi_awvalid => ddr_s_axi_awvalid , 
+--     s_axi_awready => ddr_s_axi_awready , 
+--     s_axi_wdata =>   ddr_s_axi_wdata , 
+--     s_axi_wstrb =>   ddr_s_axi_wstrb , 
+--     s_axi_wlast =>   ddr_s_axi_wlast ,
+--     s_axi_wvalid =>  ddr_s_axi_wvalid , 
+--     s_axi_wready =>  ddr_s_axi_wready ,
+--     s_axi_bready =>  ddr_s_axi_bready ,
+--     s_axi_bid =>     ddr_s_axi_bid ,
+--     s_axi_bresp =>   ddr_s_axi_bresp ,
+--     s_axi_bvalid =>  ddr_s_axi_bvalid ,
+--     s_axi_arid =>    ddr_s_axi_arid ,
+--     s_axi_araddr =>  ddr_s_axi_araddr , 
+--     s_axi_arlen =>   ddr_s_axi_arlen , 
+--     s_axi_arsize =>  ddr_s_axi_arsize , 
+--     s_axi_arburst => ddr_s_axi_arburst , 
+--     s_axi_arlock =>  (others => '0'), --ddr_s_axi_arlock , 
+--     s_axi_arcache => (others => '0'), --ddr_s_axi_arcache , 
+--     s_axi_arprot =>  (others => '0'), --ddr_s_axi_arprot , 
+--     s_axi_arqos =>   (others => '0'), --ddr_s_axi_arqos , 
+--     s_axi_arvalid => ddr_s_axi_arvalid , 
+--     s_axi_arready => ddr_s_axi_arready , 
+--     s_axi_rready =>  ddr_s_axi_rready , 
+--     s_axi_rid =>     ddr_s_axi_rid ,
+--     s_axi_rdata =>   ddr_s_axi_rdata , 
+--     s_axi_rresp =>   ddr_s_axi_rresp , 
+--     s_axi_rlast =>   ddr_s_axi_rlast ,
+--     s_axi_rvalid =>  ddr_s_axi_rvalid , 
+--     -- Memory interface ports
+--     ddr3_addr                      => ddr3_addr,
+--     ddr3_ba                        => ddr3_ba,
+--     ddr3_cas_n                     => ddr3_cas_n,
+--     ddr3_ck_n                      => ddr3_ck_n,
+--     ddr3_ck_p                      => ddr3_ck_p,
+--     ddr3_cke                       => ddr3_cke,
+--     ddr3_ras_n                     => ddr3_ras_n,
+--     ddr3_reset_n                   => ddr3_reset_n,
+--     ddr3_we_n                      => ddr3_we_n,
+--     ddr3_dq                        => ddr3_dq,
+--     ddr3_dqs_n                     => ddr3_dqs_n,
+--     ddr3_dqs_p                     => ddr3_dqs_p,
+--     init_calib_complete            => ddr_init_calib_complete,
+--     ddr3_cs_n                      => ddr3_cs_n,
+--     ddr3_dm                        => ddr3_dm,
+--     ddr3_odt                       => ddr3_odt,
+--     -- Application interface ports
+--     app_sr_req                     => ddr_app_sr_req,
+--     app_ref_req                    => ddr_app_ref_req,
+--     app_zq_req                     => ddr_app_zq_req,
+--     app_sr_active                  => ddr_app_sr_active,
+--     app_ref_ack                    => ddr_app_ref_ack,
+--     app_zq_ack                     => ddr_app_zq_ack,
+--     ui_clk                         => ddr_ui_clk, -- 83.33MHz
+--     ui_clk_sync_rst                => ddr_ui_clk_sync_rst,
+--     -- System Clock Ports
+--     sys_clk_i                      => ddr_sys_clk, -- 166.66MHz 
+--     -- Reference Clock Ports
+--     clk_ref_i                      => clk_200, -- Ref always 200MHz
+--     sys_rst                        => ddr_sys_rst_n, -- ACTIVE LOW - PORT NAME IS INCORRECT
+--     aresetn => ddr_sys_rst_n
 --  );
--- clk_166p66 <= ddr_sys_clk;
--- -- Hold in reset until clocks are ready
--- ddr_sys_rst <= rst or not ddr_clks_ready;
--- ddr_sys_rst_n <= not ddr_sys_rst;
---  
--- -- The board's DDR3 controller
---  ddr3_0_inst : ddr3_0
---      port map (
---         -- Memory interface ports
---         ddr3_addr                      => ddr3_addr,
---         ddr3_ba                        => ddr3_ba,
---         ddr3_cas_n                     => ddr3_cas_n,
---         --ddr3_ck_n                      => ddr3_ck_n,
---         --ddr3_ck_p                      => ddr3_ck_p,
---         ddr3_cke                       => ddr3_cke,
---         ddr3_ras_n                     => ddr3_ras_n,
---         ddr3_reset_n                   => ddr3_reset_n,
---         ddr3_we_n                      => ddr3_we_n,
---         ddr3_dq                        => ddr3_dq,
---         ddr3_dqs_n                     => ddr3_dqs_n,
---         ddr3_dqs_p                     => ddr3_dqs_p,
---         init_calib_complete            => init_calib_complete,
---  	   ddr3_cs_n                      => ddr3_cs_n,
---         ddr3_dm                        => ddr3_dm,
---         ddr3_odt                       => ddr3_odt,
---         -- Application interface ports
---         app_addr                       => app_addr,
---         app_cmd                        => app_cmd,
---         app_en                         => app_en,
---         app_wdf_data                   => app_wdf_data,
---         app_wdf_end                    => app_wdf_end,
---         app_wdf_wren                   => app_wdf_wren,
---         app_rd_data                    => app_rd_data,
---         app_rd_data_end                => app_rd_data_end,
---         app_rd_data_valid              => app_rd_data_valid,
---         app_rdy                        => app_rdy,
---         app_wdf_rdy                    => app_wdf_rdy,
---         app_sr_req                     => app_sr_req,
---         app_ref_req                    => app_ref_req,
---         app_zq_req                     => app_zq_req,
---         app_sr_active                  => app_sr_active,
---         app_ref_ack                    => app_ref_ack,
---         app_zq_ack                     => app_zq_ack,
---         ui_clk                         => ui_clk, -- 83.33MHz
---         ui_clk_sync_rst                => ui_clk_sync_rst,
---         app_wdf_mask                   => app_wdf_mask,
---         -- System Clock Ports
---         sys_clk_i                      => ddr_sys_clk, -- 166.66MHz 
---         -- Reference Clock Ports
---         clk_ref_i                      => clk_200, -- Ref always 200MHz
---         sys_rst                        => ddr_sys_rst_n -- ACTIVE LOW - PORT NAME IS INCORRECT
---      );
--- clk_83p33 <= ui_clk;
+--  clk_83p33 <= ddr_ui_clk;
 
 -- -- The board's ethernet MAC
 -- eth_ref_clk <= clk_25;
@@ -482,36 +564,49 @@ pixel_clk_reset_n <= vga_clocks_ready;
 
 
 -- Un/pack IO struct types to/from flattened SLV board pins
--- TODO Code gen this...
+-- TODO write most of conversion funcs in PipelineC instead...
 -- Commented out wires as necessary
 process(all) begin    
-    -- DDR3
-    -- app_addr <= std_logic_vector(app_to_mig.addr);
-    -- app_cmd  <= std_logic_vector(app_to_mig.cmd);
-    -- app_en  <= std_logic(app_to_mig.en(0));
-    -- for byte_i in 0 to app_wdf_mask'length-1 loop
-	-- 	app_wdf_data(((byte_i+1)*8)-1 downto (byte_i*8)) <= std_logic_vector(app_to_mig.wdf_data(byte_i));
-	-- end loop;
-    -- app_wdf_end  <= std_logic(app_to_mig.wdf_end(0));
-    -- for byte_i in 0 to app_wdf_mask'length-1 loop
-	-- 	app_wdf_mask(byte_i) <= std_logic(app_to_mig.wdf_mask(byte_i)(0));
-	-- end loop;
-    -- app_wdf_wren <= std_logic(app_to_mig.wdf_wren(0));
-    -- for byte_i in 0 to app_wdf_mask'length-1 loop
-    --     mig_to_app.rd_data(byte_i) <= unsigned(app_rd_data(((byte_i+1)*8)-1 downto (byte_i*8)));
-	-- end loop;
-    -- mig_to_app.rd_data_end(0) <= app_rd_data_end; 
-    -- mig_to_app.rd_data_valid(0) <= app_rd_data_valid;
-    -- mig_to_app.rdy(0) <= app_rdy;
-    -- mig_to_app.wdf_rdy(0) <= app_wdf_rdy; 
-    -- app_sr_req   <= std_logic(app_to_mig.sr_req(0));
-    -- app_ref_req  <= std_logic(app_to_mig.ref_req(0));
-    -- app_zq_req   <= std_logic(app_to_mig.zq_req(0));
-    -- mig_to_app.sr_active(0) <= app_sr_active;
-    -- mig_to_app.ref_ack(0) <= app_ref_ack;
-    -- mig_to_app.zq_ack(0)  <= app_zq_ack;
-    -- mig_to_app.ui_clk_sync_rst(0) <= ui_clk_sync_rst;
-    -- mig_to_app.init_calib_complete(0) <= init_calib_complete;
+    -- DDR3 
+    --  ddr_s_axi_awid <= std_logic_vector(app_to_mem.axi_host_to_dev.write.req.awid);
+    --  ddr_s_axi_awaddr <= std_logic_vector(resize(app_to_mem.axi_host_to_dev.write.req.awaddr, ddr_s_axi_awaddr'length)); 
+    --  ddr_s_axi_awlen <= std_logic_vector(app_to_mem.axi_host_to_dev.write.req.awlen);
+    --  ddr_s_axi_awsize <= std_logic_vector(app_to_mem.axi_host_to_dev.write.req.awsize);
+    --  ddr_s_axi_awburst <= std_logic_vector(app_to_mem.axi_host_to_dev.write.req.awburst);
+    --  ddr_s_axi_awvalid <= app_to_mem.axi_host_to_dev.write.req.awvalid(0);
+    --  ddr_s_axi_wlast <= app_to_mem.axi_host_to_dev.write.data.wlast(0);
+    --  ddr_s_axi_wvalid <= app_to_mem.axi_host_to_dev.write.data.wvalid(0);
+    --  ddr_s_axi_bready <= app_to_mem.axi_host_to_dev.write.bready(0);
+    --  ddr_s_axi_arid <= std_logic_vector(app_to_mem.axi_host_to_dev.read.req.arid);
+    --  ddr_s_axi_araddr <= std_logic_vector(resize(app_to_mem.axi_host_to_dev.read.req.araddr, ddr_s_axi_araddr'length));
+    --  ddr_s_axi_arlen <= std_logic_vector(app_to_mem.axi_host_to_dev.read.req.arlen);
+    --  ddr_s_axi_arsize <= std_logic_vector(app_to_mem.axi_host_to_dev.read.req.arsize);
+    --  ddr_s_axi_arburst <= std_logic_vector(app_to_mem.axi_host_to_dev.read.req.arburst);
+    --  ddr_s_axi_arvalid <= app_to_mem.axi_host_to_dev.read.req.arvalid(0);
+    --  ddr_s_axi_rready <= app_to_mem.axi_host_to_dev.read.rready(0);
+    --  mem_to_app.axi_dev_to_host.write.resp.bid <= unsigned(ddr_s_axi_bid) ;
+    --  mem_to_app.axi_dev_to_host.write.resp.bresp <= unsigned(ddr_s_axi_bresp) ;
+    --  mem_to_app.axi_dev_to_host.write.resp.bvalid(0) <= ddr_s_axi_bvalid ;
+    --  mem_to_app.axi_dev_to_host.write.awready(0) <= ddr_s_axi_awready;
+    --  mem_to_app.axi_dev_to_host.write.wready(0) <= ddr_s_axi_wready ;
+    --  mem_to_app.axi_dev_to_host.read.resp.rid <= unsigned(ddr_s_axi_rid) ;
+    --  mem_to_app.axi_dev_to_host.read.resp.rresp <= unsigned(ddr_s_axi_rresp) ; 
+    --  mem_to_app.axi_dev_to_host.read.data.rlast(0) <= ddr_s_axi_rlast ;
+    --  mem_to_app.axi_dev_to_host.read.data.rvalid(0) <= ddr_s_axi_rvalid ;
+    --  mem_to_app.axi_dev_to_host.read.arready(0) <= ddr_s_axi_arready ;
+    --  for i in 0 to (ddr_s_axi_wdata'length/8)-1 loop
+    --      ddr_s_axi_wdata(((i+1)*8)-1 downto (i*8)) <= std_logic_vector(app_to_mem.axi_host_to_dev.write.data.wdata(i));
+    --      ddr_s_axi_wstrb(i) <= app_to_mem.axi_host_to_dev.write.data.wstrb(i)(0);
+    --      mem_to_app.axi_dev_to_host.read.data.rdata(i) <= unsigned(ddr_s_axi_rdata(((i+1)*8)-1 downto (i*8)) );
+    --  end loop;
+    --  ddr_app_sr_req   <= app_to_mem.sr_req(0);
+    --  ddr_app_ref_req  <= app_to_mem.ref_req(0);
+    --  ddr_app_zq_req   <= app_to_mem.zq_req(0);
+    --  mem_to_app.sr_active(0) <= ddr_app_sr_active;
+    --  mem_to_app.ref_ack(0) <= ddr_app_ref_ack;
+    --  mem_to_app.zq_ack(0)  <= ddr_app_zq_ack;
+    --  mem_to_app.ui_clk_sync_rst(0) <= ddr_ui_clk_sync_rst;
+    --  mem_to_app.init_calib_complete(0) <= ddr_init_calib_complete;
     
     -- Ethernet     
     --  temac_to_rx.rx_statistics_vector <= unsigned(rx_statistics_vector) ;
@@ -545,9 +640,10 @@ end process;
 -- The PipelineC generated entity
 top_inst : entity work.top port map (   
     -- Generic main function clocks
+    clk_none => clk_50,
     --clk_6p25 => clk_6p25,
     --clk_22p579 => clk_22p579,
-    clk_25p0 => clk_25,
+    --clk_25p0 => clk_25,
     --clk_74p25 => vga_pixel_clk,
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
@@ -561,11 +657,11 @@ top_inst : entity work.top port map (
     -- Each main function's inputs and outputs
     --app_reset_n(0) => rst_n,   
     
-    -- -- LEDs
-    -- led0_module_return_output(0) => led(0),
-    -- led1_module_return_output(0) => led(1),
-    -- led2_module_return_output(0) => led(2),
-    -- led3_module_return_output(0) => led(3),
+    -- LEDs
+    led0_module_return_output(0) => led(0),
+    led1_module_return_output(0) => led(1),
+    led2_module_return_output(0) => led(2),
+    led3_module_return_output(0) => led(3)
     
     -- -- Switches
     -- switches_module_sw => unsigned(sw),
@@ -574,14 +670,14 @@ top_inst : entity work.top port map (
     --buttons_module_btn => unsigned(btn),
 
     -- UART
-    uart_module_data_in(0) => uart_txd_in,
-    uart_module_return_output(0) => uart_rxd_out
+    --uart_module_data_in(0) => uart_txd_in,
+    --uart_module_return_output(0) => uart_rxd_out,
     
     -- DVI PMOD on PMODB+C specific
-    --pixel_clock(0) => vga_pixel_clk,
-    --clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
-    -- Double rate DVI PMOD clock, PMODC[2] c.jc2 = ddr_clk;
-    --dvi_pmod_shifted_clock_return_output(0) => jc(2),
+    --  pixel_clock(0) => vga_pixel_clk,
+    --  clk_148p5_delayed_146p25deg => vga_pixel_clk_delayed,
+    --  -- Double rate DVI PMOD clock, PMODC[2] c.jc2 = ddr_clk;
+    --  dvi_pmod_shifted_clock_return_output(0) => jc(2),
     
     -- PMODA
     ----pmod_ja_return_output.ja0(0) => ja(0),
@@ -601,10 +697,11 @@ top_inst : entity work.top port map (
     --  pmod_jb_return_output.jb5(0) => jb(5),
     --  pmod_jb_return_output.jb6(0) => jb(6),
     --  pmod_jb_return_output.jb7(0) => jb(7),
-    -- PMODC (High Speed)
+    --  -- PMODC (High Speed)
     --  pmod_jc_return_output.jc0(0) => jc(0),
     --  pmod_jc_return_output.jc1(0) => jc(1),
-    --  pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
+    --  --pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
+    --  pmod_jc_return_output.jc2(0) => jc(2), -- No connect when using DVI PMOD special DDR clock
     --  pmod_jc_return_output.jc3(0) => jc(3),
     --  pmod_jc_return_output.jc4(0) => jc(4),
     --  pmod_jc_return_output.jc5(0) => jc(5),
@@ -621,8 +718,8 @@ top_inst : entity work.top port map (
     -- pmod_jd_return_output.jd7(0) => jd(7)
     
     -- DDR3
-    --xil_mig_module_mig_to_app => mig_to_app,
-    --xil_mig_module_return_output => app_to_mig,
+    -- xil_mem_module_mem_to_app => mem_to_app,
+    -- xil_mem_module_return_output => app_to_mem
     
     -- Ethernet
     --clk_25p0_xil_temac_rx => clk_25_eth_rx,
