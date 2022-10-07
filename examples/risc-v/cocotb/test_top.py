@@ -5,7 +5,7 @@ from cocotb.triggers import Timer
 from pipelinec_cocotb import * # Generated
 
 def check_cpu_debug(dut):
-    DUMP_PIPELINEC_DEBUG(dut)
+    #DUMP_PIPELINEC_DEBUG(dut)
     if halt(dut) == 1:
         print(f"CPU Halted: returned {int(main_return(dut))}")
         raise cocotb.result.TestSuccess("RISC-V Test Passed!")
