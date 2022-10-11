@@ -16,14 +16,91 @@ DECL_RAM_DP_RW_R_0(
   MEM_INIT
 )
 
-// Memory mapped IO addresses to drive debug ports
+// Memory mapped IO addresses to drive hardware wires, ex. debug ports, devices
 #include "mem_map.h"
 // Debug ports for simulation
 DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
 DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
-
-// Drive LEDs with memory mapped io
 #include "leds/leds_port.c"
+#include "frame_buffer.c"
+typedef struct mem_map_out_t
+{
+  uint1_t addr_is_mapped;
+  uint32_t rd_data;
+}mem_map_out_t;
+mem_map_out_t mem_map_module(
+  uint32_t addr,
+  uint32_t wr_data,
+  uint1_t wr_en)
+{
+  // Outputs
+  mem_map_out_t o;
+  // Some defaults for single cycle pulses
+  frame_buffer_wr_enable_in = 0;
+  line_bufs_wr_enable_in = 0;
+  if(addr==RETURN_OUTPUT_ADDR){
+    // The return/halt debug signal
+    o.addr_is_mapped = 1;
+    o.rd_data = 0;
+    if(wr_en){
+      main_return = wr_data;
+      halt = 1;
+    }
+  }else if(addr==LEDS_ADDR){
+    // LEDs
+    o.addr_is_mapped = 1;
+    o.rd_data = leds;
+    if(wr_en){
+      leds = wr_data;
+    }
+  }else if(addr==FRAME_BUF_X_ADDR){
+    // Frame buffer x
+    o.addr_is_mapped = 1;
+    o.rd_data = frame_buffer_x_in;
+    if(wr_en){
+      frame_buffer_x_in = wr_data;
+    }
+  }else if(addr==FRAME_BUF_Y_ADDR){
+    // Frame buffer y
+    o.addr_is_mapped = 1;
+    o.rd_data = frame_buffer_y_in;
+    if(wr_en){
+      frame_buffer_y_in = wr_data;
+    }
+  }else if(addr==FRAME_BUF_DATA_ADDR){
+    // Frame buffer data
+    o.addr_is_mapped = 1;
+    o.rd_data = frame_buffer_rd_data_out;
+    frame_buffer_wr_enable_in = wr_en;
+    if(wr_en){
+      frame_buffer_wr_data_in = wr_data;
+    }
+  }else if(addr==LINE_BUF_SEL_ADDR){
+    // Line buf sel
+    o.addr_is_mapped = 1;
+    o.rd_data = line_bufs_line_sel_in;
+    if(wr_en){
+      line_bufs_line_sel_in = wr_data;
+    }
+  }else if(addr==LINE_BUF_X_ADDR){
+    // Line buf x
+    o.addr_is_mapped = 1;
+    o.rd_data = line_bufs_x_in;
+    if(wr_en){
+      line_bufs_x_in = wr_data;
+    }
+  }else if(addr==LINE_BUF_DATA_ADDR){
+    // Line buffer data
+    o.addr_is_mapped = 1;
+    o.rd_data = line_bufs_rd_data_out;
+    line_bufs_wr_enable_in = wr_en;
+    if(wr_en){
+      line_bufs_wr_data_in = wr_data;
+    }
+  }
+
+  return o;
+}
 
 // Split main memory the_mem into two parts,
 // one read port for instructions, one r/w port for data mem
@@ -37,33 +114,40 @@ typedef struct mem_rw_in_t{
   uint32_t wr_data;
   uint1_t wr_en;
 }mem_rw_in_t;
+DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
 mem_out_t mem(
   uint32_t rd_addr,
   mem_rw_in_t mem_rw
 ){
   // Check for write to memory mapped IO addresses
-  if(mem_rw.wr_en){
-    // Mem map io does not write actual RAM memory
-    if(mem_rw.addr==RETURN_OUTPUT_ADDR){
-      // The return/halt signal
-      main_return = mem_rw.wr_data;
-      halt = 1;
-      mem_rw.wr_en = 0;
-    } else if(mem_rw.addr==LEDS_ADDR){
-      // LEDs
-      leds = mem_rw.wr_data;
-      mem_rw.wr_en = 0;
-    }
-  }
+  mem_map_out_t mem_map_out = mem_map_module(
+    mem_rw.addr,
+    mem_rw.wr_data,
+    mem_rw.wr_en);
+  
+  // Mem map write does not write actual RAM memory
+  mem_rw.wr_en &= !mem_map_out.addr_is_mapped;
 
   // Convert byte addresses to 4-byte word address
   uint32_t mem_rw_word_index = mem_rw.addr >> 2;
   uint32_t rd_addr_word_index = rd_addr >> 2;
+
+  // Sanity check, stop sim if out of range access
+  if((mem_rw_word_index >= MEM_NUM_WORDS) & mem_rw.wr_en){
+    mem_out_of_range = 1;
+  }
+
   // The single RAM instance with connections splitting in two
   the_mem_outputs_t ram_out = the_mem(mem_rw_word_index, mem_rw.wr_data, mem_rw.wr_en, rd_addr);
   mem_out_t mem_out;
   mem_out.mem_read_write = ram_out.rd_data0;
   mem_out.inst_read = ram_out.rd_data1;
+
+  // Mem map read comes from memory map module not RAM memory
+  if(mem_map_out.addr_is_mapped){
+    mem_out.mem_read_write = mem_map_out.rd_data;
+  }
+
   return mem_out;
 }
 MAIN_SPLIT2(

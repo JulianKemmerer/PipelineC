@@ -16,6 +16,12 @@ def unknown_op(dut, val_input=None):
     dut.unknown_op_DEBUG_return_output = val_input
   else:
     return dut.unknown_op_DEBUG_return_output
+
+def mem_out_of_range(dut, val_input=None):
+  if val_input:
+    dut.mem_out_of_range_DEBUG_return_output = val_input
+  else:
+    return dut.mem_out_of_range_DEBUG_return_output
           
 def DUMP_PIPELINEC_DEBUG(dut):
   print("halt =", halt(dut), flush=True)

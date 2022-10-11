@@ -640,10 +640,10 @@ end process;
 -- The PipelineC generated entity
 top_inst : entity work.top port map (   
     -- Generic main function clocks
-    clk_none => clk_50,
+    --clk_none => ,
     --clk_6p25 => clk_6p25,
     --clk_22p579 => clk_22p579,
-    --clk_25p0 => clk_25,
+    clk_25p0 => clk_25,
     --clk_74p25 => vga_pixel_clk,
     --clk_50p0 => clk_50,
     --clk_83p33 => clk_83p33,
@@ -661,7 +661,7 @@ top_inst : entity work.top port map (
     led0_module_return_output(0) => led(0),
     led1_module_return_output(0) => led(1),
     led2_module_return_output(0) => led(2),
-    led3_module_return_output(0) => led(3)
+    led3_module_return_output(0) => led(3),
     
     -- -- Switches
     -- switches_module_sw => unsigned(sw),
@@ -689,24 +689,24 @@ top_inst : entity work.top port map (
     --pmod_ja_return_output.ja6(0) => ja(6),
     --pmod_ja_inputs.ja7(0) => ja(7),
     -- PMODB (High Speed)
-    --  pmod_jb_return_output.jb0(0) => jb(0),
-    --  pmod_jb_return_output.jb1(0) => jb(1),
-    --  pmod_jb_return_output.jb2(0) => jb(2),
-    --  pmod_jb_return_output.jb3(0) => jb(3),
-    --  pmod_jb_return_output.jb4(0) => jb(4),
-    --  pmod_jb_return_output.jb5(0) => jb(5),
-    --  pmod_jb_return_output.jb6(0) => jb(6),
-    --  pmod_jb_return_output.jb7(0) => jb(7),
-    --  -- PMODC (High Speed)
-    --  pmod_jc_return_output.jc0(0) => jc(0),
-    --  pmod_jc_return_output.jc1(0) => jc(1),
-    --  --pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
-    --  pmod_jc_return_output.jc2(0) => jc(2), -- No connect when using DVI PMOD special DDR clock
-    --  pmod_jc_return_output.jc3(0) => jc(3),
-    --  pmod_jc_return_output.jc4(0) => jc(4),
-    --  pmod_jc_return_output.jc5(0) => jc(5),
-    --  pmod_jc_return_output.jc6(0) => jc(6),
-    --  pmod_jc_return_output.jc7(0) => jc(7)
+    pmod_jb_return_output.jb0(0) => jb(0),
+    pmod_jb_return_output.jb1(0) => jb(1),
+    pmod_jb_return_output.jb2(0) => jb(2),
+    pmod_jb_return_output.jb3(0) => jb(3),
+    pmod_jb_return_output.jb4(0) => jb(4),
+    pmod_jb_return_output.jb5(0) => jb(5),
+    pmod_jb_return_output.jb6(0) => jb(6),
+    pmod_jb_return_output.jb7(0) => jb(7),
+    -- PMODC (High Speed)
+    pmod_jc_return_output.jc0(0) => jc(0),
+    pmod_jc_return_output.jc1(0) => jc(1),
+    --pmod_jc_return_output.jc2(0) => open, --jc(2), -- No connect when using DVI PMOD special DDR clock
+    pmod_jc_return_output.jc2(0) => jc(2), -- Connected for VGA pmod
+    pmod_jc_return_output.jc3(0) => jc(3),
+    pmod_jc_return_output.jc4(0) => jc(4),
+    pmod_jc_return_output.jc5(0) => jc(5),
+    pmod_jc_return_output.jc6(0) => jc(6),
+    pmod_jc_return_output.jc7(0) => jc(7)
     -- -- PMODD
     -- pmod_jd_return_output.jd0(0) => jd(0),
     -- pmod_jd_return_output.jd1(0) => jd(1),

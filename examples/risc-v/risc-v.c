@@ -1,14 +1,14 @@
-#pragma MAIN risc_v
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "debug_port.h"
 
-// TODO resource sharing + more in decode logic to control fewer resources
+// TODO remove duplicate code / do resource sharing, in decode+execute logic
 
 // Register file w/ read+write ports
 #include "reg_file.c"
 
 // Combined instruction and data memory w/ ports
+// Also include memory mapped IO
 #include "mem.c"
 
 // OPCODES and such
@@ -22,10 +22,16 @@
 #define OP_LUI    0b0110111
 #define OP_STORE  0b0100011
 #define FUNCT3_ADDI  0b000
+#define FUNCT3_ANDI  0b111
+#define FUNCT3_BEQ   0b000
 #define FUNCT3_BLT   0b100
 #define FUNCT3_BGE   0b101
+#define FUNCT3_BNE   0b001
 #define FUNCT3_LW_SW 0b010
+#define FUNCT3_SLTI  0b010
+#define FUNCT3_SLTIU 0b011
 #define FUNCT3_SRAI  0b101
+#define FUNCT3_XORI  0b100
 
 // Sorta decode+control
 // Debug signal for simulation
@@ -87,7 +93,7 @@ decoded_t decode(uint32_t inst){
       // Execute stage does pc related math
       rv.exe_to_pc = 1;
       printf("BLT: PC = r%d < r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
-    } else if(rv.funct3==FUNCT3_BGE){
+    }else if(rv.funct3==FUNCT3_BGE){
       // BGE
       uint1_t imm12 = inst(31);
       uint6_t imm10_5 = inst(30, 25);
@@ -106,6 +112,44 @@ decoded_t decode(uint32_t inst){
       // Execute stage does pc related math
       rv.exe_to_pc = 1;
       printf("BGE: PC = r%d >= r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
+    }else if(rv.funct3==FUNCT3_BEQ){
+      // BEQ
+      uint1_t imm12 = inst(31);
+      uint6_t imm10_5 = inst(30, 25);
+      uint4_t imm4_1 = inst(11, 8);
+      uint1_t imm11 = inst(7);
+      // BEQ offset
+      int12_t beq_offset;
+      beq_offset = int12_uint1_12(beq_offset, imm12);
+      beq_offset = int12_uint6_5(beq_offset, imm10_5);
+      beq_offset = int12_uint4_1(beq_offset, imm4_1);
+      beq_offset = int12_uint1_11(beq_offset, imm11);
+      rv.signed_immediate = beq_offset;
+      // Compare two regs
+      rv.print_rs1_read = 1;
+      rv.print_rs2_read = 1;
+      // Execute stage does pc related math
+      rv.exe_to_pc = 1;
+      printf("BEQ: PC = r%d == r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
+    }else if(rv.funct3==FUNCT3_BNE){
+      // BNE
+      uint1_t imm12 = inst(31);
+      uint6_t imm10_5 = inst(30, 25);
+      uint4_t imm4_1 = inst(11, 8);
+      uint1_t imm11 = inst(7);
+      // BNE offset
+      int12_t bne_offset;
+      bne_offset = int12_uint1_12(bne_offset, imm12);
+      bne_offset = int12_uint6_5(bne_offset, imm10_5);
+      bne_offset = int12_uint4_1(bne_offset, imm4_1);
+      bne_offset = int12_uint1_11(bne_offset, imm11);
+      rv.signed_immediate = bne_offset;
+      // Compare two regs
+      rv.print_rs1_read = 1;
+      rv.print_rs2_read = 1;
+      // Execute stage does pc related math
+      rv.exe_to_pc = 1;
+      printf("BNE: PC = r%d != r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
     }else {
       printf("Unsupported OP_BRANCH instruction: 0x%X\n", inst);
       unknown_op = 1;
@@ -118,6 +162,24 @@ decoded_t decode(uint32_t inst){
       rv.reg_wr = 1;
       rv.print_rs1_read = 1;
       printf("ADDI: r%d + %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    }else if(rv.funct3==FUNCT3_ANDI){
+      // ANDI
+      rv.signed_immediate = imm11_0;
+      rv.reg_wr = 1;
+      rv.print_rs1_read = 1;
+      printf("ANDI: r%d & %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    }else if(rv.funct3==FUNCT3_SLTI){
+      // SLTI
+      rv.signed_immediate = imm11_0;
+      rv.reg_wr = 1;
+      rv.print_rs1_read = 1;
+      printf("SLTI: r%d < %d ? 1 : 0  -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    }else if(rv.funct3==FUNCT3_SLTIU){
+      // SLTIU
+      rv.signed_immediate = imm11_0;
+      rv.reg_wr = 1;
+      rv.print_rs1_read = 1;
+      printf("SLTIU: (uint)r%d < (uint)%d ? 1 : 0  -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_SRAI){
       // SRAI
       uint6_t shamt = imm11_0(5, 0);
@@ -125,6 +187,12 @@ decoded_t decode(uint32_t inst){
       rv.reg_wr = 1;
       rv.print_rs1_read = 1;
       printf("SRAI: r%d >> %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    }else if(rv.funct3==FUNCT3_XORI){
+      // XOR
+      rv.signed_immediate = imm11_0;
+      rv.reg_wr = 1;
+      rv.print_rs1_read = 1;
+      printf("XORI: r%d ^ %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else{
       printf("Unsupported OP_IMM instruction: 0x%X\n", inst);
       unknown_op = 1;
@@ -240,14 +308,42 @@ execute_t execute(
         rv.result = pc_plus4;
       }
       printf("BGE: PC = %d >= %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
+    }else if(decoded.funct3==FUNCT3_BEQ){
+      int32_t pc_plus_imm = pc + decoded.signed_immediate;
+      if(reg1 == reg2){
+        rv.result = pc_plus_imm;
+      } else {
+        rv.result = pc_plus4;
+      }
+      printf("BEQ: PC = %d == %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
+    }else if(decoded.funct3==FUNCT3_BNE){
+      int32_t pc_plus_imm = pc + decoded.signed_immediate;
+      if(reg1 != reg2){
+        rv.result = pc_plus_imm;
+      } else {
+        rv.result = pc_plus4;
+      }
+      printf("BNE: PC = %d != %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
     }
   }else if(decoded.opcode==OP_IMM){
     if(decoded.funct3==FUNCT3_ADDI){
       rv.result = reg1 + decoded.signed_immediate;
       printf("ADDI: %d + %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }else if(decoded.funct3==FUNCT3_ANDI){
+      rv.result = reg1 & decoded.signed_immediate;
+      printf("ANDI: %d & %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }else if(decoded.funct3==FUNCT3_XORI){
+      rv.result = reg1 ^ decoded.signed_immediate;
+      printf("XORI: %d ^ %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }else if(decoded.funct3==FUNCT3_SLTI){
+      rv.result = ((int32_t)reg1) < decoded.signed_immediate ? 1 : 0;
+      printf("SLTI: %d < %d = %d ? 1 : 0 -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }else if(decoded.funct3==FUNCT3_SLTIU){
+      rv.result = reg1 < (uint32_t)decoded.signed_immediate ? 1 : 0;
+      printf("SLTIU: 0x%X < 0x%X = %d ? 1 : 0 -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
     }else if(decoded.funct3==FUNCT3_SRAI){
       rv.result = ((int32_t)reg1) >> decoded.signed_immediate;
-      printf("SRA: %d >> %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+      printf("SRAI: %d >> %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
     }
   }else if(decoded.opcode==OP_JAL){
     rv.result = pc + decoded.signed_immediate;
@@ -273,6 +369,8 @@ execute_t execute(
   return rv;
 }
 
+// Run CPU at VGA pixel clock for demo
+MAIN_MHZ(risc_v, PIXEL_CLK_MHZ)
 uint32_t risc_v()
 {
   // Program counter
