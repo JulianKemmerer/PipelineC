@@ -28,6 +28,7 @@ OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None  # Auto created with pid and filename or from user
 TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 SYN_TOOL = None  # Attempts to figure out from part number
+CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
@@ -37,14 +38,14 @@ MAX_ALLOWED_LATENCY_MULT = (
     15  # Multiplier limit for individual module coarse register insertion coarsely
 )
 HIER_SWEEP_MULT_MIN = (
-    0.5  # How big modules need to be for pipelining to be prioritized there
+    1.5  # How big modules need to be for pipelining to be prioritized there - TODO try up to 2.0?
 )
 HIER_SWEEP_MULT_INC = (
     0.001  # Intentionally very small, sweep tries to make largest possible steps
 )
 COARSE_SWEEP_MULT_INC = 0.01  # Multiplier increment for how many times fmax to try for compensating not meeting timing
 COARSE_SWEEP_MULT_MAX = 2.0  # Max multiplier for internal fmax
-BEST_GUESS_MUL_MAX = 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep #25.0 # Between 20-30 is MAX?
+BEST_GUESS_MUL_MAX = 5.0  # 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep #25.0 # Between 20-30 is MAX?
 INF_MHZ = 1000  # Impossible timing goal
 INF_HIER_MULT = 999999.9  # Needed?
 MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
@@ -1960,6 +1961,11 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     f.write(out_text)
     f.close()
 
+    # Tack on a conversion to verilog if requested
+    if CONVERT_FINAL_TOP_VERILOG:
+        print("Rendering final top level Verilog...")
+        OPEN_TOOLS.RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state)
+
 
 # Sweep state for a single pipeline inst of logic (a main inst typically?)
 class InstSweepState:
@@ -1996,6 +2002,11 @@ class InstSweepState:
         # Otherwise from top level coarsely - like original coarse sweep
         # keep trying harder with best guess slices
         self.best_guess_sweep_mult = 1.0
+
+    def reset_recorded_best(self):
+        self.mhz_to_latency = dict()
+        self.latency_to_mhz = dict()
+        self.worse_or_same_tries_count = 0
 
 
 # SweepState for the entire multimain top
@@ -3281,6 +3292,12 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                                     ].coarse_sweep_mult,
                                 )
                                 made_adj = True
+                                # New timing goal resets recorded best for all recorded insts
+                                for inst_i in sweep_state.inst_sweep_state:
+                                    inst_sweep_state_i = sweep_state.inst_sweep_state[
+                                        inst_i
+                                    ]
+                                    inst_sweep_state_i.reset_recorded_best()
                             elif (
                                 sweep_state.inst_sweep_state[
                                     main_inst

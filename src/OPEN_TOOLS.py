@@ -370,6 +370,11 @@ def SYN_AND_REPORT_TIMING_NEW(
         m_ghdl = ""
         if not GHDL_PLUGIN_BUILT_IN:
             m_ghdl = "-m ghdl "
+        optional_router2 = "--router router2"
+        if inst_name:
+            # Dont use router two for small single instances
+            # Only use router two for multi main top level no inst_name
+            optional_router2 = ""
         sh_file = top_entity_name + ".sh"
         sh_path = output_directory + "/" + sh_file
         f = open(sh_path, "w")
@@ -403,13 +408,15 @@ export GHDL_PREFIX="""
 # P&R
 {NEXTPNR_BIN_PATH}/nextpnr-"""
                 + exe_ext
-                + """ """
+                + " "
                 + PART_TO_CMD_LINE_OPTS(parser_state.part)
-                + """ --json """
+                + " --json "
                 + top_entity_name
-                + """.json --pre-pack """
+                + ".json --pre-pack "
                 + constraints_filepath
-                + """ --timing-allow-fail &>> """
+                + " --timing-allow-fail "
+                + optional_router2
+                + " &>> "
                 + log_file_name
                 + """
 """
@@ -453,6 +460,35 @@ export GHDL_PREFIX="""
             sys.exit(0)
 
     return ParsedTimingReport(log_text)
+
+
+def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
+    # Identify tool versions
+    if not os.path.exists(f"{GHDL_BIN_PATH}/ghdl"):
+        raise Exception("ghdl executable not found!")
+    if not os.path.exists(f"{YOSYS_BIN_PATH}/yosys"):
+        raise Exception("yosys executable not found!")
+
+    # Write a shell script to execute
+    m_ghdl = ""
+    if not GHDL_PLUGIN_BUILT_IN:
+        m_ghdl = "-m ghdl "
+    sh_text = f"""
+{GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
+{GHDL_BIN_PATH}/ghdl -m --std=08 {SYN.TOP_LEVEL_MODULE} && \
+{YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
+"""
+    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
+    sh_path = output_dir + "/" + "convert_to_verilog.sh"
+    f = open(sh_path, "w")
+    f.write(sh_text)
+    f.close()
+
+    # Run command
+    bash_cmd = f"bash {sh_path}"
+    # print(bash_cmd, flush=True)
+    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
+    print(f"Top level Verilog file: {output_dir}/{SYN.TOP_LEVEL_MODULE}.v")
 
 
 def FUNC_IS_PRIMITIVE(func_name):

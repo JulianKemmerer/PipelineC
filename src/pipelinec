@@ -21,11 +21,13 @@ default_top_module = "top"
 parser = argparse.ArgumentParser(description="PipelineC:")
 parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
                     help=f"C file containing main functions. Default is {default_c_file}.")
+parser.add_argument("--top", help=f"Set the name of the top-level module generated. Default is {default_top_module}.", type=str, default=default_top_module)                    
 parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
+parser.add_argument("--verilog", help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.", action="store_true")               
+parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
 parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
                       help=f"infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.")
-parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
 parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.", action="store_true")
 parser.add_argument("--run", type=int, default=10, help="Argument for simulator run command. Default = '10' clock cycles.")
@@ -44,7 +46,6 @@ parser.add_argument("--start", type=int, default=None, help="When doing a --coar
 parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
 parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
 parser.add_argument("--yosys_json", help="Just output the json from yosys.", action="store_true")
-parser.add_argument("--top", help=f"Set the name of the top-level module generated. Default is {default_top_module}.", type=str, default=default_top_module)
 args = parser.parse_args()
 
 # Combine certain args
@@ -59,6 +60,10 @@ c_file = os.path.abspath(args.c_file)
 
 # Apply arguments to global modules
 
+# Set top level module name
+SYN.TOP_LEVEL_MODULE = args.top
+# Flag for verilog conversion
+SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
 # Output dir:
 #   Use what user provided
 #   Or create a new dir for each run by default
@@ -74,8 +79,7 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args)
-# Set top level module name
-SYN.TOP_LEVEL_MODULE = args.top
+
 
 # Ugh some python versions dont obey the coding comment at top of file?
 try:
@@ -131,12 +135,18 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 """
 TODO:
 RISCV CPU and stuff?
-  Put a risc(v? CHIPS2.0?) core along side accelerator in pipelinec
+  Put a riscv core along side accelerator in pipelinec
+    Game of life is very parallelizeable
   host OS on FOSIX NoC?
 Victor's RT
   Try ECP5 flow again?
     nextpnr has bette packing now
+  Yosyshq article!
   Try verilating whole pipeline?
+Bartus help w/ Vitis HLS integration
+Victor wave pipelining small example
+  Measure min and max delays
+  Craft multi path, try it?
 BUGS: Missing typedef support!?
   Shouldnt be too bad, can hack around 
 Fix bug in FSM style extra clock

@@ -170,18 +170,14 @@ int main(int argc, char *argv[]) {{
     else:
         raise Exception("verilator executable not found!")
 
+    # Render the final verilog for verilator to use
+    OPEN_TOOLS.RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state)
+
     # Write a shell script to execute
-    m_ghdl = ""
-    if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
-        m_ghdl = "-m ghdl "
     sh_text = f"""
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 {SYN.TOP_LEVEL_MODULE} && \
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog ../{SYN.TOP_LEVEL_MODULE}/{SYN.TOP_LEVEL_MODULE}.v" && \
 {VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module {SYN.TOP_LEVEL_MODULE} -cc ../{SYN.TOP_LEVEL_MODULE}/{SYN.TOP_LEVEL_MODULE}.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()} && \
 make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()}" -j4 -C obj_dir -f V{SYN.TOP_LEVEL_MODULE}.mk
 """
-    # --report-unoptflat
     sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
     f = open(sh_path, "w")
     f.write(sh_text)
