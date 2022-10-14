@@ -38,7 +38,7 @@ MAX_ALLOWED_LATENCY_MULT = (
     15  # Multiplier limit for individual module coarse register insertion coarsely
 )
 HIER_SWEEP_MULT_MIN = (
-    1.5  # How big modules need to be for pipelining to be prioritized there - TODO try up to 2.0?
+    1.0  # How big modules need to be for pipelining to be prioritized there - TODO try up to 2.0? 1.2 is better?
 )
 HIER_SWEEP_MULT_INC = (
     0.001  # Intentionally very small, sweep tries to make largest possible steps
