@@ -12,6 +12,7 @@ typedef struct an_array_t
 } an_array_t;
 
 
+#pragma MAIN main
 an_array_t main(float mat1[N][N], float mat2[N][N])
 {
     an_array_t res;

@@ -13,6 +13,7 @@ typedef struct result_matrix_t
 	uint1_t done;
 } result_matrix_t;
 
+// WARNING: volatile variables are highly experimental
 // Indicates if volatile globals are valid
 volatile uint1_t volatiles_valid;
 // Volatile globals
@@ -37,6 +38,7 @@ for (i = 0; i < N; i++)
 // Signal the start of the operation with 'start'
 // return value '.done' signals the completion of the operation
 // Both input matrices are assumed to have data from start->done
+#pragma MAIN main
 result_matrix_t main(
 	 uint1_t start,
 	 float mat1[N][N], float mat2[N][N])
