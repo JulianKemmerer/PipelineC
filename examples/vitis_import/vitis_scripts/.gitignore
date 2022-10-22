@@ -1,0 +1,14 @@
+*.log
+*.jou
+*.link_summary
+project_1
+.Xil
+.ipcache
+_x
+o
+xo
+main
+ip_repo
+kernel.ltx
+kernel.xclbin
+kernel.xclbin.info
