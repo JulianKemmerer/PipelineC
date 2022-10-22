@@ -16,11 +16,3 @@ void name##_DEBUG(type_t val_input) \
 { \
   name = val_input;\
 }
-
-#define DECL_OUTPUT(type_t, name) \
-type_t name; \
-PRAGMA_MESSAGE(MAIN name) \
-type_t name() \
-{ \
-  return name; \
-}

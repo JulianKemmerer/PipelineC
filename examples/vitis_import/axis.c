@@ -1,6 +1,6 @@
 #include "uintN_t.h"
 #include "axi/axis.h"
-#include "debug_port.h"
+#include "compiler.h"
 
 DECL_OUTPUT(uint32_t, out_data)
 DECL_OUTPUT(uint1_t, out_valid)

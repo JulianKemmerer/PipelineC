@@ -32,6 +32,24 @@ PRAGMA_MESSAGE(MAIN_SYN_MHZ main_func mhz)
 #define MAIN_MHZ_GROUP(main_func, mhz, group)\
 PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
 
+// Work around for user top level IO:
+// https://github.com/JulianKemmerer/PipelineC/issues/123
+// https://github.com/JulianKemmerer/PipelineC/issues/130
+#define DECL_INPUT(type_t, name) \
+type_t name; \
+PRAGMA_MESSAGE(MAIN name) \
+void name(type_t val_input) \
+{ \
+  name = val_input;\
+}
+#define DECL_OUTPUT(type_t, name) \
+type_t name; \
+PRAGMA_MESSAGE(MAIN name) \
+type_t name() \
+{ \
+  return name; \
+}
+
 // Split a main funciton instance into N globally available function calls
 // Maybe code gen some day?
 #define MAIN_SPLIT2( \
