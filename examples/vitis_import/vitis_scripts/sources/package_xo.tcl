@@ -1,15 +1,16 @@
 set script_path [ file dirname [ file normalize [ info script ] ] ]
 set script_path $script_path/..
-puts $script_path
 set PIPELINEC_PROJ_DIR $script_path/../OUT
 
 source sources/utils.tcl
 
 create_project project_1 $script_path/project_1 -part xcu50-fsvh2104-2-e -force
-set_property board_part xilinx.com:au50:part0:1.3 [current_project]
 
-source ${PIPELINEC_PROJ_DIR}/read_vhdl.tcl
+set fp [open ${PIPELINEC_PROJ_DIR}/vhdl_files.txt r]
+set file_data [read $fp]
+read_vhdl -vhdl2008 -library work $file_data
 set_property file_type {VHDL} [get_files  ${PIPELINEC_PROJ_DIR}/top/top.vhd]
+close $fp
 
 update_compile_order -fileset sources_1
 

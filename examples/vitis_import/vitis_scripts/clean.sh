@@ -13,3 +13,7 @@ rm -rf ip_repo
 rm -rf kernel.ltx
 rm -rf kernel.xclbin
 rm -rf kernel.xclbin.info
+rm -rf xsa.xml
+rm -rf emconfig.json
+rm -rf ext_metadata.json
+rm -rf .run

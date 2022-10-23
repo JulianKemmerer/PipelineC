@@ -12,3 +12,7 @@ ip_repo
 kernel.ltx
 kernel.xclbin
 kernel.xclbin.info
+xsa.xml
+emconfig.json
+ext_metadata.json
+.run
