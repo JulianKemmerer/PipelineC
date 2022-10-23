@@ -1,7 +1,5 @@
-Source Xilinx env first!
+Tested with Vivado/Vitis tools version 2022.2
 
-If you wish to use HW-emu for now you must comment float_pkg from VHDL sources...
-Change TARGET to "HW_EMU"
-and run test:
-export XCL_EMULATION_MODE=hw_emu
-./main kernel.xclbin
+Source Xilinx env first -> for example: "source /tools/Xilinx/Vitis/2022.2/settings64.sh"
+Use build_all.sh to build and run example project.
+If you wish to build for hw change target in build_all.sh script.

@@ -1,5 +1,7 @@
  #!/bin/bash
-#VITIS_PLATFORM=xilinx_u50_gen3x16_xdma_5_202210_1
-#export XCL_EMULATION_MODE=hw_emu
-#emconfigutil --nd 1  --platform ${VITIS_PLATFORM} --od .
+if [ $1 == "hw_emu" ]; then
+    VITIS_PLATFORM=$2
+    export XCL_EMULATION_MODE=$1
+    emconfigutil --nd 1  --platform ${VITIS_PLATFORM} --od .
+fi
 ./main kernel.xclbin
