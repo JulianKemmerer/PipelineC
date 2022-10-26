@@ -45,11 +45,38 @@
 #define V_POL 1
 */
 
-////***1280x720@60Hz***// Requires 74.25 MHz clock
+
 #if FRAME_HEIGHT == 720
+
+////***800x720@60Hz***//
+#if FRAME_WIDTH == 800
+#warning check timings for 800x720
+/* ORIGINAL CONSTANTS
+// Pulse width inferred from single cycle pulse in Verilog demo?
+#define VID_H_BPORCH 10
+#define VID_H_ACTIVE 800
+#define VID_H_TOTAL (VID_H_ACTIVE + VID_H_BPORCH)
+#define VID_V_BPORCH 1
+#define VID_V_ACTIVE 720
+#define VID_V_TOTAL (VID_V_ACTIVE + VID_V_BPORCH)
+*/
+#define PIXEL_CLK_MHZ 34.75
+// ^ TODO FIX TIMING NUMBERS ^
+#define H_FP 10 //H front porch width (pixels)
+#define H_PW 1 //H sync pulse width (pixels)
+#define H_MAX (800+H_FP) //H total period (pixels)
+
+#define V_FP 1 //V front porch width (lines)
+#define V_PW 1 //V sync pulse width (lines)
+#define V_MAX (720+V_FP) //V total period (lines)
+
+#define H_POL 1
+#define V_POL 1
+#endif
+
+////***1280x720@60Hz***// Requires 74.25 MHz clock
+#if FRAME_WIDTH == 1280
 #define PIXEL_CLK_MHZ 74.25
-#define FRAME_WIDTH 1280
-#define FRAME_HEIGHT 720
 
 #define H_FP 110 //H front porch width (pixels)
 #define H_PW 40 //H sync pulse width (pixels)
@@ -61,6 +88,8 @@
 
 #define H_POL 1
 #define V_POL 1
+#endif
+
 #endif
 
 ////***1280x1024@60Hz***// Requires 108 MHz clock
