@@ -354,9 +354,13 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
 ):
     rv = ""
 
-    # Add in VHDL 2008 fixed/float support?
-    rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
-    rv += "set_property library ieee_proposed [get_files " + FIXED_PKG_PATH + "]\n"
+    # What vivado version?
+    ver_decimal = float(os.path.basename(VIVADO_DIR))
+
+    # Add in VHDL 2008 fixed/float support for pre 2022.2
+    if ver_decimal < 2022.2:
+        rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
+        rv += "set_property library ieee_proposed [get_files " + FIXED_PKG_PATH + "]\n"
 
     # Bah tcl doesnt like brackets in file names
     # Becuase dumb
