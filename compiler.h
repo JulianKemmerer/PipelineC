@@ -38,6 +38,7 @@ PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
 #define DECL_INPUT(type_t, name) \
 type_t name; \
 PRAGMA_MESSAGE(MAIN name) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
 void name(type_t val_input) \
 { \
   name = val_input;\
@@ -45,6 +46,7 @@ void name(type_t val_input) \
 #define DECL_OUTPUT(type_t, name) \
 type_t name; \
 PRAGMA_MESSAGE(MAIN name) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
 type_t name() \
 { \
   return name; \
