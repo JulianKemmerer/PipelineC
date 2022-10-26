@@ -1936,7 +1936,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
         )
         rv_lines = []
         for line in tcl.split("\n"):
-            if line.startswith("set_global_assignment -name VHDL_FILE"):
+            if "-name VHDL_FILE" in line:
                 # Ok getting hack hack
                 if SYN_OUTPUT_DIRECTORY in line:
                     line = (
@@ -3256,16 +3256,15 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                         fake_one_clk_mhz = 1000.0 / total_delay
                         new_clks = target_mhz / fake_one_clk_mhz
                         latency_mult = new_clks / latency
+                        #if latency_mult > 2.0:
+                        #    print("Clipping best guess multiplier to 2.0")
+                        #    latency_mult = 2.0
                         new_best_guess_sweep_mult = (
                             sweep_state.inst_sweep_state[
                                 main_inst
                             ].best_guess_sweep_mult
                             * latency_mult
                         )
-                        # best_guess_sweep_mult_inc = 1.1 # 10% smalelr default? ....1.2 # 20% default
-                        # if not better_mhz:
-                        #  best_guess_sweep_mult_inc = 1.5 # smaller big jump? 2.0 # Big double jump
-                        # if (sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult*best_guess_sweep_mult_inc) > BEST_GUESS_MUL_MAX: #15 like? main_max_allowed_latency_mult  2.0 magic?
                         if (
                             new_best_guess_sweep_mult > BEST_GUESS_MUL_MAX
                         ):  # 15 like? main_max_allowed_latency_mult  2.0 magic?

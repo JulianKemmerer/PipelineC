@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import shutil
 import sys
 
 import C_TO_LOGIC
@@ -4182,7 +4183,16 @@ def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
 
     # Float pkg
     if SYN.SYN_TOOL is QUARTUS:
+        # hacky do copy into out dir here for now
         # Lite version doesnt support vhdl 08
+        # IEEE proposed since quartus lite doesnt include vhdl 2008
+        ieee_pro_dir = SYN.SYN_OUTPUT_DIRECTORY + "/ieee_proposed"
+        os.makedirs(ieee_pro_dir, exist_ok=True)
+        # Copy files from repo to output
+        pro_files = ["ieee_proposed.fixed_float_types.vhdl", "ieee_proposed.fixed_pkg.vhdl", "ieee_proposed.float_pkg.vhdl"]
+        for f in pro_files:
+            shutil.copy(f"{C_TO_LOGIC.REPO_ABS_DIR()}/ieee/{f}", ieee_pro_dir + "/" + f"{f}")
+        # And write vhdl using those proposed files
         text += """library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n"""
 
