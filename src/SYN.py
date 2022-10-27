@@ -1775,6 +1775,12 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                 clock_mhz = INF_MHZ
             f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ")\n")
     else:
+        # Collect all user generated clocks, no groups for now
+        all_user_clks = set()
+        for clk_mhz in parser_state.clk_mhz.values():
+            clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+            all_user_clks.add(clk_name)
+
         # Standard sdc like constraints
         for clock_name in clock_name_to_mhz:
             clock_mhz = clock_name_to_mhz[clock_name]
@@ -1784,6 +1790,16 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                 )
                 clock_mhz = INF_MHZ
             ns = 1000.0 / clock_mhz
+            # Quartus has some maximum acceptable clock period < 8333333 ns
+            if SYN_TOOL is QUARTUS:
+                MAX_NS = 80000
+                if ns > MAX_NS:
+                    print("Clipping clock",clock_name,"period to", MAX_NS,"ns...")
+                    ns = MAX_NS
+            # Default cmd is get_ports unless need internal user clk net name
+            get_thing_cmd = "get_ports"
+            if clock_name in all_user_clks:
+                get_thing_cmd = "get_nets"
             f.write(
                 "create_clock -add -name "
                 + clock_name
@@ -1791,13 +1807,10 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                 + str(ns)
                 + " -waveform {0 "
                 + str(ns / 2.0)
-                + "} [get_nets "
+                + "} [" + get_thing_cmd + " "
                 + clock_name
                 + "]\n"
             )
-            # f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets -hierarchical -filter {NAME =~ " + clock_name + "}]\n")
-            # f.write("create_clock -add -name " + clock_name + " -period " + str(ns) + " -waveform {0 " + str(ns/2.0) + "} [get_nets -filter {NAME =~ " + clock_name + "}]\n")
-            # f.write("puts [get_nets *]\n")
 
         # All clock assumed async? Doesnt matter for internal syn
         # Rely on generated/board provided constraints for real hardware
