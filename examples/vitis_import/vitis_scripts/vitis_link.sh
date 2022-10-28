@@ -1,5 +1,6 @@
 #!/bin/bash
-v++ --link \
+v++ -g \
+    --link \
     --platform $2 \
     --output kernel.xclbin \
     --input_files xo/my_ip.xo \
