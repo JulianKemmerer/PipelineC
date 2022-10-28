@@ -6,11 +6,12 @@ source sources/utils.tcl
 
 create_project project_1 $script_path/project_1 -part xcu50-fsvh2104-2-e -force
 
-set fp [open ${PIPELINEC_PROJ_DIR}/vhdl_files.txt r]
-set file_data [read $fp]
-read_vhdl -vhdl2008 -library work $file_data
+#set fp [open ${PIPELINEC_PROJ_DIR}/vhdl_files.txt r]
+#set file_data [read $fp]
+#read_vhdl -vhdl2008 -library work $file_data
+source ${PIPELINEC_PROJ_DIR}/read_vhdl.tcl
 set_property file_type {VHDL} [get_files  ${PIPELINEC_PROJ_DIR}/top/top.vhd]
-close $fp
+#close $fp
 
 update_compile_order -fileset sources_1
 
@@ -35,8 +36,8 @@ set_property vitis_drc {ctrl_protocol ap_ctrl_none} [ipx::find_open_core user.or
 set_property ipi_drc {ignore_freq_hz true} [ipx::find_open_core user.org:user:my_ip:1.0]
 
 map_clock clk_300p0_0
-map_axi_stream pipelineC_ip_in_data_0 pipelineC_ip_in_valid_0 in_ready_return_output_0 clk_300p0_0 input_stream slave
-map_axi_stream out_data_return_output_0 out_valid_return_output_0 pipelineC_ip_out_ready_0 clk_300p0_0 output_stream master
+map_axi_stream io_and_ctrl_in_data_0 io_and_ctrl_in_valid_0 in_ready_return_output_0 clk_300p0_0 input_stream slave
+map_axi_stream out_data_return_output_0 out_valid_return_output_0 io_and_ctrl_out_ready_0 clk_300p0_0 output_stream master
 
 set_property core_revision 1 [ipx::find_open_core user.org:user:my_ip:1.0]
 ipx::create_xgui_files [ipx::find_open_core user.org:user:my_ip:1.0]
