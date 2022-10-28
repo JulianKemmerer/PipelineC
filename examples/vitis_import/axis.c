@@ -15,7 +15,19 @@ uint1_t pipeline_out_valid;
 // The autopipelined function (no state)
 void the_pipeline()
 {
-    pipeline_out_data = pipeline_in_data + 1;
+    uint32_t temp = 0;
+    uint32_t i = 0;
+    for (i = 0; i < 32; i = i + 1) {
+        if (temp == 1) {
+          temp = temp - 1;
+        } else if (temp == 0) {
+          temp = temp + 1;
+        }
+    }
+    if (temp == 0) {
+        temp = temp + 1;
+    }
+    pipeline_out_data = pipeline_in_data + temp;
     pipeline_out_valid = pipeline_in_valid;
 }
 
