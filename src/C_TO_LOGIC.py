@@ -8774,7 +8774,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     # All func bodys can see globally defined variable names
     # Instead of processing upon finding global names multiple times
     # do a single copy of info from global to local func
-    all_ids = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_funcdef.body, c_ast.ID)
+    all_ids = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_funcdef.body)
     for id_node in all_ids:
         var_name = str(id_node.name)
         parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(
@@ -9494,9 +9494,30 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     return main_func_name_to_calls, main_func_names_to_called_from
 
 
+def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
+    if nodes is None:
+        nodes = []
+    if type(c_ast_node) == c_ast.ID:
+        nodes.append(c_ast_node)
+    children_tuples = c_ast_node.children()
+    for children_tuple in children_tuples:
+        # Certain compound nodes contain C AST identifiers that are not variables
+        # Ex. struct use, my_struct.my_var shows up as
+        # an individual c_ast.ID node for 'my_var' 
+        # when thats not the same as using 'my_var' as an actual variable
+        child_node = children_tuple[1]
+        if type(child_node) == c_ast.StructRef:
+            # Only need ID node for the name not the field
+            child_node = child_node.name
+        nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(child_node, nodes)
+    return nodes
+
+
 def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
     if nodes is None:
         nodes = []
+        if c_ast_type == c_ast.ID:
+            raise Exception(f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
     if type(c_ast_node) == c_ast_type:
         nodes.append(c_ast_node)
     children_tuples = c_ast_node.children()
@@ -9996,7 +10017,7 @@ def GET_GLOBAL_VAR_INFO(parser_state):
     for c_ast_func_def in c_ast_func_defs:
         func_name = c_ast_func_def.decl.name
         if not SKIP_PARSING_FUNC(func_name, parser_state):
-            ids_in_func = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_func_def, c_ast.ID)
+            ids_in_func = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_func_def)
             for id_node in ids_in_func:
                 var_name = id_node.name
                 # If name is from global names, and not from local then record global being used
@@ -10094,13 +10115,13 @@ def GET_GLOBAL_CONST_INFO(parser_state):
     )
     for c_ast_assignment in c_ast_assignments:
         lhs_node = c_ast_assignment.lvalue
-        ids_assigned = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(lhs_node, c_ast.ID)
+        ids_assigned = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(lhs_node)
         for id_assigned in ids_assigned:
             var_name = id_assigned.name
             if var_name in vars_w_no_write:
                 vars_w_no_write.remove(var_name)
     vars_w_some_use = set()
-    all_ids = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(parser_state.c_file_ast, c_ast.ID)
+    all_ids = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(parser_state.c_file_ast)
     for id_node in all_ids:
         var_name = id_node.name
         vars_w_some_use.add(var_name)
