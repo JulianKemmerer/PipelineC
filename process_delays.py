@@ -1,0 +1,65 @@
+#model FPGA timings
+#(C) 2022 Victor Surez Rovere <suarezvictor@gmail.com>
+#NOTE: only for integer operations (not floats)
+
+import os, re, math
+
+ops = {}
+
+def estimate_int_timing(integer_op, widths_vector):
+  timing_model= { #category, origin, slope
+    "arith":	(1.92, .04),
+    "comp":		(2.49, .0),
+    "equal":	(1.72, .04),
+    "logical":	(1.28, .0),
+    "shift":	(3.42, .0),
+  }
+
+  categ = ""   
+  if integer_op in ["PLUS", "MINUS", "NEGATE"]:	categ = "arith"
+  if integer_op in ["GT", "GTE", "LT", "LTE"]:	categ = "comp"
+  if integer_op in ["EQ", "NEQ"]:				categ = "equal"
+  if integer_op in ["AND", "OR", "XOR", "NOT"]:	categ = "logical"
+  if integer_op in ["SL", "SR"]:				categ = "shift"
+  if categ not in timing_model:
+    return None #unknown operation
+   
+  bits = max(widths_vector)
+  origin, slope = timing_model[categ]
+  return origin + bits*slope
+  
+
+def process_delays(dir_path):
+  print("real\top\testimation\twidths")
+  mindelay = 1e6
+  total = count = 0
+  for path in os.listdir(dir_path):
+    full = os.path.join(dir_path, path)
+    if os.path.isfile(full):
+      p = path.find("_OP_")
+      if p >= 0:
+        optyp = path[:p]
+        _ = path.find("_", p+4)
+        op = path[p+4:_]
+        widths = re.findall(r'int[0-9]+', path[4:])
+        if not len(widths):
+          continue
+        widths = [int(w[3:]) for w in widths] #cut 'int'
+        estim_ns = estimate_int_timing(op, widths)
+        with open(full, 'r') as file:
+          time_ns = float(file.read())
+
+        if estim_ns is not None:
+          if time_ns < mindelay: mindelay = time_ns
+          total += (time_ns - estim_ns)**2
+          count += 1
+          print(str(time_ns) + "\t" + op + "\t" + str(estim_ns) + "\t".join([str(w) for w in widths]))
+
+  rms = math.sqrt(total/count)  
+  print("Count:", count, ", minimum delay (ns):", mindelay, ", RMS error (ns):", rms)
+
+      
+
+if __name__ == "__main__":
+  process_delays("path_delay_cache/vivado/xc7a35ticsg324-1l/syn")
+
