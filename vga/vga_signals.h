@@ -11,4 +11,5 @@ typedef struct vga_signals_t
   uint1_t active;
   uint1_t start_of_frame;
   uint1_t end_of_frame;
+  uint1_t valid;
 }vga_signals_t;

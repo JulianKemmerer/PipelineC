@@ -11,8 +11,7 @@ vga_signals_t external_vga_timing_feedback;
 
 // Wire to internal vga timing module
 // that signals to stall/stop incrementing counters, etc
-uint1_t external_vga_req_stall;
-#include "clock_crossing/external_vga_req_stall.h"
+#include "vga_stall_signal.c"
 
 // Include regular VGA timing module now with external timing hooks enabled and visible
 #include "vga_timing.h"
@@ -90,5 +89,5 @@ void ext_vga(uint16_t x, uint16_t y)
   }
 
   // Signal stall to vga timing module
-  WIRE_WRITE(uint1_t, external_vga_req_stall, stall_req)
+  vga_req_stall = stall_req;
 }

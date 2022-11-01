@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 // Hooks into hardware buffers, ex. frame_buf_write
-#include "frame_buffer.h"
+#include "../../frame_buffer.h"
 
 // Demo application that plays Conway's Game of Life
 // https://www.geeksforgeeks.org/program-for-conways-game-of-life/

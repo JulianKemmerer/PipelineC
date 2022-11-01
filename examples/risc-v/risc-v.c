@@ -1,6 +1,11 @@
+#include "compiler.h"
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "debug_port.h"
+
+// Set CPU clock
+#define CPU_CLK_MHZ 27.0
+MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 
 // TODO remove duplicate code / do resource sharing, in decode+execute logic
 
@@ -369,8 +374,6 @@ execute_t execute(
   return rv;
 }
 
-// Run CPU at VGA pixel clock for demo
-MAIN_MHZ(risc_v, PIXEL_CLK_MHZ)
 uint32_t risc_v()
 {
   // Program counter

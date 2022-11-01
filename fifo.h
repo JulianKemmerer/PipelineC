@@ -78,6 +78,10 @@ name##_t name(uint1_t rd, type data_in, uint1_t wr)\
 }
 
 // FWFT style using RAM prim
+// Has latency issues: https://github.com/JulianKemmerer/PipelineC/issues/142
+#define FIFO_FWFT_EXTRA_STOP_LATENCY 2 
+#define FIFO_FWFT_MIN_LEVEL 6 // 2 cycle latency buffer + 2 cycles latency through ram + 2 cycles to extra to restart per issue
+#define FIFO_FWFT_MIN_PROG_FULL (FIFO_FWFT_MIN_LEVEL + FIFO_FWFT_EXTRA_STOP_LATENCY)
 #define FIFO_FWFT(name, type_t, DEPTH) FIFO_FWFT_DEPTH_ADDR_COUNT(name, type_t, DEPTH, uint28_t, uint28_t)
 #define FIFO_FWFT_DEPTH_ADDR_COUNT(name, type_t, DEPTH, fifo_ram_addr_t, fifo_count_t) \
 typedef struct name##_t \

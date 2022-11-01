@@ -131,34 +131,33 @@
 #ifdef __PIPELINEC__
 vga_signals_t vga_timing()
 {
-  uint1_t active;
-  
   static uint12_t h_cntr_reg;
   static uint12_t v_cntr_reg;
-  
   static uint1_t h_sync_reg = !H_POL;
   static uint1_t v_sync_reg = !V_POL;
+  static uint1_t valid_reg = 1; // Counters are valid, ex. not stalled
 
   vga_signals_t o;
   o.hsync = h_sync_reg;
   o.vsync = v_sync_reg;
   o.pos.x = h_cntr_reg;
   o.pos.y = v_cntr_reg;
-  active = 0;
+  o.valid = valid_reg;
+  o.active = 0;
   if((h_cntr_reg < FRAME_WIDTH) & (v_cntr_reg < FRAME_HEIGHT))
   {
-    active = 1;
+    o.active = 1;
   }
-  o.active = active;
   o.start_of_frame = (h_cntr_reg==0) & (v_cntr_reg==0);
   o.end_of_frame = (h_cntr_reg==(FRAME_WIDTH-1)) & (v_cntr_reg==(FRAME_HEIGHT-1));
   
   // External VGA can request a stall
   uint1_t stall_req = 0;
-  #ifdef EXT_VGA_TIMING
-  WIRE_READ(uint1_t, stall_req, external_vga_req_stall)
+  #ifdef VGA_STALL_SIGNAL
+  stall_req = vga_req_stall;
   #endif
-  if(!stall_req)
+  uint1_t valid = !stall_req;
+  if(valid)
   {
     if((h_cntr_reg >= (H_FP + FRAME_WIDTH - 1)) & (h_cntr_reg < (H_FP + FRAME_WIDTH + H_PW - 1)))
     {
@@ -196,6 +195,7 @@ vga_signals_t vga_timing()
       h_cntr_reg = h_cntr_reg + 1;
     }
   }
+  valid_reg = valid;
   
   return o;
 }
