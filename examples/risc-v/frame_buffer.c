@@ -1,6 +1,7 @@
 // Define the frame buffer RAM
+#include "uintN_t.h"
 #include "arrays.h"
-#include "ram.h" // For DECL_RAM_DP_RW_R_0 macro
+#include "ram.h" // For DECL_RAM_DP_RW_R macros
 #include "frame_buffer.h" // For frame size
 // Frame buffer is a RAM that both
 // 1) allows pixels to be read at full 'chasing the beam' 
@@ -9,15 +10,20 @@
 //    by some computation process 'application' (CPU in this demo)
 // RAM init data from file
 #include "gcc_test/gol/frame_buf_init_data.h"
-#define FRAME_BUFFER_LATENCY 0
-#if FRAME_BUFFER_LATENCY == 0
+// Configure frame buffer based on latency
+#define FRAME_BUFFER_LATENCY 2
+#if FRAME_BUFFER_LATENCY == 1
 DECL_RAM_DP_RW_R_0(
+#elif FRAME_BUFFER_LATENCY == 1
+DECL_RAM_DP_RW_R_1(
+#elif FRAME_BUFFER_LATENCY == 2
+DECL_RAM_DP_RW_R_2(
+#endif
   uint1_t,
   frame_buf_ram,
   FRAME_WIDTH*FRAME_HEIGHT,
   FRAME_BUF_INIT_DATA
 )
-#endif
 
 // Helper function to flatten 2D x,y positions into 1D RAM addresses
 uint32_t pos_to_addr(uint16_t x, uint16_t y)
@@ -58,19 +64,33 @@ void frame_buf_function()
   // First port is for user application, is read+write
   // Second port is read only for the frame buffer vga display
   frame_buf_ram_outputs_t frame_buf_outputs
-    = frame_buf_ram(frame_buffer_addr, 
-                         frame_buffer_wr_data_in, 
-                         frame_buffer_wr_enable_in,
-                         vga_addr);
+    = frame_buf_ram(frame_buffer_addr, // Port0
+                    frame_buffer_wr_data_in, 
+                    frame_buffer_wr_enable_in,
+                    #if FRAME_BUFFER_LATENCY == 2
+                    1, // Always inputs enabled
+                    #endif
+                    #if FRAME_BUFFER_LATENCY >= 1
+                    1, // Always reading
+                    #endif     
+                    vga_addr // Port1
+                    #if FRAME_BUFFER_LATENCY == 2
+                    , 1 // Always inputs enabled
+                    #endif
+                    #if FRAME_BUFFER_LATENCY >= 1
+                    , 1 // Always reading
+                    #endif
+                    );
 
   // Delay VGA signals to match ram output latency
   #if FRAME_BUFFER_LATENCY > 0
   static vga_signals_t vga_delay_regs[FRAME_BUFFER_LATENCY];
+  vga_signals_t vga_signals_into_delay = vga_signals;
   // Drive vga_signals from end/output delay regs
   vga_signals = vga_delay_regs[FRAME_BUFFER_LATENCY-1];
   // Shift array up to make room, and then put new vga at buf[0]
   ARRAY_SHIFT_UP(vga_delay_regs, FRAME_BUFFER_LATENCY, 1)
-  vga_delay_regs[0] = vga;
+  vga_delay_regs[0] = vga_signals_into_delay;
   #endif
   
   // Drive output signals with RAM values (delayed FRAME_BUFFER_LATENCY)
@@ -99,6 +119,15 @@ uint1_t line_bufs_wr_enable_in; // 0=read
 //  Outputs
 uint1_t line_bufs_rd_data_out;
 
+// Configure latency to match frame buffer
+#if FRAME_BUFFER_LATENCY == 0
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_0
+#elif FRAME_BUFFER_LATENCY == 1
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_1
+#elif FRAME_BUFFER_LATENCY == 2
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_2
+#endif
+
 // Line buffer used only by application via global wires (never called directly)
 // So need stand alone func to wire things up (similar to frame buffer wiring)
 MAIN_MHZ(line_bufs_function, CPU_CLK_MHZ)
@@ -111,9 +140,9 @@ void line_bufs_function()
   static uint1_t line_buf1[FRAME_WIDTH];
   uint1_t read_val;
   if (line_bufs_line_sel_in) {
-    read_val = line_buf1_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, line_bufs_wr_enable_in);
+    read_val = line_buf_RAM(1)(line_bufs_x_in, line_bufs_wr_data_in, line_bufs_wr_enable_in);
   } else {
-    read_val = line_buf0_RAM_SP_RF_0(line_bufs_x_in, line_bufs_wr_data_in, line_bufs_wr_enable_in);
+    read_val = line_buf_RAM(0)(line_bufs_x_in, line_bufs_wr_data_in, line_bufs_wr_enable_in);
   }
   // Drive output signals
   line_bufs_rd_data_out = read_val;

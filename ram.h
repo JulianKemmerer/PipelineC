@@ -63,6 +63,202 @@ begin \n\
 "); \
 }
 
+// Dual port, one read+write, one read only, 1 clock latency
+#define DECL_RAM_DP_RW_R_1( \
+  elem_t, \
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct ram_name##_outputs_t \
+{ \
+  elem_t rd_data0; \
+  elem_t rd_data1; \
+}ram_name##_outputs_t; \
+ram_name##_outputs_t ram_name( \
+  uint32_t addr0, elem_t wr_data0, uint1_t wr_en0, \
+  uint1_t rd_en0, \
+  uint32_t addr1, \
+  uint1_t rd_en1 \
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr0_s <= to_integer(addr0(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if rd_en0(0) = '1' then \n\
+          return_output.rd_data0 <= the_ram(addr0_s); \n\
+        end if; \n\
+        if rd_en1(0) = '1' then \n\
+          return_output.rd_data1 <= the_ram(addr1_s); \n\
+        end if; \n\
+        if wr_en0(0) = '1' then \n\
+          the_ram(addr0_s) <= wr_data0; \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+"); \
+}
+
+// Dual port, one read+write, one read only
+// 2 clock latency from input and output regs
+#define DECL_RAM_DP_RW_R_2( \
+  elem_t, \
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct ram_name##_outputs_t \
+{ \
+  elem_t rd_data0; \
+  elem_t rd_data1; \
+}ram_name##_outputs_t; \
+ram_name##_outputs_t ram_name( \
+  uint32_t addr0, elem_t wr_data0, uint1_t wr_en0, \
+  uint1_t en0, uint1_t rd_en0, \
+  uint32_t addr1, \
+  uint1_t en1, uint1_t rd_en1 \
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+  signal wr_data0_r : " xstr(elem_t) "; \n\
+  signal wr_en0_r : std_logic; \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if en0(0) = '1' then \n\
+          addr0_s <= to_integer(addr0(30 downto 0)) \n\
+          -- synthesis translate_off \n\
+          mod SIZE \n\
+          -- synthesis translate_on \n\
+          ; \n\
+          wr_data0_r <= wr_data0; \n\
+          wr_en0_r <= wr_en0(0); \n\
+        end if; \n\
+        if en1(0) = '1' then \n\
+          addr1_s <= to_integer(addr1(30 downto 0)) \n\
+          -- synthesis translate_off \n\
+          mod SIZE \n\
+          -- synthesis translate_on \n\
+          ; \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if wr_en0_r = '1' then \n\
+          the_ram(addr0_s) <= wr_data0_r; \n\
+        end if; \n\
+        if rd_en0(0) = '1' then \n\
+          return_output.rd_data0 <= the_ram(addr0_s); \n\
+        end if; \n\
+        if rd_en1(0) = '1' then \n\
+          return_output.rd_data1 <= the_ram(addr1_s); \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+"); \
+}
+
+// Dual port, one read+write, one read only
+// 2 clock latency from two sets of output regs
+#define DECL_RAM_DP_RW_R_2_O( \
+  elem_t, \
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct ram_name##_outputs_t \
+{ \
+  elem_t rd_data0; \
+  elem_t rd_data1; \
+}ram_name##_outputs_t; \
+ram_name##_outputs_t ram_name( \
+  uint32_t addr0, elem_t wr_data0, uint1_t wr_en0, \
+  uint1_t en0, uint1_t rd_en0, \
+  uint32_t addr1, \
+  uint1_t en1, uint1_t rd_en1 \
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+  signal rd_data0_r : " xstr(elem_t) "; \n\
+  signal rd_data1_r : " xstr(elem_t) "; \n\
+begin \n\
+  process(all) begin \n\
+    addr0_s <= to_integer(addr0(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        rd_data0_r <= the_ram(addr0_s); \n\
+        if rd_en0(0) = '1' then \n\
+          return_output.rd_data0 <= rd_data0_r; \n\
+        end if; \n\
+        rd_data1_r <= the_ram(addr1_s); \n\
+        if rd_en1(0) = '1' then \n\
+          return_output.rd_data1 <= rd_data1_r; \n\
+        end if; \n\
+        if wr_en0(0) = '1' then \n\
+          the_ram(addr0_s) <= wr_data0; \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+"); \
+}
+
 // Triple port, two read only, one write only, 0 latency
 #define DECL_RAM_TP_R_R_W_0( \
   elem_t, \
