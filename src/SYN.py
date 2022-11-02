@@ -12,6 +12,7 @@ from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import C_TO_LOGIC
+import DEVICE_MODELS
 import DIAMOND
 import EFINITY
 import OPEN_TOOLS
@@ -4105,9 +4106,22 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                         break
                 # If all dependencies met then maybe add to list do syn yet
                 if all_dep_met:
+                    # Try to model the path delay
+                    modeled_path_delay = None
+                    if DEVICE_MODELS.part_supported(parser_state.part):
+                        op_and_widths = DEVICE_MODELS.func_name_to_op_and_widths(logic.func_name)
+                        if op_and_widths is not None:
+                            op, widths = op_and_widths 
+                            modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
                     # Try to get cached path delay
                     cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
-                    if cached_path_delay is not None:
+                    # Prefer model over cache for now?
+                    if modeled_path_delay is not None:
+                        logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
+                        print(
+                            f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns"
+                        )
+                    elif cached_path_delay is not None:
                         logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
                         print(
                             f"Function: {logic.func_name} Cached path delay: {cached_path_delay:.3f} ns"
