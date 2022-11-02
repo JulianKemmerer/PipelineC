@@ -35,9 +35,35 @@ mem_map_out_t mem_map_module(
 {
   // Outputs
   mem_map_out_t o;
+
+  // In+out registers for frame buffer wires, for better fmax
+  static uint1_t frame_buffer_wr_data_in_reg;
+  static uint16_t frame_buffer_x_in_reg;
+  static uint16_t frame_buffer_y_in_reg;
+  static uint1_t frame_buffer_wr_enable_in_reg;
+  static uint1_t frame_buffer_rd_data_out_reg;
+  //
+  static uint1_t line_bufs_line_sel_in_reg;
+  static uint16_t line_bufs_x_in_reg;
+  static uint1_t line_bufs_wr_data_in_reg;
+  static uint1_t line_bufs_wr_enable_in_reg;
+  static uint1_t line_bufs_rd_data_out_reg;
+
+  // Connect frame buffer inputs from registers for better fmax
+  frame_buffer_wr_data_in = frame_buffer_wr_data_in_reg;
+  frame_buffer_x_in = frame_buffer_x_in_reg;
+  frame_buffer_y_in = frame_buffer_y_in_reg;
+  frame_buffer_wr_enable_in = frame_buffer_wr_enable_in_reg;
+  //
+  line_bufs_line_sel_in = line_bufs_line_sel_in_reg;
+  line_bufs_x_in = line_bufs_x_in_reg;
+  line_bufs_wr_data_in = line_bufs_wr_data_in_reg;
+  line_bufs_wr_enable_in = line_bufs_wr_enable_in_reg;
+
   // Some defaults for single cycle pulses
-  frame_buffer_wr_enable_in = 0;
-  line_bufs_wr_enable_in = 0;
+  frame_buffer_wr_enable_in_reg = 0;
+  line_bufs_wr_enable_in_reg = 0;
+
   if(addr==RETURN_OUTPUT_ADDR){
     // The return/halt debug signal
     o.addr_is_mapped = 1;
@@ -56,48 +82,53 @@ mem_map_out_t mem_map_module(
   }else if(addr==FRAME_BUF_X_ADDR){
     // Frame buffer x
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_x_in;
+    o.rd_data = frame_buffer_x_in_reg;
     if(wr_en){
-      frame_buffer_x_in = wr_data;
+      frame_buffer_x_in_reg = wr_data;
     }
   }else if(addr==FRAME_BUF_Y_ADDR){
     // Frame buffer y
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_y_in;
+    o.rd_data = frame_buffer_y_in_reg;
     if(wr_en){
-      frame_buffer_y_in = wr_data;
+      frame_buffer_y_in_reg = wr_data;
     }
   }else if(addr==FRAME_BUF_DATA_ADDR){
     // Frame buffer data
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_rd_data_out;
-    frame_buffer_wr_enable_in = wr_en;
+    o.rd_data = frame_buffer_rd_data_out_reg;
+    frame_buffer_wr_enable_in_reg = wr_en;
     if(wr_en){
-      frame_buffer_wr_data_in = wr_data;
+      frame_buffer_wr_data_in_reg = wr_data;
     }
   }else if(addr==LINE_BUF_SEL_ADDR){
     // Line buf sel
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_line_sel_in;
+    o.rd_data = line_bufs_line_sel_in_reg;
     if(wr_en){
-      line_bufs_line_sel_in = wr_data;
+      line_bufs_line_sel_in_reg = wr_data;
     }
   }else if(addr==LINE_BUF_X_ADDR){
     // Line buf x
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_x_in;
+    o.rd_data = line_bufs_x_in_reg;
     if(wr_en){
-      line_bufs_x_in = wr_data;
+      line_bufs_x_in_reg = wr_data;
     }
   }else if(addr==LINE_BUF_DATA_ADDR){
     // Line buffer data
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_rd_data_out;
-    line_bufs_wr_enable_in = wr_en;
+    o.rd_data = line_bufs_rd_data_out_reg;
+    line_bufs_wr_enable_in_reg = wr_en;
     if(wr_en){
-      line_bufs_wr_data_in = wr_data;
+      line_bufs_wr_data_in_reg = wr_data;
     }
   }
+
+  // Connect frame buffer outputs to registers for better fmax
+  frame_buffer_rd_data_out_reg = frame_buffer_rd_data_out;
+  //
+  line_bufs_rd_data_out_reg = line_bufs_rd_data_out;
 
   return o;
 }

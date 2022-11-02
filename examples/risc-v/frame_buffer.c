@@ -11,8 +11,8 @@
 // RAM init data from file
 #include "gcc_test/gol/frame_buf_init_data.h"
 // Configure frame buffer based on latency
-#define FRAME_BUFFER_LATENCY 2
-#if FRAME_BUFFER_LATENCY == 1
+#define FRAME_BUFFER_LATENCY 0
+#if FRAME_BUFFER_LATENCY == 0
 DECL_RAM_DP_RW_R_0(
 #elif FRAME_BUFFER_LATENCY == 1
 DECL_RAM_DP_RW_R_1(
