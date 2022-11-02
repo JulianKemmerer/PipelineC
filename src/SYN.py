@@ -4115,16 +4115,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                             modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
                     # Try to get cached path delay
                     cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
-                    # Prefer model over cache for now?
-                    if modeled_path_delay is not None:
-                        logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
-                        print(
-                            f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns"
-                        )
-                    elif cached_path_delay is not None:
+                    # Prefer cache over model
+                    if cached_path_delay is not None:
                         logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
                         print(
-                            f"Function: {logic.func_name} Cached path delay: {cached_path_delay:.3f} ns"
+                            f"Function: {logic.func_name} cached path delay: {cached_path_delay:.3f} ns"
                         )
                         if cached_path_delay > 0.0 and logic.delay == 0:
                             print("Have timing path of", cached_path_delay, "ns")
@@ -4132,6 +4127,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                                 "...but recorded zero delay. Increase delay multiplier!"
                             )
                             sys.exit(-1)
+                    elif modeled_path_delay is not None:
+                        logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
+                        print(
+                            f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns"
+                        )
                     # Then check for known delays
                     elif LOGIC_IS_ZERO_DELAY(logic, parser_state):
                         logic.delay = 0
