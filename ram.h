@@ -18,13 +18,20 @@
 ) \
 typedef struct ram_name##_outputs_t \
 { \
+  uint32_t addr0; \
+  elem_t wr_data0; uint1_t wr_en0; \
   elem_t rd_data0; \
+  uint1_t valid0; \
+  uint32_t addr1; \
   elem_t rd_data1; \
+  uint1_t valid1; \
 }ram_name##_outputs_t; \
 ram_name##_outputs_t ram_name( \
   uint32_t addr0, \
   elem_t wr_data0, uint1_t wr_en0, \
-  uint32_t addr1 \
+  uint1_t valid0, \
+  uint32_t addr1, \
+  uint1_t valid1 \
 ){ \
   __vhdl__("\n\
   constant SIZE : integer := " xstr(SIZE) "; \n\
@@ -52,14 +59,20 @@ begin \n\
   begin \n\
     if rising_edge(clk) then \n\
       if CLOCK_ENABLE(0)='1' then \n\
-        if wr_en0(0) = '1' then \n\
+        if wr_en0(0)='1' and valid0(0)='1' then \n\
           the_ram(addr0_s) <= wr_data0; \n\
         end if; \n\
       end if; \n\
     end if; \n\
   end process; \n\
+  return_output.addr0 <= addr0; \n\
   return_output.rd_data0 <= the_ram(addr0_s); \n\
+  return_output.wr_data0 <= wr_data0; \n\
+  return_output.wr_en0 <= wr_en0; \n\
+  return_output.valid0 <= valid0; \n\
+  return_output.addr1 <= addr1; \n\
   return_output.rd_data1 <= the_ram(addr1_s); \n\
+  return_output.valid1 <= valid1; \n\
 "); \
 }
 

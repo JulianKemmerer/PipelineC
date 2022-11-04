@@ -37,32 +37,18 @@ mem_map_out_t mem_map_module(
   mem_map_out_t o;
 
   // In+out registers for frame buffer wires, for better fmax
-  static uint1_t frame_buffer_wr_data_in_reg;
-  static uint16_t frame_buffer_x_in_reg;
-  static uint16_t frame_buffer_y_in_reg;
-  static uint1_t frame_buffer_wr_enable_in_reg;
-  static uint1_t frame_buffer_rd_data_out_reg;
-  //
-  static uint1_t line_bufs_line_sel_in_reg;
-  static uint16_t line_bufs_x_in_reg;
-  static uint1_t line_bufs_wr_data_in_reg;
-  static uint1_t line_bufs_wr_enable_in_reg;
-  static uint1_t line_bufs_rd_data_out_reg;
+  static frame_buffer_inputs_t frame_buffer_in_reg;
+  static frame_buffer_outputs_t frame_buffer_out_reg;
+  static line_bufs_inputs_t line_bufs_in_reg;
+  static line_bufs_outputs_t line_bufs_out_reg;
 
   // Connect frame buffer inputs from registers for better fmax
-  frame_buffer_wr_data_in = frame_buffer_wr_data_in_reg;
-  frame_buffer_x_in = frame_buffer_x_in_reg;
-  frame_buffer_y_in = frame_buffer_y_in_reg;
-  frame_buffer_wr_enable_in = frame_buffer_wr_enable_in_reg;
-  //
-  line_bufs_line_sel_in = line_bufs_line_sel_in_reg;
-  line_bufs_x_in = line_bufs_x_in_reg;
-  line_bufs_wr_data_in = line_bufs_wr_data_in_reg;
-  line_bufs_wr_enable_in = line_bufs_wr_enable_in_reg;
+  frame_buffer_in = frame_buffer_in_reg;
+  line_bufs_in = line_bufs_in_reg;
 
   // Some defaults for single cycle pulses
-  frame_buffer_wr_enable_in_reg = 0;
-  line_bufs_wr_enable_in_reg = 0;
+  frame_buffer_in_reg.valid = 0;
+  line_bufs_in_reg.valid = 0;
 
   if(addr==RETURN_OUTPUT_ADDR){
     // The return/halt debug signal
@@ -82,53 +68,54 @@ mem_map_out_t mem_map_module(
   }else if(addr==FRAME_BUF_X_ADDR){
     // Frame buffer x
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_x_in_reg;
+    o.rd_data = frame_buffer_in_reg.x;
     if(wr_en){
-      frame_buffer_x_in_reg = wr_data;
+      frame_buffer_in_reg.x = wr_data;
     }
   }else if(addr==FRAME_BUF_Y_ADDR){
     // Frame buffer y
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_y_in_reg;
+    o.rd_data = frame_buffer_in_reg.y;
     if(wr_en){
-      frame_buffer_y_in_reg = wr_data;
+      frame_buffer_in_reg.y = wr_data;
     }
   }else if(addr==FRAME_BUF_DATA_ADDR){
     // Frame buffer data
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_rd_data_out_reg;
-    frame_buffer_wr_enable_in_reg = wr_en;
+    o.rd_data = frame_buffer_out_reg.rd_data;
+    frame_buffer_in_reg.valid = 1;
+    frame_buffer_in_reg.wr_en = wr_en;
     if(wr_en){
-      frame_buffer_wr_data_in_reg = wr_data;
+      frame_buffer_in_reg.wr_data = wr_data;
     }
   }else if(addr==LINE_BUF_SEL_ADDR){
     // Line buf sel
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_line_sel_in_reg;
+    o.rd_data = line_bufs_in_reg.line_sel;
     if(wr_en){
-      line_bufs_line_sel_in_reg = wr_data;
+      line_bufs_in_reg.line_sel = wr_data;
     }
   }else if(addr==LINE_BUF_X_ADDR){
     // Line buf x
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_x_in_reg;
+    o.rd_data = line_bufs_in_reg.x;
     if(wr_en){
-      line_bufs_x_in_reg = wr_data;
+      line_bufs_in_reg.x = wr_data;
     }
   }else if(addr==LINE_BUF_DATA_ADDR){
     // Line buffer data
     o.addr_is_mapped = 1;
-    o.rd_data = line_bufs_rd_data_out_reg;
-    line_bufs_wr_enable_in_reg = wr_en;
+    o.rd_data = line_bufs_out_reg.rd_data;
+    line_bufs_in_reg.valid = 1;
+    line_bufs_in_reg.wr_en = wr_en;
     if(wr_en){
-      line_bufs_wr_data_in_reg = wr_data;
+      line_bufs_in_reg.wr_data = wr_data;
     }
   }
 
   // Connect frame buffer outputs to registers for better fmax
-  frame_buffer_rd_data_out_reg = frame_buffer_rd_data_out;
-  //
-  line_bufs_rd_data_out_reg = line_bufs_rd_data_out;
+  frame_buffer_out_reg = frame_buffer_out;
+  line_bufs_out_reg = line_bufs_out;
 
   return o;
 }
@@ -169,7 +156,9 @@ mem_out_t mem(
   }
 
   // The single RAM instance with connections splitting in two
-  the_mem_outputs_t ram_out = the_mem(mem_rw_word_index, mem_rw.wr_data, mem_rw.wr_en, rd_addr);
+  the_mem_outputs_t ram_out = the_mem(mem_rw_word_index,
+                                      mem_rw.wr_data, mem_rw.wr_en, 1,
+                                       rd_addr, 1);
   mem_out_t mem_out;
   mem_out.mem_read_write = ram_out.rd_data0;
   mem_out.inst_read = ram_out.rd_data1;
