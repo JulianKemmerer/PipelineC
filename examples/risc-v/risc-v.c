@@ -33,6 +33,7 @@ MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 #define FUNCT3_BGE   0b101
 #define FUNCT3_BNE   0b001
 #define FUNCT3_LW_SW 0b010
+#define FUNCT3_SLLI  0b001
 #define FUNCT3_SLTI  0b010
 #define FUNCT3_SLTIU 0b011
 #define FUNCT3_SRAI  0b101
@@ -173,6 +174,13 @@ decoded_t decode(uint32_t inst){
       rv.reg_wr = 1;
       rv.print_rs1_read = 1;
       printf("ANDI: r%d & %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
+    }else if(rv.funct3==FUNCT3_SLLI){
+      // SLLI
+      uint5_t shamt = imm11_0(4, 0);
+      rv.signed_immediate = shamt;
+      rv.reg_wr = 1;
+      rv.print_rs1_read = 1;
+      printf("SLLI: r%d << %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_SLTI){
       // SLTI
       rv.signed_immediate = imm11_0;
@@ -187,7 +195,7 @@ decoded_t decode(uint32_t inst){
       printf("SLTIU: (uint)r%d < (uint)%d ? 1 : 0  -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_SRAI){
       // SRAI
-      uint6_t shamt = imm11_0(5, 0);
+      uint5_t shamt = imm11_0(4, 0);
       rv.signed_immediate = shamt;
       rv.reg_wr = 1;
       rv.print_rs1_read = 1;
@@ -281,6 +289,7 @@ decoded_t decode(uint32_t inst){
   return rv;
 }
 
+// Exceute/ALU
 typedef struct execute_t
 {
   uint32_t result;
@@ -340,6 +349,9 @@ execute_t execute(
     }else if(decoded.funct3==FUNCT3_XORI){
       rv.result = reg1 ^ decoded.signed_immediate;
       printf("XORI: %d ^ %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+    }else if(decoded.funct3==FUNCT3_SLLI){
+      rv.result = reg1 << decoded.signed_immediate;
+      printf("SLLI: %d << %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
     }else if(decoded.funct3==FUNCT3_SLTI){
       rv.result = ((int32_t)reg1) < decoded.signed_immediate ? 1 : 0;
       printf("SLTI: %d < %d = %d ? 1 : 0 -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
@@ -374,6 +386,7 @@ execute_t execute(
   return rv;
 }
 
+// CPU top level
 uint32_t risc_v()
 {
   // Program counter
