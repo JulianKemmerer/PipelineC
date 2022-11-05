@@ -32,6 +32,8 @@ MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 #define FUNCT3_BLT   0b100
 #define FUNCT3_BGE   0b101
 #define FUNCT3_BNE   0b001
+#define FUNCT3_LB_SB 0b000
+#define FUNCT3_LH_SH 0b001
 #define FUNCT3_LW_SW 0b010
 #define FUNCT3_SLLI  0b001
 #define FUNCT3_SLTI  0b010
@@ -264,24 +266,33 @@ decoded_t decode(uint32_t inst){
     rv.signed_immediate = int32_uint20_12(0, imm31_12);
     printf("LUI: %d -> r%d \n", rv.signed_immediate, rv.dest);
   }else if(rv.opcode==OP_STORE){
+    rv.print_rs1_read = 1;
+    rv.print_rs2_read = 1;
+    uint7_t imm11_5 = inst(31, 25);
+    uint5_t imm4_0 = inst(11, 7);
+    // Store offset
+    int12_t sw_offset;
+    sw_offset = int12_uint7_5(sw_offset, imm11_5);
+    sw_offset = int12_uint5_0(sw_offset, imm4_0);
+    int32_t sign_extended_offset = sw_offset;
+    rv.signed_immediate = sign_extended_offset;
     if(rv.funct3==FUNCT3_LW_SW){
       // SW
       rv.mem_wr_byte_ens[0] = 1;
       rv.mem_wr_byte_ens[1] = 1;
       rv.mem_wr_byte_ens[2] = 1;
       rv.mem_wr_byte_ens[3] = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      uint7_t imm11_5 = inst(31, 25);
-      uint5_t imm4_0 = inst(11, 7);
-      // Store offset
-      int12_t sw_offset;
-      sw_offset = int12_uint7_5(sw_offset, imm11_5);
-      sw_offset = int12_uint5_0(sw_offset, imm4_0);
-      int32_t sign_extended_offset = sw_offset;
-      rv.signed_immediate = sign_extended_offset;
       printf("SW: addr = r%d + %d, mem[addr] <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
-    } else {
+    }else if(rv.funct3==FUNCT3_LH_SH){
+      // SH
+      rv.mem_wr_byte_ens[0] = 1;
+      rv.mem_wr_byte_ens[1] = 1;
+      printf("SH: addr = r%d + %d, mem[addr](15 downto 0) <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
+    }else if(rv.funct3==FUNCT3_LB_SB){
+      // SB
+      rv.mem_wr_byte_ens[0] = 1;
+      printf("SB: addr = r%d + %d, mem[addr](7 downto 0) <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
+    }else {
       printf("Unsupported OP_STORE instruction: 0x%X\n", inst);
       unknown_op = 1;
     }
@@ -381,9 +392,13 @@ execute_t execute(
     rv.result = decoded.signed_immediate;
     printf("LUI: exe result = %d \n", decoded.signed_immediate);
   }else if(decoded.opcode==OP_STORE){
+    rv.result = reg1 + decoded.signed_immediate;
     if(decoded.funct3==FUNCT3_LW_SW){
-      rv.result = reg1 + decoded.signed_immediate;
       printf("SW: addr = %d + %d = %d, mem[0x%X] <- %d \n", reg1, decoded.signed_immediate, rv.result, rv.result, reg2);
+    }else if(decoded.funct3==FUNCT3_LH_SH){
+      printf("SH: addr = %d + %d = %d, mem[0x%X](15 downto 0) <- %d \n", reg1, decoded.signed_immediate, rv.result, rv.result, (uint16_t)reg2);
+    }else if(decoded.funct3==FUNCT3_LB_SB){
+      printf("SB: addr = %d + %d = %d, mem[0x%X](7 downto 0) <- %d \n", reg1, decoded.signed_immediate, rv.result, rv.result, (uint8_t)reg2);
     }
   }
   return rv;
