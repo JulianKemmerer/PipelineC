@@ -18,16 +18,16 @@ async def run_cpu(dut):
     # to work around 'metavalue detected' warnings from ieee libs
     cycle = 0
     print("Clock:", cycle, flush=True)
-    dut.clk_25p0.value = 1
+    dut.clk_60p0.value = 1
     await Timer(0.5, units="ns")
     check_cpu_debug(dut)
     print("^End Clock:", cycle, flush=True)
     while True:
-        dut.clk_25p0.value = 0
+        dut.clk_60p0.value = 0
         await Timer(0.5, units="ns")
         print("")
         print("Clock:", cycle+1, flush=True)
-        dut.clk_25p0.value = 1
+        dut.clk_60p0.value = 1
         await Timer(0.5, units="ns")
         check_cpu_debug(dut)
         cycle += 1

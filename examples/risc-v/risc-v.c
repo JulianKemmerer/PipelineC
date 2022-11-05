@@ -50,7 +50,7 @@ typedef struct decoded_t{
   uint7_t opcode;
   // Derived control flags from decode
   uint1_t reg_wr;
-  uint1_t mem_wr;
+  uint1_t mem_wr_byte_ens[4];
   uint1_t mem_rd;
   uint1_t mem_to_reg;
   uint1_t pc_plus4_to_reg;
@@ -266,7 +266,10 @@ decoded_t decode(uint32_t inst){
   }else if(rv.opcode==OP_STORE){
     if(rv.funct3==FUNCT3_LW_SW){
       // SW
-      rv.mem_wr = 1;
+      rv.mem_wr_byte_ens[0] = 1;
+      rv.mem_wr_byte_ens[1] = 1;
+      rv.mem_wr_byte_ens[2] = 1;
+      rv.mem_wr_byte_ens[3] = 1;
       rv.print_rs1_read = 1;
       rv.print_rs2_read = 1;
       uint7_t imm11_5 = inst(31, 25);
@@ -418,10 +421,10 @@ uint32_t risc_v()
   mem_rw_in_t mem_rw_in;
   mem_rw_in.addr = exe.result; // TEMP addr always from execute module
   mem_rw_in.wr_data = rd_data2;
-  mem_rw_in.wr_en = decoded.mem_wr;
+  mem_rw_in.wr_byte_ens = decoded.mem_wr_byte_ens;
   // Actual connection to memory read+write port
   uint32_t data_mem_rd_val = mem_read_write(mem_rw_in);
-  if(decoded.mem_wr){
+  if(decoded.mem_wr_byte_ens[0]){
     printf("Write Mem[0x%X] = %d\n", mem_rw_in.addr, mem_rw_in.wr_data);
   }
   if(decoded.mem_rd){
