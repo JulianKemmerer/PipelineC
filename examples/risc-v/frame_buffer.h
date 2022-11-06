@@ -1,6 +1,9 @@
 #include "mem_map.h"
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
+
+// Memory mapped version not used by pipelinec hardware fsm style frame buffers
+#ifndef __PIPELINEC__
 // TODO reduce code size with inlined read+write single func call?
 void frame_buf_write(int32_t x, int32_t y, int32_t wr_data){
   *FRAME_BUF_X = x;
@@ -22,3 +25,4 @@ int32_t line_buf_read(int32_t line_sel, int32_t x){
   *LINE_BUF_X = x;
   return *LINE_BUF_DATA;
 }
+#endif

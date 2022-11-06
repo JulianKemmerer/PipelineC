@@ -15,6 +15,12 @@
 #endif
 #endif
 
+// Can't parse attributes
+// https://github.com/eliben/pycparser/wiki/FAQ#what-do-i-do-about-__attribute__
+#ifdef __PIPELINEC__
+#define __attribute__(x)
+#endif
+
 #define PRAGMA_MESSAGE(x) _Pragma(#x)
 
 #define CLK_MHZ(clock, mhz)\

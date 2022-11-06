@@ -13,7 +13,7 @@ MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 #include "reg_file.c"
 
 // Combined instruction and data memory w/ ports
-// Also include memory mapped IO
+// Also includes memory mapped IO
 #include "mem.c"
 
 // OPCODES and such

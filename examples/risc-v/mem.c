@@ -1,3 +1,4 @@
+// Combined instruction and data memory
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
@@ -82,17 +83,15 @@ begin \n\
 ");
 }
 
+// GoL accelerators are enabled inside hw.c (some or none)
+#include "gcc_test/gol/hw.c"
+
 // Memory mapped IO addresses to drive hardware wires, ex. debug ports, devices
 #include "mem_map.h"
 // Debug ports for simulation
 DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
 DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
-//DEBUG_OUTPUT_DECL(test_struct_t, test_struct_debug)
 #include "leds/leds_port.c"
-#define FRAME_BUFFER // Enable or disable frame buffer
-#ifdef FRAME_BUFFER
-#include "frame_buffer.c"
-#endif
 typedef struct mem_map_out_t
 {
   uint1_t addr_is_mapped;
@@ -105,6 +104,8 @@ mem_map_out_t mem_map_module(
 {
   // Outputs
   mem_map_out_t o;
+
+  // Extra registers as needed
 
   #ifdef FRAME_BUFFER
   // In+out registers for frame buffer wires, for better fmax
@@ -120,6 +121,13 @@ mem_map_out_t mem_map_module(
   line_bufs_in_reg.valid = 0;
   #endif
 
+  #ifdef COUNT_NEIGHBORS_IS_HW
+  static count_neighbors_hw_in_t count_neighbors_in_reg;
+  static count_neighbors_hw_out_t count_neighbors_out_reg;
+  count_neighbors_fsm_in = count_neighbors_in_reg;
+  #endif
+
+  // Memory muxing/select logic
   if(addr==RETURN_OUTPUT_ADDR){
     // The return/halt debug signal
     o.addr_is_mapped = 1;
@@ -185,16 +193,60 @@ mem_map_out_t mem_map_module(
     }
   }
   #endif
-  else if( (addr>=TEST_STRUCT_ADDR) & (addr<(TEST_STRUCT_ADDR+sizeof(test_struct_t))) ){
-    // Line buffer data
+  #ifdef COUNT_NEIGHBORS_IS_HW
+  else if( (addr>=COUNT_NEIGHBORS_HW_IN_ADDR) & (addr<(COUNT_NEIGHBORS_HW_IN_ADDR+sizeof(count_neighbors_hw_in_t))) ){
     o.addr_is_mapped = 1;
-    // TEMP TEST
+    // Convert to bytes
+    count_neighbors_hw_in_t_bytes_t count_neighbors_hw_in_bytes
+      = count_neighbors_hw_in_t_to_bytes(count_neighbors_hw_in_reg);
+    uint32_t bytes_offset = addr - COUNT_NEIGHBORS_HW_IN_ADDR;
+    // Assemble rd data bytes
+    uint32_t i;
+    uint8_t rd_bytes[4];
+    for(i=0;i<4;i+=1){
+      rd_bytes[i] = count_neighbors_hw_in_bytes.data[bytes_offset+i];
+    }
+    o.rd_data = uint8_array4_le(rd_bytes);
+    // Drive write bytes
+    for(i=0;i<4;i+=1){
+      if(wr_byte_ens[i]){
+        count_neighbors_hw_in_bytes.data[bytes_offset+i] = wr_data >> (i*8);
+      }
+    }
+    // Convert back to type
+    count_neighbors_hw_in_reg = bytes_to_count_neighbors_hw_in_t(count_neighbors_hw_in_bytes);
+  }else if( (addr>=COUNT_NEIGHBORS_HW_OUT_ADDR) & (addr<(COUNT_NEIGHBORS_HW_OUT_ADDR+sizeof(count_neighbors_hw_out_t))) ){
+    o.addr_is_mapped = 1;
+    // Convert to bytes
+    count_neighbors_hw_out_t_bytes_t count_neighbors_hw_out_bytes
+      = count_neighbors_hw_out_t_to_bytes(count_neighbors_hw_out_reg);
+    uint32_t bytes_offset = addr - COUNT_NEIGHBORS_HW_OUT_ADDR;
+    // Assemble rd data bytes
+    uint32_t i;
+    uint8_t rd_bytes[4];
+    for(i=0;i<4;i+=1){
+      rd_bytes[i] = count_neighbors_hw_out_bytes.data[bytes_offset+i];
+    }
+    o.rd_data = uint8_array4_le(rd_bytes);
+    // Drive write bytes
+    for(i=0;i<4;i+=1){
+      if(wr_byte_ens[i]){
+        count_neighbors_hw_out_bytes.data[bytes_offset+i] = wr_data >> (i*8);
+      }
+    }
+    // Convert back to type
+    count_neighbors_hw_out_reg = bytes_to_count_neighbors_hw_out_t(count_neighbors_hw_out_bytes);
   }
+  #endif
 
   #ifdef FRAME_BUFFER
   // Connect frame buffer outputs to registers for better fmax
   frame_buffer_out_reg = frame_buffer_out;
   line_bufs_out_reg = line_bufs_out;
+  #endif
+
+  #ifdef COUNT_NEIGHBORS_IS_HW
+  count_neighbors_hw_out_reg = count_neighbors_fsm_out;
   #endif
 
   return o;

@@ -1,12 +1,20 @@
 #include <stdint.h>
+#ifdef __PIPELINEC__
+#include "compiler.h"
+#endif
 
-// Hooks into hardware buffers, ex. frame_buf_write
-#include "../../frame_buffer.h"
+// Include various hardware acceleration if using as plain c code
+// like frame_buf_read/write, count_live_neighbour_cells_hw, etc
+#ifndef __PIPELINEC__
+#include "hw.c"
+#endif
 
 // Demo application that plays Conway's Game of Life
-// https://www.geeksforgeeks.org/program-for-conways-game-of-life/
 // returns the count of alive neighbours around r,c
+#ifndef COUNT_NEIGHBORS_IGNORE_C_CODE
 int32_t count_live_neighbour_cells(int32_t r, int32_t c){
+  // Software implementation (which can also be used to derive HW FSM)
+  // https://www.geeksforgeeks.org/program-for-conways-game-of-life/
   int32_t i, j;
   int32_t count=0;
   for(i=r-1; i<=r+1; i+=1){
@@ -21,6 +29,7 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
   }
   return count;
 }
+#endif
 // Game of Life logic to determine if cell at x,y lives or dies
 int32_t cell_next_state(int32_t x, int32_t y)
 {
