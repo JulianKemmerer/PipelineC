@@ -1,10 +1,8 @@
 #include <stdint.h>
-#ifdef __PIPELINEC__
-#include "compiler.h"
-#endif
+#include "../../../../compiler.h" // 'and' 'or' workaround
 
 // Include various hardware acceleration if using as plain c code
-// like frame_buf_read/write, count_live_neighbour_cells_hw, etc
+// like frame_buf_read/write, count_live_neighbour_cells, etc
 #ifndef __PIPELINEC__
 #include "hw.c"
 #endif
@@ -19,7 +17,7 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
   int32_t count=0;
   for(i=r-1; i<=r+1; i+=1){
       for(j=c-1;j<=c+1;j+=1){
-          if(!( ((i==r) && (j==c)) || ((i<0) || (j<0)) || ((i>=FRAME_WIDTH) || (j>=FRAME_HEIGHT)))){
+          if(!( ((i==r) and (j==c)) or ((i<0) or (j<0)) or ((i>=FRAME_WIDTH) or (j>=FRAME_HEIGHT)))){
             int32_t cell_alive = frame_buf_read(i, j);
             if(cell_alive==1){
               count+=1;
@@ -36,9 +34,9 @@ int32_t cell_next_state(int32_t x, int32_t y)
   int32_t neighbour_live_cells = count_live_neighbour_cells(x, y);
   int32_t cell_alive = frame_buf_read(x, y);
   int32_t cell_alive_next;
-  if((cell_alive==1) && ((neighbour_live_cells==2) || (neighbour_live_cells==3))){
+  if((cell_alive==1) and ((neighbour_live_cells==2) or (neighbour_live_cells==3))){
       cell_alive_next=1;
-  }else if((cell_alive==0) && (neighbour_live_cells==3)){
+  }else if((cell_alive==0) and (neighbour_live_cells==3)){
       cell_alive_next=1;
   }else{
       cell_alive_next=0;

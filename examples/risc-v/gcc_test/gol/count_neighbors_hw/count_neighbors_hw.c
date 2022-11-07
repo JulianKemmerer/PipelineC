@@ -18,10 +18,8 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
 #endif
 
 #ifdef __PIPELINEC__
-
-TODO pull in code for FSM style frame frame_buffer
-so wire up to a new port on frame buffer
-
+// Pull in FSM style hooks to frame buffer
+#include "../../../frame_buffer.c"
 // Pull in shared GoL software and hardware count_live_neighbour_cells code
 #include "../main.c"
 // Hooks to derive hardware FSMs from C code

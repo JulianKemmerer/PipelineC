@@ -4,7 +4,7 @@
 #include "debug_port.h"
 
 // Set CPU clock
-#define CPU_CLK_MHZ 60.0
+#define CPU_CLK_MHZ 48.0
 MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 
 // TODO remove duplicate code / do resource sharing, in decode+execute logic

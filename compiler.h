@@ -8,9 +8,11 @@
 #define true 1
 #define false 0
 #define and &
+#define or |
 #else
 #ifndef __cplusplus
 #define and &&
+#define or ||
 #define uint1_t bool
 #endif
 #endif

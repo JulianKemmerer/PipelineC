@@ -109,22 +109,28 @@ mem_map_out_t mem_map_module(
 
   #ifdef FRAME_BUFFER
   // In+out registers for frame buffer wires, for better fmax
-  static frame_buffer_inputs_t frame_buffer_in_reg;
-  static frame_buffer_outputs_t frame_buffer_out_reg;
+  static frame_buffer_inputs_t cpu_frame_buffer_in_reg;
+  static frame_buffer_outputs_t cpu_frame_buffer_out_reg;
   static line_bufs_inputs_t line_bufs_in_reg;
   static line_bufs_outputs_t line_bufs_out_reg;
   // Connect frame buffer inputs from registers for better fmax
-  frame_buffer_in = frame_buffer_in_reg;
+  cpu_frame_buffer_in = cpu_frame_buffer_in_reg;
   line_bufs_in = line_bufs_in_reg;
   // Some defaults for single cycle pulses
-  frame_buffer_in_reg.valid = 0;
+  cpu_frame_buffer_in_reg.valid = 0;
   line_bufs_in_reg.valid = 0;
   #endif
 
   #ifdef COUNT_NEIGHBORS_IS_HW
   static count_neighbors_hw_in_t count_neighbors_in_reg;
   static count_neighbors_hw_out_t count_neighbors_out_reg;
-  count_neighbors_fsm_in = count_neighbors_in_reg;
+  count_neighbors_fsm_in.input_valid = count_neighbors_in_reg.valid;
+  count_neighbors_fsm_in.r = count_neighbors_in_reg.x;
+  count_neighbors_fsm_in.c = count_neighbors_in_reg.y;
+  // Clear input to fsm once accepted ready
+  if(count_neighbors_fsm_out.input_ready){
+    count_neighbors_in_reg.valid = 0;
+  }
   #endif
 
   // Memory muxing/select logic
@@ -148,25 +154,25 @@ mem_map_out_t mem_map_module(
   else if(addr==FRAME_BUF_X_ADDR){
     // Frame buffer x
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_in_reg.x;
+    o.rd_data = cpu_frame_buffer_in_reg.x;
     if(wr_byte_ens[0]){
-      frame_buffer_in_reg.x = wr_data;
+      cpu_frame_buffer_in_reg.x = wr_data;
     }
   }else if(addr==FRAME_BUF_Y_ADDR){
     // Frame buffer y
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_in_reg.y;
+    o.rd_data = cpu_frame_buffer_in_reg.y;
     if(wr_byte_ens[0]){
-      frame_buffer_in_reg.y = wr_data;
+      cpu_frame_buffer_in_reg.y = wr_data;
     }
   }else if(addr==FRAME_BUF_DATA_ADDR){
     // Frame buffer data
     o.addr_is_mapped = 1;
-    o.rd_data = frame_buffer_out_reg.rd_data;
-    frame_buffer_in_reg.valid = 1;
-    frame_buffer_in_reg.wr_en = wr_byte_ens[0];
+    o.rd_data = cpu_frame_buffer_out_reg.rd_data;
+    cpu_frame_buffer_in_reg.valid = 1;
+    cpu_frame_buffer_in_reg.wr_en = wr_byte_ens[0];
     if(wr_byte_ens[0]){
-      frame_buffer_in_reg.wr_data = wr_data;
+      cpu_frame_buffer_in_reg.wr_data = wr_data;
     }
   }else if(addr==LINE_BUF_SEL_ADDR){
     // Line buf sel
@@ -198,7 +204,7 @@ mem_map_out_t mem_map_module(
     o.addr_is_mapped = 1;
     // Convert to bytes
     count_neighbors_hw_in_t_bytes_t count_neighbors_hw_in_bytes
-      = count_neighbors_hw_in_t_to_bytes(count_neighbors_hw_in_reg);
+      = count_neighbors_hw_in_t_to_bytes(count_neighbors_in_reg);
     uint32_t bytes_offset = addr - COUNT_NEIGHBORS_HW_IN_ADDR;
     // Assemble rd data bytes
     uint32_t i;
@@ -214,12 +220,12 @@ mem_map_out_t mem_map_module(
       }
     }
     // Convert back to type
-    count_neighbors_hw_in_reg = bytes_to_count_neighbors_hw_in_t(count_neighbors_hw_in_bytes);
+    count_neighbors_in_reg = bytes_to_count_neighbors_hw_in_t(count_neighbors_hw_in_bytes);
   }else if( (addr>=COUNT_NEIGHBORS_HW_OUT_ADDR) & (addr<(COUNT_NEIGHBORS_HW_OUT_ADDR+sizeof(count_neighbors_hw_out_t))) ){
     o.addr_is_mapped = 1;
     // Convert to bytes
     count_neighbors_hw_out_t_bytes_t count_neighbors_hw_out_bytes
-      = count_neighbors_hw_out_t_to_bytes(count_neighbors_hw_out_reg);
+      = count_neighbors_hw_out_t_to_bytes(count_neighbors_out_reg);
     uint32_t bytes_offset = addr - COUNT_NEIGHBORS_HW_OUT_ADDR;
     // Assemble rd data bytes
     uint32_t i;
@@ -235,18 +241,27 @@ mem_map_out_t mem_map_module(
       }
     }
     // Convert back to type
-    count_neighbors_hw_out_reg = bytes_to_count_neighbors_hw_out_t(count_neighbors_hw_out_bytes);
+    count_neighbors_out_reg = bytes_to_count_neighbors_hw_out_t(count_neighbors_hw_out_bytes);
   }
   #endif
 
   #ifdef FRAME_BUFFER
   // Connect frame buffer outputs to registers for better fmax
-  frame_buffer_out_reg = frame_buffer_out;
+  cpu_frame_buffer_out_reg = cpu_frame_buffer_out;
   line_bufs_out_reg = line_bufs_out;
   #endif
 
   #ifdef COUNT_NEIGHBORS_IS_HW
-  count_neighbors_hw_out_reg = count_neighbors_fsm_out;
+  // Connect outputs from fsm to regs
+  count_neighbors_fsm_in.output_ready = 1;
+  if(count_neighbors_fsm_in.input_valid & count_neighbors_fsm_out.input_ready){
+    // Starting fsm clears output regs valid bit
+    count_neighbors_out_reg.valid = 0;
+  }else if(count_neighbors_fsm_out.output_valid){
+    // Output from FSM updated return values and sets valid flag
+    count_neighbors_out_reg.count = count_neighbors_fsm_out.return_output;
+    count_neighbors_out_reg.valid = 1;
+  }
   #endif
 
   return o;
