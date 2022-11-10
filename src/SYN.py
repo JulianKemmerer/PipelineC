@@ -36,26 +36,25 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
-MAX_N_WORSE_RESULTS = 6  # How many times failing to improve before moving on?
+MAX_N_WORSE_RESULTS_MULT = 16  # Multiplier for how many times failing to improve before moving on? divided by total latnecy
+BEST_GUESS_MUL_MAX = 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep
 MAX_ALLOWED_LATENCY_MULT = (
-    15  # Multiplier limit for individual module coarse register insertion coarsely
+    10  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
 )
 HIER_SWEEP_MULT_MIN = (
-    1.0  # How big modules need to be for pipelining to be prioritized there - TODO try up to 2.0? 1.2 is better?
+    1.0  # How big modules need to be for pipelining to be prioritized there. 0.5->1/0.5=2 times the target period, 2.0->1/2.0=1/2 the target period, - TODO try up to 2.0? 1.2 is better?
 )
 HIER_SWEEP_MULT_INC = (
     0.001  # Intentionally very small, sweep tries to make largest possible steps
 )
-COARSE_SWEEP_MULT_INC = 0.01  # Multiplier increment for how many times fmax to try for compensating not meeting timing
-COARSE_SWEEP_MULT_MAX = 2.0  # Max multiplier for internal fmax
-BEST_GUESS_MUL_MAX = 5.0  # 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep #25.0 # Between 20-30 is MAX?
+COARSE_SWEEP_MULT_INC = 0.1  # Multiplier increment for how many times fmax to try for compensating not meeting timing
+COARSE_SWEEP_MULT_MAX = 1.5  # Max multiplier for internal fmax
+MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
+DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 INF_MHZ = 1000  # Impossible timing goal
 INF_HIER_MULT = 999999.9  # Needed?
-MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
 SLICE_EPSILON_MULTIPLIER = 5  # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3  # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
-DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
-
 
 def PART_SET_TOOL(part_str, allow_fail=False):
     global SYN_TOOL
@@ -2885,7 +2884,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                         - 1
                     )
                     allowed_worse_results = int(
-                        MAX_N_WORSE_RESULTS / coarse_sweep_initial_clks
+                        MAX_N_WORSE_RESULTS_MULT / coarse_sweep_initial_clks
                     )
                     if allowed_worse_results == 0:
                         allowed_worse_results = 1
@@ -4378,15 +4377,14 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
             f = open(out_filepath, "w")
             f.write(str(period_ns))
             f.close()
-        # Get all the cache entries that are below the slize size
-        # Enforce monotonic smaller slicing always increases fmax
+        # Enforce monotonic smaller slicing always increases fmax in cache
         func_cache_files = Path(cache_dir).glob(f"{func_key}*")
         for func_cache_filepath in func_cache_files:
             func_cache_file = os.path.basename(str(func_cache_filepath))
             cached_slice_size = float(func_cache_file.replace(".delay","").split("_")[-1])
             # those with smaller slices than current
             if cached_slice_size < max_slice_size:
-                # Should have better timing?
+                # Should have better timing
                 f = open(func_cache_filepath, "r")
                 cached_period_ns = float(f.read())
                 f.close()
@@ -4394,6 +4392,17 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
                 if period_ns < cached_period_ns:
                     f = open(func_cache_filepath, "w")
                     f.write(str(period_ns))
+                    f.close()
+            # Those with larger slices should not be fast
+            elif cached_slice_size > max_slice_size:
+                # Should not have better timing
+                f = open(func_cache_filepath, "r")
+                cached_period_ns = float(f.read())
+                f.close()
+                # Update as needed
+                if cached_period_ns < period_ns:
+                    f = open(out_filepath, "w")
+                    f.write(str(cached_period_ns))
                     f.close()
 
 
