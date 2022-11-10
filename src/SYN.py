@@ -9,6 +9,7 @@ import os
 import pickle
 import sys
 from multiprocessing.pool import ThreadPool
+from pathlib import Path
 from timeit import default_timer as timer
 
 import C_TO_LOGIC
@@ -18,6 +19,7 @@ import EFINITY
 import OPEN_TOOLS
 import PYRTL
 import QUARTUS
+import RAW_VHDL
 import SW_LIB
 import VHDL
 import VIVADO
@@ -2223,7 +2225,7 @@ def SLICES_EQ(slices_a, slices_b, epsilon):
 
 
 # Wow this is hack AF
-def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_params):
+def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):
     if path_report.start_reg_name is None:
         raise Exception("No start reg name in timing report!")
     if path_report.end_reg_name is None:
@@ -2238,7 +2240,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
         main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(
             main_inst,
             main_logic,
-            multimain_timing_params.TimingParamsLookupTable,
+            TimingParamsLookupTable,
             parser_state,
         )
         # OPEN_TOOLs reports in lower case
@@ -2269,7 +2271,7 @@ def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, multimain_timing_
                 main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(
                     main_inst,
                     main_logic,
-                    multimain_timing_params.TimingParamsLookupTable,
+                    TimingParamsLookupTable,
                     parser_state,
                 )
                 # print(main_vhdl_entity_name,"?")
@@ -3168,6 +3170,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             print("Using a bad syn log file?")
             sys.exit(-1)
 
+        # Write pipeline delay cache
+        UPDATE_PIPELINE_MIN_PERIOD_CACHE(sweep_state.timing_report,
+                                         sweep_state.multimain_timing_params.TimingParamsLookupTable,
+                                         parser_state)
+
         # Did it meet timing? Make adjusments as checking
         made_adj = False
         has_paths = len(sweep_state.timing_report.path_reports) > 0
@@ -3186,7 +3193,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 main_insts = set([list(parser_state.main_mhz.keys())[0]])
             else:
                 main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
-                    path_report, parser_state, sweep_state.multimain_timing_params
+                    path_report, parser_state,
+                    sweep_state.multimain_timing_params.TimingParamsLookupTable
                 )
             if len(main_insts) <= 0:
                 print(
@@ -3270,9 +3278,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                         fake_one_clk_mhz = 1000.0 / total_delay
                         new_clks = target_mhz / fake_one_clk_mhz
                         latency_mult = new_clks / latency
-                        #if latency_mult > 2.0:
-                        #    print("Clipping best guess multiplier to 2.0")
-                        #    latency_mult = 2.0
                         new_best_guess_sweep_mult = (
                             sweep_state.inst_sweep_state[
                                 main_inst
@@ -3532,6 +3537,11 @@ def DO_COARSE_THROUGHPUT_SWEEP(
         inst_sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(
             inst_name, logic, parser_state, TimingParamsLookupTable
         )
+
+        # Write pipeline delay cache
+        UPDATE_PIPELINE_MIN_PERIOD_CACHE(inst_sweep_state.timing_report, 
+                                         TimingParamsLookupTable,
+                                         parser_state, inst_name)
 
         # Did it meet timing? Make adjusments as checking
         made_adj = False
@@ -3998,10 +4008,10 @@ def IS_USER_CODE(logic, parser_state):
     return user_code
 
 
-def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
+def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     PATH_DELAY_CACHE_DIR = (
         C_TO_LOGIC.EXE_ABS_DIR()
-        + "/../path_delay_cache/"
+        + f"/../{dir_name}/"
         + str(SYN_TOOL.__name__).lower()
     )
     if parser_state.part is not None:
@@ -4012,8 +4022,7 @@ def GET_PATH_DELAY_CACHE_DIR(logic, parser_state):
         PATH_DELAY_CACHE_DIR += "/syn"
     return PATH_DELAY_CACHE_DIR
 
-
-def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
+def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # Default sanity
     key = logic.func_name
 
@@ -4030,9 +4039,12 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
             for input_port in logic.inputs:
                 c_type = logic.wire_to_c_type[input_port]
                 key += "_" + c_type
+    return key
 
-    file_path = GET_PATH_DELAY_CACHE_DIR(logic, parser_state) + "/" + key + ".delay"
 
+def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
+    key = GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+    file_path = GET_PATH_DELAY_CACHE_DIR(parser_state) + "/" + key + ".delay"
     return file_path
 
 
@@ -4276,7 +4288,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             # Cache delay syn result if not user code
             if not IS_USER_CODE(logic, parser_state):
                 filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
-                PATH_DELAY_CACHE_DIR = GET_PATH_DELAY_CACHE_DIR(logic, parser_state)
+                PATH_DELAY_CACHE_DIR = GET_PATH_DELAY_CACHE_DIR(parser_state)
                 if not os.path.exists(PATH_DELAY_CACHE_DIR):
                     os.makedirs(PATH_DELAY_CACHE_DIR)
                 f = open(filepath, "w")
@@ -4301,6 +4313,88 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
 
     return parser_state
+
+def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, parser_state, inst_name=None):
+    # Make dir if needed
+    cache_dir = GET_PATH_DELAY_CACHE_DIR(parser_state, "pipeline_min_period_cache")
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    
+    # pipeline 'number' record in filename is size of largest slice 0..1.0
+    # Find all pipelined cachable func instances
+    cacheable_pipelined_instances = set()
+    for func_inst,timing_params in TimingParamsLookupTable.items():
+        func_logic = parser_state.LogicInstLookupTable[func_inst]
+        # Cacheable non user code?
+        if IS_USER_CODE(func_logic, parser_state):
+            continue
+        # Pipelined?
+        if len(timing_params._slices) <= 0:
+            continue
+        # Func is inside the func inst being talked about?
+        if inst_name:
+            if func_inst.startswith(inst_name):
+                cacheable_pipelined_instances.add(func_inst)
+        else:
+            cacheable_pipelined_instances.add(func_inst)
+
+    # Organize timing report into main func -> period ns
+    # Includes logic for inst name coarse or multi main top
+    main_to_period = dict()
+    if len(parser_state.main_mhz) == 1: # TODO --coarse like finding of main needed?
+        the_main_inst = list(parser_state.main_mhz.keys())[0]
+        if len(timing_report.path_reports) > 1:
+            raise Exception("Should only be one path group in timing report!")
+        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[0].path_delay_ns
+    elif inst_name:
+        the_main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state)
+        if len(timing_report.path_reports) > 1:
+            raise Exception("Should only be one path group in timing report!")
+        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[0].path_delay_ns
+    else:
+        for reported_clock_group in timing_report.path_reports:
+            path_report = timing_report.path_reports[reported_clock_group]
+            some_main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
+                path_report, parser_state, TimingParamsLookupTable
+            )
+            for main_inst in some_main_insts:
+                main_to_period[main_inst] = path_report.path_delay_ns
+        
+    # For each pipelined instance try to update cache with
+    # period from its main func
+    for func_inst in cacheable_pipelined_instances:
+        timing_params = TimingParamsLookupTable[func_inst]
+        func_logic = parser_state.LogicInstLookupTable[func_inst]
+        main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+        period_ns = main_to_period[main_inst]
+        # Try to update cache
+        # What is slicing, specifically largest slice?
+        slice_sizes = RAW_VHDL.SLICES_TO_SIZE_LIST(timing_params._slices)
+        max_slice_size = max(slice_sizes)
+        func_key = GET_CACHED_LOGIC_FILE_KEY(func_logic, parser_state)
+        # Does the file exist?
+        out_filepath = cache_dir + "/" + func_key + f"_{max_slice_size:.2f}.delay"
+        if not os.path.exists(out_filepath):
+            f = open(out_filepath, "w")
+            f.write(str(period_ns))
+            f.close()
+        # Get all the cache entries that are below the slize size
+        # Enforce monotonic smaller slicing always increases fmax
+        func_cache_files = Path(cache_dir).glob(f"{func_key}*")
+        for func_cache_filepath in func_cache_files:
+            func_cache_file = os.path.basename(str(func_cache_filepath))
+            cached_slice_size = float(func_cache_file.replace(".delay","").split("_")[-1])
+            # those with smaller slices than current
+            if cached_slice_size < max_slice_size:
+                # Should have better timing?
+                f = open(func_cache_filepath, "r")
+                cached_period_ns = float(f.read())
+                f.close()
+                # Update if not...
+                if period_ns < cached_period_ns:
+                    f = open(func_cache_filepath, "w")
+                    f.write(str(period_ns))
+                    f.close()
 
 
 def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):

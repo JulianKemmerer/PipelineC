@@ -1824,6 +1824,18 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
         print("Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type)
         sys.exit(-1)
 
+def SLICES_TO_SIZE_LIST(slices):
+    removed_percent = 0.0
+    adj_percents = []
+    # This does for >= 1clks
+    for raw_hdl_slice in slices:
+        adj_percent = raw_hdl_slice - removed_percent
+        adj_percents.append(adj_percent)
+        removed_percent += adj_percent
+    # Do last/default stage0 only stage
+    remaining_percent = 1.0 - removed_percent
+    adj_percents.append(remaining_percent)
+    return adj_percents
 
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
     bits_per_stage_dict = dict()
@@ -1833,16 +1845,7 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
 
     # Build a list of absolute percent sizes for each stage
     # ex. two even slices = [0.333,0.3333,0.333]
-    removed_percent = 0.0
-    adj_percents = []
-    # This does for >= 1clks
-    for raw_hdl_slice in timing_params._slices:
-        adj_percent = raw_hdl_slice - removed_percent
-        adj_percents.append(adj_percent)
-        removed_percent += adj_percent
-    # Do last/default stage0 only stage
-    remaining_percent = 1.0 - removed_percent
-    adj_percents.append(remaining_percent)
+    adj_percents = SLICES_TO_SIZE_LIST(timing_params._slices)
 
     # Apply slice
     # (will have zero bits per stage in some places)
