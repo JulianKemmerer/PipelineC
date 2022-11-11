@@ -7,6 +7,7 @@
 #endif
 #endif
 
+// IO types
 typedef struct count_neighbors_hw_in_t{
   int32_t valid;
   // Inputs
@@ -19,7 +20,7 @@ typedef struct count_neighbors_hw_out_t{
   int32_t count;
 }count_neighbors_hw_out_t;
 
-
+// To-from bytes conversion funcs
 #ifdef __PIPELINEC__
 #include "count_neighbors_hw_in_t_bytes_t.h"
 #include "count_neighbors_hw_out_t_bytes_t.h"

@@ -12,6 +12,7 @@
 // RAM init data from file
 #include "gcc_test/gol/frame_buf_init_data.h"
 // Configure frame buffer RAM based on latency and number of ports
+// 3 PORT
 #ifdef FRAME_BUFFER_PORT2_RD_ONLY
 #if FRAME_BUFFER_LATENCY == 0
 DECL_RAM_TP_RW_R_R_0(
@@ -109,6 +110,7 @@ void frame_buf_function()
   // Do RAM lookups
   // First port is for user CPU application, is read+write
   // Second port is read only for the frame buffer vga display
+  // Third+ ports are generic extra ports
   frame_buf_ram_outputs_t ram_outputs
     = frame_buf_ram(// Port0
                     cpu_addr, 

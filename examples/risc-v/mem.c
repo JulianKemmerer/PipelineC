@@ -1,4 +1,6 @@
 // Combined instruction and data memory
+//  TODO: Macro-away repeated structure for IO reg mapping
+//        Make read-write struct byte array muxing simpler, not all alignments handled are possible.
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
@@ -121,7 +123,7 @@ mem_map_out_t mem_map_module(
   line_bufs_in_reg.valid = 0;
   #endif
 
-  #ifdef COUNT_NEIGHBORS_IS_HW
+  #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
   static count_neighbors_hw_in_t count_neighbors_in_reg;
   static count_neighbors_hw_out_t count_neighbors_out_reg;
   count_neighbors_fsm_in.input_valid = count_neighbors_in_reg.valid;
@@ -130,6 +132,18 @@ mem_map_out_t mem_map_module(
   // Clear input to fsm once accepted ready
   if(count_neighbors_fsm_out.input_ready){
     count_neighbors_in_reg.valid = 0;
+  }
+  #endif
+
+  #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
+  static cell_next_state_hw_in_t cell_next_state_in_reg;
+  static cell_next_state_hw_out_t cell_next_state_out_reg;
+  cell_next_state_fsm_in.input_valid = cell_next_state_in_reg.valid;
+  cell_next_state_fsm_in.x = cell_next_state_in_reg.x;
+  cell_next_state_fsm_in.y = cell_next_state_in_reg.y;
+  // Clear input to fsm once accepted ready
+  if(cell_next_state_fsm_out.input_ready){
+    cell_next_state_in_reg.valid = 0;
   }
   #endif
 
@@ -199,7 +213,7 @@ mem_map_out_t mem_map_module(
     }
   }
   #endif
-  #ifdef COUNT_NEIGHBORS_IS_HW
+  #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
   else if( (addr>=COUNT_NEIGHBORS_HW_IN_ADDR) & (addr<(COUNT_NEIGHBORS_HW_IN_ADDR+sizeof(count_neighbors_hw_in_t))) ){
     o.addr_is_mapped = 1;
     // Convert to bytes
@@ -244,6 +258,51 @@ mem_map_out_t mem_map_module(
     count_neighbors_out_reg = bytes_to_count_neighbors_hw_out_t(count_neighbors_hw_out_bytes);
   }
   #endif
+  #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
+  else if( (addr>=CELL_NEXT_STATE_HW_IN_ADDR) & (addr<(CELL_NEXT_STATE_HW_IN_ADDR+sizeof(cell_next_state_hw_in_t))) ){
+    o.addr_is_mapped = 1;
+    // Convert to bytes
+    cell_next_state_hw_in_t_bytes_t cell_next_state_hw_in_bytes
+      = cell_next_state_hw_in_t_to_bytes(cell_next_state_in_reg);
+    uint32_t bytes_offset = addr - CELL_NEXT_STATE_HW_IN_ADDR;
+    // Assemble rd data bytes
+    uint32_t i;
+    uint8_t rd_bytes[4];
+    for(i=0;i<4;i+=1){
+      rd_bytes[i] = cell_next_state_hw_in_bytes.data[bytes_offset+i];
+    }
+    o.rd_data = uint8_array4_le(rd_bytes);
+    // Drive write bytes
+    for(i=0;i<4;i+=1){
+      if(wr_byte_ens[i]){
+        cell_next_state_hw_in_bytes.data[bytes_offset+i] = wr_data >> (i*8);
+      }
+    }
+    // Convert back to type
+    cell_next_state_in_reg = bytes_to_cell_next_state_hw_in_t(cell_next_state_hw_in_bytes);
+  }else if( (addr>=CELL_NEXT_STATE_HW_OUT_ADDR) & (addr<(CELL_NEXT_STATE_HW_OUT_ADDR+sizeof(cell_next_state_hw_out_t))) ){
+    o.addr_is_mapped = 1;
+    // Convert to bytes
+    cell_next_state_hw_out_t_bytes_t cell_next_state_hw_out_bytes
+      = cell_next_state_hw_out_t_to_bytes(cell_next_state_out_reg);
+    uint32_t bytes_offset = addr - CELL_NEXT_STATE_HW_OUT_ADDR;
+    // Assemble rd data bytes
+    uint32_t i;
+    uint8_t rd_bytes[4];
+    for(i=0;i<4;i+=1){
+      rd_bytes[i] = cell_next_state_hw_out_bytes.data[bytes_offset+i];
+    }
+    o.rd_data = uint8_array4_le(rd_bytes);
+    // Drive write bytes
+    for(i=0;i<4;i+=1){
+      if(wr_byte_ens[i]){
+        cell_next_state_hw_out_bytes.data[bytes_offset+i] = wr_data >> (i*8);
+      }
+    }
+    // Convert back to type
+    cell_next_state_out_reg = bytes_to_cell_next_state_hw_out_t(cell_next_state_hw_out_bytes);
+  }
+  #endif
 
   #ifdef FRAME_BUFFER
   // Connect frame buffer outputs to registers for better fmax
@@ -251,7 +310,7 @@ mem_map_out_t mem_map_module(
   line_bufs_out_reg = line_bufs_out;
   #endif
 
-  #ifdef COUNT_NEIGHBORS_IS_HW
+  #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
   // Connect outputs from fsm to regs
   count_neighbors_fsm_in.output_ready = 1;
   if(count_neighbors_fsm_in.input_valid & count_neighbors_fsm_out.input_ready){
@@ -261,6 +320,19 @@ mem_map_out_t mem_map_module(
     // Output from FSM updated return values and sets valid flag
     count_neighbors_out_reg.count = count_neighbors_fsm_out.return_output;
     count_neighbors_out_reg.valid = 1;
+  }
+  #endif
+
+  #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
+  // Connect outputs from fsm to regs
+  cell_next_state_fsm_in.output_ready = 1;
+  if(cell_next_state_fsm_in.input_valid & cell_next_state_fsm_out.input_ready){
+    // Starting fsm clears output regs valid bit
+    cell_next_state_out_reg.valid = 0;
+  }else if(cell_next_state_fsm_out.output_valid){
+    // Output from FSM updated return values and sets valid flag
+    cell_next_state_out_reg.is_alive = cell_next_state_fsm_out.return_output;
+    cell_next_state_out_reg.valid = 1;
   }
   #endif
 

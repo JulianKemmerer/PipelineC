@@ -28,6 +28,7 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
   return count;
 }
 #endif
+#ifndef CELL_NEXT_STATE_IGNORE_C_CODE
 // Game of Life logic to determine if cell at x,y lives or dies
 int32_t cell_next_state(int32_t x, int32_t y)
 {
@@ -43,6 +44,21 @@ int32_t cell_next_state(int32_t x, int32_t y)
   }
   return cell_alive_next;
 }
+#endif
+
+/*
+// Helper functions for working with one frame buffer and two line buffers
+line_buf_read_frame_buf_write(line_sel, line_x, frame_x, frame_y, wr_data){
+  cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
+  frame_buf_write(x, y_write, cell_alive_next);
+}
+
+cell_next_state_line_buf_write(cell_x, cell_y, line_sel, line_x, wr_data){
+  cell_alive_next = cell_next_state(x, y);
+  line_buf_write(y_minus_2_line_sel, x, cell_alive_next);
+}
+*/
+
 // Main function using one frame buffer and two line buffers
 int32_t main()
 {

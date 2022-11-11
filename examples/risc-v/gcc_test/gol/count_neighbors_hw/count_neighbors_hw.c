@@ -1,4 +1,6 @@
 // include mem map for this count neighbors functionality
+#ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
+
 #include "mem_map.h"
 
 #ifndef __PIPELINEC__
@@ -17,6 +19,7 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
 }
 #endif
 
+
 #ifdef __PIPELINEC__
 // Pull in FSM style hooks to frame buffer
 #include "../../../frame_buffer.c"
@@ -34,4 +37,6 @@ void count_live_neighbour_cells_wrapper()
 {
   count_neighbors_fsm_out = count_live_neighbour_cells_FSM(count_neighbors_fsm_in);
 }
+#endif
+
 #endif

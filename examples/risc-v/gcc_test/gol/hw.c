@@ -13,3 +13,7 @@
 #ifdef COUNT_NEIGHBORS_IS_HW
 #include "count_neighbors_hw/count_neighbors_hw.c"
 #endif
+
+#ifdef CELL_NEXT_STATE_IS_HW
+#include "cell_next_state_hw/cell_next_state_hw.c"
+#endif

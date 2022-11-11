@@ -45,7 +45,12 @@ static volatile uint32_t* LINE_BUF_DATA = (uint32_t*)LINE_BUF_DATA_ADDR;
 // For now use separate input and output structs for accelerators
 // that have special input and output valid flags
 
-#ifdef COUNT_NEIGHBORS_IS_HW
+#ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
+#define CELL_NEXT_STATE_MEM_MAP_BASE_ADDR (LINE_BUF_DATA_ADDR + sizeof(uint32_t))
+#include "gcc_test/gol/cell_next_state_hw/mem_map.h"
+// Continue from addr=CELL_NEXT_STATE_MEM_MAP_NEXT_ADDR
+
+#elif defined(COUNT_NEIGHBORS_IS_MEM_MAPPED)
 #define COUNT_NEIGHBORS_MEM_MAP_BASE_ADDR (LINE_BUF_DATA_ADDR + sizeof(uint32_t))
 #include "gcc_test/gol/count_neighbors_hw/mem_map.h"
 // Continue from addr=COUNT_NEIGHBORS_MEM_MAP_NEXT_ADDR
