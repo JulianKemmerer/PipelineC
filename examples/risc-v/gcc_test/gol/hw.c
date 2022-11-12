@@ -1,7 +1,7 @@
 // C code for various configured Game of Life accelerators
 #include "hw_config.h"
 
-// Hooks into hardware buffers, ex. frame_buf_write, count_live_neighbour_cells_hw
+// Hooks into hardware modules
 #include "../../mem_map.h"
 
 #ifdef FRAME_BUFFER

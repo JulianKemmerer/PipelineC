@@ -9,15 +9,10 @@
 
 // IO types
 typedef struct count_neighbors_hw_in_t{
-  int32_t valid;
-  // Inputs
-  int32_t x;
-  int32_t y;
+  FSM_IN_TYPE_FIELDS_2INPUTS(int32_t, x, int32_t, y)
 }count_neighbors_hw_in_t;
 typedef struct count_neighbors_hw_out_t{
-  int32_t valid;
-  // Outputs
-  int32_t count;
+  FSM_OUT_TYPE_FIELDS // count
 }count_neighbors_hw_out_t;
 
 // To-from bytes conversion funcs

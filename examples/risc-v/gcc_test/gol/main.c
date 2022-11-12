@@ -2,22 +2,22 @@
 #include "../../../../compiler.h" // 'and' 'or' workaround
 
 // Include various hardware acceleration if using as plain c code
-// like frame_buf_read/write, count_live_neighbour_cells, etc
+// like frame_buf_read/write, count_neighbors, etc
 #ifndef __PIPELINEC__
 #include "hw.c"
 #endif
 
 // Demo application that plays Conway's Game of Life
-// returns the count of alive neighbours around r,c
+// returns the count of alive neighbours around x,y
 #ifndef COUNT_NEIGHBORS_IGNORE_C_CODE
-int32_t count_live_neighbour_cells(int32_t r, int32_t c){
+int32_t count_neighbors(int32_t x, int32_t y){
   // Software implementation (which can also be used to derive HW FSM)
   // https://www.geeksforgeeks.org/program-for-conways-game-of-life/
   int32_t i, j;
   int32_t count=0;
-  for(i=r-1; i<=r+1; i+=1){
-      for(j=c-1;j<=c+1;j+=1){
-          if(!( ((i==r) and (j==c)) or ((i<0) or (j<0)) or ((i>=FRAME_WIDTH) or (j>=FRAME_HEIGHT)))){
+  for(i=x-1; i<=x+1; i+=1){
+      for(j=y-1;j<=y+1;j+=1){
+          if(!( ((i==x) and (j==y)) or ((i<0) or (j<0)) or ((i>=FRAME_WIDTH) or (j>=FRAME_HEIGHT)))){
             int32_t cell_alive = frame_buf_read(i, j);
             if(cell_alive==1){
               count+=1;
@@ -32,7 +32,7 @@ int32_t count_live_neighbour_cells(int32_t r, int32_t c){
 // Game of Life logic to determine if cell at x,y lives or dies
 int32_t cell_next_state(int32_t x, int32_t y)
 {
-  int32_t neighbour_live_cells = count_live_neighbour_cells(x, y);
+  int32_t neighbour_live_cells = count_neighbors(x, y);
   int32_t cell_alive = frame_buf_read(x, y);
   int32_t cell_alive_next;
   if((cell_alive==1) and ((neighbour_live_cells==2) or (neighbour_live_cells==3))){
@@ -46,16 +46,23 @@ int32_t cell_next_state(int32_t x, int32_t y)
 }
 #endif
 
-/*
+
 // Helper functions for working with one frame buffer and two line buffers
-line_buf_read_frame_buf_write(line_sel, line_x, frame_x, frame_y, wr_data){
-  cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
-  frame_buf_write(x, y_write, cell_alive_next);
+/*
+// Read from line buffer, write data to frame buffer
+void line_buf_read_frame_buf_write(
+  int32_t line_sel, int32_t line_x,
+  int32_t frame_x, int32_t frame_y)
+{
+  int32_t rd_data = line_buf_read(line_sel, line_x);
+  frame_buf_write(frame_x, frame_y, rd_data);
 }
 
-cell_next_state_line_buf_write(cell_x, cell_y, line_sel, line_x, wr_data){
-  cell_alive_next = cell_next_state(x, y);
-  line_buf_write(y_minus_2_line_sel, x, cell_alive_next);
+// Compute next state for cell and write to line buffer
+void cell_next_state_line_buf_write(int32_t frame_x, int32_t frame_y, int32_t line_sel)
+{
+  int32_t cell_alive_next = cell_next_state(frame_x, frame_y);
+  line_buf_write(line_sel, frame_x, cell_alive_next);
 }
 */
 
