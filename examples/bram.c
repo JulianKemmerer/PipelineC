@@ -22,7 +22,7 @@ DECL_RAM_DP_RW_R_1(
   RAM_INIT_INT_ZEROS // Initial value VHDL string, from ram.h
 )
 
-// Demo function writing ones, then zeros repeatedly to RAM
+// Demo function writing zeros, then ones repeatedly to RAM
 // Read only port is connected as dummy output
 #pragma MAIN my_func
 uint24_t my_func()
