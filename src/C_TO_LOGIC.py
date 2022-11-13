@@ -9752,7 +9752,7 @@ def PARSE_FILE(c_filename):
                         )
 
         # Elaborate the logic down to raw vhdl modules
-        print("Elaborating pipeline hierarchies down to raw HDL logic...", flush=True)
+        print("Elaborating main function hierarchies down to raw HDL logic...", flush=True)
         for main_func in list(parser_state.main_mhz.keys()):
             adjusted_containing_logic_inst_name = ""
             main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -10885,11 +10885,11 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
             func_def, parser_state, parse_body, only_fsm_clk_funcs
         )
         if logic is not None:
-            print("Parsed FSM style function:", logic.func_name)
+            print("Parsed FSM style function:", logic.func_name, flush=True)
             parser_state.FuncLogicLookupTable[logic.func_name] = logic
             # print(logic.c_ast_node)
         else:
-            # print("Function skipped:",func_def.decl.name)
+            #print("Non FSM Function:",func_def.decl.name, flush=True)
             pass
 
     return parser_state
