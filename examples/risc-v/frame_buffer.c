@@ -146,7 +146,7 @@ void frame_buf_function()
   // Drive signals from end/output delay regs
   // Shift array up to make room, and then put new at buf[0]
   #if FRAME_BUFFER_LATENCY > 0
-  static frame_buffer_inputs_t cpu_signals_delay_regs[FRAME_BUFFER_LATENCY] ;
+  static frame_buffer_inputs_t cpu_signals_delay_regs[FRAME_BUFFER_LATENCY];
   frame_buffer_inputs_t cpu_signals_into_delay = cpu_signals;
   cpu_signals = cpu_signals_delay_regs[FRAME_BUFFER_LATENCY-1];
   ARRAY_SHIFT_UP(cpu_signals_delay_regs, FRAME_BUFFER_LATENCY, 1)

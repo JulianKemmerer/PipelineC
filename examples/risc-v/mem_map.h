@@ -67,23 +67,53 @@ else if(addr==ADDR){\
 }
 
 // Fields for derived FSM input struct type
+#define FSM_IN_TYPE_FIELDS \
+int32_t valid;
+//
 #define FSM_IN_TYPE_FIELDS_2INPUTS(in0_t, in0, in1_t, in1)\
-int32_t valid;\
+FSM_IN_TYPE_FIELDS \
 in0_t in0;\
 in1_t in1;
 
 // Fields for derived FSM output struct type
 #define FSM_OUT_TYPE_FIELDS \
-int32_t valid;\
-int32_t return_output;
+int32_t valid;
 
-// Declare memory mapped input and output variables for a derived FSM
-#define FSM_IO_MEM_MAP_VARS_DECL(name, out_t, OUT_ADDR, in_t, IN_ADDR)\
-static volatile in_t* name##_IN = (in_t*)IN_ADDR;\
+// Declare memory mapped function with
+// input and output variables for a derived FSM
+#define FSM_IN_MEM_MAP_VAR_DECL(name, in_t, IN_ADDR)\
+static volatile in_t* name##_IN = (in_t*)IN_ADDR;
+//
+#define FSM_OUT_MEM_MAP_VAR_DECL(name, out_t, OUT_ADDR)\
 static volatile out_t* name##_OUT = (out_t*)OUT_ADDR;
+//
+#define FSM_IO_MEM_MAP_VARS_DECL(name, out_t, OUT_ADDR, in_t, IN_ADDR)\
+FSM_IN_MEM_MAP_VAR_DECL(name, in_t, IN_ADDR)\
+FSM_OUT_MEM_MAP_VAR_DECL(name, out_t, OUT_ADDR)
+//
+#define FSM_MEM_MAP_FUNC_DECL(func_name, var_name, out_t, OUT_ADDR, in_t, IN_ADDR)\
+/* Variables */\
+FSM_IO_MEM_MAP_VARS_DECL(\
+  var_name,\
+  out_t, OUT_ADDR,\
+  in_t, IN_ADDR)\
+/* Function version using memory mapped variables interface*/\
+out_t func_name(in_t inputs){\
+  /* Set input value without valid*/\
+  inputs.valid = 0;\
+  *var_name##_IN = inputs;\
+  /* Set valid bit */\
+  var_name##_IN->valid = 1;\
+  /* (optionally wait for valid to be cleared indicating started work)*/\
+  /* Then wait for valid output*/\
+  while(var_name##_OUT->valid==0){}\
+  /* Read outputs*/\
+  return *var_name##_OUT;\
+}
+
 
 // Contents of C function to use memory mapped input and output variables for a derived FSM
-#define FSM_MEM_MAP_VARS_FUNC_BODY_2INPUTS(name, in0, in1)\
+#define FSM_MEM_MAP_VARS_FUNC_BODY_2INPUTS(name, out0, in0, in1)\
 /* Set all input values*/\
 name##_IN->in0 = in0;\
 name##_IN->in1 = in1;\
@@ -93,7 +123,7 @@ name##_IN->valid = 1;\
 /* Then wait for valid output*/\
 while(name##_OUT->valid==0){}\
 /* Read outputs*/\
-return name##_OUT->return_output;
+return name##_OUT->out0;
 
 // Wrap up main FSM as top level
 #define FSM_MAIN_IO_WRAPPER(name)\
@@ -106,20 +136,43 @@ void name##_wrapper()\
 }
 
 // Define IO regs and connect inputs for derived FSMs (with valid+ready handshake)
+#define FSM_IN_REG_DECL(\
+  name, in_t\
+)\
+/*IN regs connecting to FSM*/\
+static in_t name##_in_reg;\
+name##_fsm_in.input_valid = name##_in_reg.valid;\
+name##_fsm_in.inputs = name##_in_reg;\
+/*Clear input to fsm once accepted ready*/\
+if(name##_fsm_out.input_ready){\
+  name##_in_reg.valid = 0;\
+}
+//
+#define FSM_OUT_REG_DECL(\
+  name, out_t\
+)/*OUT regs connecting to FSM*/\
+static out_t name##_out_reg;
+//
+#define FSM_IO_REGS_DECL(\
+  name, out_t, in_t\
+)\
+FSM_IN_REG_DECL(name, in_t)\
+FSM_OUT_REG_DECL(name, out_t)
+//
 #define FSM_IO_REGS_DECL_2INPUTS(\
   name, out_t,\
   in_t, input0, input1\
 )\
 /*IO regs connecting to FSM*/\
 static in_t name##_in_reg;\
-static out_t name##_out_reg;\
 name##_fsm_in.input_valid = name##_in_reg.valid;\
 name##_fsm_in.input0 = name##_in_reg.input0;\
 name##_fsm_in.input1 = name##_in_reg.input1;\
 /*Clear input to fsm once accepted ready*/\
 if(name##_fsm_out.input_ready){\
   name##_in_reg.valid = 0;\
-}
+}\
+FSM_OUT_REG_DECL(name, out_t)
 
 // Assign derived FSM struct IO reg vars to memory map
 #define FSM_IN_REG_STRUCT_MM_ENTRY(ADDR, in_t, name)\
@@ -135,7 +188,18 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
   name##_out_reg.valid = 0;\
 }else if(name##_fsm_out.output_valid){\
   /* Output from FSM updated return values and sets valid flag*/\
-  name##_out_reg.return_output = name##_fsm_out.return_output;\
+  name##_out_reg = name##_fsm_out.return_output;\
+  name##_out_reg.valid = 1;\
+}
+//
+#define FSM_OUT_REG_1OUTPUT(name, out0)\
+name##_fsm_in.output_ready = 1;\
+if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
+  /* Starting fsm clears output regs valid bit*/\
+  name##_out_reg.valid = 0;\
+}else if(name##_fsm_out.output_valid){\
+  /* Output from FSM updated return values and sets valid flag*/\
+  name##_out_reg.out0 = name##_fsm_out.return_output;\
   name##_out_reg.valid = 1;\
 }
 
@@ -185,13 +249,5 @@ static volatile uint32_t* LINE_BUF_DATA = (uint32_t*)LINE_BUF_DATA_ADDR;
 // For now use separate input and output structs for accelerators
 // that have special input and output valid flags
 
-#ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
-#define CELL_NEXT_STATE_MEM_MAP_BASE_ADDR (LINE_BUF_DATA_ADDR + sizeof(uint32_t))
-#include "gcc_test/gol/cell_next_state_hw/mem_map.h"
-// Continue from addr=CELL_NEXT_STATE_MEM_MAP_NEXT_ADDR
-
-#elif defined(COUNT_NEIGHBORS_IS_MEM_MAPPED)
-#define COUNT_NEIGHBORS_MEM_MAP_BASE_ADDR (LINE_BUF_DATA_ADDR + sizeof(uint32_t))
-#include "gcc_test/gol/count_neighbors_hw/mem_map.h"
-// Continue from addr=COUNT_NEIGHBORS_MEM_MAP_NEXT_ADDR
-#endif
+#define GOL_BASE_ADDR (LINE_BUF_DATA_ADDR + sizeof(uint32_t))
+#include "gcc_test/gol/hw_config.h"

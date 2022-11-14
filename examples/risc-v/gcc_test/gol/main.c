@@ -1,17 +1,22 @@
 #include <stdint.h>
 #include "../../../../compiler.h" // 'and' 'or' workaround
 
-// Include various hardware acceleration if using as plain c code
-// like frame_buf_read/write, count_neighbors, etc
-#ifndef __PIPELINEC__
-#include "hw.c"
+// Hardware memory map
+#include "../../mem_map.h"
+
+// General CPU frame buffer hooks, ex. frame_buf_read|write
+#ifdef FRAME_BUFFER
+#ifdef __PIPELINEC__ // Only HW stuff in .c file
+#include "../../frame_buffer.c"
+#endif
 #endif
 
 // Demo application that plays Conway's Game of Life
-// returns the count of alive neighbours around x,y
+// Software implementations (which can also be used to derive HW FSMs)
+
+// Returns the count of alive neighbours around x,y
 #ifndef COUNT_NEIGHBORS_IGNORE_C_CODE
 int32_t count_neighbors(int32_t x, int32_t y){
-  // Software implementation (which can also be used to derive HW FSM)
   // https://www.geeksforgeeks.org/program-for-conways-game-of-life/
   int32_t i, j;
   int32_t count=0;
@@ -46,25 +51,10 @@ int32_t cell_next_state(int32_t x, int32_t y)
 }
 #endif
 
-
-// Helper functions for working with one frame buffer and two line buffers
-/*
-// Read from line buffer, write data to frame buffer
-void line_buf_read_frame_buf_write(
-  int32_t line_sel, int32_t line_x,
-  int32_t frame_x, int32_t frame_y)
-{
-  int32_t rd_data = line_buf_read(line_sel, line_x);
-  frame_buf_write(frame_x, frame_y, rd_data);
-}
-
-// Compute next state for cell and write to line buffer
-void cell_next_state_line_buf_write(int32_t frame_x, int32_t frame_y, int32_t line_sel)
-{
-  int32_t cell_alive_next = cell_next_state(frame_x, frame_y);
-  line_buf_write(line_sel, frame_x, cell_alive_next);
-}
-*/
+// Include various Gol specific hardware acceleration if using as plain c code
+// like count_neighbors, cell_next_state, next_state_buf_rw, etc
+#ifndef __PIPELINEC__
+#include "hw.c"
 
 // Main function using one frame buffer and two line buffers
 int32_t main()
@@ -85,7 +75,10 @@ int32_t main()
     */
     int32_t x, y;
     int32_t cell_alive_next;
-    
+    #ifdef USE_NEXT_STATE_BUF_RW
+    next_state_buf_rw_in_t args;
+    #endif
+
     // Precompute+fill next state line buffers
     // Line at y-2 is at line_sel=0, y-1 at line_sel=1
     int32_t y_minus_2_line_sel = 0;
@@ -94,8 +87,16 @@ int32_t main()
     {
       for(x=0; x<FRAME_WIDTH; x+=1)
       {
+        #ifdef USE_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y;
+        args.line_sel = y;
+        args.op_sel = NEXT_STATE_LINE_WRITE;
+        next_state_buf_rw(args);
+        #else
         cell_alive_next = cell_next_state(x, y);
         line_buf_write(y, x, cell_alive_next);
+        #endif
       }
     }
     
@@ -107,16 +108,32 @@ int32_t main()
       y_write = y - 2;
       for(x=0; x<FRAME_WIDTH; x+=1)
       {
+        #ifdef USE_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y_write;
+        args.line_sel = y_minus_2_line_sel;
+        args.op_sel = LINE_READ_FRAME_WRITE;
+        next_state_buf_rw(args);
+        #else
         cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
         frame_buf_write(x, y_write, cell_alive_next);
+        #endif
       }
 
       // Use now available y_minus_2_line_sel line buffer
       // to store next state from current reads
       for(x=0; x<FRAME_WIDTH; x+=1)
       {
+        #ifdef USE_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y;
+        args.line_sel = y_minus_2_line_sel;
+        args.op_sel = NEXT_STATE_LINE_WRITE;
+        next_state_buf_rw(args);
+        #else
         cell_alive_next = cell_next_state(x, y);
         line_buf_write(y_minus_2_line_sel, x, cell_alive_next);
+        #endif
       }
 
       // Swap buffers (flip sel bits)
@@ -128,12 +145,31 @@ int32_t main()
     for(x=0; x<FRAME_WIDTH; x+=1)
     {
       y_write = FRAME_HEIGHT - 2;
+      #ifdef USE_NEXT_STATE_BUF_RW
+      args.frame_x = x;
+      args.frame_y = y_write;
+      args.line_sel = y_minus_2_line_sel;
+      args.op_sel = LINE_READ_FRAME_WRITE;
+      next_state_buf_rw(args);
+      #else
       cell_alive_next = line_buf_read(y_minus_2_line_sel, x);
       frame_buf_write(x, y_write, cell_alive_next);
+      #endif
+      //
       y_write = FRAME_HEIGHT - 1;
+      #ifdef USE_NEXT_STATE_BUF_RW
+      args.frame_x = x;
+      args.frame_y = y_write;
+      args.line_sel = y_minus_1_line_sel;
+      args.op_sel = LINE_READ_FRAME_WRITE;
+      next_state_buf_rw(args);
+      #else
       cell_alive_next = line_buf_read(y_minus_1_line_sel, x);
       frame_buf_write(x, y_write, cell_alive_next);
+      #endif
     }
   }
   return 0;
 }
+
+#endif

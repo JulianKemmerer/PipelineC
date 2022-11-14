@@ -6,10 +6,9 @@
 #ifndef __PIPELINEC__
 // Software access to hardware count neighbors fsm
 int32_t count_neighbors(int32_t x, int32_t y){
-  FSM_MEM_MAP_VARS_FUNC_BODY_2INPUTS(COUNT_NEIGHBORS_HW, x, y)
+  FSM_MEM_MAP_VARS_FUNC_BODY_2INPUTS(COUNT_NEIGHBORS_HW, count, x, y)
 }
 #endif
-
 
 #ifdef __PIPELINEC__
 // Pull in FSM style hooks to frame buffer

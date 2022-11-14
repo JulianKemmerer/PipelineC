@@ -12,7 +12,8 @@ typedef struct count_neighbors_hw_in_t{
   FSM_IN_TYPE_FIELDS_2INPUTS(int32_t, x, int32_t, y)
 }count_neighbors_hw_in_t;
 typedef struct count_neighbors_hw_out_t{
-  FSM_OUT_TYPE_FIELDS // count
+  int32_t count;
+  FSM_OUT_TYPE_FIELDS
 }count_neighbors_hw_out_t;
 
 // To-from bytes conversion funcs

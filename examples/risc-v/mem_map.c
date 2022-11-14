@@ -40,6 +40,9 @@ mem_map_out_t mem_map_module(
     cell_next_state, cell_next_state_hw_out_t,
     cell_next_state_hw_in_t, x, y)
   #endif
+  #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_IO_REGS_DECL(next_state_buf_rw, next_state_buf_rw_out_t, next_state_buf_rw_in_t)
+  #endif
 
   // Memory muxing/select logic
   if(addr==RETURN_OUTPUT_ADDR){
@@ -69,6 +72,10 @@ mem_map_out_t mem_map_module(
   FSM_IN_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW_IN_ADDR, cell_next_state_hw_in_t, cell_next_state)
   FSM_OUT_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW_OUT_ADDR, cell_next_state_hw_out_t, cell_next_state)
   #endif
+  #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_IN_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW_IN_ADDR, next_state_buf_rw_in_t, next_state_buf_rw)
+  FSM_OUT_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW_OUT_ADDR, next_state_buf_rw_out_t, next_state_buf_rw)
+  #endif
 
   // Output registers as needed
   #ifdef FRAME_BUFFER
@@ -78,10 +85,13 @@ mem_map_out_t mem_map_module(
   #endif
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
-  FSM_OUT_REG(count_neighbors)
+  FSM_OUT_REG_1OUTPUT(count_neighbors, count)
   #endif
   #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
-  FSM_OUT_REG(cell_next_state)
+  FSM_OUT_REG_1OUTPUT(cell_next_state, is_alive)
+  #endif
+  #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_OUT_REG(next_state_buf_rw)
   #endif
 
   return o;
