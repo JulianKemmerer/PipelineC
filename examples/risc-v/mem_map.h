@@ -91,14 +91,14 @@ static volatile out_t* name##_OUT = (out_t*)OUT_ADDR;
 FSM_IN_MEM_MAP_VAR_DECL(name, in_t, IN_ADDR)\
 FSM_OUT_MEM_MAP_VAR_DECL(name, out_t, OUT_ADDR)
 //
-#define FSM_MEM_MAP_FUNC_DECL(func_name, var_name, out_t, OUT_ADDR, in_t, IN_ADDR)\
+#define FSM_MEM_MAP_FUNC_DECL(func_name, var_name)\
 /* Variables */\
 FSM_IO_MEM_MAP_VARS_DECL(\
   var_name,\
-  out_t, OUT_ADDR,\
-  in_t, IN_ADDR)\
+  func_name##_out_t, var_name##_OUT_ADDR,\
+  func_name##_in_t, var_name##_IN_ADDR)\
 /* Function version using memory mapped variables interface*/\
-out_t func_name(in_t inputs){\
+func_name##_out_t func_name(func_name##_in_t inputs){\
   /* Set input value without valid*/\
   inputs.valid = 0;\
   *var_name##_IN = inputs;\
@@ -153,11 +153,9 @@ if(name##_fsm_out.input_ready){\
 )/*OUT regs connecting to FSM*/\
 static out_t name##_out_reg;
 //
-#define FSM_IO_REGS_DECL(\
-  name, out_t, in_t\
-)\
-FSM_IN_REG_DECL(name, in_t)\
-FSM_OUT_REG_DECL(name, out_t)
+#define FSM_IO_REGS_DECL(name)\
+FSM_IN_REG_DECL(name, name##_in_t)\
+FSM_OUT_REG_DECL(name, name##_out_t)
 //
 #define FSM_IO_REGS_DECL_2INPUTS(\
   name, out_t,\
@@ -179,6 +177,10 @@ FSM_OUT_REG_DECL(name, out_t)
 STRUCT_MM_ENTRY(ADDR, in_t, name##_in_reg)
 #define FSM_OUT_REG_STRUCT_MM_ENTRY(ADDR, out_t, name)\
 STRUCT_MM_ENTRY(ADDR, out_t, name##_out_reg)
+//
+#define FSM_IO_REG_STRUCT_MM_ENTRY(addr_name, func_name)\
+FSM_IN_REG_STRUCT_MM_ENTRY(addr_name##_IN_ADDR, func_name##_in_t, func_name)\
+FSM_OUT_REG_STRUCT_MM_ENTRY(addr_name##_OUT_ADDR, func_name##_out_t, func_name)
 
 // Connect outputs from derived FSMs (with valid+ready handshake) to regs
 #define FSM_OUT_REG(name)\

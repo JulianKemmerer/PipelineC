@@ -41,7 +41,7 @@ mem_map_out_t mem_map_module(
     cell_next_state_hw_in_t, x, y)
   #endif
   #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
-  FSM_IO_REGS_DECL(next_state_buf_rw, next_state_buf_rw_out_t, next_state_buf_rw_in_t)
+  FSM_IO_REGS_DECL(next_state_buf_rw)
   #endif
 
   // Memory muxing/select logic
@@ -73,8 +73,7 @@ mem_map_out_t mem_map_module(
   FSM_OUT_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW_OUT_ADDR, cell_next_state_hw_out_t, cell_next_state)
   #endif
   #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
-  FSM_IN_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW_IN_ADDR, next_state_buf_rw_in_t, next_state_buf_rw)
-  FSM_OUT_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW_OUT_ADDR, next_state_buf_rw_out_t, next_state_buf_rw)
+  FSM_IO_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW, next_state_buf_rw)
   #endif
 
   // Output registers as needed

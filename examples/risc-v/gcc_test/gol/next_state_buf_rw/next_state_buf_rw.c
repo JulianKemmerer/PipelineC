@@ -66,10 +66,6 @@ FSM_MAIN_IO_WRAPPER(next_state_buf_rw)
 // Software access to hardware fsm
 #ifndef __PIPELINEC__
 // Declare memory mapped function and variables
-FSM_MEM_MAP_FUNC_DECL(
-  next_state_buf_rw, NEXT_STATE_BUF_RW_HW,
-  next_state_buf_rw_out_t, NEXT_STATE_BUF_RW_HW_OUT_ADDR,
-  next_state_buf_rw_in_t, NEXT_STATE_BUF_RW_HW_IN_ADDR
-)
+FSM_MEM_MAP_FUNC_DECL(next_state_buf_rw, NEXT_STATE_BUF_RW_HW)
 #endif
 #endif
