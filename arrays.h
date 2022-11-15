@@ -1,3 +1,4 @@
+#pragma once
 
 #define ARRAY_COPY(dest,src,n)\
 uint32_t ARRAY_COPY_i; \
@@ -54,3 +55,38 @@ for(UINT_TO_ARRAY_i=0;UINT_TO_ARRAY_i<BIT_WIDTH;UINT_TO_ARRAY_i+=1) \
 { \
   bit_array[UINT_TO_ARRAY_i] = uint_val >> UINT_TO_ARRAY_i; \
 }
+
+// Use arrays for delays/shift regs
+#define DELAY_ASSIGN(type_t, out_var, in_var, LATENCY)\
+static type_t out_var##_delay_regs[LATENCY];\
+type_t in_var##_into_delay = in_var;\
+out_var = out_var##_delay_regs[LATENCY-1];\
+ARRAY_SHIFT_UP(out_var##_delay_regs, LATENCY, 1)\
+out_var##_delay_regs[0] = in_var##_into_delay;
+//
+#define DELAY_VAR(type_t, var, LATENCY)\
+DELAY_ASSIGN(type_t, var, var, LATENCY)
+//
+#define DELAY_ARRAY_ASSIGN(elem_t, ARRAY_SIZE, out_var, in_var, LATENCY)\
+static elem_t out_var##_delay_regs[LATENCY][ARRAY_SIZE];\
+elem_t in_var##_into_delay[ARRAY_SIZE];\
+in_var##_into_delay = in_var;\
+out_var = out_var##_delay_regs[LATENCY-1];\
+ARRAY_SHIFT_UP(out_var##_delay_regs, LATENCY, 1)\
+out_var##_delay_regs[0] = in_var##_into_delay;
+//
+#define DELAY_ARRAY(elem_t, ARRAY_SIZE, var, LATENCY)\
+DELAY_ARRAY_ASSIGN(elem_t, ARRAY_SIZE, var, var, LATENCY)
+
+// Helper for some repeated IO reg code dealing with arrays
+#define ARRAY_IN_REG(elem_t, ARRAY_SIZE, out_var, in_var)\
+static elem_t in_var##_input_reg[ARRAY_SIZE];\
+elem_t in_var##_array_in_reg_copy[ARRAY_SIZE];\
+in_var##_array_in_reg_copy = in_var;\
+out_var = in_var##_input_reg;\
+in_var##_input_reg = in_var##_array_in_reg_copy;
+//
+#define ARRAY_OUT_REG(elem_t, ARRAY_SIZE, out_var, in_var)\
+static elem_t out_var##_output_reg[ARRAY_SIZE];\
+out_var = out_var##_output_reg;\
+out_var##_output_reg = in_var;

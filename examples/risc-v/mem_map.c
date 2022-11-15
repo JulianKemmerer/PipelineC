@@ -27,7 +27,7 @@ mem_map_out_t mem_map_module(
   VALID_PULSE_IO_REGS_DECL(
     cpu_frame_buffer, frame_buffer_outputs_t, frame_buffer_inputs_t)
   VALID_PULSE_IO_REGS_DECL(
-    line_bufs, line_bufs_outputs_t, line_bufs_inputs_t)
+    cpu_line_bufs, line_bufs_outputs_t, line_bufs_inputs_t)
   #endif
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
@@ -59,9 +59,9 @@ mem_map_out_t mem_map_module(
   IN_REG_WORD_MM_ENTRY(FRAME_BUF_X_ADDR, cpu_frame_buffer, x)
   IN_REG_WORD_MM_ENTRY(FRAME_BUF_Y_ADDR, cpu_frame_buffer, y)
   VALID_PULSE_RW_DATA_WORD_MM_ENTRY(FRAME_BUF_DATA_ADDR, cpu_frame_buffer)
-  IN_REG_WORD_MM_ENTRY(LINE_BUF_SEL_ADDR, line_bufs, line_sel)
-  IN_REG_WORD_MM_ENTRY(LINE_BUF_X_ADDR, line_bufs, x)
-  VALID_PULSE_RW_DATA_WORD_MM_ENTRY(LINE_BUF_DATA_ADDR, line_bufs)
+  IN_REG_WORD_MM_ENTRY(LINE_BUF_SEL_ADDR, cpu_line_bufs, line_sel)
+  IN_REG_WORD_MM_ENTRY(LINE_BUF_X_ADDR, cpu_line_bufs, x)
+  VALID_PULSE_RW_DATA_WORD_MM_ENTRY(LINE_BUF_DATA_ADDR, cpu_line_bufs)
   #endif
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
@@ -80,7 +80,7 @@ mem_map_out_t mem_map_module(
   #ifdef FRAME_BUFFER
   // Connect frame buffer outputs to registers for better fmax
   OUT_REG(cpu_frame_buffer)
-  OUT_REG(line_bufs)
+  OUT_REG(cpu_line_bufs)
   #endif
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
