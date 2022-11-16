@@ -345,7 +345,7 @@ ram_name##_outputs_t ram_name( \
   __vhdl__("\n\
   constant SIZE : integer := " xstr(SIZE) "; \n\
   type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
-  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  shared variable the_ram : ram_t := " VHDL_INIT "; \n\
   -- Limit zero latency comb. read addr range to SIZE \n\
   -- since invalid addresses can occur as logic propogates \n\
   -- (this includes out of int32 range u32 values) \n\
@@ -369,7 +369,7 @@ begin \n\
     if rising_edge(clk) then \n\
       if CLOCK_ENABLE(0)='1' then \n\
         if wr_en0(0) = '1' and valid0(0)='1' then \n\
-          the_ram(addr0_s) <= wr_data0; \n\
+          the_ram(addr0_s) := wr_data0; \n\
         end if; \n\
         if rd_en0(0) = '1' then \n\
           return_output.addr0 <= addr0; \n\
@@ -378,11 +378,17 @@ begin \n\
           return_output.rd_data0 <= the_ram(addr0_s); \n\
           return_output.valid0 <= valid0; \n\
         end if; \n\
+      end if; \n\
+    end if; \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
         if wr_en1(0) = '1' and valid1(0)='1' then \n\
-          the_ram(addr1_s) <= wr_data1; \n\
+          the_ram(addr1_s) := wr_data1; \n\
         end if; \n\
         if rd_en1(0) = '1' then \n\
           return_output.addr1 <= addr1; \n\
+          return_output.wr_data1 <= wr_data1; \n\
+          return_output.wr_en1 <= wr_en1; \n\
           return_output.rd_data1 <= the_ram(addr1_s); \n\
           return_output.valid1 <= valid1; \n\
         end if; \n\
