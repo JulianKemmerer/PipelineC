@@ -10885,7 +10885,7 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
             func_def, parser_state, parse_body, only_fsm_clk_funcs
         )
         if logic is not None:
-            print("Parsed FSM style function:", logic.func_name, flush=True)
+            #print("Parsed FSM style function:", logic.func_name, flush=True)
             parser_state.FuncLogicLookupTable[logic.func_name] = logic
             # print(logic.c_ast_node)
         else:

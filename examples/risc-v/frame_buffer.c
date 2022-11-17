@@ -13,7 +13,11 @@
 #include "gcc_test/gol/frame_buf_init_data.h"
 // Configure frame buffer RAM based on latency and number of ports
 // 3 PORT
-#ifdef FRAME_BUFFER_PORT2_RD_ONLY
+#ifdef FRAME_BUFFER_DISABLE_CPU_PORT
+#if FRAME_BUFFER_LATENCY == 1
+DECL_RAM_DP_R_RW_1(
+#endif
+#elif defined(FRAME_BUFFER_PORT2_RD_ONLY)
 #if FRAME_BUFFER_LATENCY == 0
 DECL_RAM_TP_RW_R_R_0(
 #elif FRAME_BUFFER_LATENCY == 1
@@ -58,11 +62,14 @@ typedef struct frame_buffer_outputs_t{
   uint1_t rd_data;
 }frame_buffer_outputs_t;
 
-// Frame buffer CPU application/user global wires for use once anywhere in code
+// Frame buffer global wires for use once anywhere in code
+// CPU ports
+#ifndef FRAME_BUFFER_DISABLE_CPU_PORT
 //  Inputs
 frame_buffer_inputs_t cpu_frame_buffer_in;
 //  Outputs
 frame_buffer_outputs_t cpu_frame_buffer_out;
+#endif
 
 // Extra ports
 #if FRAME_BUFFER_NUM_EXTRA_PORTS > 0
@@ -80,8 +87,10 @@ void frame_buf_function()
 
   // Convert VGA timing position
   // and application x,y pos to RAM addresses
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   frame_buffer_inputs_t cpu_signals = cpu_frame_buffer_in;
   uint32_t cpu_addr = pos_to_addr(cpu_signals.x, cpu_signals.y);
+  #endif
   uint32_t vga_addr = pos_to_addr(vga_signals.pos.x, vga_signals.pos.y);
 
   // Frame buffer extra ports are maybe registered, does pos_to_addr too
@@ -104,7 +113,9 @@ void frame_buf_function()
   // Second port is read only for the frame buffer vga display
   // Third+ ports are generic extra ports
   frame_buf_ram_outputs_t ram_outputs
-    = frame_buf_ram(// Port0
+    = frame_buf_ram(
+                    #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
+                    // CPU port
                     cpu_addr, 
                     cpu_signals.wr_data, 
                     cpu_signals.wr_en,
@@ -115,7 +126,8 @@ void frame_buf_function()
                     #if FRAME_BUFFER_LATENCY >= 1
                     1, // Always output regs enabled
                     #endif
-                    // Port1   
+                    #endif
+                    // VGA read only port   
                     vga_addr,
                     vga_signals.valid // Inputs always valid
                     #if FRAME_BUFFER_LATENCY == 2
@@ -127,6 +139,10 @@ void frame_buf_function()
                     // Port2, first extra port
                     #if FRAME_BUFFER_NUM_EXTRA_PORTS >= 1
                     , extra_addrs[0]
+                    #ifdef FRAME_BUFFER_EXTRA_PORT0_RW
+                    , extra_inputs[0].wr_data
+                    , extra_inputs[0].wr_en
+                    #endif
                     , extra_inputs[0].valid
                     #if FRAME_BUFFER_LATENCY >= 1
                     , 1 // Always output regs enabled
@@ -138,7 +154,9 @@ void frame_buf_function()
   // Drive signals from end/output delay regs
   // Shift array up to make room, and then put new at buf[0]
   #if FRAME_BUFFER_LATENCY > 0
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   DELAY_VAR(frame_buffer_inputs_t, cpu_signals, FRAME_BUFFER_LATENCY)
+  #endif
   DELAY_VAR(vga_signals_t, vga_signals, FRAME_BUFFER_LATENCY)
   #if FRAME_BUFFER_NUM_EXTRA_PORTS > 0
   DELAY_ARRAY(frame_buffer_inputs_t, FRAME_BUFFER_NUM_EXTRA_PORTS, extra_inputs, FRAME_BUFFER_LATENCY)
@@ -148,18 +166,25 @@ void frame_buf_function()
   // Drive output signals with RAM values (already delayed FRAME_BUFFER_LATENCY)
   // and with signals manually delayed FRAME_BUFFER_LATENCY cycles
 
-  // Port0 CPU frame buffer outputs back to CPU
+  // CPU frame buffer outputs back to CPU
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   cpu_frame_buffer_out.inputs.wr_data = ram_outputs.wr_data0;
   cpu_frame_buffer_out.inputs.wr_en = ram_outputs.wr_en0;
   cpu_frame_buffer_out.inputs.valid = ram_outputs.valid0;
   cpu_frame_buffer_out.rd_data = ram_outputs.rd_data0;
   cpu_frame_buffer_out.inputs.x = cpu_signals.x; 
   cpu_frame_buffer_out.inputs.y = cpu_signals.y;
+  #endif
 
-  // Port1 VGA final connection to output display pmod
+  // VGA final connection to output display pmod
   // Default black=0 unless pixel is white=1
   pixel_t color = {0};
+  // VGA ram port changes pos if CPU port removed
+  #ifdef FRAME_BUFFER_DISABLE_CPU_PORT
+  uint1_t vga_pixel = ram_outputs.rd_data0;
+  #else
   uint1_t vga_pixel = ram_outputs.rd_data1;
+  #endif
   if(vga_pixel)
   {
     color.r = 255;
@@ -168,18 +193,21 @@ void frame_buf_function()
   }
   pmod_async_fifo_write(vga_signals, color);
 
-  // Port2 extra port frame buffer outputs delayed FRAME_BUFFER_LATENCY
+  // Extra ports frame buffer outputs delayed FRAME_BUFFER_LATENCY
   // (some from RAM, some from delay regs)
   #if FRAME_BUFFER_NUM_EXTRA_PORTS > 0
   frame_buffer_outputs_t extra_outputs[FRAME_BUFFER_NUM_EXTRA_PORTS];
   for(i=0;i<FRAME_BUFFER_NUM_EXTRA_PORTS;i+=1){
     extra_outputs[i].inputs = extra_inputs[i];
-    // Port2 is first extra port, read only
+    // Extra port changes pos if CPU port removed
     if(i==0){
-      //extra_outputs_reg[i].inputs.wr_data = ram_outputs.wr_data2;
-      //extra_outputs_reg[i].inputs.wr_en = ram_outputs.wr_en2;
+      #ifdef FRAME_BUFFER_DISABLE_CPU_PORT
+      extra_outputs[i].inputs.valid = ram_outputs.valid1;
+      extra_outputs[i].rd_data = ram_outputs.rd_data1;
+      #else
       extra_outputs[i].inputs.valid = ram_outputs.valid2;
       extra_outputs[i].rd_data = ram_outputs.rd_data2;
+      #endif
     }
     #if FRAME_BUFFER_NUM_EXTRA_PORTS > 1
     TODO more ports
@@ -194,10 +222,10 @@ void frame_buf_function()
 }
 
 // FSM style functionality for using read only first extra port, [0]
-#ifdef FRAME_BUFFER_PORT2_RD_ONLY
-#define FRAME_BUFFER_RW_FSM_STYLE_PORT 0
-#define frame_buf_read_write_in_port frame_buffer_extra_in_ports[FRAME_BUFFER_RW_FSM_STYLE_PORT]
-#define frame_buf_read_write_out_port frame_buffer_extra_out_ports[FRAME_BUFFER_RW_FSM_STYLE_PORT]
+#if FRAME_BUFFER_NUM_EXTRA_PORTS > 0
+#define FRAME_BUFFER_RW_FSM_STYLE_EXTRA_PORT_NUM 0
+#define frame_buf_read_write_in_port frame_buffer_extra_in_ports[FRAME_BUFFER_RW_FSM_STYLE_EXTRA_PORT_NUM]
+#define frame_buf_read_write_out_port frame_buffer_extra_out_ports[FRAME_BUFFER_RW_FSM_STYLE_EXTRA_PORT_NUM]
 // Helper FSM func for read/writing the frame buffer using global wires
 uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr_en)
 {
@@ -230,35 +258,47 @@ uint1_t frame_buf_read_write(uint16_t x, uint16_t y, uint1_t wr_data, uint1_t wr
 #include "frame_buf_read_write_SINGLE_INST.h"
 // Use macros to help avoid nested multiple instances of function by inlining
 #define frame_buf_read(x, y) frame_buf_read_write(x, y, 0, 0)
-//TEMP NO WRITE #define frame_buf_write(x, y, wr_data) frame_buf_read_write(x, y, wr_data, 1)
+#define frame_buf_write(x, y, wr_data) frame_buf_read_write(x, y, wr_data, 1)
 #endif
 
 
 // Similar structure for two-line buffer RAM/s
 
 // Configure latency to match frame buffer
-#if FRAME_BUFFER_LATENCY == 0
-#if LINE_BUFS_NUM_EXTRA_PORTS > 0
-TODO
-#else
-#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_0
-#endif
-#elif FRAME_BUFFER_LATENCY == 1
-#if LINE_BUFS_NUM_EXTRA_PORTS > 0
+
+#ifndef FRAME_BUFFER_DISABLE_CPU_PORT
+// Has CPU port
+#if LINE_BUFS_NUM_EXTRA_PORTS == 1
+// Has one or more extra ports
+#if FRAME_BUFFER_LATENCY == 1
 DECL_RAM_DP_RW_RW_1(
   uint1_t,
   line_buf_ram,
   FRAME_WIDTH,
   RAM_INIT_INT_ZEROS
 )
-#else
-#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_1
+#define LINE_BUFS_RAM_IS_DP
 #endif
-#elif FRAME_BUFFER_LATENCY == 2
-#if LINE_BUFS_NUM_EXTRA_PORTS > 0
-TODO
 #else
+// Normal just CPU port
+#if FRAME_BUFFER_LATENCY == 0
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_0
+#define LINE_BUFS_RAM_IS_SP
+#elif FRAME_BUFFER_LATENCY == 1
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_1
+#define LINE_BUFS_RAM_IS_SP
+#elif FRAME_BUFFER_LATENCY == 2
 #define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_2
+#define LINE_BUFS_RAM_IS_SP
+#endif
+#endif
+#else
+// No CPU port
+#if LINE_BUFS_NUM_EXTRA_PORTS == 1
+#if FRAME_BUFFER_LATENCY == 1
+#define line_buf_RAM(num) line_buf##num##_RAM_SP_RF_1
+#define LINE_BUFS_RAM_IS_SP
+#endif
 #endif
 #endif
 
@@ -292,9 +332,14 @@ MAIN_MHZ(line_bufs_function, CPU_CLK_MHZ)
 void line_bufs_function()
 {
   // Do RAM lookups, same delay as frame buffer
-  // Always one RW port at least
-  uint1_t port0_read_val;
+
+  // CPU port?
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   line_bufs_inputs_t cpu_inputs = cpu_line_bufs_in;
+  uint1_t cpu_port_line0_sel = cpu_inputs.line_sel==0;
+  uint1_t cpu_port_line1_sel = cpu_inputs.line_sel==1;
+  uint1_t cpu_read_val;
+  #endif
   
   // Extra ports?
   #if LINE_BUFS_NUM_EXTRA_PORTS > 0
@@ -305,12 +350,6 @@ void line_bufs_function()
   #else
   extra_inputs = line_bufs_extra_in_ports;
   #endif
-  // Port0 is CPU. Port1 is first extra port
-  // A ram for each line buffer
-  // need to gate valid signals, and select output with line select
-  uint1_t extra_ports_read_val[LINE_BUFS_NUM_EXTRA_PORTS];
-  uint1_t port0_line0_sel = cpu_inputs.line_sel==0;
-  uint1_t port0_line1_sel = cpu_inputs.line_sel==1;
   uint1_t extra_port_line0_sel[LINE_BUFS_NUM_EXTRA_PORTS];
   uint1_t extra_port_line1_sel[LINE_BUFS_NUM_EXTRA_PORTS];
   uint32_t i;
@@ -319,11 +358,56 @@ void line_bufs_function()
     extra_port_line0_sel[i] = extra_inputs[i].line_sel==0;
     extra_port_line1_sel[i] = extra_inputs[i].line_sel==1;
   }
+  uint1_t extra_ports_read_val[LINE_BUFS_NUM_EXTRA_PORTS];
+  #endif
+
+  // Port0 inputs depends on if CPU is there or not
+  line_bufs_inputs_t port0_inputs;
+  uint1_t port0_line0_sel;
+  uint1_t port0_line1_sel;
+  uint1_t port0_read_val;
+  #ifdef FRAME_BUFFER_DISABLE_CPU_PORT
+  #if LINE_BUFS_NUM_EXTRA_PORTS >= 1
+  port0_inputs = extra_inputs[0];
+  port0_line0_sel = extra_port_line0_sel[0];
+  port0_line1_sel = extra_port_line1_sel[0];
+  #endif
+  #else
+  port0_inputs = cpu_inputs;
+  port0_line0_sel = cpu_port_line0_sel;
+  port0_line1_sel = cpu_port_line1_sel;
+  #endif
+
+  // Single port RAM connections
+  #ifdef LINE_BUFS_RAM_IS_SP
+  // Single port built in as _RAM_SP_RF (single port, read first)
+  // Two line buffers inside one func for now
+  static uint1_t line_buf0[FRAME_WIDTH];
+  static uint1_t line_buf1[FRAME_WIDTH];
+  if (port0_inputs.line_sel) {
+    port0_read_val = line_buf_RAM(1)(port0_inputs.x, port0_inputs.wr_data, port0_inputs.wr_en & port0_inputs.valid);
+  } else {
+    port0_read_val = line_buf_RAM(0)(port0_inputs.x, port0_inputs.wr_data, port0_inputs.wr_en & port0_inputs.valid);
+  }
+  // Port0 output depends on if CPU is there or not
+  #ifdef FRAME_BUFFER_DISABLE_CPU_PORT
+  #if LINE_BUFS_NUM_EXTRA_PORTS >= 1
+  extra_ports_read_val[0] = port0_read_val;
+  #endif
+  #else
+  cpu_read_val = port0_read_val;
+  #endif
+  #endif
+  
+  // Dual port RAM connections, assumed only CPU+1 extra port
+  // TODO 2+ extra ports?
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
+  #if LINE_BUFS_NUM_EXTRA_PORTS == 1
   line_buf_ram_outputs_t line_buf0_out = line_buf_ram(
               cpu_inputs.x, 
               cpu_inputs.wr_data, 
               cpu_inputs.wr_en, 
-              cpu_inputs.valid & port0_line0_sel,
+              cpu_inputs.valid & cpu_port_line0_sel,
               1
               #if LINE_BUFS_NUM_EXTRA_PORTS >= 1
               ,
@@ -338,7 +422,7 @@ void line_bufs_function()
               cpu_inputs.x, 
               cpu_inputs.wr_data, 
               cpu_inputs.wr_en, 
-              cpu_inputs.valid & port0_line1_sel,
+              cpu_inputs.valid & cpu_port_line1_sel,
               1
               #if LINE_BUFS_NUM_EXTRA_PORTS >= 1
               ,
@@ -350,36 +434,27 @@ void line_bufs_function()
               #endif
             );
   // Select output based on line select
+  // CPU port0
+  if(cpu_port_line0_sel)
+    cpu_read_val = line_buf0_out.rd_data0;
+  else if(cpu_port_line1_sel)
+    cpu_read_val = line_buf1_out.rd_data0;
   // Extra ports start at Port1
-  if(port0_line0_sel)
-    port0_read_val = line_buf0_out.rd_data0;
-  else if(port0_line1_sel)
-    port0_read_val = line_buf1_out.rd_data0;
-  #if LINE_BUFS_NUM_EXTRA_PORTS >= 1
   if(extra_port_line0_sel[0])
     extra_ports_read_val[0] = line_buf0_out.rd_data1;
   else if(extra_port_line1_sel[0])
     extra_ports_read_val[0] = line_buf1_out.rd_data1;
-  #endif 
-  #else
-  // No extra ports, just one RW port
-  // Single port built in as _RAM_SP_RF (single port, read first)
-  // Two line buffers inside one func for now
-  static uint1_t line_buf0[FRAME_WIDTH];
-  static uint1_t line_buf1[FRAME_WIDTH];
-  if (cpu_inputs.line_sel) {
-    port0_read_val = line_buf_RAM(1)(cpu_inputs.x, cpu_inputs.wr_data, cpu_inputs.wr_en & cpu_inputs.valid);
-  } else {
-    port0_read_val = line_buf_RAM(0)(cpu_inputs.x, cpu_inputs.wr_data, cpu_inputs.wr_en & cpu_inputs.valid);
-  }
+  //
   #endif
-
-  // Port0 is CPU, extra ports start at port1
+  #endif
+    
   // Delay input signals to align with RAM outputs after FRAME_BUFFER_LATENCY
   // Zero delay direct connect:
   #if FRAME_BUFFER_LATENCY > 0
   // >=1 clock cycle of delay for inputs
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   DELAY_VAR(line_bufs_inputs_t, cpu_inputs, FRAME_BUFFER_LATENCY)
+  #endif
   #if LINE_BUFS_NUM_EXTRA_PORTS > 0
   DELAY_ARRAY(
     line_bufs_inputs_t, LINE_BUFS_NUM_EXTRA_PORTS,
@@ -388,9 +463,11 @@ void line_bufs_function()
   #endif
 
   // Drive output signals with RAM outputs and other delayed signals
-  // Port0 is CPU
-  cpu_line_bufs_out.rd_data = port0_read_val;
+  // CPU port
+  #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
+  cpu_line_bufs_out.rd_data = cpu_read_val;
   cpu_line_bufs_out.inputs = cpu_inputs;
+  #endif
   // Extra ports:
   #if LINE_BUFS_NUM_EXTRA_PORTS > 0
   line_bufs_outputs_t extra_outputs[LINE_BUFS_NUM_EXTRA_PORTS];
@@ -409,7 +486,7 @@ void line_bufs_function()
 }
 
 // FSM style functionality for using read|write first extra line buffers port
-#ifdef LINE_BUFS_PORT1_RW
+#if LINE_BUFS_NUM_EXTRA_PORTS > 0
 #define LINE_BUFS_RW_FSM_STYLE_PORT 0
 #define line_bufs_read_write_in_port line_bufs_extra_in_ports[LINE_BUFS_RW_FSM_STYLE_PORT]
 #define line_bufs_read_write_out_port line_bufs_extra_out_ports[LINE_BUFS_RW_FSM_STYLE_PORT]
