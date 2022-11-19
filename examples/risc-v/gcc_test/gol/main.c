@@ -75,8 +75,16 @@ int32_t main()
     */
     int32_t x, y;
     int32_t cell_alive_next;
-    #ifdef USE_NEXT_STATE_BUF_RW
+    #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+    multi_next_state_buf_rw_in_t multi_args;
     next_state_buf_rw_in_t args;
+    #elif defined(USE_NEXT_STATE_BUF_RW)
+    next_state_buf_rw_in_t args;
+    #endif
+    #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+    int32_t x_increment = NUM_THREADS;
+    #else
+    int32_t x_increment = 1;
     #endif
 
     // Precompute+fill next state line buffers
@@ -85,9 +93,16 @@ int32_t main()
     int32_t y_minus_1_line_sel = 1;
     for(y=0; y<2; y+=1)
     {
-      for(x=0; x<FRAME_WIDTH; x+=1)
+      for(x=0; x<FRAME_WIDTH; x+=x_increment)
       {
-        #ifdef USE_NEXT_STATE_BUF_RW
+        #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y;
+        args.line_sel = y;
+        args.op_sel = NEXT_STATE_LINE_WRITE;
+        multi_args.next_state_buf_rw_inputs = args;
+        multi_next_state_buf_rw(multi_args);
+        #elif defined(USE_NEXT_STATE_BUF_RW)
         args.frame_x = x;
         args.frame_y = y;
         args.line_sel = y;
@@ -106,9 +121,16 @@ int32_t main()
     { 
       // Write line is 2 lines delayed
       y_write = y - 2;
-      for(x=0; x<FRAME_WIDTH; x+=1)
+      for(x=0; x<FRAME_WIDTH; x+=x_increment)
       {
-        #ifdef USE_NEXT_STATE_BUF_RW
+        #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y_write;
+        args.line_sel = y_minus_2_line_sel;
+        args.op_sel = LINE_READ_FRAME_WRITE;
+        multi_args.next_state_buf_rw_inputs = args;
+        multi_next_state_buf_rw(multi_args);
+        #elif defined(USE_NEXT_STATE_BUF_RW)
         args.frame_x = x;
         args.frame_y = y_write;
         args.line_sel = y_minus_2_line_sel;
@@ -122,9 +144,16 @@ int32_t main()
 
       // Use now available y_minus_2_line_sel line buffer
       // to store next state from current reads
-      for(x=0; x<FRAME_WIDTH; x+=1)
+      for(x=0; x<FRAME_WIDTH; x+=x_increment)
       {
-        #ifdef USE_NEXT_STATE_BUF_RW
+        #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+        args.frame_x = x;
+        args.frame_y = y;
+        args.line_sel = y_minus_2_line_sel;
+        args.op_sel = NEXT_STATE_LINE_WRITE;
+        multi_args.next_state_buf_rw_inputs = args;
+        multi_next_state_buf_rw(multi_args);
+        #elif defined(USE_NEXT_STATE_BUF_RW)
         args.frame_x = x;
         args.frame_y = y;
         args.line_sel = y_minus_2_line_sel;
@@ -142,10 +171,17 @@ int32_t main()
     }
 
     // Write next states of final lines left in buffers
-    for(x=0; x<FRAME_WIDTH; x+=1)
+    for(x=0; x<FRAME_WIDTH; x+=x_increment)
     {
       y_write = FRAME_HEIGHT - 2;
-      #ifdef USE_NEXT_STATE_BUF_RW
+      #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+      args.frame_x = x;
+      args.frame_y = y_write;
+      args.line_sel = y_minus_2_line_sel;
+      args.op_sel = LINE_READ_FRAME_WRITE;
+      multi_args.next_state_buf_rw_inputs = args;
+      multi_next_state_buf_rw(multi_args);
+      #elif defined(USE_NEXT_STATE_BUF_RW)
       args.frame_x = x;
       args.frame_y = y_write;
       args.line_sel = y_minus_2_line_sel;
@@ -157,7 +193,14 @@ int32_t main()
       #endif
       //
       y_write = FRAME_HEIGHT - 1;
-      #ifdef USE_NEXT_STATE_BUF_RW
+      #ifdef USE_MULTI_NEXT_STATE_BUF_RW
+      args.frame_x = x;
+      args.frame_y = y_write;
+      args.line_sel = y_minus_1_line_sel;
+      args.op_sel = LINE_READ_FRAME_WRITE;
+      multi_args.next_state_buf_rw_inputs = args;
+      multi_next_state_buf_rw(multi_args);
+      #elif defined(USE_NEXT_STATE_BUF_RW)
       args.frame_x = x;
       args.frame_y = y_write;
       args.line_sel = y_minus_1_line_sel;

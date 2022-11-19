@@ -16,3 +16,7 @@
 #include "next_state_buf_rw/next_state_buf_rw.c"
 #endif
 
+#ifdef USE_MULTI_NEXT_STATE_BUF_RW
+#include "multi_next_state_buf_rw/multi_next_state_buf_rw.c"
+#endif
+

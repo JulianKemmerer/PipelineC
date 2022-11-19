@@ -34,16 +34,19 @@ mem_map_out_t mem_map_module(
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
   FSM_IO_REGS_DECL_2INPUTS(
-    count_neighbors, count_neighbors_hw_out_t,
-    count_neighbors_hw_in_t, x, y)
+    count_neighbors, count_neighbors_out_valid_t,
+    count_neighbors_in_valid_t, x, y)
   #endif
   #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
   FSM_IO_REGS_DECL_2INPUTS(
-    cell_next_state, cell_next_state_hw_out_t,
-    cell_next_state_hw_in_t, x, y)
+    cell_next_state, cell_next_state_out_valid_t,
+    cell_next_state_in_valid_t, x, y)
   #endif
   #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
   FSM_IO_REGS_DECL(next_state_buf_rw)
+  #endif
+  #ifdef MULTI_NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_IO_REGS_DECL(multi_next_state_buf_rw)
   #endif
 
   // Memory muxing/select logic
@@ -69,15 +72,16 @@ mem_map_out_t mem_map_module(
   #endif
   // GoL accelerators
   #ifdef COUNT_NEIGHBORS_IS_MEM_MAPPED
-  FSM_IN_REG_STRUCT_MM_ENTRY(COUNT_NEIGHBORS_HW_IN_ADDR, count_neighbors_hw_in_t, count_neighbors)
-  FSM_OUT_REG_STRUCT_MM_ENTRY(COUNT_NEIGHBORS_HW_OUT_ADDR, count_neighbors_hw_out_t, count_neighbors)
+  FSM_IO_REG_STRUCT_MM_ENTRY(COUNT_NEIGHBORS_HW, count_neighbors)
   #endif
   #ifdef CELL_NEXT_STATE_IS_MEM_MAPPED
-  FSM_IN_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW_IN_ADDR, cell_next_state_hw_in_t, cell_next_state)
-  FSM_OUT_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW_OUT_ADDR, cell_next_state_hw_out_t, cell_next_state)
+  FSM_IO_REG_STRUCT_MM_ENTRY(CELL_NEXT_STATE_HW, cell_next_state)
   #endif
   #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
   FSM_IO_REG_STRUCT_MM_ENTRY(NEXT_STATE_BUF_RW_HW, next_state_buf_rw)
+  #endif
+  #ifdef MULTI_NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_IO_REG_STRUCT_MM_ENTRY(MULTI_NEXT_STATE_BUF_RW_HW, multi_next_state_buf_rw)
   #endif
 
   // Output registers as needed
@@ -97,6 +101,9 @@ mem_map_out_t mem_map_module(
   #endif
   #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
   FSM_OUT_REG(next_state_buf_rw)
+  #endif
+  #ifdef MULTI_NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+  FSM_OUT_REG(multi_next_state_buf_rw)
   #endif
 
   return o;

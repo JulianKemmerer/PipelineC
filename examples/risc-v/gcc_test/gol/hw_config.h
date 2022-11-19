@@ -18,7 +18,13 @@
 // Combo computing next state and read+writing buffers
 #define USE_NEXT_STATE_BUF_RW
 #define NEXT_STATE_BUF_RW_IS_HW
-#define NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+//#define NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+
+// Multiple 'threads' of the above
+#define USE_MULTI_NEXT_STATE_BUF_RW
+#define NUM_THREADS 2 // FRAME_WIDTH must be divisible by this
+#define MULTI_NEXT_STATE_BUF_RW_IS_HW
+#define MULTI_NEXT_STATE_BUF_RW_IS_MEM_MAPPED
 
 // Derive and include whats enabled
 

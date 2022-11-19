@@ -1,18 +1,26 @@
 #pragma once
 
 // IO types
+#define NEXT_STATE_LINE_WRITE 1
+#define LINE_READ_FRAME_WRITE 0
 typedef struct next_state_buf_rw_in_t{
   int32_t frame_x;
   int32_t frame_y;
   int32_t line_sel;
   int32_t op_sel;
-  FSM_IN_TYPE_FIELDS // handshake bits
 }next_state_buf_rw_in_t;
-#define NEXT_STATE_LINE_WRITE 1
-#define LINE_READ_FRAME_WRITE 0
 typedef struct next_state_buf_rw_out_t{
-  FSM_OUT_TYPE_FIELDS // handshake bits
+  int32_t dummy; // unused
 }next_state_buf_rw_out_t;
+// IO _valid types wrapped with FSM handshake signals
+FSM_IO_TYPES_WRAPPER(next_state_buf_rw)
+// To-from bytes conversion funcs
+#ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+#ifdef __PIPELINEC__
+#include "next_state_buf_rw_in_valid_t_bytes_t.h"
+#include "next_state_buf_rw_out_valid_t_bytes_t.h"
+#endif
+#endif
 
 // If hardware then pull in software main.c like a header for cell_next_state
 #ifdef __PIPELINEC__
@@ -21,6 +29,9 @@ typedef struct next_state_buf_rw_out_t{
 
 // Software version (or can be used to derived hardware FSM)
 #ifndef __PIPELINEC__
+#ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
+#define NEXT_STATE_BUF_RW_IGNORE_C_CODE
+#endif
 #ifdef NEXT_STATE_BUF_RW_IS_HW
 #define NEXT_STATE_BUF_RW_IGNORE_C_CODE
 #endif
@@ -44,18 +55,13 @@ next_state_buf_rw_out_t next_state_buf_rw(next_state_buf_rw_in_t inputs)
 #ifdef __PIPELINEC__
 #ifdef NEXT_STATE_BUF_RW_IS_HW
 #include "next_state_buf_rw_FSM.h"
-// Wrap up main FSM as top level
-FSM_MAIN_IO_WRAPPER(next_state_buf_rw)
 #endif
 #endif
 
 // Memory mapped hardware functionality
 #ifdef NEXT_STATE_BUF_RW_IS_MEM_MAPPED
-// To-from bytes conversion funcs
-#ifdef __PIPELINEC__
-#include "next_state_buf_rw_in_t_bytes_t.h"
-#include "next_state_buf_rw_out_t_bytes_t.h"
-#endif
+// Wrap up main FSM as top level if mem mapped
+FSM_MAIN_IO_WRAPPER(next_state_buf_rw)
 // Define addresses:
 /*#ifndef NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR
 #define NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR 0

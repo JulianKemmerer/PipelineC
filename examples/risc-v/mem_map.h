@@ -37,6 +37,14 @@ else if( (addr>=ADDR) & (addr<(ADDR+sizeof(type_t))) ){\
   var = bytes_to_##type_t(var##_bytes);\
 }
 
+// Assign input register word to mem map
+#define IN_REG_WORD_MM_ENTRY(ADDR, name, field)\
+WORD_MM_ENTRY(ADDR, name##_in_reg.field)
+
+// Connect outputs to registers for better fmax
+#define OUT_REG(name)\
+name##_out_reg = name##_out;
+
 // Define IO regs and connect inputs with single cycle .valid field
 #define VALID_PULSE_IO_REGS_DECL(name, out_t, in_t)\
 /*In+out registers for wires, for better fmax*/\
@@ -46,15 +54,9 @@ name##_in = name##_in_reg;\
 /*Defaults for single cycle pulses*/\
 name##_in_reg.valid = 0;
 
-// Assign input register word to mem map
-#define IN_REG_WORD_MM_ENTRY(ADDR, name, field)\
-WORD_MM_ENTRY(ADDR, name##_in_reg.field)
-
-// Connect outputs to registers for better fmax
-#define OUT_REG(name)\
-name##_out_reg = name##_out;
-
-// Assign data word to mem map that works with IO regs and valid pulse
+// Assign read and write data words to mem map
+// mostly for frame buffer IO type regs
+// w/ .valid pulse, and rd,wr data fields, etc
 #define VALID_PULSE_RW_DATA_WORD_MM_ENTRY(ADDR, name)\
 else if(addr==ADDR){\
   o.addr_is_mapped = 1;\
@@ -66,18 +68,24 @@ else if(addr==ADDR){\
   }\
 }
 
-// Fields for derived FSM input struct type
-#define FSM_IN_TYPE_FIELDS \
-int32_t valid;
-//
-#define FSM_IN_TYPE_FIELDS_2INPUTS(in0_t, in0, in1_t, in1)\
-FSM_IN_TYPE_FIELDS \
-in0_t in0;\
-in1_t in1;
-
-// Fields for derived FSM output struct type
-#define FSM_OUT_TYPE_FIELDS \
-int32_t valid;
+// IO types wrapped with FSM handshake signals
+#define FSM_IO_TYPES_WRAPPER(name)\
+typedef struct name##_in_valid_t{\
+  name##_in_t data;\
+  int32_t valid;\
+}name##_in_valid_t;\
+typedef struct name##_in_handshake_t{\
+  name##_in_valid_t inputs;\
+  int32_t output_ready;\
+}name##_in_handshake_t;\
+typedef struct name##_out_valid_t{\
+  name##_out_t data;\
+  int32_t valid;\
+}name##_out_valid_t;\
+typedef struct name##_out_handshake_t{\
+  name##_out_valid_t outputs;\
+  int32_t input_ready;\
+}name##_out_handshake_t;
 
 // Declare memory mapped function with
 // input and output variables for a derived FSM
@@ -95,35 +103,34 @@ FSM_OUT_MEM_MAP_VAR_DECL(name, out_t, OUT_ADDR)
 /* Variables */\
 FSM_IO_MEM_MAP_VARS_DECL(\
   var_name,\
-  func_name##_out_t, var_name##_OUT_ADDR,\
-  func_name##_in_t, var_name##_IN_ADDR)\
+  func_name##_out_valid_t, var_name##_OUT_ADDR,\
+  func_name##_in_valid_t, var_name##_IN_ADDR)\
 /* Function version using memory mapped variables interface*/\
 func_name##_out_t func_name(func_name##_in_t inputs){\
-  /* Set input value without valid*/\
-  inputs.valid = 0;\
-  *var_name##_IN = inputs;\
+  /* Set input data without valid*/\
+  var_name##_IN->data = inputs;\
   /* Set valid bit */\
   var_name##_IN->valid = 1;\
   /* (optionally wait for valid to be cleared indicating started work)*/\
   /* Then wait for valid output*/\
   while(var_name##_OUT->valid==0){}\
-  /* Read outputs*/\
-  return *var_name##_OUT;\
+  /* Read output data*/\
+  return var_name##_OUT->data;\
 }
 
-
-// Contents of C function to use memory mapped input and output variables for a derived FSM
+// Special case C function to use memory mapped input to derived FSM
+// that does not use input struct, 2 inputs
 #define FSM_MEM_MAP_VARS_FUNC_BODY_2INPUTS(name, out0, in0, in1)\
-/* Set all input values*/\
-name##_IN->in0 = in0;\
-name##_IN->in1 = in1;\
+/* Set all input data*/\
+name##_IN->data.in0 = in0;\
+name##_IN->data.in1 = in1;\
 /* Set valid bit */\
 name##_IN->valid = 1;\
 /* (optionally wait for valid to be cleared indicating started work)*/\
 /* Then wait for valid output*/\
 while(name##_OUT->valid==0){}\
 /* Read outputs*/\
-return name##_OUT->out0;
+return name##_OUT->data.out0;
 
 // Wrap up main FSM as top level
 #define FSM_MAIN_IO_WRAPPER(name)\
@@ -142,7 +149,7 @@ void name##_wrapper()\
 /*IN regs connecting to FSM*/\
 static in_t name##_in_reg;\
 name##_fsm_in.input_valid = name##_in_reg.valid;\
-name##_fsm_in.inputs = name##_in_reg;\
+name##_fsm_in.inputs = name##_in_reg.data;\
 /*Clear input to fsm once accepted ready*/\
 if(name##_fsm_out.input_ready){\
   name##_in_reg.valid = 0;\
@@ -154,8 +161,8 @@ if(name##_fsm_out.input_ready){\
 static out_t name##_out_reg;
 //
 #define FSM_IO_REGS_DECL(name)\
-FSM_IN_REG_DECL(name, name##_in_t)\
-FSM_OUT_REG_DECL(name, name##_out_t)
+FSM_IN_REG_DECL(name, name##_in_valid_t)\
+FSM_OUT_REG_DECL(name, name##_out_valid_t)
 //
 #define FSM_IO_REGS_DECL_2INPUTS(\
   name, out_t,\
@@ -164,8 +171,8 @@ FSM_OUT_REG_DECL(name, name##_out_t)
 /*IO regs connecting to FSM*/\
 static in_t name##_in_reg;\
 name##_fsm_in.input_valid = name##_in_reg.valid;\
-name##_fsm_in.input0 = name##_in_reg.input0;\
-name##_fsm_in.input1 = name##_in_reg.input1;\
+name##_fsm_in.input0 = name##_in_reg.data.input0;\
+name##_fsm_in.input1 = name##_in_reg.data.input1;\
 /*Clear input to fsm once accepted ready*/\
 if(name##_fsm_out.input_ready){\
   name##_in_reg.valid = 0;\
@@ -179,8 +186,8 @@ STRUCT_MM_ENTRY(ADDR, in_t, name##_in_reg)
 STRUCT_MM_ENTRY(ADDR, out_t, name##_out_reg)
 //
 #define FSM_IO_REG_STRUCT_MM_ENTRY(addr_name, func_name)\
-FSM_IN_REG_STRUCT_MM_ENTRY(addr_name##_IN_ADDR, func_name##_in_t, func_name)\
-FSM_OUT_REG_STRUCT_MM_ENTRY(addr_name##_OUT_ADDR, func_name##_out_t, func_name)
+FSM_IN_REG_STRUCT_MM_ENTRY(addr_name##_IN_ADDR, func_name##_in_valid_t, func_name)\
+FSM_OUT_REG_STRUCT_MM_ENTRY(addr_name##_OUT_ADDR, func_name##_out_valid_t, func_name)
 
 // Connect outputs from derived FSMs (with valid+ready handshake) to regs
 #define FSM_OUT_REG(name)\
@@ -190,7 +197,7 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
   name##_out_reg.valid = 0;\
 }else if(name##_fsm_out.output_valid){\
   /* Output from FSM updated return values and sets valid flag*/\
-  name##_out_reg = name##_fsm_out.return_output;\
+  name##_out_reg.data = name##_fsm_out.return_output;\
   name##_out_reg.valid = 1;\
 }
 //
@@ -201,10 +208,9 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
   name##_out_reg.valid = 0;\
 }else if(name##_fsm_out.output_valid){\
   /* Output from FSM updated return values and sets valid flag*/\
-  name##_out_reg.out0 = name##_fsm_out.return_output;\
+  name##_out_reg.data.out0 = name##_fsm_out.return_output;\
   name##_out_reg.valid = 1;\
 }
-
 
 // Hardware memory address mappings
 
@@ -215,7 +221,7 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
 #include <stdint.h>
 #endif
 
-#define MEM_MAP_BASE_ADDR 0x10000000 
+#define MEM_MAP_BASE_ADDR 0x10000000
 
 // The output/stop/halt peripheral
 #define RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
