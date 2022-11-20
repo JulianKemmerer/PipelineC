@@ -41,9 +41,11 @@ next_state_buf_rw_out_t next_state_buf_rw(next_state_buf_rw_in_t inputs)
 {
   next_state_buf_rw_out_t outputs;
   if(inputs.op_sel==NEXT_STATE_LINE_WRITE){
+    __clk();
     int32_t cell_alive_next = cell_next_state(inputs.frame_x, inputs.frame_y);
-    line_buf_write(inputs.line_sel, inputs.frame_x, cell_alive_next);
+    line_buf_write(inputs.line_sel, inputs.frame_x, cell_alive_next);  
   }else{ // LINE_READ_FRAME_WRITE
+    __clk();
     int32_t rd_data = line_buf_read(inputs.line_sel, inputs.frame_x);
     frame_buf_write(inputs.frame_x, inputs.frame_y, rd_data);
   }

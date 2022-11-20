@@ -22,7 +22,7 @@
 
 // Multiple 'threads' of the above
 #define USE_MULTI_NEXT_STATE_BUF_RW
-#define NUM_THREADS 2 // FRAME_WIDTH must be divisible by this
+#define NUM_THREADS 16 // FRAME_WIDTH must be divisible by this
 #define MULTI_NEXT_STATE_BUF_RW_IS_HW
 #define MULTI_NEXT_STATE_BUF_RW_IS_MEM_MAPPED
 

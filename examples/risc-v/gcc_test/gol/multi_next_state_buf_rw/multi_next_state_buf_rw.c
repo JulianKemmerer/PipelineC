@@ -67,43 +67,38 @@ multi_next_state_buf_rw_OUTPUT_t multi_next_state_buf_rw_fsm_out;
 #pragma MAIN multi_wrapper
 void multi_wrapper()
 {
-  // IO for each FSM isntance
-  next_state_buf_rw_INPUT_t fsm_in[NUM_THREADS];
-  next_state_buf_rw_OUTPUT_t fsm_out[NUM_THREADS];
+  // IO for each FSM isntance, w/ extra registers
+  static next_state_buf_rw_INPUT_t fsm_in_reg[NUM_THREADS];
+  static next_state_buf_rw_OUTPUT_t fsm_out_reg[NUM_THREADS];
 
   // Inputs are only valid if all FSM instances ready to start
   uint1_t all_fsms_input_ready;
-  // Value isnt known until 'after', is feedback
-  #pragma FEEDBACK all_fsms_input_ready
-  
   // Only ready for output once all are done and valid
   uint1_t all_fsms_valid_output;
-  // Value isnt known until 'after', is feedback
-  #pragma FEEDBACK all_fsms_valid_output
+  // Were all FSMs ready/valid? (feedback)
+  all_fsms_input_ready = 1;
+  all_fsms_valid_output = 1;
+  uint32_t i;
+  for (i = 0; i < NUM_THREADS; i+=1)
+  {
+    all_fsms_input_ready &= fsm_out_reg[i].input_ready;
+    all_fsms_valid_output &= fsm_out_reg[i].output_valid;
+  }
+  // Gated output valid ready
+  multi_next_state_buf_rw_fsm_out.output_valid = all_fsms_valid_output;
+  multi_next_state_buf_rw_fsm_out.input_ready = all_fsms_input_ready;
 
   // The N instances of FSM with input valid ready gated
-  uint32_t i;
+  next_state_buf_rw_INPUT_t fsm_in[NUM_THREADS];
   for (i = 0; i < NUM_THREADS; i+=1)
   {
     fsm_in[i].input_valid = all_fsms_input_ready & multi_next_state_buf_rw_fsm_in.input_valid;
     fsm_in[i].output_ready = all_fsms_valid_output & multi_next_state_buf_rw_fsm_in.output_ready;
     fsm_in[i].inputs = multi_next_state_buf_rw_fsm_in.inputs.next_state_buf_rw_inputs;
     fsm_in[i].inputs.frame_x = multi_next_state_buf_rw_fsm_in.inputs.next_state_buf_rw_inputs.frame_x + i;
-    fsm_out[i] = next_state_buf_rw_FSM(fsm_in[i]);
+    fsm_out_reg[i] = next_state_buf_rw_FSM(fsm_in_reg[i]);
   }
-
-  // Were all FSMs ready/valid? (feedback)
-  all_fsms_input_ready = 1;
-  all_fsms_valid_output = 1;
-  for (i = 0; i < NUM_THREADS; i+=1)
-  {
-    all_fsms_input_ready &= fsm_out[i].input_ready;
-    all_fsms_valid_output &= fsm_out[i].output_valid;
-  }
-
-  // Gated output valid ready
-  multi_next_state_buf_rw_fsm_out.output_valid = all_fsms_valid_output;
-  multi_next_state_buf_rw_fsm_out.input_ready = all_fsms_input_ready;
+  fsm_in_reg = fsm_in;
 }
 #endif
 
