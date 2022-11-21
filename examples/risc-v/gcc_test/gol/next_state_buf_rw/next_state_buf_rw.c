@@ -70,8 +70,8 @@ FSM_MAIN_IO_WRAPPER(next_state_buf_rw)
 #endif*/
 #define NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR GOL_BASE_ADDR
 #define NEXT_STATE_BUF_RW_HW_IN_ADDR NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR
-#define NEXT_STATE_BUF_RW_HW_OUT_ADDR (NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(next_state_buf_rw_in_t))
-#define NEXT_STATE_BUF_RW_MEM_MAP_NEXT_ADDR (NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(next_state_buf_rw_out_t))
+#define NEXT_STATE_BUF_RW_HW_OUT_ADDR (NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(next_state_buf_rw_in_valid_t))
+#define NEXT_STATE_BUF_RW_MEM_MAP_NEXT_ADDR (NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(next_state_buf_rw_out_valid_t))
 // Software access to hardware fsm
 #ifndef __PIPELINEC__
 // Declare memory mapped function and variables

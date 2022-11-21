@@ -8,8 +8,8 @@
 #endif*/
 #define CELL_NEXT_STATE_MEM_MAP_BASE_ADDR GOL_BASE_ADDR
 #define CELL_NEXT_STATE_HW_IN_ADDR CELL_NEXT_STATE_MEM_MAP_BASE_ADDR
-#define CELL_NEXT_STATE_HW_OUT_ADDR (CELL_NEXT_STATE_HW_IN_ADDR + sizeof(cell_next_state_in_t))
-#define CELL_NEXT_STATE_MEM_MAP_NEXT_ADDR (CELL_NEXT_STATE_HW_OUT_ADDR + sizeof(cell_next_state_out_t))
+#define CELL_NEXT_STATE_HW_OUT_ADDR (CELL_NEXT_STATE_HW_IN_ADDR + sizeof(cell_next_state_in_valid_t))
+#define CELL_NEXT_STATE_MEM_MAP_NEXT_ADDR (CELL_NEXT_STATE_HW_OUT_ADDR + sizeof(cell_next_state_out_valid_t))
 
 FSM_IO_MEM_MAP_VARS_DECL(
   CELL_NEXT_STATE_HW, 

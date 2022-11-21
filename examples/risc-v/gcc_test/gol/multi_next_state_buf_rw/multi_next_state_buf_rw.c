@@ -108,8 +108,8 @@ void multi_wrapper()
 #endif*/
 #define MULTI_NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR GOL_BASE_ADDR
 #define MULTI_NEXT_STATE_BUF_RW_HW_IN_ADDR MULTI_NEXT_STATE_BUF_RW_MEM_MAP_BASE_ADDR
-#define MULTI_NEXT_STATE_BUF_RW_HW_OUT_ADDR (MULTI_NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(multi_next_state_buf_rw_in_t))
-#define MULTI_NEXT_STATE_BUF_RW_MEM_MAP_NEXT_ADDR (MULTI_NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(multi_next_state_buf_rw_out_t))
+#define MULTI_NEXT_STATE_BUF_RW_HW_OUT_ADDR (MULTI_NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(multi_next_state_buf_rw_in_valid_t))
+#define MULTI_NEXT_STATE_BUF_RW_MEM_MAP_NEXT_ADDR (MULTI_NEXT_STATE_BUF_RW_HW_IN_ADDR + sizeof(multi_next_state_buf_rw_out_valid_t))
 // Software access to hardware fsm
 #ifndef __PIPELINEC__
 // Declare memory mapped function and variables
