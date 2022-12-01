@@ -4365,6 +4365,12 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
         timing_params = TimingParamsLookupTable[func_inst]
         func_logic = parser_state.LogicInstLookupTable[func_inst]
         main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+        # Sometimes, especally when finally meeting timing,
+        # the timing report might not have a critical path through 
+        # a cacheable pipelined instance
+        # Could assume met timing, but for now just skip...
+        if main_inst not in main_to_period:
+            continue
         period_ns = main_to_period[main_inst]
         # Try to update cache
         # What is slicing, specifically largest slice?
