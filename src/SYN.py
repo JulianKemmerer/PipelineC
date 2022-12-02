@@ -504,14 +504,18 @@ class PipelineMap:
     def __init__(self, logic):
         self.logic = logic
         # Any logic will have
-        # self.per_stage_texts = dict() # VHDL texts dict[stage_num]=[per,submodule,level,texts]
         self.num_stages = 1  # Comb logic
-
-        # Pairs of wires propogating constants
-        self.const_wire_prop_driver_driven_wire_pairs = []
-
         # New per stage info class
         self.stage_infos = []
+
+        # Wires and submodules of const network like another pipeline stage outside pipeline
+        self.const_network_stage_info = None # StageInfo
+        # Helper list of wires part of const network just used during prop processes
+        self.const_network_wire_to_upstream_vars = dict()
+
+        # Read only global wires (might be volatile or not)
+        self.read_only_global_network_stage_info = None
+        self.read_only_global_network_wire_to_upstream_vars = dict()
 
         # DELAY STUFF ONLY MAKES SENSE TO TALK ABOUT WHEN:
         # - 0 CLKS
@@ -562,7 +566,7 @@ ___          ___     __   __   ___  __       . ___
 """
 # So for ~now the answer is yes, forever
 def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
-    # FORGIVE ME - never
+    # FORGIVE ME (for this hacked custom graph breadth first thing w/ delays + multiple stages) - never
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     timing_params = TimingParamsLookupTable[inst_name]
     rv = PipelineMap(logic)
@@ -639,6 +643,11 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     for wire in logic.wires:
         wire_to_remaining_clks_before_driven[wire] = -1
 
+    # Bound on latency for sanity - this isnt used is it?
+    if est_total_latency is not None:
+        max_possible_latency = est_total_latency
+        max_possible_latency_with_extra = max_possible_latency + 2
+
     # To keep track of 'execution order' do this stupid thing:
     # Keep a list of wires that are have been driven so far
     # Search this list to filter which submodules are in each level
@@ -661,35 +670,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     RECORD_DRIVEN_BY(None, logic.inputs)
     RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
     RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
-    RECORD_DRIVEN_BY(None, set(logic.read_only_global_wires.keys()))
     RECORD_DRIVEN_BY(None, logic.feedback_vars)
-    # "CONST" wires representing constants like '2' are already driven
-    for wire in logic.wires:
-        # print "wire=",wire
-        if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
-            # print "CONST->",wire
-            RECORD_DRIVEN_BY(None, wire)
-    # Constant wire propogation
-    for wire in logic.wires:
-        if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
-            # Do loop propogating constant values into
-            wires_to_follow = [wire]
-            while len(wires_to_follow) > 0:
-                next_wires_to_follow = []
-                for wire_to_follow in wires_to_follow:
-                    if wire_to_follow in logic.wire_drives:
-                        wire_to_follow_driven_wires = logic.wire_drives[wire_to_follow]
-                        for wire_to_follow_driven_wire in wire_to_follow_driven_wires:
-                            rv.const_wire_prop_driver_driven_wire_pairs.append(
-                                (wire_to_follow, wire_to_follow_driven_wire)
-                            )
-                            RECORD_DRIVEN_BY(wire_to_follow, wire_to_follow_driven_wire)
-                            # Follow wire if didnt hit submodule
-                            if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(
-                                wire_to_follow_driven_wire, logic
-                            ):
-                                next_wires_to_follow.append(wire_to_follow_driven_wire)
-                wires_to_follow = next_wires_to_follow[:]
 
     # Keep track of delay offset when wire is driven
     # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
@@ -704,11 +685,157 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     wires_starting_level = list(wires_driven_by_so_far.keys())[:]
     next_wires_to_follow = []
 
-    # Bound on latency for sanity
-    if est_total_latency is not None:
-        max_possible_latency = est_total_latency
-        max_possible_latency_with_extra = max_possible_latency + 2
-    stage_num = 0
+    # Special handling of wires not directly in pipeline:
+    
+    # Propagate network across wires until reaching submodule inputs
+    # Append wire driver pairs to submodule_level_info
+    # Return submodules reached by wire
+    def propagate_wire(wire_to_follow, upstream_vars, submodule_level_info, network_wire_to_upstream_vars):
+        if wire_to_follow not in network_wire_to_upstream_vars:
+            network_wire_to_upstream_vars[wire_to_follow] = set()
+        network_wire_to_upstream_vars[wire_to_follow] |= upstream_vars
+        submodules_reached = set()
+        # Submodule input port finishes level
+        is_submodule_input = False
+        if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow, logic):
+            sub_toks = wire_to_follow.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            submodule_inst = sub_toks[0]
+            sub_func_name = logic.submodule_instances[submodule_inst]
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            sub_port_name = sub_toks[1]
+            if sub_port_name in sub_logic.inputs:
+                is_submodule_input = True
+            if sub_port_name in sub_logic.outputs:
+                RECORD_DRIVEN_BY(None, wire_to_follow)
+        if is_submodule_input:
+            sub_toks = wire_to_follow.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            submodule_inst = sub_toks[0]
+            submodules_reached.add(submodule_inst)
+        else:
+            # Otherwise keep following connected wires
+            driven_wires = []
+            if wire_to_follow in logic.wire_drives:
+                driven_wires = logic.wire_drives[wire_to_follow]
+            for driven_wire in driven_wires:
+                RECORD_DRIVEN_BY(wire_to_follow, driven_wire)
+                submodule_level_info.driver_driven_wire_pairs.append((wire_to_follow, driven_wire))
+                submodules_reached |= propagate_wire(
+                                        driven_wire, upstream_vars, 
+                                        submodule_level_info, network_wire_to_upstream_vars)
+        return submodules_reached
+    # Single submodule level of network propagation
+    # Fucky since essentially can start with upstream root wires or following modules...
+    # Return updated stage_info with new submodule level and return all_in_network_sub_insts_reached 
+    def propagate_submodule_level(things_to_follow, things_are_upstream_vars_not_submodules, submodule_level_num, stage_info, network_wire_to_upstream_vars):
+        submodule_level_info = SubmoduleLevelInfo(submodule_level_num)
+        # Upstreams vars for these wires depend on if starting off with wires or following submodules
+        wire_to_upstream_vars = dict()
+        if things_are_upstream_vars_not_submodules:
+            wires_to_follow = things_to_follow
+            for wire_to_follow in wires_to_follow:
+                # Follow wires marking as mark of network to submodules
+                upstream_vars = set([wire_to_follow])
+                wire_to_upstream_vars[wire_to_follow] = upstream_vars
+        else:
+            submodules_to_follow_outputs = things_to_follow
+            # Follow submodule outputs adding to wires_to_follow
+            wires_to_follow = set()
+            for sub_inst_reached in submodules_to_follow_outputs:
+                sub_func_name = logic.submodule_instances[sub_inst_reached]
+                sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+                # Known that this func has all inputs fully driven by network in prev sub level
+                # And module can be instantiated in separate network
+                prev_submodule_level_info = stage_info.submodule_level_infos[-1]
+                prev_submodule_level_info.submodule_insts.append(sub_inst_reached)
+                fully_driven_submodule_inst_2_logic[sub_inst_reached] = sub_logic
+                not_fully_driven_submodules.remove(sub_inst_reached)
+                # Set upstream vars for this output wire to be
+                # everything that occurs across inputs
+                input_upstream_vars = set()
+                for input_port in sub_logic.inputs:
+                    input_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    input_upstream_vars |= network_wire_to_upstream_vars[input_wire]
+                for output_port in sub_logic.outputs:
+                    output_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                    wires_to_follow.add(output_wire)
+                    wire_to_upstream_vars[output_wire] = input_upstream_vars
+        # Follow each wire with associated upstream vars to more submodules 
+        all_in_network_sub_insts_reached = set()
+        for wire_to_follow in wires_to_follow:
+            upstream_vars = wire_to_upstream_vars[wire_to_follow]
+            sub_insts_reached = propagate_wire(wire_to_follow, upstream_vars, 
+                                               submodule_level_info, network_wire_to_upstream_vars)
+            # Are all submodule inputs part of network?
+            for sub_inst_reached in sub_insts_reached:
+                if sub_inst_reached in all_in_network_sub_insts_reached:
+                    continue
+                sub_func_name = logic.submodule_instances[sub_inst_reached]
+                sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+                all_inputs_in_network = True
+                for input_port in sub_logic.inputs:
+                    input_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    if input_wire not in network_wire_to_upstream_vars.keys():
+                        all_inputs_in_network = False
+                        break
+                if all_inputs_in_network:
+                    all_in_network_sub_insts_reached.add(sub_inst_reached)
+        # Update and return where ended up
+        stage_info.submodule_level_infos.append(submodule_level_info)
+        return all_in_network_sub_insts_reached                      
+    
+    # Constant network propagation starts at user constant literals like '2'
+    things_to_follow = set()
+    for wire in logic.wires:
+        if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+            RECORD_DRIVEN_BY(None, wire)
+            things_to_follow.add(wire)
+    if len(things_to_follow) > 0:
+        rv.const_network_stage_info = StageInfo(0)
+    submodule_level = 0
+    while len(things_to_follow) > 0:
+        things_are_upstream_vars_not_submodules = submodule_level==0
+        all_in_network_sub_insts_reached = propagate_submodule_level(
+            things_to_follow, things_are_upstream_vars_not_submodules, submodule_level, 
+            rv.const_network_stage_info, rv.const_network_wire_to_upstream_vars)
+        submodule_level += 1
+        # Conditionally set submodule outputs as next wires to follow
+        things_to_follow = set()
+        for sub_inst_reached in all_in_network_sub_insts_reached:
+            sub_func_name = logic.submodule_instances[sub_inst_reached]
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            # Is this logic something constants propagate over?
+            # Any pure function without state should work
+            # Use clock/enable? check?
+            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                continue
+            things_to_follow.add(sub_inst_reached)
+           
+    # Do read_only_global_wires (non volatile) network prop
+    # Starts from read only wires
+    things_to_follow = set(logic.read_only_global_wires.keys())
+    RECORD_DRIVEN_BY(None, set(logic.read_only_global_wires.keys()))
+    if len(things_to_follow) > 0:
+        rv.read_only_global_network_stage_info = StageInfo(0)
+        # And also includes constant network but does not include its upstream vars/wires - just that is in network
+        for const_network_wire in rv.const_network_wire_to_upstream_vars:
+            if const_network_wire not in rv.read_only_global_network_wire_to_upstream_vars:
+                rv.read_only_global_network_wire_to_upstream_vars[const_network_wire] = set()
+    submodule_level = 0
+    while len(things_to_follow) > 0:
+        things_are_upstream_vars_not_submodules = submodule_level==0
+        all_in_network_sub_insts_reached = propagate_submodule_level(
+            things_to_follow, things_are_upstream_vars_not_submodules, submodule_level, 
+            rv.read_only_global_network_stage_info, rv.read_only_global_network_wire_to_upstream_vars)
+        submodule_level += 1
+        # Conditionally set submodule outputs as next wires to follow
+        things_to_follow = set()
+        for sub_inst_reached in all_in_network_sub_insts_reached:
+            sub_func_name = logic.submodule_instances[sub_inst_reached]
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            # Is this logic something non vol read only globals propagate over?
+            if not LOGIC_IS_ZERO_DELAY(sub_logic, parser_state, True):
+                continue
+            things_to_follow.add(sub_inst_reached)
 
     # Pipeline is done when
     def PIPELINE_DONE():
@@ -802,7 +929,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 and not logic.WIRE_ALLOW_NO_DRIVEN_BY(
                     wire, parser_state.FuncLogicLookupTable
                 )
-                and C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(wire, logic) is None
             ):
                 if print_debug:
                     print("Pipeline not done wire.", wire)
@@ -817,6 +943,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         return True
 
     # WHILE LOOP FOR MULTI STAGE/CLK
+    stage_num = 0
+    stage_info = StageInfo(stage_num)
+    rv.stage_infos.append(stage_info)
     while not PIPELINE_DONE():
         # Print stuff and set debug if obviously wrong
         if stage_num >= 5000:
@@ -837,9 +966,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 print_debug = True
         if print_debug:
             print("STAGE NUM =", stage_num)
-
-        # rv.per_stage_texts[stage_num] = []
-        stage_info = StageInfo(stage_num)
+        
         submodule_level = 0
         # DO WHILE LOOP FOR PER COMB LOGIC SUBMODULE LEVELS
         while True:  # DO
@@ -899,14 +1026,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             if submodule_latency_from_container_logic > 0:
                                 stage_info.submodule_output_ports.append(driving_wire)
 
+
                     # Loop over what this wire drives
                     if driving_wire in logic.wire_drives:
                         driven_wires = logic.wire_drives[driving_wire]
+                        # Sort for easy debug
+                        driven_wires = sorted(driven_wires)
                         if bad_inf_loop:
                             print("driven_wires", driven_wires)
 
-                        # Sort for easy debug
-                        driven_wires = sorted(driven_wires)
+                        # Handle each driven wire
                         for driven_wire in driven_wires:
                             if bad_inf_loop:
                                 print("handling driven wire", driven_wire)
@@ -982,11 +1111,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 )
                 # Also skip if not the correct stage for this submodule
                 incorrect_stage_for_submodule = False
-                """
-        NOT DOING THIS FOR NOW
-        if submodule_inst in timing_params.submodule_to_start_stage:
-          incorrect_stage_for_submodule = stage_num != timing_params.submodule_to_start_stage[submodule_inst]
-        """
 
                 # if print_debug:
                 # print ""
@@ -1014,12 +1138,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                         )
                         ce_driving_wire = logic.wire_driven_by[ce_wire]
                         submodule_input_port_driving_wires.append(ce_driving_wire)
-                        ce_const_driving_wire = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(
-                            ce_wire, logic
-                        )
                         if (
                             ce_driving_wire not in wires_driven_by_so_far
-                            and ce_const_driving_wire is None
                         ):
                             submodule_has_all_inputs_driven = False
                     # Check each input
@@ -1030,14 +1150,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                     logic, submodule_inst, input_port_name
                                 )
                             )
-                            submodule_input_port_driving_wires.append(driving_wire)
-                            input_port_const_driving_wire = (
-                                C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(driving_wire, logic)
-                            )
-                            if (
-                                driving_wire not in wires_driven_by_so_far
-                                and input_port_const_driving_wire is None
-                            ):
+                            submodule_input_port_driving_wires.append(driving_wire)                            
+                            if (driving_wire not in wires_driven_by_so_far):
                                 submodule_has_all_inputs_driven = False
                                 if bad_inf_loop:
                                     print(
@@ -1047,7 +1161,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                         + input_port_name
                                         + " not driven yet"
                                     )
-                                    # print " is driven by", driving_wire
+                                    print(" ^ is driven by", driving_wire)
                                     # print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
                                     # print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
                                     # C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_by_so_far)
@@ -1075,11 +1189,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                 submodule_input_port_driving_wire
                             ) in submodule_input_port_driving_wires:
                                 # Some inputs might be constant, dont contribute to delay offset
+                                # Some inputs might also be global read wires, similar no delay
                                 if (
-                                    C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(
-                                        submodule_input_port_driving_wire, logic
-                                    )
-                                    is None
+                                    submodule_input_port_driving_wire not in rv.const_network_wire_to_upstream_vars and
+                                    submodule_input_port_driving_wire not in rv.read_only_global_network_wire_to_upstream_vars
                                 ):
                                     delay_offset = delay_offset_when_driven[
                                         submodule_input_port_driving_wire
@@ -1210,10 +1323,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 len(fully_driven_submodule_inst_this_level_2_logic) > 0
             )
 
-            ############################# GET OUTPUT WIRES FROM SUBMODULE LEVEL #############################################
+            ################## INSTANTIATIONS + OUTPUT WIRES FROM SUBMODULE LEVEL ###################################
             # Get list of output wires for this all the submodules in this level
             # by writing submodule connections / entity connections
-            submodule_level_output_wires = []
             for submodule_inst in fully_driven_submodule_inst_this_level_2_logic:
                 submodule_inst_name = (
                     inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
@@ -1221,10 +1333,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
 
                 # Use submodule logic to write vhdl
-                # REGULAR ENTITY CONNECITON
-                # submodule_level_text += " " + " " + " -- " + C_TO_LOGIC.LEAF_NAME(submodule_inst, True) + " LATENCY=" + str(submodule_latency_from_container_logic) +  "\n"
-                # entity_connection_text = VHDL.GET_ENTITY_CONNECTION_TEXT(submodule_logic,submodule_inst, inst_name, logic, TimingParamsLookupTable, parser_state, submodule_latency_from_container_logic)
-                # submodule_level_text += entity_connection_text + "\n"
                 submodule_level_info.submodule_insts.append(submodule_inst)
 
                 # Get latency
@@ -1298,21 +1406,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             )
             if not submodule_level_info.IS_EMPTY():
                 stage_info.submodule_level_infos.append(submodule_level_info)
-            """
-      if submodule_level_text != "":
-        # Init dict entries
-        if stage_num not in rv.per_stage_texts:
-          # Init stage to have empty list of submodule stage texts
-          rv.per_stage_texts[stage_num] = []
-        # Init submodule level to be empty text then have prepend
-        if submodule_level > len(rv.per_stage_texts[stage_num])-1:
-          rv.per_stage_texts[stage_num].append("")
-          rv.per_stage_texts[stage_num][submodule_level] = submodule_level_prepend_text
-        # Append text to dict entry
-        rv.per_stage_texts[stage_num][submodule_level] += submodule_level_text
-        if print_debug:
-          print(submodule_level_text)
-      """
+           
             # Sometimes submodule levels iterations dont have submodules as we iterate driving wires / for multiple clks
             # Only update counters if was real submodule level with submodules
             if submodule_level_iteration_has_submodules:
@@ -1368,10 +1462,11 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         # PER CLOCK decrement latencies
-        stage_num = stage_num + 1
-        rv.stage_infos.append(stage_info)
         if print_debug:
-            print("Appending stage info...", len(rv.stage_infos))
+            print("Current stage info...", len(rv.stage_infos))
+        stage_num = stage_num + 1
+        stage_info = StageInfo(stage_num)
+        rv.stage_infos.append(stage_info)
         for wire in wire_to_remaining_clks_before_driven:
             # if wire_to_remaining_clks_before_driven[wire] >= 0:
             wire_to_remaining_clks_before_driven[wire] = (
@@ -3922,7 +4017,7 @@ def GET_OUTPUT_DIRECTORY(Logic):
     return output_directory
 
 
-def LOGIC_IS_ZERO_DELAY(logic, parser_state):
+def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     if logic.func_name in parser_state.func_marked_wires:
         return True
     # Black boxes have no known delay to the tool
@@ -3953,8 +4048,10 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state):
                 submodule_func_name = logic.submodule_instances[submodule_inst]
                 submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
                 if submodule_logic.delay is None:
-                    print("Wtf none to check delay?")
-                    sys.exit(-1)
+                    if allow_none_delay:
+                        return False
+                    else:
+                        raise Exception("Wtf none to check delay?")
                 if submodule_logic.delay > 0:
                     return False
             return True
