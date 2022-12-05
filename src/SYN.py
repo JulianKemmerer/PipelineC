@@ -36,13 +36,38 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
+
+#WTF?
+# RT pixel_logic
+# HIER_SWEEP_MULT_MIN   latency   # top runs
+# 0.125                 470       32
+# 0.25                  470       24
+# 0.5                   419       7
+# 0.75                  421       13
+# 1.0                   423       31
+# 1.0625                413       31
+# 1.125                 370       5
+# 1.25                  370       5
+# 1.5                   370       5
+# 1.75                  370       5
+# 1.875                 371       4
+# 1.9375                350       4
+# 1.96875               350       4
+# 1.984375              585       9
+# 2.0                   585       9
+# 2.25                  493       8
+# 2.5                   509       7
+
 MAX_N_WORSE_RESULTS_MULT = 16  # Multiplier for how many times failing to improve before moving on? divided by total latnecy
 BEST_GUESS_MUL_MAX = 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep
 MAX_ALLOWED_LATENCY_MULT = (
     10  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
 )
+# Target pipelining at minimum at modules of period = target/MULT
+#   0.5 -> 2 times the target period (not meeting timing), 
+#   2.0 -> 1/2 the target period (easily meets timing)
 HIER_SWEEP_MULT_MIN = (
-    1.0  # How big modules need to be for pipelining to be prioritized there. 0.5->1/0.5=2 times the target period, 2.0->1/2.0=1/2 the target period, - TODO try up to 2.0? 1.2 is better?
+    1.9375  
 )
 HIER_SWEEP_MULT_INC = (
     0.001  # Intentionally very small, sweep tries to make largest possible steps
