@@ -415,6 +415,7 @@ export GHDL_PREFIX="""
                 + ".json --pre-pack "
                 + constraints_filepath
                 + " --timing-allow-fail "
+                + " --seed 1 "
                 + optional_router2
                 + " &>> "
                 + log_file_name
