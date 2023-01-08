@@ -92,6 +92,22 @@
 
 #endif
 
+//***1024x768@60Hz***
+#if FRAME_HEIGHT == 768
+#define FRAME_WIDTH 1024
+#define PIXEL_CLK_MHZ 65.0
+
+#define H_FP 24 //H front porch width (pixels)
+#define H_PW 136 //H sync pulse width (pixels)
+#define H_MAX 1344 //(2*(H_FP+H_PW)+FRAME_WIDTH) //H total period (pixels: active + blanking)
+#define V_FP 3 //V front porch width (lines)
+#define V_PW 6 //V sync pulse width (lines)
+#define V_MAX 806 //(38+FRAME_HEIGHT) //V total period (lines: active + blanking)
+
+#define H_POL 0
+#define V_POL 0
+#endif
+
 ////***1280x1024@60Hz***// Requires 108 MHz clock
 //#define PIXEL_CLK_MHZ 108.0
 //#define FRAME_WIDTH 1280
