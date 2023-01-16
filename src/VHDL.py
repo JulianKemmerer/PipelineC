@@ -1084,10 +1084,12 @@ begin
                         )
                 text += "\n"
 
-    # Connections for global regs used in multiple funcs
+    # Connections for normal global regs used in multiple funcs
+    # (excluded special instance array multi driver vars etc)
     shared_global_vars = set()
     for var_name, var_info in parser_state.global_vars.items():
-        if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+        part_of_inst_array = (var_name in parser_state.inst_array_dict.keys()) or (var_name in parser_state.inst_array_dict.values())
+        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and not part_of_inst_array:
             shared_global_vars.add(var_name)
     if len(shared_global_vars) > 0:
         text += """
@@ -1182,6 +1184,238 @@ begin
             )
 
         text += "\n"
+
+    # WRITE SIDE connections for instance array special multi driver global wires, etc
+    write_inst_array_vars = set()
+    for var_name, var_info in parser_state.global_vars.items():
+        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (var_name in parser_state.inst_array_dict.keys()):
+            # "Write"-like if not used as read only
+            is_wr_like = True
+            for func_name in var_info.used_in_funcs:
+                func_logic = parser_state.FuncLogicLookupTable[func_name]
+                if var_name in func_logic.read_only_global_wires:
+                    is_wr_like = False
+                    #print(var_name, "not wr like in ",func_logic.func_name)
+                    break
+            if is_wr_like:
+                write_inst_array_vars.add(var_name)
+    if len(write_inst_array_vars) > 0:
+        text += """
+-- Multiple write-side global shared variable instances driving read only wires array
+"""
+    for wr_var_name in write_inst_array_vars:
+        wr_var_info = parser_state.global_vars[wr_var_name]
+        # Global var with one or more write wires
+        write_funcs = set()
+        for func_name in wr_var_info.used_in_funcs:
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            if wr_var_name in func_logic.state_regs:
+                write_funcs.add(func_name)
+            if wr_var_name in func_logic.write_only_global_wires:
+                write_funcs.add(func_name)
+
+        # Find all write instances 
+        write_insts = set()
+        for write_func in write_funcs:
+            write_insts |= parser_state.FuncToInstances[write_func]
+
+        # Find the many read funcs that read the special array version of variable
+        rd_var_name = parser_state.inst_array_dict[wr_var_name]
+        rd_var_info = parser_state.global_vars[rd_var_name]
+        if not C_TO_LOGIC.C_TYPE_IS_ARRAY(rd_var_info.type_name):
+            raise Exception(f"Instance array read variable {rd_var_name} is not an array!")
+        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(rd_var_info.type_name)
+        if len(dims) != 1:
+            raise Exception(f"Instance array read variable {rd_var_name} is not a 1D array!")
+        if len(write_insts) != dims[0]:
+            raise Exception(
+                f"{write_insts}\nInstance array read variable {rd_var_name} is defined with array sized {dims[0]} when actually has {len(write_insts)} write-side instances!"
+            )
+        read_funcs = set()
+        for func_name in rd_var_info.used_in_funcs:
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            if rd_var_name in func_logic.read_only_global_wires:
+                read_funcs.add(func_name)
+
+        # Find the many read insts
+        read_insts = set()
+        for read_func_name in read_funcs:
+            if read_func_name in parser_state.FuncToInstances:
+                read_func_insts = parser_state.FuncToInstances[read_func_name]
+                read_insts |= read_func_insts
+
+        # Find main funcs for all insts
+        # Find clock names for all main funcs, can only be one clock
+        rw_func_insts = set()
+        rw_func_insts |= read_insts
+        rw_func_insts |= write_insts
+        rw_clk_names = set()
+        for rw_func_inst in rw_func_insts:
+            rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                rw_func_inst, parser_state
+            )
+            rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
+            rw_clk_names.add(rw_clk_name)
+            if len(rw_clk_names) > 1:
+                raise Exception(
+                    f"Cannot have multiple clock domains for write shared instance array global {wr_var_name}! {rw_clk_names}"
+                )
+
+        # Each read instance is a read of the N multiple drivers
+        for read_func_inst in read_insts:
+            # Assemble driven read wire text
+            read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            # Start with main func then apply hier instances
+            read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                read_func_inst, parser_state
+            )
+            for read_func_inst_tok in read_func_inst_toks[1 : len(read_func_inst_toks)]:
+                read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+                read_text += "." + read_func_inst_str
+            read_text += "." + rd_var_name
+
+            # Assemble driver write wire text
+            write_insts_list = sorted(list(write_insts))
+            for write_inst_i in range(0, len(write_insts_list)):
+                write_func_inst = write_insts_list[write_inst_i]
+                write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                # Start with main func then apply hier instances
+                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    write_func_inst, parser_state
+                )
+                for write_func_inst_tok in write_func_inst_toks[1 : len(write_func_inst_toks)]:
+                    write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+                    write_text += "." + write_func_inst_str
+                write_text += "." + wr_var_name
+
+                text += (
+                    "global_to_module."
+                    + read_text
+                    + "(" + str(write_inst_i) + ")"
+                    + " <= module_to_global."
+                    + write_text
+                    + ";\n"
+                )
+
+        text += "\n"
+
+    # READ SIDE connections for instance array special multi driver global wires, etc
+    read_inst_array_vars = set()
+    for var_name, var_info in parser_state.global_vars.items():
+        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (var_name in parser_state.inst_array_dict.keys()):
+            is_rd_only = True
+            for func_name in var_info.used_in_funcs:
+                func_logic = parser_state.FuncLogicLookupTable[func_name]
+                if var_name not in func_logic.read_only_global_wires:
+                    is_rd_only = False
+                    #print(var_name, "not read only in ",func_logic.func_name)
+                    break
+            if is_rd_only:
+                read_inst_array_vars.add(var_name)
+    if len(read_inst_array_vars) > 0:
+        text += """
+-- Array of global read only variable write-side wires for multiple read side instances
+"""
+    for rd_var_name in read_inst_array_vars:
+        rd_var_info = parser_state.global_vars[rd_var_name]
+        # Find all read funcs
+        read_funcs = set()
+        for func_name in rd_var_info.used_in_funcs:
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            if rd_var_name in func_logic.read_only_global_wires:
+                read_funcs.add(func_name)
+
+        # Find all read instances 
+        read_insts = set()
+        for read_func in read_funcs:
+            read_insts |= parser_state.FuncToInstances[read_func]
+
+        # Find single write func inst that is driving the array
+        wr_var_name = parser_state.inst_array_dict[rd_var_name]
+        wr_var_info = parser_state.global_vars[wr_var_name]
+
+        if not C_TO_LOGIC.C_TYPE_IS_ARRAY(wr_var_info.type_name):
+            raise Exception(f"Instance array write variable {wr_var_name} is not an array!")
+        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(wr_var_info.type_name)
+        if len(dims) != 1:
+            raise Exception(f"Instance array write variable {wr_var_name} is not a 1D array!")
+        if len(read_insts) != dims[0]:
+            raise Exception(
+                f"{read_insts}\nInstance array write variable {wr_var_name} is defined with array sized {dims[0]} when actually has {len(read_insts)} read-side instances!"
+            )
+
+        write_funcs = set()
+        for func_name in wr_var_info.used_in_funcs:
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            if wr_var_name not in func_logic.read_only_global_wires:
+                write_funcs.add(func_name)
+        if len(write_funcs) > 1:
+            raise Exception(
+                f"More than one function trying to write to instance array global {wr_var_name}: {write_funcs}!"
+            )
+        write_func = list(write_funcs)[0]
+        # Find the one write inst
+        write_insts = parser_state.FuncToInstances[write_func]
+        if len(write_insts) > 1:
+            raise Exception(
+                f"More than one instance trying to write to instance array global {wr_var_name}: {write_insts}!"
+            )
+        write_func_inst = list(write_insts)[0]
+
+        # Find main funcs for all insts
+        # Find clock names for all main funcs, can only be one clock
+        rw_func_insts = set()
+        rw_func_insts |= read_insts
+        rw_func_insts.add(write_func_inst)
+        rw_clk_names = set()
+        for rw_func_inst in rw_func_insts:
+            rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                rw_func_inst, parser_state
+            )
+            rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
+            rw_clk_names.add(rw_clk_name)
+            if len(rw_clk_names) > 1:
+                raise Exception(
+                    f"Cannot have multiple clock domains for read shared instance array global {rd_var_name}! {rw_clk_names}"
+                )
+                
+        # Determine write side array element text
+        write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+        # Start with main func then apply hier instances
+        write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            write_func_inst, parser_state
+        )
+        for write_func_inst_tok in write_func_inst_toks[1 : len(write_func_inst_toks)]:
+            write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+            write_text += "." + write_func_inst_str
+        write_text += "." + wr_var_name
+        # Each read instance is reads from one of the write side array
+        read_insts_list = sorted(list(read_insts))
+        for read_inst_i in range(0, len(read_insts_list)):
+            read_func_inst = read_insts_list[read_inst_i]
+            # Assemble driven read wire text
+            read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            # Start with main func then apply hier instances
+            read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                read_func_inst, parser_state
+            )
+            for read_func_inst_tok in read_func_inst_toks[1 : len(read_func_inst_toks)]:
+                read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
+                read_text += "." + read_func_inst_str
+            read_text += "." + rd_var_name
+
+            # Assemble driver text
+            text += (
+                "global_to_module."
+                + read_text
+                + " <= module_to_global."
+                + write_text
+                + "(" + str(read_inst_i) + ")"
+                + ";\n"
+            )
+
+        text += "\n"
+
 
     text += """
 end arch;
@@ -2945,8 +3179,9 @@ def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
     if var_name not in parser_state.global_vars:
         return False
     var_info = parser_state.global_vars[var_name]
-    return len(var_info.used_in_funcs) > 1
-
+    # Instance array stuff wont appear used normally is special case
+    part_of_inst_array = (var_name in parser_state.inst_array_dict.values()) or (var_name in parser_state.inst_array_dict.keys())
+    return len(var_info.used_in_funcs) > 1 or part_of_inst_array
 
 def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
     # Do nothing if no clock crossings or no shared globals
