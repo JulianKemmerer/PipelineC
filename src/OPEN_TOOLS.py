@@ -370,11 +370,12 @@ def SYN_AND_REPORT_TIMING_NEW(
         m_ghdl = ""
         if not GHDL_PLUGIN_BUILT_IN:
             m_ghdl = "-m ghdl "
-        optional_router2 = "--router router2"
-        if inst_name:
-            # Dont use router two for small single instances
-            # Only use router two for multi main top level no inst_name
-            optional_router2 = ""
+        optional_router2 = "" # Always default router for now...
+        #optional_router2 = "--router router2"
+        #if inst_name:
+        #    # Dont use router two for small single instances
+        #    # Only use router two for multi main top level no inst_name
+        #    optional_router2 = ""
         sh_file = top_entity_name + ".sh"
         sh_path = output_directory + "/" + sh_file
         f = open(sh_path, "w")

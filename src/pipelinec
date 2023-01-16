@@ -39,8 +39,10 @@ parser.add_argument("--modelsim", help="Setup simulation files for use with Mode
 parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
 parser.add_argument("--verilator", help="Setup simulation files for use with GHDL+Yosys+Verilator.", action="store_true")
 parser.add_argument("--main_cpp", type=str, default=None,help=f"Specify an existing main C++ file for simulators such as CXXRTL and Verilator.")
+parser.add_argument("--hier_mult", type=float, default=0.0,
+                      help="Hierarchy sweep multiplier minimum starting value ~= 'what modules to focus pipelining efforts on to get to desired fmax'. 0.0 = starts with largest/slowest modules (default). 0.5 = modules half as fast fmax. 2.0 = modules twice as fast as fmax, etc.")
 parser.add_argument("--coarse",
-                      help="Do only a single coarse grain autopipelining sweep (as opposed to default of several multi-level coarse sweeps).",
+                      help="Do only a single coarse grain autopipelining sweep (as opposed to default of hierarchical several multi-level coarse sweeps).",
                       action="store_true")
 parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from START cycles latency.")
 parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
@@ -64,6 +66,8 @@ c_file = os.path.abspath(args.c_file)
 SYN.TOP_LEVEL_MODULE = args.top
 # Flag for verilog conversion
 SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
+# Hierarchy sweep const
+SYN.HIER_SWEEP_MULT_MIN = args.hier_mult
 # Output dir:
 #   Use what user provided
 #   Or create a new dir for each run by default
@@ -134,37 +138,40 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Python cleanup PR
 Bartus help w/ Vitis HLS integration
-  How to update wiki page?
-Make global wires read and written where/when used in pipeline??
-  Structs and const ref funcs break easy implementation of
-    'first func use' detection for the entire global var at oince
-  Need to propogate knowledge of read only global across const refs
-    And other no delay funcs?
-  volatile to say 'every read is different'
-  Can help reduce registers for ray tracer like Victor said
-    Async wires are another volatile++ like case where
-      pure downstream fo async funcs even with logic delay arent registered in pipeline
+  --xo mode making packaing tcl?
+Fix duplicate instances of FSM funcs
+  https://github.com/JulianKemmerer/PipelineC/issues/86
+  Default to one single inst per MAIN thread?
+  Requires flattening into one module?
+  Make inst of every func used in thread?
+  Make all funcs single instance?
+  Also can fix bug in FSM style extra clock?
+    Extra clock when just func inside nested loops? ex. GoL count live neighbors
 Victor's RT
   disable -Whide for less ghdl warnings
   Yosyshq article!
-  Victor is setting up ECP5 hardware and testing basic flow...
-    nextpnr has better packing now
-    Still can only make it to ~21MHz at full RT
-  Try to rework state wire for fewer registers? (read+written where used)
-    See if reg est log shows it being extra reg'd?
   Try verilating whole pipeline?
-Frame buffer with 3 clock domains(vga, RAM, compute)
+Document INST_ARRAY array vars 
+    Is read/write only style and auto connected to N insts in design
+  Can build arbiters out of that (simple data,valid, ready, or even AXI)
+Does clang does constexpr/temaples well
+  Try cindex test w/ preprocessing too
+  Isolate .pipelinec specific files to be parsed by clang in isolation
+  Simple example could be multiplier func inferring out bits from in...
+  Ideal example is FIR bit width growth calc
+  Need abitrary bit width integer type?
+  Fixed point stuff?
+General shared buffer with 3 clock domains(vga, RAM, compute) (RO, the RAM, RW)
   Valid ready signalling
-  Need N<->M sharing from below too?
-  Needs async start and complete from below?
+  Use N<->M sharing
   Use to make double frame buffer fast ~final GOL demo?
+  Needs async start and complete from below?
 How to do async start and complete (prob w/ ready+valid for cpu polling)
-How to share N instances among M users?
-  Use frame buffer ram as demo?
-  If RAM then best to use AXI? :-/
-Allow setting slower FSM style arb styles with more regs, not zero cycle
-Fix duplicate instances of FSM funcs (is git issue)
+Redo FSM Style arb with N-M sharing wires
+  User will need to specify number of users of SINGLE INST (inst array size)
+  Allow setting slower FSM style arb styles with more regs, not zero cycle
 How to use delay caches?
   Path delay cache
     Redo attempt at adding up delays in netlist?
@@ -175,12 +182,10 @@ notypes+bartus talk about autopipelined feedback/stall/clock enable
   how to better handle clock enables / ready feedback? / resets even
   try to use example axis demo thing pipeline contorl signals.c 
 Victor's other secret thing
-  Hope I can remember details because sure can put anything here
+  Hope I can remember details because sure cant put anything here
 Make VHDL IEEE committee suggestion for record to-from slv like verilog packing
 BUGS: Missing typedef support!?
   Shouldnt be too bad, can hack around 
-Fix bug in FSM style extra clock
-  Extra clock when just func inside nested loops? ex. GoL count live neighbors
 Victor wave pipelining small example
   Measure min and max delays 
     (also applies to existing pipelined circuit not just comb logic)

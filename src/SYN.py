@@ -37,7 +37,10 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
 
-#WTF?
+# Artix 7 100t full RT:
+# Coarse sweep BEST IS sliced 494 clocks, get 490 clock pipeline at 153MHz
+# Coarse (not sweep) gets to 504 slice, 500 clk, 10 clks off fine for now...
+# With BEST_GUESS_MUL_MAX = 10.0, COARSE_SWEEP_MULT_MAX = 1.5, not skipping higher fmax to compensate
 # RT pixel_logic
 # HIER_SWEEP_MULT_MIN   latency   # top runs
 # 0.125                 470       32
@@ -57,23 +60,53 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 # 2.0                   585       9
 # 2.25                  493       8
 # 2.5                   509       7
+#=== After Recent updates
+# 2.0?                  536       5
+# 1.9375                343       8
+# 1.5                   368       8
+# 1.0                   417       15
+# 0.5                   ~417      ~45 reaches 1.0x start after ~33runs
+# 0.0                   ~417      ~65 reaches 1.0x after ~55 runs
 
-MAX_N_WORSE_RESULTS_MULT = 16  # Multiplier for how many times failing to improve before moving on? divided by total latnecy
-BEST_GUESS_MUL_MAX = 10.0  # Multiplier limit on top down register insertion coarsly during middle out sweep
-MAX_ALLOWED_LATENCY_MULT = (
-    10  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
-)
+# ECP5 Full RT:
+# Coarse sweep gets to: 75 clocks
+# Coarse (not sweep) gets to 81 clocks
+# HIER_SWEEP_MULT_MIN   latency         # top runs
+# 2.0                   80+clks never finished ~24hrs hash=5c32
+# 1.9375                ^same
+# 1.5                   83+clks never finished ~12 hours hash=a39f
+# 1.0                   63+clks never finished ~12 hrs hash=e748
+# 0.5                   45+clks never finished ~12 hr hash=22ef
+# 0.25                  60+clks never finished 12+hours hash=5237
+# 0.181                 79+clks never finished 12+hours hash=222f
+# 0.125                 ^same
+# 0.09375               ^same
+# 0.078125              \/same
+# 0.06780026720106881
+# 0.0625                66              4   ^ ends up at slighty higher after failing coarse
+# 0.046875              ^same
+# 0.03125               \/same
+# 0.0                   70              2   # wow
+
+# Tool increases HIER_SWEEP_MULT_MIN if it has trouble
+# i.e. tries to pipeline smaller/less logic modules, easier task
+# Starting off too large is bad - no way to recover
+
 # Target pipelining at minimum at modules of period = target/MULT
+#   0.0 -> start w/ largest/top level modules first
 #   0.5 -> 2 times the target period (not meeting timing), 
 #   2.0 -> 1/2 the target period (easily meets timing)
-HIER_SWEEP_MULT_MIN = (
-    1.9375  
-)
+HIER_SWEEP_MULT_MIN = None # Cmd line arg sets
 HIER_SWEEP_MULT_INC = (
-    0.001  # Intentionally very small, sweep tries to make largest possible steps
+    0.001  # Intentionally very small, sweep already tries to make largest possible steps
+)
+MAX_N_WORSE_RESULTS_MULT = 16  # Multiplier for how many times failing to improve before moving on? divided by total latnecy
+BEST_GUESS_MUL_MAX = 5.0  # Multiplier limit on top down register insertion coarsly during middle out sweep
+MAX_ALLOWED_LATENCY_MULT = (
+    5.0  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
 )
 COARSE_SWEEP_MULT_INC = 0.1  # Multiplier increment for how many times fmax to try for compensating not meeting timing
-COARSE_SWEEP_MULT_MAX = 1.5  # Max multiplier for internal fmax
+COARSE_SWEEP_MULT_MAX = 1.0  # ==1.0 disables trying to pipeline to fake higher fmax, Max multiplier for internal fmax
 MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
 DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 INF_MHZ = 1000  # Impossible timing goal
@@ -2107,8 +2140,9 @@ class InstSweepState:
     def __init__(self):
         self.met_timing = False
         self.timing_report = None  # Current timing report with multiple paths
-        self.mhz_to_latency = dict()  # dict[mhz] = latency
-        self.latency_to_mhz = dict()  # dict[latency] = mhz
+        self.mhz_to_latency = dict()  # BEST dict[mhz] = latency
+        self.latency_to_mhz = dict()  # BEST dict[latency] = mhz
+        self.last_mhz = None
 
         # Coarse grain sweep
         self.coarse_latency = None
@@ -3377,6 +3411,8 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 better_mhz = curr_mhz > best_mhz_so_far
                 better_latency = curr_mhz > best_mhz_this_latency
                 # Log result
+                got_same_mhz_again = curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
+                sweep_state.inst_sweep_state[main_inst].last_mhz = curr_mhz
                 if better_mhz or better_latency:
                     sweep_state.inst_sweep_state[main_inst].mhz_to_latency[
                         curr_mhz
@@ -3403,19 +3439,65 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                             ].best_guess_sweep_mult
                             * latency_mult
                         )
-                        if (
+
+                        # TODO: Very much need to organize this
+
+                        # Getting exactly same MHz is bad sign, that didnt pipeline current modules right
+                        if got_same_mhz_again:
+                            print("Got identical timing result, trying to pipeline smaller modules instead...")
+                            # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
+                            # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
+                            if (
+                                sweep_state.inst_sweep_state[
+                                    main_func
+                                ].smallest_not_sliced_hier_mult
+                                == sweep_state.inst_sweep_state[
+                                    main_func
+                                ].hier_sweep_mult
+                            ):
+                                sweep_state.inst_sweep_state[
+                                    main_func
+                                ].hier_sweep_mult += HIER_SWEEP_MULT_INC
+                                print(
+                                    "Nudging hierarchy sweep multiplier:",
+                                    sweep_state.inst_sweep_state[
+                                        main_func
+                                    ].hier_sweep_mult,
+                                )
+                            else:
+                                sweep_state.inst_sweep_state[
+                                    main_inst
+                                ].hier_sweep_mult = sweep_state.inst_sweep_state[
+                                    main_inst
+                                ].smallest_not_sliced_hier_mult
+                                print(
+                                    "Hierarchy sweep multiplier:",
+                                    sweep_state.inst_sweep_state[
+                                        main_inst
+                                    ].hier_sweep_mult,
+                                )
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].best_guess_sweep_mult = 1.0
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].coarse_sweep_mult = 1.0
+                            made_adj = True
+                        elif (
                             new_best_guess_sweep_mult > BEST_GUESS_MUL_MAX
                         ):  # 15 like? main_max_allowed_latency_mult  2.0 magic?
                             # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
                             print(
-                                "Middle sweep at this hierarchy level failed to meet timing, trying to pipeline current modules to higher fmax to compensate..."
+                                "Middle sweep at this hierarchy level failed to meet timing...",
+                                "Next best guess multiplier was", new_best_guess_sweep_mult
                             )
                             if (
                                 sweep_state.inst_sweep_state[
                                     main_inst
                                 ].coarse_sweep_mult
                                 + COARSE_SWEEP_MULT_INC
-                            ) <= COARSE_SWEEP_MULT_MAX:  # 1.5: # MAGIC?
+                            ) <= COARSE_SWEEP_MULT_MAX: 
+                                print("Trying to pipeline current modules to higher fmax to compensate...")
                                 sweep_state.inst_sweep_state[
                                     main_inst
                                 ].best_guess_sweep_mult = 1.0
@@ -3766,6 +3848,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                                 print(
                                     logic.func_name,
                                     "reached maximum allowed latency, no more adjustments...",
+                                    "multiplier =",max_allowed_latency_mult
                                 )
                                 continue
 
@@ -3787,7 +3870,8 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                             and clk_inc >= inst_sweep_state.last_latency_increase
                         ):
                             # Clip to last inc size - 1, minus one to always be narrowing down
-                            clk_inc = inst_sweep_state.last_latency_increase - 1
+                            # Extra div by 2 helps?
+                            clk_inc = int(inst_sweep_state.last_latency_increase/2) # - 1
                             if clk_inc <= 0:
                                 clk_inc = 1
                             clks = inst_sweep_state.coarse_latency + clk_inc
