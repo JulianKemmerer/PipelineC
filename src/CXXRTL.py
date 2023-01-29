@@ -1,10 +1,7 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import OPEN_TOOLS
-import SIM
-import SYN
+from src import C_TO_LOGIC, OPEN_TOOLS, SIM, SYN
 
 
 def DO_SIM(latency, parser_state):

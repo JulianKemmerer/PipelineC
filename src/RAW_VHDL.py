@@ -2,10 +2,8 @@
 import copy
 import sys
 
-import C_TO_LOGIC
-import SW_LIB
-import VHDL
-from pycparser import c_ast, c_parser  # bleh for now
+from src import C_TO_LOGIC, SW_LIB, VHDL
+from src.pycparser import c_ast, c_parser  # bleh for now
 
 
 # Declare variables used internally to c built in C logic
@@ -1824,6 +1822,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
         print("Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type)
         sys.exit(-1)
 
+
 def SLICES_TO_SIZE_LIST(slices):
     removed_percent = 0.0
     adj_percents = []
@@ -1836,6 +1835,7 @@ def SLICES_TO_SIZE_LIST(slices):
     remaining_percent = 1.0 - removed_percent
     adj_percents.append(remaining_percent)
     return adj_percents
+
 
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
     bits_per_stage_dict = dict()

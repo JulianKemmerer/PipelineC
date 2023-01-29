@@ -1,12 +1,6 @@
 import os
 
-import COCOTB
-import CXXRTL
-import EDAPLAY
-import MODELSIM
-import SYN
-import VERILATOR
-import VHDL
+from src import COCOTB, CXXRTL, EDAPLAY, MODELSIM, SYN, VERILATOR, VHDL
 
 # Default simulation tool is free online edaplayground
 SIM_TOOL = EDAPLAY

@@ -3,11 +3,8 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import SIM
-import SYN
-import VIVADO
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from src import C_TO_LOGIC, SIM, SYN, VIVADO
+from src.utilities import GET_TOOL_PATH, REPO_ABS_DIR
 
 # Default to env if there
 TOOL_EXE = "vsim"

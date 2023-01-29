@@ -8,16 +8,12 @@ import re
 import shlex
 import subprocess
 import sys
-import re
 from collections import OrderedDict
 from subprocess import PIPE, Popen
 
-import C_TO_FSM
-import SW_LIB
-import SYN
-import VHDL
-from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR
+from src import C_TO_FSM, SW_LIB, SYN, VHDL
+from src.pycparser import c_ast, c_parser
+from src.utilities import REPO_ABS_DIR
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -9497,7 +9493,7 @@ def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
     for children_tuple in children_tuples:
         # Certain compound nodes contain C AST identifiers that are not variables
         # Ex. struct use, my_struct.my_var shows up as
-        # an individual c_ast.ID node for 'my_var' 
+        # an individual c_ast.ID node for 'my_var'
         # when thats not the same as using 'my_var' as an actual variable
         child_node = children_tuple[1]
         if type(child_node) == c_ast.StructRef:
@@ -9511,7 +9507,9 @@ def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
     if nodes is None:
         nodes = []
         if c_ast_type == c_ast.ID:
-            raise Exception(f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
+            raise Exception(
+                f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers..."
+            )
     if type(c_ast_node) == c_ast_type:
         nodes.append(c_ast_node)
     children_tuples = c_ast_node.children()
@@ -9746,7 +9744,9 @@ def PARSE_FILE(c_filename):
                         )
 
         # Elaborate the logic down to raw vhdl modules
-        print("Elaborating main function hierarchies down to raw HDL logic...", flush=True)
+        print(
+            "Elaborating main function hierarchies down to raw HDL logic...", flush=True
+        )
         for main_func in list(parser_state.main_mhz.keys()):
             adjusted_containing_logic_inst_name = ""
             main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -10879,11 +10879,11 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
             func_def, parser_state, parse_body, only_fsm_clk_funcs
         )
         if logic is not None:
-            #print("Parsed FSM style function:", logic.func_name, flush=True)
+            # print("Parsed FSM style function:", logic.func_name, flush=True)
             parser_state.FuncLogicLookupTable[logic.func_name] = logic
             # print(logic.c_ast_node)
         else:
-            #print("Non FSM Function:",func_def.decl.name, flush=True)
+            # print("Non FSM Function:",func_def.decl.name, flush=True)
             pass
 
     return parser_state

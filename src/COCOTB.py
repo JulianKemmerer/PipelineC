@@ -1,11 +1,8 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import SIM
-import SYN
-import VHDL
-from utilities import GET_TOOL_PATH
+from src import C_TO_LOGIC, SIM, SYN
+from src.utilities import GET_TOOL_PATH
 
 
 def DO_SIM(multimain_timing_params, parser_state, args):

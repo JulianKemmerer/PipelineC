@@ -1,10 +1,8 @@
 import os
 import sys
 
-import C_TO_LOGIC
-import SYN
-import VHDL
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from src import C_TO_LOGIC, SYN, VHDL
+from src.utilities import GET_TOOL_PATH
 
 TOOL_EXE = "quartus_sh"
 # Default to env if there
@@ -495,7 +493,11 @@ set_global_assignment -name SDC_FILE """
 
     # IEEE proposed since quartus lite doesnt include vhdl 2008
     ieee_pro_dir = SYN.SYN_OUTPUT_DIRECTORY + "/ieee_proposed"
-    pro_files = ["ieee_proposed.fixed_float_types.vhdl", "ieee_proposed.fixed_pkg.vhdl", "ieee_proposed.float_pkg.vhdl"]
+    pro_files = [
+        "ieee_proposed.fixed_float_types.vhdl",
+        "ieee_proposed.fixed_pkg.vhdl",
+        "ieee_proposed.float_pkg.vhdl",
+    ]
     # Point at copy of files in output
     for f in pro_files:
         text += f"set_global_assignment -library ieee_proposed -name VHDL_FILE {ieee_pro_dir}/{f}\n"

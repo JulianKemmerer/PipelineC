@@ -1,9 +1,6 @@
 import os
 
-import C_TO_LOGIC
-import OPEN_TOOLS
-import SYN
-import VHDL
+from src import C_TO_LOGIC, OPEN_TOOLS, SYN, VHDL
 
 
 def IS_INSTALLED():
