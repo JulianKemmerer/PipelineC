@@ -1,32 +1,23 @@
 [tool.poetry]
 name = "pipelinec"
 version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
+description = "A C-like hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature."
+authors = ["Julian Kemmerer <julian.v.kemmerer@gmail.com>"]
 license = "GPL-3.0"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.10"
 
-
-[tool.poetry.group.types.dependencies]
-mypy = "^0.971"
-
-
-[tool.poetry.group.test.dependencies]
-hypothesis = "^6.54.4"
-pytest = "^7.1.3"
-coverage = "^6.4.4"
-mutmut = "^2.4.1"
-
-
-[tool.poetry.group.format.dependencies]
-black = "^22.8.0"
-
-
-[tool.poetry.group.analysis.dependencies]
-vulture = "^2.5"
+[tool.poetry.group.dev.dependencies]
+black = ">=22.12.0"
+pytest = ">=7.2.1"
+hypothesis = ">=6.65.2"
+py-spy = ">=0.3.14"
+ruff = ">=0.0.237"
+refurb = ">=1.10.0"
+pytest-cov = "^4.0.0"
+cosmic-ray = "^8.3.5"
 
 [build-system]
 requires = ["poetry-core"]
