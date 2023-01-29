@@ -1,6 +1,5 @@
 from hypothesis import given
 from hypothesis.strategies import text
-import sys
 
 from src import utilities
 
