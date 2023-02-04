@@ -4402,7 +4402,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         # Start parallel syn for parallel_func_names
         # Parallelized
         NUM_PROCESSES = int(
-            open(C_TO_LOGIC.EXE_ABS_DIR() + "/../num_processes.cfg", "r").readline()
+            open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
         )
         my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
         func_name_to_async_result = dict()
