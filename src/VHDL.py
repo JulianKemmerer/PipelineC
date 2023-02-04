@@ -14,6 +14,9 @@ import SW_LIB
 import SYN
 import VERILATOR
 import VIVADO
+
+# TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
+sys.path.append('../submodule/pycparser/pycparser')
 from pycparser import c_ast
 
 VHDL_FILE_EXT = ".vhd"

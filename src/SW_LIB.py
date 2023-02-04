@@ -8,6 +8,9 @@ import C_TO_FSM
 import C_TO_LOGIC
 import SYN
 import VHDL
+
+# TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
+sys.path.append('../submodule/pycparser/pycparser')
 from pycparser import c_ast
 
 # Hey lets bootstrap for fun

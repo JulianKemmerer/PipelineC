@@ -3,6 +3,9 @@ import sys
 import os
 
 import C_TO_LOGIC
+
+# TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
+sys.path.append('../submodule/pycparser/pycparser')
 from pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
