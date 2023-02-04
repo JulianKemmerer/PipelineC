@@ -1,4 +1,4 @@
-![pipelinec_color](./pipelinec_color.jpg)
+![pipelinec_color](./docs/images/pipelinec_color.jpg)
 
 ```
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
