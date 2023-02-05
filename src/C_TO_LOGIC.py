@@ -402,15 +402,15 @@ class Logic:
         self.feedback_vars = set()  # Vars pragmad to be combinatorial feedback wires
         self.inputs = []  # Ordered list of inputs ["a","b"]
         self.outputs = []  # Ordered list of outputs ["return"]
-        self.state_regs = dict()  # name -> variable info
+        self.state_regs = {}  # name -> variable info
         self.write_only_global_wires = (
-            dict()
+            {}
         )  # name -> variable info (from list of global vars)
         self.read_only_global_wires = (
-            dict()
+            {}
         )  # name -> variable info (from list of global vars)
         self.uses_nonvolatile_state_regs = False
-        self.submodule_instances = dict()  # instance name -> logic func_name
+        self.submodule_instances = {}  # instance name -> logic func_name
         self.next_user_inst_name = None  # User name for func
         self.debug_names = set()  # Names MARK_DEBUG
         self.c_ast_node = None
@@ -430,33 +430,33 @@ class Logic:
         # self.is_new_style_bit_math = False
 
         # Mostly for c built in C functions
-        self.submodule_instance_to_c_ast_node = dict()
-        self.submodule_instance_to_input_port_names = dict()
-        self.ref_submodule_instance_to_input_port_driven_ref_toks = dict()
-        self.ref_submodule_instance_to_ref_toks = dict()
+        self.submodule_instance_to_c_ast_node = {}
+        self.submodule_instance_to_input_port_names = {}
+        self.ref_submodule_instance_to_input_port_driven_ref_toks = {}
+        self.ref_submodule_instance_to_ref_toks = {}
 
-        # Python graph example was dict() of strings so this
+        # Python graph example was {} of strings so this
         # string based wire naming makes Pythonic sense.
         # I think pointers would work better - constant strings are the pointer?
         # Wire names with a dot means sub module connection
         # func0.a  is a port on the func0 instance
         # Connections are given as two lists "drives" and "driven by"
-        self.wire_drives = dict()  # wire_name -> set([driven,wire,names])
-        self.wire_driven_by = dict()  # wire_name -> driving wire
+        self.wire_drives = {}  # wire_name -> set([driven,wire,names])
+        self.wire_driven_by = {}  # wire_name -> driving wire
 
         # To keep track of C execution over time in logic graph,
         # each assignment assigns to a renamed variable, renamed
         # variables keep execution order
         # Need to keep dicts for variable names
         self.wire_aliases_over_time = (
-            dict()
+            {}
         )  # orig var name -> [list,of,renamed,wire,names] # Further in list is further in time
-        self.alias_to_orig_var_name = dict()  # alias -> orig var name
-        self.alias_to_driven_ref_toks = dict()  # alias -> [ref,toks]
+        self.alias_to_orig_var_name = {}  # alias -> orig var name
+        self.alias_to_driven_ref_toks = {}  # alias -> [ref,toks]
 
         # Need to look up types by wire name
         # wire_to_c_type[wire_name] -> c_type_str
-        self.wire_to_c_type = dict()
+        self.wire_to_c_type = {}
 
         # For timing, delay integer units (tenths of nanosec probably)
         # this is populated by vendor tool
@@ -475,10 +475,10 @@ class Logic:
         self.state_groups = []  # List of lists of state infos
         self.first_user_state = None  # First/user entry state
         self.func_call_name_to_state = (
-            dict()
+            {}
         )  # Func call name to lookup of func call state
         self.func_call_node_to_entry_exit_states = (
-            dict()
+            {}
         )  # Same funcs as above, node inst specific entry and exit
 
     # Help!
@@ -550,19 +550,19 @@ class Logic:
 
     # Really, help! # Replace with deep copy?
     def DEEPCOPY_DICT_LIST(self, d):
-        rv = dict()
+        rv = {}
         for key in d:
             rv[key] = d[key][:]
         return rv
 
     def DEEPCOPY_DICT_SET(self, d):
-        rv = dict()
+        rv = {}
         for key in d:
             rv[key] = set(d[key])
         return rv
 
     def DEEPCOPY_DICT_COPY(self, d):
-        rv = dict()
+        rv = {}
         for key in d:
             rv[key] = copy.copy(d[key])
         return rv
@@ -768,7 +768,7 @@ class Logic:
 
         # Also for both wire drives and driven by, remove wire driving self:
         # wire_driven_by
-        new_wire_driven_by = dict()
+        new_wire_driven_by = {}
         for driven_wire in self.wire_driven_by:
             # Filter out self driving
             driving_wire = self.wire_driven_by[driven_wire]
@@ -779,7 +779,7 @@ class Logic:
         self.wire_driven_by = new_wire_driven_by
 
         # wire_drives
-        new_wire_drives = dict()
+        new_wire_drives = {}
         for driving_wire in self.wire_drives:
             driven_wires = self.wire_drives[driving_wire]
             new_driven_wires = set()
@@ -882,7 +882,7 @@ class Logic:
 
         # Driving wires need to reflect over time
         # Last alias from first logic replaces original wire name in second logic
-        # self.wire_drives = dict() # wire_name -> set(driven,wire,names])
+        # self.wire_drives = {} # wire_name -> set(driven,wire,names])
         for orig_var in self.wire_aliases_over_time:
             # And the var drives second_logic
             if orig_var in second_logic.wire_drives:
@@ -1656,7 +1656,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     return submodule_logic
 
 
-_other_partial_logic_cache = dict()
+_other_partial_logic_cache = {}
 
 
 def BUILD_LOGIC_AS_C_CODE(
@@ -1873,10 +1873,10 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
     return FuncLogicLookupTable
 
 
-# WHY CAN I NEVER REMEMBER DICT() IS NOT IMMUTABLE (AKA needs copy operator)
+# WHY CAN I NEVER REMEMBER {} IS NOT IMMUTABLE (AKA needs copy operator)
 
 # Node needs context for variable renaming over time, can give existing logic
-# _node_record = dict()
+# _node_record = {}
 def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
 
     # Cover logic as far up in c ast tree as possible
@@ -3040,7 +3040,7 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
 # Do one level of expansion to next branches
 # Expands variable ref toks, structs to fields, arrays to elements
 # Does not return self ref_toks in set, self is not a branch of self
-_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = dict()
+_REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = {}
 
 
 def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
@@ -3114,7 +3114,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     return rv
 
 
-_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = dict()
+_REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = {}
 # Traverse compound types down to individual ref toks to collect all branches
 #  expanding variable refs along the way
 def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
@@ -3157,7 +3157,7 @@ def REF_TOKS_TO_ENTIRE_TREE_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     return rv
 
 
-_REDUCE_REF_TOKS_OR_STRS_cache = dict()
+_REDUCE_REF_TOKS_OR_STRS_cache = {}
 
 
 def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
@@ -3298,7 +3298,7 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
 # Please just be mostly used for silly len(ref_toks) compare stuff, not fundamentally required
 # 141 sec w/ cache
 # 186 w/o cache
-_TRIM_VAR_REF_TOKS_cache = dict()
+_TRIM_VAR_REF_TOKS_cache = {}
 
 
 def TRIM_VAR_REF_TOKS(ref_toks):
@@ -3320,7 +3320,7 @@ def TRIM_VAR_REF_TOKS(ref_toks):
     return ref_toks
 
 
-# _REF_TOKS_COVERED_BY_cache = dict()
+# _REF_TOKS_COVERED_BY_cache = {}
 # With cache: 63.812 seconds, 206.699 seconds
 # Without cache: 47.065 seconds, 128.514 seconds
 # More testing: without cache: 141, with cache: 240
@@ -3432,7 +3432,7 @@ def WIRE_TO_DRIVEN_REF_TOKS(wire, parser_state):
 # Fat cache...
 # With cache, run time 230 sec w heapy, Total size = 1261187248 bytes
 # Without cache, run time 180 sec w heapy, Total size = 1098484016 bytes
-# _REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
+# _REMOVE_COVERED_REF_TOK_BRANCHES_cache = {}
 # Try without heapy...
 # With cache runtime: 74.670 seconds, 304.788 seconds
 # Without cache runtime: 61.963 seconds, 210.264 seconds,
@@ -3911,7 +3911,7 @@ def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
     return toks, parser_state.existing_logic
 
 
-_C_AST_REF_TOKS_TO_C_TYPE_cache = dict()
+_C_AST_REF_TOKS_TO_C_TYPE_cache = {}
 # "Const" here means variable refs are evaluated x[*] = type of x[0]
 def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
     debug = False
@@ -5209,7 +5209,7 @@ def C_AST_NODES_EQUAL(node0, node1):
 
 # C AST nodes from different parsing runs, i.e. different object, same looking C code will produce different coordinate strings
 # This is wtf hacky since C_AST_NODES_EQUAL problems too
-_C_AST_NODE_COORD_STR_cache = dict()
+_C_AST_NODE_COORD_STR_cache = {}
 
 
 def C_AST_NODE_COORD_STR(c_ast_node):
@@ -5726,8 +5726,8 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     # Driving is recorded with aliases over time
     # True and false can share some existing drivings we dont want to consider
     # Loop over each variable
-    var_name_2_all_ref_toks_set = dict()
-    ref_toks_id_str_to_output_wire = dict()
+    var_name_2_all_ref_toks_set = {}
+    ref_toks_id_str_to_output_wire = {}
     # print "==== IF",file_coord_str,"======="
     for var_name in merge_var_names:
         # Get aliases over time
@@ -5945,7 +5945,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     # since selection of final alias from either true or false branch is what THIS MUX DOES
     # Loop over and remove branch-only aliases over time
     # RV contains logic before T/F logic so orig aliases
-    new_true_false_logic_wire_aliases_over_time = dict()
+    new_true_false_logic_wire_aliases_over_time = {}
     for orig_var in merge_var_names:
         # Filtered aliases contains orig from RV logic
         filtered_aliases = []
@@ -7008,7 +7008,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     return parser_state.existing_logic
 
 
-_LOGIC_NEEDS_CLOCK_ENABLE_cache = dict()
+_LOGIC_NEEDS_CLOCK_ENABLE_cache = {}
 
 
 def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
@@ -8716,7 +8716,7 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
     return type_decl.declname, elem_type, dim
 
 
-_C_AST_FUNC_DEF_TO_LOGIC_cache = dict()
+_C_AST_FUNC_DEF_TO_LOGIC_cache = {}
 
 
 def C_AST_FUNC_DEF_TO_LOGIC(
@@ -9033,7 +9033,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         making_changes = False
 
         # Find duplicates
-        submodule_dups = dict()
+        submodule_dups = {}
         for submodule_inst in func_logic.submodule_instances:
             submodule_func_name = func_logic.submodule_instances[submodule_inst]
             # Skip printf
@@ -9153,7 +9153,7 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 
         # Wire new inst outputs to all outputs
         # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
-        sub_out_port_to_driven_wires = dict()
+        sub_out_port_to_driven_wires = {}
         for output_port in sub_func_logic.outputs:
             for sub_inst in dup_insts:
                 sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
@@ -9235,17 +9235,17 @@ def DEL_ALL_CACHES():
     global _C_AST_FUNC_DEF_TO_LOGIC_cache
     # global _GET_ZERO_CLK_PIPELINE_MAP_cache
 
-    _other_partial_logic_cache = dict()
-    _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = dict()
-    _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = dict()
-    _REDUCE_REF_TOKS_OR_STRS_cache = dict()
-    _TRIM_VAR_REF_TOKS_cache = dict()
-    _REF_TOKS_COVERED_BY_cache = dict()
-    _REMOVE_COVERED_REF_TOK_BRANCHES_cache = dict()
-    _C_AST_REF_TOKS_TO_C_TYPE_cache = dict()
-    _C_AST_NODE_COORD_STR_cache = dict()
-    _C_AST_FUNC_DEF_TO_LOGIC_cache = dict()
-    # _GET_ZERO_CLK_PIPELINE_MAP_cache          = dict()
+    _other_partial_logic_cache = {}
+    _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = {}
+    _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache = {}
+    _REDUCE_REF_TOKS_OR_STRS_cache = {}
+    _TRIM_VAR_REF_TOKS_cache = {}
+    _REF_TOKS_COVERED_BY_cache = {}
+    _REMOVE_COVERED_REF_TOK_BRANCHES_cache = {}
+    _C_AST_REF_TOKS_TO_C_TYPE_cache = {}
+    _C_AST_NODE_COORD_STR_cache = {}
+    _C_AST_FUNC_DEF_TO_LOGIC_cache = {}
+    # _GET_ZERO_CLK_PIPELINE_MAP_cache          = {}
 
 
 _EXE_ABS_DIR = None
@@ -9270,38 +9270,38 @@ class ParserState:
 
         # Parsed pre func defintions
         # Build map just of func names and where there are used
-        self.func_name_to_calls = dict()  # dict[func_name] = set(called_func_names)
+        self.func_name_to_calls = {}  # dict[func_name] = set(called_func_names)
         self.func_names_to_called_from = (
-            dict()
+            {}
         )  # dict[func_name] = set(calling_func_names)
-        self.struct_to_field_type_dict = dict()
-        self.enum_info_dict = dict()
-        self.global_vars = dict()  # name->state reg info
-        self.global_consts = dict()  # name->global const info
+        self.struct_to_field_type_dict = {}
+        self.enum_info_dict = {}
+        self.global_vars = {}  # name->state reg info
+        self.global_consts = {}  # name->global const info
         # The func body stuff here is hacky af damn
         #   State regs only needed for GET_MEM_H_LOGIC_LOOKUP?
-        self.func_to_local_state_regs = dict()  # funcname-> [state,reg,infos]
+        self.func_to_local_state_regs = {}  # funcname-> [state,reg,infos]
         #   Local vars needed since doing MAYBE global all names in func body before parsing decls?
-        self.func_to_local_variables = dict()  # funcname-> set(vars)
+        self.func_to_local_variables = {}  # funcname-> set(vars)
 
         # Parsed from function defintions
         # Function definitons as logic
-        self.FuncLogicLookupTable = dict()  # dict[func_name]=Logic() <--
+        self.FuncLogicLookupTable = {}  # dict[func_name]=Logic() <--
         # Special primitive funcs
-        self.PrimFuncLogicLookupTable = dict()  # Why table vs .is_prim_func on logic?
+        self.PrimFuncLogicLookupTable = {}  # Why table vs .is_prim_func on logic?
         # Elaborated to instances
         self.LogicInstLookupTable = (
-            dict()
+            {}
         )  # dict[inst_name]=Logic()  (^ same logic object as above)
         self.FuncToInstances = (
-            dict()
+            {}
         )  # dict[func_name]=set([instance, name, usages, of , func)
 
         # Pragma info
-        self.main_mhz = dict()  # dict[main_inst_name]=mhz # Any inst name can be used
-        self.main_syn_mhz = dict()
-        self.main_clk_group = dict()  # dict[main_inst_name]=clk_group_str
-        self.func_mult_style = dict()
+        self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
+        self.main_syn_mhz = {}
+        self.main_clk_group = {}  # dict[main_inst_name]=clk_group_str
+        self.func_mult_style = {}
         self.func_marked_wires = set()
         self.func_marked_blackbox = set()
         self.func_marked_debug = set()
@@ -9309,10 +9309,10 @@ class ParserState:
         self.part = None
         self.io_pairs = set()
         self.async_wires = set()
-        self.clk_mhz = dict()
+        self.clk_mhz = {}
 
         # Clock crossing info
-        self.clk_cross_var_info = dict()  # var name -> clk cross var info
+        self.clk_cross_var_info = {}  # var name -> clk cross var info
         self.arb_handshake_infos = set()
 
         # Generated header info
@@ -9328,15 +9328,15 @@ class ParserState:
         # Fuck me how many times will I get caught with objects getting copied incorrectly?
         rv = ParserState()
 
-        rv.FuncLogicLookupTable = dict()
+        rv.FuncLogicLookupTable = {}
         for fname in self.FuncLogicLookupTable:
             rv.FuncLogicLookupTable[fname] = self.FuncLogicLookupTable[fname].DEEPCOPY()
 
-        rv.PrimFuncLogicLookupTable = dict()
+        rv.PrimFuncLogicLookupTable = {}
         for fname in self.PrimFuncLogicLookupTable:
             rv.PrimFuncLogicLookupTable[fname] = rv.FuncLogicLookupTable[fname]
 
-        rv.LogicInstLookupTable = dict()
+        rv.LogicInstLookupTable = {}
         for inst_name in self.LogicInstLookupTable:
             func_name = self.LogicInstLookupTable[inst_name].func_name
             rv_func_logic = rv.FuncLogicLookupTable[func_name]
@@ -9415,8 +9415,8 @@ def GET_PARSER_STATE_CACHE(c_filename):
 # dict[func_name] = set(calling_func_names)
 # func_name_to_calls, func_names_to_called_from =
 def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
-    func_name_to_calls = dict()
-    func_names_to_called_from = dict()
+    func_name_to_calls = {}
+    func_names_to_called_from = {}
     # Do this by manually recursing through all nodes in each func def
     c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for c_ast_func_def in c_ast_func_defs:
@@ -9449,8 +9449,8 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     # print("func_name_to_calls",func_name_to_calls)
 
     # Reduce data down to funcs as used by main funcs (trying to avoid regular C code)
-    main_func_name_to_calls = dict()
-    main_func_names_to_called_from = dict()
+    main_func_name_to_calls = {}
+    main_func_names_to_called_from = {}
     submodule_func_names = set(parser_state.main_mhz.keys())
     # Ahh hackey hack help
     # ~~~Nobody Speak - Run The Jewels
@@ -9852,7 +9852,7 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
 
     # Keep just integer ops that are built in
     int_funcs = []
-    int_func_to_max_in_width = dict()
+    int_func_to_max_in_width = {}
     for func_name in parser_state.FuncToInstances:
         func_logic = parser_state.FuncLogicLookupTable[func_name]
         func_types = []
@@ -9897,7 +9897,7 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
             continue
 
         # Sort by main func
-        main_to_insts = dict()
+        main_to_insts = {}
         for instance in instances:
             main_func = instance.split(SUBMODULE_MARKER)[0]
             if main_func not in main_to_insts:
@@ -9943,7 +9943,7 @@ def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
     for func_name in sorted(float_funcs):
         instances = sorted(parser_state.FuncToInstances[func_name])
         # Sort by main func
-        main_to_insts = dict()
+        main_to_insts = {}
         for instance in instances:
             main_func = instance.split(SUBMODULE_MARKER)[0]
             if main_func not in main_to_insts:
@@ -9981,7 +9981,7 @@ class VariableInfo:
 
 def GET_GLOBAL_VAR_INFO(parser_state):
     # Read in file with C parser to get global def nodes
-    parser_state.global_vars = dict()
+    parser_state.global_vars = {}
     global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
     for global_decl in global_decls:
         name_str = str(global_decl.name)
@@ -10025,8 +10025,8 @@ def GET_GLOBAL_VAR_INFO(parser_state):
 
 
 def GET_LOCAL_VAR_INFO(parser_state):
-    parser_state.func_to_local_variables = dict()
-    parser_state.func_to_local_state_regs = dict()
+    parser_state.func_to_local_variables = {}
+    parser_state.func_to_local_state_regs = {}
 
     # Get all the func defs
     # And look for declarations in the func BODY
@@ -10065,7 +10065,7 @@ def GET_LOCAL_VAR_INFO(parser_state):
                 var_info.is_volatile = True
             # Save info
             if func_name not in parser_state.func_to_local_state_regs:
-                parser_state.func_to_local_state_regs[func_name] = dict()
+                parser_state.func_to_local_state_regs[func_name] = {}
             parser_state.func_to_local_state_regs[func_name][var_info.name] = var_info
 
     return parser_state
@@ -10081,9 +10081,9 @@ class GlobalConstInfo:
 
 def GET_GLOBAL_CONST_INFO(parser_state):
     # Collect all global defs marked const
-    parser_state.global_consts = dict()
+    parser_state.global_consts = {}
     global_decls = GET_C_AST_GLOBAL_DECLS(parser_state.c_file_ast)
-    non_const_decls = dict()
+    non_const_decls = {}
     for global_decl in global_decls:
         name_str = str(global_decl.name)
         if "const" not in global_decl.quals:
@@ -10160,7 +10160,7 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
                     data_array_type += "[" + str(dim) + "]"
 
                 # Append to dict
-                field_type_dict = dict()
+                field_type_dict = {}
                 field_type_dict["data"] = data_array_type
                 parser_state.struct_to_field_type_dict[c_type] = field_type_dict
 
@@ -10216,8 +10216,8 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         read_func_names.append(read_func_call.strip("(").strip())
 
     # Find pairs that are global or volatile global vars
-    var_to_read_func = dict()
-    var_to_write_func = dict()
+    var_to_read_func = {}
+    var_to_write_func = {}
     all_var_names = set()
     for func_name in write_func_names + read_func_names:
         if "_WRITE" in func_name:
@@ -10245,7 +10245,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # print("var_names",var_names)
     # print("var_to_read_func",var_to_read_func)
     # print("var_to_write_func",var_to_write_func)
-    var_to_rw_main_funcs = dict()  # ([read,mains],[write,mains])
+    var_to_rw_main_funcs = {}  # ([read,mains],[write,mains])
     for var_name in var_names:
         var_to_rw_main_funcs[var_name] = (set(), set())
         read_func_name = None
@@ -10298,7 +10298,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Do infer loop slow thing for now
     inferring = True
     # the single mhz,group read+write side data
-    var_to_rw_mhz_groups = dict()
+    var_to_rw_mhz_groups = {}
     while inferring:
         inferring = False
         # Do pass over all shared globals (same domain) trying to match domains
@@ -10668,7 +10668,7 @@ _printed_GET_ENUM_INFO_DICT = False
 
 def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
     # Read in file with C parser and get function def nodes
-    rv = dict()
+    rv = {}
     enum_defs = GET_C_AST_ENUM_DEFS(c_file_ast)
     for enum_def in enum_defs:
         if enum_def.name is None:

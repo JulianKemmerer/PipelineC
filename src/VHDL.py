@@ -58,8 +58,8 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
             c_ast_init.coord,
         )
         sys.exit(-1)
-    index_to_vhdl_str = dict()
-    member_to_vhdl_str = dict()
+    index_to_vhdl_str = {}
+    member_to_vhdl_str = {}
     for init_expr in init_exprs:
         # What is expected for this expression given type?
         ref_toks = None
@@ -860,7 +860,7 @@ begin
 """
 
     # Clock crossings
-    non_arb_clk_cross_vars = dict()
+    non_arb_clk_cross_vars = {}
     for var_name, var_info in parser_state.clk_cross_var_info.items():
         if not var_info.is_part_of_arb_handshake:
             non_arb_clk_cross_vars[var_name] = var_info
@@ -2385,7 +2385,7 @@ end arch;
     #
     #
     #
-    non_arb_clock_crossings = dict()
+    non_arb_clock_crossings = {}
     for var_name in parser_state.clk_cross_var_info:
         var_info = parser_state.clk_cross_var_info[var_name]
         if not var_info.is_part_of_arb_handshake:
@@ -4210,10 +4210,10 @@ class PiplineHDLParams:
     ):
         self.pipeline_map = pipeline_map
         self.wires_to_decl = []
-        self.wire_to_reg_stage_start_end = dict()  # Same as comb range too
+        self.wire_to_reg_stage_start_end = {}  # Same as comb range too
         # These used just internally? \/
-        self.stage_to_driver_wires = dict()
-        self.stage_to_driven_wires = dict()
+        self.stage_to_driver_wires = {}
+        self.stage_to_driven_wires = {}
 
         # Not needed for no submodule things like raw hdl
         if (
@@ -4395,7 +4395,7 @@ class PiplineHDLParams:
 
         # Adjust range of use for non vol read only global wire network
         # Entire network downstream from var needs to be read at same time
-        upstream_var_to_earliest_stage = dict()
+        upstream_var_to_earliest_stage = {}
         for wire in self.pipeline_map.read_only_global_network_wire_to_upstream_vars:
             upstream_vars = self.pipeline_map.read_only_global_network_wire_to_upstream_vars[wire]
             if wire not in self.wire_to_reg_stage_start_end:

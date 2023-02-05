@@ -49,7 +49,7 @@ class ParsedTimingReport:
         single_timing_report = split_marker_toks[0]
 
         self.orig_text = syn_output
-        self.reg_merged_with = dict()  # dict[new_sig] = [orig,sigs]
+        self.reg_merged_with = {}  # dict[new_sig] = [orig,sigs]
         self.has_loops = True
         self.has_latch_loops = True
 
@@ -196,7 +196,7 @@ class ParsedTimingReport:
             print("TIMING LOOPS!")
 
         # Parse multiple path reports
-        self.path_reports = dict()
+        self.path_reports = {}
         path_report_texts = split_marker_toks[1:]
         for path_report_text in path_report_texts:
             if "(required time - arrival time)" in path_report_text:

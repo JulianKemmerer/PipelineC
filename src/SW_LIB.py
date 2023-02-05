@@ -1466,7 +1466,7 @@ def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text, regenerate_files):
     array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
     # print("preprocessed_c_text",preprocessed_c_text)
     # print("array_types",array_types)
-    text_per_elem_t = dict()
+    text_per_elem_t = {}
 
     # Typedef each one
     for array_type in array_types:
@@ -1610,7 +1610,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
     lookups.append(mem_func_name_logic_lookup)
 
     # Combine lookups
-    rv = dict()
+    rv = {}
     for func_name_logic_lookup in lookups:
         for func_name in func_name_logic_lookup:
             if not (func_name in rv):
@@ -1672,8 +1672,8 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
     # parser_state.func_name_to_calls, parser_state.func_names_to_called_from
     # Need to indicate that these MEM functions have state registers globals/statics
     # HACK YHACK CHAKC
-    func_name_to_state_reg_info = dict()
-    func_name_was_global_def = dict()
+    func_name_to_state_reg_info = {}
+    func_name_was_global_def = {}
     # _RAM_SP_RF
     # RAM_DP_RF_RF_2  MORE THAN ONE OUTPUT DATA NEEDS DUMB C STRUCT WRAPPER!!
     ram_types = []
@@ -1685,7 +1685,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
                 called_func_names,
             ) in parser_state.func_name_to_calls.items():
                 # Get local static var info for this func
-                local_state_reg_info_dict = dict()
+                local_state_reg_info_dict = {}
                 if calling_func_name in parser_state.func_to_local_state_regs:
                     local_state_reg_info_dict = parser_state.func_to_local_state_regs[
                         calling_func_name
@@ -1796,10 +1796,10 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
         # Keep everything except logic stuff
         parser_state_copy.FuncLogicLookupTable = (
-            dict()
+            {}
         )  # dict[func_name]=Logic() instance with just func info
         parser_state_copy.LogicInstLookupTable = (
-            dict()
+            {}
         )  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
@@ -1840,7 +1840,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
 
     else:
         # No code, no funcs
-        return dict()
+        return {}
 
 
 def GET_MEM_NAME(logic):
@@ -2055,7 +2055,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
             result_t = type_name
             in_t = type_name
             func_name = type_prefix + "_" + mux_name
-            var_2_type = dict()
+            var_2_type = {}
 
             text += (
                 """
@@ -2279,7 +2279,7 @@ typedef uint8_t """
   // Cant I just be happy for a little? maybe later?"""
                 )
             # SKIP SUM0 SINCE IS BY DEF 0
-            var_2_type = dict()
+            var_2_type = {}
             for leading_zeros in range(1, in_width + 1):
                 sum_width = int(math.ceil(math.log(leading_zeros + 1, 2)))
                 sum_prefix = "uint" + str(sum_width)
@@ -2509,7 +2509,7 @@ typedef uint8_t """
 
                 # Keep track of variable type so
                 # result type can be determined if needed
-                var_2_type = dict()
+                var_2_type = {}
 
                 # Start the code
                 text += (
@@ -2709,10 +2709,10 @@ typedef uint8_t """
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY()
         # Keep everything except logic stuff
         parser_state_copy.FuncLogicLookupTable = (
-            dict()
+            {}
         )  # dict[func_name]=Logic() instance with just func info
         parser_state_copy.LogicInstLookupTable = (
-            dict()
+            {}
         )  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
@@ -2731,7 +2731,7 @@ typedef uint8_t """
       func_name = str(func_call_node.name.name)
       func_names.add(func_name)
     bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names,parser_state)
-    parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # dict() 
+    parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # {} 
     """
 
         # C TEXT NAME BASED
@@ -2739,7 +2739,7 @@ typedef uint8_t """
             text, parser_state
         )  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
         parser_state_copy.FuncLogicLookupTable = (
-            bit_manip_func_name_logic_lookup  # dict()
+            bit_manip_func_name_logic_lookup  # {}
         )
 
         # Try to get all built in? not just manip? Recursive is nice?
@@ -2767,7 +2767,7 @@ typedef uint8_t """
 
     else:
         # No code, no funcs
-        return dict()
+        return {}
 
 
 def BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name):
@@ -3284,10 +3284,10 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
         # Keep everything except logic stuff
         parser_state_copy.FuncLogicLookupTable = (
-            dict()
+            {}
         )  # dict[func_name]=Logic() instance with just func info
         parser_state_copy.LogicInstLookupTable = (
-            dict()
+            {}
         )  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
@@ -3306,7 +3306,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         return FuncLogicLookupTable
     else:
         # No code, no funcs
-        return dict()
+        return {}
 
 
 def GENERATE_INT_N_HEADERS(max_bit_width=2048):
@@ -6877,7 +6877,7 @@ def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state
         )
 
     # Save types of shifted partial sum vars for ease later
-    var_2_type = dict()
+    var_2_type = {}
 
     text += (
         """
@@ -7585,7 +7585,7 @@ def GET_BIN_OP_MULT_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_stat
 """
         )
     # Save types of vars for ease later
-    var_2_type = dict()
+    var_2_type = {}
 
     # Cap shifted partiual sums to max intermediate width
     max_intermidate_prefix = "uint" + str(max_intermidate_bit_width)

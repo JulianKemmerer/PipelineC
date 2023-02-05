@@ -184,7 +184,7 @@ class ParsedTimingReport:
         # Skip hold
         tok = "Lattice TRACE Report - Hold"
         syn_output = syn_output.split(tok)[0]
-        self.path_reports = dict()
+        self.path_reports = {}
         PATH_SPLIT = "Logical Details:"
         maybe_path_texts = syn_output.split(PATH_SPLIT)
         for path_text in maybe_path_texts:
@@ -209,7 +209,7 @@ class ParsedTimingReport:
             sys.exit(-1)
 
     def init_synplify(self, syn_output):
-        self.path_reports = dict()
+        self.path_reports = {}
         PATH_SPLIT = "Path information for path number"
         maybe_path_texts = syn_output.split(PATH_SPLIT)
         for path_text in maybe_path_texts:

@@ -46,7 +46,7 @@ class ParsedTimingReport:
     def __init__(self, syn_output):
         # print(syn_output)
         # Clocks reported once at end
-        clock_to_act_tar_mhz = dict()
+        clock_to_act_tar_mhz = {}
         in_constraints = False
         in_freqs = False
         prev_line = ""
@@ -81,7 +81,7 @@ class ParsedTimingReport:
                 in_freqs = True
 
         # Get max delay paths
-        self.path_reports = dict()
+        self.path_reports = {}
         min_split = "Path Details for Min Critical Paths (begin)"
         max_delay_paths = syn_output.split(min_split)[0]
         path_split = "++++ Path"

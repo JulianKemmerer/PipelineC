@@ -1838,7 +1838,7 @@ def SLICES_TO_SIZE_LIST(slices):
     return adj_percents
 
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
-    bits_per_stage_dict = dict()
+    bits_per_stage_dict = {}
 
     # Default everything in stage 0 if no slices
     bits_per_stage_dict[0] = num_bits

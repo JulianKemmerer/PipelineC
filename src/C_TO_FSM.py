@@ -1722,7 +1722,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
 
     # Use transition lists to group states
     # print("Transition lists:")
-    state_to_latest_index = dict()
+    state_to_latest_index = {}
     for state_trans_list in all_state_trans_lists:
         text = "States: "
         state_i = 0

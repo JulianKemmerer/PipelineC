@@ -146,7 +146,7 @@ def NODE_TO_ELEM(node_str):
 class ParsedTimingReport:
     def __init__(self, syn_output):
         # Clocks reported once at end
-        clock_to_act_tar_mhz = dict()
+        clock_to_act_tar_mhz = {}
         tok1 = "Max frequency for clock"
         for line in syn_output.split("\n"):
             if tok1 in line:
@@ -160,7 +160,7 @@ class ParsedTimingReport:
                 # print(clk_name, actual_mhz, target_mhz)
                 clock_to_act_tar_mhz[clk_name] = (actual_mhz, target_mhz)
 
-        self.path_reports = dict()
+        self.path_reports = {}
         PATH_SPLIT = "Info: Critical path report for "
         maybe_path_texts = syn_output.split(PATH_SPLIT)
         for path_text in maybe_path_texts:
