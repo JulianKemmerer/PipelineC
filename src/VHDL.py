@@ -4189,9 +4189,15 @@ def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
         ieee_pro_dir = SYN.SYN_OUTPUT_DIRECTORY + "/ieee_proposed"
         os.makedirs(ieee_pro_dir, exist_ok=True)
         # Copy files from repo to output
-        pro_files = ["ieee_proposed.fixed_float_types.vhdl", "ieee_proposed.fixed_pkg.vhdl", "ieee_proposed.float_pkg.vhdl"]
+        pro_files = [
+            "ieee_proposed.fixed_float_types.vhdl",
+            "ieee_proposed.fixed_pkg.vhdl",
+            "ieee_proposed.float_pkg.vhdl",
+        ]
         for f in pro_files:
-            shutil.copy(f"{C_TO_LOGIC.REPO_ABS_DIR()}/ieee/{f}", ieee_pro_dir + "/" + f"{f}")
+            shutil.copy(
+                f"{C_TO_LOGIC.REPO_ABS_DIR()}/ieee/{f}", ieee_pro_dir + "/" + f"{f}"
+            )
         # And write vhdl using those proposed files
         text += """library ieee_proposed;
 use ieee_proposed.float_pkg.all;\n"""
@@ -4251,7 +4257,7 @@ class PiplineHDLParams:
             self.wire_to_reg_stage_start_end[wire_name] = [None, None]
 
         # Arrange into list of driven(write) wires per stage, and list of driver(read) wires
-        
+
         # Init non-stages stuff,
         #   inputs
         #   clockenable
@@ -4272,7 +4278,9 @@ class PiplineHDLParams:
         for output_port in Logic.outputs:
             if self.pipeline_map.num_stages - 1 not in self.stage_to_driver_wires:
                 self.stage_to_driver_wires[self.pipeline_map.num_stages - 1] = []
-            self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(output_port)
+            self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(
+                output_port
+            )
         # Vol written at input read at output
         vol_state_regs = []
         for state_reg in Logic.state_regs:
@@ -4290,7 +4298,9 @@ class PiplineHDLParams:
             self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(
                 driver_of_vol_wire
             )
-            self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(state_reg)
+            self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(
+                state_reg
+            )
 
         # Loop over all stages
         for stage in range(0, self.pipeline_map.num_stages):
@@ -4342,7 +4352,9 @@ class PiplineHDLParams:
                         for in_wire in sub_in_wires:
                             driver_of_in_wire = Logic.wire_driven_by[in_wire]
                             if driver_of_in_wire in self.wires_to_decl:
-                                self.stage_to_driver_wires[stage].append(driver_of_in_wire)
+                                self.stage_to_driver_wires[stage].append(
+                                    driver_of_in_wire
+                                )
                     # Outputs are driven(written) if latency is 0
                     sub_latency = timing_params.GET_SUBMODULE_LATENCY(
                         submodule_inst_name, parser_state, TimingParamsLookupTable
@@ -4369,35 +4381,46 @@ class PiplineHDLParams:
                     self.wire_to_reg_stage_start_end[driver_wire] = [
                         curr_start,
                         curr_end,
-                    ]         
+                    ]
             for driven_wire in driven_wires:
                 curr_start, curr_end = self.wire_to_reg_stage_start_end[driven_wire]
                 if curr_start is None:
                     curr_start = stage
-                    self.wire_to_reg_stage_start_end[driven_wire] = [curr_start, curr_end]
+                    self.wire_to_reg_stage_start_end[driven_wire] = [
+                        curr_start,
+                        curr_end,
+                    ]
 
         # Extra try to find start for wires that are never driven (read only driver)
         # Extra try to find end for wires that are never drivers (write only driven)
-        # Only needed for write only globals? 
+        # Only needed for write only globals?
         for stage in range(self.pipeline_map.num_stages - 1, -1, -1):
             driver_wires = self.stage_to_driver_wires[stage]
             driven_wires = self.stage_to_driven_wires[stage]
             for driver_wire in driver_wires:
                 curr_start, curr_end = self.wire_to_reg_stage_start_end[driver_wire]
-                if curr_start is None or (stage<curr_start):
+                if curr_start is None or (stage < curr_start):
                     curr_start = stage
-                    self.wire_to_reg_stage_start_end[driver_wire] = [curr_start, curr_end]
+                    self.wire_to_reg_stage_start_end[driver_wire] = [
+                        curr_start,
+                        curr_end,
+                    ]
             for driven_wire in driven_wires:
                 curr_start, curr_end = self.wire_to_reg_stage_start_end[driven_wire]
-                if curr_end is None or (stage-1>curr_end):
-                    curr_end = stage-1
-                    self.wire_to_reg_stage_start_end[driven_wire] = [curr_start, curr_end]
+                if curr_end is None or (stage - 1 > curr_end):
+                    curr_end = stage - 1
+                    self.wire_to_reg_stage_start_end[driven_wire] = [
+                        curr_start,
+                        curr_end,
+                    ]
 
         # Adjust range of use for non vol read only global wire network
         # Entire network downstream from var needs to be read at same time
         upstream_var_to_earliest_stage = {}
         for wire in self.pipeline_map.read_only_global_network_wire_to_upstream_vars:
-            upstream_vars = self.pipeline_map.read_only_global_network_wire_to_upstream_vars[wire]
+            upstream_vars = (
+                self.pipeline_map.read_only_global_network_wire_to_upstream_vars[wire]
+            )
             if wire not in self.wire_to_reg_stage_start_end:
                 continue
             start_stage, end_stage = self.wire_to_reg_stage_start_end[wire]
@@ -4413,16 +4436,23 @@ class PiplineHDLParams:
             if start_stage is None:
                 continue
             if wire in self.pipeline_map.read_only_global_network_wire_to_upstream_vars:
-                upstream_vars = self.pipeline_map.read_only_global_network_wire_to_upstream_vars[wire]
+                upstream_vars = (
+                    self.pipeline_map.read_only_global_network_wire_to_upstream_vars[
+                        wire
+                    ]
+                )
                 for upstream_var in upstream_vars:
                     ro_var_info = Logic.read_only_global_wires[upstream_var]
                     if ro_var_info.is_volatile:
                         continue
                     # non vol read only global wire downstream from upstream_var
-                    # Find earliest use of all wires 
+                    # Find earliest use of all wires
                     earliest_start_stage = upstream_var_to_earliest_stage[upstream_var]
                     if earliest_start_stage < start_stage:
-                        self.wire_to_reg_stage_start_end[wire] = (earliest_start_stage, end_stage)
+                        self.wire_to_reg_stage_start_end[wire] = (
+                            earliest_start_stage,
+                            end_stage,
+                        )
 
         # Pass to clear all record of unused None,None
         wires_to_rm = []
@@ -4433,15 +4463,17 @@ class PiplineHDLParams:
                 # Constants handled special outside pipeline, wont have start end
                 if (
                     not Logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state)
-                    and wire not in self.pipeline_map.const_network_wire_to_upstream_vars
-                    and wire not in self.pipeline_map.read_only_global_network_wire_to_upstream_vars
+                    and wire
+                    not in self.pipeline_map.const_network_wire_to_upstream_vars
+                    and wire
+                    not in self.pipeline_map.read_only_global_network_wire_to_upstream_vars
                 ):
                     wires_to_rm.append(wire)
         for wire_to_rm in wires_to_rm:
             self.wires_to_decl.remove(wire_to_rm)
             self.wire_to_reg_stage_start_end.pop(wire_to_rm)
 
-        #for wire in self.wire_to_reg_stage_start_end:
+        # for wire in self.wire_to_reg_stage_start_end:
         #    print("wire, start, end", wire, self.wire_to_reg_stage_start_end[wire])
 
 
@@ -5289,19 +5321,21 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
 
     # Is there a pseudo stage of non vol read only global prop?
     if pipeline_hdl_params.pipeline_map.read_only_global_network_stage_info is not None:
-        nonvol_ro_stage_info = pipeline_hdl_params.pipeline_map.read_only_global_network_stage_info
+        nonvol_ro_stage_info = (
+            pipeline_hdl_params.pipeline_map.read_only_global_network_stage_info
+        )
         rv += " " + "-- Reads from global variables\n"
         # Read each global into VAR_ variable
         for ro_var in Logic.read_only_global_wires:
             rv += (
-                        "     "
-                        + "VAR_"
-                        + WIRE_TO_VHDL_NAME(ro_var, Logic) 
-                        + " := "
-                        + "global_to_module."
-                        + WIRE_TO_VHDL_NAME(ro_var, Logic)
-                        + ";\n"
-                    )
+                "     "
+                + "VAR_"
+                + WIRE_TO_VHDL_NAME(ro_var, Logic)
+                + " := "
+                + "global_to_module."
+                + WIRE_TO_VHDL_NAME(ro_var, Logic)
+                + ";\n"
+            )
         # Write the text for each submodule level ~logic level in this stage
         for submodule_level_info in nonvol_ro_stage_info.submodule_level_infos:
             rv += GET_SUBMODULE_LEVEL_TEXT(

@@ -370,9 +370,9 @@ def SYN_AND_REPORT_TIMING_NEW(
         m_ghdl = ""
         if not GHDL_PLUGIN_BUILT_IN:
             m_ghdl = "-m ghdl "
-        optional_router2 = "" # Always default router for now...
-        #optional_router2 = "--router router2"
-        #if inst_name:
+        optional_router2 = ""  # Always default router for now...
+        # optional_router2 = "--router router2"
+        # if inst_name:
         #    # Dont use router two for small single instances
         #    # Only use router two for multi main top level no inst_name
         #    optional_router2 = ""

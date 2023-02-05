@@ -2738,9 +2738,7 @@ typedef uint8_t """
         bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
             text, parser_state
         )  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
-        parser_state_copy.FuncLogicLookupTable = (
-            bit_manip_func_name_logic_lookup  # {}
-        )
+        parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup  # {}
 
         # Try to get all built in? not just manip? Recursive is nice?
         # print("preprocessed_text",preprocessed_text)

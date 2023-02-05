@@ -1186,7 +1186,9 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
     input_drivers = []
     called_func_name = c_ast_node.name.name
     if called_func_name not in parser_state.FuncLogicLookupTable:
-        raise Exception(f"No function defintion parsed for: {called_func_name} ? Bad #include order? {c_ast_node.coord}")
+        raise Exception(
+            f"No function defintion parsed for: {called_func_name} ? Bad #include order? {c_ast_node.coord}"
+        )
     called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
     for i in range(0, len(called_func_logic.inputs)):
         input_c_ast_node = c_ast_node.args.exprs[i]
