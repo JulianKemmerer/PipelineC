@@ -138,7 +138,7 @@ def NODE_TO_ELEM(node_str):
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
-        self.path_reports = dict()
+        self.path_reports = {}
         PATH_SPLIT = "): Path #"
         maybe_path_texts = syn_output.split(PATH_SPLIT)
         path_texts = []

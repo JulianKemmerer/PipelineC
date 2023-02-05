@@ -186,7 +186,7 @@ def PART_SET_TOOL(part_str, allow_fail=False):
 class MultiMainTimingParams:
     def __init__(self):
         # Pipeline params
-        self.TimingParamsLookupTable = dict()
+        self.TimingParamsLookupTable = {}
         # TODO some kind of params for clock crossing
 
     def GET_HASH_EXT(self, parser_state):
@@ -225,8 +225,8 @@ class TimingParams:
         # Sometimes slices are between submodules,
         # This can specify where a stage is artificially started by not allowing submodules to be instantiated even if driven in an early state
         # UNUSED FOR NOW
-        # self.submodule_to_start_stage = dict()
-        # self.submodule_to_end_stage = dict()
+        # self.submodule_to_start_stage = {}
+        # self.submodule_to_end_stage = {}
 
         # Cached stuff
         self.calcd_total_latency = None
@@ -412,13 +412,13 @@ def DEL_ALL_CACHES():
     global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
     # global _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache
 
-    _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = dict()
-    # _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache    = dict()
-    # _GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
+    _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
+    # _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache    = {}
+    # _GET_ZERO_CLK_PIPELINE_MAP_cache = {}
 
 
-_GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = dict()
-_GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = dict()
+_GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
+_GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = {}
 
 
 def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
@@ -427,13 +427,13 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
     cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
     if cache_key in _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache:
         cached_lookup = _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key]
-        rv = dict()
+        rv = {}
         for inst_i, params_i in cached_lookup.items():
             rv[inst_i] = params_i.DEEPCOPY()
         return rv
 
     # Create empty lookup
-    ZeroClockTimingParamsLookupTable = dict()
+    ZeroClockTimingParamsLookupTable = {}
     for logic_inst_name in parser_state.LogicInstLookupTable:
         logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
         timing_params_i = TimingParams(logic_inst_name, logic_i)
@@ -469,7 +469,7 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
     return ZeroClockTimingParamsLookupTable
 
 
-_GET_ZERO_CLK_PIPELINE_MAP_cache = dict()
+_GET_ZERO_CLK_PIPELINE_MAP_cache = {}
 
 
 def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
@@ -569,11 +569,11 @@ class PipelineMap:
         # Wires and submodules of const network like another pipeline stage outside pipeline
         self.const_network_stage_info = None # StageInfo
         # Helper list of wires part of const network just used during prop processes
-        self.const_network_wire_to_upstream_vars = dict()
+        self.const_network_wire_to_upstream_vars = {}
 
         # Read only global wires (might be volatile or not)
         self.read_only_global_network_stage_info = None
-        self.read_only_global_network_wire_to_upstream_vars = dict()
+        self.read_only_global_network_wire_to_upstream_vars = {}
 
         # DELAY STUFF ONLY MAKES SENSE TO TALK ABOUT WHEN:
         # - 0 CLKS
@@ -586,13 +586,13 @@ class PipelineMap:
         # Doing slicing for multiple clocks shouldnt require multi clk pipeline maps anyway right?
         # HELP ME
         self.zero_clk_per_delay_submodules_map = (
-            dict()
+            {}
         )  # dict[delay_offset] => [submodules,at,offset]
         self.zero_clk_submodule_start_offset = (
-            dict()
+            {}
         )  # dict[submodule_inst] = start_offset  # In delay units
         self.zero_clk_submodule_end_offset = (
-            dict()
+            {}
         )  # dict[submodule_inst] => end_offset # In delay units
         self.zero_clk_max_delay = None
 
@@ -687,7 +687,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         print("is_zero_clk_has_delay", is_zero_clk_has_delay)
 
     # Keep track of submodules whos inputs are fully driven
-    fully_driven_submodule_inst_2_logic = dict()
+    fully_driven_submodule_inst_2_logic = {}
     # And keep track of which submodules remain
     # as to not keep looping over all submodules (sloo)
     not_fully_driven_submodules = set(logic.submodule_instances.keys())
@@ -696,7 +696,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # add output wire (and driven by output wires) to wires_driven_so_far
     # Intead delay them for N clocks as counted by the clock loop
     #   "Let's pretend we don't exist. Lets pretend we're in Antarctica" - Of Montreal
-    wire_to_remaining_clks_before_driven = dict()
+    wire_to_remaining_clks_before_driven = {}
     # All wires start with invalid latency as to not write them too soon
     for wire in logic.wires:
         wire_to_remaining_clks_before_driven[wire] = -1
@@ -710,7 +710,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # Keep a list of wires that are have been driven so far
     # Search this list to filter which submodules are in each level
     # Replaced wires_driven_so_far
-    wires_driven_by_so_far = dict()  # driven wire -> driving wire
+    wires_driven_by_so_far = {}  # driven wire -> driving wire
 
     def RECORD_DRIVEN_BY(driving_wire, driven_wire_or_wires):
         if type(driven_wire_or_wires) == list:
@@ -732,7 +732,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # Keep track of delay offset when wire is driven
     # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
-    delay_offset_when_driven = dict()
+    delay_offset_when_driven = {}
     for wire_driven_so_far in list(wires_driven_by_so_far.keys()):
         delay_offset_when_driven[
             wire_driven_so_far
@@ -787,7 +787,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     def propagate_submodule_level(things_to_follow, things_are_upstream_vars_not_submodules, submodule_level_num, stage_info, network_wire_to_upstream_vars):
         submodule_level_info = SubmoduleLevelInfo(submodule_level_num)
         # Upstreams vars for these wires depend on if starting off with wires or following submodules
-        wire_to_upstream_vars = dict()
+        wire_to_upstream_vars = {}
         if things_are_upstream_vars_not_submodules:
             wires_to_follow = things_to_follow
             for wire_to_follow in wires_to_follow:
@@ -1155,7 +1155,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             # been driven by now in clock cycle to keep execution order
             #   ALSO:
             #     Slicing between submodules is done via artificially delaying when submodules are instantiated/connected into later stages
-            fully_driven_submodule_inst_this_level_2_logic = dict()
+            fully_driven_submodule_inst_this_level_2_logic = {}
             # Get submodule logics
             # Loop over each sumodule and check if all inputs are driven
             not_fully_driven_submodules_iter = set(not_fully_driven_submodules)
@@ -1884,7 +1884,7 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
             # sys.exit(-1)
         ext = ""
 
-    clock_name_to_mhz = dict()
+    clock_name_to_mhz = {}
     if inst_name:
         # Default instances get max fmax
         clock_name_to_mhz["clk"] = INF_MHZ
@@ -2140,8 +2140,8 @@ class InstSweepState:
     def __init__(self):
         self.met_timing = False
         self.timing_report = None  # Current timing report with multiple paths
-        self.mhz_to_latency = dict()  # BEST dict[mhz] = latency
-        self.latency_to_mhz = dict()  # BEST dict[latency] = mhz
+        self.mhz_to_latency = {}  # BEST dict[mhz] = latency
+        self.latency_to_mhz = {}  # BEST dict[latency] = mhz
         self.last_mhz = None
 
         # Coarse grain sweep
@@ -2155,8 +2155,8 @@ class InstSweepState:
         # These only make sense after re writing fine sweep?
         # State about which stage being adjusted?
         # self.seen_slices=dict() # dict[main func] = list of above lists
-        # self.latency_to_best_slices = dict()
-        # self.latency_to_best_delay = dict()
+        # self.latency_to_best_slices = {}
+        # self.latency_to_best_delay = {}
         # self.stage_range = [0] # The current worst path stage estimate from the timing report
         # self.working_stage_range = [0] # Temporary stage range to guide adjustments to slices
         # self.stages_adjusted_this_latency = {0 : 0} # stage -> num times adjusted
@@ -2173,8 +2173,8 @@ class InstSweepState:
         self.best_guess_sweep_mult = 1.0
 
     def reset_recorded_best(self):
-        self.mhz_to_latency = dict()
-        self.latency_to_mhz = dict()
+        self.mhz_to_latency = {}
+        self.latency_to_mhz = {}
         self.worse_or_same_tries_count = 0
 
 
@@ -2189,7 +2189,7 @@ class SweepState:
         self.curr_main_inst = None
 
         # Per instance sweep state
-        self.inst_sweep_state = dict()  # dict[main_inst_name] = InstSweepState
+        self.inst_sweep_state = {}  # dict[main_inst_name] = InstSweepState
 
 
 def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params):
@@ -2619,7 +2619,7 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
         )
 
     # Start cache of info for recursive process
-    ff_est_cache = dict()
+    ff_est_cache = {}
 
     # For each main func write text
     text = ""
@@ -2797,7 +2797,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
     debug = False
 
     # Cache the multiple coarse runs
-    coarse_slices_cache = dict()
+    coarse_slices_cache = {}
     printed_slices_cache = set()  # hacky indicator of if printed slicing of func yet
 
     def cache_key_func(logic, target_mhz):
@@ -3594,7 +3594,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             sys.exit(-1)
 
 
-# Returns main_inst_to_slices = dict() since "coarse" means timing defined by top level slices
+# Returns main_inst_to_slices = {} since "coarse" means timing defined by top level slices
 # Of Montreal - The Party's Crashing Us
 # Starting guess really only saves 1 extra syn run for dup multimain top
 def DO_COARSE_THROUGHPUT_SWEEP(
@@ -4405,7 +4405,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
         )
         my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
-        func_name_to_async_result = dict()
+        func_name_to_async_result = {}
         for logic_func_name in parallel_func_names:
             # Get logic
             logic = parser_state.FuncLogicLookupTable[logic_func_name]
@@ -4545,7 +4545,7 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
 
     # Organize timing report into main func -> period ns
     # Includes logic for inst name coarse or multi main top
-    main_to_period = dict()
+    main_to_period = {}
     if len(parser_state.main_mhz) == 1: # TODO --coarse like finding of main needed?
         the_main_inst = list(parser_state.main_mhz.keys())[0]
         if len(timing_report.path_reports) > 1:
@@ -4625,7 +4625,7 @@ def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
     top_n_delay_usage = 10
 
     # Calc delay*n uses
-    func_to_delay_usage = dict()
+    func_to_delay_usage = {}
     for func_name in parser_state.FuncToInstances:
         func_logic = parser_state.FuncLogicLookupTable[func_name]
         if func_logic.delay is None:

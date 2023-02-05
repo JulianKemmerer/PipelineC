@@ -20,7 +20,7 @@ def IS_INSTALLED():
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
-        self.path_reports = dict()
+        self.path_reports = {}
         path_report = PathReport(syn_output)
         self.path_reports[path_report.path_group] = path_report
 

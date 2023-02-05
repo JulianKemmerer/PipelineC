@@ -75,9 +75,9 @@ def GET_SIM_FILES(latency=0):
 class SimGenInfo:
     def __init__(self):
         self.clock_name_to_mhz = None
-        self.debug_input_to_vhdl_name = dict()
-        self.debug_output_to_vhdl_name = dict()
-        self.main_func_to_latency = dict()
+        self.debug_input_to_vhdl_name = {}
+        self.debug_output_to_vhdl_name = {}
+        self.main_func_to_latency = {}
 
 
 def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
