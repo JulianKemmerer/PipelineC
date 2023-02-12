@@ -10023,6 +10023,13 @@ def GET_GLOBAL_VAR_INFO(parser_state):
                 ):
                     parser_state.global_vars[var_name].used_in_funcs.add(func_name)
 
+    # Even hackier fix to remove what looks like FSM generated code duplicate driving things
+    # but really is just generated copy
+    for var_name, var_info in parser_state.global_vars.items():
+        for func_name in set(var_info.used_in_funcs):
+            if func_name + C_TO_FSM.FSM_EXT in var_info.used_in_funcs:
+                var_info.used_in_funcs.remove(func_name)
+
     return parser_state
 
 
