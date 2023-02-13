@@ -9308,6 +9308,7 @@ class ParserState:
         self.marked_onehot = set()
         self.part = None
         self.io_pairs = set()
+        self.inst_array_dict = dict()
         self.async_wires = set()
         self.clk_mhz = {}
 
@@ -9368,6 +9369,7 @@ class ParserState:
         rv.marked_onehot = set(self.marked_onehot)
         rv.part = self.part
         rv.io_pairs = set(self.io_pairs)
+        rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
         rv.clk_mhz = dict(self.clk_mhz)
 
@@ -10021,6 +10023,13 @@ def GET_GLOBAL_VAR_INFO(parser_state):
                 ):
                     parser_state.global_vars[var_name].used_in_funcs.add(func_name)
 
+    # Even hackier fix to remove what looks like FSM generated code duplicate driving things
+    # but really is just generated copy
+    for var_name, var_info in parser_state.global_vars.items():
+        for func_name in set(var_info.used_in_funcs):
+            if func_name + C_TO_FSM.FSM_EXT in var_info.used_in_funcs:
+                var_info.used_in_funcs.remove(func_name)
+
     return parser_state
 
 
@@ -10123,6 +10132,11 @@ def GET_GLOBAL_CONST_INFO(parser_state):
     # Promote non const decls to const as found
     for global_decl in non_const_decls.values():
         name_str = str(global_decl.name)
+        # Skips array instance wires that appear undriven
+        if name_str in parser_state.inst_array_dict.values():
+            continue
+        if name_str in parser_state.inst_array_dict.keys():
+            continue
         if (name_str in vars_w_no_write) and (name_str in vars_w_some_use):
             print(
                 f"Marking global variable {name_str} as constant since never written..."
@@ -11199,6 +11213,13 @@ def APPEND_PRAGMA_INFO(parser_state):
             i_wire = toks[1]
             o_wire = toks[2]
             parser_state.io_pairs.add((i_wire, o_wire))
+
+        # INST_ARRAY
+        elif name == "INST_ARRAY":
+            toks = pragma.string.split(" ")
+            inst_var = toks[1]
+            array_var = toks[2]
+            parser_state.inst_array_dict[inst_var] = array_var
 
         # ASYNC_WIRE
         elif name == "ASYNC_WIRE":
