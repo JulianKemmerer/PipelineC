@@ -98,7 +98,10 @@ def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
                     path_list += ["-I" + thing_path]
     # Also include src files in git root dir
     dir_path = REPO_ABS_DIR()
+
+    # TODO: Temporarily include both paths to avoid breakage while still refactoring
     path_list += ["-I" + dir_path + "/"]
+    path_list += ["-I" + dir_path + "/pipelinec/include/"]
 
     # For now global __PIPELINEC__ define lives here
     path_list += ["-D__PIPELINEC__"]
