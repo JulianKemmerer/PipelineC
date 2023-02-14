@@ -17,7 +17,12 @@ import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR
+from utilities import REPO_ABS_DIR, GET_TOOL_PATH
+
+# Detect cpp install
+if GET_TOOL_PATH("cpp") is None:
+    # TODO fall back to clang tools?
+    raise Exception("'cpp' C preprocessor is not installed!")
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
