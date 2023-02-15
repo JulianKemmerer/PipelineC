@@ -482,9 +482,7 @@ class Logic:
         self.is_fsm_clk_func = False
         self.state_groups = []  # List of lists of state infos
         self.first_user_state = None  # First/user entry state
-        self.func_call_name_to_state = (
-            {}
-        )  # Func call name to lookup of func call state
+        self.func_call_name_to_state = {}  # Func call name to lookup of func call state
         self.func_call_node_to_entry_exit_states = (
             {}
         )  # Same funcs as above, node inst specific entry and exit
@@ -3882,7 +3880,7 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
 # ONLY USE THIS WITH REF C AST NODES
 # Returns toks, logic
 def C_AST_REF_TO_TOKENS_TO_LOGIC(c_ast_ref, prepend_text, parser_state):
-    toks = tuple()
+    toks = ()
     if type(c_ast_ref) == c_ast.ID:
         toks += (str(c_ast_ref.name),)
     elif type(c_ast_ref) == c_ast.ArrayRef:
@@ -9279,9 +9277,7 @@ class ParserState:
         # Parsed pre func defintions
         # Build map just of func names and where there are used
         self.func_name_to_calls = {}  # dict[func_name] = set(called_func_names)
-        self.func_names_to_called_from = (
-            {}
-        )  # dict[func_name] = set(calling_func_names)
+        self.func_names_to_called_from = {}  # dict[func_name] = set(calling_func_names)
         self.struct_to_field_type_dict = {}
         self.enum_info_dict = {}
         self.global_vars = {}  # name->state reg info
@@ -9507,7 +9503,7 @@ def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
     for children_tuple in children_tuples:
         # Certain compound nodes contain C AST identifiers that are not variables
         # Ex. struct use, my_struct.my_var shows up as
-        # an individual c_ast.ID node for 'my_var' 
+        # an individual c_ast.ID node for 'my_var'
         # when thats not the same as using 'my_var' as an actual variable
         child_node = children_tuple[1]
         if type(child_node) == c_ast.StructRef:
@@ -9521,7 +9517,9 @@ def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
     if nodes is None:
         nodes = []
         if c_ast_type == c_ast.ID:
-            raise Exception(f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
+            raise Exception(
+                f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers..."
+            )
     if type(c_ast_node) == c_ast_type:
         nodes.append(c_ast_node)
     children_tuples = c_ast_node.children()
@@ -9756,7 +9754,9 @@ def PARSE_FILE(c_filename):
                         )
 
         # Elaborate the logic down to raw vhdl modules
-        print("Elaborating main function hierarchies down to raw HDL logic...", flush=True)
+        print(
+            "Elaborating main function hierarchies down to raw HDL logic...", flush=True
+        )
         for main_func in list(parser_state.main_mhz.keys()):
             adjusted_containing_logic_inst_name = ""
             main_func_logic = parser_state.FuncLogicLookupTable[main_func]
@@ -10901,11 +10901,11 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
             func_def, parser_state, parse_body, only_fsm_clk_funcs
         )
         if logic is not None:
-            #print("Parsed FSM style function:", logic.func_name, flush=True)
+            # print("Parsed FSM style function:", logic.func_name, flush=True)
             parser_state.FuncLogicLookupTable[logic.func_name] = logic
             # print(logic.c_ast_node)
         else:
-            #print("Non FSM Function:",func_def.decl.name, flush=True)
+            # print("Non FSM Function:",func_def.decl.name, flush=True)
             pass
 
     return parser_state

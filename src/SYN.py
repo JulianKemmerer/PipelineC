@@ -60,7 +60,7 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 # 2.0                   585       9
 # 2.25                  493       8
 # 2.5                   509       7
-#=== After Recent updates
+# === After Recent updates
 # 2.0?                  536       5
 # 1.9375                343       8
 # 1.5                   368       8
@@ -94,17 +94,13 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 
 # Target pipelining at minimum at modules of period = target/MULT
 #   0.0 -> start w/ largest/top level modules first
-#   0.5 -> 2 times the target period (not meeting timing), 
+#   0.5 -> 2 times the target period (not meeting timing),
 #   2.0 -> 1/2 the target period (easily meets timing)
-HIER_SWEEP_MULT_MIN = None # Cmd line arg sets
-HIER_SWEEP_MULT_INC = (
-    0.001  # Intentionally very small, sweep already tries to make largest possible steps
-)
+HIER_SWEEP_MULT_MIN = None  # Cmd line arg sets
+HIER_SWEEP_MULT_INC = 0.001  # Intentionally very small, sweep already tries to make largest possible steps
 MAX_N_WORSE_RESULTS_MULT = 16  # Multiplier for how many times failing to improve before moving on? divided by total latnecy
 BEST_GUESS_MUL_MAX = 5.0  # Multiplier limit on top down register insertion coarsly during middle out sweep
-MAX_ALLOWED_LATENCY_MULT = (
-    5.0  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
-)
+MAX_ALLOWED_LATENCY_MULT = 5.0  # Multiplier limit for individual module coarse register insertion coarsely, similar same as BEST_GUESS_MUL_MAX?
 COARSE_SWEEP_MULT_INC = 0.1  # Multiplier increment for how many times fmax to try for compensating not meeting timing
 COARSE_SWEEP_MULT_MAX = 1.0  # ==1.0 disables trying to pipeline to fake higher fmax, Max multiplier for internal fmax
 MAX_CLK_INC_RATIO = 1.25  # Multiplier for how any extra clocks can be added ex. 1.25 means 25% more stages max
@@ -113,6 +109,7 @@ INF_MHZ = 1000  # Impossible timing goal
 INF_HIER_MULT = 999999.9  # Needed?
 SLICE_EPSILON_MULTIPLIER = 5  # 6.684491979 max/best? # Constant used to determine when slices are equal. Higher=finer grain slicing, lower=similar slices are said to be equal
 SLICE_STEPS_BETWEEN_REGS = 3  # Multiplier for how narrow to start off the search for better timing. Higher=More narrow start, Experimentally 2 isn't enough, slices shift <0 , > 1 easily....what?
+
 
 def PART_SET_TOOL(part_str, allow_fail=False):
     global SYN_TOOL
@@ -567,7 +564,7 @@ class PipelineMap:
         self.stage_infos = []
 
         # Wires and submodules of const network like another pipeline stage outside pipeline
-        self.const_network_stage_info = None # StageInfo
+        self.const_network_stage_info = None  # StageInfo
         # Helper list of wires part of const network just used during prop processes
         self.const_network_wire_to_upstream_vars = {}
 
@@ -744,11 +741,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     next_wires_to_follow = []
 
     # Special handling of wires not directly in pipeline:
-    
+
     # Propagate network across wires until reaching submodule inputs
     # Append wire driver pairs to submodule_level_info
     # Return submodules reached by wire
-    def propagate_wire(wire_to_follow, upstream_vars, submodule_level_info, network_wire_to_upstream_vars):
+    def propagate_wire(
+        wire_to_follow,
+        upstream_vars,
+        submodule_level_info,
+        network_wire_to_upstream_vars,
+    ):
         if wire_to_follow not in network_wire_to_upstream_vars:
             network_wire_to_upstream_vars[wire_to_follow] = set()
         network_wire_to_upstream_vars[wire_to_follow] |= upstream_vars
@@ -776,15 +778,27 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 driven_wires = logic.wire_drives[wire_to_follow]
             for driven_wire in driven_wires:
                 RECORD_DRIVEN_BY(wire_to_follow, driven_wire)
-                submodule_level_info.driver_driven_wire_pairs.append((wire_to_follow, driven_wire))
+                submodule_level_info.driver_driven_wire_pairs.append(
+                    (wire_to_follow, driven_wire)
+                )
                 submodules_reached |= propagate_wire(
-                                        driven_wire, upstream_vars, 
-                                        submodule_level_info, network_wire_to_upstream_vars)
+                    driven_wire,
+                    upstream_vars,
+                    submodule_level_info,
+                    network_wire_to_upstream_vars,
+                )
         return submodules_reached
+
     # Single submodule level of network propagation
     # Fucky since essentially can start with upstream root wires or following modules...
-    # Return updated stage_info with new submodule level and return all_in_network_sub_insts_reached 
-    def propagate_submodule_level(things_to_follow, things_are_upstream_vars_not_submodules, submodule_level_num, stage_info, network_wire_to_upstream_vars):
+    # Return updated stage_info with new submodule level and return all_in_network_sub_insts_reached
+    def propagate_submodule_level(
+        things_to_follow,
+        things_are_upstream_vars_not_submodules,
+        submodule_level_num,
+        stage_info,
+        network_wire_to_upstream_vars,
+    ):
         submodule_level_info = SubmoduleLevelInfo(submodule_level_num)
         # Upstreams vars for these wires depend on if starting off with wires or following submodules
         wire_to_upstream_vars = {}
@@ -811,18 +825,26 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 # everything that occurs across inputs
                 input_upstream_vars = set()
                 for input_port in sub_logic.inputs:
-                    input_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    input_wire = (
+                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    )
                     input_upstream_vars |= network_wire_to_upstream_vars[input_wire]
                 for output_port in sub_logic.outputs:
-                    output_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                    output_wire = (
+                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                    )
                     wires_to_follow.add(output_wire)
                     wire_to_upstream_vars[output_wire] = input_upstream_vars
-        # Follow each wire with associated upstream vars to more submodules 
+        # Follow each wire with associated upstream vars to more submodules
         all_in_network_sub_insts_reached = set()
         for wire_to_follow in wires_to_follow:
             upstream_vars = wire_to_upstream_vars[wire_to_follow]
-            sub_insts_reached = propagate_wire(wire_to_follow, upstream_vars, 
-                                               submodule_level_info, network_wire_to_upstream_vars)
+            sub_insts_reached = propagate_wire(
+                wire_to_follow,
+                upstream_vars,
+                submodule_level_info,
+                network_wire_to_upstream_vars,
+            )
             # Are all submodule inputs part of network?
             for sub_inst_reached in sub_insts_reached:
                 if sub_inst_reached in all_in_network_sub_insts_reached:
@@ -831,7 +853,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
                 all_inputs_in_network = True
                 for input_port in sub_logic.inputs:
-                    input_wire = sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    input_wire = (
+                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                    )
                     if input_wire not in network_wire_to_upstream_vars.keys():
                         all_inputs_in_network = False
                         break
@@ -839,8 +863,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     all_in_network_sub_insts_reached.add(sub_inst_reached)
         # Update and return where ended up
         stage_info.submodule_level_infos.append(submodule_level_info)
-        return all_in_network_sub_insts_reached                      
-    
+        return all_in_network_sub_insts_reached
+
     # Constant network propagation starts at user constant literals like '2'
     things_to_follow = set()
     for wire in logic.wires:
@@ -851,10 +875,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         rv.const_network_stage_info = StageInfo(0)
     submodule_level = 0
     while len(things_to_follow) > 0:
-        things_are_upstream_vars_not_submodules = submodule_level==0
+        things_are_upstream_vars_not_submodules = submodule_level == 0
         all_in_network_sub_insts_reached = propagate_submodule_level(
-            things_to_follow, things_are_upstream_vars_not_submodules, submodule_level, 
-            rv.const_network_stage_info, rv.const_network_wire_to_upstream_vars)
+            things_to_follow,
+            things_are_upstream_vars_not_submodules,
+            submodule_level,
+            rv.const_network_stage_info,
+            rv.const_network_wire_to_upstream_vars,
+        )
         submodule_level += 1
         # Conditionally set submodule outputs as next wires to follow
         things_to_follow = set()
@@ -867,7 +895,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                 continue
             things_to_follow.add(sub_inst_reached)
-           
+
     # Do read_only_global_wires (non volatile) network prop
     # Starts from read only wires
     things_to_follow = set(logic.read_only_global_wires.keys())
@@ -876,14 +904,23 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         rv.read_only_global_network_stage_info = StageInfo(0)
         # And also includes constant network but does not include its upstream vars/wires - just that is in network
         for const_network_wire in rv.const_network_wire_to_upstream_vars:
-            if const_network_wire not in rv.read_only_global_network_wire_to_upstream_vars:
-                rv.read_only_global_network_wire_to_upstream_vars[const_network_wire] = set()
+            if (
+                const_network_wire
+                not in rv.read_only_global_network_wire_to_upstream_vars
+            ):
+                rv.read_only_global_network_wire_to_upstream_vars[
+                    const_network_wire
+                ] = set()
     submodule_level = 0
     while len(things_to_follow) > 0:
-        things_are_upstream_vars_not_submodules = submodule_level==0
+        things_are_upstream_vars_not_submodules = submodule_level == 0
         all_in_network_sub_insts_reached = propagate_submodule_level(
-            things_to_follow, things_are_upstream_vars_not_submodules, submodule_level, 
-            rv.read_only_global_network_stage_info, rv.read_only_global_network_wire_to_upstream_vars)
+            things_to_follow,
+            things_are_upstream_vars_not_submodules,
+            submodule_level,
+            rv.read_only_global_network_stage_info,
+            rv.read_only_global_network_wire_to_upstream_vars,
+        )
         submodule_level += 1
         # Conditionally set submodule outputs as next wires to follow
         things_to_follow = set()
@@ -1024,7 +1061,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 print_debug = True
         if print_debug:
             print("STAGE NUM =", stage_num)
-        
+
         submodule_level = 0
         # DO WHILE LOOP FOR PER COMB LOGIC SUBMODULE LEVELS
         while True:  # DO
@@ -1083,7 +1120,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             )
                             if submodule_latency_from_container_logic > 0:
                                 stage_info.submodule_output_ports.append(driving_wire)
-
 
                     # Loop over what this wire drives
                     if driving_wire in logic.wire_drives:
@@ -1196,9 +1232,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                         )
                         ce_driving_wire = logic.wire_driven_by[ce_wire]
                         submodule_input_port_driving_wires.append(ce_driving_wire)
-                        if (
-                            ce_driving_wire not in wires_driven_by_so_far
-                        ):
+                        if ce_driving_wire not in wires_driven_by_so_far:
                             submodule_has_all_inputs_driven = False
                     # Check each input
                     if submodule_has_all_inputs_driven:
@@ -1208,8 +1242,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                     logic, submodule_inst, input_port_name
                                 )
                             )
-                            submodule_input_port_driving_wires.append(driving_wire)                            
-                            if (driving_wire not in wires_driven_by_so_far):
+                            submodule_input_port_driving_wires.append(driving_wire)
+                            if driving_wire not in wires_driven_by_so_far:
                                 submodule_has_all_inputs_driven = False
                                 if bad_inf_loop:
                                     print(
@@ -1249,8 +1283,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                 # Some inputs might be constant, dont contribute to delay offset
                                 # Some inputs might also be global read wires, similar no delay
                                 if (
-                                    submodule_input_port_driving_wire not in rv.const_network_wire_to_upstream_vars and
-                                    submodule_input_port_driving_wire not in rv.read_only_global_network_wire_to_upstream_vars
+                                    submodule_input_port_driving_wire
+                                    not in rv.const_network_wire_to_upstream_vars
+                                    and submodule_input_port_driving_wire
+                                    not in rv.read_only_global_network_wire_to_upstream_vars
                                 ):
                                     delay_offset = delay_offset_when_driven[
                                         submodule_input_port_driving_wire
@@ -1464,7 +1500,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             )
             if not submodule_level_info.IS_EMPTY():
                 stage_info.submodule_level_infos.append(submodule_level_info)
-           
+
             # Sometimes submodule levels iterations dont have submodules as we iterate driving wires / for multiple clks
             # Only update counters if was real submodule level with submodules
             if submodule_level_iteration_has_submodules:
@@ -1949,7 +1985,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
             if SYN_TOOL is QUARTUS:
                 MAX_NS = 80000
                 if ns > MAX_NS:
-                    print("Clipping clock",clock_name,"period to", MAX_NS,"ns...")
+                    print("Clipping clock", clock_name, "period to", MAX_NS, "ns...")
                     ns = MAX_NS
             # Default cmd is get_ports unless need internal user clk net name
             get_thing_cmd = "get_ports"
@@ -1962,7 +1998,9 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                 + str(ns)
                 + " -waveform {0 "
                 + str(ns / 2.0)
-                + "} [" + get_thing_cmd + " "
+                + "} ["
+                + get_thing_cmd
+                + " "
                 + clock_name
                 + "]\n"
             )
@@ -3324,9 +3362,11 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             sys.exit(-1)
 
         # Write pipeline delay cache
-        UPDATE_PIPELINE_MIN_PERIOD_CACHE(sweep_state.timing_report,
-                                         sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                                         parser_state)
+        UPDATE_PIPELINE_MIN_PERIOD_CACHE(
+            sweep_state.timing_report,
+            sweep_state.multimain_timing_params.TimingParamsLookupTable,
+            parser_state,
+        )
 
         # Did it meet timing? Make adjusments as checking
         made_adj = False
@@ -3346,8 +3386,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 main_insts = set([list(parser_state.main_mhz.keys())[0]])
             else:
                 main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
-                    path_report, parser_state,
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable
+                    path_report,
+                    parser_state,
+                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
                 )
             if len(main_insts) <= 0:
                 print(
@@ -3411,7 +3452,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 better_mhz = curr_mhz > best_mhz_so_far
                 better_latency = curr_mhz > best_mhz_this_latency
                 # Log result
-                got_same_mhz_again = curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
+                got_same_mhz_again = (
+                    curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
+                )
                 sweep_state.inst_sweep_state[main_inst].last_mhz = curr_mhz
                 if better_mhz or better_latency:
                     sweep_state.inst_sweep_state[main_inst].mhz_to_latency[
@@ -3444,7 +3487,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
 
                         # Getting exactly same MHz is bad sign, that didnt pipeline current modules right
                         if got_same_mhz_again:
-                            print("Got identical timing result, trying to pipeline smaller modules instead...")
+                            print(
+                                "Got identical timing result, trying to pipeline smaller modules instead..."
+                            )
                             # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
                             # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
                             if (
@@ -3489,15 +3534,18 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                             # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
                             print(
                                 "Middle sweep at this hierarchy level failed to meet timing...",
-                                "Next best guess multiplier was", new_best_guess_sweep_mult
+                                "Next best guess multiplier was",
+                                new_best_guess_sweep_mult,
                             )
                             if (
                                 sweep_state.inst_sweep_state[
                                     main_inst
                                 ].coarse_sweep_mult
                                 + COARSE_SWEEP_MULT_INC
-                            ) <= COARSE_SWEEP_MULT_MAX: 
-                                print("Trying to pipeline current modules to higher fmax to compensate...")
+                            ) <= COARSE_SWEEP_MULT_MAX:
+                                print(
+                                    "Trying to pipeline current modules to higher fmax to compensate..."
+                                )
                                 sweep_state.inst_sweep_state[
                                     main_inst
                                 ].best_guess_sweep_mult = 1.0
@@ -3740,9 +3788,12 @@ def DO_COARSE_THROUGHPUT_SWEEP(
         )
 
         # Write pipeline delay cache
-        UPDATE_PIPELINE_MIN_PERIOD_CACHE(inst_sweep_state.timing_report, 
-                                         TimingParamsLookupTable,
-                                         parser_state, inst_name)
+        UPDATE_PIPELINE_MIN_PERIOD_CACHE(
+            inst_sweep_state.timing_report,
+            TimingParamsLookupTable,
+            parser_state,
+            inst_name,
+        )
 
         # Did it meet timing? Make adjusments as checking
         made_adj = False
@@ -3848,7 +3899,8 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                                 print(
                                     logic.func_name,
                                     "reached maximum allowed latency, no more adjustments...",
-                                    "multiplier =",max_allowed_latency_mult
+                                    "multiplier =",
+                                    max_allowed_latency_mult,
                                 )
                                 continue
 
@@ -3871,7 +3923,9 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                         ):
                             # Clip to last inc size - 1, minus one to always be narrowing down
                             # Extra div by 2 helps?
-                            clk_inc = int(inst_sweep_state.last_latency_increase/2) # - 1
+                            clk_inc = int(
+                                inst_sweep_state.last_latency_increase / 2
+                            )  # - 1
                             if clk_inc <= 0:
                                 clk_inc = 1
                             clks = inst_sweep_state.coarse_latency + clk_inc
@@ -4215,9 +4269,7 @@ def IS_USER_CODE(logic, parser_state):
 
 def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     PATH_DELAY_CACHE_DIR = (
-        C_TO_LOGIC.EXE_ABS_DIR()
-        + f"/../{dir_name}/"
-        + str(SYN_TOOL.__name__).lower()
+        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/" + str(SYN_TOOL.__name__).lower()
     )
     if parser_state.part is not None:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
@@ -4226,6 +4278,7 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     else:
         PATH_DELAY_CACHE_DIR += "/syn"
     return PATH_DELAY_CACHE_DIR
+
 
 def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # Default sanity
@@ -4326,10 +4379,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                     # Try to model the path delay
                     modeled_path_delay = None
                     if DEVICE_MODELS.part_supported(parser_state.part):
-                        op_and_widths = DEVICE_MODELS.func_name_to_op_and_widths(logic.func_name)
+                        op_and_widths = DEVICE_MODELS.func_name_to_op_and_widths(
+                            logic.func_name
+                        )
                         if op_and_widths is not None:
-                            op, widths = op_and_widths 
-                            modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
+                            op, widths = op_and_widths
+                            modeled_path_delay = DEVICE_MODELS.estimate_int_timing(
+                                op, widths
+                            )
                     # Try to get cached path delay
                     cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
                     # Prefer cache over model
@@ -4402,7 +4459,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         # Start parallel syn for parallel_func_names
         # Parallelized
         NUM_PROCESSES = int(
-            open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
+            open(
+                C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r"
+            ).readline()
         )
         my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
         func_name_to_async_result = {}
@@ -4519,16 +4578,19 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 
     return parser_state
 
-def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, parser_state, inst_name=None):
+
+def UPDATE_PIPELINE_MIN_PERIOD_CACHE(
+    timing_report, TimingParamsLookupTable, parser_state, inst_name=None
+):
     # Make dir if needed
     cache_dir = GET_PATH_DELAY_CACHE_DIR(parser_state, "pipeline_min_period_cache")
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
-    
+
     # pipeline 'number' record in filename is size of largest slice 0..1.0
     # Find all pipelined cachable func instances
     cacheable_pipelined_instances = set()
-    for func_inst,timing_params in TimingParamsLookupTable.items():
+    for func_inst, timing_params in TimingParamsLookupTable.items():
         func_logic = parser_state.LogicInstLookupTable[func_inst]
         # Cacheable non user code?
         if IS_USER_CODE(func_logic, parser_state):
@@ -4546,16 +4608,22 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
     # Organize timing report into main func -> period ns
     # Includes logic for inst name coarse or multi main top
     main_to_period = {}
-    if len(parser_state.main_mhz) == 1: # TODO --coarse like finding of main needed?
+    if len(parser_state.main_mhz) == 1:  # TODO --coarse like finding of main needed?
         the_main_inst = list(parser_state.main_mhz.keys())[0]
         if len(timing_report.path_reports) > 1:
             raise Exception("Should only be one path group in timing report!")
-        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[0].path_delay_ns
+        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[
+            0
+        ].path_delay_ns
     elif inst_name:
-        the_main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state)
+        the_main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            inst_name, parser_state
+        )
         if len(timing_report.path_reports) > 1:
             raise Exception("Should only be one path group in timing report!")
-        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[0].path_delay_ns
+        main_to_period[the_main_inst] = list(timing_report.path_reports.values())[
+            0
+        ].path_delay_ns
     else:
         for reported_clock_group in timing_report.path_reports:
             path_report = timing_report.path_reports[reported_clock_group]
@@ -4564,15 +4632,17 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
             )
             for main_inst in some_main_insts:
                 main_to_period[main_inst] = path_report.path_delay_ns
-        
+
     # For each pipelined instance try to update cache with
     # period from its main func
     for func_inst in cacheable_pipelined_instances:
         timing_params = TimingParamsLookupTable[func_inst]
         func_logic = parser_state.LogicInstLookupTable[func_inst]
-        main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+        main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            func_inst, parser_state
+        )
         # Sometimes, especally when finally meeting timing,
-        # the timing report might not have a critical path through 
+        # the timing report might not have a critical path through
         # a cacheable pipelined instance
         # Could assume met timing, but for now just skip...
         if main_inst not in main_to_period:
@@ -4593,7 +4663,9 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(timing_report, TimingParamsLookupTable, par
         func_cache_files = Path(cache_dir).glob(f"{func_key}*")
         for func_cache_filepath in func_cache_files:
             func_cache_file = os.path.basename(str(func_cache_filepath))
-            cached_slice_size = float(func_cache_file.replace(".delay","").split("_")[-1])
+            cached_slice_size = float(
+                func_cache_file.replace(".delay", "").split("_")[-1]
+            )
             # those with smaller slices than current
             if cached_slice_size < max_slice_size:
                 # Should have better timing
