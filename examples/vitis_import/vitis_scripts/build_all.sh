@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Use ../build.sh to produce PipelineC ../OUT/package_axis_xo.tcl file
+
+# Vitis build steps:
 #TARGET=hw
 TARGET=hw_emu
 VITIS_PLATFORM=xilinx_u50_gen3x16_xdma_5_202210_1
