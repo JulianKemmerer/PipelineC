@@ -33,6 +33,7 @@ TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 SYN_TOOL = None  # Attempts to figure out from part number
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
+WRITE_AXIS_XO_FILE = False
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
@@ -64,6 +65,7 @@ DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 # 2.0?                  536       5
 # 1.9375                343       8
 # 1.5                   368       8
+# 1.087                 368
 # 1.0                   417       15
 # 0.5                   ~417      ~45 reaches 1.0x start after ~33runs
 # 0.0                   ~417      ~65 reaches 1.0x after ~55 runs
@@ -2128,6 +2130,10 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     f = open(out_filepath, "w")
     f.write(out_text)
     f.close()
+
+    # Optional Vivado .xo file, only needs IO info to be ready, not final read_vhdl.tcl yet
+    if WRITE_AXIS_XO_FILE:
+        VIVADO.WRITE_AXIS_XO(parser_state)
 
     # Tack on a conversion to verilog if requested
     if CONVERT_FINAL_TOP_VERILOG:

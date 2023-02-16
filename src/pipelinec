@@ -48,6 +48,7 @@ parser.add_argument("--start", type=int, default=None, help="When doing a --coar
 parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
 parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
 parser.add_argument("--yosys_json", help="Just output the json from yosys.", action="store_true")
+parser.add_argument("--xo_axis", help="Write a .tcl script to package output VHDL as a Vitis IP .xo file with an AXIS interface.", action="store_true")
 args = parser.parse_args()
 
 # Combine certain args
@@ -83,6 +84,8 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args)
+# AXIS XO file switch
+SYN.WRITE_AXIS_XO_FILE = args.xo_axis
 
 
 # Ugh some python versions dont obey the coding comment at top of file?
@@ -138,24 +141,29 @@ SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
-Python cleanup PR
-Bartus help w/ Vitis HLS integration
-  --xo mode making packaing tcl?
-Fix duplicate instances of FSM funcs
-  https://github.com/JulianKemmerer/PipelineC/issues/86
-  Default to one single inst per MAIN thread?
-  Requires flattening into one module?
-  Make inst of every func used in thread?
-  Make all funcs single instance?
-  Also can fix bug in FSM style extra clock?
-    Extra clock when just func inside nested loops? ex. GoL count live neighbors
+Python cleanup PRs
+  Datavenia formatting and git commit hooks
+  DarkKnight w /pipelinec/include/ reorg
+  Clone copy of repo
+  Try to build RT or other big project
+LATTE 23
+  Slides ready for break out room discussions March 26
+General shared buffer with 3 clock domains(vga, RAM, compute) (RO port, the RAM, RW ports)
+  Sketch out with shared instance wires in way that works with multiple clock domains
+  Valid ready signalling
+  Use inst array sharing
+  Use to make double frame buffer fast ~final GOL demo?
+  Needs async start and complete from below?
+Try to do short youtube video fixing a bug or introducing how tool works
+  For people like Bartus who want to help
 Victor's RT
-  disable -Whide for less ghdl warnings
-  Yosyshq article!
+  Try to get nextpnr-xilinx working
+    Might need to hacked for now
+  Victor's iterations:
+    Try coarse style sweep that doubles stages each failure
+    Find a working design and then backs down to fewer stages
   Try verilating whole pipeline?
-Document INST_ARRAY array vars 
-    Is read/write only style and auto connected to N insts in design
-  Can build arbiters out of that (simple data,valid, ready, or even AXI)
+How to do async start and complete (prob w/ ready+valid for cpu polling)
 Does clang does constexpr/temaples well
   Try cindex test w/ preprocessing too
   Isolate .pipelinec specific files to be parsed by clang in isolation
@@ -163,13 +171,7 @@ Does clang does constexpr/temaples well
   Ideal example is FIR bit width growth calc
   Need abitrary bit width integer type?
   Fixed point stuff?
-General shared buffer with 3 clock domains(vga, RAM, compute) (RO, the RAM, RW)
-  Valid ready signalling
-  Use N<->M sharing
-  Use to make double frame buffer fast ~final GOL demo?
-  Needs async start and complete from below?
-How to do async start and complete (prob w/ ready+valid for cpu polling)
-Redo FSM Style arb with N-M sharing wires
+Redo FSM Style arb with inst array sharing wires
   User will need to specify number of users of SINGLE INST (inst array size)
   Allow setting slower FSM style arb styles with more regs, not zero cycle
 How to use delay caches?
@@ -331,4 +333,5 @@ Need to re-do clock crossings/wires used in pipelineable logic to be like volati
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Macros using preprocessing integer math checks for sizes?
   Software does this somehow? hold N value type?
+Can use clang preprocessor? clang -E? if cpp not installed...
 """
