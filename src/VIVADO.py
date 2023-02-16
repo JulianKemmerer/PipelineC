@@ -750,9 +750,9 @@ validate_bd_design''' + f'''
 make_wrapper -files [get_files $script_path/{project_name}/{project_name}.srcs/sources_1/bd/{ip_name}/{ip_name}.bd] -top
 add_files -norecurse $script_path/{project_name}/{project_name}.gen/sources_1/bd/{ip_name}/hdl/{ip_name}_wrapper.v
 set_property top {ip_name}_wrapper [current_fileset]
-update_compile_order -fileset sources_1''' + '''
+update_compile_order -fileset sources_1
 
-ipx::package_project -root_dir $script_path/ip_repo -vendor user.org -library user -taxonomy /UserIP -module {ip_name} -import_files
+ipx::package_project -root_dir $script_path/ip_repo -vendor user.org -library user -taxonomy /UserIP -module {ip_name} -import_files + ''' + '''
 update_compile_order -fileset sources_1
 set_property ipi_drc {ignore_freq_hz false} [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
 set_property sdx_kernel true [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
