@@ -521,12 +521,17 @@ def STATE_GROUP_TO_C_CODE(
             text += "  }\n"
             continue
 
-        # At this point the stage is absolutely empty, assume to be delay state for delaying return
-        #raise Exception("Need assumed delay state for return?")
-        text += "    // ASSUMED EMPTY DELAY STATE FOR RETURN\n"
-        text += "    FSM_STATE = RETURN_REG;\n"
-        text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
-        text += "  }\n"
+        # At this point the stage assumed to be returning/done?
+        # From a subroutine or main?
+        if state_info.sub_func_name is not None:
+            text += "    // Assumed subroutine returning to scheduled return state\n"
+            text += "    FSM_STATE = " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+            text += "  }\n"
+        else:
+            text += "    // ASSUMED EMPTY DELAY STATE FOR RETURN\n"
+            text += "    FSM_STATE = RETURN_REG;\n"
+            text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+            text += "  }\n"
 
     return text
 
@@ -995,7 +1000,7 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     # print()
     # visited_states is primarily to resolve loops for user instead of requiring __clk()?
     if start_state in visited_states:
-        return [[start_state]]
+        return [[]] #[[start_state]]
     visited_states.append(start_state)
 
     debug = False
@@ -1784,7 +1789,8 @@ def GET_GROUPED_STATE_TRANSITIONS(
         return []
     state_groups = [None] * (max(state_to_latest_index.values()) + 1)
     for state, index in state_to_latest_index.items():
-        # print("Last Index",index,state.name)
+        if debug:
+            print("Last Index",index,state.name)
         if state_groups[index] is None:
             state_groups[index] = set()
         state_groups[index].add(state)
