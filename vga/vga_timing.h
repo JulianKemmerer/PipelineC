@@ -10,6 +10,24 @@
 
 // Constants and logic to produce VGA signals at fixed resolution
 
+////***480x320@60Hz***//  Requires 12.5 MHz clock
+#if FRAME_WIDTH == 480
+#if FRAME_HEIGHT == 320
+#define PIXEL_CLK_MHZ 12.5
+
+#define H_FP 8 //H front porch width (pixels)
+#define H_PW 24 //H sync pulse width (pixels)
+#define H_MAX 544 //H total period (pixels)
+
+#define V_FP 8 //V front porch width (lines)
+#define V_PW 24 //V sync pulse width (lines)
+#define V_MAX 384 //V total period (lines)
+
+#define H_POL 0
+#define V_POL 0
+#endif
+#endif
+
 ////***640x480@60Hz***//  Requires 25 MHz clock
 #if FRAME_HEIGHT == 480
 #define PIXEL_CLK_MHZ 25.0
