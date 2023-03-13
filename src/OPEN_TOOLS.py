@@ -399,6 +399,7 @@ export GHDL_PREFIX="""
                 + top_entity_name
                 + """; synth_"""
                 + exe_ext
+                + """ -abc9 -nowidelut """
                 + """ -top """
                 + top_entity_name
                 + """ -json """
