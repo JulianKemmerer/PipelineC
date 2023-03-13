@@ -233,6 +233,31 @@ vga_signals_t vga_timing()
   
   return o;
 }
+
+// Position increment that assumes <=1 FRAME_WIDTH increment
+// and only does ACTIVE 'screen' frame bounds no extra vga timing
+vga_pos_t vga_frame_pos_increment(vga_pos_t pos, uint16_t x_amount)
+{
+  uint32_t new_x_val = pos.x + x_amount;
+  pos.x = new_x_val;
+  // Roll over to next line?
+  if(new_x_val > (FRAME_WIDTH-1))
+  {
+    // Partially through next line
+    pos.x = new_x_val - FRAME_WIDTH;
+    // Next line might be back to start
+    if(pos.y < (FRAME_HEIGHT-1))
+    {
+      pos.y += 1;
+    }
+    else
+    {
+      pos.y = 0;
+    }
+  }
+  return pos;
+}
+
 #endif // ifdef __PIPELINEC__
 
 #ifndef __PIPELINEC__
