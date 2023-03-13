@@ -390,6 +390,7 @@ begin \n\
 }
 
 // Dual port, two read+write ports, 1 clock latency
+// Does not have read enable separate from clock enable
 #define DECL_RAM_DP_RW_RW_1( \
   elem_t, \
   ram_name, \
@@ -408,10 +409,8 @@ typedef struct ram_name##_outputs_t \
 ram_name##_outputs_t ram_name( \
   uint32_t addr0, elem_t wr_data0, uint1_t wr_en0, \
   uint1_t valid0, \
-  uint1_t rd_en0, \
   uint32_t addr1, elem_t wr_data1, uint1_t wr_en1, \
-  uint1_t valid1, \
-  uint1_t rd_en1 \
+  uint1_t valid1 \
 ){ \
   __vhdl__("\n\
   constant SIZE : integer := " xstr(SIZE) "; \n\
@@ -439,29 +438,25 @@ begin \n\
   begin \n\
     if rising_edge(clk) then \n\
       if CLOCK_ENABLE(0)='1' then \n\
+        return_output.valid0 <= valid0; \n\
+        return_output.addr0 <= addr0; \n\
+        return_output.wr_data0 <= wr_data0; \n\
+        return_output.wr_en0 <= wr_en0; \n\
+        return_output.rd_data0 <= the_ram(addr0_s); \n\
         if wr_en0(0) = '1' and valid0(0)='1' then \n\
           the_ram(addr0_s) := wr_data0; \n\
-        end if; \n\
-        if rd_en0(0) = '1' then \n\
-          return_output.addr0 <= addr0; \n\
-          return_output.wr_data0 <= wr_data0; \n\
-          return_output.wr_en0 <= wr_en0; \n\
-          return_output.rd_data0 <= the_ram(addr0_s); \n\
-          return_output.valid0 <= valid0; \n\
         end if; \n\
       end if; \n\
     end if; \n\
     if rising_edge(clk) then \n\
       if CLOCK_ENABLE(0)='1' then \n\
+        return_output.valid1 <= valid1; \n\
+        return_output.addr1 <= addr1; \n\
+        return_output.wr_data1 <= wr_data1; \n\
+        return_output.wr_en1 <= wr_en1; \n\
+        return_output.rd_data1 <= the_ram(addr1_s); \n\
         if wr_en1(0) = '1' and valid1(0)='1' then \n\
           the_ram(addr1_s) := wr_data1; \n\
-        end if; \n\
-        if rd_en1(0) = '1' then \n\
-          return_output.addr1 <= addr1; \n\
-          return_output.wr_data1 <= wr_data1; \n\
-          return_output.wr_en1 <= wr_en1; \n\
-          return_output.rd_data1 <= the_ram(addr1_s); \n\
-          return_output.valid1 <= valid1; \n\
         end if; \n\
       end if; \n\
     end if; \n\
