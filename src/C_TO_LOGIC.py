@@ -5306,7 +5306,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state
         )
         if const_cond_wire is None:
             print(
-                "I dont know how to handle what you are doing in the for loop condition at",
+                "Unsupported for loop condition (missing FSM __clk()?) at",
                 c_ast_node.cond.coord,
                 "iteration",
                 i,
@@ -5371,7 +5371,7 @@ def C_AST_WHILE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_sta
         )
         if const_cond_wire is None:
             print(
-                "I dont know how to handle what you are doing in the while loop condition at",
+                "Unsupported while loop condition (missing FSM __clk()?) at",
                 c_ast_node.cond.coord,
                 "iteration",
                 i,
@@ -8539,7 +8539,7 @@ def APPLY_CONNECT_WIRES_LOGIC(
                     ):
                         # Unhandled
                         print(
-                            "Unhandled array assignment: RHS",
+                            "Error handling assignment of array : RHS",
                             driving_wire,
                             "drives LHS",
                             driven_wire_name,
@@ -9735,6 +9735,11 @@ def PARSE_FILE(c_filename):
 
         # Check for double write of globals+volatiles
         for the_global_var, the_global_var_info in parser_state.global_vars.items():
+            # Skips array instance wires that can be multi driven
+            if the_global_var in parser_state.inst_array_dict.values():
+                continue
+            if the_global_var in parser_state.inst_array_dict.keys():
+                continue
             for func_name1 in the_global_var_info.used_in_funcs:
                 func1_logic = parser_state.FuncLogicLookupTable[func_name1]
                 for func_name2 in the_global_var_info.used_in_funcs:
