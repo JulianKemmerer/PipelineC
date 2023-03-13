@@ -1192,16 +1192,19 @@ begin
             # "Write"-like if not used as read only
             is_wr_like = True
             for func_name in var_info.used_in_funcs:
+                # Must be used in a func that has instance, not just defined
+                if func_name not in parser_state.FuncToInstances:
+                    continue
                 func_logic = parser_state.FuncLogicLookupTable[func_name]
                 if var_name in func_logic.read_only_global_wires:
                     is_wr_like = False
-                    #print(var_name, "not wr like in ",func_logic.func_name)
+                    #print(var_name, "not wr like, read only in ",func_logic.func_name)
                     break
             if is_wr_like:
                 write_inst_array_vars.add(var_name)
     if len(write_inst_array_vars) > 0:
-        text += """
--- Multiple write-side global shared variable instances driving read only wires array
+        text += f"""
+-- Multiple write-side global shared variable instances driving read only wires array {write_inst_array_vars}
 """
     for wr_var_name in write_inst_array_vars:
         wr_var_info = parser_state.global_vars[wr_var_name]
@@ -1229,7 +1232,7 @@ begin
             raise Exception(f"Instance array read variable {rd_var_name} is not a 1D array!")
         if len(write_insts) != dims[0]:
             raise Exception(
-                f"{write_insts}\nInstance array read variable {rd_var_name} is defined with array sized {dims[0]} when actually has {len(write_insts)} write-side instances!"
+                f"{write_insts}\nInstance array read variable {rd_var_name} is defined with array sized {dims[0]} when actually has {len(write_insts)} write-side instances to wr var {wr_var_name}!"
             )
         read_funcs = set()
         for func_name in rd_var_info.used_in_funcs:
@@ -1241,8 +1244,10 @@ begin
         read_insts = set()
         for read_func_name in read_funcs:
             if read_func_name in parser_state.FuncToInstances:
-                read_func_insts = parser_state.FuncToInstances[read_func_name]
-                read_insts |= read_func_insts
+                read_insts |= parser_state.FuncToInstances[read_func_name]
+            #else:
+            #    raise Exception(f"No instances of reader func {read_func_name} which is reading side of INST_ARRAY var {rd_var_name}!? Also read in {read_funcs}")
+                
 
         # Find main funcs for all insts
         # Find clock names for all main funcs, can only be one clock
@@ -1262,6 +1267,8 @@ begin
                 )
 
         # Each read instance is a read of the N multiple drivers
+        #if len(read_insts) == 0:
+        #    raise Exception(f"No instances of reader funcs {read_funcs} which is reading sides of INST_ARRAY var {wr_var_name}!?")
         for read_func_inst in read_insts:
             # Assemble driven read wire text
             read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
@@ -1313,8 +1320,8 @@ begin
             if is_rd_only:
                 read_inst_array_vars.add(var_name)
     if len(read_inst_array_vars) > 0:
-        text += """
--- Array of global read only variable write-side wires for multiple read side instances
+        text += f"""
+-- Array of global read only variable write-side wires for multiple read side instances {read_inst_array_vars}
 """
     for rd_var_name in read_inst_array_vars:
         rd_var_info = parser_state.global_vars[rd_var_name]
@@ -1328,7 +1335,10 @@ begin
         # Find all read instances 
         read_insts = set()
         for read_func in read_funcs:
-            read_insts |= parser_state.FuncToInstances[read_func]
+            if read_func in parser_state.FuncToInstances:
+                read_insts |= parser_state.FuncToInstances[read_func]        
+            #else:
+            #    raise Exception(f"No instances of reader func {read_func} which is reading side of INST_ARRAY var {rd_var_name}!? Also read in {read_funcs}")
 
         # Find single write func inst that is driving the array
         wr_var_name = parser_state.inst_array_dict[rd_var_name]
@@ -1341,7 +1351,7 @@ begin
             raise Exception(f"Instance array write variable {wr_var_name} is not a 1D array!")
         if len(read_insts) != dims[0]:
             raise Exception(
-                f"{read_insts}\nInstance array write variable {wr_var_name} is defined with array sized {dims[0]} when actually has {len(read_insts)} read-side instances!"
+                f"{read_insts}\nInstance array write variable {wr_var_name} is defined with array sized {dims[0]} when actually has {len(read_insts)} read-side instances of rd var {rd_var_name}!"
             )
 
         write_funcs = set()
