@@ -1,7 +1,7 @@
 #pragma once
 #include "arrays.h"
 
-// INSIZE must be divisible by OUTSIZE ??
+// INSIZE must be divisible by OUTSIZE
 #define serializer_in_to_out(name, data_t, IN_SIZE, OUT_SIZE) \
 typedef struct name##_t \
 { \
@@ -22,8 +22,10 @@ name##_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_r
     rv.out_data[i] = in_buffer[i]; \
   } \
   rv.out_data_valid = in_buffer_valid; \
-  /* Read if buffer empty */ \
-  rv.in_data_ready = !in_buffer_valid; \
+  /* Is last elements outgoing now? */ \
+  uint1_t last_outgoing = out_data_ready & (out_counter==(IN_SIZE-OUT_SIZE)); \
+  /* Read if buffer empty or being emptied*/ \
+  rv.in_data_ready = !in_buffer_valid | last_outgoing; \
   \
   /* Only shift buffer if output ready */ \
   if(out_data_ready) \
@@ -74,11 +76,8 @@ name##_t name(in_t in_data, uint1_t in_data_valid, uint1_t out_data_ready) \
 }
 
 
-// TODO replace with in to out version? always use array args?
 #define serializer(name, data_t, IN_SIZE) \
-data_t name##_in_buffer[IN_SIZE]; \
-uint1_t name##_in_buffer_valid; \
-uint32_t name##_out_counter; \
+serializer_in_to_out(name##_serializer_in_to_out, data_t, IN_SIZE, 1) \
 typedef struct name##_o_t \
 { \
   data_t out_data; \
@@ -87,38 +86,10 @@ typedef struct name##_o_t \
 }name##_o_t; \
 name##_o_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_ready) \
 { \
-  name##_o_t rv; \
-  /* Default outputs from front of shift buffer */ \
-  rv.out_data = name##_in_buffer[0]; \
-  rv.out_data_valid = name##_in_buffer_valid; \
-  /* Read if buffer empty */ \
-  rv.in_data_ready = !name##_in_buffer_valid; \
-  \
-  /* Only shift buffer if output ready */ \
-  if(out_data_ready) \
-  { \
-    /* Shift buffer to bring next elem to front */ \
-    uint32_t i; \
-    for(i=0;i<(IN_SIZE-1);i=i+1) \
-    { \
-      name##_in_buffer[i] = name##_in_buffer[i+1]; \
-    } \
-    name##_out_counter += 1; \
-    \
-    /* If output all the elems then clear buffer */ \
-    if(name##_out_counter==IN_SIZE) \
-    { \
-      name##_in_buffer_valid = 0; \
-    } \
-  } \
-  \
-  /* Input registers */ \
-  if(rv.in_data_ready) \
-  { \
-    name##_in_buffer = in_data; \
-    name##_in_buffer_valid = in_data_valid; \
-    name##_out_counter = 0; \
-  } \
-  \
-  return rv; \
+  name##_o_t o; \
+  name##_serializer_in_to_out_t ser_in_to_out = name##_serializer_in_to_out(in_data, in_data_valid, out_data_ready); \
+  o.out_data = ser_in_to_out.out_data[0]; \
+  o.out_data_valid = ser_in_to_out.out_data_valid; \
+  o.in_data_ready = ser_in_to_out.in_data_ready; \
+  return o; \
 } 
