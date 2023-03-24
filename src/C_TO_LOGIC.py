@@ -3388,6 +3388,8 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
                     break
                 # Variable c ast nodes only match one way
                 # * covers digit but digit doesnt cover *
+                elif isinstance(covering_ref_tok, c_ast.Node) and type(ref_tok) == int:
+                    pass
                 elif isinstance(covering_ref_tok, c_ast.Node) and ref_tok.isdigit():
                     pass
                 # * covers others *
@@ -3730,6 +3732,8 @@ def C_TYPE_IS_USER_TYPE(c_type, parser_state):
         elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
         if C_TYPE_IS_STRUCT(elem_type, parser_state):
             user_code = True
+    elif C_TYPE_IS_ENUM(c_type, parser_state):
+        user_code = True
 
     return user_code
 
