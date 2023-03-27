@@ -1632,19 +1632,32 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     # CONST refs are vhdl funcs
     if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
         submodule_logic.is_vhdl_func = True
-        # But can also be VHDL expressions if the feeling is right
-        driven_ref_toks_list = (
-            containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[
-                submodule_inst
-            ]
-        )
-        # Just one input
-        if len(driven_ref_toks_list) == 1:
-            driven_ref_toks = driven_ref_toks_list[0]
-            # Driving the base variable
-            if len(driven_ref_toks) == 1:
-                submodule_logic.is_vhdl_func = False
-                submodule_logic.is_vhdl_expr = True
+        # But can also be VHDL expressions if the syntax feeling is right
+        # The feeling is not right if trying to dereference a NULL array constant
+        has_null_array_inputs = False
+        for input_name in input_names:
+            input_wire_name = submodule_inst + SUBMODULE_MARKER + input_name
+            c_type = containing_func_logic.wire_to_c_type[input_wire_name]
+            if C_TYPE_IS_ARRAY(c_type):
+                const_driver = FIND_CONST_DRIVING_WIRE(input_wire_name, containing_func_logic)
+                if const_driver is not None:
+                    const_val_str = GET_VAL_STR_FROM_CONST_WIRE(const_driver, containing_func_logic, parser_state)
+                    if const_val_str == COMPOUND_NULL:
+                        has_null_array_inputs = True
+                        break
+        if not has_null_array_inputs:
+            # Needs just one input
+            driven_ref_toks_list = (
+                containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[
+                    submodule_inst
+                ]
+            )
+            if len(driven_ref_toks_list) == 1:
+                driven_ref_toks = driven_ref_toks_list[0]
+                # Driving the base variable
+                if len(driven_ref_toks) == 1:
+                    submodule_logic.is_vhdl_func = False
+                    submodule_logic.is_vhdl_expr = True
     # Casts of ints are vhdl funcs too
     if submodule_logic_name.startswith(
         CAST_FUNC_NAME_PREFIX
