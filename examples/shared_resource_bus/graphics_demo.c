@@ -3,9 +3,8 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
-// Make a second shared resource instance second frame buf
-//    To demo GoL/complete first draft macros
-// shared_resource_bus.h commit?
+// COMPLETE first draft macros
+// demo GoL/complete second shared resource instance second frame buf
 //
 //
 // FUTURE How to wrap/macro make any new 'resource' (like the frame buffer or autopipeline)
