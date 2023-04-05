@@ -33,16 +33,39 @@ typedef enum shared_res_bus_dev_arb_state_t
   write_req_data_t, write_data_word_t, write_resp_data_t, \
   read_req_data_t, read_data_resp_word_t \
 )\
+/* Wrapper struct defs until plain typedefs are supported*/ \
+typedef struct name##_write_req_data_t \
+{ \
+  write_req_data_t user; \
+}name##_write_req_data_t; \
+typedef struct name##_write_data_word_t \
+{ \
+  write_data_word_t user; \
+}name##_write_data_word_t; \
+typedef struct name##_write_resp_data_t \
+{ \
+  write_resp_data_t user; \
+}name##_write_resp_data_t; \
+typedef struct name##_read_req_data_t \
+{ \
+  read_req_data_t user; \
+}name##_read_req_data_t; \
+typedef struct name##_read_data_resp_word_t \
+{ \
+  read_data_resp_word_t user; \
+}name##_read_data_resp_word_t; \
+\
+/* Bus types*/ \
 typedef struct name##_write_req_t \
 { \
-  write_req_data_t data; \
+  name##_write_req_data_t data; \
   id_t id; \
   uint1_t valid; \
 }name##_write_req_t; \
 \
 typedef struct name##_write_burst_word_t \
 { \
-  write_data_word_t data_word; \
+  name##_write_data_word_t data_word; \
   uint1_t last; \
 } name##_write_burst_word_t; \
 \
@@ -55,7 +78,7 @@ typedef struct name##_write_data_t \
 \
 typedef struct name##_write_resp_t \
 { \
-  write_resp_data_t data; \
+  name##_write_resp_data_t data; \
   id_t id; \
   uint1_t valid; \
 } name##_write_resp_t; \
@@ -79,14 +102,14 @@ typedef struct name##_write_dev_to_host_t \
 \
 typedef struct name##_read_req_t \
 { \
-  read_req_data_t data; \
+  name##_read_req_data_t data; \
   id_t id; \
   uint1_t valid; \
 } name##_read_req_t; \
  \
 typedef struct name##_read_burst_word_t \
 { \
-  read_data_resp_word_t data_resp; \
+  name##_read_data_resp_word_t data_resp; \
   uint1_t last; \
 }name##_read_burst_word_t; \
  \
@@ -128,7 +151,7 @@ typedef struct name##_dev_to_host_t \
 } name##_dev_to_host_t; \
  \
 /* Write has two channels to begin request: address and data */ \
-/* Helper func to write one write_data_word_t requires that inputs are valid/held constant*/ \
+/* Helper func to write one name##_write_data_word_t requires that inputs are valid/held constant*/ \
 /* until data phase done (ready_for_inputs asserted)*/ \
 typedef struct name##_write_logic_outputs_t \
 { \
@@ -152,7 +175,7 @@ name##_write_logic_outputs_t name##_write_logic( \
     { \
       /* Use inputs to form valid address*/ \
       o.to_dev.write.req.valid = 1; \
-      o.to_dev.write.req.data = req; \
+      o.to_dev.write.req.data.user = req; \
       /* And then data next*/ \
       state = DATA_STATE; \
     } \
@@ -167,7 +190,7 @@ name##_write_logic_outputs_t name##_write_logic( \
       /* Send valid data transfer*/ \
       o.to_dev.write.data.valid = 1; \
       o.to_dev.write.data.burst.last = 1; \
-      o.to_dev.write.data.burst.data_word = data; \
+      o.to_dev.write.data.burst.data_word.user = data; \
       /* And then begin waiting for response*/ \
       state = RESP_STATE; \
     } \
@@ -184,7 +207,7 @@ name##_write_logic_outputs_t name##_write_logic( \
       { \
         /* Done (error code not checked, just returned)*/ \
         o.done = 1; \
-        o.resp = from_dev.write.resp.data; \
+        o.resp = from_dev.write.resp.data.user; \
         state = REQ_STATE; \
       } \
     } \
@@ -196,7 +219,7 @@ name##_write_logic_outputs_t name##_write_logic( \
 typedef struct name##_read_logic_outputs_t \
 { \
   name##_host_to_dev_t to_dev; \
-  name##_read_data_t data; /* uint32_t data; Output data uint2_t rresp; Response error code*/ \
+  read_data_resp_word_t data; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }name##_read_logic_outputs_t; \
@@ -216,7 +239,7 @@ name##_read_logic_outputs_t name##_read_logic( \
       o.ready_for_inputs = 1; \
       /* Use inputs to form valid request*/ \
       o.to_dev.read.req.valid = 1; \
-      o.to_dev.read.req.data = req; \
+      o.to_dev.read.req.data.user = req; \
       /* And then begin waiting for response*/ \
       state = RESP_STATE; \
     } \
@@ -231,7 +254,7 @@ name##_read_logic_outputs_t name##_read_logic( \
       /* And wait for valid output response*/ \
       if(from_dev.read.data.valid) \
       { \
-        o.data = from_dev.read.data; \
+        o.data = from_dev.read.data.burst.data_resp.user; \
         if(from_dev.read.data.burst.last) \
         { \
           /* Done on last word of data_resp*/ \
@@ -275,7 +298,7 @@ read_data_resp_word_t name##_read(read_req_data_t req) \
       = name##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
     name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
     done = read_logic_outputs.done; \
-    rv = read_logic_outputs.data.burst.data_resp; \
+    rv = read_logic_outputs.data; \
     __clk(); \
   } \
   name##_host_to_dev_wire_on_host_clk = name##_HOST_TO_DEV_NULL; \
@@ -573,29 +596,22 @@ name##_dev_arb_t name##_dev_arb( \
   return o; \
 }
 
-// TODO temp wrapper struct typedef (since cant do plain typedef) for name#_ types
-// TODO convert macros to use constant literal interger
+// TODO convert macros to use constant literal interger, fix dev_to_host_wire etc
 
 // Each channel of 5 channels host<->dev link needs async fifo
 // 3 write, 2 read
 // INST_ARRAY doesnt support async fifos
-#define SHARED_BUS_ASYNC_FIFO_DECL(name, bus_name, DEPTH, \
-write_req_data_t, write_resp_data_t, \
-read_req_data_t \
-) \
-write_req_data_t name##_write_req[DEPTH];\
+#define SHARED_BUS_ASYNC_FIFO_DECL(name, bus_name, DEPTH) \
+bus_name##_write_req_data_t name##_write_req[DEPTH];\
 bus_name##_write_burst_word_t name##_write_data[DEPTH];\
-write_resp_data_t name##_write_resp[DEPTH];\
-read_req_data_t name##_read_req[DEPTH];\
+bus_name##_write_resp_data_t name##_write_resp[DEPTH];\
+bus_name##_read_req_data_t name##_read_req[DEPTH];\
 bus_name##_read_burst_word_t name##_read_data[DEPTH];
 
 #define SHARED_BUS_ASYNC_FIFO_HOST_WIRING( \
   name, bus_name, \
   dev_to_host_wire, \
-  host_to_dev_wire, \
-  write_req_data_t, \
-  write_resp_data_t, \
-  read_req_data_t \
+  host_to_dev_wire \
 )\
 /* Write into fifo (to dev) <= host_to_dev_wire*/ \
 /* dev_to_host_wire <= Read from fifo (from dev)*/ \
@@ -603,7 +619,7 @@ bus_name##_read_burst_word_t name##_read_data[DEPTH];
 /**/ \
 /* Write request data into fifo*/ \
 /* Write request ready out of fifo*/ \
-write_req_data_t name##_write_req_write_req_data[1]; \
+bus_name##_write_req_data_t name##_write_req_write_req_data[1]; \
 name##_write_req_write_req_data[0] = host_to_dev_wire.write.req.data; \
 name##_write_req_write_t name##_write_req_write_req_write = \
   name##_write_req_WRITE_1(name##_write_req_write_req_data, host_to_dev_wire.write.req.valid); \
@@ -623,7 +639,7 @@ dev_to_host_wire.write.resp.data = name##_write_resp_write_resp_read.data[0]; \
 dev_to_host_wire.write.resp.valid = name##_write_resp_write_resp_read.valid; \
 /* Read req data into fifo*/ \
 /* Read req ready out of fifo*/ \
-read_req_data_t name##_read_req_read_req_data[1]; \
+bus_name##_read_req_data_t name##_read_req_read_req_data[1]; \
 name##_read_req_read_req_data[0] = host_to_dev_wire.read.req.data; \
 name##_read_req_write_t name##_read_req_read_req_write = \
   name##_read_req_WRITE_1(name##_read_req_read_req_data, host_to_dev_wire.read.req.valid); \
@@ -638,10 +654,7 @@ dev_to_host_wire.read.data.valid = name##_read_data_read_data_read.valid;
 #define SHARED_BUS_ASYNC_FIFO_DEV_WIRING( \
   name, bus_name, \
   host_to_dev_wire, \
-  dev_to_host_wire, \
-  write_req_data_t, \
-  write_resp_data_t, \
-  read_req_data_t \
+  dev_to_host_wire \
 )\
 /* Write into fifo (to host) <= dev_to_host_wire */ \
 /* host_to_dev_wire <= Read from fifo (from host)*/ \
@@ -661,7 +674,7 @@ host_to_dev_wire.write.data.burst = name##_write_data_write_data_read.data[0]; \
 host_to_dev_wire.write.data.valid = name##_write_data_write_data_read.valid; \
 /* Write resp data into fifo*/ \
 /* Write resp ready out of fifo*/ \
-write_resp_data_t name##_write_resp_write_resp_data[1]; \
+bus_name##_write_resp_data_t name##_write_resp_write_resp_data[1]; \
 name##_write_resp_write_resp_data[0] = dev_to_host_wire.write.resp.data; \
 name##_write_resp_write_t name##_write_resp_write_resp_write = \
   name##_write_resp_WRITE_1(name##_write_resp_write_resp_data, dev_to_host_wire.write.resp.valid); \
