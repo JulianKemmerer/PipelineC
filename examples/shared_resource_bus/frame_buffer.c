@@ -36,14 +36,10 @@ typedef struct frame_buf_req_t
 {
   uint32_t addr;
 }frame_buf_req_t;
-// TODO move into macros
-#define id_t uint8_t
 
 //  Inputs
 typedef struct frame_buffer_in_ports_t{
-  n_pixels_t wr_data; 
-  //uint16_t x_buffer_index;
-  //uint16_t y;
+  n_pixels_t wr_data;
   frame_buf_req_t req; //uint32_t addr;
   uint1_t wr_enable; // 0=read
   id_t id;

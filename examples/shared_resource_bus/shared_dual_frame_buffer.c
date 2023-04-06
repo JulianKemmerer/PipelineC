@@ -271,22 +271,22 @@ MAIN_MHZ(frame_buf_ram_dev_arb_connect, DEV_CLK_MHZ)
 void frame_buf_ram_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
-  //SHARED_BUS_ARB_INST(frame_buf0_shared_bus, arb0, NUM_DEV_PORTS)
-  frame_buf0_shared_bus_dev_to_host_t from_devs[NUM_DEV_PORTS];
+  SHARED_BUS_ARB_INST(frame_buf0_shared_bus, arb0, NUM_DEV_PORTS)
+  /*frame_buf0_shared_bus_dev_to_host_t from_devs[NUM_DEV_PORTS];
   #pragma FEEDBACK from_devs // Value from last assignment
   frame_buf0_shared_bus_dev_arb_t arb = frame_buf0_shared_bus_dev_arb(from_devs, frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk);
   frame_buf0_shared_bus_host_to_dev_t to_devs[NUM_DEV_PORTS];
   to_devs = arb.to_devs;
-  frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk = arb.to_hosts;
+  frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk = arb.to_hosts;*/
 
   // Connect devs to frame buffer ports
   uint32_t i;
   for (i = 0; i < NUM_DEV_PORTS; i+=1)
   {
     frame_buf_ram_port_dev_ctrl_t port_ctrl
-      = frame_buf_ram_port_dev_ctrl(frame_buffer_out_ports[i], to_devs[i]);
+      = frame_buf_ram_port_dev_ctrl(frame_buffer_out_ports[i], arb0_to_devs[i]);
     frame_buffer_in_ports[i] = port_ctrl.to_frame_buf;
-    from_devs[i] = port_ctrl.to_host;
+    arb0_from_devs[i] = port_ctrl.to_host;
   }
 }
 

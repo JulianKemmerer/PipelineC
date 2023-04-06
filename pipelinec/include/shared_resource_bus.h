@@ -2,15 +2,14 @@
 #include "compiler.h"
 
 // TODO SHIIIIITT
-// IN WORKING STATE NOW? FUCK!?
 // SHARED_BUS_ARB_INST broken?
 // power_on_reset broken?
 // bus_buffer broke?
 
-
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
 // Generic 5 channel bus
 // 3 write, 2 read
+#define id_t uint8_t
 
 typedef enum shared_res_bus_write_state_t
 {
