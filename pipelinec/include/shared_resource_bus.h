@@ -2,8 +2,6 @@
 #include "compiler.h"
 
 // TODO SHIIIIITT
-// SHARED_BUS_ARB_INST broken?
-// power_on_reset broken?
 // bus_buffer broke?
 
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
@@ -443,8 +441,8 @@ name##_dev_arb_t name##_dev_arb( \
   } \
    \
   /* Each frame bus port prioritizes/selects a specific shared dev host bus*/ \
-  static uint8_t dev_to_selected_host[NUM_DEV_PORTS] = {0,1}; /* See reset below {0, 1}*/ \
-  /*static uint1_t power_on_reset = 1; \
+  static uint8_t dev_to_selected_host[NUM_DEV_PORTS]; /* See reset below {0, 1}*/ \
+  static uint1_t power_on_reset = 1; \
   if(power_on_reset) \
   { \
     for (i = 0; i < NUM_DEV_PORTS; i+=1) \
@@ -452,7 +450,7 @@ name##_dev_arb_t name##_dev_arb( \
       dev_to_selected_host[i] = i; \
     } \
   } \
-  power_on_reset = 0; */\
+  power_on_reset = 0;\
  \
   /* Each dev port has a FSM doing req-resp logic*/ \
   /* Allow one req-data-resp in flight at a time per host port:*/ \

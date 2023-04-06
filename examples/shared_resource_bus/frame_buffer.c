@@ -42,14 +42,14 @@ typedef struct frame_buffer_in_ports_t{
   n_pixels_t wr_data;
   frame_buf_req_t req; //uint32_t addr;
   uint1_t wr_enable; // 0=read
-  id_t id;
+  uint8_t id;
   uint1_t valid;
 }frame_buffer_in_ports_t;
 //  Outputs
 typedef struct frame_buffer_out_ports_t{
   n_pixels_t rd_data;
   uint1_t wr_enable; // 0=read
-  id_t id;
+  uint8_t id;
   uint1_t valid;
 }frame_buffer_out_ports_t;
 
@@ -63,7 +63,7 @@ MAIN_MHZ(frame_buffer_ram, DEV_CLK_MHZ)
 void frame_buffer_ram()
 {
   // 1 cycle of delay regs for ID field not included in RAM macro func
-  static id_t id_reg[N_FRAME_BUF_PORTS];
+  static uint8_t id_reg[N_FRAME_BUF_PORTS];
 
   // Do RAM lookup
   frame_buf_ram_outputs_t frame_buf_ram_outputs = frame_buf_ram(

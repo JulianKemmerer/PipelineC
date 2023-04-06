@@ -272,12 +272,6 @@ void frame_buf_ram_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
   SHARED_BUS_ARB_INST(frame_buf0_shared_bus, arb0, NUM_DEV_PORTS)
-  /*frame_buf0_shared_bus_dev_to_host_t from_devs[NUM_DEV_PORTS];
-  #pragma FEEDBACK from_devs // Value from last assignment
-  frame_buf0_shared_bus_dev_arb_t arb = frame_buf0_shared_bus_dev_arb(from_devs, frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk);
-  frame_buf0_shared_bus_host_to_dev_t to_devs[NUM_DEV_PORTS];
-  to_devs = arb.to_devs;
-  frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk = arb.to_hosts;*/
 
   // Connect devs to frame buffer ports
   uint32_t i;
