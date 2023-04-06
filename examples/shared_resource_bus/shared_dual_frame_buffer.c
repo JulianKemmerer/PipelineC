@@ -21,46 +21,36 @@ SHARED_BUS_DECL(
 //  COULD EVEN DO whole 'arrays' 
 //  #include "shared_res_fifos/fifo[0:4].h"
 
-// SHARED_BUS_USER0
-SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo0, frame_buf0_shared_bus, CLK_CROSS_FIFO_DEPTH)
-//#include "shared_bus_fifos/shared_bus_fifo0.h"
-#include "clock_crossing/shared_bus_fifo0_write_req.h"
-#include "clock_crossing/shared_bus_fifo0_write_data.h"
-#include "clock_crossing/shared_bus_fifo0_write_resp.h"
-#include "clock_crossing/shared_bus_fifo0_read_req.h"
-#include "clock_crossing/shared_bus_fifo0_read_data.h"
-// SHARED_BUS_USER1
-SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo1, frame_buf0_shared_bus, CLK_CROSS_FIFO_DEPTH)
-//#include "shared_bus_fifos/shared_bus_fifo1.h"
-#include "clock_crossing/shared_bus_fifo1_write_req.h"
-#include "clock_crossing/shared_bus_fifo1_write_data.h"
-#include "clock_crossing/shared_bus_fifo1_write_resp.h"
-#include "clock_crossing/shared_bus_fifo1_read_req.h"
-#include "clock_crossing/shared_bus_fifo1_read_data.h"
-// SHARED_BUS_USER2
-SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo2, frame_buf0_shared_bus, CLK_CROSS_FIFO_DEPTH)
-//#include "shared_bus_fifos/shared_bus_fifo2.h"
-#include "clock_crossing/shared_bus_fifo2_write_req.h"
-#include "clock_crossing/shared_bus_fifo2_write_data.h"
-#include "clock_crossing/shared_bus_fifo2_write_resp.h"
-#include "clock_crossing/shared_bus_fifo2_read_req.h"
-#include "clock_crossing/shared_bus_fifo2_read_data.h"
-// SHARED_BUS_USER3
-SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo3, frame_buf0_shared_bus, CLK_CROSS_FIFO_DEPTH)
-//#include "shared_bus_fifos/shared_bus_fifo3.h"
-#include "clock_crossing/shared_bus_fifo3_write_req.h"
-#include "clock_crossing/shared_bus_fifo3_write_data.h"
-#include "clock_crossing/shared_bus_fifo3_write_resp.h"
-#include "clock_crossing/shared_bus_fifo3_read_req.h"
-#include "clock_crossing/shared_bus_fifo3_read_data.h"
-// SHARED_BUS_USER4
-SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo4, frame_buf0_shared_bus, CLK_CROSS_FIFO_DEPTH)
-//#include "shared_bus_fifos/shared_bus_fifo4.h"
-#include "clock_crossing/shared_bus_fifo4_write_req.h"
-#include "clock_crossing/shared_bus_fifo4_write_data.h"
-#include "clock_crossing/shared_bus_fifo4_write_resp.h"
-#include "clock_crossing/shared_bus_fifo4_read_req.h"
-#include "clock_crossing/shared_bus_fifo4_read_data.h"
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf0_shared_bus, 0, CLK_CROSS_FIFO_DEPTH)
+#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_data.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_resp.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo0_read_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo0_read_data.h"
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf0_shared_bus, 1, CLK_CROSS_FIFO_DEPTH)
+#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_data.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_resp.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo1_read_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo1_read_data.h"
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf0_shared_bus, 2, CLK_CROSS_FIFO_DEPTH)
+#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_data.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_resp.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo2_read_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo2_read_data.h"
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf0_shared_bus, 3, CLK_CROSS_FIFO_DEPTH)
+#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_data.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_resp.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo3_read_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo3_read_data.h"
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf0_shared_bus, 4, CLK_CROSS_FIFO_DEPTH)
+#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_data.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_resp.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo4_read_req.h"
+#include "clock_crossing/frame_buf0_shared_bus_fifo4_read_data.h"
 
 
 // Wire ASYNC FIFOs to dev-host wires
@@ -68,66 +58,27 @@ SHARED_BUS_ASYNC_FIFO_DECL(shared_bus_fifo4, frame_buf0_shared_bus, CLK_CROSS_FI
 MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)
 void host_side_fifo_wiring()
 {
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(
-    shared_bus_fifo0, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_dev_to_host_wires_on_host_clk[0],
-    frame_buf0_shared_bus_host_to_dev_wires_on_host_clk[0]
-  )
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(
-    shared_bus_fifo1, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_dev_to_host_wires_on_host_clk[1],
-    frame_buf0_shared_bus_host_to_dev_wires_on_host_clk[1]
-  )
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(
-    shared_bus_fifo2, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_dev_to_host_wires_on_host_clk[2],
-    frame_buf0_shared_bus_host_to_dev_wires_on_host_clk[2]
-  )
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(
-    shared_bus_fifo3, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_dev_to_host_wires_on_host_clk[3],
-    frame_buf0_shared_bus_host_to_dev_wires_on_host_clk[3]
-  )
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(
-    shared_bus_fifo4, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_dev_to_host_wires_on_host_clk[4],
-    frame_buf0_shared_bus_host_to_dev_wires_on_host_clk[4]
-  )
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf0_shared_bus, 0)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf0_shared_bus, 1)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf0_shared_bus, 2)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf0_shared_bus, 3)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf0_shared_bus, 4)
 }
 MAIN_MHZ(dev_side_fifo_wiring, DEV_CLK_MHZ)
 void dev_side_fifo_wiring()
 {
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(
-    shared_bus_fifo0, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk[0],
-    frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk[0]
-  )
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(
-    shared_bus_fifo1, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk[1],
-    frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk[1]
-  )
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(
-    shared_bus_fifo2, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk[2],
-    frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk[2]
-  )
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(
-    shared_bus_fifo3, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk[3],
-    frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk[3]
-  )
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(
-    shared_bus_fifo4, frame_buf0_shared_bus, 
-    frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk[4],
-    frame_buf0_shared_bus_dev_to_host_wires_on_dev_clk[4]
-  )
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf0_shared_bus, 0)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf0_shared_bus, 1)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf0_shared_bus, 2)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf0_shared_bus, 3)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf0_shared_bus, 4)
 }
 
 // User application uses 5 channel AXI-like shared bus wires for frame buffer control
 // Need to wire up RAM with AXI style req, resp which used valid ready
 // resp/req/data channels are independent
 // (RAM also needs VGA read only port)
+// TODO what kind of helper funcs are good for generic support connecting to bus?
 
 // How frame buffer port is 'converted' to shared bus connection
 typedef enum frame_buf_ram_port_dev_ctrl_state_t
@@ -159,6 +110,7 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
   static frame_buf0_shared_bus_read_data_t read_data;
   static frame_buf0_shared_bus_write_data_t write_data;
   static frame_buf0_shared_bus_write_resp_t write_resp;
+  //frame_buf0_shared_bus_buffer_t bus_buffer;
   // Allow one req-data-resp in flight at a time:
   //  Wait for inputs to arrive in input handshake regs w/ things needed req/data
   //  Start operation
@@ -319,6 +271,7 @@ MAIN_MHZ(frame_buf_ram_dev_arb_connect, DEV_CLK_MHZ)
 void frame_buf_ram_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
+  //SHARED_BUS_ARB_INST(frame_buf0_shared_bus, arb0, NUM_DEV_PORTS)
   frame_buf0_shared_bus_dev_to_host_t from_devs[NUM_DEV_PORTS];
   #pragma FEEDBACK from_devs // Value from last assignment
   frame_buf0_shared_bus_dev_arb_t arb = frame_buf0_shared_bus_dev_arb(from_devs, frame_buf0_shared_bus_host_to_dev_wires_on_dev_clk);

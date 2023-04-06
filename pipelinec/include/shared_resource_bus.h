@@ -1,6 +1,13 @@
 #include "uintN_t.h"
 #include "compiler.h"
 
+// TODO SHIIIIITT
+// IN WORKING STATE NOW? FUCK!?
+// SHARED_BUS_ARB_INST broken?
+// power_on_reset broken?
+// bus_buffer broke?
+
+
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
 // Generic 5 channel bus
 // 3 write, 2 read
@@ -149,6 +156,15 @@ typedef struct name##_dev_to_host_t \
   /* Read Channel */ \
   name##_read_dev_to_host_t read; \
 } name##_dev_to_host_t; \
+\
+typedef struct name##_buffer_t \
+{ \
+  name##_write_req_t write_req; \
+  name##_read_req_t read_req; \
+  name##_read_data_t read_data; \
+  name##_write_data_t write_data; \
+  name##_write_resp_t write_resp; \
+}name##_buffer_t; \
  \
 /* Write has two channels to begin request: address and data */ \
 /* Helper func to write one name##_write_data_word_t requires that inputs are valid/held constant*/ \
@@ -366,6 +382,7 @@ uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_sel
 /* one xfer per host port at a time, does NOT use host ID, DOES use dev IDs*/ \
 /* TODO name##_dev_arb DOES NOT NEED read write separation like frame buf multiplexing needed*/ \
 /*    just keep req,resp state - now duplicated? for read+write?*/ \
+/*    helps async start complete from one channel, mixing reads and writes*/ \
 typedef struct name##_dev_arb_t{ \
   name##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
   name##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
@@ -427,7 +444,17 @@ name##_dev_arb_t name##_dev_arb( \
   } \
    \
   /* Each frame bus port prioritizes/selects a specific shared dev host bus*/ \
-  static uint8_t dev_to_selected_host[NUM_DEV_PORTS] = {0, 1}/*TODO_FIX_INIT*/; \
+  static uint8_t dev_to_selected_host[NUM_DEV_PORTS] = {0,1}; /* See reset below {0, 1}*/ \
+  /*static uint1_t power_on_reset = 1; \
+  if(power_on_reset) \
+  { \
+    for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+    { \
+      dev_to_selected_host[i] = i; \
+    } \
+  } \
+  power_on_reset = 0; */\
+ \
   /* Each dev port has a FSM doing req-resp logic*/ \
   /* Allow one req-data-resp in flight at a time per host port:*/ \
   /*  Wait for inputs to arrive in input handshake regs w/ things needed req/data*/ \
@@ -596,99 +623,98 @@ name##_dev_arb_t name##_dev_arb( \
   return o; \
 }
 
-// TODO convert macros to use constant literal interger, fix dev_to_host_wire etc
+// Instantiate the arb module with to-from wires for user
+#define SHARED_BUS_ARB_INST(bus_name, arb_name, NUM_DEV_PORTS) \
+bus_name##_dev_to_host_t arb_name##_from_devs[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK arb_name##_from_devs) /* Value from last assignment*/ \
+bus_name##_dev_arb_t arb_name = bus_name##_dev_arb(arb_name##_from_devs, bus_name##_host_to_dev_wires_on_dev_clk); \
+bus_name##_host_to_dev_t arb_name##_to_devs[NUM_DEV_PORTS]; \
+arb_name##_to_devs = arb_name.to_devs; \
+bus_name##_dev_to_host_wires_on_dev_clk = arb_name.to_hosts;
 
 // Each channel of 5 channels host<->dev link needs async fifo
 // 3 write, 2 read
 // INST_ARRAY doesnt support async fifos
-#define SHARED_BUS_ASYNC_FIFO_DECL(name, bus_name, DEPTH) \
-bus_name##_write_req_data_t name##_write_req[DEPTH];\
-bus_name##_write_burst_word_t name##_write_data[DEPTH];\
-bus_name##_write_resp_data_t name##_write_resp[DEPTH];\
-bus_name##_read_req_data_t name##_read_req[DEPTH];\
-bus_name##_read_burst_word_t name##_read_data[DEPTH];
+#define SHARED_BUS_ASYNC_FIFO_DECL(bus_name, NUM_STR, DEPTH) \
+bus_name##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req[DEPTH];\
+bus_name##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data[DEPTH];\
+bus_name##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp[DEPTH];\
+bus_name##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req[DEPTH];\
+bus_name##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data[DEPTH];
 
-#define SHARED_BUS_ASYNC_FIFO_HOST_WIRING( \
-  name, bus_name, \
-  dev_to_host_wire, \
-  host_to_dev_wire \
-)\
-/* Write into fifo (to dev) <= host_to_dev_wire*/ \
-/* dev_to_host_wire <= Read from fifo (from dev)*/ \
+#define SHARED_BUS_ASYNC_FIFO_HOST_WIRING(bus_name, NUM_STR)\
+/* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
+/* bus_name##_dev_to_host_wires_on_host_clk[NUM_STR] <= Read from fifo (from dev)*/ \
 /* FIFO is one of the channels...*/ \
 /**/ \
 /* Write request data into fifo*/ \
 /* Write request ready out of fifo*/ \
-bus_name##_write_req_data_t name##_write_req_write_req_data[1]; \
-name##_write_req_write_req_data[0] = host_to_dev_wire.write.req.data; \
-name##_write_req_write_t name##_write_req_write_req_write = \
-  name##_write_req_WRITE_1(name##_write_req_write_req_data, host_to_dev_wire.write.req.valid); \
-dev_to_host_wire.write.req_ready = name##_write_req_write_req_write.ready; \
+bus_name##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
+bus_name##_fifo##NUM_STR##_write_req_write_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.data; \
+bus_name##_fifo##NUM_STR##_write_req_write_t bus_name##_fifo##NUM_STR##_write_req_write_req_write = \
+  bus_name##_fifo##NUM_STR##_write_req_WRITE_1(bus_name##_fifo##NUM_STR##_write_req_write_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.req_ready = bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready; \
 /* Write data data into fifo*/ \
 /* Write data ready out of fifo*/ \
-bus_name##_write_burst_word_t name##_write_data_write_data_data[1]; \
-name##_write_data_write_data_data[0] = host_to_dev_wire.write.data.burst; \
-name##_write_data_write_t name##_write_data_write_data_write = \
-  name##_write_data_WRITE_1(name##_write_data_write_data_data, host_to_dev_wire.write.data.valid); \
-dev_to_host_wire.write.data_ready = name##_write_data_write_data_write.ready; \
+bus_name##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
+bus_name##_fifo##NUM_STR##_write_data_write_data_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.burst; \
+bus_name##_fifo##NUM_STR##_write_data_write_t bus_name##_fifo##NUM_STR##_write_data_write_data_write = \
+  bus_name##_fifo##NUM_STR##_write_data_WRITE_1(bus_name##_fifo##NUM_STR##_write_data_write_data_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.data_ready = bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready; \
 /* Write resp data out of fifo*/ \
 /* Write resp ready into fifo*/ \
-name##_write_resp_read_t name##_write_resp_write_resp_read = \
-  name##_write_resp_READ_1(host_to_dev_wire.write.resp_ready); \
-dev_to_host_wire.write.resp.data = name##_write_resp_write_resp_read.data[0]; \
-dev_to_host_wire.write.resp.valid = name##_write_resp_write_resp_read.valid; \
+bus_name##_fifo##NUM_STR##_write_resp_read_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_read = \
+  bus_name##_fifo##NUM_STR##_write_resp_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid; \
 /* Read req data into fifo*/ \
 /* Read req ready out of fifo*/ \
-bus_name##_read_req_data_t name##_read_req_read_req_data[1]; \
-name##_read_req_read_req_data[0] = host_to_dev_wire.read.req.data; \
-name##_read_req_write_t name##_read_req_read_req_write = \
-  name##_read_req_WRITE_1(name##_read_req_read_req_data, host_to_dev_wire.read.req.valid); \
-dev_to_host_wire.read.req_ready = name##_read_req_read_req_write.ready; \
+bus_name##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
+bus_name##_fifo##NUM_STR##_read_req_read_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.data; \
+bus_name##_fifo##NUM_STR##_read_req_write_t bus_name##_fifo##NUM_STR##_read_req_read_req_write = \
+  bus_name##_fifo##NUM_STR##_read_req_WRITE_1(bus_name##_fifo##NUM_STR##_read_req_read_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.req_ready = bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready; \
 /* Read data data out of fifo*/ \
 /* Read data ready into fifo*/ \
-name##_read_data_read_t name##_read_data_read_data_read = \
-  name##_read_data_READ_1(host_to_dev_wire.read.data_ready); \
-dev_to_host_wire.read.data.burst = name##_read_data_read_data_read.data[0]; \
-dev_to_host_wire.read.data.valid = name##_read_data_read_data_read.valid;
+bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data_read_data_read = \
+  bus_name##_fifo##NUM_STR##_read_data_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid;
 
-#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING( \
-  name, bus_name, \
-  host_to_dev_wire, \
-  dev_to_host_wire \
-)\
-/* Write into fifo (to host) <= dev_to_host_wire */ \
-/* host_to_dev_wire <= Read from fifo (from host)*/ \
+#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(bus_name,NUM_STR)\
+/* Write into fifo (to host) <= bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR] */ \
+/* bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR] <= Read from fifo (from host)*/ \
 /* FIFO is one of the channels...
 /**/ \
 /* Write request data out of fifo*/ \
 /* Write request ready back into fifo*/ \
-name##_write_req_read_t name##_write_req_write_req_read = \
-  name##_write_req_READ_1(dev_to_host_wire.write.req_ready); \
-host_to_dev_wire.write.req.data = name##_write_req_write_req_read.data[0]; \
-host_to_dev_wire.write.req.valid = name##_write_req_write_req_read.valid; \
+bus_name##_fifo##NUM_STR##_write_req_read_t bus_name##_fifo##NUM_STR##_write_req_write_req_read = \
+  bus_name##_fifo##NUM_STR##_write_req_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.req_ready); \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.req.data = bus_name##_fifo##NUM_STR##_write_req_write_req_read.data[0]; \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.req.valid = bus_name##_fifo##NUM_STR##_write_req_write_req_read.valid; \
 /* Write data data out of fifo*/ \
 /* Write data ready back into fifo*/ \
-name##_write_data_read_t name##_write_data_write_data_read =  \
-  name##_write_data_READ_1(dev_to_host_wire.write.data_ready); \
-host_to_dev_wire.write.data.burst = name##_write_data_write_data_read.data[0]; \
-host_to_dev_wire.write.data.valid = name##_write_data_write_data_read.valid; \
+bus_name##_fifo##NUM_STR##_write_data_read_t bus_name##_fifo##NUM_STR##_write_data_write_data_read =  \
+  bus_name##_fifo##NUM_STR##_write_data_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.data_ready); \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.burst = bus_name##_fifo##NUM_STR##_write_data_write_data_read.data[0]; \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.valid = bus_name##_fifo##NUM_STR##_write_data_write_data_read.valid; \
 /* Write resp data into fifo*/ \
 /* Write resp ready out of fifo*/ \
-bus_name##_write_resp_data_t name##_write_resp_write_resp_data[1]; \
-name##_write_resp_write_resp_data[0] = dev_to_host_wire.write.resp.data; \
-name##_write_resp_write_t name##_write_resp_write_resp_write = \
-  name##_write_resp_WRITE_1(name##_write_resp_write_resp_data, dev_to_host_wire.write.resp.valid); \
-host_to_dev_wire.write.resp_ready = name##_write_resp_write_resp_write.ready; \
+bus_name##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[1]; \
+bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.data; \
+bus_name##_fifo##NUM_STR##_write_resp_write_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_write = \
+  bus_name##_fifo##NUM_STR##_write_resp_WRITE_1(bus_name##_fifo##NUM_STR##_write_resp_write_resp_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.valid); \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.resp_ready = bus_name##_fifo##NUM_STR##_write_resp_write_resp_write.ready; \
 /* Read req data out of fifo*/ \
 /* Read req ready back into fifo*/ \
-name##_read_req_read_t name##_read_req_read_req_read =  \
-  name##_read_req_READ_1(dev_to_host_wire.read.req_ready); \
-host_to_dev_wire.read.req.data = name##_read_req_read_req_read.data[0]; \
-host_to_dev_wire.read.req.valid = name##_read_req_read_req_read.valid; \
+bus_name##_fifo##NUM_STR##_read_req_read_t bus_name##_fifo##NUM_STR##_read_req_read_req_read =  \
+  bus_name##_fifo##NUM_STR##_read_req_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.req_ready); \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.data = bus_name##_fifo##NUM_STR##_read_req_read_req_read.data[0]; \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.valid = bus_name##_fifo##NUM_STR##_read_req_read_req_read.valid; \
 /* Read data data into fifo*/ \
 /* Read data ready out of fifo*/ \
-bus_name##_read_burst_word_t name##_read_data_read_data_data[1]; \
-name##_read_data_read_data_data[0] = dev_to_host_wire.read.data.burst; \
-name##_read_data_write_t name##_read_data_read_data_write = \
-  name##_read_data_WRITE_1(name##_read_data_read_data_data, dev_to_host_wire.read.data.valid); \
-host_to_dev_wire.read.data_ready = name##_read_data_read_data_write.ready;
+bus_name##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data_read_data_data[1]; \
+bus_name##_fifo##NUM_STR##_read_data_read_data_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.burst; \
+bus_name##_fifo##NUM_STR##_read_data_write_t bus_name##_fifo##NUM_STR##_read_data_read_data_write = \
+  bus_name##_fifo##NUM_STR##_read_data_WRITE_1(bus_name##_fifo##NUM_STR##_read_data_read_data_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.valid); \
+bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.data_ready = bus_name##_fifo##NUM_STR##_read_data_read_data_write.ready;
