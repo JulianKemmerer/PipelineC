@@ -1,9 +1,6 @@
 #include "uintN_t.h"
 #include "compiler.h"
 
-// TODO SHIIIIITT
-// bus_buffer broke?
-
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
 // Generic 5 channel bus
 // 3 write, 2 read

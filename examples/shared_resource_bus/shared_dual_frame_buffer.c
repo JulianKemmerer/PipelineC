@@ -1,6 +1,7 @@
 #include "frame_buffer.c"
 
 //////////////// EXPOSE FRAME BUFFER AS SHARED RESOURCE //////////////////////
+// See docs: https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 #include "shared_resource_bus.h"
 
 #define NUM_DEV_PORTS N_FRAME_BUF_PORTS
@@ -105,12 +106,7 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
   //  Write data (data bytes)
   //  Write resp (err code)
   // Each channel has a valid+ready handshake buffer
-  static frame_buf0_shared_bus_write_req_t write_req;
-  static frame_buf0_shared_bus_read_req_t read_req;
-  static frame_buf0_shared_bus_read_data_t read_data;
-  static frame_buf0_shared_bus_write_data_t write_data;
-  static frame_buf0_shared_bus_write_resp_t write_resp;
-  //frame_buf0_shared_bus_buffer_t bus_buffer;
+  static frame_buf0_shared_bus_buffer_t bus_buffer;
   // Allow one req-data-resp in flight at a time:
   //  Wait for inputs to arrive in input handshake regs w/ things needed req/data
   //  Start operation
@@ -122,26 +118,26 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
   // Signal ready for inputs if buffers are empty
   // Static since o.to_frame_buf written to over multiple cycles
   static frame_buf_ram_port_dev_ctrl_t o;
-  o.to_host.write.req_ready = !write_req.valid;
-  o.to_host.read.req_ready = !read_req.valid;
-  o.to_host.write.data_ready = !write_data.valid;
+  o.to_host.write.req_ready = !bus_buffer.write_req.valid;
+  o.to_host.read.req_ready = !bus_buffer.read_req.valid;
+  o.to_host.write.data_ready = !bus_buffer.write_data.valid;
 
   // Drive outputs from buffers
-  o.to_host.read.data = read_data;
-  o.to_host.write.resp = write_resp;
+  o.to_host.read.data = bus_buffer.read_data;
+  o.to_host.write.resp = bus_buffer.write_resp;
 
   // Clear output buffers when ready
   if(from_host.read.data_ready)
   {
-    read_data.valid = 0;
+    bus_buffer.read_data.valid = 0;
   }
   if(from_host.write.resp_ready)
   {
-    write_resp.valid = 0;
+    bus_buffer.write_resp.valid = 0;
   }
 
   // State machine logic feeding signals into ram
-  o.to_frame_buf.wr_data = write_data.burst.data_word.user;
+  o.to_frame_buf.wr_data = bus_buffer.write_data.burst.data_word.user;
   o.to_frame_buf.wr_enable = 0;
   o.to_frame_buf.valid = 0;
   if(state==REQ)
@@ -153,11 +149,11 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
     if(read_has_priority)
     {
       // Read priority
-      if(read_req.valid)
+      if(bus_buffer.read_req.valid)
       {
         do_read = 1;
       }
-      else if(write_req.valid)
+      else if(bus_buffer.write_req.valid)
       {
         do_write = 1;
       } 
@@ -165,11 +161,11 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
     else
     {
       // Write priority
-      if(write_req.valid)
+      if(bus_buffer.write_req.valid)
       {
         do_write = 1;
       }
-      else if(read_req.valid)
+      else if(bus_buffer.read_req.valid)
       {
         do_read = 1;
       } 
@@ -177,20 +173,20 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
     if(do_read)
     {
       op_is_read = 1;
-      o.to_frame_buf.req = read_req.data.user;
-      read_req.valid = 0; // Done w req now
+      o.to_frame_buf.req = bus_buffer.read_req.data.user;
+      bus_buffer.read_req.valid = 0; // Done w req now
       read_has_priority = 0; // Writes next
       o.to_frame_buf.valid = 1; // addr completes valid inputs, no input read data
-      o.to_frame_buf.id = read_req.id;
+      o.to_frame_buf.id = bus_buffer.read_req.id;
       // Waiting for output read data next
       state = DATA;
     }
     else if(do_write)
     {
       op_is_read = 0;
-      o.to_frame_buf.req = write_req.data.user;
-      o.to_frame_buf.id = write_req.id;
-      write_req.valid = 0; // Done w req now
+      o.to_frame_buf.req = bus_buffer.write_req.data.user;
+      o.to_frame_buf.id = bus_buffer.write_req.id;
+      bus_buffer.write_req.valid = 0; // Done w req now
       read_has_priority = 1; // Reads next
       // Write stil needs data still before valid input to frame buf
       state = DATA;
@@ -200,12 +196,12 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
   else if((state==DATA) & !op_is_read) // Write data into RAM
   {
     // Wait until valid write data
-    if(write_data.valid)
+    if(bus_buffer.write_data.valid)
     {
       o.to_frame_buf.wr_enable = 1;
       o.to_frame_buf.valid = 1;
-      // AXI3-like interleaved writes only o.to_frame_buf.id = write_data.id;
-      write_data.valid = 0; // Done w data now
+      // AXI3-like interleaved writes only o.to_frame_buf.id = bus_buffer.write_data.id;
+      bus_buffer.write_data.valid = 0; // Done w data now
       state = WR_RESP;
     }
   }
@@ -219,16 +215,16 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
     if(from_frame_buf.wr_enable)
     {
       // Output write resp, err code unused
-      write_resp.valid = 1;
-      write_resp.id = from_frame_buf.id;
+      bus_buffer.write_resp.valid = 1;
+      bus_buffer.write_resp.id = from_frame_buf.id;
     }
     else
     {
       // Output read data
-      read_data.valid = 1;
-      read_data.id = from_frame_buf.id;
-      read_data.burst.last = 1;
-      read_data.burst.data_resp.user = from_frame_buf.rd_data;
+      bus_buffer.read_data.valid = 1;
+      bus_buffer.read_data.id = from_frame_buf.id;
+      bus_buffer.read_data.burst.last = 1;
+      bus_buffer.read_data.burst.data_resp.user = from_frame_buf.rd_data;
     }
   }
 
@@ -253,15 +249,15 @@ frame_buf_ram_port_dev_ctrl_t frame_buf_ram_port_dev_ctrl(
   // Save data into input buffers if signalling ready
   if(o.to_host.write.req_ready)
   {
-    write_req = from_host.write.req;
+    bus_buffer.write_req = from_host.write.req;
   }
   if(o.to_host.read.req_ready)
   {
-    read_req = from_host.read.req;
+    bus_buffer.read_req = from_host.read.req;
   }
   if(o.to_host.write.data_ready)
   {
-    write_data = from_host.write.data;
+    bus_buffer.write_data = from_host.write.data;
   }
 
   return o;
