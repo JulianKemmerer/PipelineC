@@ -12,11 +12,10 @@
 // Extend to use DDR3 AXI for frame buffer?
 //    Can add/test many in flight ~pipelined full AXI funcitonality?
 // Extend to use a autopipeline - sphery? is read of state write to frame buffer only
-
+#define HOST_CLK_MHZ 50.0 //35.0 TODO TRY LOWERING TO 35 one frame buf, works?
 
 // NUM_THREADS Divides FRAME_WIDTH
 #define NUM_THREADS 4
-
 #include "shared_dual_frame_buffer.c"
 
 
@@ -32,8 +31,8 @@ uint1_t pixel_kernel(uint16_t x, uint16_t y, uint1_t pixel)
 // Func run for every n_pixels_t chunk
 void pixels_buffer_kernel(uint16_t x_buffer_index, uint16_t y)
 {
-  // Read the pixels
-  n_pixels_t pixels = frame_buf_read(x_buffer_index, y);
+  // Read the pixels from the 'read' frame buffer
+  n_pixels_t pixels = frame_buf_read(frame_buffer_read_port_sel, x_buffer_index, y);
   
   // Run kernel for each pixel
   uint32_t i;
@@ -43,8 +42,8 @@ void pixels_buffer_kernel(uint16_t x_buffer_index, uint16_t y)
     pixels.data[i] = pixel_kernel(x+i, y, pixels.data[i]);
   }  
   
-  // Write pixels back
-  frame_buf_write(x_buffer_index, y, pixels);
+  // Write pixels back to the 'write' frame buffer (opposite read)
+  frame_buf_write(!frame_buffer_read_port_sel, x_buffer_index, y, pixels);
 }
 
 // Single 'thread' state machine running pixels_buffer_kernel "sequentially" across an x,y range
@@ -98,6 +97,8 @@ void render_frame()
     }
     __clk();
   }
+  // Final step in rendering frame is switching to read from newly rendered frame buffer
+  //frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
 }
 
 void main()

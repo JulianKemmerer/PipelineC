@@ -5,6 +5,7 @@
 // Generic 5 channel bus
 // 3 write, 2 read
 #define id_t uint8_t
+#define SHARED_RES_CLK_CROSS_FIFO_DEPTH 16 // min is 16 due to Xilinx XPM FIFO
 
 typedef enum shared_res_bus_write_state_t
 {
@@ -27,10 +28,8 @@ typedef enum shared_res_bus_dev_arb_state_t
   WR_RESP_STATE
 }shared_res_bus_dev_arb_state_t;
 
-#define SHARED_BUS_DECL( \
+#define SHARED_BUS_TYPE_DEF( \
   name, \
-  NUM_HOST_PORTS, \
-  NUM_DEV_PORTS, \
   write_req_data_t, write_data_word_t, write_resp_data_t, \
   read_req_data_t, read_data_resp_word_t \
 )\
@@ -277,23 +276,29 @@ name##_read_logic_outputs_t name##_read_logic( \
   } \
   return o; \
 } \
- \
 /* ^TODO: condsider making a combined single read_write_logic?*/ \
  \
+name##_host_to_dev_t name##_HOST_TO_DEV_NULL;
+
+#define SHARED_BUS_DECL(\
+type, \
+write_req_data_t, write_data_word_t, write_resp_data_t, \
+read_req_data_t, read_data_resp_word_t, \
+name, NUM_HOST_PORTS, NUM_DEV_PORTS \
+) \
 /* Global wires*/ \
-name##_host_to_dev_t name##_HOST_TO_DEV_NULL; \
-name##_host_to_dev_t name##_host_to_dev_wire_on_host_clk; \
-name##_dev_to_host_t name##_dev_to_host_wire_on_host_clk; \
+type##_host_to_dev_t name##_host_to_dev_wire_on_host_clk; \
+type##_dev_to_host_t name##_dev_to_host_wire_on_host_clk; \
 /* Wires are used by N thread instances trying to do reads and writes at same time*/ \
 /* Resolve multiple drivers with INST_ARRAY arrays of wires*/ \
-name##_host_to_dev_t name##_host_to_dev_wires_on_host_clk[NUM_HOST_PORTS]; \
+type##_host_to_dev_t name##_host_to_dev_wires_on_host_clk[NUM_HOST_PORTS]; \
 PRAGMA_MESSAGE(INST_ARRAY name##_host_to_dev_wire_on_host_clk name##_host_to_dev_wires_on_host_clk) \
-name##_dev_to_host_t name##_dev_to_host_wires_on_host_clk[NUM_HOST_PORTS]; \
+type##_dev_to_host_t name##_dev_to_host_wires_on_host_clk[NUM_HOST_PORTS]; \
 PRAGMA_MESSAGE(INST_ARRAY name##_dev_to_host_wire_on_host_clk name##_dev_to_host_wires_on_host_clk) \
 /* Only need/want INST_ARRAY on host clock since multiple threads*/ \
 /* Dev side needs just plain array use to wire to ports and such*/ \
-name##_host_to_dev_t name##_host_to_dev_wires_on_dev_clk[NUM_HOST_PORTS]; \
-name##_dev_to_host_t name##_dev_to_host_wires_on_dev_clk[NUM_HOST_PORTS]; \
+type##_host_to_dev_t name##_host_to_dev_wires_on_dev_clk[NUM_HOST_PORTS]; \
+type##_dev_to_host_t name##_dev_to_host_wires_on_dev_clk[NUM_HOST_PORTS]; \
  \
 /* FSM style funcs to do reads and writes*/ \
  \
@@ -301,17 +306,17 @@ read_data_resp_word_t name##_read(read_req_data_t req) \
 { \
   read_data_resp_word_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = name##_HOST_TO_DEV_NULL; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
   while(!done) \
   { \
-    name##_read_logic_outputs_t read_logic_outputs \
-      = name##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
+    type##_read_logic_outputs_t read_logic_outputs \
+      = type##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
     name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
     done = read_logic_outputs.done; \
     rv = read_logic_outputs.data; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = name##_HOST_TO_DEV_NULL; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
   return rv; \
 } \
  \
@@ -319,17 +324,17 @@ write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
 { \
   write_resp_data_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = name##_HOST_TO_DEV_NULL; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
   while(!done) \
   { \
-    name##_write_logic_outputs_t write_logic_outputs \
-      = name##_write_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk); \
+    type##_write_logic_outputs_t write_logic_outputs \
+      = type##_write_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk); \
     name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     rv = write_logic_outputs.resp; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = name##_HOST_TO_DEV_NULL; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
   return rv; \
 } \
  \
@@ -378,12 +383,12 @@ uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_sel
 /*    just keep req,resp state - now duplicated? for read+write?*/ \
 /*    helps async start complete from one channel, mixing reads and writes*/ \
 typedef struct name##_dev_arb_t{ \
-  name##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
-  name##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
+  type##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
+  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
 }name##_dev_arb_t; \
 name##_dev_arb_t name##_dev_arb( \
-  name##_dev_to_host_t from_devs[NUM_DEV_PORTS], \
-  name##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+  type##_dev_to_host_t from_devs[NUM_DEV_PORTS], \
+  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
 ) \
 { \
   /* 5 channels between each host and device*/ \
@@ -395,11 +400,11 @@ name##_dev_arb_t name##_dev_arb( \
   /*  Write data (data bytes)*/ \
   /*  Write resp (err code)*/ \
   /* Each channel has a valid+ready handshake buffer*/ \
-  static name##_write_req_t write_reqs[NUM_HOST_PORTS]; \
-  static name##_read_req_t read_reqs[NUM_HOST_PORTS]; \
-  static name##_read_data_t read_datas[NUM_HOST_PORTS]; \
-  static name##_write_data_t write_datas[NUM_HOST_PORTS]; \
-  static name##_write_resp_t write_resps[NUM_HOST_PORTS]; \
+  static type##_write_req_t write_reqs[NUM_HOST_PORTS]; \
+  static type##_read_req_t read_reqs[NUM_HOST_PORTS]; \
+  static type##_read_data_t read_datas[NUM_HOST_PORTS]; \
+  static type##_write_data_t write_datas[NUM_HOST_PORTS]; \
+  static type##_write_resp_t write_resps[NUM_HOST_PORTS]; \
  \
   /* Output signal, static since o.to_frame_buf written to over multiple cycles*/ \
   static name##_dev_arb_t o; \
@@ -618,39 +623,39 @@ name##_dev_arb_t name##_dev_arb( \
 }
 
 // Instantiate the arb module with to-from wires for user
-#define SHARED_BUS_ARB_INST(bus_name, arb_name, NUM_DEV_PORTS) \
-bus_name##_dev_to_host_t arb_name##_from_devs[NUM_DEV_PORTS]; \
-PRAGMA_MESSAGE(FEEDBACK arb_name##_from_devs) /* Value from last assignment*/ \
-bus_name##_dev_arb_t arb_name = bus_name##_dev_arb(arb_name##_from_devs, bus_name##_host_to_dev_wires_on_dev_clk); \
-bus_name##_host_to_dev_t arb_name##_to_devs[NUM_DEV_PORTS]; \
-arb_name##_to_devs = arb_name.to_devs; \
-bus_name##_dev_to_host_wires_on_dev_clk = arb_name.to_hosts;
+#define SHARED_BUS_ARB(type, bus_name, NUM_DEV_PORTS) \
+type##_dev_to_host_t bus_name##_to_host[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK bus_name##_to_host) /* Value from last assignment*/ \
+bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb(bus_name##_to_host, bus_name##_host_to_dev_wires_on_dev_clk); \
+type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
+bus_name##_from_host = bus_name##_arb.to_devs; \
+bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
 
 // Each channel of 5 channels host<->dev link needs async fifo
 // 3 write, 2 read
 // INST_ARRAY doesnt support async fifos
-#define SHARED_BUS_ASYNC_FIFO_DECL(bus_name, NUM_STR, DEPTH) \
-bus_name##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req[DEPTH];\
-bus_name##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data[DEPTH];\
-bus_name##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp[DEPTH];\
-bus_name##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req[DEPTH];\
-bus_name##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data[DEPTH];
+#define SHARED_BUS_ASYNC_FIFO_DECL(type, bus_name, NUM_STR) \
+type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
+type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
+type##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
+type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
+type##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data[SHARED_RES_CLK_CROSS_FIFO_DEPTH];
 
-#define SHARED_BUS_ASYNC_FIFO_HOST_WIRING(bus_name, NUM_STR)\
+#define SHARED_BUS_ASYNC_FIFO_HOST_WIRING(type, bus_name, NUM_STR)\
 /* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
 /* bus_name##_dev_to_host_wires_on_host_clk[NUM_STR] <= Read from fifo (from dev)*/ \
 /* FIFO is one of the channels...*/ \
 /**/ \
 /* Write request data into fifo*/ \
 /* Write request ready out of fifo*/ \
-bus_name##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
+type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
 bus_name##_fifo##NUM_STR##_write_req_write_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.data; \
 bus_name##_fifo##NUM_STR##_write_req_write_t bus_name##_fifo##NUM_STR##_write_req_write_req_write = \
   bus_name##_fifo##NUM_STR##_write_req_WRITE_1(bus_name##_fifo##NUM_STR##_write_req_write_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid); \
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.req_ready = bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready; \
 /* Write data data into fifo*/ \
 /* Write data ready out of fifo*/ \
-bus_name##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
+type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
 bus_name##_fifo##NUM_STR##_write_data_write_data_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.burst; \
 bus_name##_fifo##NUM_STR##_write_data_write_t bus_name##_fifo##NUM_STR##_write_data_write_data_write = \
   bus_name##_fifo##NUM_STR##_write_data_WRITE_1(bus_name##_fifo##NUM_STR##_write_data_write_data_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid); \
@@ -663,7 +668,7 @@ bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = bus_name##_f
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid; \
 /* Read req data into fifo*/ \
 /* Read req ready out of fifo*/ \
-bus_name##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
+type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
 bus_name##_fifo##NUM_STR##_read_req_read_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.data; \
 bus_name##_fifo##NUM_STR##_read_req_write_t bus_name##_fifo##NUM_STR##_read_req_read_req_write = \
   bus_name##_fifo##NUM_STR##_read_req_WRITE_1(bus_name##_fifo##NUM_STR##_read_req_read_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid); \
@@ -675,7 +680,7 @@ bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid;
 
-#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(bus_name,NUM_STR)\
+#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(type, bus_name,NUM_STR)\
 /* Write into fifo (to host) <= bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR] */ \
 /* bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR] <= Read from fifo (from host)*/ \
 /* FIFO is one of the channels...
@@ -694,7 +699,7 @@ bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.burst = bus_name##_f
 bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.valid = bus_name##_fifo##NUM_STR##_write_data_write_data_read.valid; \
 /* Write resp data into fifo*/ \
 /* Write resp ready out of fifo*/ \
-bus_name##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[1]; \
+type##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[1]; \
 bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.data; \
 bus_name##_fifo##NUM_STR##_write_resp_write_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_write = \
   bus_name##_fifo##NUM_STR##_write_resp_WRITE_1(bus_name##_fifo##NUM_STR##_write_resp_write_resp_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.valid); \
@@ -707,7 +712,7 @@ bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.data = bus_name##_fifo
 bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.valid = bus_name##_fifo##NUM_STR##_read_req_read_req_read.valid; \
 /* Read data data into fifo*/ \
 /* Read data ready out of fifo*/ \
-bus_name##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data_read_data_data[1]; \
+type##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data_read_data_data[1]; \
 bus_name##_fifo##NUM_STR##_read_data_read_data_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.burst; \
 bus_name##_fifo##NUM_STR##_read_data_write_t bus_name##_fifo##NUM_STR##_read_data_read_data_write = \
   bus_name##_fifo##NUM_STR##_read_data_WRITE_1(bus_name##_fifo##NUM_STR##_read_data_read_data_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.valid); \

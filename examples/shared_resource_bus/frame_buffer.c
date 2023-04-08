@@ -15,7 +15,7 @@ typedef struct n_pixels_t{
   uint1_t data[RAM_PIXEL_BUFFER_SIZE];
 }n_pixels_t;
 
-// The frame buffer with multiple ports
+// The frame buffer with two ports
 #include "ram.h"
 #define N_FRAME_BUF_PORTS 2
 DECL_RAM_DP_RW_RW_1(
@@ -31,16 +31,10 @@ uint32_t pos_to_addr(uint16_t x_buffer_index, uint16_t y)
   return (y*(FRAME_WIDTH/RAM_PIXEL_BUFFER_SIZE)) + x_buffer_index;
 }
 
-// TODO dont need struct wrapper
-typedef struct frame_buf_req_t
-{
-  uint32_t addr;
-}frame_buf_req_t;
-
 //  Inputs
 typedef struct frame_buffer_in_ports_t{
   n_pixels_t wr_data;
-  frame_buf_req_t req; //uint32_t addr;
+  uint32_t addr;
   uint1_t wr_enable; // 0=read
   uint8_t id;
   uint1_t valid;
@@ -53,34 +47,32 @@ typedef struct frame_buffer_out_ports_t{
   uint1_t valid;
 }frame_buffer_out_ports_t;
 
-// Frame buffer RAM application/user global wires for use once anywhere in code
-frame_buffer_in_ports_t frame_buffer_in_ports[N_FRAME_BUF_PORTS];
-frame_buffer_out_ports_t frame_buffer_out_ports[N_FRAME_BUF_PORTS];
-
-// Frame buffer RAM
-#define DEV_CLK_MHZ 100.0
-MAIN_MHZ(frame_buffer_ram, DEV_CLK_MHZ)
-void frame_buffer_ram()
+typedef struct frame_buf_ram_module_t
 {
+  frame_buffer_out_ports_t frame_buffer_out_ports[N_FRAME_BUF_PORTS];
+}frame_buf_ram_module_t;
+frame_buf_ram_module_t frame_buf_ram_module(frame_buffer_in_ports_t frame_buffer_in_ports[N_FRAME_BUF_PORTS])
+{
+  frame_buf_ram_module_t o;
   // 1 cycle of delay regs for ID field not included in RAM macro func
   static uint8_t id_reg[N_FRAME_BUF_PORTS];
 
   // Do RAM lookup
   frame_buf_ram_outputs_t frame_buf_ram_outputs = frame_buf_ram(
-    frame_buffer_in_ports[0].req.addr, frame_buffer_in_ports[0].wr_data, frame_buffer_in_ports[0].wr_enable, frame_buffer_in_ports[0].valid,
-    frame_buffer_in_ports[1].req.addr, frame_buffer_in_ports[1].wr_data, frame_buffer_in_ports[1].wr_enable, frame_buffer_in_ports[1].valid
+    frame_buffer_in_ports[0].addr, frame_buffer_in_ports[0].wr_data, frame_buffer_in_ports[0].wr_enable, frame_buffer_in_ports[0].valid,
+    frame_buffer_in_ports[1].addr, frame_buffer_in_ports[1].wr_data, frame_buffer_in_ports[1].wr_enable, frame_buffer_in_ports[1].valid
   );
 
   // User output signals
-  frame_buffer_out_ports[0].rd_data = frame_buf_ram_outputs.rd_data0;
-  frame_buffer_out_ports[0].wr_enable = frame_buf_ram_outputs.wr_en0;
-  frame_buffer_out_ports[0].id = id_reg[0];
-  frame_buffer_out_ports[0].valid = frame_buf_ram_outputs.valid0;
+  o.frame_buffer_out_ports[0].rd_data = frame_buf_ram_outputs.rd_data0;
+  o.frame_buffer_out_ports[0].wr_enable = frame_buf_ram_outputs.wr_en0;
+  o.frame_buffer_out_ports[0].id = id_reg[0];
+  o.frame_buffer_out_ports[0].valid = frame_buf_ram_outputs.valid0;
   //
-  frame_buffer_out_ports[1].rd_data = frame_buf_ram_outputs.rd_data1;
-  frame_buffer_out_ports[1].wr_enable = frame_buf_ram_outputs.wr_en1;
-  frame_buffer_out_ports[1].id = id_reg[1];
-  frame_buffer_out_ports[1].valid = frame_buf_ram_outputs.valid1;
+  o.frame_buffer_out_ports[1].rd_data = frame_buf_ram_outputs.rd_data1;
+  o.frame_buffer_out_ports[1].wr_enable = frame_buf_ram_outputs.wr_en1;
+  o.frame_buffer_out_ports[1].id = id_reg[1];
+  o.frame_buffer_out_ports[1].valid = frame_buf_ram_outputs.valid1;
 
   // ID delay reg
   uint32_t i;
@@ -88,4 +80,6 @@ void frame_buffer_ram()
   {
     id_reg[i] = frame_buffer_in_ports[i].id;
   }
+
+  return o;
 }
