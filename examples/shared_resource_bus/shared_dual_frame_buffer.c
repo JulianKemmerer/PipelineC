@@ -2,7 +2,7 @@
 #include "frame_buffer.c"
 
 // Dual frame buffers
-#define N_FRAME_BUFFERS 1
+#define N_FRAME_BUFFERS 2
 // Frame buffer RAM application/user global wires for use once anywhere in code
 frame_buffer_in_ports_t frame_buffers_in_ports[N_FRAME_BUFFERS][N_FRAME_BUF_PORTS];
 frame_buffer_out_ports_t frame_buffers_out_ports[N_FRAME_BUFFERS][N_FRAME_BUF_PORTS];
@@ -42,7 +42,7 @@ SHARED_BUS_DECL(
   NUM_HOST_PORTS,
   NUM_DEV_PORTS
 )
-/*// Second frame buffer
+// Second frame buffer
 SHARED_BUS_DECL(
   frame_buf_bus_t,
   uint32_t, n_pixels_t, uint1_t,
@@ -50,8 +50,7 @@ SHARED_BUS_DECL(
   frame_buf1_shared_bus,
   NUM_HOST_PORTS,
   NUM_DEV_PORTS
-)*/
-
+)
 
 // TODO           #include "shared_res_fifos/fifo0.h"
 // When generates   #include "clock_crossing/write_req_fifo0.h"
@@ -90,7 +89,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 4)
 #include "clock_crossing/frame_buf0_shared_bus_fifo4_write_resp.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo4_read_req.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo4_read_data.h"
-/*// Second frame buffer fifos
+// Second frame buffer fifos
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 0)
 #include "clock_crossing/frame_buf1_shared_bus_fifo0_write_req.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo0_write_data.h"
@@ -120,7 +119,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 4)
 #include "clock_crossing/frame_buf1_shared_bus_fifo4_write_data.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo4_write_resp.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo4_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_read_data.h"*/
+#include "clock_crossing/frame_buf1_shared_bus_fifo4_read_data.h"
 
 // Wire ASYNC FIFOs to dev-host wires
 MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)
@@ -132,12 +131,12 @@ void host_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 2)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 3)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 4)
-  /*// Second frame buffer
+  // Second frame buffer
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 0)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 1)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 2)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 4)*/
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 4)
 }
 MAIN_MHZ(dev_side_fifo_wiring, DEV_CLK_MHZ)
 void dev_side_fifo_wiring()
@@ -148,18 +147,18 @@ void dev_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 2)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 3)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 4)
-  /*// Second frame buffer
+  // Second frame buffer
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 0)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 1)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 2)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 4)*/
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 4)
 }
 
 // User application uses 5 channel AXI-like shared bus wires for frame buffer control
-// Need to wire up RAM with AXI style req, resp which used valid ready
+// Need to wire up RAM with AXI style req,resp which uses valid ready
 // resp/req/data channels are independent
-// (RAM also needs VGA read only port)
+
 // TODO what kind of helper funcs are good for generic support connecting to bus?
 
 // How frame buffer port is 'converted' to shared bus connection
@@ -349,7 +348,7 @@ void frame_buf_ram_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
   SHARED_BUS_ARB(frame_buf_bus_t, frame_buf0_shared_bus, NUM_DEV_PORTS)
-  //SHARED_BUS_ARB(frame_buf_bus_t, frame_buf1_shared_bus, NUM_DEV_PORTS)
+  SHARED_BUS_ARB(frame_buf_bus_t, frame_buf1_shared_bus, NUM_DEV_PORTS)
 
   // Connect devs to frame buffer ports
   uint32_t i;
@@ -360,11 +359,11 @@ void frame_buf_ram_dev_arb_connect()
       = frame_buf_ram_port_dev_ctrl(frame_buffers_out_ports[0][i], frame_buf0_shared_bus_from_host[i]);
     frame_buffers_in_ports[0][i] = port_ctrl.to_frame_buf;
     frame_buf0_shared_bus_to_host[i] = port_ctrl.to_host;
-    /*// Second frame buffer
+    // Second frame buffer
     frame_buf_ram_port_dev_ctrl_t port_ctrl
       = frame_buf_ram_port_dev_ctrl(frame_buffers_out_ports[1][i], frame_buf1_shared_bus_from_host[i]);
     frame_buffers_in_ports[1][i] = port_ctrl.to_frame_buf;
-    frame_buf1_shared_bus_to_host[i] = port_ctrl.to_host;*/
+    frame_buf1_shared_bus_to_host[i] = port_ctrl.to_host;
   }
 }
 
@@ -374,22 +373,22 @@ n_pixels_t frame_buf_read(uint1_t frame_buf_sel, uint16_t x_buffer_index, uint16
 {
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   n_pixels_t resp;
-  //if(frame_buf_sel){
-  //  resp = frame_buf1_shared_bus_read(addr);
-  //}else{
+  if(frame_buf_sel){
+    resp = frame_buf1_shared_bus_read(addr);
+  }else{
     resp = frame_buf0_shared_bus_read(addr);
-  //}
+  }
   return resp;
 }
 void frame_buf_write(uint1_t frame_buf_sel, uint16_t x_buffer_index, uint16_t y, n_pixels_t wr_data)
 {
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   uint1_t resp; // dummy return resp val
-  //if(frame_buf_sel){
-  //  resp = frame_buf1_shared_bus_write(addr, wr_data); 
-  //}else{
+  if(frame_buf_sel){
+    resp = frame_buf1_shared_bus_write(addr, wr_data); 
+  }else{
     resp = frame_buf0_shared_bus_write(addr, wr_data);
-  //} 
+  } 
 }
 
 // Always-reading logic to drive VGA signal into pmod_async_fifo_write

@@ -3,8 +3,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
-// COMPLETE first draft macros
-// demo GoL/complete second shared resource instance second frame buf
+// Demo GoL next
 //
 //
 // FUTURE How to wrap/macro make any new 'resource' (like the frame buffer or autopipeline)
@@ -12,7 +11,7 @@
 // Extend to use DDR3 AXI for frame buffer?
 //    Can add/test many in flight ~pipelined full AXI funcitonality?
 // Extend to use a autopipeline - sphery? is read of state write to frame buffer only
-#define HOST_CLK_MHZ 50.0 //35.0 TODO TRY LOWERING TO 35 one frame buf, works?
+#define HOST_CLK_MHZ 35.0
 
 // NUM_THREADS Divides FRAME_WIDTH
 #define NUM_THREADS 4
@@ -98,7 +97,7 @@ void render_frame()
     __clk();
   }
   // Final step in rendering frame is switching to read from newly rendered frame buffer
-  //frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
+  frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
 }
 
 void main()
