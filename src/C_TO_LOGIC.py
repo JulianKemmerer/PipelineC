@@ -2058,21 +2058,27 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
 
 
 def CONNECT_FINAL_STATE_WIRES(prepend_text, parser_state, c_ast_node):
+    # Final state wires are using made C AST location == func def 
+    # So need extra way to distinguish multiple things at same AST location
+    # Use prepend text like IF true false branches
+       
     # Tie all state regs to state wire
     # Collpase struct ref hierarchy to get top most orig wire name nodes
     for state_reg in parser_state.existing_logic.state_regs:
         # Read ref_toks takes care of it
         ref_toks = (state_reg,)
+        new_prepend_text = state_reg + "_" + prepend_text
         connect_logic = C_AST_REF_TOKS_TO_LOGIC(
-            ref_toks, c_ast_node, [state_reg], prepend_text, parser_state
+            ref_toks, c_ast_node, [state_reg], new_prepend_text, parser_state
         )
         parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)
 
     # Tie feedback wires to var like state regs
     for feedback_var in parser_state.existing_logic.feedback_vars:
         ref_toks = (feedback_var,)
+        new_prepend_text = feedback_var + "_" + prepend_text
         connect_logic = C_AST_REF_TOKS_TO_LOGIC(
-            ref_toks, c_ast_node, [feedback_var], prepend_text, parser_state
+            ref_toks, c_ast_node, [feedback_var], new_prepend_text, parser_state
         )
         parser_state.existing_logic.MERGE_COMB_LOGIC(connect_logic)
 
@@ -4121,7 +4127,6 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
 def C_AST_REF_TOKS_TO_LOGIC(
     ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state
 ):
-
     # FUCK
     debug = False
     # debug = (parser_state.existing_logic.func_name == "sbox") and (ref_toks[0]=="rom")
@@ -4417,13 +4422,14 @@ def C_AST_REF_TOKS_TO_LOGIC(
       width = int(math.ceil(math.log(var_dim,2)))
       var_dim_type = "uint" + str(width) + "_t"
       func_name += "_" + var_dim_type
-    """
-
-        # print "REF FUNC NAME:", func_name
+    """    
 
         # Get inst name
         func_base_name = func_name  # Is unique
         func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_ref)
+        if debug:
+            print("REF FUNC NAME:", func_name)
+            print("REF INST NAME:", func_inst_name)
         # Save ref toks for this ref submodule
         parser_state.existing_logic.ref_submodule_instance_to_ref_toks[
             func_inst_name
