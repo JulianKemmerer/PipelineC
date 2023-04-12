@@ -6,6 +6,7 @@
 //#include "vga/vga_pmod_async_fifo.c"
 #define RAM_PIXEL_BUFFER_SIZE 32 //16 // number of pixels in x direction N_PIXELS
 #define RAM_PIXEL_BUFFER_SIZE_LOG2 5 //4
+#define ram_pixel_offset_t uint5_t
 #define VGA_ASYNC_FIFO_N_PIXELS RAM_PIXEL_BUFFER_SIZE
 #include "vga/vga_pmod_async_pixels_fifo.c" // Version that expects only x,y pixels, N at a time
 
@@ -15,6 +16,9 @@ typedef struct n_pixels_t{
   uint1_t data[RAM_PIXEL_BUFFER_SIZE];
 }n_pixels_t;
 
+// Game of life RAM init data
+#include "frame_buf_init_data.h"
+
 // The frame buffer with two ports
 #include "ram.h"
 #define N_FRAME_BUF_PORTS 2
@@ -22,7 +26,7 @@ DECL_RAM_DP_RW_RW_1(
   n_pixels_t,
   frame_buf_ram,
   ((FRAME_WIDTH/RAM_PIXEL_BUFFER_SIZE)*FRAME_HEIGHT),
-  "(others => (others => (others => (others => '1'))))"
+  FRAME_BUF_INIT_DATA
 )
 
 // Helper function to flatten 2D x_buffer_index,y positions into 1D RAM addresses

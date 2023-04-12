@@ -354,7 +354,6 @@ uint8_t name##_host_port_inc(uint8_t selected_host_port) \
 /* Pick next shared bus to arb based on what other ports have chosen*/ \
 uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
 { \
-  uint1_t found_rv = 0; \
   uint8_t rv = name##_host_port_inc(selected_host_port); \
   int32_t i; \
   /* Backwards loop because 'next' is like a shift, etc*/ \
@@ -363,16 +362,7 @@ uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_sel
     if(next_dev_to_selected_host[i]==rv) \
     { \
       rv = name##_host_port_inc(rv); \
-      found_rv = 0; \
     } \
-    else \
-    { \
-      found_rv = 1; \
-    } \
-  } \
-  if(!found_rv) \
-  { \
-    rv = selected_host_port; \
   } \
   return rv; \
 } \

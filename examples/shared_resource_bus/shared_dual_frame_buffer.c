@@ -369,22 +369,26 @@ void frame_buf_ram_dev_arb_connect()
 
 // frame_buf_read and write
 // wrappers around shared_resource_bus.h read() and write() dealing with request types etc
-n_pixels_t frame_buf_read(uint1_t frame_buf_sel, uint16_t x_buffer_index, uint16_t y)
+// Dual frame buffer is writing to one buffer while other is for reading
+uint1_t frame_buffer_read_port_sel;
+n_pixels_t dual_frame_buf_read(uint16_t x_buffer_index, uint16_t y)
 {
+  __clk();
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   n_pixels_t resp;
-  if(frame_buf_sel){
+  if(frame_buffer_read_port_sel){
     resp = frame_buf1_shared_bus_read(addr);
   }else{
     resp = frame_buf0_shared_bus_read(addr);
   }
   return resp;
 }
-void frame_buf_write(uint1_t frame_buf_sel, uint16_t x_buffer_index, uint16_t y, n_pixels_t wr_data)
+void dual_frame_buf_write(uint16_t x_buffer_index, uint16_t y, n_pixels_t wr_data)
 {
+  __clk();
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   uint1_t resp; // dummy return resp val
-  if(frame_buf_sel){
+  if(!frame_buffer_read_port_sel){
     resp = frame_buf1_shared_bus_write(addr, wr_data); 
   }else{
     resp = frame_buf0_shared_bus_write(addr, wr_data);
@@ -392,8 +396,6 @@ void frame_buf_write(uint1_t frame_buf_sel, uint16_t x_buffer_index, uint16_t y,
 }
 
 // Always-reading logic to drive VGA signal into pmod_async_fifo_write
-// Dual frame buffer is writing to one buffer while other is for reading
-uint1_t frame_buffer_read_port_sel;
 void host_vga_reader()
 {
   vga_pos_t vga_pos;
@@ -401,7 +403,7 @@ void host_vga_reader()
   {
     // Read the pixels at x,y pos
     uint16_t x_buffer_index = vga_pos.x >> RAM_PIXEL_BUFFER_SIZE_LOG2;
-    n_pixels_t pixels = frame_buf_read(frame_buffer_read_port_sel, x_buffer_index, vga_pos.y);
+    n_pixels_t pixels = dual_frame_buf_read(x_buffer_index, vga_pos.y);
     
     // Default black=0 unless pixel is white=1
     pixel_t colors[RAM_PIXEL_BUFFER_SIZE];
