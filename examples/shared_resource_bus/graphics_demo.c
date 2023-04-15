@@ -1,11 +1,14 @@
 #pragma PART "xc7a100tcsg324-1" 
 #include "compiler.h"
 #include "debug_port.h"
+#include "arrays.h"
 #include "intN_t.h"
 #include "uintN_t.h"
 
 // Next: Make GoL fast...
 //  Cache
+//  Can resize to have as big possible RAM_PIXEL_BUFFER_SIZE
+//    split threads across Y instead of x, like each thread having full line buffers
 //  Try to nudge clocks up for boost
 //
 // FUTURE How to wrap/macro make any new 'resource' (like the frame buffer or autopipeline)
@@ -32,11 +35,88 @@
 // Frame buffer reads N pixels at a time
 // ~Convert that into function calls reading 1 pixel/cell at a time
 // Very inefficient, reading N pixels to return just 1 for now...
-uint1_t pixel_buf_read(uint32_t x, uint32_t y)
+/*uint1_t pixel_buf_read(uint32_t x, uint32_t y)
 {
   // Read the pixels from the 'read' frame buffer
   uint16_t x_buffer_index = x >> RAM_PIXEL_BUFFER_SIZE_LOG2;
   n_pixels_t pixels = dual_frame_buf_read(x_buffer_index, y);
+  __clk();
+  // Select the single pixel offset of interest (bottom bits of x)
+  ram_pixel_offset_t x_offset = x;
+  return pixels.data[x_offset];
+}*/
+
+/*// 1 cached read
+uint1_t pixel_buf_read(uint32_t x, uint32_t y)
+{
+  // Cache registers
+  static uint16_t cache_x_buffer_index = FRAME_WIDTH;
+  static uint16_t cache_y = FRAME_HEIGHT;
+  static n_pixels_t cache_pixels;
+  // Read the pixels from the 'read' frame buffer or from cache
+  n_pixels_t pixels;
+  uint16_t x_buffer_index = x >> RAM_PIXEL_BUFFER_SIZE_LOG2;
+  uint1_t cache_match = (x_buffer_index==cache_x_buffer_index) & (y==cache_y);
+  if(cache_match)
+  {
+    // Use cache
+    pixels = cache_pixels;
+  }
+  else
+  {
+    // Read RAM and update cache
+    pixels = dual_frame_buf_read(x_buffer_index, y);
+    cache_x_buffer_index = x_buffer_index;
+    cache_y = y;
+    cache_pixels = pixels;
+  }
+  __clk();
+  // Select the single pixel offset of interest (bottom bits of x)
+  ram_pixel_offset_t x_offset = x;
+  return pixels.data[x_offset];
+}*/
+
+// 3 'y' lines of reads cached
+uint1_t pixel_buf_read(uint32_t x, uint32_t y)
+{
+  // Cache registers
+  static uint16_t cache_x_buffer_index = FRAME_WIDTH;
+  static uint16_t cache_y[3] = {FRAME_HEIGHT, FRAME_HEIGHT, FRAME_HEIGHT};
+  static n_pixels_t cache_pixels[3];
+  // Read the pixels from the 'read' frame buffer or from cache
+  n_pixels_t pixels;
+  uint16_t x_buffer_index = x >> RAM_PIXEL_BUFFER_SIZE_LOG2;
+  // Check cache for match (only one will match)
+  uint1_t cache_match = 0;
+  uint8_t cache_sel; // Which of 3 cache lines
+  uint32_t i;
+  for(i=0; i<3; i+=1)
+  {
+    uint1_t match_i = (x_buffer_index==cache_x_buffer_index) & (y==cache_y[i]);
+    cache_match |= match_i;
+    if(match_i){
+      cache_sel = i;
+    }
+  } 
+  if(cache_match)
+  {
+    pixels = cache_pixels[cache_sel];
+  }
+  else
+  {
+    // Read RAM and update cache
+    pixels = dual_frame_buf_read(x_buffer_index, y);
+    // If got a new x pos to read then default clear/invalidate entire cache
+    if(x_buffer_index != cache_x_buffer_index)
+    {
+      ARRAY_SET(cache_y, FRAME_HEIGHT, 3)
+    }
+    cache_x_buffer_index = x_buffer_index;
+    // Least recently used style shift out cache entries
+    // to make room for keeping new one most recent at [0]
+    ARRAY_1SHIFT_INTO_BOTTOM(cache_y, 3, y)
+    ARRAY_1SHIFT_INTO_BOTTOM(cache_pixels, 3, pixels)
+  }
   __clk();
   // Select the single pixel offset of interest (bottom bits of x)
   ram_pixel_offset_t x_offset = x;
