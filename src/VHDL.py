@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import math
 import os
 import shutil
 import sys
@@ -3601,6 +3602,9 @@ package c_structs_pkg is
         # Enum types
         for enum_name in list(parser_state.enum_info_dict.keys()):
             if enum_name not in types_written:
+                is_one_hot = enum_name in parser_state.marked_onehot
+                enum_info = parser_state.enum_info_dict[enum_name]
+                width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(enum_info.int_c_type)
                 done = False
                 types_written.append(enum_name)
                 # Type
@@ -3631,26 +3635,28 @@ package c_structs_pkg is
                     """
 function """
                     + enum_name
-                    + """_to_integer(e : """
+                    + """_to_slv(e : """
                     + enum_name
-                    + """) return integer"""
+                    + """) return std_logic_vector"""
                 )
                 func_body_text += """ is
+    variable rv: std_logic_vector(""" + str(width-1) + """ downto 0) := (others => '0');
 begin
-    
 case(e) is\n"""
-                for id_str, int_val in parser_state.enum_info_dict[
-                    enum_name
-                ].id_to_int_val.items():
-                    func_body_text += (
-                        """when """
-                        + id_str
-                        + """ => return """
-                        + str(int_val)
-                        + """;\n"""
-                    )
+                for id_str, int_val in enum_info.id_to_int_val.items():
+                    func_body_text += """when """ + id_str
+                    if is_one_hot:
+                        bit_index = int(math.log(int_val, 2))
+                        func_body_text += " => rv(" + str(bit_index) + ") := '1';\n"
+                    else:
+                        if int_val < 0:
+                            func_body_text += " => rv := std_logic_vector(to_signed(" + str(int_val) + ", " + str(width) + "));\n"
+                        else:
+                            func_body_text += " => rv := std_logic_vector(to_unsigned(" + str(int_val) + ", " + str(width) + "));\n"
+                    
                 func_body_text += """
 end case;
+return rv;
 end function;
     """
                 text += func_decl_text + ";\n"
@@ -3663,23 +3669,18 @@ end function;
                     """
 function """
                     + enum_name
-                    + """_from_integer(i : integer) return """
+                    + """_from_slv(s : std_logic_vector) return """
                     + enum_name
                 )
                 func_body_text += """ is
 begin
     
-case(i) is\n"""
+case(s(""" + str(width-1) + """ downto 0)) is\n"""
 
-                default_id = list(
-                    parser_state.enum_info_dict[enum_name].id_to_int_val.keys()
-                )[0]
-                for id_str, int_val in parser_state.enum_info_dict[
-                    enum_name
-                ].id_to_int_val.items():
+                default_id = list(enum_info.id_to_int_val.keys())[0]
+                for id_str, int_val in enum_info.id_to_int_val.items():
                     func_body_text += (
-                        """when """
-                        + str(int_val)
+                        """when """ + enum_name + """_to_slv(""" + id_str + ")"
                         + """ => return """
                         + id_str
                         + """;\n"""
@@ -3688,7 +3689,7 @@ case(i) is\n"""
                         default_id = id_str
                 func_body_text += (
                     """
-when others => assert False report "integer " & integer'image(i) & " to """
+when others => assert False report "bits " & to_hstring(s) & " to """
                     + enum_name
                     + """ failed! Returning """
                     + default_id
@@ -6137,10 +6138,7 @@ def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
         width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
             parser_state.enum_info_dict[vhdl_type].int_c_type
         )
-        return [
-            "std_logic_vector(to_unsigned(" + vhdl_type + "_to_integer(",
-            ") ," + str(width) + "))",
-        ]
+        return [vhdl_type + "_to_slv(", ")"]
     else:
         return [vhdl_type + "_to_slv(", ")"]
 
@@ -6155,7 +6153,7 @@ def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
     elif C_TO_LOGIC.C_TYPE_IS_ENUM(
         vhdl_type, parser_state
     ):  # same name as c type hacky
-        return [vhdl_type + "_from_integer(to_integer(unsigned(", ")))"]
+        return [vhdl_type + "_from_slv(", ")"]
     else:
         return ["slv_to_" + vhdl_type + "(", ")"]
 
@@ -6243,13 +6241,13 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         max_width = max(left_width, right_width)
         if is_signed:
             resize_toks = [
-                "to_signed(" + right_type + "_to_integer(",
-                ") ," + str(max_width) + ")",
+                "resize(signed(" + right_type + "_to_slv(",
+                ")) ," + str(max_width) + ")",
             ]
         else:
             resize_toks = [
-                "to_unsigned(" + right_type + "_to_integer(",
-                ") ," + str(max_width) + ")",
+                "resize(unsigned(" + right_type + "_to_slv(",
+                ")) ," + str(max_width) + ")",
             ]
 
     # U/INT driving ENUM is ok
@@ -6259,7 +6257,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         WIRES_ARE_INT_N([driving_wire], logic)
         or WIRES_ARE_UINT_N([driving_wire], logic)
     ):
-        resize_toks = [left_type + "_from_integer(to_integer(", "))"]
+        resize_toks = [left_type + "_from_slv(std_logic_vector(", "))"]
 
     # Making yourself sad to work around issues you didnt forsee is ok
     elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
