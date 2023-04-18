@@ -454,28 +454,39 @@ name##_dev_arb_t name##_dev_arb( \
  \
   /* INPUT TO DEV SIDE*/ \
  \
-  /* Default arb state doesnt change*/ \
+  /* Default state doesnt change*/ \
   uint8_t next_dev_to_selected_host[NUM_DEV_PORTS] = dev_to_selected_host; \
+  shared_res_bus_dev_arb_state_t next_host_port_arb_states[NUM_HOST_PORTS] = host_port_arb_states; \
+  type##_read_req_t next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
+  type##_write_req_t next_write_reqs[NUM_HOST_PORTS] = write_reqs; \
+  type##_read_req_t next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
+  type##_write_data_t next_write_datas[NUM_HOST_PORTS] = write_datas; \
+  uint1_t next_host_port_read_has_priority[NUM_HOST_PORTS] = host_port_read_has_priority; \
  \
   /* Loop that finds input req/ wr data for each dev port*/ \
   for (i = 0; i < NUM_DEV_PORTS; i+=1) \
   { \
     uint8_t selected_host = dev_to_selected_host[i]; \
+    shared_res_bus_dev_arb_state_t state = host_port_arb_states[selected_host]; \
+    type##_read_req_t read_req = read_reqs[selected_host]; \
+    type##_write_req_t write_req = write_reqs[selected_host]; \
+    type##_write_data_t write_data = write_datas[selected_host]; \
+    uint1_t read_priority = host_port_read_has_priority[selected_host]; \
     /* Try to start xfer for the current/round robin selected host dev port*/ \
-    if(host_port_arb_states[selected_host]==REQ) \
+    if(state==REQ) \
     { \
       /* Wait for a request*/ \
       /* Choose a request to handle, read or write*/ \
       uint1_t do_read; \
       uint1_t do_write; \
-      if(host_port_read_has_priority[selected_host]) \
+      if(read_priority) \
       { \
         /* Read priority*/ \
-        if(read_reqs[selected_host].valid) \
+        if(read_req.valid) \
         { \
           do_read = 1; \
         } \
-        else if(write_reqs[selected_host].valid) \
+        else if(write_req.valid) \
         { \
           do_write = 1; \
         }  \
@@ -483,11 +494,11 @@ name##_dev_arb_t name##_dev_arb( \
       else \
       { \
         /* Write priority*/ \
-        if(write_reqs[selected_host].valid) \
+        if(write_req.valid) \
         { \
           do_write = 1; \
         } \
-        else if(read_reqs[selected_host].valid) \
+        else if(read_req.valid) \
         { \
           do_read = 1; \
         }  \
@@ -496,13 +507,13 @@ name##_dev_arb_t name##_dev_arb( \
       { \
         if(from_devs[i].read.req_ready) \
         { \
-          o.to_devs[i].read.req = read_reqs[selected_host]; \
-          read_reqs[selected_host].valid = 0; /* Done w req now*/ \
-          host_port_read_has_priority[selected_host] = 0; /* Writes next*/ \
+          o.to_devs[i].read.req = read_req; \
+          next_read_reqs[selected_host].valid = 0; /* Done w req now*/ \
+          read_priority = 0; /* Writes next*/ \
           o.to_devs[i].read.req.id = selected_host; /* Overides/ignores host value*/ \
           /*FRAME BUF ONLY o.to_frame_bufs[i].valid = 1; addr completes valid inputs, no input read data*/ \
           /* Waiting for output read data next*/ \
-          host_port_arb_states[selected_host] = RD_DATA; \
+          state = RD_DATA; \
           /* Done with shared bus port inputs, move arb on*/ \
           next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
         } \
@@ -511,12 +522,12 @@ name##_dev_arb_t name##_dev_arb( \
       { \
         if(from_devs[i].write.req_ready) \
         { \
-          o.to_devs[i].write.req = write_reqs[selected_host]; \
-          write_reqs[selected_host].valid = 0; /* Done w req now*/ \
-          host_port_read_has_priority[selected_host] = 1; /* Reads next*/ \
+          o.to_devs[i].write.req = write_req; \
+          next_write_reqs[selected_host].valid = 0; /* Done w req now*/ \
+          read_priority = 1; /* Reads next*/ \
           o.to_devs[i].write.req.id = selected_host; /* Overides/ignores host value*/ \
           /*FRAME BUF ONLY Write stil needs data still before valid input*/ \
-          host_port_arb_states[selected_host] = WR_DATA; \
+          state = WR_DATA; \
           /* Not done with shared bus port inputs yet, dont change arb*/ \
         } \
       } \
@@ -527,25 +538,30 @@ name##_dev_arb_t name##_dev_arb( \
       } \
     } \
     /* TODO pass through write req and data*/ \
-    else if(host_port_arb_states[selected_host]==WR_DATA) /* Write data into dev*/ \
+    else if(state==WR_DATA) /* Write data into dev*/ \
     { \
       /* Wait until valid write data*/ \
-      if(write_datas[selected_host].valid) \
+      if(write_data.valid) \
       { \
         if(from_devs[i].write.data_ready) \
         { \
-          o.to_devs[i].write.data = write_datas[selected_host]; \
+          o.to_devs[i].write.data = write_data; \
           o.to_devs[i].write.data.id = selected_host; /* Overides/ignores host value*/ \
-          write_datas[selected_host].valid = 0; /* Done w data now*/ \
-          host_port_arb_states[selected_host] = WR_RESP_STATE; \
+          next_write_datas[selected_host].valid = 0; /* Done w data now*/ \
+          state = WR_RESP_STATE; \
           /* Done with shared bus port inputs, move arb on*/ \
           next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
         } \
       } \
-    }   \
+    } \
+    /* Update next reg values */ \
+    next_host_port_arb_states[selected_host] = state; \
+    /*Req and data assigned directly to next[*]. few items only above */ \
+    /*next_read_reqs[selected_host] = read_req;*/ \
+    /*next_write_reqs[selected_host] = write_req;*/ \
+    /*next_write_datas[selected_host] = write_data;*/ \
+    next_host_port_read_has_priority[selected_host] = read_priority; \
   } \
-  /* Update arb state*/ \
-  dev_to_selected_host = next_dev_to_selected_host; \
  \
   /* DEV WAS HERE*/ \
  \
@@ -576,13 +592,13 @@ name##_dev_arb_t name##_dev_arb( \
  \
   for (i = 0; i < NUM_HOST_PORTS; i+=1) \
   { \
-    /* State machine logic dealing with ram output signals handshake*/ \
+    /* TODO move to reduce host_port_arb_states long path? State machine logic dealing with ram output signals handshake*/ \
     if(host_port_arb_states[i]==RD_DATA) /* Read data out of RAM*/ \
     { \
       /* Wait for last valid read data outgoing to host*/ \
       if(o.to_hosts[i].read.data.valid & o.to_hosts[i].read.data.burst.last & from_hosts[i].read.data_ready)  \
       { \
-        host_port_arb_states[i] = REQ; \
+        next_host_port_arb_states[i] = REQ; \
       } \
     } \
     else if(host_port_arb_states[i]==WR_RESP_STATE) \
@@ -590,25 +606,33 @@ name##_dev_arb_t name##_dev_arb( \
       /* Wait for valid write resp outgoing to host*/ \
       if(o.to_hosts[i].write.resp.valid & from_hosts[i].write.resp_ready)  \
       { \
-        host_port_arb_states[i] = REQ; \
+        next_host_port_arb_states[i] = REQ; \
       } \
     } \
  \
     /* Save data into input buffers if signalling ready in handshake*/ \
     if(o.to_hosts[i].write.req_ready) \
     { \
-      write_reqs[i] = from_hosts[i].write.req; \
+      next_write_reqs[i] = from_hosts[i].write.req; \
     } \
     if(o.to_hosts[i].read.req_ready) \
     { \
-      read_reqs[i] = from_hosts[i].read.req; \
+      next_read_reqs[i] = from_hosts[i].read.req; \
     } \
     if(o.to_hosts[i].write.data_ready) \
     { \
-      write_datas[i] = from_hosts[i].write.data; \
+      next_write_datas[i] = from_hosts[i].write.data; \
     } \
   } \
  \
+  /* Update regs with next values*/ \
+  dev_to_selected_host = next_dev_to_selected_host; \
+  host_port_arb_states = next_host_port_arb_states; \
+  read_reqs = next_read_reqs; \
+  write_reqs = next_write_reqs; \
+  write_datas = next_write_datas; \
+  host_port_read_has_priority = next_host_port_read_has_priority; \
+  \
   return o; \
 }
 
