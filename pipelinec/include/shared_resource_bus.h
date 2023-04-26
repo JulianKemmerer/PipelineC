@@ -592,7 +592,7 @@ name##_dev_arb_t name##_dev_arb( \
  \
   for (i = 0; i < NUM_HOST_PORTS; i+=1) \
   { \
-    /* TODO move to reduce host_port_arb_states long path? State machine logic dealing with ram output signals handshake*/ \
+    /* State machine logic dealing with ram output signals handshake*/ \
     if(host_port_arb_states[i]==RD_DATA) /* Read data out of RAM*/ \
     { \
       /* Wait for last valid read data outgoing to host*/ \

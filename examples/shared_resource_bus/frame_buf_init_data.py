@@ -1,6 +1,6 @@
 import random
 dims = [640,480]
-n_pixels = 16
+n_pixels = 64
 rv = '#define FRAME_BUF_INIT_DATA "('
 n_pixels_list = []
 for y in range(0, dims[1]):

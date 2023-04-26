@@ -112,7 +112,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 8)
 #include "clock_crossing/frame_buf0_shared_bus_fifo8_write_resp.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo8_read_req.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo8_read_data.h"
-/*SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 9)
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 9)
 #include "clock_crossing/frame_buf0_shared_bus_fifo9_write_req.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo9_write_data.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo9_write_resp.h"
@@ -159,7 +159,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 16)
 #include "clock_crossing/frame_buf0_shared_bus_fifo16_write_data.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo16_write_resp.h"
 #include "clock_crossing/frame_buf0_shared_bus_fifo16_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_read_data.h"*/
+#include "clock_crossing/frame_buf0_shared_bus_fifo16_read_data.h"
 // Second frame buffer fifos
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 0)
 #include "clock_crossing/frame_buf1_shared_bus_fifo0_write_req.h"
@@ -215,7 +215,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 8)
 #include "clock_crossing/frame_buf1_shared_bus_fifo8_write_resp.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo8_read_req.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo8_read_data.h"
-/*SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 9)
+SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 9)
 #include "clock_crossing/frame_buf1_shared_bus_fifo9_write_req.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo9_write_data.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo9_write_resp.h"
@@ -262,7 +262,7 @@ SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 16)
 #include "clock_crossing/frame_buf1_shared_bus_fifo16_write_data.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo16_write_resp.h"
 #include "clock_crossing/frame_buf1_shared_bus_fifo16_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_read_data.h"*/
+#include "clock_crossing/frame_buf1_shared_bus_fifo16_read_data.h"
 
 // Wire ASYNC FIFOs to dev-host wires
 MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)
@@ -278,14 +278,14 @@ void host_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 6)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 7)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 8)
-  /*SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 9)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 9)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 10)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 11)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 12)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 13)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 14)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 16)*/
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 16)
   // Second frame buffer
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 0)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 1)
@@ -296,14 +296,14 @@ void host_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 6)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 7)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 8)
-  /*SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 9)
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 9)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 10)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 11)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 12)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 13)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 14)
   SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 16)*/
+  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 16)
 }
 MAIN_MHZ(dev_side_fifo_wiring, DEV_CLK_MHZ)
 void dev_side_fifo_wiring()
@@ -318,14 +318,14 @@ void dev_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 6)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 7)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 8)
-  /*SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 9)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 9)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 10)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 11)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 12)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 13)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 14)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 16)*/
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf0_shared_bus, 16)
   // Second frame buffer
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 0)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 1)
@@ -336,14 +336,14 @@ void dev_side_fifo_wiring()
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 6)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 7)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 8)
-  /*SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 9)
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 9)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 10)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 11)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 12)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 13)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 14)
   SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 16)*/
+  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(frame_buf_bus_t, frame_buf1_shared_bus, 16)
 }
 
 // User application uses 5 channel AXI-like shared bus wires for frame buffer control

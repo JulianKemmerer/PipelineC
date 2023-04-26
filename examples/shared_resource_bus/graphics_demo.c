@@ -5,27 +5,30 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
-// Next: Make GoL fast...
-//  Try to nudge clocks up for boost
-//     Once over 25Mhz, try less than 16b RAM width and running even faster?
-// FUTURE How to wrap/macro make any new 'resource' (like the frame buffer or autopipeline)
-//
+// Next: 
+// Add push button LFSR add randomness in function since renders to stead state so fast?
+
+// TODO:
+// How to wrap/macro make any new 'resource'?
+// Extend to use an autopipeline - sphery? 
+//      Async start finish calls?
+//      Since waiting hundreds of cycles per op is dumb?
+//      Is operaiton render random x,y or next x,y?
 // Extend to use DDR3 AXI for frame buffer?
 //    Can add/test many in flight ~pipelined full AXI funcitonality?
-// Extend to use a autopipeline - sphery? is read of state write to frame buffer only
 
 // NUM_X_THREADS must evenly divide (FRAME_WIDTH/RAM_PIXEL_BUFFER_SIZE)
 // NUM_Y_THREADS must evenly divide FRAME_HEIGHT
 // RAM_PIXEL_BUFFER_SIZE is RAM width, number of pixels in x direction
 // Include FRAME_BUF_INIT_DATA header
-#include "frame_buf_init_data_32b.h" // Game of life RAM init data
-#define ram_pixel_offset_t uint5_t
-#define RAM_PIXEL_BUFFER_SIZE_LOG2 5
-#define RAM_PIXEL_BUFFER_SIZE 32
-#define DEV_CLK_MHZ 100.0
-#define HOST_CLK_MHZ 25.0
+#include "frame_buf_init_data_16b.h" // Game of life RAM init data
+#define ram_pixel_offset_t uint4_t
+#define RAM_PIXEL_BUFFER_SIZE_LOG2 4
+#define RAM_PIXEL_BUFFER_SIZE 16
+#define DEV_CLK_MHZ 150.0
+#define HOST_CLK_MHZ 45.0
 #define NUM_X_THREADS 4
-#define NUM_Y_THREADS 2
+#define NUM_Y_THREADS 4
 #define NUM_TOTAL_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "shared_dual_frame_buffer.c"
 
