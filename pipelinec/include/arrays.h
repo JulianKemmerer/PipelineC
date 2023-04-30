@@ -44,10 +44,9 @@ for(ARRAY_SHIFT_INTO_BOTTOM_i=0;ARRAY_SHIFT_INTO_BOTTOM_i<IN_SIZE;ARRAY_SHIFT_IN
   dst_array[ARRAY_SHIFT_INTO_BOTTOM_i] = src_array[ARRAY_SHIFT_INTO_BOTTOM_i]; \
 }
 
-// TODO rename - not always bits dummy
-#define ARRAY_SHIFT_BIT_INTO_BOTTOM(array,SIZE,in_bit)\
+#define ARRAY_1SHIFT_INTO_BOTTOM(array,SIZE,in_elem)\
 ARRAY_SHIFT_UP(array,SIZE,1)\
-array[0] = in_bit;
+array[0] = in_elem;
 
 #define UINT_TO_BIT_ARRAY(bit_array,BIT_WIDTH,uint_val)\
 uint32_t UINT_TO_ARRAY_i; \
