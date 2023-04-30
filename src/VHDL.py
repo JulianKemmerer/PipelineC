@@ -15,8 +15,10 @@ import SYN
 import VERILATOR
 import VIVADO
 
+from utilities import REPO_ABS_DIR
+
 # TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
-sys.path.append('../submodule/pycparser/pycparser')
+sys.path.append(REPO_ABS_DIR() + '/submodule/pycparser')
 from pycparser import c_ast
 
 VHDL_FILE_EXT = ".vhd"

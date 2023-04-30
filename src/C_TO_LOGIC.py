@@ -25,7 +25,7 @@ if GET_TOOL_PATH("cpp") is None:
     raise Exception("'cpp' C preprocessor is not installed!")
 
 # TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
-sys.path.append('../submodule/pycparser/pycparser')
+sys.path.append(REPO_ABS_DIR() + '/submodule/pycparser')
 from pycparser import c_ast, c_parser
 
 # Global default constants for inferring different VHDL implementations of operators
