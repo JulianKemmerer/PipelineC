@@ -798,38 +798,33 @@ typedef struct """
         text += "      " + input_port + " = fsm_i." + input_port + ";\n"
 
     # Go to first user state after getting inputs
-    text += (
-        """      // Go to signaled return-from-entry state if valid
-      if(ONE_HOT_CONST_EQ(FUNC_CALL_RETURN_FSM_STATE,ENTRY_REG))
-      {
-        // Invalid, default to first user state
-""")
     if uses_io_func:
-        text += """
-        if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)){
-"""
-    text += """        ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)
-"""
-    if uses_io_func:
-        text += """
+        # Extra logic to detect 'return to arbitrary user location from entry'
+        text += """      // Go to signaled return-from-entry state if valid
+        if(ONE_HOT_CONST_EQ(FUNC_CALL_RETURN_FSM_STATE,ENTRY_REG))
+        {
+            // Invalid, default to first user state
+            if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)){
+                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)
+            }else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)){
+                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_RETURN_IN)
+            }
+        }
+        else
+        {
+            // Make indicated user transition from entry
+            ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
         }"""
-    if uses_io_func:
-        text += ("""else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)){
-          ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_RETURN_IN)
-        }""")
-    text += ("""
-      }
-      else
-      {
-        // Make indicated transition from entry TODO is this for io funcs only?
-        ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
-      }
+    else:
+        # Normal case
+        text += """      // Default to first user state
+      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)"""  
+
+    text += """
     }
   }
-
   // Pass through from ENTRY in same clk cycle
-
-""")
+"""
 
     # List out all user states in parallel branch groups
     # Except for last state group of clk delay
