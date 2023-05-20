@@ -186,7 +186,7 @@ def STATE_GROUP_TO_C_CODE(
         else:
             text += "  else if("
         first_state_in_group = False
-        text += "FSM_STATE==" + state_info.name + ")\n"
+        text += "ONE_HOT_CONST_EQ(FSM_STATE," + state_info.name + "))\n"
         text += "  {\n"
 
         # Returning from func call
@@ -261,12 +261,12 @@ def STATE_GROUP_TO_C_CODE(
             cond_code = C_AST_NODE_TO_C_CODE(mux_node.cond, parser_state, state_info, "", generator, False)
             text += "    if(" + cond_code + ")\n"
             text += "    {\n"
-            text += "      FSM_STATE = " + true_state.name + ";\n"
+            text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + true_state.name + ", " + state_info.name + ")\n"
             text += "    }\n"
             if false_state is not None:
                 text += "    else\n"
                 text += "    {\n"
-                text += "      FSM_STATE = " + false_state.name + ";\n"
+                text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + false_state.name + ", " + state_info.name + ")\n"
                 text += "    }\n"
             else:  # No next state, just return/exit/start over?
                 text += "    else\n"
@@ -275,12 +275,12 @@ def STATE_GROUP_TO_C_CODE(
                     if state_info.always_next_state is not None:
                         raise Exception(f"Subroutine branching exit has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
                     text += "      // Subroutine branch exiting to scheduled return state\n"
-                    text += "      FSM_STATE = " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+                    text += "      ONE_HOT_VAR_ASSIGN(FSM_STATE, " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name +")\n"
                 else:
                     # Main/single inst exit end execution
                     text += "      // No next state, return and start over?\n"
-                    text += "      FSM_STATE = RETURN_REG;\n"
-                    text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+                    text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
+                    text += "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name +")\n"
                 text += "    }\n"
             text += "  }\n"
             continue
@@ -332,14 +332,14 @@ def STATE_GROUP_TO_C_CODE(
                     )
             # text += "\n"
             #text += "    // SUBROUTINE STATE NEXT\n"
-            text += "    FSM_STATE = " + func_call_state.name + ";\n"
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + func_call_state.name + ", " + state_info.name + ")\n"
             # Set state to return to after func call
             #text += "    // Followed by return state\n"
-            text += "    // Return state saved for func retrurn\n"
+            text += "    // Return state saved for func return\n"
             if called_func_name in single_inst_flow_ctrl_func_call_names:
-                text += "    FUNC_CALL_RETURN_FSM_STATE = " + exit_state.name + ";\n"
+                text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + exit_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             else:
-                text += "    " + called_func_name + "_FUNC_CALL_RETURN_FSM_STATE = " + exit_state.name + ";\n"
+                text += "    ONE_HOT_CONST_ASSIGN(" + called_func_name + "_FUNC_CALL_RETURN_FSM_STATE, " + exit_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             if state_info.ends_w_clk and not state_info.clk_end_is_user:
                 text += "    // FUNC ENTRY FORCED CLK DELAY IMPLIED\n"
             text += "  }\n"
@@ -388,7 +388,7 @@ def STATE_GROUP_TO_C_CODE(
                 + """_o.output_valid)
     {
       // Go to signaled return state
-      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
     }\n"""
             )
             text += "  }\n"
@@ -396,13 +396,6 @@ def STATE_GROUP_TO_C_CODE(
 
         # Return?
         if state_info.return_node is not None:
-            #if state_info.return_node == "void":
-            #    text += "    // VOID RETURN\n"
-            #    text += "    FSM_STATE = RETURN_REG;\n"
-            #    text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
-            #    text += "  }\n"
-            #    continue
-            #else:
             output_maybe_func_and_tok = C_TO_LOGIC.RETURN_WIRE_NAME + "_FSM"
             if state_info.sub_func_name is not None:
                 if state_info.sub_func_name in single_inst_flow_ctrl_func_call_names:
@@ -422,15 +415,14 @@ def STATE_GROUP_TO_C_CODE(
                 if state_info.always_next_state is not None:
                     raise Exception(f"Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
                 text += "    // Subroutine returning to scheduled return state\n"
-                #text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
-                text += "    FSM_STATE = " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+                text += "    ONE_HOT_VAR_ASSIGN(FSM_STATE, " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
                 text += "  }\n"
                 continue
             else:
                 # Main/single inst return end execution
                 text += "    // Return, end execution by maybe going back to entry\n"
-                text += "    FSM_STATE = RETURN_REG;\n"
-                text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+                text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
+                text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
                 text += "  }\n"
                 continue                        
 
@@ -445,30 +437,22 @@ def STATE_GROUP_TO_C_CODE(
             if state_info.always_next_state is None:
                 if state_info.sub_func_name is not None:
                     text += "      // Subroutine delay clk exiting to scheduled return state\n"
-                    text += "      FSM_STATE = " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+                    text += "      ONE_HOT_VAR_ASSIGN(FSM_STATE, " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
                 else:
                     # Main/single inst exit end execution
                     text += "      // No next state, return and start over?\n"
-                    text += "      FSM_STATE = RETURN_REG;\n"
-                    text += "      FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+                    text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
+                    text += "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             else:
-                text += (
-                    "    FSM_STATE = "
-                    + state_info.always_next_state.name
-                    + ";\n"
-                )
+                text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + state_info.always_next_state.name + ", " + state_info.name + ")\n"
             text += "  }\n"
             continue
 
         # Input func
         if state_info.input_func_call_node is not None:
             text += "    // Get new inputs, continue execution\n"
-            text += "    FSM_STATE = ENTRY_REG;\n"
-            text += (
-                "    FUNC_CALL_RETURN_FSM_STATE = "
-                + state_info.always_next_state.name
-                + ";\n"
-            )
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_REG, " + state_info.name + ")\n"
+            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             text += "  }\n"
             continue
 
@@ -484,12 +468,8 @@ def STATE_GROUP_TO_C_CODE(
                 + yield_arg_code
                 + "\n"
             )
-            text += "    FSM_STATE = RETURN_REG;\n"
-            text += (
-                "    FUNC_CALL_RETURN_FSM_STATE = "
-                + state_info.always_next_state.name
-                + ";\n"
-            )
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
+            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             text += "  }\n"
             continue
 
@@ -505,19 +485,15 @@ def STATE_GROUP_TO_C_CODE(
                 + inout_arg_code
                 + "\n"
             )
-            text += "    FSM_STATE = ENTRY_RETURN_OUT;\n"
-            text += (
-                "    FUNC_CALL_RETURN_FSM_STATE = "
-                + state_info.always_next_state.name
-                + ";\n"
-            )
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_RETURN_OUT, " + state_info.name + ")\n"
+            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             text += "  }\n"
             continue
 
         # Default next
         if state_info.always_next_state is not None:
             text += "    // DEFAULT NEXT\n"
-            text += "    FSM_STATE = " + state_info.always_next_state.name + ";\n"
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + state_info.always_next_state.name + ", " + state_info.name + ")\n"
             text += "  }\n"
             continue
 
@@ -525,12 +501,12 @@ def STATE_GROUP_TO_C_CODE(
         # From a subroutine or main?
         if state_info.sub_func_name is not None:
             text += "    // Assumed subroutine returning to scheduled return state\n"
-            text += "    FSM_STATE = " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+            text += "    ONE_HOT_VAR_ASSIGN(FSM_STATE, " + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             text += "  }\n"
         else:
             text += "    // ASSUMED EMPTY DELAY STATE FOR RETURN\n"
-            text += "    FSM_STATE = RETURN_REG;\n"
-            text += "    FUNC_CALL_RETURN_FSM_STATE = ENTRY_REG;\n"
+            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
+            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
             text += "  }\n"
 
     return text
@@ -575,33 +551,40 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
                         + '"\n'
                     )
 
-    text += (
-        """
-typedef enum """
-        + fsm_logic.func_name
-        + """_FSM_STATE_t{
- ENTRY_REG,
-"""
-    )
+    # Need one hot helpers
+    text += '#include "one_hot.h"\n'
+
+    # States enum as one hot
+    one_hot_states_text = "  // One hot states indices\n"
+    # Entry
+    one_hot_index = 0
+    one_hot_states_text += "uint32_t ENTRY_REG" + " = " + str(one_hot_index) + ";\n"
+    one_hot_index += 1
     # Extra IO in single stage
     if uses_io_func:
-        text += " ENTRY_RETURN_IN,\n"
-        text += " ENTRY_RETURN_OUT,\n"
+        one_hot_states_text += "uint32_t ENTRY_RETURN_IN" + " = " + str(one_hot_index) + ";\n"
+        one_hot_index += 1
+        one_hot_states_text += "uint32_t ENTRY_RETURN_OUT" + " = " + str(one_hot_index) + ";\n"
+        one_hot_index += 1
     # User states
     for state_group in fsm_logic.state_groups:
         for state_info in state_group:
-            text += " " + state_info.name + ",\n"
-    text += (""" RETURN_REG
-}"""
-        + fsm_logic.func_name
-        + """_FSM_STATE_t;
-typedef struct """
-        + fsm_logic.func_name
-        + """_INPUT_t
+            one_hot_states_text += "uint32_t " + state_info.name + " = " +str(one_hot_index) + ";\n"
+            if state_info.name == fsm_logic.first_user_state.name:
+                text += "#define FIRST_STATE" + "_" + fsm_logic.func_name + " " + str(one_hot_index) + "\n"
+            one_hot_index += 1
+    # Return
+    one_hot_states_text += "uint32_t RETURN_REG" + " = " + str(one_hot_index) + ";\n"
+    one_hot_index += 1
+    num_states = one_hot_index
+    text += "#define NUM_STATES" + "_" + fsm_logic.func_name + " " + str(num_states) + "\n"
+
+    # Input Struct
+    text += """
+typedef struct """ + fsm_logic.func_name + """_INPUT_t
 {
   uint1_t input_valid;
 """
-    )
     for input_port in fsm_logic.inputs:
         c_type = fsm_logic.wire_to_c_type[input_port]
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
@@ -648,17 +631,14 @@ typedef struct """
         + fsm_logic.func_name
         + """_INPUT_t fsm_i)
 {
+""")
+    text += one_hot_states_text
+    text += ("""
   // State reg holding current state
-  static """
-        + fsm_logic.func_name
-        + """_FSM_STATE_t FSM_STATE;
+  ONE_HOT_REG(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
   // State reg holding state to return to after certain func calls
   // Starting set to first user state
-  static """
-        + fsm_logic.func_name
-        + """_FSM_STATE_t FUNC_CALL_RETURN_FSM_STATE = """
-        + fsm_logic.first_user_state.name
-        + """;
+  ONE_HOT_REG(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
   // Input regs
 """
     )
@@ -777,7 +757,7 @@ typedef struct """
                 sub_out_port_c_type = flow_ctrl_func_logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
                 text += "  static " + sub_out_port_c_type+ " " + flow_ctrl_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
             # Return state
-            text += "  static " + fsm_logic.func_name + "_FSM_STATE_t " + flow_ctrl_func_name + "_FUNC_CALL_RETURN_FSM_STATE;\n"
+            text += "  ONE_HOT_REG(" + flow_ctrl_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ", FIRST_STATE_" + fsm_logic.func_name + ")\n"
 
     if len(single_inst_flow_ctrl_func_call_names) > 0:
         # Dont need for outputs since known calling fsm is ready for single inst output valid
@@ -803,9 +783,9 @@ typedef struct """
 
     text += """
   // Handshake+inputs registered
-  if( (FSM_STATE==ENTRY_REG) """
+  if( (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)) """
     if uses_io_func:
-        text += " | (FSM_STATE==ENTRY_RETURN_IN) "
+        text += " | (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN) "
     text += """)
   {
     // Special first state signals ready, waits for start
@@ -820,27 +800,36 @@ typedef struct """
     # Go to first user state after getting inputs
     text += (
         """      // Go to signaled return-from-entry state if valid
-      if(FUNC_CALL_RETURN_FSM_STATE==FSM_STATE)
+      if(ONE_HOT_CONST_EQ(FUNC_CALL_RETURN_FSM_STATE,ENTRY_REG))
       {
         // Invalid, default to first user state
-        FSM_STATE = """
-        + fsm_logic.first_user_state.name
-        + """;
+""")
+    if uses_io_func:
+        text += """
+        if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)){
+"""
+    text += """        ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)
+"""
+    if uses_io_func:
+        text += """
+        }"""
+    if uses_io_func:
+        text += ("""else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)){
+          ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_RETURN_IN)
+        }""")
+    text += ("""
       }
       else
       {
-        // Make indicated transition from entry
-        FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+        // Make indicated transition from entry TODO is this for io funcs only?
+        ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
       }
     }
   }
-"""
-    )
 
-    text += """  
   // Pass through from ENTRY in same clk cycle
 
-"""
+""")
 
     # List out all user states in parallel branch groups
     # Except for last state group of clk delay
@@ -854,9 +843,9 @@ typedef struct """
   // Pass through to RETURN_REG in same clk cycle
   
   // Handshake+outputs registered
-  if( (FSM_STATE==RETURN_REG) """
+  if( (ONE_HOT_CONST_EQ(FSM_STATE,RETURN_REG)) """
     if uses_io_func:
-        text += " | (FSM_STATE==ENTRY_RETURN_OUT) "
+        text += " | (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT)) "
     text += """)
   {
     // Special last state signals done, waits for ready
@@ -873,13 +862,13 @@ typedef struct """
     if(fsm_i.output_ready)
     {
       // Go to signaled return state
-      FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
 """
     if uses_io_func:
         text += """      // Go to second part of io state\n"""
-        text += """      if(FSM_STATE==ENTRY_RETURN_OUT)
+        text += """      if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT))
       {
-        FSM_STATE = ENTRY_RETURN_IN;
+        ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_RETURN_IN, ENTRY_RETURN_OUT)
       }
 """
     text += """    }
