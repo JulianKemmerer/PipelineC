@@ -26,6 +26,7 @@ parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
 parser.add_argument("--verilog", help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.", action="store_true")               
 parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
+parser.add_argument("--no_synth", help="Like --comb, except do not run synthesis. Just output final combinatorial logic HDL.", action="store_true")
 parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
                       help=f"infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.")
 parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
@@ -114,58 +115,63 @@ parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
 
-# Here is a good point to check basic single cycle/comb logic functionality before pipelining
+# Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
 SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
   
-if not args.comb and not args.yosys_json:
-  print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
-  parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+if not args.no_synth:
+  if not args.comb and not args.yosys_json:
+    print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
+    parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
-print("================== Beginning Throughput Sweep ================================", flush=True)
-multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
-  parser_state, 
-  coarse_only=args.coarse, 
-  starting_guess_latency=args.start, 
-  do_incremental_guesses=not(args.sweep), 
-  comb_only=args.comb,
-  stop_at_latency=args.stop
-)
+  print("================== Beginning Throughput Sweep ================================", flush=True)
+  multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
+    parser_state, 
+    coarse_only=args.coarse, 
+    starting_guess_latency=args.start, 
+    do_incremental_guesses=not(args.sweep), 
+    comb_only=args.comb,
+    stop_at_latency=args.stop
+  )
+  print("================== Writing Results of Throughput Sweep ================================", flush=True)
+  SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+  
+  # Start simulation on final VHDL
+  SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 
-print("================== Writing Results of Throughput Sweep ================================", flush=True)
-SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 print("Done.", flush=True)
-
-# Start simulation on final VHDL
-SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 
 # No need to scare folks with my big dumb todo list printing...
 """
 TODO:
+Do little EDIF experiment
+  "-03" lolz
 Python cleanup PRs
-  Datavenia formatting and git commit hooks
-  DarkKnight w /pipelinec/include/ reorg
+  DarkKnight PR on pycparser submodule
   Clone copy of repo
-  Try to build RT or other big project
-LATTE 23
-  Slides ready for break out room discussions March 26
-General shared buffer with 3 clock domains(vga, RAM, compute) (RO port, the RAM, RW ports)
-  Sketch out with shared instance wires in way that works with multiple clock domains
-  Valid ready signalling
-  Use inst array sharing
-  Use to make double frame buffer fast ~final GOL demo?
-  Needs async start and complete from below?
+  Try to build recent GoL demo
+     Results in some more LUTs...wtf? does it matter?
 Try to do short youtube video fixing a bug or introducing how tool works
+  Would declaring IF interator in INIT statement support be good first/video issue?
+    Any other issues?
   For people like Bartus who want to help
-Victor's RT
-  Try to get nextpnr-xilinx working
-    Might need to hacked for now
-  Victor's iterations:
-    Try coarse style sweep that doubles stages each failure
-    Find a working design and then backs down to fewer stages
-  Try verilating whole pipeline?
-How to do async start and complete (prob w/ ready+valid for cpu polling)
-Does clang does constexpr/temaples well
-  Try cindex test w/ preprocessing too
+  tutorial that explains how to fix some github issues, ex. stream handshake?
+  would like to help with some features but I don't like to spent like many weeks understanding
+  Some kind of step by step how a + b function is pipelined to vhdl?
+SDR project? 
+  https://github.com/ha7ilm/csdr
+  Do FIR DEMO first?
+  Receive FM radio audio?
+How to do async start and complete with shared resource bus
+  For stuff like long pipelines
+  Multi in flight support?
+  start read, finish read etc
+  CPU support? prob w/ ready+valid?
+Multiple RISCV CPUs compiled from multiple MAIN funcs?
+Try to optimize derived FSMs to merge states etc
+Does clang does constexpr/templates well?
+  Only in C++ API has EvaluateAsConstExpr?
+  Try cindex test w/ example.cpp 
+  Try w/ preprocessing too
   Isolate .pipelinec specific files to be parsed by clang in isolation
   Simple example could be multiplier func inferring out bits from in...
   Ideal example is FIR bit width growth calc
@@ -182,9 +188,22 @@ How to use delay caches?
       instead of coarse checks at that level in hier?
 notypes+bartus talk about autopipelined feedback/stall/clock enable
   how to better handle clock enables / ready feedback? / resets even
-  try to use example axis demo thing pipeline contorl signals.c 
-Victor's other secret thing
-  Hope I can remember details because sure cant put anything here
+  try to use example axis demo thing pipeline contorl signals.c
+Victor's RT
+  Re-install diamond and try using?
+    Yosys doesnt support smaller ALU or multiplier prims?
+  Fewer multipliers version of FP mult?
+  Trying to get 320p handheld demo working
+    Close with abc9nowideluts...
+  Convert to 3x clock serial R,G,then B through pipeline
+    75Mhz and 480p test pattrn
+    Dont want multi clock so make 3x VGA timing module
+  Try to get nextpnr-xilinx working
+    Might need to hacked for now
+  Victor's iterations:
+    Try coarse style sweep that doubles stages each failure
+    Find a working design and then backs down to fewer stages
+  Try verilating whole pipeline?
 Make VHDL IEEE committee suggestion for record to-from slv like verilog packing
 BUGS: Missing typedef support!?
   Shouldnt be too bad, can hack around 
@@ -199,9 +218,6 @@ Victor wave pipelining small example
       and knowing roughly what fmax rounding should near there?
   Need multiple cycle paths
   Craft multi path, try it?
-SDR project? 
-  Do FIR DEMO first
-  Receive FM radio audio?
 Analogue Pocket FPGA Sphery demo
   Fix timing for hsync and vsync?
 CPU Mandelbrot demo w/ BRAM of floats? with frame buffer FSM style and pipelined iterations?
@@ -232,8 +248,6 @@ Do video walkthrough of Pong demo?
 Next ML demo?
   Email TinyML/HLS4ML?
   Recreate mnist demo using hls4ml or idk some CIRCT stuff?
-Try to restructure FSM style parsing + building of states list to be bottom up ~ last states first
-  as opposed to top down, first states first, since asking next_state.is_something() isnt valid since next state is shell, to be filled in
 Can XLS C++ -> XLS IR be used to map XLS IR to PipelineC / replace it?
 Can XLA for GPU/TPU partitioning help with PipelineC?
 SiliconCompiler/edalize to automate/cloud runs of vivado+import of results into python (and other eda tools)
@@ -246,7 +260,6 @@ PyRTL issue: https://github.com/UCSBarchlab/PyRTL/issues/422
   Try to recreate unused wires with smaller examples
   try just unused wires instead of unlistened nets?
 Implement DIAMOND PNR run?
-Detect/document function types ...ex. Detect single instance funcs and record logic.is_single_inst, maybe need to add pragmas to specify/force
 How does multiple ins and out over time work in clk step style?  (not hdl wrapper)
 Refactor fosix stuff:
   do demo 1b wide data bus
@@ -333,5 +346,5 @@ Need to re-do clock crossings/wires used in pipelineable logic to be like volati
   ^ Mostly already true for no-flow control crossings in functions with no other inputs and outputs, clock crossings are the io (and no issue for 0clk comb functions)
 Macros using preprocessing integer math checks for sizes?
   Software does this somehow? hold N value type?
-Can use clang preprocessor? clang -E? if cpp not installed...
+What happens if use orignal non-INST_ARRAY var instead of the array?
 """
