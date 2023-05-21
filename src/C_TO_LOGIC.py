@@ -11344,8 +11344,9 @@ def APPEND_PRAGMA_INFO(parser_state):
 
         # ONE_HOT
         elif name == "ONE_HOT":
-            thing = toks[1]
-            parser_state.marked_onehot.add(thing)
+            raise Exception(f"Use one_hot.h instead of #pragma ONE_HOT. {pragma.coord}")
+            #thing = toks[1]
+            #parser_state.marked_onehot.add(thing)
 
         # ID_INST
         elif name == "ID_INST":
