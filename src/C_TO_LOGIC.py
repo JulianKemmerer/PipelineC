@@ -47,6 +47,7 @@ CONST_REF_RD_FUNC_NAME_PREFIX = "CONST_REF_RD"
 VAR_REF_ASSIGN_FUNC_NAME_PREFIX = "VAR_REF_ASSIGN"
 VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
 CAST_FUNC_NAME_PREFIX = "CAST_TO"
+ONE_HOT_EQ_LOGIC_NAME = "ONE_HOT_EQ"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
@@ -1665,7 +1666,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
         submodule_logic.is_vhdl_func = True
 
     # Also do submodule instances for built in logic that is not raw VHDL
-    if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name, input_types, c_type):
+    if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(submodule_logic_name, input_types, c_type, parser_state):
         # IS RAW VHDL
         pass
     # NOT RAW VHDL (assumed to be built from C code then)
@@ -1806,6 +1807,15 @@ def BUILD_LOGIC_AS_C_CODE(
                 containing_func_logic,
                 parser_state,
             )
+        elif partially_complete_logic.func_name.startswith(
+            ONE_HOT_EQ_LOGIC_NAME
+        ):
+            c_code_text = SW_LIB.GET_ONE_HOT_EQ_C_CODE(
+                partially_complete_logic_local_inst_name,
+                partially_complete_logic,
+                containing_func_logic,
+                parser_state,
+            )    
         else:
             print(
                 "How to BUILD_LOGIC_AS_C_CODE for",
@@ -3666,11 +3676,21 @@ def C_TYPE_IS_ENUM(c_type_str, parser_state):
     return c_type_str in parser_state.enum_info_dict
 
 
+# Includes intN and uintN
+def C_TYPES_ARE_ENUMS(c_types, parser_state):
+    for c_type in c_types:
+        if not C_TYPE_IS_ENUM(c_type, parser_state):
+            return False
+    return True
+
+
 def C_TYPE_IS_ARRAY(c_type):
     return "[" in c_type and c_type.endswith("]")
 
 
 def C_TYPE_IS_FLOAT_E_M(c_type):
+    if c_type is None:
+        return False
     toks = c_type.split("_")
     if (
         c_type.startswith("float_")
@@ -3980,12 +4000,12 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
         # print "parser_state.existing_logic",parser_state.existing_logic
         # print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
         # print "known variables:",parser_state.existing_logic.variable_names
-        print("It looks like variable", var_name, "is not defined?", c_ast_ref.coord)
+        raise Exception(f"It looks like variable {var_name} is not defined? {c_ast_ref.coord}")
         # for wire in sorted(parser_state.existing_logic.wire_to_c_type):
         # print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
         # print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
         # print 0/0
-        sys.exit(-1)
+        #sys.exit(-1)
 
     # Is this base type an ID, array or struct ref?
     if len(ref_toks) == 1:
@@ -6108,6 +6128,7 @@ def LEAF_NAME(name, do_submodule_split=True):
     return new_name
 
 
+
 # Function instance is module connection
 # Connect certain input nodes to certain lists of wire names
 # dict[c_ast_node] => [list of driven wire names]
@@ -6275,6 +6296,42 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 func_c_ast_node,
             )
             return parser_state.existing_logic
+    
+    # One hot enum compare
+    if (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME) and
+        C_TYPES_ARE_ENUMS(input_driver_types, parser_state) and
+        input_driver_types[0]==input_driver_types[1] and
+        input_driver_types[0] in parser_state.marked_onehot
+        ):
+        # Rewrite ex. BIN_OP_EQ_uint1_t_my_enum_t_my_enum_t -> ONE_HOT_EQ_uint1_uint128_t_uint128_t
+        # Prepare for call to C_AST_N_ARG_FUNC_INST_TO_LOGIC with replacement
+        new_func_base_name = ONE_HOT_EQ_LOGIC_NAME
+        new_base_name_is_name = False # Do append types to name (base is not complete)
+        new_input_drivers = input_drivers[:]  # Wires or C ast nodes, same as old function
+        new_input_port_names = input_port_names[:]  # Port names on submodule
+        # The same wires are connected, with the same names
+        # EXCEPT need to be ~converted/forced to uint types
+        # Similar to in C_AST_BINARY_OP_TO_LOGIC for non-one hot to uint types EQ operator
+        enum_type = input_driver_types[0]
+        enum_int_type = parser_state.enum_info_dict[enum_type].int_c_type
+        new_input_driver_types = [enum_int_type, enum_int_type]
+        # Remove old submodule instance
+        parser_state.existing_logic.REMOVE_SUBMODULE(
+            func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+        )
+        # Connect new function call
+        parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
+            prepend_text,
+            func_c_ast_node,
+            new_func_base_name,
+            new_base_name_is_name,
+            new_input_drivers,  # Wires or C ast nodes
+            new_input_driver_types,  # Might be none if not known
+            new_input_port_names,  # Port names on submodule
+            output_driven_wire_names,
+            parser_state,
+        )
+        return parser_state.existing_logic
 
     # Check if can be replaced by constant output wire
     # Or reduced function due to partial constant inputs
@@ -6745,6 +6802,39 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             "Hey you did a bad job at your job reducing MUXES. Atlas Sound w. Noah Lennox - Walkabout"
         )
         sys.exit(-1)
+    # Constant one hot enum compare eq
+    elif func_base_name == ONE_HOT_EQ_LOGIC_NAME and (
+        const_input_wires[0] is not None or
+        const_input_wires[1] is not None
+    ):
+        # Which input is the const left or right?
+        # Which is var?
+        if const_input_wires[0] is not None:
+            const_input_wire = const_input_wires[0]
+            var_input_driver = input_drivers[1]
+        if const_input_wires[1] is not None:
+            const_input_wire = const_input_wires[1]
+            var_input_driver = input_drivers[0]
+        # What is the constant?
+        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            const_input_wire, parser_state.existing_logic, parser_state
+        )
+        # Will be an enum const, convert to int...
+        enum_t = parser_state.existing_logic.wire_to_c_type[const_input_wire]
+        enum_info = parser_state.enum_info_dict[enum_t]
+        int_const_val = enum_info.id_to_int_val[const_val_str]
+        one_hot_bit = int(math.log2(int_const_val))
+        int_c_type = enum_info.int_c_type
+        int_c_type_prefix = int_c_type.replace("_t","")
+        # Use bit select built in func: uint<Y-X+1>_t <type_prefix>_Y_X(<type>)
+        new_func_base_name = int_c_type_prefix + "_" + str(one_hot_bit) + "_" + str(one_hot_bit)
+        new_base_name_is_name = True # nothing to append to base
+        new_input_drivers = [var_input_driver] # Just one input, the variable
+        new_input_driver_types = [int_c_type]
+        new_input_port_names = ["x"]  # Port name on submodule (from SW_LIB.GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT)
+        APPEND_BIT_MANIP_FUNC(new_func_base_name, parser_state)
+        is_reducable = True
+
     # Not a reducable function
     if not is_reducable:
         return None
@@ -6903,6 +6993,16 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     elif func_base_name == VHDL_FUNC_NAME:
         output_type = "void"
 
+    # Try to infer out type from driven wires if not set by now? # Hacky?
+    if output_type is None:
+        for output_driven_wire_name in output_driven_wire_names:
+            if (
+                output_driven_wire_name in parser_state.existing_logic.wire_to_c_type
+            ):
+                output_type = parser_state.existing_logic.wire_to_c_type[
+                    output_driven_wire_name
+                ]
+
     # Set this type for the driven wires if not set already? # This seems really hacky
     if output_type is not None:
         for output_driven_wire_name in output_driven_wire_names:
@@ -6913,7 +7013,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 parser_state.existing_logic.wire_to_c_type[
                     output_driven_wire_name
                 ] = output_type
-
+    
     # Is this a constant or reduceable func call?
     const_reduced_logic = TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         func_inst_name,
@@ -7252,6 +7352,29 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
 
     return parser_state.existing_logic
 
+# See hacky below var as func stuff
+def APPEND_BIT_MANIP_FUNC(bit_manip_func_name, parser_state):
+    (   
+        input_port_names,
+        input_types,
+        output_type,
+    ) = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+    if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
+        bit_manip_func_logic = Logic()
+        bit_manip_func_logic.func_name = bit_manip_func_name
+        for i in range(0, len(input_port_names)):
+            input_port_name = input_port_names[i]
+            input_type = input_types[i]
+            bit_manip_func_logic.inputs.append(input_port_name)
+            bit_manip_func_logic.wire_to_c_type[input_port_name] = input_type
+        bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
+        bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
+        bit_manip_func_logic.is_vhdl_func = True
+        bit_manip_func_logic.is_new_style_bit_manip = True
+        parser_state.FuncLogicLookupTable[
+            bit_manip_func_name
+        ] = bit_manip_func_logic
+
 
 # HACK AF variables as func names
 def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
@@ -7305,18 +7428,7 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
             output_type,
         ) = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
         input_port_name = input_port_names[0]
-        if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
-            bit_manip_func_logic = Logic()
-            bit_manip_func_logic.func_name = bit_manip_func_name
-            bit_manip_func_logic.inputs.append(input_port_name)
-            bit_manip_func_logic.wire_to_c_type[input_port_name] = c_type
-            bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
-            bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
-            bit_manip_func_logic.is_vhdl_func = True
-            bit_manip_func_logic.is_new_style_bit_manip = True
-            parser_state.FuncLogicLookupTable[
-                bit_manip_func_name
-            ] = bit_manip_func_logic
+        APPEND_BIT_MANIP_FUNC(bit_manip_func_name, parser_state)
         # Make up a func call to eval, copying SW_LIB funcs? hacky hack
         func_base_name = bit_manip_func_name
         base_name_is_name = True  # Dont need type into since base name has it
@@ -7324,7 +7436,7 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
         input_driver_types = [c_type]
         input_drivers = [(var_name,)]  # ref toks list
         output_driven_wire_names = driven_wire_names
-        func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+        #func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
         # Then regular narg func?
         parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             prepend_text,
@@ -8063,47 +8175,48 @@ def C_AST_BINARY_OP_TO_LOGIC(
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
         right_type = common_fp_type
         parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
-
-    # Replace ENUM with INT type of input wire so cast happens? :/?
-    # Left
+  
+    # ENUM constant strings driving ports wont know what enum type they are
+    # need to detect enum variables of known type and apply to wires
+    # Left correcting right port + driver of port
     if left_type in parser_state.enum_info_dict:
-        # print "left enum"
-        # Set BIN OP input wire as UINT
         enum_type = left_type
-        left_type = parser_state.enum_info_dict[enum_type].int_c_type
-        # Set driver of input as ENUM
-        # This is really only necessary for constant driving wires
-        # which wont have known type without this
-        # works fine for non constant wires too though
-        driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
-        parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
-        # print "driving_wire",driving_wire,enum_type
-        # If right type is unknown assume it also? Only OK for ENUMS?
         if right_type is None:
-            right_type = left_type
+            right_type = enum_type
             parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
-            driving_wire = parser_state.existing_logic.wire_driven_by[
-                bin_op_right_input
-            ]
-            parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
-    # Right
-    if right_type in parser_state.enum_info_dict:
-        # Set BIN OP input wire as UINT
-        enum_type = right_type
-        right_type = parser_state.enum_info_dict[enum_type].int_c_type
-        # Set driver of input as ENUM
-        # This is really only necessary for constant driving wires
-        # which wont have known type without this
-        # works fine for non constant wires too though
         driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_right_input]
-        parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
-        # print "driving_wire",driving_wire,enum_type
-        # If left type is unknown assume it also? Only OK for ENUMS?
+        if driving_wire not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
+    # Right correcting left port + driver of port
+    if right_type in parser_state.enum_info_dict:
+        enum_type = right_type
         if left_type is None:
+            left_type = enum_type
+            parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+        driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
+        if driving_wire not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
+
+    # Convert binary operator enum input ports to u/int as needed
+    # Not done for not-one hot since need custom one hot operators
+    # Left correcting left+right ports
+    if left_type in parser_state.enum_info_dict and left_type not in parser_state.marked_onehot:
+        # Normal enum convert BIN OP ports to integer type
+        enum_int_type = parser_state.enum_info_dict[left_type].int_c_type
+        left_type = enum_int_type
+        parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
+        if right_type is None or C_TYPE_IS_ENUM(right_type, parser_state):
+            right_type = left_type
+            parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type        
+    # Right correcting left+right ports
+    if right_type in parser_state.enum_info_dict and right_type not in parser_state.marked_onehot:
+        # Normal enum convert BIN OP ports to integer type
+        enum_int_type = parser_state.enum_info_dict[right_type].int_c_type
+        right_type = enum_int_type
+        parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
+        if left_type is None or C_TYPE_IS_ENUM(left_type, parser_state):
             left_type = right_type
             parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-            driving_wire = parser_state.existing_logic.wire_driven_by[bin_op_left_input]
-            parser_state.existing_logic.wire_to_c_type[driving_wire] = enum_type
 
     # Same thing as ENUM (wanting bin op port to be int so cast happens)
     # Dont want bin op ports based on char type or enum types

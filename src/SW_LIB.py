@@ -3874,6 +3874,44 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(
     return text
 
 
+def GET_ONE_HOT_EQ_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    containing_func_logic,
+    parser_state,
+):
+    func_c_name = partially_complete_logic.func_name
+    # Assumes both inputs are same type
+    input_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[0]
+    ]
+    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(input_t)
+    text = ""
+    text += '''
+#include "intN_t.h"
+#include "uintN_t.h"'''
+##include "'''
+#        + BIT_MATH_HEADER_FILE
+#        + """"
+#"""
+    text += '''
+uint1_t ''' + func_c_name + '''(''' + input_t + ''' left, ''' + input_t + ''' right)
+{
+    // Bitwise and
+    ''' + input_t + ''' left_and_right = left & right;
+    uint1_t bits['''+str(bit_width)+'''];
+    uint32_t i;
+    for(i=0; i<'''+str(bit_width)+'''; i+=1)
+    {
+        bits[i] = left_and_right(i); // Select ith bit
+    } 
+    // OR reduce with built in function
+    return uint1_array_or'''+str(bit_width)+'''(bits);
+}
+    '''
+    return text
+
+
 ### Ahh fuck taking the easy way
 # Copying implemetnation from     GET_VAR_REF_ASSIGN_C_CODE
 # Might actually be worth it

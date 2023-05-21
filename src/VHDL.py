@@ -1969,7 +1969,7 @@ def C_TYPES_ARE_TYPE(c_types, the_type):
     return True
 
 
-def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
+def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type, parser_state):
     # IS RAW VHDL
     if (
         logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME
@@ -2161,6 +2161,9 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type):
             )
             and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
+        or (
+            logic_func_name.startswith(C_TO_LOGIC.ONE_HOT_EQ_LOGIC_NAME)
+        )
     ):
         return False
 
@@ -2182,7 +2185,7 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(
     timing_params = TimingParamsLookupTable[inst_name]
     package_file_text = ""
     # Raw hdl logic is static in the stages code here but coded as generic
-    if LOGIC_IS_RAW_HDL(logic):  # not in parser_state.main_mhz:
+    if LOGIC_IS_RAW_HDL(logic, parser_state):  # not in parser_state.main_mhz:
         package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(
             inst_name, logic, parser_state, timing_params
         )
@@ -4463,7 +4466,7 @@ class PiplineHDLParams:
 
         # Not needed for no submodule things like raw hdl
         if (
-            LOGIC_IS_RAW_HDL(Logic)
+            LOGIC_IS_RAW_HDL(Logic, parser_state)
             or Logic.is_vhdl_func
             or Logic.is_vhdl_expr
             or Logic.is_vhdl_text_module
@@ -4981,13 +4984,13 @@ def WRITE_LOGIC_ENTITY(
     f.close()
 
 
-def LOGIC_IS_RAW_HDL(Logic):
+def LOGIC_IS_RAW_HDL(Logic, parser_state):
     if Logic.is_c_built_in:
         input_types = []
         for in_port in Logic.inputs:
             input_types.append(Logic.wire_to_c_type[in_port])
         output_type = Logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-        return C_BUILT_IN_FUNC_IS_RAW_HDL(Logic.func_name, input_types, output_type)
+        return C_BUILT_IN_FUNC_IS_RAW_HDL(Logic.func_name, input_types, output_type, parser_state)
     else:
         if SW_LIB.IS_BIT_MANIP(Logic):
             return True
@@ -4998,7 +5001,7 @@ def LOGIC_IS_RAW_HDL(Logic):
 
 def LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
     timing_params = TimingParamsLookupTable[inst_name]
-    if LOGIC_IS_RAW_HDL(Logic) and LOGIC_NEEDS_REGS(
+    if LOGIC_IS_RAW_HDL(Logic, parser_state) and LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     ):
         return True
@@ -5026,7 +5029,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     needs_regs = LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    is_raw_hdl = LOGIC_IS_RAW_HDL(Logic)
+    is_raw_hdl = LOGIC_IS_RAW_HDL(Logic, parser_state)
     needs_manual_regs = LOGIC_NEEDS_MANUAL_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
@@ -5344,7 +5347,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
     needs_regs = LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    is_raw_hdl = LOGIC_IS_RAW_HDL(Logic)
+    is_raw_hdl = LOGIC_IS_RAW_HDL(Logic, parser_state)
     needs_manual_regs = LOGIC_NEEDS_MANUAL_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
@@ -6171,23 +6174,35 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     # DO VHDL CONVERSION FUNCTIONS
     resize_toks = []
 
-    # Combine driving and driven into one list
-    wires_to_check = [driving_wire, driven_wire]
-    # If both are of same type then VHDL resize should work
-    if WIRES_ARE_INT_N(wires_to_check, logic) or WIRES_ARE_UINT_N(
-        wires_to_check, logic
-    ):
+    # Enums are encoded as u/int so include with logic for u/int stuff
+    left_is_int = WIRES_ARE_INT_N([driven_wire], logic)
+    left_is_uint = WIRES_ARE_UINT_N([driven_wire], logic)
+    if C_TO_LOGIC.C_TYPE_IS_ENUM(left_type, parser_state):
+        enum_int_c_type = parser_state.enum_info_dict[left_type].int_c_type
+        left_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
+        left_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
+    right_is_int = WIRES_ARE_INT_N([driving_wire], logic)
+    right_is_uint = WIRES_ARE_UINT_N([driving_wire], logic)
+    if C_TO_LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
+        enum_int_c_type = parser_state.enum_info_dict[right_type].int_c_type
+        right_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
+        right_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
+    uint_driving_int = left_is_int and right_is_uint
+    int_driving_uint = left_is_uint and right_is_int
+
+    # If both are of same signedness type then VHDL resize should work
+    if (left_is_int and right_is_int) or (left_is_uint and right_is_uint):
         # Do integer promotion conversion
         right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-        # Can resize do smaller, and unsigned to unsigned too?
-        resize_toks = ["resize(", ", " + str(left_width) + ")"]
+        if right_width == left_width:
+            return RHS
+        else:
+            resize_toks = ["resize(", ", " + str(left_width) + ")"]
 
-    # Otherwise need to
+    # Otherwise need to resize and change signedness
     # UINT driving INT
-    elif WIRES_ARE_INT_N([driven_wire], logic) and WIRES_ARE_UINT_N(
-        [driving_wire], logic
-    ):
+    elif uint_driving_int:
         right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
         # Just need to add sign bit
@@ -6198,9 +6213,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         ]
 
     # INT driving UINT
-    elif WIRES_ARE_UINT_N([driven_wire], logic) and WIRES_ARE_INT_N(
-        [driving_wire], logic
-    ):
+    elif int_driving_uint:
         right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
 
@@ -6224,40 +6237,6 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         l_e, l_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_type)
         r_e, r_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(right_type)
         resize_toks = ["resize_float_e_m_t(", f",{r_e},{r_m},{l_e},{l_m})"]
-
-    # ENUM DRIVING U/INT is ok
-    elif (
-        WIRES_ARE_INT_N([driven_wire], logic) or WIRES_ARE_UINT_N([driven_wire], logic)
-    ) and C_TO_LOGIC.C_TYPE_IS_ENUM(logic.wire_to_c_type[driving_wire], parser_state):
-        is_signed = WIRES_ARE_INT_N([driven_wire], logic)
-        left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-        if C_TO_LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
-            right_width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
-                parser_state.enum_info_dict[right_type].int_c_type
-            )
-        else:
-            print("Expected enum type?", driving_wire)
-            sys.exit(-1)
-        max_width = max(left_width, right_width)
-        if is_signed:
-            resize_toks = [
-                "resize(signed(" + right_type + "_to_slv(",
-                ")) ," + str(max_width) + ")",
-            ]
-        else:
-            resize_toks = [
-                "resize(unsigned(" + right_type + "_to_slv(",
-                ")) ," + str(max_width) + ")",
-            ]
-
-    # U/INT driving ENUM is ok
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(
-        logic.wire_to_c_type[driven_wire], parser_state
-    ) and (
-        WIRES_ARE_INT_N([driving_wire], logic)
-        or WIRES_ARE_UINT_N([driving_wire], logic)
-    ):
-        resize_toks = [left_type + "_from_slv(std_logic_vector(", "))"]
 
     # Making yourself sad to work around issues you didnt forsee is ok
     elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
@@ -6447,39 +6426,16 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
         # Use VHDL null expression
         return C_TYPE_STR_TO_VHDL_NULL_STR(c_type, parser_state)
 
-    # Enums
+    # Enums need conversion to u/int
     if C_TO_LOGIC.C_TYPE_IS_ENUM(c_type, parser_state):
-        """
-        toks = wire_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
-        toks.reverse()
-        local_name = toks[0]
-        enum_wire = local_name.split("$")[0]
-        if not enum_wire.startswith(C_TO_LOGIC.CONST_PREFIX):
-          print("Non const enum constant?",enum_wire)
-          sys.exit(-1)
-        enum_name = enum_wire[len(C_TO_LOGIC.CONST_PREFIX):]
-        """
-        enum_name = val_str
-        # print "local_name",local_name
-        # print "enum_name",enum_name
-
-        """
-    # Sanity check that enum exists?
-    match = False
-    for enum_type in parser_state.enum_info_dict:
-      ids = parser_state.enum_info_dict[enum_type].id_to_int_val.keys()
-      if enum_name in ids:
-        match = True
-        break
-    if not match:
-      print(parser_state.enum_info_dict)
-      print(enum_name, "doesn't look like an ENUM constant?")
-      sys.exit(-1)
-    """
         if is_negated:
             print("TODO negated enums?")
             sys.exit(-1)
-        return enum_name
+        enum_int_type = parser_state.enum_info_dict[c_type].int_c_type
+        if C_TYPE_IS_INT_N(enum_int_type):
+            return "signed(" + c_type + "_to_slv(" + val_str + "))" 
+        else:
+            return "unsigned(" + c_type + "_to_slv(" + val_str + "))"
 
     # Chars
     if c_type == "char":
@@ -6929,8 +6885,9 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
         # Use same type from C
         return c_type_str
     elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
-        # Use same type from C
-        return c_type_str
+        # Manually use integer encoding type for enum
+        enum_info = parser_state.enum_info_dict[c_type_str]
+        return C_TYPE_STR_TO_VHDL_TYPE_STR(enum_info.int_c_type, parser_state)
     elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
         return C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str)
     else:
@@ -6996,8 +6953,12 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
         # Use same type from C
         return c_type_str + "_NULL"
     elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
-        # Null is always first,left value
-        return c_type_str + "'left"
+        # Null is always first,left value, converted to u/int
+        int_type = parser_state.enum_info_dict[c_type_str].int_c_type
+        if C_TYPE_IS_INT_N(int_type):
+            return "signed(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
+        else:
+            return "unsigned(" + c_type_str + "_to_slv(" + c_type_str + "'left))"    
     elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
         elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
         text = ""

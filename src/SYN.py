@@ -634,7 +634,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # Non submodule modules like dont need this
     # Dont check just dont call this func in that case?
     if (
-        VHDL.LOGIC_IS_RAW_HDL(logic)
+        VHDL.LOGIC_IS_RAW_HDL(logic, parser_state)
         or logic.is_vhdl_func
         or logic.is_vhdl_expr
         or logic.is_vhdl_text_module
@@ -2518,7 +2518,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
 
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     if latency > 0:
-        if VHDL.LOGIC_IS_RAW_HDL(logic):
+        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state):
             # Raw vhdl estimate func of N bits input -> M bits output as using
             # (N+M)/2 bits per pipeline stage
             avg_regs = int((input_ffs + output_ffs) / 2)
