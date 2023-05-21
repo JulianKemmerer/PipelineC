@@ -1,8 +1,8 @@
 // To replace #pragma ONE_HOT
 
-#define ONE_HOT_IN(name, num_states) \
+#define ONE_HOT_IN_DECL(name, num_states) \
 uint1_t name[num_states]
-#define ONE_HOT_REG(name, num_states, init_state_num) \
+#define ONE_HOT_REG_DECL(name, num_states, init_state_num) \
 static uint1_t name[num_states] = {[init_state_num]=1};
 #define ONE_HOT_CONST_EQ(name, state_num) \
 name[state_num]

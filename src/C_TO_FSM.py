@@ -635,10 +635,10 @@ typedef struct """
     text += one_hot_states_text
     text += ("""
   // State reg holding current state
-  ONE_HOT_REG(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
+  ONE_HOT_REG_DECL(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
   // State reg holding state to return to after certain func calls
   // Starting set to first user state
-  ONE_HOT_REG(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
+  ONE_HOT_REG_DECL(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
   // Input regs
 """
     )
@@ -757,7 +757,7 @@ typedef struct """
                 sub_out_port_c_type = flow_ctrl_func_logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
                 text += "  static " + sub_out_port_c_type+ " " + flow_ctrl_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
             # Return state
-            text += "  ONE_HOT_REG(" + flow_ctrl_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ", FIRST_STATE_" + fsm_logic.func_name + ")\n"
+            text += "  ONE_HOT_REG_DECL(" + flow_ctrl_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ", FIRST_STATE_" + fsm_logic.func_name + ")\n"
 
     if len(single_inst_flow_ctrl_func_call_names) > 0:
         # Dont need for outputs since known calling fsm is ready for single inst output valid
