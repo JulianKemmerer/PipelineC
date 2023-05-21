@@ -564,7 +564,7 @@ void frame_buf_ram_dev_arb_connect()
 uint1_t frame_buffer_read_port_sel;
 n_pixels_t dual_frame_buf_read(uint16_t x_buffer_index, uint16_t y)
 {
-  __clk();
+  //__clk();
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   n_pixels_t resp;
   if(frame_buffer_read_port_sel){
@@ -576,7 +576,7 @@ n_pixels_t dual_frame_buf_read(uint16_t x_buffer_index, uint16_t y)
 }
 void dual_frame_buf_write(uint16_t x_buffer_index, uint16_t y, n_pixels_t wr_data)
 {
-  __clk();
+  //__clk();
   uint32_t addr = pos_to_addr(x_buffer_index, y);
   uint1_t resp; // dummy return resp val
   if(!frame_buffer_read_port_sel){

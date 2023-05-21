@@ -26,7 +26,7 @@
 #define RAM_PIXEL_BUFFER_SIZE_LOG2 4
 #define RAM_PIXEL_BUFFER_SIZE 16
 #define DEV_CLK_MHZ 150.0
-#define HOST_CLK_MHZ 45.0
+#define HOST_CLK_MHZ 55.0
 #define NUM_X_THREADS 4
 #define NUM_Y_THREADS 4
 #define NUM_TOTAL_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
@@ -117,7 +117,7 @@ uint1_t pixel_buf_read(uint32_t x, uint32_t y)
     ARRAY_1SHIFT_INTO_BOTTOM(cache_y, 3, y)
     ARRAY_1SHIFT_INTO_BOTTOM(cache_pixels, 3, pixels)
   }
-  __clk();
+  //__clk();
   // Select the single pixel offset of interest (bottom bits of x)
   ram_pixel_offset_t x_offset = x;
   return pixels.data[x_offset];
@@ -134,21 +134,21 @@ uint32_t count_neighbors(uint32_t x, uint32_t y){
       for(i=x-1; i<=x+1; i+=1){
           if(!( ((i==x) and (j==y)) or ((i<0) or (j<0)) or ((i>=FRAME_WIDTH) or (j>=FRAME_HEIGHT)))){
             uint1_t cell_alive = pixel_buf_read(i, j);
-            __clk();
+            //__clk();
             if(cell_alive==1){
               count+=1;
             }
           }
       }
   }
-  __clk();
+  //__clk();
   return count;
 }
 // Game of Life logic to determine if cell at x,y lives or dies
 uint1_t cell_next_state(uint1_t cell_alive, uint32_t x, uint32_t y){
-  __clk();
+  //__clk();
   uint32_t neighbour_live_cells = count_neighbors(x, y);
-  __clk();
+  //__clk();
   uint1_t cell_alive_next;
   if((cell_alive==1) and ((neighbour_live_cells==2) or (neighbour_live_cells==3))){
       cell_alive_next=1;
@@ -170,10 +170,10 @@ uint1_t pixel_kernel(uint16_t x, uint16_t y, uint1_t pixel)
 // Func run for every n_pixels_t chunk
 void pixels_buffer_kernel(uint16_t x_buffer_index, uint16_t y)
 {
-  __clk();
+  //__clk();
   // Read the pixels from the 'read' frame buffer
   n_pixels_t pixels = dual_frame_buf_read(x_buffer_index, y);
-  __clk();
+  //__clk();
   // Run kernel for each pixel
   uint32_t i;
   uint16_t x = x_buffer_index << RAM_PIXEL_BUFFER_SIZE_LOG2;
@@ -200,7 +200,7 @@ void pixels_kernel_seq_range(
     for(x_buffer_index=x_buffer_index_start; x_buffer_index<=x_buffer_index_end; x_buffer_index+=1)
     {
       pixels_buffer_kernel(x_buffer_index, y);
-      __clk();
+      //__clk();
     }
   }
 }
@@ -247,7 +247,7 @@ void render_frame()
         //all_threads_done &= thread_done[i][j]; // Longer path
       }
     }
-    __clk();
+    __clk(); // REQUIRED
   }
   // Final step in rendering frame is switching to read from newly rendered frame buffer
   frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
