@@ -1,6 +1,8 @@
 #include "uintN_t.h"
 #include "compiler.h"
 
+// WARNING: User cannot use IDs (only used internally by arb), and bursts are not supported yet (1 cycle tlast=1 xfers only)
+
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
 // Generic 5 channel bus
 // 3 write, 2 read
@@ -162,6 +164,83 @@ typedef struct name##_buffer_t \
 /* Write has two channels to begin request: address and data */ \
 /* Helper func to write one name##_write_data_word_t requires that inputs are valid/held constant*/ \
 /* until data phase done (ready_for_inputs asserted)*/ \
+typedef struct name##_write_start_logic_outputs_t \
+{ \
+  name##_host_to_dev_t to_dev; \
+  uint1_t done; \
+  uint1_t ready_for_inputs; \
+}name##_write_start_logic_outputs_t; \
+name##_write_start_logic_outputs_t name##_write_start_logic( \
+  write_req_data_t req, /* uint32_t addr,*/ \
+  write_data_word_t data, /* uint32_t data,*/ \
+  uint1_t ready_for_outputs,  \
+  name##_dev_to_host_t from_dev \
+){ \
+  static shared_res_bus_write_state_t state; \
+  name##_write_start_logic_outputs_t o; \
+  if(state==REQ_STATE) \
+  { \
+    /* Wait device to be ready for write address first*/ \
+    if(from_dev.write.req_ready) \
+    { \
+      /* Use inputs to form valid address*/ \
+      o.to_dev.write.req.valid = 1; \
+      o.to_dev.write.req.data.user = req; \
+      /* And then data next*/ \
+      state = DATA_STATE; \
+    } \
+  } \
+  /* pass through states */ \
+  if(state==DATA_STATE) \
+  { \
+    /* Wait for this function to be ready for output*/ \
+    if(ready_for_outputs) \
+    { \
+      /* Wait device to be ready for write data*/ \
+      if(from_dev.write.data_ready) \
+      { \
+        /* Signal finally ready for inputs since data completes write request*/ \
+        o.ready_for_inputs = 1; \
+        /* Send valid data transfer*/ \
+        o.to_dev.write.data.valid = 1; \
+        o.to_dev.write.data.burst.last = 1; \
+        o.to_dev.write.data.burst.data_word.user = data; \
+        /* Done */ \
+        o.done = 1; \
+        state = REQ_STATE; \
+      } \
+    } \
+  } \
+  return o; \
+} \
+typedef struct name##_write_finish_logic_outputs_t \
+{ \
+  name##_host_to_dev_t to_dev; \
+  write_resp_data_t resp; \
+  uint1_t done; \
+}name##_write_finish_logic_outputs_t; \
+name##_write_finish_logic_outputs_t name##_write_finish_logic( \
+  uint1_t ready_for_outputs,  \
+  name##_dev_to_host_t from_dev \
+){ \
+  name##_write_finish_logic_outputs_t o; \
+  /* Wait for this function to be ready for output*/ \
+  if(ready_for_outputs) \
+  { \
+    /* Then signal to device that ready for response*/ \
+    o.to_dev.write.resp_ready = 1; \
+    /* And wait for valid output response*/ \
+    if(from_dev.write.resp.valid) \
+    { \
+      /* Done (error code not checked, just returned)*/ \
+      o.done = 1; \
+      o.resp = from_dev.write.resp.data.user; \
+      state = REQ_STATE; \
+    } \
+  } \
+  return o; \
+} \
+/* TODO make write_logic use write_start_logic and write_finish_logic*/ \
 typedef struct name##_write_logic_outputs_t \
 { \
   name##_host_to_dev_t to_dev; \
@@ -225,6 +304,65 @@ name##_write_logic_outputs_t name##_write_logic( \
 } \
  \
 /* Read of one name##_read_data_t helper func is slightly simpler than write*/ \
+typedef struct name##_read_start_logic_outputs_t \
+{ \
+  name##_host_to_dev_t to_dev; \
+  uint1_t done; \
+  uint1_t ready_for_inputs; \
+}name##_read_start_logic_outputs_t; \
+name##_read_start_logic_outputs_t name##_read_start_logic( \
+  read_req_data_t req, /* uint32_t addr,*/ \
+  uint1_t ready_for_outputs, \
+  name##_dev_to_host_t from_dev \
+){ \
+  name##_read_start_logic_outputs_t o; \
+  /* Wait for this function to be ready for output*/ \
+  if(ready_for_outputs) \
+  { \
+    /* Wait device to be ready for request inputs*/ \
+    if(from_dev.read.req_ready) \
+    { \
+      /* Signal function is ready for inputs*/ \
+      o.ready_for_inputs = 1; \
+      /* Use inputs to form valid request*/ \
+      o.to_dev.read.req.valid = 1; \
+      o.to_dev.read.req.data.user = req; \
+      o.done = 1; \
+    } \
+  }\
+  return o; \
+} \
+typedef struct name##_read_finish_logic_outputs_t \
+{ \
+  name##_host_to_dev_t to_dev; \
+  read_data_resp_word_t data; \
+  uint1_t done; \
+}name##_read_finish_logic_outputs_t; \
+name##_read_finish_logic_outputs_t name##_read_finish_logic( \
+  uint1_t ready_for_outputs, \
+  name##_dev_to_host_t from_dev \
+){ \
+  name##_read_finish_logic_outputs_t o; \
+  /* Wait for this function to be ready for output*/ \
+  if(ready_for_outputs) \
+  { \
+    /* Then signal to device that ready for response*/ \
+    o.to_dev.read.data_ready = 1; \
+    /* And wait for valid output response*/ \
+    if(from_dev.read.data.valid) \
+    { \
+      o.data = from_dev.read.data.burst.data_resp.user; \
+      if(from_dev.read.data.burst.last) \
+      { \
+        /* Done on last word of data_resp*/ \
+        /* Error code not checked, just returned*/ \
+        o.done = 1; \
+      } \
+    } \
+  } \
+  return o; \
+} \
+/* TODO make read_logic use read_start_logic and read_finish_logic*/ \
 typedef struct name##_read_logic_outputs_t \
 { \
   name##_host_to_dev_t to_dev; \
@@ -301,7 +439,37 @@ type##_host_to_dev_t name##_host_to_dev_wires_on_dev_clk[NUM_HOST_PORTS]; \
 type##_dev_to_host_t name##_dev_to_host_wires_on_dev_clk[NUM_HOST_PORTS]; \
  \
 /* FSM style funcs to do reads and writes*/ \
- \
+void name##_read_start(read_req_data_t req) \
+{ \
+  uint1_t done = 0; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done) \
+  { \
+    type##_read_start_logic_outputs_t read_logic_outputs \
+      = type##_read_start_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
+    name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
+    done = read_logic_outputs.done; \
+    __clk(); \
+  } \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+} \
+read_data_resp_word_t name##_read_finish() \
+{ \
+  read_data_resp_word_t rv; \
+  uint1_t done = 0; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done) \
+  { \
+    type##_read_finish_logic_outputs_t read_logic_outputs \
+      = type##_read_finish_logic(1, name##_dev_to_host_wire_on_host_clk); \
+    name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
+    done = read_logic_outputs.done; \
+    rv = read_logic_outputs.data; \
+    __clk(); \
+  } \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  return rv; \
+} \
 read_data_resp_word_t name##_read(read_req_data_t req) \
 { \
   read_data_resp_word_t rv; \
@@ -319,7 +487,39 @@ read_data_resp_word_t name##_read(read_req_data_t req) \
   name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
   return rv; \
 } \
- \
+\
+void name##_write_start(write_req_data_t req, write_data_word_t data) \
+{ \
+  uint1_t done = 0; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done) \
+  { \
+    type##_write_start_logic_outputs_t write_logic_outputs \
+      = type##_write_start_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk); \
+    name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
+    done = write_logic_outputs.done; \
+    __clk(); \
+  } \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  return rv; \
+} \
+write_resp_data_t name##_write_finish() \
+{ \
+  write_resp_data_t rv; \
+  uint1_t done = 0; \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done) \
+  { \
+    type##_write_finish_logic_outputs_t write_logic_outputs \
+      = type##_write_finish_logic(1, name##_dev_to_host_wire_on_host_clk); \
+    name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
+    done = write_logic_outputs.done; \
+    rv = write_logic_outputs.resp; \
+    __clk(); \
+  } \
+  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  return rv; \
+} \
 write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
 { \
   write_resp_data_t rv; \
@@ -339,6 +539,7 @@ write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
 } \
  \
 /* ^TODO: condsider making a combined single read_write func that uses combined read_write_logic?*/ \
+/* ^ TODO maybe implement full read/write using start and finish?*/ \
  \
 /* Increment with wrap around*/ \
 uint8_t name##_host_port_inc(uint8_t selected_host_port) \
@@ -634,6 +835,92 @@ name##_dev_arb_t name##_dev_arb( \
   host_port_read_has_priority = next_host_port_read_has_priority; \
   \
   return o; \
+}\
+/* Multiple in flight 'pipelined' round robin arb*/ \
+typedef struct name##_dev_arb_t{ \
+  type##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
+  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
+}name##_dev_arb_t; \
+name##_dev_arb_t name##_dev_arb_pipelined( \
+  type##_dev_to_host_t from_devs[NUM_DEV_PORTS], \
+  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+) \
+{ \
+  /* 5 channels between each host and device*/ \
+  /* Request to start*/ \
+  /*  Read req (addr)*/ \
+  /*  Write req (addr)*/ \
+  /* Exchange of data*/ \
+  /*  Read data+resp (data+err)*/ \
+  /*  Write data (data bytes)*/ \
+  /*  Write resp (err code)*/ \
+  /* Each channel has a valid+ready handshake */ \
+ \
+  /* Output signal*/ \
+  name##_dev_arb_t o; /*Default all zeros single cycle pulses*/ \
+   \
+  /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
+  uint32_t i; \
+  static uint8_t dev_to_selected_host[NUM_DEV_PORTS]; /* See reset below {0, 1}*/ \
+  static uint1_t power_on_reset = 1; \
+  if(power_on_reset) \
+  { \
+    for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+    { \
+      dev_to_selected_host[i] = i; \
+    } \
+  } \
+  power_on_reset = 0;\
+ \
+  /* Each dev port has FIFOs so will allow 'streaming' multiple read/write in flight*/ \
+ \
+  /* INPUT TO DEV SIDE*/ \
+ \
+  /* Default state doesnt change*/ \
+  uint8_t next_dev_to_selected_host[NUM_DEV_PORTS] = dev_to_selected_host; \
+ \
+  /* Loop that muxes requests/inputs into the selected host bus for each dev port*/ \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    uint8_t selected_host = dev_to_selected_host[i]; \
+    /* Connect the selected requests/inputs host to dev[i] handshakes */ \
+    o.to_devs[i].read.req = from_hosts[selected_host].read.req; \
+    o.to_devs[i].read.req.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_devs[i].write.req = from_hosts[selected_host].write.req; \
+    o.to_devs[i].write.req.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_devs[i].write.data = from_hosts[selected_host].write.data; \
+    o.to_devs[i].write.data.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[selected_host].read.req_ready = from_devs[i].read.req_ready; \
+    o.to_hosts[selected_host].write.req_ready = from_devs[i].write.req_ready; \
+    o.to_hosts[selected_host].write.data_ready = from_devs[i].write.data_ready; \
+    /* Done with host inputs, move arb on*/ \
+    next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
+  } \
+ \
+  /* DEV WAS HERE*/ \
+ \
+  /* Outputs from DEV is muxed into output fifos based on ID=host port*/ \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    /* Output write resp, err code unused*/ \
+    if(from_devs[i].write.resp.valid) \
+    { \
+      uint8_t selected_host = from_devs[i].write.resp.id; \
+      o.to_hosts[selected_host].write.resp = from_devs[i].write.resp; \
+      o.to_devs[i].write.resp_ready = from_hosts[selected_host].write.resp_ready; \
+    } \
+    /* Output read data*/ \
+    if(from_devs[i].read.data.valid) \
+    { \
+      uint8_t selected_host = from_devs[i].read.data.id; \
+      o.to_hosts[selected_host].read.data = from_devs[i].read.data; \
+      o.to_devs[i].read.data_ready = from_hosts[selected_host].read.data_ready; \
+    } \
+  } \
+ \
+  /* Update regs with next values*/ \
+  dev_to_selected_host = next_dev_to_selected_host; \
+  return o; \
 }
 
 // Instantiate the arb module with to-from wires for user
@@ -641,6 +928,14 @@ name##_dev_arb_t name##_dev_arb( \
 type##_dev_to_host_t bus_name##_to_host[NUM_DEV_PORTS]; \
 PRAGMA_MESSAGE(FEEDBACK bus_name##_to_host) /* Value from last assignment*/ \
 bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb(bus_name##_to_host, bus_name##_host_to_dev_wires_on_dev_clk); \
+type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
+bus_name##_from_host = bus_name##_arb.to_devs; \
+bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
+//
+#define SHARED_BUS_ARB_PIPELINED(type, bus_name, NUM_DEV_PORTS) \
+type##_dev_to_host_t bus_name##_to_host[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK bus_name##_to_host) /* Value from last assignment*/ \
+bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb_pipelined(bus_name##_to_host, bus_name##_host_to_dev_wires_on_dev_clk); \
 type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
 bus_name##_from_host = bus_name##_arb.to_devs; \
 bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
