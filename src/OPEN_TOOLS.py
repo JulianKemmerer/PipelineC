@@ -404,7 +404,9 @@ export GHDL_PREFIX="""
                 + top_entity_name
                 + """ -json """
                 + top_entity_name
-                + """.json' &>> """
+                + """.json; write_edif -top """
+                + top_entity_name + """  """ 
+                + top_entity_name + """.edf' &>> """
                 + log_file_name
                 + f"""
 # P&R
