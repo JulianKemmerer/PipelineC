@@ -9639,17 +9639,23 @@ def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
         nodes = []
     if type(c_ast_node) == c_ast.ID:
         nodes.append(c_ast_node)
+
+    # Certain compound nodes contain C AST identifiers that are not variables
+    # Ex. struct use, my_struct.my_var shows up as
+    # an individual c_ast.ID node for 'my_var' 
+    # when thats not the same as using 'my_var' as an actual variable
+    # Only need node for the .name variable name not the .field struct field
+    if type(c_ast_node) == c_ast.StructRef:
+        nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node.name, nodes)
+        return nodes
+    
+    # Normal case look at all children of node
     children_tuples = c_ast_node.children()
     for children_tuple in children_tuples:
-        # Certain compound nodes contain C AST identifiers that are not variables
-        # Ex. struct use, my_struct.my_var shows up as
-        # an individual c_ast.ID node for 'my_var' 
-        # when thats not the same as using 'my_var' as an actual variable
+        child_name = children_tuple[0]
         child_node = children_tuple[1]
-        if type(child_node) == c_ast.StructRef:
-            # Only need ID node for the name not the field
-            child_node = child_node.name
         nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(child_node, nodes)
+
     return nodes
 
 
