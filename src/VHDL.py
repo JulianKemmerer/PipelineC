@@ -2816,7 +2816,8 @@ use xpm.vcomponents.all;
       signal valid : std_logic;
       signal fifo_rd_enable : std_logic;
       signal fifo_wr_en : std_logic;
-      signal power_on_reset : std_logic := '1';
+      signal wr_power_on_reset : std_logic := '1';
+      signal rd_power_on_reset : std_logic := '1';
       signal din_slv : std_logic_vector(("""
                 + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(in_t, parser_state)
                 + """)-1 downto 0);
@@ -2898,15 +2899,16 @@ use xpm.vcomponents.all;
         if flow_control:
             text += (
                 """
-power_on_reset <= '0' when rising_edge(in_clk);
-fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy and not power_on_reset;
-wr_return_output.ready(0) <= not full and not wr_rst_busy and not power_on_reset;
+wr_power_on_reset <= '0' when rising_edge(in_clk);
+fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy and not wr_power_on_reset;
+wr_return_output.ready(0) <= not full and not wr_rst_busy and not wr_power_on_reset;
 din_slv <= """
                 + to_slv_toks[0]
                 + """write_data"""
                 + to_slv_toks[1]
                 + """;
-fifo_rd_enable <= read_enable(0) and not rd_rst_busy and not power_on_reset"""
+rd_power_on_reset <= '0' when rising_edge(out_clk);
+fifo_rd_enable <= read_enable(0) and not rd_rst_busy and not rd_power_on_reset"""
             )
             if read_func_logic is not None and C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                 read_func_logic, parser_state
@@ -2914,7 +2916,7 @@ fifo_rd_enable <= read_enable(0) and not rd_rst_busy and not power_on_reset"""
                 text += """ and out_clk_en(0)"""
             text += (
                 """;
-rd_return_output.valid(0) <= valid and not rd_rst_busy and not power_on_reset;
+rd_return_output.valid(0) <= valid and not rd_rst_busy and not rd_power_on_reset;
 rd_return_output.data <= """
                 + from_slv_toks[0]
                 + """dout_slv"""
