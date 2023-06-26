@@ -634,8 +634,8 @@ typedef struct """
 """)
     text += one_hot_states_text
     text += ("""
-  // State reg holding current state
-  ONE_HOT_REG_DECL(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
+  // State reg holding current state, starting at entry=0
+  ONE_HOT_REG_DECL(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", 0)
   // State reg holding state to return to after certain func calls
   // Starting set to first user state
   ONE_HOT_REG_DECL(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", FIRST_STATE_""" + fsm_logic.func_name + """)
@@ -886,9 +886,10 @@ typedef struct """
     return text
 
 
-def BUILD_STATE_NAME(c_ast_node, post_text=""):
+def BUILD_STATE_NAME(c_ast_node, parser_state, post_text=""):
     return (
-        "L"
+        parser_state.existing_logic.fsm_subroutine_scope[-1] + "_"
+        + "L"
         + str(c_ast_node.coord.line)
         + "_C"
         + str(c_ast_node.coord.column)
@@ -925,7 +926,7 @@ def C_AST_NODE_TO_STATES_LIST(
             name_c_ast_node = chunk[0]
             if type(name_c_ast_node) is c_ast.Compound:
                 name_c_ast_node = name_c_ast_node.block_items[0]
-            state_info.name = BUILD_STATE_NAME(name_c_ast_node)
+            state_info.name = BUILD_STATE_NAME(name_c_ast_node, parser_state)
             state_info.c_ast_nodes += chunk
             state_info.always_next_state = next_state_info
             reversed_states_list.append(state_info)
@@ -1141,6 +1142,10 @@ def C_AST_CTRL_FLOW_NODE_TO_STATES(
         return C_AST_CTRL_FLOW_WHILE_TO_STATES(
             c_ast_node, curr_state_info, next_state_info, parser_state
         )
+    elif type(c_ast_node) == c_ast.DoWhile:
+        return C_AST_CTRL_FLOW_DOWHILE_TO_STATES(
+            c_ast_node, curr_state_info, next_state_info, parser_state
+        )
     elif type(c_ast_node) == c_ast.For:
         return C_AST_CTRL_FLOW_FOR_TO_STATES(
             c_ast_node, curr_state_info, next_state_info, parser_state
@@ -1231,7 +1236,7 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
     # Func entry new state 
     entry_state_info = FsmStateInfo()
     #entry_state_info.always_next_state = done later below
-    entry_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_ENTRY"
+    entry_state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_ENTRY"
     # Set current state to have func entry
     entry_state_info.ends_w_fsm_func_entry = c_ast_node
     entry_state_info.ends_w_fsm_func_entry_input_drivers = input_drivers
@@ -1239,7 +1244,7 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
 
     # Func exit new state 
     exit_state_info = FsmStateInfo()
-    exit_state_info.name = BUILD_STATE_NAME(c_ast_node) + "_EXIT"
+    exit_state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_EXIT"
     exit_state_info.always_next_state = next_state_info
     exit_state_info.starts_w_fsm_func_return = c_ast_node
     exit_state_info.starts_w_fsm_func_return_output_driven_things = output_driven_things
@@ -1280,7 +1285,9 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
             sub_c_ast_func_def_body = called_func_logic.c_ast_node.body
             # None next state info since not all calls to this ~inlined func exit back to the same calling locaiton
             # Needs to use the function's FUNC_CALL_RETURN_STATE to get to location specific exist states
+            parser_state.existing_logic.fsm_subroutine_scope.append(called_func_name)
             sub_states = C_AST_NODE_TO_STATES_LIST(sub_c_ast_func_def_body, parser_state, None, None)
+            parser_state.existing_logic.fsm_subroutine_scope.pop()
             # Apply to each subroutine state a recording of what func it came from
             for sub_state in sub_states:
                 if sub_state.sub_func_name is None:
@@ -1310,7 +1317,7 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(
     # This state can be merged into others later
     state_info = FsmStateInfo()
     # next_state_info.always_next_state = curr_state_info
-    state_info.name = BUILD_STATE_NAME(c_ast_clk_func_call) + "_DELAY_CLK"
+    state_info.name = BUILD_STATE_NAME(c_ast_clk_func_call, parser_state) + "_DELAY_CLK"
     state_info.ends_w_clk = True
     state_info.always_next_state = next_state_info
     states.append(state_info)
@@ -1331,7 +1338,7 @@ def C_AST_CTRL_FLOW_RETURN_TO_STATES(
 
     # Update curr state as ending with return transition
     state_info = FsmStateInfo()
-    state_info.name = BUILD_STATE_NAME(c_ast_node)
+    state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state)
     state_info.return_node = c_ast_node
     state_info.always_next_state = next_state_info
     states.append(state_info)
@@ -1345,7 +1352,7 @@ def C_AST_CTRL_FLOW_INPUT_FUNC_CALL_TO_STATES(
     states = []
 
     state_info = FsmStateInfo()
-    state_info.name = BUILD_STATE_NAME(c_ast_node)
+    state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state)
     state_info.always_next_state = next_state_info
     states.append(state_info)
 
@@ -1364,7 +1371,7 @@ def C_AST_CTRL_FLOW_YIELD_FUNC_CALL_TO_STATES(
         raise Exception(f"TODO unsupported control flow in yield: {ret_arg_node.coord}")
 
     state_info = FsmStateInfo()
-    state_info.name = BUILD_STATE_NAME(c_ast_node)
+    state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state)
     state_info.always_next_state = next_state_info
     states.append(state_info)
 
@@ -1383,7 +1390,7 @@ def C_AST_CTRL_FLOW_INOUT_FUNC_CALL_TO_STATES(
         raise Exception(f"TODO unsupported control flow in inout: {ret_arg_node.coord}")
 
     state_info = FsmStateInfo()
-    state_info.name = BUILD_STATE_NAME(c_ast_node)
+    state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state)
     state_info.always_next_state = next_state_info
     states.append(state_info)
 
@@ -1437,7 +1444,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(
 
     # Add mux sel calculation, and jumping to true or false states
     # to current state after comb logic
-    cond_state.name = BUILD_STATE_NAME(c_ast_if) + "_COND"
+    cond_state.name = BUILD_STATE_NAME(c_ast_if, parser_state) + "_COND"
     cond_state.always_next_state = None # branching
     cond_state.branch_nodes_tf_states = (c_ast_if, first_true_state, first_false_state)
 
@@ -1466,12 +1473,12 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(
     next_inc_state = FsmStateInfo()
 
     # Init
-    init_state.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_INIT"
+    init_state.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_FOR_INIT"
     init_state.c_ast_nodes.append(c_ast_node.init)
     init_state.always_next_state = cond_state
     
     # Next/increment state
-    next_inc_state.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_NEXT"
+    next_inc_state.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_FOR_NEXT"
     next_inc_state.c_ast_nodes.append(c_ast_node.next)
     next_inc_state.always_next_state = cond_state  # Check condition after increment
 
@@ -1483,7 +1490,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(
     first_body_state = body_states[0]
 
     # Condition
-    cond_state.name = BUILD_STATE_NAME(c_ast_node) + "_FOR_COND"
+    cond_state.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_FOR_COND"
     cond_state.always_next_state = None  # Branching, no default
     cond_state.branch_nodes_tf_states = (
         c_ast_node,
@@ -1522,7 +1529,7 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(
     first_body_state = body_states[0]
 
     # Condition
-    cond_state.name = BUILD_STATE_NAME(c_ast_while) + "_WHILE_COND"
+    cond_state.name = BUILD_STATE_NAME(c_ast_while, parser_state) + "_WHILE_COND"
     cond_state.always_next_state = None  # Branching, no default
     cond_state.branch_nodes_tf_states = (
         c_ast_while,
@@ -1536,11 +1543,65 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(
 
     return states
 
+# Idential to while loop except for body-cond states ordering in return?
+def C_AST_CTRL_FLOW_DOWHILE_TO_STATES(
+    c_ast_dowhile, curr_state_info, next_state_info, parser_state
+):
+    # While default next state is looping backto eval loop cond again
+    if C_AST_NODE_USES_CTRL_FLOW_NODE(c_ast_dowhile.cond, parser_state):
+        raise Exception(
+            f"TODO unsupported control flow in do while condition: {c_ast_dowhile.cond.coord}"
+        )
+
+    states = []
+
+    cond_state = FsmStateInfo()
+
+    # Body states goes to condition
+    # Eval body and accum states
+    body_states = C_AST_NODE_TO_STATES_LIST(
+        c_ast_dowhile.stmt, parser_state, None, cond_state
+    )
+    # Order kinda matters?
+    first_body_state = body_states[0]
+
+    # Condition
+    cond_state.name = BUILD_STATE_NAME(c_ast_dowhile, parser_state) + "_WHILE_COND"
+    cond_state.always_next_state = None  # Branching, no default
+    cond_state.branch_nodes_tf_states = (
+        c_ast_dowhile,
+        first_body_state,
+        next_state_info,
+    )    
+    
+    # Order kinda matters?
+    # DO WHILE HAS BODY FIRST?
+    states += body_states
+    states.append(cond_state)
+
+    return states
+
 
 def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     # Start off with as parsed single file ordered list of states
+    parser_state.existing_logic.fsm_subroutine_scope.append(parser_state.existing_logic.func_name)
     states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
+    parser_state.existing_logic.fsm_subroutine_scope.pop()
     parser_state.existing_logic.first_user_state = states_list[0]
+
+    states_ends_w_clk = set()
+    for state in states_list:
+        if state.ends_w_clk:
+            states_ends_w_clk.add(state)
+
+    # DEBUG ONE GROUP PER STATE AS PARSED
+    #for state in states_list:
+    #    parser_state.existing_logic.state_groups.append(set([state]))
+    #return parser_state.existing_logic
+
+    #DEBUG try basic group from start?
+    #parser_state.existing_logic.state_groups = GET_GROUPED_STATE_TRANSITIONS([states_list[0]], parser_state)
+    #return parser_state.existing_logic
 
     debug = False
 
@@ -1569,10 +1630,6 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     # Exclude pre fsm + fsm stuff (entry+fsm state)
     excluded_subentry_and_subfsm_states = True
     # And exclude states that end with clock
-    states_ends_w_clk = set()
-    for state in states_list:
-        if state.ends_w_clk:
-            states_ends_w_clk.add(state)
     post_fsms_groups = GET_GROUPED_STATE_TRANSITIONS(
         fsm_return_states_list,
         parser_state,
@@ -1613,7 +1670,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     start_states = [states_list_no_fsms[0]]
     for state in states_list_no_fsms:
         # Pseduo new starts from func entry could be jump back to renter func next clock
-        if state.ends_w_fsm_func_entry: #and state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included:
+        if state.ends_w_fsm_func_entry and state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included:
             start_states.append(state)
         # Pseduo new starts from single inst func returns
         if state.starts_w_fsm_func_return and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included:
@@ -1675,30 +1732,30 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     # Combine all
     state_groups = pre_fsms_groups + fsms_groups + post_fsms_groups
 
+    # Save return val
+    parser_state.existing_logic.state_groups = state_groups
+
     # Doing opposite of Ends with clock -> onward being a starting state
     # by making states that lead up to ending with a clock in the last group
 
     # Remove states ending with clock delay
-    for state_group in state_groups:
+    for state_group in parser_state.existing_logic.state_groups:
         for state in list(state_group):
             if state.ends_w_clk:
                 state_group.remove(state)
 
     # Remove any empty groups from list
-    for state_group in list(state_groups):
+    for state_group in list(parser_state.existing_logic.state_groups):
         if len(state_group) == 0:
-            state_groups.remove(state_group)
+            parser_state.existing_logic.state_groups.remove(state_group)
 
     # Add states with clock as last group to be included with return handshake group
     if len(states_ends_w_clk) > 0:
-        state_groups.append(states_ends_w_clk)
-
-    # Save return val
-    parser_state.existing_logic.state_groups = state_groups
+        parser_state.existing_logic.state_groups.append(states_ends_w_clk)
 
     # Sanity check all states coming in, went out
     total_states_from_groups = []
-    for state_group in state_groups:
+    for state_group in parser_state.existing_logic.state_groups:
         total_states_from_groups += list(state_group)
     if len(total_states_from_groups) != len(set(total_states_from_groups)):
         # for s in set(states_list) - set(total_states_from_groups):
@@ -1737,9 +1794,80 @@ def GET_GROUPED_STATE_TRANSITIONS(
             )
         all_state_trans_lists += state_trans_lists_starting_at_start_state
 
+    # Sort other trans lists by length
+    # give priority to to those longer ones by appending them first into state groups
+    # Later short branches are better to be appended at end if needed
+    list_len_to_trans_lists = dict()
+    for state_trans_list in all_state_trans_lists:
+        l = len(state_trans_list)
+        if l not in list_len_to_trans_lists:
+            list_len_to_trans_lists[l] = []
+        list_len_to_trans_lists[l].append(state_trans_list)
+
+    # How to add a transition list to a state groups
+    def append_trans_list(trans_list, state_groups, state_to_group_index):
+        # Init starting group pointer
+        curr_group_index = 0
+        if len(state_groups)==0:
+            state_groups.append(set())
+        if trans_list[0] in state_to_group_index:
+            curr_group_index = state_to_group_index[trans_list[0]]
+        for state in trans_list:
+            # Skip some states
+            # State groups do not include single inst fsm funcs upon request?
+            if excluded_single_inst_subfsm_states_and_subreturn:
+                if (
+                    state.single_inst_func_name is not None
+                    or (state.starts_w_fsm_func_return is not None and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included)
+                ):
+                    continue
+            if excluded_single_inst_subentry_and_subfsm_states:
+                if (
+                    (state.ends_w_fsm_func_entry is not None and state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included)
+                    or state.single_inst_func_name is not None
+                ):
+                    continue
+            # also manual exclusion wohao
+            if state in excluded_states:
+                continue
+            # Is state in a group yet?
+            if state in state_to_group_index:
+                state_group_index = state_to_group_index[state]
+                # Is state group behind, at, in front of curr pointer?
+                if state_group_index >= curr_group_index:
+                    # Is in front/later than current, move up for next
+                    curr_group_index = state_group_index + 1
+                else: #if state_group_index < curr_group_index:
+                    # Is behind current pos? odd...
+                    # Cant use state_group_index
+                    # Dont do anything and next time
+                    # try to put next state in curr group
+                    pass
+            else:
+                # State is not in any group yet
+                # use current pos
+                state_groups[curr_group_index].add(state)
+                state_to_group_index[state] = curr_group_index
+                # And next state goes next
+                curr_group_index = curr_group_index + 1
+            # Add new state groups as needed
+            if curr_group_index >= len(state_groups):
+                state_groups.append(set())
+    
+    # Start with longest trans lists and build groups 
+    state_groups = []
+    state_to_group_index = dict()
+    trans_list_lens = list_len_to_trans_lists.keys()
+    for trans_list_len in reversed(sorted(trans_list_lens)):
+        trans_lists = list_len_to_trans_lists[trans_list_len]
+        for trans_list in trans_lists:
+            append_trans_list(trans_list, state_groups, state_to_group_index)
+
+    '''
     # Use transition lists to group states
     # print("Transition lists:")
     state_to_latest_index = {}
+    state_to_earliest_index = {}
     for state_trans_list in all_state_trans_lists:
         text = "States: "
         state_i = 0
@@ -1763,21 +1891,31 @@ def GET_GROUPED_STATE_TRANSITIONS(
             text += state.name + " -> "
             if state not in state_to_latest_index:
                 state_to_latest_index[state] = state_i
+            if state not in state_to_earliest_index:
+                state_to_earliest_index[state] = state_i
             if state_i > state_to_latest_index[state]:
                 state_to_latest_index[state] = state_i
+            if state_i < state_to_earliest_index[state]:
+                state_to_earliest_index[state] = state_i
             state_i += 1
         if debug:
             print(text)
 
-    if len(state_to_latest_index) <= 0:
+    # Debug select which ordering is best? ugh
+    #state_to_index = state_to_latest_index
+    state_to_index = state_to_earliest_index
+
+    if len(state_to_index) <= 0:
         return []
-    state_groups = [None] * (max(state_to_latest_index.values()) + 1)
-    for state, index in state_to_latest_index.items():
+    state_groups = [None] * (max(state_to_index.values()) + 1)
+    for state, index in state_to_index.items():
         if debug:
-            print("Last Index",index,state.name)
+            print("Index",index,state.name)
         if state_groups[index] is None:
             state_groups[index] = set()
         state_groups[index].add(state)
+    '''
+
     non_none_state_groups = []
     for state_group in state_groups:
         if state_group is not None:

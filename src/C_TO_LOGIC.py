@@ -489,6 +489,8 @@ class Logic:
         self.func_call_node_to_entry_exit_states = (
             {}
         )  # Same funcs as above, node inst specific entry and exit
+        # Current nested func scope since not single inst subroutines are inlined
+        self.fsm_subroutine_scope = []
 
     # Help!
     def DEEPCOPY(self):
