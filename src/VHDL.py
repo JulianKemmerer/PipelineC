@@ -3669,7 +3669,8 @@ end function;
                 text += func_decl_text + ";\n"
                 pkg_body_text += func_decl_text + func_body_text
 
-                # from integer
+                # from integer - should be unused for enums for now
+                '''
                 func_decl_text = ""
                 func_body_text = ""
                 func_decl_text += (
@@ -3702,6 +3703,7 @@ begin
                 func_body_text += "end function;\n"
                 text += func_decl_text + ";\n"
                 pkg_body_text += func_decl_text + func_body_text
+                '''
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~   ARRAYS  ~~~~~~~~~~~~~~~~~~~~~~~~~~#
         # C arrays are multidimensional and single element type
@@ -6152,8 +6154,9 @@ def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
         return ["signed(", ")"]
     elif C_TO_LOGIC.C_TYPE_IS_ENUM(
         vhdl_type, parser_state
-    ):  # same name as c type hacky
-        return [vhdl_type + "_from_slv(", ")"]
+    ):  # Shouldnt be used anymore?
+        raise Exception("VHDL enum types are no longer used!")
+        #return [vhdl_type + "_from_slv(", ")"]
     else:
         return ["slv_to_" + vhdl_type + "(", ")"]
 
