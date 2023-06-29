@@ -3681,32 +3681,25 @@ function """
                 )
                 func_body_text += """ is
 begin
-    
-case(s(""" + str(width-1) + """ downto 0)) is\n"""
-
+"""
+                var_text = "s" # s(""" + str(width-1) + """ downto 0))
+                if_text = "if "
                 default_id = list(enum_info.id_to_int_val.keys())[0]
                 for id_str, int_val in enum_info.id_to_int_val.items():
-                    func_body_text += (
-                        """when """ + enum_name + """_to_slv(""" + id_str + ")"
-                        + """ => return """
-                        + id_str
-                        + """;\n"""
-                    )
-                    if int_val == 0:
-                        default_id = id_str
-                func_body_text += (
-                    """
-when others => assert False report "bits " & to_hstring(s) & " to """
+                    func_body_text += "  " + if_text + var_text + " = " + enum_name + "_to_slv(" + id_str + ")" + " then\n"
+                    func_body_text += "      return " + id_str + ";\n"
+                    if_text = "elsif "
+
+                func_body_text += "  else \n"
+                func_body_text += ('    assert False report "bits " & to_hstring(s) & " to '
                     + enum_name
                     + """ failed! Returning """
                     + default_id
-                    + """." severity ERROR; return """
+                    + """." severity ERROR;\n    return """
                     + default_id
-                    + """;
-end case;
-end function;
-    """
-                )
+                    + """;\n""")
+                func_body_text += "  end if;\n"
+                func_body_text += "end function;\n"
                 text += func_decl_text + ";\n"
                 pkg_body_text += func_decl_text + func_body_text
 
