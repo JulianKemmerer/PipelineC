@@ -166,7 +166,7 @@ typedef struct name##_buffer_t \
 /* until data phase done (ready_for_inputs asserted)*/ \
 typedef struct name##_write_start_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  name##_write_host_to_dev_t to_dev; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }name##_write_start_logic_outputs_t; \
@@ -174,18 +174,18 @@ name##_write_start_logic_outputs_t name##_write_start_logic( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
   uint1_t ready_for_outputs,  \
-  name##_dev_to_host_t from_dev \
+  name##_write_dev_to_host_t from_dev \
 ){ \
   static shared_res_bus_write_state_t state; \
   name##_write_start_logic_outputs_t o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for write address first*/ \
-    if(from_dev.write.req_ready) \
+    if(from_dev.req_ready) \
     { \
       /* Use inputs to form valid address*/ \
-      o.to_dev.write.req.valid = 1; \
-      o.to_dev.write.req.data.user = req; \
+      o.to_dev.req.valid = 1; \
+      o.to_dev.req.data.user = req; \
       /* And then data next*/ \
       state = DATA_STATE; \
     } \
@@ -197,14 +197,14 @@ name##_write_start_logic_outputs_t name##_write_start_logic( \
     if(ready_for_outputs) \
     { \
       /* Wait device to be ready for write data*/ \
-      if(from_dev.write.data_ready) \
+      if(from_dev.data_ready) \
       { \
         /* Signal finally ready for inputs since data completes write request*/ \
         o.ready_for_inputs = 1; \
         /* Send valid data transfer*/ \
-        o.to_dev.write.data.valid = 1; \
-        o.to_dev.write.data.burst.last = 1; \
-        o.to_dev.write.data.burst.data_word.user = data; \
+        o.to_dev.data.valid = 1; \
+        o.to_dev.data.burst.last = 1; \
+        o.to_dev.data.burst.data_word.user = data; \
         /* Done */ \
         o.done = 1; \
         state = REQ_STATE; \
@@ -215,26 +215,26 @@ name##_write_start_logic_outputs_t name##_write_start_logic( \
 } \
 typedef struct name##_write_finish_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  name##_write_host_to_dev_t to_dev; \
   write_resp_data_t resp; \
   uint1_t done; \
 }name##_write_finish_logic_outputs_t; \
 name##_write_finish_logic_outputs_t name##_write_finish_logic( \
   uint1_t ready_for_outputs,  \
-  name##_dev_to_host_t from_dev \
+  name##_write_dev_to_host_t from_dev \
 ){ \
   name##_write_finish_logic_outputs_t o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
     /* Then signal to device that ready for response*/ \
-    o.to_dev.write.resp_ready = 1; \
+    o.to_dev.resp_ready = 1; \
     /* And wait for valid output response*/ \
-    if(from_dev.write.resp.valid) \
+    if(from_dev.resp.valid) \
     { \
       /* Done (error code not checked, just returned)*/ \
       o.done = 1; \
-      o.resp = from_dev.write.resp.data.user; \
+      o.resp = from_dev.resp.data.user; \
       state = REQ_STATE; \
     } \
   } \
@@ -243,7 +243,7 @@ name##_write_finish_logic_outputs_t name##_write_finish_logic( \
 /* TODO make write_logic use write_start_logic and write_finish_logic*/ \
 typedef struct name##_write_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  name##_write_host_to_dev_t to_dev; \
   write_resp_data_t resp; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
@@ -252,18 +252,18 @@ name##_write_logic_outputs_t name##_write_logic( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
   uint1_t ready_for_outputs,  \
-  name##_dev_to_host_t from_dev \
+  name##_write_dev_to_host_t from_dev \
 ){ \
   static shared_res_bus_write_state_t state; \
   name##_write_logic_outputs_t o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for write address first*/ \
-    if(from_dev.write.req_ready) \
+    if(from_dev.req_ready) \
     { \
       /* Use inputs to form valid address*/ \
-      o.to_dev.write.req.valid = 1; \
-      o.to_dev.write.req.data.user = req; \
+      o.to_dev.req.valid = 1; \
+      o.to_dev.req.data.user = req; \
       /* And then data next*/ \
       state = DATA_STATE; \
     } \
@@ -271,14 +271,14 @@ name##_write_logic_outputs_t name##_write_logic( \
   else if(state==DATA_STATE) \
   { \
     /* Wait device to be ready for write data*/ \
-    if(from_dev.write.data_ready) \
+    if(from_dev.data_ready) \
     { \
       /* Signal finally ready for inputs since data completes write request*/ \
       o.ready_for_inputs = 1; \
       /* Send valid data transfer*/ \
-      o.to_dev.write.data.valid = 1; \
-      o.to_dev.write.data.burst.last = 1; \
-      o.to_dev.write.data.burst.data_word.user = data; \
+      o.to_dev.data.valid = 1; \
+      o.to_dev.data.burst.last = 1; \
+      o.to_dev.data.burst.data_word.user = data; \
       /* And then begin waiting for response*/ \
       state = RESP_STATE; \
     } \
@@ -289,13 +289,13 @@ name##_write_logic_outputs_t name##_write_logic( \
     if(ready_for_outputs) \
     { \
       /* Then signal to device that ready for response*/ \
-      o.to_dev.write.resp_ready = 1; \
+      o.to_dev.resp_ready = 1; \
       /* And wait for valid output response*/ \
-      if(from_dev.write.resp.valid) \
+      if(from_dev.resp.valid) \
       { \
         /* Done (error code not checked, just returned)*/ \
         o.done = 1; \
-        o.resp = from_dev.write.resp.data.user; \
+        o.resp = from_dev.resp.data.user; \
         state = REQ_STATE; \
       } \
     } \
@@ -306,27 +306,27 @@ name##_write_logic_outputs_t name##_write_logic( \
 /* Read of one name##_read_data_t helper func is slightly simpler than write*/ \
 typedef struct name##_read_start_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  name##_read_req_t req; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }name##_read_start_logic_outputs_t; \
 name##_read_start_logic_outputs_t name##_read_start_logic( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
-  name##_dev_to_host_t from_dev \
+  uint1_t req_ready \
 ){ \
   name##_read_start_logic_outputs_t o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
     /* Wait device to be ready for request inputs*/ \
-    if(from_dev.read.req_ready) \
+    if(req_ready) \
     { \
       /* Signal function is ready for inputs*/ \
       o.ready_for_inputs = 1; \
       /* Use inputs to form valid request*/ \
-      o.to_dev.read.req.valid = 1; \
-      o.to_dev.read.req.data.user = req; \
+      o.req.valid = 1; \
+      o.req.data.user = req; \
       o.done = 1; \
     } \
   }\
@@ -334,25 +334,25 @@ name##_read_start_logic_outputs_t name##_read_start_logic( \
 } \
 typedef struct name##_read_finish_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  uint1_t data_ready; \
   read_data_resp_word_t data; \
   uint1_t done; \
 }name##_read_finish_logic_outputs_t; \
 name##_read_finish_logic_outputs_t name##_read_finish_logic( \
   uint1_t ready_for_outputs, \
-  name##_dev_to_host_t from_dev \
+  name##_read_data_t data \
 ){ \
   name##_read_finish_logic_outputs_t o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
     /* Then signal to device that ready for response*/ \
-    o.to_dev.read.data_ready = 1; \
+    o.data_ready = 1; \
     /* And wait for valid output response*/ \
-    if(from_dev.read.data.valid) \
+    if(data.valid) \
     { \
-      o.data = from_dev.read.data.burst.data_resp.user; \
-      if(from_dev.read.data.burst.last) \
+      o.data = data.burst.data_resp.user; \
+      if(data.burst.last) \
       { \
         /* Done on last word of data_resp*/ \
         /* Error code not checked, just returned*/ \
@@ -365,7 +365,7 @@ name##_read_finish_logic_outputs_t name##_read_finish_logic( \
 /* TODO make read_logic use read_start_logic and read_finish_logic*/ \
 typedef struct name##_read_logic_outputs_t \
 { \
-  name##_host_to_dev_t to_dev; \
+  name##_read_host_to_dev_t to_dev; \
   read_data_resp_word_t data; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
@@ -373,20 +373,20 @@ typedef struct name##_read_logic_outputs_t \
 name##_read_logic_outputs_t name##_read_logic( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
-  name##_dev_to_host_t from_dev \
+  name##_read_dev_to_host_t from_dev \
 ){ \
   static shared_res_bus_read_state_t state; \
   name##_read_logic_outputs_t o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for request inputs*/ \
-    if(from_dev.read.req_ready) \
+    if(from_dev.req_ready) \
     { \
       /* Signal function is ready for inputs*/ \
       o.ready_for_inputs = 1; \
       /* Use inputs to form valid request*/ \
-      o.to_dev.read.req.valid = 1; \
-      o.to_dev.read.req.data.user = req; \
+      o.to_dev.req.valid = 1; \
+      o.to_dev.req.data.user = req; \
       /* And then begin waiting for response*/ \
       state = RESP_STATE; \
     } \
@@ -397,12 +397,12 @@ name##_read_logic_outputs_t name##_read_logic( \
     if(ready_for_outputs) \
     { \
       /* Then signal to device that ready for response*/ \
-      o.to_dev.read.data_ready = 1; \
+      o.to_dev.data_ready = 1; \
       /* And wait for valid output response*/ \
-      if(from_dev.read.data.valid) \
+      if(from_dev.data.valid) \
       { \
-        o.data = from_dev.read.data.burst.data_resp.user; \
-        if(from_dev.read.data.burst.last) \
+        o.data = from_dev.data.burst.data_resp.user; \
+        if(from_dev.data.burst.last) \
         { \
           /* Done on last word of data_resp*/ \
           /* Error code not checked, just returned*/ \
@@ -416,7 +416,69 @@ name##_read_logic_outputs_t name##_read_logic( \
 } \
 /* ^TODO: condsider making a combined single read_write_logic?*/ \
  \
-name##_host_to_dev_t name##_HOST_TO_DEV_NULL;
+name##_host_to_dev_t name##_HOST_TO_DEV_NULL; \
+name##_read_host_to_dev_t name##_READ_HOST_TO_DEV_NULL; \
+name##_write_host_to_dev_t name##_WRITE_HOST_TO_DEV_NULL;
+
+#define SHARED_BUS_READ_START_FINISH_DECL(\
+type, \
+read_req_data_t, read_data_resp_word_t, \
+name, \
+host_to_dev_wire_on_host_clk_read_req, \
+dev_to_host_wire_on_host_clk_read_req_ready, \
+dev_to_host_wire_on_host_clk_read_data, \
+host_to_dev_wire_on_host_clk_read_data_ready \
+) \
+void name##_read_start(read_req_data_t req) \
+{ \
+  uint1_t done = 0; \
+  host_to_dev_wire_on_host_clk_read_req.valid = 0; \
+  do \
+  { \
+    type##_read_start_logic_outputs_t read_logic_outputs \
+      = type##_read_start_logic(req, 1, dev_to_host_wire_on_host_clk_read_req_ready); \
+    host_to_dev_wire_on_host_clk_read_req = read_logic_outputs.req; \
+    done = read_logic_outputs.done; \
+    __clk(); \
+  } \
+  while(!done); \
+  host_to_dev_wire_on_host_clk_read_req.valid = 0; \
+} \
+read_data_resp_word_t name##_read_finish() \
+{ \
+  read_data_resp_word_t rv; \
+  uint1_t done = 0; \
+  host_to_dev_wire_on_host_clk_read_data_ready = 0; \
+  do \
+  { \
+    type##_read_finish_logic_outputs_t read_logic_outputs \
+      = type##_read_finish_logic(1, dev_to_host_wire_on_host_clk_read_data); \
+    host_to_dev_wire_on_host_clk_read_data_ready = read_logic_outputs.data_ready; \
+    done = read_logic_outputs.done; \
+    rv = read_logic_outputs.data; \
+    __clk(); \
+  } \
+  while(!done); \
+  host_to_dev_wire_on_host_clk_read_data_ready = 0; \
+  return rv; \
+} \
+typedef struct name##_read_finish_nonblocking_t{ \
+  read_data_resp_word_t data; \
+  uint1_t valid; \
+}name##_read_finish_nonblocking_t; \
+name##_read_finish_nonblocking_t name##_read_finish_nonblocking() \
+{ \
+  name##_read_finish_nonblocking_t rv; \
+  type##_read_finish_logic_outputs_t read_logic_outputs \
+    = type##_read_finish_logic(1, dev_to_host_wire_on_host_clk_read_data); \
+  host_to_dev_wire_on_host_clk_read_data_ready = read_logic_outputs.data_ready; \
+  rv.data = read_logic_outputs.data; \
+  rv.valid = read_logic_outputs.done; \
+  __clk(); \
+  host_to_dev_wire_on_host_clk_read_data_ready = 0; \
+  return rv; \
+}
+
 
 #define SHARED_BUS_DECL(\
 type, \
@@ -439,102 +501,84 @@ type##_host_to_dev_t name##_host_to_dev_wires_on_dev_clk[NUM_HOST_PORTS]; \
 type##_dev_to_host_t name##_dev_to_host_wires_on_dev_clk[NUM_HOST_PORTS]; \
  \
 /* FSM style funcs to do reads and writes*/ \
-void name##_read_start(read_req_data_t req) \
-{ \
-  uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
-  { \
-    type##_read_start_logic_outputs_t read_logic_outputs \
-      = type##_read_start_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
-    done = read_logic_outputs.done; \
-    __clk(); \
-  } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-} \
-read_data_resp_word_t name##_read_finish() \
-{ \
-  read_data_resp_word_t rv; \
-  uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
-  { \
-    type##_read_finish_logic_outputs_t read_logic_outputs \
-      = type##_read_finish_logic(1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
-    done = read_logic_outputs.done; \
-    rv = read_logic_outputs.data; \
-    __clk(); \
-  } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  return rv; \
-} \
+SHARED_BUS_READ_START_FINISH_DECL(\
+type, \
+read_req_data_t, read_data_resp_word_t, \
+name, \
+name##_host_to_dev_wire_on_host_clk.read.req, \
+name##_dev_to_host_wire_on_host_clk.read.req_ready, \
+name##_dev_to_host_wire_on_host_clk.read.data, \
+name##_host_to_dev_wire_on_host_clk.read.data_ready \
+) \
 read_data_resp_word_t name##_read(read_req_data_t req) \
 { \
   read_data_resp_word_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
+  name##_host_to_dev_wire_on_host_clk.read = type##_READ_HOST_TO_DEV_NULL; \
+  do \
   { \
     type##_read_logic_outputs_t read_logic_outputs \
-      = type##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = read_logic_outputs.to_dev; \
+      = type##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk.read); \
+    name##_host_to_dev_wire_on_host_clk.read = read_logic_outputs.to_dev; \
     done = read_logic_outputs.done; \
     rv = read_logic_outputs.data; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done); \
+  name##_host_to_dev_wire_on_host_clk.read = type##_READ_HOST_TO_DEV_NULL; \
   return rv; \
 } \
 \
 void name##_write_start(write_req_data_t req, write_data_word_t data) \
 { \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  do \
   { \
     type##_write_start_logic_outputs_t write_logic_outputs \
-      = type##_write_start_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
+      = type##_write_start_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk.write); \
+    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done); \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
   return rv; \
 } \
 write_resp_data_t name##_write_finish() \
 { \
   write_resp_data_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  do \
   { \
     type##_write_finish_logic_outputs_t write_logic_outputs \
-      = type##_write_finish_logic(1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
+      = type##_write_finish_logic(1, name##_dev_to_host_wire_on_host_clk.write); \
+    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     rv = write_logic_outputs.resp; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done); \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
   return rv; \
 } \
 write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
 { \
   write_resp_data_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
-  while(!done) \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  do \
   { \
     type##_write_logic_outputs_t write_logic_outputs \
-      = type##_write_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk); \
-    name##_host_to_dev_wire_on_host_clk = write_logic_outputs.to_dev; \
+      = type##_write_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk.write); \
+    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     rv = write_logic_outputs.resp; \
     __clk(); \
   } \
-  name##_host_to_dev_wire_on_host_clk = type##_HOST_TO_DEV_NULL; \
+  while(!done); \
+  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
   return rv; \
 } \
  \
@@ -988,6 +1032,86 @@ bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data
   bus_name##_fifo##NUM_STR##_read_data_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
 bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid;
+
+
+#define SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(type, bus_name, NUM_STR)\
+/* This version gates valid ready handshake based on limited number in flight*/ \
+static uint8_t bus_name##_fifo##NUM_STR##_write_req_in_flight; \
+uint1_t bus_name##_fifo##NUM_STR##_write_req_gate_open = \
+  bus_name##_fifo##NUM_STR##_write_req_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+static uint8_t bus_name##_fifo##NUM_STR##_write_data_in_flight; \
+uint1_t bus_name##_fifo##NUM_STR##_write_data_gate_open = \
+  bus_name##_fifo##NUM_STR##_write_data_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+static uint8_t bus_name##_fifo##NUM_STR##_read_req_in_flight; \
+uint1_t bus_name##_fifo##NUM_STR##_read_req_gate_open = \
+  bus_name##_fifo##NUM_STR##_read_req_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+/* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
+/* bus_name##_dev_to_host_wires_on_host_clk[NUM_STR] <= Read from fifo (from dev)*/ \
+/* FIFO is one of the channels...*/ \
+/**/ \
+/* Write request data into fifo*/ \
+/* Write request ready out of fifo*/ \
+type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
+bus_name##_fifo##NUM_STR##_write_req_write_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.data; \
+bus_name##_fifo##NUM_STR##_write_req_write_t bus_name##_fifo##NUM_STR##_write_req_write_req_write = \
+  bus_name##_fifo##NUM_STR##_write_req_WRITE_1(bus_name##_fifo##NUM_STR##_write_req_write_req_data, \
+  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid & bus_name##_fifo##NUM_STR##_write_req_gate_open); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.req_ready = \
+  bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready & bus_name##_fifo##NUM_STR##_write_req_gate_open; \
+/* Write req increments in flight counter */ \
+bus_name##_fifo##NUM_STR##_write_req_in_flight +=  \
+  (bus_name##_fifo##NUM_STR##_write_req_gate_open & \
+   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid & \
+   bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready); \
+/* Write data data into fifo*/ \
+/* Write data ready out of fifo*/ \
+type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
+bus_name##_fifo##NUM_STR##_write_data_write_data_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.burst; \
+bus_name##_fifo##NUM_STR##_write_data_write_t bus_name##_fifo##NUM_STR##_write_data_write_data_write = \
+  bus_name##_fifo##NUM_STR##_write_data_WRITE_1(bus_name##_fifo##NUM_STR##_write_data_write_data_data, \
+  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid & bus_name##_fifo##NUM_STR##_write_data_gate_open); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.data_ready = \
+  bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready & bus_name##_fifo##NUM_STR##_write_data_gate_open; \
+/* Write data increments in flight counter */ \
+bus_name##_fifo##NUM_STR##_write_data_in_flight += \
+  (bus_name##_fifo##NUM_STR##_write_data_gate_open & \
+   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid & \
+   bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready); \
+/* Write resp data out of fifo*/ \
+/* Write resp ready into fifo*/ \
+bus_name##_fifo##NUM_STR##_write_resp_read_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_read = \
+  bus_name##_fifo##NUM_STR##_write_resp_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid; \
+/* Write resp decrements in flight counters*/ \
+bus_name##_fifo##NUM_STR##_write_req_in_flight -= \
+  (bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+bus_name##_fifo##NUM_STR##_write_data_in_flight -= \
+  (bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+/* Read req data into fifo*/ \
+/* Read req ready out of fifo*/ \
+type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
+bus_name##_fifo##NUM_STR##_read_req_read_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.data; \
+bus_name##_fifo##NUM_STR##_read_req_write_t bus_name##_fifo##NUM_STR##_read_req_read_req_write = \
+  bus_name##_fifo##NUM_STR##_read_req_WRITE_1(bus_name##_fifo##NUM_STR##_read_req_read_req_data, \
+  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid & bus_name##_fifo##NUM_STR##_read_req_gate_open); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.req_ready = \
+  bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready & bus_name##_fifo##NUM_STR##_read_req_gate_open; \
+/* Read req increments in flight counter */ \
+bus_name##_fifo##NUM_STR##_read_req_in_flight += \
+  (bus_name##_fifo##NUM_STR##_read_req_gate_open & \
+   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid & \
+   bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready); \
+/* Read data data out of fifo*/ \
+/* Read data ready into fifo*/ \
+bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data_read_data_read = \
+  bus_name##_fifo##NUM_STR##_read_data_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid; \
+/* Read data resp decrements in flight counter */ \
+bus_name##_fifo##NUM_STR##_read_req_in_flight -= \
+  (bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready);
+
 
 #define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(type, bus_name,NUM_STR)\
 /* Write into fifo (to host) <= bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR] */ \
