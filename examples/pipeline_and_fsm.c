@@ -1,13 +1,12 @@
 #include "uintN_t.h"
 #include "intN_t.h"
-#include "wire.h"
+#include "global_func_inst.h"
 
-// Make getting to autopipeline from stateful easier
+// Make getting to autopipeline from stateful module easier
+// A pipeline my_func() and a stateful testbench() reading the inputs and outputs
+// Global instance wires with macros to do read and write makes this easy
 
-// I have func to pipeline my_func() and I want a stateful testbench() reading the inputs and outputs of f
-// Do global instance and wires macros w/ helper read and write
-
-// The work to pipeline
+// The function inputs and outputs
 typedef struct my_func_in_t
 {
   int32_t x;
@@ -19,6 +18,7 @@ typedef struct my_func_out_t
   int32_t data;
   uint1_t valid;
 }my_func_out_t;
+// The work to pipeline out = f(in)
 my_func_out_t my_func(my_func_in_t input)
 {
   my_func_out_t output;
@@ -28,10 +28,8 @@ my_func_out_t my_func(my_func_in_t input)
 }
 
 // Helper macros to make a globally visible and wired up instance of the pipeline
-GLOBAL_WIRES_FUNC_DECL(my_inst, my_func_out_t, my_func, my_func_in_t)
-#include "clock_crossing/my_inst_in.h"
-#include "clock_crossing/my_inst_out.h"
-GLOBAL_WIRES_FUNC_IMPL(my_inst, my_func_out_t, my_func, my_func_in_t)
+GLOBAL_FUNC_INST(my_inst, my_func_out_t, my_func, my_func_in_t)
+//GLOBAL_PIPELINE_INST(my_inst, my_func_out_t, my_func, my_func_in_t)
 
 #pragma MAIN_MHZ testbench 200.0
 uint1_t testbench()
@@ -65,10 +63,10 @@ uint1_t testbench()
   input.y = inputs_y[write_input_index];
   input.valid = 1;
   write_input_index += 1;
-  my_inst_WRITE(input);
+  my_inst_in = input;
   // Read output of pipeline
   // .valid = 1 output data doesnt show up until N cycles/iterations later
-  my_func_out_t output = my_inst_READ();
+  my_func_out_t output = my_inst_out;
   
   // Check test data pattern
   if(output.valid)
