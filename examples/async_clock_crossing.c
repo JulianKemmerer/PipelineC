@@ -2,14 +2,11 @@
 // data width integer ratioed clock crossing stream,
 // this uses same size read and write ports on an async fifo
 
-#include "compiler.h"
-#include "wire.h"
-#include "arty/src/leds/led0_3.c"
+#include "uintN_t.h"
+#include "leds/led0_3_ports.c"
 
 #pragma MAIN_MHZ fast 166.66
 #pragma MAIN_MHZ slow 25.0
-
-#include "uintN_t.h"
 
 // Write+read 2 'datas' in/out the fifo at a time
 // (port sizes on each side of async fifo)
@@ -21,12 +18,15 @@
 #define fast_to_slow_READ_N fast_to_slow_READ_2
 
 // Fifo depth=4
-data_t fast_to_slow[4]; 
-#include "clock_crossing/fast_to_slow.h" // Auto generated
+//data_t fast_to_slow[4]; 
+//#include "clock_crossing/fast_to_slow.h" // Auto generated
+#include "clock_crossing.h"
+ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, fast_to_slow, DATAS_PER_ITER, 4)
 
 // Fifo depth=4
-data_t slow_to_fast[4]; 
-#include "clock_crossing/slow_to_fast.h" // Auto generated
+//data_t slow_to_fast[4]; 
+//#include "clock_crossing/slow_to_fast.h" // Auto generated
+ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, slow_to_fast, DATAS_PER_ITER, 4)
 
 void fast(uint1_t reset)
 {  
@@ -37,8 +37,8 @@ void fast(uint1_t reset)
   {
     led = 0;
   }
-  WIRE_WRITE(uint1_t, led0, led)
-  WIRE_WRITE(uint1_t, led1, !reset)
+  led0 = led;
+  led1 = !reset;
   
   // Send a test pattern into slow
   static data_t test_data = 0;
@@ -113,8 +113,8 @@ void slow(uint1_t reset)
   {
     led = 0;
   }
-  WIRE_WRITE(uint1_t, led2, led)
-  WIRE_WRITE(uint1_t, led3, !reset)
+  led2 = led;
+  led3 = !reset;
   
   // Send a test pattern into fast
   static data_t test_data = 0;

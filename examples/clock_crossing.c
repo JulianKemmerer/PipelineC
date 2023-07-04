@@ -5,7 +5,7 @@
 
 #include "compiler.h"
 #include "wire.h"
-#include "arty/src/leds/led0_3.c"
+#include "leds/led0_3_ports.c"
 
 #pragma MAIN_MHZ fast 100.0
 #pragma MAIN_MHZ slow 25.0
@@ -32,8 +32,8 @@ void fast(uint1_t reset)
   {
     led = 0;
   }
-  WIRE_WRITE(uint1_t, led0, led)
-  WIRE_WRITE(uint1_t, led1, !reset)
+  led0 = led;
+  led1 = !reset;
   
   // Send a test pattern into slow
   static uint64_t test_data = 0;
@@ -88,8 +88,8 @@ void slow(uint1_t reset)
   {
     led = 0;
   }
-  WIRE_WRITE(uint1_t, led2, led)
-  WIRE_WRITE(uint1_t, led3, !reset)
+  led2 = led;
+  led3 = !reset;
   
   // Send test pattern into fast
   static uint64_t test_data = 0;

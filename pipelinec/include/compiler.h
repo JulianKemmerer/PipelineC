@@ -1,6 +1,17 @@
 // Compiler helper stuff
 #pragma once
 
+/*
+ * Concatenate preprocessor tokens A and B without expanding macro definitions
+ * (however, if invoked from a macro, macro arguments are expanded).
+ */
+#define PPCAT_NX(A, B) A ## B
+
+/*
+ * Concatenate preprocessor tokens A and B after macro-expanding them.
+ */
+#define PPCAT(A, B) PPCAT_NX(A, B)
+
 // Temp work around for C++/bool types, see github issue
 // https://github.com/JulianKemmerer/PipelineC/issues/24
 #ifdef __PIPELINEC__
