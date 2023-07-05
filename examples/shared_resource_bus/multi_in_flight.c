@@ -266,29 +266,9 @@ void dev_arb_connect()
 }
 
 SHARED_BUS_ASYNC_FIFO_DECL(dev_bus, the_bus_name, 0)
-#include "clock_crossing/the_bus_name_fifo0_write_req.h"
-#include "clock_crossing/the_bus_name_fifo0_write_data.h"
-#include "clock_crossing/the_bus_name_fifo0_write_resp.h"
-#include "clock_crossing/the_bus_name_fifo0_read_req.h"
-#include "clock_crossing/the_bus_name_fifo0_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(dev_bus, the_bus_name, 1)
-#include "clock_crossing/the_bus_name_fifo1_write_req.h"
-#include "clock_crossing/the_bus_name_fifo1_write_data.h"
-#include "clock_crossing/the_bus_name_fifo1_write_resp.h"
-#include "clock_crossing/the_bus_name_fifo1_read_req.h"
-#include "clock_crossing/the_bus_name_fifo1_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(dev_bus, the_bus_name, 2)
-#include "clock_crossing/the_bus_name_fifo2_write_req.h"
-#include "clock_crossing/the_bus_name_fifo2_write_data.h"
-#include "clock_crossing/the_bus_name_fifo2_write_resp.h"
-#include "clock_crossing/the_bus_name_fifo2_read_req.h"
-#include "clock_crossing/the_bus_name_fifo2_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(dev_bus, the_bus_name, 3)
-#include "clock_crossing/the_bus_name_fifo3_write_req.h"
-#include "clock_crossing/the_bus_name_fifo3_write_data.h"
-#include "clock_crossing/the_bus_name_fifo3_write_resp.h"
-#include "clock_crossing/the_bus_name_fifo3_read_req.h"
-#include "clock_crossing/the_bus_name_fifo3_read_data.h"
 
 // Wire ASYNC FIFOs to dev-host wires
 MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)

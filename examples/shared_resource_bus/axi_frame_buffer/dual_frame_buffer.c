@@ -40,7 +40,7 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 // Dual frame buffer is writing to one buffer while other is for reading
 // wrappers around shared_resource_bus.h read() and write() dealing with request types etc
 uint1_t frame_buffer_read_port_sel;
-// Async pipelined start separate from finish
+/* // Async pipelined start separate from finish
 void frame_buf_read_start(uint16_t x, uint16_t y)
 {
   uint32_t addr = pos_to_addr(x, y);
@@ -55,8 +55,9 @@ pixel_t frame_buf_read_finish()
   pixel.g = read.data[1];
   pixel.b = read.data[0];
   return pixel;
-}
-/*void frame_buf_read_only_start(uint16_t x, uint16_t y)
+} */
+/* // Read only versions for VGA port
+void frame_buf_read_only_start(uint16_t x, uint16_t y)
 {
   uint32_t addr = pos_to_addr(x, y);
   dual_axi_read_only_ram_read_start(frame_buffer_read_port_sel, addr);

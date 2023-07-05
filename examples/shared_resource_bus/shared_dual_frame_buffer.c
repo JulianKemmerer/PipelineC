@@ -59,211 +59,40 @@ SHARED_BUS_DECL(
 
 // First frame buffer fifos
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 0)
-#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo0_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo0_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo0_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 1)
-#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo1_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo1_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo1_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 2)
-#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo2_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo2_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo2_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 3)
-#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo3_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo3_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo3_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 4)
-#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo4_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo4_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo4_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 5)
-#include "clock_crossing/frame_buf0_shared_bus_fifo5_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo5_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo5_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo5_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo5_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 6)
-#include "clock_crossing/frame_buf0_shared_bus_fifo6_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo6_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo6_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo6_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo6_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 7)
-#include "clock_crossing/frame_buf0_shared_bus_fifo7_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo7_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo7_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo7_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo7_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 8)
-#include "clock_crossing/frame_buf0_shared_bus_fifo8_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo8_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo8_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo8_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo8_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 9)
-#include "clock_crossing/frame_buf0_shared_bus_fifo9_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo9_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo9_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo9_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo9_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 10)
-#include "clock_crossing/frame_buf0_shared_bus_fifo10_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo10_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo10_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo10_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo10_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 11)
-#include "clock_crossing/frame_buf0_shared_bus_fifo11_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo11_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo11_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo11_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo11_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 12)
-#include "clock_crossing/frame_buf0_shared_bus_fifo12_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo12_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo12_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo12_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo12_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 13)
-#include "clock_crossing/frame_buf0_shared_bus_fifo13_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo13_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo13_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo13_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo13_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 14)
-#include "clock_crossing/frame_buf0_shared_bus_fifo14_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo14_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo14_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo14_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo14_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 15)
-#include "clock_crossing/frame_buf0_shared_bus_fifo15_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo15_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo15_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo15_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo15_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf0_shared_bus, 16)
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_write_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_write_data.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_write_resp.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_read_req.h"
-#include "clock_crossing/frame_buf0_shared_bus_fifo16_read_data.h"
 // Second frame buffer fifos
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 0)
-#include "clock_crossing/frame_buf1_shared_bus_fifo0_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo0_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo0_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo0_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo0_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 1)
-#include "clock_crossing/frame_buf1_shared_bus_fifo1_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo1_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo1_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo1_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo1_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 2)
-#include "clock_crossing/frame_buf1_shared_bus_fifo2_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo2_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo2_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo2_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo2_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 3)
-#include "clock_crossing/frame_buf1_shared_bus_fifo3_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo3_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo3_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo3_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo3_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 4)
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo4_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 5)
-#include "clock_crossing/frame_buf1_shared_bus_fifo5_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo5_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo5_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo5_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo5_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 6)
-#include "clock_crossing/frame_buf1_shared_bus_fifo6_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo6_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo6_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo6_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo6_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 7)
-#include "clock_crossing/frame_buf1_shared_bus_fifo7_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo7_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo7_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo7_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo7_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 8)
-#include "clock_crossing/frame_buf1_shared_bus_fifo8_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo8_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo8_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo8_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo8_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 9)
-#include "clock_crossing/frame_buf1_shared_bus_fifo9_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo9_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo9_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo9_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo9_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 10)
-#include "clock_crossing/frame_buf1_shared_bus_fifo10_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo10_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo10_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo10_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo10_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 11)
-#include "clock_crossing/frame_buf1_shared_bus_fifo11_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo11_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo11_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo11_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo11_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 12)
-#include "clock_crossing/frame_buf1_shared_bus_fifo12_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo12_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo12_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo12_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo12_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 13)
-#include "clock_crossing/frame_buf1_shared_bus_fifo13_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo13_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo13_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo13_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo13_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 14)
-#include "clock_crossing/frame_buf1_shared_bus_fifo14_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo14_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo14_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo14_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo14_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 15)
-#include "clock_crossing/frame_buf1_shared_bus_fifo15_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo15_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo15_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo15_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo15_read_data.h"
 SHARED_BUS_ASYNC_FIFO_DECL(frame_buf_bus_t, frame_buf1_shared_bus, 16)
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_write_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_write_data.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_write_resp.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_read_req.h"
-#include "clock_crossing/frame_buf1_shared_bus_fifo16_read_data.h"
-
 // Wire ASYNC FIFOs to dev-host wires
 MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)
 void host_side_fifo_wiring()

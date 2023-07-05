@@ -1,5 +1,6 @@
 #include "uintN_t.h"
 #include "compiler.h"
+#include "clock_crossing.h"
 
 // WARNING: User cannot use IDs (only used internally by arb), and bursts are not supported yet (1 cycle tlast=1 xfers only)
 
@@ -988,11 +989,11 @@ bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
 // 3 write, 2 read
 // INST_ARRAY doesnt support async fifos
 #define SHARED_BUS_ASYNC_FIFO_DECL(type, bus_name, NUM_STR) \
-type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
-type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
-type##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
-type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req[SHARED_RES_CLK_CROSS_FIFO_DEPTH];\
-type##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data[SHARED_RES_CLK_CROSS_FIFO_DEPTH];
+ASYNC_CLK_CROSSING(type##_write_req_data_t, bus_name##_fifo##NUM_STR##_write_req, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(type##_write_burst_word_t, bus_name##_fifo##NUM_STR##_write_data, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(type##_write_resp_data_t, bus_name##_fifo##NUM_STR##_write_resp, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(type##_read_req_data_t, bus_name##_fifo##NUM_STR##_read_req, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(type##_read_burst_word_t, bus_name##_fifo##NUM_STR##_read_data, SHARED_RES_CLK_CROSS_FIFO_DEPTH)
 
 #define SHARED_BUS_ASYNC_FIFO_HOST_WIRING(type, bus_name, NUM_STR)\
 /* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
