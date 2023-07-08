@@ -165,6 +165,8 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         if OPEN_TOOLS.YOSYS_BIN_PATH is None:
             raise Exception("yosys not installed?")
+        if OPEN_TOOLS.GHDL_PREFIX is None:
+            raise Exception("ghdl not installed?")
 
         """
     max_freq(tech_in_nm=130, ffoverhead=None)[source]
