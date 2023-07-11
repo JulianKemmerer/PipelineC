@@ -977,6 +977,46 @@ def C_AST_NODE_TO_STATES_LIST(
     return states_list
 
 
+# Helper to decide what exit states follow a subroutine return
+# Can't always tell since visited states is only for the current clock cycle
+# ex. if entered subroutine some clocks ago can't identify that entry point in history
+# TODO modify trans list to include multiple clk cycles in list for always being able
+# to correct determine exit point matching entry
+def FIND_EXIT_STATES(start_state, sub_func_name, parser_state, visited_states=set()):
+    debug = False
+    if debug:
+        print(f"{parser_state.existing_logic.func_name} Trying exit states from sub {sub_func_name} {start_state.name}...")
+    exit_states = []
+    all_possible_exit_states = []
+    for func_call_node in parser_state.existing_logic.func_call_node_to_entry_exit_states.keys():
+        if func_call_node.name.name == sub_func_name:
+            #if sub_func_name=="get_uart_input":
+            #   print(f"{sub_func_name} {func_call_node.coord} 
+            entry_state, exit_state = parser_state.existing_logic.func_call_node_to_entry_exit_states[func_call_node]
+            all_possible_exit_states.append(exit_state)
+            if entry_state in visited_states:
+                exit_states.append(exit_state)
+    # Fall back to all possible if unknown?
+    if len(all_possible_exit_states)==0:
+        raise Exception("No possible exit states for inline sub func exit/return!?", sub_func_name)
+    if debug:
+        print("start state")
+        start_state.print()
+        print("Poss exit states:")
+        for all_possible_exit_state in all_possible_exit_states:
+            all_possible_exit_state.print()
+            print("===")
+        print("Visited states:")
+        for visited_state in visited_states:
+            visited_state.print()
+            print("===")
+    if len(exit_states)==0:
+        #if debug:
+        #   raise Exception("No found exit states for inline sub func exit/return!?", sub_func_name, len(all_possible_exit_states))
+        exit_states = all_possible_exit_states
+    return exit_states
+
+
 def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     if visited_states is None:
         visited_states = []
@@ -1011,44 +1051,6 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     elif (start_state.ends_w_fsm_func_entry is not None and start_state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included):
         return [[start_state]]
 
-    # Helper to decide what exit states follow a subroutine return
-    # Can't always tell since visited states is only for the current clock cycle
-    # ex. if entered subroutine some clocks ago can't identify that entry point in history
-    # TODO modify trans list to include multiple clk cycles in list for always being able
-    # to correct determine exit point matching entry
-    def find_exit_states(start_state, sub_func_name):
-        if debug:
-            print(f"{parser_state.existing_logic.func_name} Trying exit states from sub {sub_func_name} {start_state.name}...")
-        exit_states = []
-        all_possible_exit_states = []
-        for func_call_node in parser_state.existing_logic.func_call_node_to_entry_exit_states.keys():
-            if func_call_node.name.name == sub_func_name:
-                #if sub_func_name=="get_uart_input":
-                #   print(f"{sub_func_name} {func_call_node.coord} 
-                entry_state, exit_state = parser_state.existing_logic.func_call_node_to_entry_exit_states[func_call_node]
-                all_possible_exit_states.append(exit_state)
-                if entry_state in visited_states:
-                    exit_states.append(exit_state)
-        # Fall back to all possible if unknown?
-        if len(all_possible_exit_states)==0:
-            raise Exception("No possible exit states for inline sub func exit/return!?", sub_func_name)
-        if debug:
-            print("start state")
-            start_state.print()
-            print("Poss exit states:")
-            for all_possible_exit_state in all_possible_exit_states:
-                all_possible_exit_state.print()
-                print("===")
-            print("Visited states:")
-            for visited_state in visited_states:
-                visited_state.print()
-                print("===")
-        if len(exit_states)==0:
-            if debug:
-                raise Exception("No found exit states for inline sub func exit/return!?", sub_func_name, len(all_possible_exit_states))
-            exit_states = all_possible_exit_states
-        return exit_states
-
     poss_next_states = []
     # Branching?
     if start_state.branch_nodes_tf_states is not None:
@@ -1069,7 +1071,7 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
         else: # false_state is None
             # Submodule return?
             if start_state.sub_func_name is not None:
-                exit_states = find_exit_states(start_state, start_state.sub_func_name)
+                exit_states = FIND_EXIT_STATES(start_state, start_state.sub_func_name, parser_state, visited_states)
                 poss_next_states += exit_states  
 
     # Normal single next state
@@ -1088,7 +1090,7 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     else: # No branching or always next states, looks like exit/return/done
         # Submodule return? 
         if start_state.sub_func_name is not None:
-            exit_states = find_exit_states(start_state, start_state.sub_func_name)
+            exit_states = FIND_EXIT_STATES(start_state, start_state.sub_func_name, parser_state, visited_states)
             poss_next_states += exit_states
 
     # Make a return state list for each state
@@ -1606,7 +1608,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     debug = False
 
     if debug:
-        print("func:", parser_state.existing_logic.func_name)
+        print("func states list:", parser_state.existing_logic.func_name)
         for state in states_list:
             state.print()
             print("=====", flush=True)
@@ -1676,15 +1678,21 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
         if state.starts_w_fsm_func_return and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included:
             start_states.append(state)
         # State after user delay clk
-        if state.always_next_state is not None:
-            if state.ends_w_clk:
+        if (state.ends_w_clk or
+            state.input_func_call_node is not None or
+            state.yield_func_call_node is not None or
+            state.inout_func_call_node is not None):
+            if state.always_next_state is not None:
+                # Normal always next state after clock
                 start_states.append(state.always_next_state)
-            if state.input_func_call_node:
-                start_states.append(state.always_next_state)
-            if state.yield_func_call_node:
-                start_states.append(state.always_next_state)
-            if state.inout_func_call_node:
-                start_states.append(state.always_next_state)
+            else:
+                # Not branching or always next states, looks like exit/return/done
+                # Similar to transition following as in get trans list func
+                # Submodule return? 
+                if state.sub_func_name is not None:
+                    exit_states = FIND_EXIT_STATES(state, state.sub_func_name, parser_state)
+                    start_states += exit_states
+
         # Branching backwards marked with delay clock next state
         elif state.branch_nodes_tf_states is not None:
             c_ast_node, true_state, false_state = state.branch_nodes_tf_states
@@ -1806,6 +1814,13 @@ def GET_GROUPED_STATE_TRANSITIONS(
 
     # How to add a transition list to a state groups
     def append_trans_list(trans_list, state_groups, state_to_group_index):
+        if debug:
+            print("Appending transition list:")
+            text = "    "
+            for state in trans_list:
+                text += state.name + " -> "
+            print(text)
+
         # Init starting group pointer
         curr_group_index = 0
         if len(state_groups)==0:
