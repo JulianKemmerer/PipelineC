@@ -4149,9 +4149,8 @@ def C_AST_REF_TO_LOGIC(c_ast_ref, driven_wire_names, prepend_text, parser_state)
 def C_AST_REF_TOKS_TO_LOGIC(
     ref_toks, c_ast_ref, driven_wire_names, prepend_text, parser_state
 ):
-    # FUCK
+    # FUCK - its not so bad, dont worry
     debug = False
-    # debug = (parser_state.existing_logic.func_name == "sbox") and (ref_toks[0]=="rom")
 
     # The original variable name is the first tok
     base_var_name = ref_toks[0]
@@ -4256,14 +4255,13 @@ def C_AST_REF_TOKS_TO_LOGIC(
             c_ast_ref,
         )
     else:
-        """
-        print "ref_toks",ref_toks
-        print "c_type",c_type
-        print "first_driving_alias_c_type",first_driving_alias_c_type
-        print "entire_tree_ref_toks_set",entire_tree_ref_toks_set
-        print "first_driving_alias",first_driving_alias
-        print "remaining_ref_toks_set",remaining_ref_toks_set
-        """
+        if debug:
+            print("ref_toks",ref_toks)
+            print("c_type",c_type)
+            print("first_driving_alias_c_type",first_driving_alias_c_type)
+            print("entire_tree_ref_toks_set",entire_tree_ref_toks_set)
+            print("first_driving_alias",first_driving_alias)
+            print("remaining_ref_toks_set",remaining_ref_toks_set)
 
         # Create list of driving aliases
         driving_aliases = []
@@ -4338,9 +4336,29 @@ def C_AST_REF_TOKS_TO_LOGIC(
         # Name needs ot include the ref being done
 
         # Constant ref ?
+        # Try to eval variable dimensions
+        (
+            var_dim_ref_tok_indices,
+            var_dims,
+            var_dim_iter_types,
+        ) = GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(
+            ref_toks, c_ast_ref, parser_state
+        )
+        if debug:
+            print("var_dim_ref_tok_indices",var_dim_ref_tok_indices)
+            print("var_dims",var_dims)
+            print("var_dim_iter_types",var_dim_iter_types)
 
+        # Special case detect variable dimensions of all 1,1,1
+        # i.e. one element, not variable at all
+        var_dims_all_ones = len(var_dims) > 0 # start true
+        for var_dim in var_dims:
+            var_dims_all_ones = var_dims_all_ones and (var_dim==1)
+        #print("var_dims_all_ones",var_dims_all_ones)
+
+        # Variable ref needs different func name but mostly same args
         prefix = CONST_REF_RD_FUNC_NAME_PREFIX
-        if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
+        if not var_dims_all_ones and not C_AST_REF_TOKS_ARE_CONST(ref_toks):
             prefix = VAR_REF_RD_FUNC_NAME_PREFIX
 
         # NEEDS TO BE LEGIT C FUNC NAME
@@ -4433,18 +4451,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
         hash_ext = "_" + (
             (hashlib.md5(input_ref_toks_str.encode("utf-8")).hexdigest())[0:4]
         )  # 4 chars enough?
-        func_name += hash_ext
-
-        # VAR DIMS HANDLED IN output ref toks?
-        """
-    # Variable dimensions
-    var_dim_ref_tok_indices, var_dims, var_dim_iter_types = GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_ref, parser_state)
-    for var_dim in var_dims:
-      # uint width is log2
-      width = int(math.ceil(math.log(var_dim,2)))
-      var_dim_type = "uint" + str(width) + "_t"
-      func_name += "_" + var_dim_type
-    """    
+        func_name += hash_ext  
 
         # Get inst name
         func_base_name = func_name  # Is unique
@@ -4507,45 +4514,39 @@ def C_AST_REF_TOKS_TO_LOGIC(
 
         # print "ref_toks",ref_toks
         # Variable dimensions come after
-        (
-            var_dim_ref_tok_indices,
-            var_dims,
-            var_dim_iter_types,
-        ) = GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(
-            ref_toks, c_ast_ref, parser_state
-        )
-        for var_dim_i in range(0, len(var_dims)):
-            ref_tok_index = var_dim_ref_tok_indices[var_dim_i]
-            var_dim_iter_type = var_dim_iter_types[var_dim_i]
-            ref_tok_c_ast_node = ref_toks[ref_tok_index]
-            # Sanity check
-            if not isinstance(ref_tok_c_ast_node, c_ast.Node):
-                print("Not a variable ref tok?2", ref_tok_c_ast_node)
-                sys.exit(-1)
+        if not var_dims_all_ones:
+            for var_dim_i in range(0, len(var_dims)):
+                ref_tok_index = var_dim_ref_tok_indices[var_dim_i]
+                var_dim_iter_type = var_dim_iter_types[var_dim_i]
+                ref_tok_c_ast_node = ref_toks[ref_tok_index]
+                # Sanity check
+                if not isinstance(ref_tok_c_ast_node, c_ast.Node):
+                    print("Not a variable ref tok?2", ref_tok_c_ast_node)
+                    sys.exit(-1)
 
-            # Say which variable index this is
-            input_port_name = "var_dim_" + str(var_dim_i)
-            input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+                # Say which variable index this is
+                input_port_name = "var_dim_" + str(var_dim_i)
+                input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
 
-            # Set type of input wire
-            parser_state.existing_logic.wire_to_c_type[input_wire] = var_dim_iter_types[
-                var_dim_i
-            ]
+                # Set type of input wire
+                parser_state.existing_logic.wire_to_c_type[input_wire] = var_dim_iter_types[
+                    var_dim_i
+                ]
 
-            # Make the c_ast node drive the input wire
-            input_connect_logic = C_AST_NODE_TO_LOGIC(
-                ref_tok_c_ast_node, [input_wire], prepend_text, parser_state
-            )
-            # Merge this connect logic
-            parser_state.existing_logic.MERGE_SEQ_LOGIC(input_connect_logic)
+                # Make the c_ast node drive the input wire
+                input_connect_logic = C_AST_NODE_TO_LOGIC(
+                    ref_tok_c_ast_node, [input_wire], prepend_text, parser_state
+                )
+                # Merge this connect logic
+                parser_state.existing_logic.MERGE_SEQ_LOGIC(input_connect_logic)
 
-            # What drives the input port?
-            driving_wire = parser_state.existing_logic.wire_driven_by[input_wire]
+                # What drives the input port?
+                driving_wire = parser_state.existing_logic.wire_driven_by[input_wire]
 
-            # Save this
-            input_drivers.append(driving_wire)
-            input_driver_types.append(var_dim_iter_type)
-            input_port_names.append(input_port_name)
+                # Save this
+                input_drivers.append(driving_wire)
+                input_driver_types.append(var_dim_iter_type)
+                input_port_names.append(input_port_name)
 
         # Can't.shouldnt rely on uint resizing to occur in the raw vhdl (for const ref)
         # So force output to be same type as ref would imply
@@ -4558,7 +4559,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
         # Variable ref reads are implemented in C
         # and so cant have an output type of an array type
         # Use auto gen struct array types
-        if not C_AST_REF_TOKS_ARE_CONST(ref_toks) and C_TYPE_IS_ARRAY(c_type):
+        if (prefix==VAR_REF_RD_FUNC_NAME_PREFIX) and C_TYPE_IS_ARRAY(c_type):
             elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             output_struct_array_type = (
                 elem_t.replace("[", "_").replace("]", "_").replace("__", "_").strip("_")

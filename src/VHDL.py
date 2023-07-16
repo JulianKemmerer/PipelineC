@@ -6634,9 +6634,12 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
             vhdl_ref_str += "(" + str(ref_tok) + ")"
         elif type(ref_tok) == str:
             vhdl_ref_str += "." + ref_tok
+        elif isinstance(ref_tok, c_ast.Node):
+            # Assume a const ref with a variable dimension will always be zero
+            vhdl_ref_str += "(0)"
         else:
             print(
-                "Only constant references right now blbblbaaaghghhh2!",
+                "What const ref tok?",
                 logic.c_ast_node.coord,
             )
             sys.exit(-1)
