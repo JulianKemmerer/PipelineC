@@ -72,6 +72,9 @@ def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(
 
 
 def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files):
+    # Make output dir
+    cc_out_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing"
+    os.makedirs(cc_out_path)
     new_regenerate_files = set()
     # Write two funcs in a header for each var
     for var_name in parser_state.clk_cross_var_info:
@@ -194,7 +197,7 @@ def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files)
 }
 """
         # Write file
-        path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing" + "/" + var_name + ".h"
+        path = cc_out_path + "/" + var_name + ".h"
         open(path, "w").write(text)
 
     return new_regenerate_files

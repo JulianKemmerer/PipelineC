@@ -8,6 +8,7 @@ import math
 import os
 import pickle
 import sys
+from distutils.dir_util import copy_tree
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from timeit import default_timer as timer
@@ -2056,6 +2057,9 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
                     multimain_timing_params.TimingParamsLookupTable,
                     is_final_top,
                 )
+
+    # Copy pipelinec vhdl directory to output so users can export output directory alone
+    copy_tree(f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl", SYN_OUTPUT_DIRECTORY + "/built_in")
 
     # Do generic dump of vhdl files
     # Which vhdl files?
@@ -4718,6 +4722,9 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
 ):
     # Read in vhdl files with a single (faster than multiple) read_vhdl
     files_txt = ""
+
+    # Built in src/vhdl #TODO just auto add every file in dir
+    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "built_in/pipelinec_fifo_fwft.vhd" + " "
 
     # C defined structs
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "

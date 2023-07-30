@@ -2641,6 +2641,15 @@ end arch;
     # Write uni dir data clock crossings
     for var_name in non_arb_clock_crossings:
         flow_control = parser_state.clk_cross_var_info[var_name].flow_control
+        flow_control_is_async = False
+        read_mains, write_mains = parser_state.clk_cross_var_info[var_name].write_read_main_funcs
+        all_mains = read_mains | write_mains 
+        clk_ext_strs = set() 
+        for main_i in all_mains:
+            clk_ext_str_i = CLK_EXT_STR(main_i, parser_state)
+            clk_ext_strs.add(clk_ext_str_i)
+        if len(clk_ext_strs) > 1:
+            flow_control_is_async = True
         write_size, read_size = parser_state.clk_cross_var_info[
             var_name
         ].write_read_sizes
@@ -2658,7 +2667,7 @@ end arch;
         if flow_control:
             if SYN.SYN_TOOL is None:
                 SYN.PART_SET_TOOL(parser_state.part)
-            if SYN.SYN_TOOL is not VIVADO:
+            if flow_control_is_async and SYN.SYN_TOOL is not VIVADO:
                 raise Exception(
                     "Async fifos are only implemented for Xilinx parts, TODO!", var_name
                 )
@@ -2697,7 +2706,7 @@ end arch;
                 print("More than 1 dim for async flow control!?", var_name)
                 sys.exit(-1)
             depth = dims[0]
-            if depth < 16:
+            if flow_control_is_async and depth < 16:
                 depth = 16
                 print(
                     "WARNING:",
@@ -2717,7 +2726,7 @@ use ieee.numeric_std.all;
 use work.c_structs_pkg.all; -- User types
 """
 
-        if flow_control:
+        if flow_control and flow_control_is_async:
             text += """
 library xpm;
 use xpm.vcomponents.all;
@@ -2897,16 +2906,21 @@ use xpm.vcomponents.all;
 
         # Flow control is async fifo
         if flow_control:
+            text += ("""din_slv <= """ + to_slv_toks[0]
+                + """write_data"""
+                + to_slv_toks[1]
+                + """;
+    rd_return_output.data <= """
+                + from_slv_toks[0]
+                + """dout_slv"""
+                + from_slv_toks[1]
+                + """;""")
+        if flow_control and flow_control_is_async:
             text += (
                 """
 wr_power_on_reset <= '0' when rising_edge(in_clk);
 fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy and not wr_power_on_reset;
 wr_return_output.ready(0) <= not full and not wr_rst_busy and not wr_power_on_reset;
-din_slv <= """
-                + to_slv_toks[0]
-                + """write_data"""
-                + to_slv_toks[1]
-                + """;
 rd_power_on_reset <= '0' when rising_edge(out_clk);
 fifo_rd_enable <= read_enable(0) and not rd_rst_busy and not rd_power_on_reset"""
             )
@@ -3042,6 +3056,26 @@ port map (
 -- End of xpm_fifo_async_inst instantiation     
 """
             )
+
+        # Sync built in fifo
+        elif flow_control and not flow_control_is_async:
+            text += """
+pipelinec_fifo_fwft_inst : entity work.pipelinec_fifo_fwft
+generic map (
+    DEPTH_LOG2 => """ + str(math.ceil(math.log(depth, 2))) + """,
+    DATA_WIDTH => """ + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(in_t, parser_state) + """
+)
+port map
+(
+    clk => in_clk,
+    valid_in  => write_enable(0) and in_clk_en(0),
+    ready_out => wr_return_output.ready(0),
+    data_in   => din_slv,
+    valid_out => rd_return_output.valid(0),
+    ready_in  => read_enable(0) and out_clk_en(0),
+    data_out  => dout_slv
+);
+"""
 
         # BELOW CROSSINGS CANNOT USE OUTPUT CLOCK ENABLES
         # - DO NOT HAVE FIFO BUFFERS
