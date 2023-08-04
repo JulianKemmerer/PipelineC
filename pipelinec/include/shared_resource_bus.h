@@ -1,4 +1,5 @@
 #include "uintN_t.h"
+#include "arrays.h"
 #include "compiler.h"
 #include "clock_crossing.h"
 
@@ -966,6 +967,104 @@ name##_dev_arb_t name##_dev_arb_pipelined( \
   /* Update regs with next values*/ \
   dev_to_selected_host = next_dev_to_selected_host; \
   return o; \
+} \
+\
+/* Multiple in flight */ \
+/*'pipelined' round robin */ \
+/*connection (not arb, no muxing)*/ \
+/* ONE HOT STATE! */ \
+typedef struct name##_dev_multi_host_connect_t{ \
+  type##_host_to_dev_t to_devs[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
+}name##_dev_multi_host_connect_t; \
+name##_dev_multi_host_connect_t name##_dev_multi_host_connect( \
+  type##_dev_to_host_t from_devs[NUM_DEV_PORTS][NUM_HOST_PORTS], \
+  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+) \
+{ \
+  /* 5 channels between each host and device*/ \
+  /* Request to start*/ \
+  /*  Read req (addr)*/ \
+  /*  Write req (addr)*/ \
+  /* Exchange of data*/ \
+  /*  Read data+resp (data+err)*/ \
+  /*  Write data (data bytes)*/ \
+  /*  Write resp (err code)*/ \
+  /* Each channel has a valid+ready handshake */ \
+ \
+  /* Output signal*/ \
+  name##_dev_multi_host_connect_t o; /*Default all zeros single cycle pulses*/ \
+   \
+  /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
+  uint32_t i, j; \
+  static uint1_t dev_to_selected_host[NUM_DEV_PORTS][NUM_HOST_PORTS]; /* See one hot reset below */ \
+  static uint1_t power_on_reset = 1; \
+  if(power_on_reset) \
+  { \
+    for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+    { \
+      dev_to_selected_host[i][i] = 1; \
+    } \
+  } \
+  power_on_reset = 0;\
+ \
+  /* Each dev port has FIFOs so will allow 'streaming' multiple read/write in flight*/ \
+ \
+  /* INPUT TO DEV SIDE*/ \
+ \
+  /* Loop that connects requests/inputs to output host bus for each dev port*/ \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    for (j = 0; j < NUM_HOST_PORTS; j+=1) \
+    { \
+      /* Connect data lines directly*/ \
+      o.to_devs[i][j].read.req.data = from_hosts[j].read.req.data; \
+      o.to_devs[i][j].read.req.id = from_hosts[j].read.req.id; \
+      o.to_devs[i][j].write.req.data = from_hosts[j].write.req.data; \
+      o.to_devs[i][j].write.req.id = from_hosts[j].write.req.id; \
+      o.to_devs[i][j].write.data.burst = from_hosts[j].write.data.burst; \
+      o.to_devs[i][j].write.data.id = from_hosts[j].write.data.id; \
+      /* Small one hot logic for handshake*/ \
+      /* ZEROS IMPLIED */ \
+      if(dev_to_selected_host[i][j]) \
+      { \
+        o.to_devs[i][j].read.req.valid = from_hosts[j].read.req.valid; \
+        o.to_hosts[j].read.req_ready = from_devs[i][j].read.req_ready; \
+        o.to_devs[i][j].write.req.valid = from_hosts[j].write.req.valid; \
+        o.to_hosts[j].write.req_ready = from_devs[i][j].write.req_ready; \
+        o.to_devs[i][j].write.data.valid = from_hosts[j].write.data.valid; \
+        o.to_hosts[j].write.data_ready = from_devs[i][j].write.data_ready; \
+      } \
+    } \
+    /* Rotate one hot dev_to_selected_host[i] */ \
+    uint1_t top_selected_host_bit = dev_to_selected_host[i][NUM_HOST_PORTS-1]; \
+    ARRAY_1SHIFT_INTO_BOTTOM(dev_to_selected_host[i], NUM_HOST_PORTS, top_selected_host_bit) \
+  } \
+ \
+  /* DEV WAS HERE*/ \
+ \
+  /* NEED TO ASSUME OUTPUT IS READY */ \
+  /* DIRECTLY CONNECT multiple host outputs from dev */ \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    for (j = 0; j < NUM_HOST_PORTS; j+=1) \
+    { \
+      /* Zeros to valid and ready implied */ \
+      /* Output write resp, err code unused*/ \
+      if(from_devs[i][j].write.resp.valid) \
+      { \
+        o.to_hosts[j].write.resp = from_devs[i][j].write.resp; \
+        o.to_devs[i][j].write.resp_ready = from_hosts[j].write.resp_ready; \
+      } \
+      /* Output read data*/ \
+      if(from_devs[i][j].read.data.valid) \
+      { \
+        o.to_hosts[j].read.data = from_devs[i][j].read.data; \
+        o.to_devs[i][j].read.data_ready = from_hosts[j].read.data_ready; \
+      } \
+    } \
+  } \
+  return o; \
 }
 
 // Instantiate the arb module with to-from wires for user
@@ -984,6 +1083,15 @@ bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb_pipelined(bus_name##_to
 type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
 bus_name##_from_host = bus_name##_arb.to_devs; \
 bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
+//
+#define SHARED_BUS_MULTI_HOST_CONNECT(type, bus_name, NUM_HOST_PORTS, NUM_DEV_PORTS) \
+type##_dev_to_host_t bus_name##_to_hosts[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK bus_name##_to_hosts) /* Value from last assignment (by user)*/ \
+bus_name##_dev_multi_host_connect_t bus_name##_connect = bus_name##_dev_multi_host_connect(bus_name##_to_hosts, bus_name##_host_to_dev_wires_on_dev_clk); \
+type##_host_to_dev_t bus_name##_from_hosts[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+bus_name##_from_hosts = bus_name##_connect.to_devs; \
+bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_connect.to_hosts;
+
 
 // Each channel of 5 channels host<->dev link needs async fifo
 // 3 write, 2 read

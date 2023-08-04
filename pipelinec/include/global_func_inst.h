@@ -40,3 +40,136 @@ void inst_name() \
   out_type o = func_name(i); \
   inst_name##_out = inst_name##_out_reg_func(o); \
 }
+
+
+// Pipeline version with id and valid
+#define GLOBAL_PIPELINE_INST_W_VALID_ID(inst_name, out_type, func_name, in_type) \
+typedef struct inst_name##_in_reg_t{ \
+  in_type data; \
+  uint8_t id; \
+  uint1_t valid; \
+}inst_name##_in_reg_t; \
+inst_name##_in_reg_t inst_name##_in_reg_func(in_type data, uint8_t id, uint1_t valid) \
+{ \
+  static inst_name##_in_reg_t the_reg; \
+  inst_name##_in_reg_t rv = the_reg; \
+  the_reg.data = data; \
+  the_reg.id = id; \
+  the_reg.valid = valid; \
+  return rv; \
+} \
+typedef struct inst_name##_out_reg_t{ \
+  out_type data; \
+  uint8_t id; \
+  uint1_t valid; \
+}inst_name##_out_reg_t; \
+inst_name##_out_reg_t inst_name##_out_reg_func(out_type data, uint8_t id, uint1_t valid) \
+{ \
+  static inst_name##_out_reg_t the_reg; \
+  inst_name##_out_reg_t rv = the_reg; \
+  the_reg.data = data; \
+  the_reg.id = id; \
+  the_reg.valid = valid; \
+  return rv; \
+} \
+/* Global wires connected to instance */ \
+in_type inst_name##_in; \
+uint8_t inst_name##_in_id; \
+uint1_t inst_name##_in_valid; \
+out_type inst_name##_out; \
+uint8_t inst_name##_out_id; \
+uint1_t inst_name##_out_valid; \
+MAIN(inst_name) \
+void inst_name() \
+{ \
+  inst_name##_in_reg_t i = inst_name##_in_reg_func( \
+    inst_name##_in, \
+    inst_name##_in_id, \
+    inst_name##_in_valid \
+  ); \
+  out_type d = func_name(i.data); \
+  inst_name##_out_reg_t o = inst_name##_out_reg_func( \
+    d, \
+    i.id,  \
+    i.valid \
+  ); \
+  inst_name##_out = o.data; \
+  inst_name##_out_id = o.id; \
+  inst_name##_out_valid = o.valid; \
+}
+
+
+// Pipeline with id and valid that includes ONE HOT mux fan-in and fan-out
+#define GLOBAL_PIPELINE_INST_W_ARB(inst_name, out_type, func_name, in_type, NUM_HOSTS) \
+typedef struct inst_name##_in_reg_t{ \
+  in_type datas[NUM_HOSTS]; \
+  uint8_t ids[NUM_HOSTS]; \
+  uint1_t valids[NUM_HOSTS]; \
+}inst_name##_in_reg_t; \
+inst_name##_in_reg_t inst_name##_in_reg_func(in_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
+{ \
+  static inst_name##_in_reg_t the_reg; \
+  inst_name##_in_reg_t rv = the_reg; \
+  the_reg.datas = datas; \
+  the_reg.ids = ids; \
+  the_reg.valids = valids; \
+  return rv; \
+} \
+typedef struct inst_name##_out_reg_t{ \
+  out_type datas[NUM_HOSTS]; \
+  uint8_t ids[NUM_HOSTS]; \
+  uint1_t valids[NUM_HOSTS]; \
+}inst_name##_out_reg_t; \
+inst_name##_out_reg_t inst_name##_out_reg_func(out_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
+{ \
+  static inst_name##_out_reg_t the_reg; \
+  inst_name##_out_reg_t rv = the_reg; \
+  the_reg.datas = datas; \
+  the_reg.ids = ids; \
+  the_reg.valids = valids; \
+  return rv; \
+} \
+/* Global wires connected to instance */ \
+in_type inst_name##_ins[NUM_HOSTS]; \
+uint8_t inst_name##_in_ids[NUM_HOSTS]; \
+uint1_t inst_name##_in_valids[NUM_HOSTS]; \
+out_type inst_name##_outs[NUM_HOSTS]; \
+uint8_t inst_name##_out_ids[NUM_HOSTS]; \
+uint1_t inst_name##_out_valids[NUM_HOSTS]; \
+MAIN(inst_name) \
+void inst_name() \
+{ \
+  /* IN REG*/ \
+  inst_name##_in_reg_t in_reg = inst_name##_in_reg_func( \
+    inst_name##_ins, \
+    inst_name##_in_ids, \
+    inst_name##_in_valids \
+  ); \
+  /*IN MUX - TODO BINARY TREE*/ \
+  in_type one_hot_selected_in_data; \
+  uint32_t i; \
+  for(i = 0; i < NUM_HOSTS; i+=1) \
+  { \
+    if(in_reg.valids[i]) \
+    { \
+      one_hot_selected_in_data = in_reg.datas[i]; \
+    } \
+  } \
+  /*THE FUNC*/ \
+  out_type data_out = func_name(one_hot_selected_in_data); \
+  /*USE INPUT ONEHOT VALID FOR OUTPUT, EVERY OUT DATA IS SAME*/ \
+  out_type data_outs[NUM_HOSTS]; \
+  for(i = 0; i < NUM_HOSTS; i+=1) \
+  { \
+    data_outs[i] = data_out; \
+  } \
+  /* OUT REG */ \
+  inst_name##_out_reg_t o = inst_name##_out_reg_func( \
+    data_outs, \
+    in_reg.ids,  \
+    in_reg.valids \
+  ); \
+  inst_name##_outs = o.datas; \
+  inst_name##_out_ids = o.ids; \
+  inst_name##_out_valids = o.valids; \
+}
