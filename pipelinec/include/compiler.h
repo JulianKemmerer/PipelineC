@@ -34,7 +34,8 @@
 #define __attribute__(x)
 #endif
 
-#define PRAGMA_MESSAGE(x) _Pragma(#x)
+#define PRAGMA_MESSAGE_(x) _Pragma(#x)
+#define PRAGMA_MESSAGE(x) PRAGMA_MESSAGE_(x)
 
 #define CLK_MHZ(clock, mhz)\
 PRAGMA_MESSAGE(CLK_MHZ clock mhz)

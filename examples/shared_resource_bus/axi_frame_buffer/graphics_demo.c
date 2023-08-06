@@ -17,6 +17,9 @@
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
+/*// Mandelbrot kernel
+#include "shared_mandelbrot_dev.c"*/
+
 // DEMO application incrmenting R,G,B channels of colors as test pattern
 typedef struct kernel_args_t{
   uint2_t color_channel_to_increment;
@@ -126,6 +129,10 @@ void main()
     start_time = host_clk_counter;
     
     // Render kernels
+
+    /*// TEST
+    screen_to_complex_in_t stc;
+    complex_t c = screen_to_complex(stc);*/
 
     // Demo kernel is entire frame
     render_demo_kernel(args, 0, FRAME_WIDTH, 0, FRAME_HEIGHT);

@@ -35,150 +35,33 @@ SHARED_BUS_TYPE_DEF(
 // Each device is a dual port RAM used by host threads
 #define NUM_DEV_PORTS AXI_RAM_N_PORTS
 #define NUM_HOST_PORTS (NUM_USER_THREADS+1) // +1 for vga port display read port
-// First frame buffer
-SHARED_BUS_DECL(
-  axi_ram_bus_t,
-  axi_write_req_t,
-  axi_write_data_t,
-  axi_write_resp_t,
-  axi_read_req_t,
-  axi_read_data_t,
-  axi_ram0_shared_bus,
-  NUM_HOST_PORTS,
-  NUM_DEV_PORTS
-)
-// Second frame buffer
-SHARED_BUS_DECL(
-  axi_ram_bus_t,
-  axi_write_req_t,
-  axi_write_data_t,
-  axi_write_resp_t,
-  axi_read_req_t,
-  axi_read_data_t,
-  axi_ram1_shared_bus,
-  NUM_HOST_PORTS,
-  NUM_DEV_PORTS
-)
 
-// First frame buffer fifos
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 0)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 1)
-/*SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 2)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 3)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 4)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 5)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 6)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 7)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 8)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 9)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 10)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 11)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 12)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 13)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 14)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 15)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram0_shared_bus, 16)
-*/
-// Second frame buffer fifos
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 0)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 1)
-/*SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 2)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 3)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 4)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 5)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 6)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 7)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 8)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 9)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 10)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 11)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 12)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 13)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 14)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 15)
-SHARED_BUS_ASYNC_FIFO_DECL(axi_ram_bus_t, axi_ram1_shared_bus, 16)*/
-
-// Wire ASYNC FIFOs to dev-host wires
-MAIN_MHZ(host_side_fifo_wiring, HOST_CLK_MHZ)
-void host_side_fifo_wiring()
-{
-  // First frame buffer
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram0_shared_bus, 0)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram0_shared_bus, 1)
-  /*SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram0_shared_bus, 2)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 4)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 5)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 6)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 7)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 8)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 9)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 10)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 11)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 12)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 13)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 14)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 16)*/
-  // Second frame buffer
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram1_shared_bus, 0)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram1_shared_bus, 1)
-  /*SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(axi_ram_bus_t, axi_ram1_shared_bus, 2)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 4)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 5)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 6)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 7)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 8)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 9)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 10)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 11)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 12)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 13)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 14)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_HOST_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 16)*/
-}
-MAIN_MHZ(dev_side_fifo_wiring, DEV_CLK_MHZ)
-void dev_side_fifo_wiring()
-{
-  // First frame buffer
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 0)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 1)
-  /*SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 2)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 4)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 5)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 6)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 7)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 8)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 9)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 10)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 11)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 12)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 13)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 14)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram0_shared_bus, 16)*/
-  // Second frame buffer
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 0)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 1)
-  /*SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 2)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 3)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 4)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 5)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 6)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 7)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 8)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 9)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 10)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 11)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 12)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 13)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 14)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 15)
-  SHARED_BUS_ASYNC_FIFO_DEV_WIRING(axi_ram_bus_t, axi_ram1_shared_bus, 16)*/
-}
+// First frame buffer bus
+#define SHARED_RESOURCE_BUS_NAME          axi_ram0_shared_bus
+#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_ram_bus_t    
+#define SHARED_RESOURCE_BUS_WR_REQ_TYPE   axi_write_req_t 
+#define SHARED_RESOURCE_BUS_WR_DATA_TYPE  axi_write_data_t
+#define SHARED_RESOURCE_BUS_WR_RESP_TYPE  axi_write_resp_t
+#define SHARED_RESOURCE_BUS_RD_REQ_TYPE   axi_read_req_t
+#define SHARED_RESOURCE_BUS_RD_DATA_TYPE  axi_read_data_t   
+#define SHARED_RESOURCE_BUS_HOST_PORTS    NUM_HOST_PORTS
+#define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  HOST_CLK_MHZ
+#define SHARED_RESOURCE_BUS_DEV_PORTS     NUM_DEV_PORTS
+#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   DEV_CLK_MHZ
+#include "shared_resource_bus_decl.h"
+// Second frame buffer bus
+#define SHARED_RESOURCE_BUS_NAME          axi_ram1_shared_bus
+#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_ram_bus_t    
+#define SHARED_RESOURCE_BUS_WR_REQ_TYPE   axi_write_req_t 
+#define SHARED_RESOURCE_BUS_WR_DATA_TYPE  axi_write_data_t
+#define SHARED_RESOURCE_BUS_WR_RESP_TYPE  axi_write_resp_t
+#define SHARED_RESOURCE_BUS_RD_REQ_TYPE   axi_read_req_t
+#define SHARED_RESOURCE_BUS_RD_DATA_TYPE  axi_read_data_t   
+#define SHARED_RESOURCE_BUS_HOST_PORTS    NUM_HOST_PORTS
+#define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  HOST_CLK_MHZ
+#define SHARED_RESOURCE_BUS_DEV_PORTS     NUM_DEV_PORTS
+#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   DEV_CLK_MHZ
+#include "shared_resource_bus_decl.h"
 
 // User application uses 5 channel AXI-like shared bus wires for frame buffer control
 

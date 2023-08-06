@@ -6,8 +6,8 @@
 
 // Code for a shared AXI RAMs
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 16
-#define TILE_FACTOR_LOG2 4
+#define TILE_FACTOR 4
+#define TILE_FACTOR_LOG2 2
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define NUM_Y_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4

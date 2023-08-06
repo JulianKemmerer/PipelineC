@@ -15,14 +15,14 @@ void inst_name() \
 
 // Pipeline version includes IO regs for now...
 #define GLOBAL_PIPELINE_INST(inst_name, out_type, func_name, in_type) \
-in_type inst_name##_in_reg_func(in_type i) \
+in_type PPCAT(inst_name,_in_reg_func)(in_type i) \
 { \
   static in_type in_reg; \
   in_type rv = in_reg; \
   in_reg = i; \
   return rv; \
 } \
-out_type inst_name##_out_reg_func(out_type o) \
+out_type PPCAT(inst_name,_out_reg_func)(out_type o) \
 { \
   static out_type out_reg; \
   out_type rv = out_reg; \
@@ -36,37 +36,37 @@ out_type inst_name##_out; \
 MAIN(inst_name) \
 void inst_name() \
 { \
-  in_type i = inst_name##_in_reg_func(inst_name##_in); \
+  in_type i = PPCAT(inst_name,_in_reg_func)(inst_name##_in); \
   out_type o = func_name(i); \
-  inst_name##_out = inst_name##_out_reg_func(o); \
+  inst_name##_out = PPCAT(inst_name,_out_reg_func)(o); \
 }
 
 
 // Pipeline version with id and valid
 #define GLOBAL_PIPELINE_INST_W_VALID_ID(inst_name, out_type, func_name, in_type) \
-typedef struct inst_name##_in_reg_t{ \
+typedef struct PPCAT(inst_name,_in_reg_t){ \
   in_type data; \
   uint8_t id; \
   uint1_t valid; \
-}inst_name##_in_reg_t; \
-inst_name##_in_reg_t inst_name##_in_reg_func(in_type data, uint8_t id, uint1_t valid) \
+}PPCAT(inst_name,_in_reg_t); \
+PPCAT(inst_name,_in_reg_t) PPCAT(inst_name,_in_reg_func)(in_type data, uint8_t id, uint1_t valid) \
 { \
-  static inst_name##_in_reg_t the_reg; \
-  inst_name##_in_reg_t rv = the_reg; \
+  static PPCAT(inst_name,_in_reg_t) the_reg; \
+  PPCAT(inst_name,_in_reg_t) rv = the_reg; \
   the_reg.data = data; \
   the_reg.id = id; \
   the_reg.valid = valid; \
   return rv; \
 } \
-typedef struct inst_name##_out_reg_t{ \
+typedef struct PPCAT(inst_name,_out_reg_t){ \
   out_type data; \
   uint8_t id; \
   uint1_t valid; \
-}inst_name##_out_reg_t; \
-inst_name##_out_reg_t inst_name##_out_reg_func(out_type data, uint8_t id, uint1_t valid) \
+}PPCAT(inst_name,_out_reg_t); \
+PPCAT(inst_name,_out_reg_t) PPCAT(inst_name,_out_reg_func)(out_type data, uint8_t id, uint1_t valid) \
 { \
-  static inst_name##_out_reg_t the_reg; \
-  inst_name##_out_reg_t rv = the_reg; \
+  static PPCAT(inst_name,_out_reg_t) the_reg; \
+  PPCAT(inst_name,_out_reg_t) rv = the_reg; \
   the_reg.data = data; \
   the_reg.id = id; \
   the_reg.valid = valid; \
@@ -82,13 +82,13 @@ uint1_t inst_name##_out_valid; \
 MAIN(inst_name) \
 void inst_name() \
 { \
-  inst_name##_in_reg_t i = inst_name##_in_reg_func( \
+  PPCAT(inst_name,_in_reg_t) i = PPCAT(inst_name,_in_reg_func)( \
     inst_name##_in, \
     inst_name##_in_id, \
     inst_name##_in_valid \
   ); \
   out_type d = func_name(i.data); \
-  inst_name##_out_reg_t o = inst_name##_out_reg_func( \
+  PPCAT(inst_name,_out_reg_t) o = PPCAT(inst_name,_out_reg_func)( \
     d, \
     i.id,  \
     i.valid \
@@ -101,49 +101,49 @@ void inst_name() \
 
 // Pipeline with id and valid that includes ONE HOT mux fan-in and fan-out
 #define GLOBAL_PIPELINE_INST_W_ARB(inst_name, out_type, func_name, in_type, NUM_HOSTS) \
-typedef struct inst_name##_in_reg_t{ \
+typedef struct PPCAT(inst_name,_in_reg_t){ \
   in_type datas[NUM_HOSTS]; \
   uint8_t ids[NUM_HOSTS]; \
   uint1_t valids[NUM_HOSTS]; \
-}inst_name##_in_reg_t; \
-inst_name##_in_reg_t inst_name##_in_reg_func(in_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
+}PPCAT(inst_name,_in_reg_t); \
+PPCAT(inst_name,_in_reg_t) PPCAT(inst_name,_in_reg_func)(in_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
 { \
-  static inst_name##_in_reg_t the_reg; \
-  inst_name##_in_reg_t rv = the_reg; \
+  static PPCAT(inst_name,_in_reg_t) the_reg; \
+  PPCAT(inst_name,_in_reg_t) rv = the_reg; \
   the_reg.datas = datas; \
   the_reg.ids = ids; \
   the_reg.valids = valids; \
   return rv; \
 } \
-typedef struct inst_name##_out_reg_t{ \
+typedef struct PPCAT(inst_name,_out_reg_t){ \
   out_type datas[NUM_HOSTS]; \
   uint8_t ids[NUM_HOSTS]; \
   uint1_t valids[NUM_HOSTS]; \
-}inst_name##_out_reg_t; \
-inst_name##_out_reg_t inst_name##_out_reg_func(out_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
+}PPCAT(inst_name,_out_reg_t); \
+PPCAT(inst_name,_out_reg_t) PPCAT(inst_name,_out_reg_func)(out_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
 { \
-  static inst_name##_out_reg_t the_reg; \
-  inst_name##_out_reg_t rv = the_reg; \
+  static PPCAT(inst_name,_out_reg_t) the_reg; \
+  PPCAT(inst_name,_out_reg_t) rv = the_reg; \
   the_reg.datas = datas; \
   the_reg.ids = ids; \
   the_reg.valids = valids; \
   return rv; \
 } \
 /* Global wires connected to instance */ \
-in_type inst_name##_ins[NUM_HOSTS]; \
-uint8_t inst_name##_in_ids[NUM_HOSTS]; \
-uint1_t inst_name##_in_valids[NUM_HOSTS]; \
-out_type inst_name##_outs[NUM_HOSTS]; \
-uint8_t inst_name##_out_ids[NUM_HOSTS]; \
-uint1_t inst_name##_out_valids[NUM_HOSTS]; \
+in_type PPCAT(inst_name,_ins)[NUM_HOSTS]; \
+uint8_t PPCAT(inst_name,_in_ids)[NUM_HOSTS]; \
+uint1_t PPCAT(inst_name,_in_valids)[NUM_HOSTS]; \
+out_type PPCAT(inst_name,_outs)[NUM_HOSTS]; \
+uint8_t PPCAT(inst_name,_out_ids)[NUM_HOSTS]; \
+uint1_t PPCAT(inst_name,_out_valids)[NUM_HOSTS]; \
 MAIN(inst_name) \
 void inst_name() \
 { \
   /* IN REG*/ \
-  inst_name##_in_reg_t in_reg = inst_name##_in_reg_func( \
-    inst_name##_ins, \
-    inst_name##_in_ids, \
-    inst_name##_in_valids \
+  PPCAT(inst_name,_in_reg_t) in_reg = PPCAT(inst_name,_in_reg_func)( \
+    PPCAT(inst_name,_ins), \
+    PPCAT(inst_name,_in_ids), \
+    PPCAT(inst_name,_in_valids) \
   ); \
   /*IN MUX - TODO BINARY TREE*/ \
   in_type one_hot_selected_in_data; \
@@ -164,12 +164,12 @@ void inst_name() \
     data_outs[i] = data_out; \
   } \
   /* OUT REG */ \
-  inst_name##_out_reg_t o = inst_name##_out_reg_func( \
+  PPCAT(inst_name,_out_reg_t) o = PPCAT(inst_name,_out_reg_func)( \
     data_outs, \
     in_reg.ids,  \
     in_reg.valids \
   ); \
-  inst_name##_outs = o.datas; \
-  inst_name##_out_ids = o.ids; \
-  inst_name##_out_valids = o.valids; \
+  PPCAT(inst_name,_outs) = o.datas; \
+  PPCAT(inst_name,_out_ids) = o.ids; \
+  PPCAT(inst_name,_out_valids) = o.valids; \
 }

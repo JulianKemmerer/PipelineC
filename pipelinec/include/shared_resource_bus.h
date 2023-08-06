@@ -1,5 +1,6 @@
 #include "uintN_t.h"
 #include "arrays.h"
+#include "xstr.h"
 #include "compiler.h"
 #include "clock_crossing.h"
 
@@ -38,148 +39,148 @@ typedef enum shared_res_bus_dev_arb_state_t
   read_req_data_t, read_data_resp_word_t \
 )\
 /* Wrapper struct defs until plain typedefs are supported*/ \
-typedef struct name##_write_req_data_t \
+typedef struct PPCAT(name, _write_req_data_t) \
 { \
   write_req_data_t user; \
-}name##_write_req_data_t; \
-typedef struct name##_write_data_word_t \
+}PPCAT(name, _write_req_data_t); \
+typedef struct PPCAT(name, _write_data_word_t) \
 { \
   write_data_word_t user; \
-}name##_write_data_word_t; \
-typedef struct name##_write_resp_data_t \
+}PPCAT(name, _write_data_word_t); \
+typedef struct PPCAT(name, _write_resp_data_t) \
 { \
   write_resp_data_t user; \
-}name##_write_resp_data_t; \
-typedef struct name##_read_req_data_t \
+}PPCAT(name, _write_resp_data_t); \
+typedef struct PPCAT(name, _read_req_data_t) \
 { \
   read_req_data_t user; \
-}name##_read_req_data_t; \
-typedef struct name##_read_data_resp_word_t \
+}PPCAT(name, _read_req_data_t); \
+typedef struct PPCAT(name, _read_data_resp_word_t) \
 { \
   read_data_resp_word_t user; \
-}name##_read_data_resp_word_t; \
+}PPCAT(name, _read_data_resp_word_t); \
 \
 /* Bus types*/ \
-typedef struct name##_write_req_t \
+typedef struct PPCAT(name, _write_req_t) \
 { \
-  name##_write_req_data_t data; \
+  PPCAT(name, _write_req_data_t) data; \
   id_t id; \
   uint1_t valid; \
-}name##_write_req_t; \
+}PPCAT(name, _write_req_t); \
 \
-typedef struct name##_write_burst_word_t \
+typedef struct PPCAT(name, _write_burst_word_t) \
 { \
-  name##_write_data_word_t data_word; \
+  PPCAT(name, _write_data_word_t) data_word; \
   uint1_t last; \
-} name##_write_burst_word_t; \
+} PPCAT(name, _write_burst_word_t); \
 \
-typedef struct name##_write_data_t \
+typedef struct PPCAT(name, _write_data_t) \
 { \
-  name##_write_burst_word_t burst; \
+  PPCAT(name, _write_burst_word_t) burst; \
   id_t id; /*AXI3 only*/ \
   uint1_t valid; \
-} name##_write_data_t; \
+} PPCAT(name, _write_data_t); \
 \
-typedef struct name##_write_resp_t \
+typedef struct PPCAT(name, _write_resp_t) \
 { \
-  name##_write_resp_data_t data; \
+  PPCAT(name, _write_resp_data_t) data; \
   id_t id; \
   uint1_t valid; \
-} name##_write_resp_t; \
+} PPCAT(name, _write_resp_t); \
 \
-typedef struct name##_write_host_to_dev_t \
+typedef struct PPCAT(name, _write_host_to_dev_t) \
 { \
-  name##_write_req_t req; \
-  name##_write_data_t data; \
+  PPCAT(name, _write_req_t) req; \
+  PPCAT(name, _write_data_t) data; \
   /*  Read to receive write responses*/\
   uint1_t resp_ready; \
-} name##_write_host_to_dev_t; \
+} PPCAT(name, _write_host_to_dev_t); \
 \
-typedef struct name##_write_dev_to_host_t \
+typedef struct PPCAT(name, _write_dev_to_host_t) \
 { \
-  name##_write_resp_t resp; \
+  PPCAT(name, _write_resp_t) resp; \
   /*  Ready for write request/address*/\
   uint1_t req_ready; \
 	/*  Ready for write data */\
   uint1_t data_ready; \
-} name##_write_dev_to_host_t;\
+} PPCAT(name, _write_dev_to_host_t);\
 \
-typedef struct name##_read_req_t \
+typedef struct PPCAT(name, _read_req_t) \
 { \
-  name##_read_req_data_t data; \
+  PPCAT(name, _read_req_data_t) data; \
   id_t id; \
   uint1_t valid; \
-} name##_read_req_t; \
+} PPCAT(name, _read_req_t); \
  \
-typedef struct name##_read_burst_word_t \
+typedef struct PPCAT(name, _read_burst_word_t) \
 { \
-  name##_read_data_resp_word_t data_resp; \
+  PPCAT(name, _read_data_resp_word_t) data_resp; \
   uint1_t last; \
-}name##_read_burst_word_t; \
+}PPCAT(name, _read_burst_word_t); \
  \
-typedef struct name##_read_data_t \
+typedef struct PPCAT(name, _read_data_t) \
 { \
-  name##_read_burst_word_t burst; \
+  PPCAT(name, _read_burst_word_t) burst; \
   id_t id; \
   uint1_t valid; \
-} name##_read_data_t; \
+} PPCAT(name, _read_data_t); \
  \
-typedef struct name##_read_host_to_dev_t \
+typedef struct PPCAT(name, _read_host_to_dev_t) \
 { \
-  name##_read_req_t req; \
+  PPCAT(name, _read_req_t) req; \
   /*  Ready to receive read data (bytes+resp)*/ \
   uint1_t data_ready; \
-} name##_read_host_to_dev_t; \
+} PPCAT(name, _read_host_to_dev_t); \
  \
-typedef struct name##_read_dev_to_host_t \
+typedef struct PPCAT(name, _read_dev_to_host_t) \
 { \
-  name##_read_data_t data; \
+  PPCAT(name, _read_data_t) data; \
   /*  Ready for read address*/ \
   uint1_t req_ready; \
-} name##_read_dev_to_host_t; \
+} PPCAT(name, _read_dev_to_host_t); \
  \
-typedef struct name##_host_to_dev_t \
+typedef struct PPCAT(name,_host_to_dev_t) \
 { \
   /* Write Channel*/ \
-  name##_write_host_to_dev_t write; \
+  PPCAT(name, _write_host_to_dev_t) write; \
   /* Read Channel*/ \
-  name##_read_host_to_dev_t read; \
-} name##_host_to_dev_t; \
+  PPCAT(name, _read_host_to_dev_t) read; \
+} PPCAT(name,_host_to_dev_t); \
  \
-typedef struct name##_dev_to_host_t \
+typedef struct PPCAT(name, _dev_to_host_t) \
 { \
   /* Write Channel*/ \
-  name##_write_dev_to_host_t write; \
+  PPCAT(name, _write_dev_to_host_t) write; \
   /* Read Channel */ \
-  name##_read_dev_to_host_t read; \
-} name##_dev_to_host_t; \
+  PPCAT(name, _read_dev_to_host_t) read; \
+} PPCAT(name, _dev_to_host_t); \
 \
-typedef struct name##_buffer_t \
+typedef struct PPCAT(name, _buffer_t) \
 { \
-  name##_write_req_t write_req; \
-  name##_read_req_t read_req; \
-  name##_read_data_t read_data; \
-  name##_write_data_t write_data; \
-  name##_write_resp_t write_resp; \
-}name##_buffer_t; \
+  PPCAT(name, _write_req_t) write_req; \
+  PPCAT(name, _read_req_t) read_req; \
+  PPCAT(name, _read_data_t) read_data; \
+  PPCAT(name, _write_data_t) write_data; \
+  PPCAT(name, _write_resp_t) write_resp; \
+}PPCAT(name, _buffer_t); \
  \
 /* Write has two channels to begin request: address and data */ \
-/* Helper func to write one name##_write_data_word_t requires that inputs are valid/held constant*/ \
+/* Helper func to write one PPCAT(name, _write_data_word_t) requires that inputs are valid/held constant*/ \
 /* until data phase done (ready_for_inputs asserted)*/ \
-typedef struct name##_write_start_logic_outputs_t \
+typedef struct PPCAT(name, _write_start_logic_outputs_t) \
 { \
-  name##_write_host_to_dev_t to_dev; \
+  PPCAT(name, _write_host_to_dev_t) to_dev; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
-}name##_write_start_logic_outputs_t; \
-name##_write_start_logic_outputs_t name##_write_start_logic( \
+}PPCAT(name, _write_start_logic_outputs_t); \
+PPCAT(name, _write_start_logic_outputs_t) PPCAT(name, _write_start_logic)( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
   uint1_t ready_for_outputs,  \
-  name##_write_dev_to_host_t from_dev \
+  PPCAT(name, _write_dev_to_host_t) from_dev \
 ){ \
   static shared_res_bus_write_state_t state; \
-  name##_write_start_logic_outputs_t o; \
+  PPCAT(name, _write_start_logic_outputs_t) o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for write address first*/ \
@@ -215,17 +216,17 @@ name##_write_start_logic_outputs_t name##_write_start_logic( \
   } \
   return o; \
 } \
-typedef struct name##_write_finish_logic_outputs_t \
+typedef struct PPCAT(name, _write_finish_logic_outputs_t) \
 { \
-  name##_write_host_to_dev_t to_dev; \
+  PPCAT(name, _write_host_to_dev_t) to_dev; \
   write_resp_data_t resp; \
   uint1_t done; \
-}name##_write_finish_logic_outputs_t; \
-name##_write_finish_logic_outputs_t name##_write_finish_logic( \
+}PPCAT(name, _write_finish_logic_outputs_t); \
+PPCAT(name, _write_finish_logic_outputs_t) PPCAT(name, _write_finish_logic)( \
   uint1_t ready_for_outputs,  \
-  name##_write_dev_to_host_t from_dev \
+  PPCAT(name, _write_dev_to_host_t) from_dev \
 ){ \
-  name##_write_finish_logic_outputs_t o; \
+  PPCAT(name, _write_finish_logic_outputs_t) o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
@@ -243,21 +244,21 @@ name##_write_finish_logic_outputs_t name##_write_finish_logic( \
   return o; \
 } \
 /* TODO make write_logic use write_start_logic and write_finish_logic*/ \
-typedef struct name##_write_logic_outputs_t \
+typedef struct PPCAT(name, _write_logic_outputs_t) \
 { \
-  name##_write_host_to_dev_t to_dev; \
+  PPCAT(name, _write_host_to_dev_t) to_dev; \
   write_resp_data_t resp; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
-}name##_write_logic_outputs_t; \
-name##_write_logic_outputs_t name##_write_logic( \
+}PPCAT(name, _write_logic_outputs_t); \
+PPCAT(name, _write_logic_outputs_t) PPCAT(name, _write_logic)( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
   uint1_t ready_for_outputs,  \
-  name##_write_dev_to_host_t from_dev \
+  PPCAT(name, _write_dev_to_host_t) from_dev \
 ){ \
   static shared_res_bus_write_state_t state; \
-  name##_write_logic_outputs_t o; \
+  PPCAT(name, _write_logic_outputs_t) o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for write address first*/ \
@@ -305,19 +306,19 @@ name##_write_logic_outputs_t name##_write_logic( \
   return o; \
 } \
  \
-/* Read of one name##_read_data_t helper func is slightly simpler than write*/ \
-typedef struct name##_read_start_logic_outputs_t \
+/* Read of one PPCAT(name, _read_data_t) helper func is slightly simpler than write*/ \
+typedef struct PPCAT(name, _read_start_logic_outputs_t) \
 { \
-  name##_read_req_t req; \
+  PPCAT(name, _read_req_t) req; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
-}name##_read_start_logic_outputs_t; \
-name##_read_start_logic_outputs_t name##_read_start_logic( \
+}PPCAT(name, _read_start_logic_outputs_t); \
+PPCAT(name, _read_start_logic_outputs_t) PPCAT(name, _read_start_logic)( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
   uint1_t req_ready \
 ){ \
-  name##_read_start_logic_outputs_t o; \
+  PPCAT(name, _read_start_logic_outputs_t) o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
@@ -334,17 +335,17 @@ name##_read_start_logic_outputs_t name##_read_start_logic( \
   }\
   return o; \
 } \
-typedef struct name##_read_finish_logic_outputs_t \
+typedef struct PPCAT(name, _read_finish_logic_outputs_t) \
 { \
   uint1_t data_ready; \
   read_data_resp_word_t data; \
   uint1_t done; \
-}name##_read_finish_logic_outputs_t; \
-name##_read_finish_logic_outputs_t name##_read_finish_logic( \
+}PPCAT(name, _read_finish_logic_outputs_t); \
+PPCAT(name, _read_finish_logic_outputs_t) PPCAT(name, _read_finish_logic)( \
   uint1_t ready_for_outputs, \
-  name##_read_data_t data \
+  PPCAT(name, _read_data_t) data \
 ){ \
-  name##_read_finish_logic_outputs_t o; \
+  PPCAT(name, _read_finish_logic_outputs_t) o; \
   /* Wait for this function to be ready for output*/ \
   if(ready_for_outputs) \
   { \
@@ -365,20 +366,20 @@ name##_read_finish_logic_outputs_t name##_read_finish_logic( \
   return o; \
 } \
 /* TODO make read_logic use read_start_logic and read_finish_logic*/ \
-typedef struct name##_read_logic_outputs_t \
+typedef struct PPCAT(name, _read_logic_outputs_t) \
 { \
-  name##_read_host_to_dev_t to_dev; \
+  PPCAT(name, _read_host_to_dev_t) to_dev; \
   read_data_resp_word_t data; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
-}name##_read_logic_outputs_t; \
-name##_read_logic_outputs_t name##_read_logic( \
+}PPCAT(name, _read_logic_outputs_t); \
+PPCAT(name, _read_logic_outputs_t) PPCAT(name, _read_logic)( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
-  name##_read_dev_to_host_t from_dev \
+  PPCAT(name, _read_dev_to_host_t) from_dev \
 ){ \
   static shared_res_bus_read_state_t state; \
-  name##_read_logic_outputs_t o; \
+  PPCAT(name, _read_logic_outputs_t) o; \
   if(state==REQ_STATE) \
   { \
     /* Wait device to be ready for request inputs*/ \
@@ -418,9 +419,9 @@ name##_read_logic_outputs_t name##_read_logic( \
 } \
 /* ^TODO: condsider making a combined single read_write_logic?*/ \
  \
-name##_host_to_dev_t name##_HOST_TO_DEV_NULL; \
-name##_read_host_to_dev_t name##_READ_HOST_TO_DEV_NULL; \
-name##_write_host_to_dev_t name##_WRITE_HOST_TO_DEV_NULL;
+PPCAT(name, _host_to_dev_t) PPCAT(name, _HOST_TO_DEV_NULL); \
+PPCAT(name, _read_host_to_dev_t) PPCAT(name, _READ_HOST_TO_DEV_NULL); \
+PPCAT(name, _write_host_to_dev_t) PPCAT(name, _WRITE_HOST_TO_DEV_NULL);
 
 #define SHARED_BUS_READ_START_FINISH_DECL(\
 type, \
@@ -431,14 +432,14 @@ dev_to_host_wire_on_host_clk_read_req_ready, \
 dev_to_host_wire_on_host_clk_read_data, \
 host_to_dev_wire_on_host_clk_read_data_ready \
 ) \
-void name##_read_start(read_req_data_t req) \
+void PPCAT(name, _read_start)(read_req_data_t req) \
 { \
   uint1_t done = 0; \
   host_to_dev_wire_on_host_clk_read_req.valid = 0; \
   do \
   { \
-    type##_read_start_logic_outputs_t read_logic_outputs \
-      = type##_read_start_logic(req, 1, dev_to_host_wire_on_host_clk_read_req_ready); \
+    PPCAT(type, _read_start_logic_outputs_t) read_logic_outputs \
+      = PPCAT(type, _read_start_logic)(req, 1, dev_to_host_wire_on_host_clk_read_req_ready); \
     host_to_dev_wire_on_host_clk_read_req = read_logic_outputs.req; \
     done = read_logic_outputs.done; \
     __clk(); \
@@ -446,15 +447,15 @@ void name##_read_start(read_req_data_t req) \
   while(!done); \
   host_to_dev_wire_on_host_clk_read_req.valid = 0; \
 } \
-read_data_resp_word_t name##_read_finish() \
+read_data_resp_word_t PPCAT(name, _read_finish)() \
 { \
   read_data_resp_word_t rv; \
   uint1_t done = 0; \
   host_to_dev_wire_on_host_clk_read_data_ready = 0; \
   do \
   { \
-    type##_read_finish_logic_outputs_t read_logic_outputs \
-      = type##_read_finish_logic(1, dev_to_host_wire_on_host_clk_read_data); \
+    PPCAT(type, _read_finish_logic_outputs_t) read_logic_outputs \
+      = PPCAT(type, _read_finish_logic)(1, dev_to_host_wire_on_host_clk_read_data); \
     host_to_dev_wire_on_host_clk_read_data_ready = read_logic_outputs.data_ready; \
     done = read_logic_outputs.done; \
     rv = read_logic_outputs.data; \
@@ -464,15 +465,15 @@ read_data_resp_word_t name##_read_finish() \
   host_to_dev_wire_on_host_clk_read_data_ready = 0; \
   return rv; \
 } \
-typedef struct name##_read_finish_nonblocking_t{ \
+typedef struct PPCAT(name, _read_finish_nonblocking_t){ \
   read_data_resp_word_t data; \
   uint1_t valid; \
-}name##_read_finish_nonblocking_t; \
-name##_read_finish_nonblocking_t name##_read_finish_nonblocking() \
+}PPCAT(name, _read_finish_nonblocking_t); \
+PPCAT(name, _read_finish_nonblocking_t) PPCAT(name, _read_finish_nonblocking)() \
 { \
-  name##_read_finish_nonblocking_t rv; \
-  type##_read_finish_logic_outputs_t read_logic_outputs \
-    = type##_read_finish_logic(1, dev_to_host_wire_on_host_clk_read_data); \
+  PPCAT(name, _read_finish_nonblocking_t) rv; \
+  PPCAT(type, _read_finish_logic_outputs_t) read_logic_outputs \
+    = PPCAT(type, _read_finish_logic)(1, dev_to_host_wire_on_host_clk_read_data); \
   host_to_dev_wire_on_host_clk_read_data_ready = read_logic_outputs.data_ready; \
   rv.data = read_logic_outputs.data; \
   rv.valid = read_logic_outputs.done; \
@@ -489,98 +490,98 @@ read_req_data_t, read_data_resp_word_t, \
 name, NUM_HOST_PORTS, NUM_DEV_PORTS \
 ) \
 /* Global wires*/ \
-type##_host_to_dev_t name##_host_to_dev_wire_on_host_clk; \
-type##_dev_to_host_t name##_dev_to_host_wire_on_host_clk; \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wire_on_host_clk); \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wire_on_host_clk); \
 /* Wires are used by N thread instances trying to do reads and writes at same time*/ \
 /* Resolve multiple drivers with INST_ARRAY arrays of wires*/ \
-type##_host_to_dev_t name##_host_to_dev_wires_on_host_clk[NUM_HOST_PORTS]; \
-PRAGMA_MESSAGE(INST_ARRAY name##_host_to_dev_wire_on_host_clk name##_host_to_dev_wires_on_host_clk) \
-type##_dev_to_host_t name##_dev_to_host_wires_on_host_clk[NUM_HOST_PORTS]; \
-PRAGMA_MESSAGE(INST_ARRAY name##_dev_to_host_wire_on_host_clk name##_dev_to_host_wires_on_host_clk) \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_host_clk)[NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _host_to_dev_wire_on_host_clk) PPCAT(name, _host_to_dev_wires_on_host_clk)) \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_host_clk)[NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _dev_to_host_wire_on_host_clk) PPCAT(name, _dev_to_host_wires_on_host_clk)) \
 /* Only need/want INST_ARRAY on host clock since multiple threads*/ \
 /* Dev side needs just plain array use to wire to ports and such*/ \
-type##_host_to_dev_t name##_host_to_dev_wires_on_dev_clk[NUM_HOST_PORTS]; \
-type##_dev_to_host_t name##_dev_to_host_wires_on_dev_clk[NUM_HOST_PORTS]; \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_dev_clk)[NUM_HOST_PORTS]; \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_dev_clk)[NUM_HOST_PORTS]; \
  \
 /* FSM style funcs to do reads and writes*/ \
 SHARED_BUS_READ_START_FINISH_DECL(\
 type, \
 read_req_data_t, read_data_resp_word_t, \
 name, \
-name##_host_to_dev_wire_on_host_clk.read.req, \
-name##_dev_to_host_wire_on_host_clk.read.req_ready, \
-name##_dev_to_host_wire_on_host_clk.read.data, \
-name##_host_to_dev_wire_on_host_clk.read.data_ready \
+PPCAT(name, _host_to_dev_wire_on_host_clk).read.req, \
+PPCAT(name, _dev_to_host_wire_on_host_clk).read.req_ready, \
+PPCAT(name, _dev_to_host_wire_on_host_clk).read.data, \
+PPCAT(name, _host_to_dev_wire_on_host_clk).read.data_ready \
 ) \
-read_data_resp_word_t name##_read(read_req_data_t req) \
+read_data_resp_word_t PPCAT(name, _read)(read_req_data_t req) \
 { \
   read_data_resp_word_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk.read = type##_READ_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
   do \
   { \
-    type##_read_logic_outputs_t read_logic_outputs \
-      = type##_read_logic(req, 1, name##_dev_to_host_wire_on_host_clk.read); \
-    name##_host_to_dev_wire_on_host_clk.read = read_logic_outputs.to_dev; \
+    PPCAT(type, _read_logic_outputs_t) read_logic_outputs \
+      = PPCAT(type, _read_logic)(req, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).read); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).read = read_logic_outputs.to_dev; \
     done = read_logic_outputs.done; \
     rv = read_logic_outputs.data; \
     __clk(); \
   } \
   while(!done); \
-  name##_host_to_dev_wire_on_host_clk.read = type##_READ_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
   return rv; \
 } \
 \
-void name##_write_start(write_req_data_t req, write_data_word_t data) \
+void PPCAT(name, _write_start)(write_req_data_t req, write_data_word_t data) \
 { \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   do \
   { \
-    type##_write_start_logic_outputs_t write_logic_outputs \
-      = type##_write_start_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk.write); \
-    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
+    PPCAT(type, _write_start_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_start_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     __clk(); \
   } \
   while(!done); \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   return rv; \
 } \
-write_resp_data_t name##_write_finish() \
+write_resp_data_t PPCAT(name, _write_finish)() \
 { \
   write_resp_data_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   do \
   { \
-    type##_write_finish_logic_outputs_t write_logic_outputs \
-      = type##_write_finish_logic(1, name##_dev_to_host_wire_on_host_clk.write); \
-    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
+    PPCAT(type, _write_finish_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_finish_logic)(1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     rv = write_logic_outputs.resp; \
     __clk(); \
   } \
   while(!done); \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   return rv; \
 } \
-write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
+write_resp_data_t PPCAT(name, _write)(write_req_data_t req, write_data_word_t data) \
 { \
   write_resp_data_t rv; \
   uint1_t done = 0; \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   do \
   { \
-    type##_write_logic_outputs_t write_logic_outputs \
-      = type##_write_logic(req, data, 1, name##_dev_to_host_wire_on_host_clk.write); \
-    name##_host_to_dev_wire_on_host_clk.write = write_logic_outputs.to_dev; \
+    PPCAT(type, _write_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
     done = write_logic_outputs.done; \
     rv = write_logic_outputs.resp; \
     __clk(); \
   } \
   while(!done); \
-  name##_host_to_dev_wire_on_host_clk.write = type##_WRITE_HOST_TO_DEV_NULL; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
   return rv; \
 } \
  \
@@ -588,7 +589,7 @@ write_resp_data_t name##_write(write_req_data_t req, write_data_word_t data) \
 /* ^ TODO maybe implement full read/write using start and finish?*/ \
  \
 /* Increment with wrap around*/ \
-uint8_t name##_host_port_inc(uint8_t selected_host_port) \
+uint8_t PPCAT(name, _host_port_inc)(uint8_t selected_host_port) \
 { \
   uint8_t rv = selected_host_port + 1; \
   if(selected_host_port >= (NUM_HOST_PORTS-1)) \
@@ -599,16 +600,16 @@ uint8_t name##_host_port_inc(uint8_t selected_host_port) \
 } \
  \
 /* Pick next shared bus to arb based on what other ports have chosen*/ \
-uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
+uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
 { \
-  uint8_t rv = name##_host_port_inc(selected_host_port); \
+  uint8_t rv = PPCAT(name, _host_port_inc)(selected_host_port); \
   int32_t i; \
   /* Backwards loop because 'next' is like a shift, etc*/ \
   for (i = (NUM_DEV_PORTS-1); i >=0; i-=1) \
   { \
     if(next_dev_to_selected_host[i]==rv) \
     { \
-      rv = name##_host_port_inc(rv); \
+      rv = PPCAT(name, _host_port_inc)(rv); \
     } \
   } \
   return rv; \
@@ -616,16 +617,16 @@ uint8_t name##_next_host_sel(uint8_t selected_host_port, uint8_t next_dev_to_sel
  \
 /* SIMPLE ROUND ROBIN, state index can jump (loop back to state, up to only NUM_DEV_PORTS places)*/ \
 /* one xfer per host port at a time, does NOT use host ID, DOES use dev IDs*/ \
-/* TODO name##_dev_arb DOES NOT NEED read write separation like frame buf multiplexing needed*/ \
+/* TODO PPCAT(name, _dev_arb) DOES NOT NEED read write separation like frame buf multiplexing needed*/ \
 /*    just keep req,resp state - now duplicated? for read+write?*/ \
 /*    helps async start complete from one channel, mixing reads and writes*/ \
-typedef struct name##_dev_arb_t{ \
-  type##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
-  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
-}name##_dev_arb_t; \
-name##_dev_arb_t name##_dev_arb( \
-  type##_dev_to_host_t from_devs[NUM_DEV_PORTS], \
-  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+typedef struct PPCAT(name, _dev_arb_t){ \
+  PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
+  PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
+}PPCAT(name, _dev_arb_t); \
+PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb)( \
+  PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
+  PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
 ) \
 { \
   /* 5 channels between each host and device*/ \
@@ -637,14 +638,14 @@ name##_dev_arb_t name##_dev_arb( \
   /*  Write data (data bytes)*/ \
   /*  Write resp (err code)*/ \
   /* Each channel has a valid+ready handshake buffer*/ \
-  static type##_write_req_t write_reqs[NUM_HOST_PORTS]; \
-  static type##_read_req_t read_reqs[NUM_HOST_PORTS]; \
-  static type##_read_data_t read_datas[NUM_HOST_PORTS]; \
-  static type##_write_data_t write_datas[NUM_HOST_PORTS]; \
-  static type##_write_resp_t write_resps[NUM_HOST_PORTS]; \
+  static PPCAT(type, _write_req_t) write_reqs[NUM_HOST_PORTS]; \
+  static PPCAT(type, _read_req_t) read_reqs[NUM_HOST_PORTS]; \
+  static PPCAT(type, _read_data_t) read_datas[NUM_HOST_PORTS]; \
+  static PPCAT(type, _write_data_t) write_datas[NUM_HOST_PORTS]; \
+  static PPCAT(type, _write_resp_t) write_resps[NUM_HOST_PORTS]; \
  \
   /* Output signal, static since o.to_frame_buf written to over multiple cycles*/ \
-  static name##_dev_arb_t o; \
+  static PPCAT(name, _dev_arb_t) o; \
  \
   uint32_t i; \
   for (i = 0; i < NUM_HOST_PORTS; i+=1) \
@@ -704,10 +705,10 @@ name##_dev_arb_t name##_dev_arb( \
   /* Default state doesnt change*/ \
   uint8_t next_dev_to_selected_host[NUM_DEV_PORTS] = dev_to_selected_host; \
   shared_res_bus_dev_arb_state_t next_host_port_arb_states[NUM_HOST_PORTS] = host_port_arb_states; \
-  type##_read_req_t next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
-  type##_write_req_t next_write_reqs[NUM_HOST_PORTS] = write_reqs; \
-  type##_read_req_t next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
-  type##_write_data_t next_write_datas[NUM_HOST_PORTS] = write_datas; \
+  PPCAT(type, _read_req_t) next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
+  PPCAT(type, _write_req_t) next_write_reqs[NUM_HOST_PORTS] = write_reqs; \
+  PPCAT(type, _read_req_t) next_read_reqs[NUM_HOST_PORTS] = read_reqs; \
+  PPCAT(type, _write_data_t) next_write_datas[NUM_HOST_PORTS] = write_datas; \
   uint1_t next_host_port_read_has_priority[NUM_HOST_PORTS] = host_port_read_has_priority; \
  \
   /* Loop that finds input req/ wr data for each dev port*/ \
@@ -715,9 +716,9 @@ name##_dev_arb_t name##_dev_arb( \
   { \
     uint8_t selected_host = dev_to_selected_host[i]; \
     shared_res_bus_dev_arb_state_t state = host_port_arb_states[selected_host]; \
-    type##_read_req_t read_req = read_reqs[selected_host]; \
-    type##_write_req_t write_req = write_reqs[selected_host]; \
-    type##_write_data_t write_data = write_datas[selected_host]; \
+    PPCAT(type, _read_req_t) read_req = read_reqs[selected_host]; \
+    PPCAT(type, _write_req_t) write_req = write_reqs[selected_host]; \
+    PPCAT(type, _write_data_t) write_data = write_datas[selected_host]; \
     uint1_t read_priority = host_port_read_has_priority[selected_host]; \
     /* Try to start xfer for the current/round robin selected host dev port*/ \
     if(state==REQ) \
@@ -762,7 +763,7 @@ name##_dev_arb_t name##_dev_arb( \
           /* Waiting for output read data next*/ \
           state = RD_DATA; \
           /* Done with shared bus port inputs, move arb on*/ \
-          next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
+          next_dev_to_selected_host[i] = PPCAT(name, _next_host_sel)(selected_host, next_dev_to_selected_host); \
         } \
       } \
       else if(do_write) \
@@ -781,7 +782,7 @@ name##_dev_arb_t name##_dev_arb( \
       else \
       { \
         /* No read or write req from this port, move on*/ \
-        next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
+        next_dev_to_selected_host[i] = PPCAT(name, _next_host_sel)(selected_host, next_dev_to_selected_host); \
       } \
     } \
     /* TODO pass through write req and data*/ \
@@ -797,7 +798,7 @@ name##_dev_arb_t name##_dev_arb( \
           next_write_datas[selected_host].valid = 0; /* Done w data now*/ \
           state = WR_RESP_STATE; \
           /* Done with shared bus port inputs, move arb on*/ \
-          next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
+          next_dev_to_selected_host[i] = PPCAT(name, _next_host_sel)(selected_host, next_dev_to_selected_host); \
         } \
       } \
     } \
@@ -883,13 +884,13 @@ name##_dev_arb_t name##_dev_arb( \
   return o; \
 }\
 /* Multiple in flight 'pipelined' round robin arb*/ \
-typedef struct name##_dev_arb_t{ \
-  type##_host_to_dev_t to_devs[NUM_DEV_PORTS]; \
-  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
-}name##_dev_arb_t; \
-name##_dev_arb_t name##_dev_arb_pipelined( \
-  type##_dev_to_host_t from_devs[NUM_DEV_PORTS], \
-  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+typedef struct PPCAT(name, _dev_arb_t){ \
+  PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
+  PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
+}PPCAT(name, _dev_arb_t); \
+PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb_pipelined)( \
+  PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
+  PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
 ) \
 { \
   /* 5 channels between each host and device*/ \
@@ -903,7 +904,7 @@ name##_dev_arb_t name##_dev_arb_pipelined( \
   /* Each channel has a valid+ready handshake */ \
  \
   /* Output signal*/ \
-  name##_dev_arb_t o; /*Default all zeros single cycle pulses*/ \
+  PPCAT(name, _dev_arb_t) o; /*Default all zeros single cycle pulses*/ \
    \
   /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
   uint32_t i; \
@@ -940,7 +941,7 @@ name##_dev_arb_t name##_dev_arb_pipelined( \
     o.to_hosts[selected_host].write.req_ready = from_devs[i].write.req_ready; \
     o.to_hosts[selected_host].write.data_ready = from_devs[i].write.data_ready; \
     /* Done with host inputs, move arb on*/ \
-    next_dev_to_selected_host[i] = name##_next_host_sel(selected_host, next_dev_to_selected_host); \
+    next_dev_to_selected_host[i] = PPCAT(name, _next_host_sel)(selected_host, next_dev_to_selected_host); \
   } \
  \
   /* DEV WAS HERE*/ \
@@ -973,13 +974,13 @@ name##_dev_arb_t name##_dev_arb_pipelined( \
 /*'pipelined' round robin */ \
 /*connection (not arb, no muxing)*/ \
 /* ONE HOT STATE! */ \
-typedef struct name##_dev_multi_host_connect_t{ \
-  type##_host_to_dev_t to_devs[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
-  type##_dev_to_host_t to_hosts[NUM_HOST_PORTS]; \
-}name##_dev_multi_host_connect_t; \
-name##_dev_multi_host_connect_t name##_dev_multi_host_connect( \
-  type##_dev_to_host_t from_devs[NUM_DEV_PORTS][NUM_HOST_PORTS], \
-  type##_host_to_dev_t from_hosts[NUM_HOST_PORTS] \
+typedef struct PPCAT(name, _dev_multi_host_connect_t){ \
+  PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+  PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
+}PPCAT(name, _dev_multi_host_connect_t); \
+PPCAT(name, _dev_multi_host_connect_t) PPCAT(name, _dev_multi_host_connect)( \
+  PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS][NUM_HOST_PORTS], \
+  PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
 ) \
 { \
   /* 5 channels between each host and device*/ \
@@ -993,7 +994,7 @@ name##_dev_multi_host_connect_t name##_dev_multi_host_connect( \
   /* Each channel has a valid+ready handshake */ \
  \
   /* Output signal*/ \
-  name##_dev_multi_host_connect_t o; /*Default all zeros single cycle pulses*/ \
+  PPCAT(name, _dev_multi_host_connect_t) o; /*Default all zeros single cycle pulses*/ \
    \
   /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
   uint32_t i, j; \
@@ -1069,193 +1070,195 @@ name##_dev_multi_host_connect_t name##_dev_multi_host_connect( \
 
 // Instantiate the arb module with to-from wires for user
 #define SHARED_BUS_ARB(type, bus_name, NUM_DEV_PORTS) \
-type##_dev_to_host_t bus_name##_to_host[NUM_DEV_PORTS]; \
-PRAGMA_MESSAGE(FEEDBACK bus_name##_to_host) /* Value from last assignment*/ \
-bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb(bus_name##_to_host, bus_name##_host_to_dev_wires_on_dev_clk); \
-type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
-bus_name##_from_host = bus_name##_arb.to_devs; \
-bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
+PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_host)[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name, _to_host)) /* Value from last assignment*/ \
+PPCAT(bus_name, _dev_arb_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _dev_arb)(PPCAT(bus_name, _to_host), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
+PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_host)[NUM_DEV_PORTS]; \
+PPCAT(bus_name, _from_host) = PPCAT(bus_name, _arb).to_devs; \
+PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
 //
 #define SHARED_BUS_ARB_PIPELINED(type, bus_name, NUM_DEV_PORTS) \
-type##_dev_to_host_t bus_name##_to_host[NUM_DEV_PORTS]; \
-PRAGMA_MESSAGE(FEEDBACK bus_name##_to_host) /* Value from last assignment*/ \
-bus_name##_dev_arb_t bus_name##_arb = bus_name##_dev_arb_pipelined(bus_name##_to_host, bus_name##_host_to_dev_wires_on_dev_clk); \
-type##_host_to_dev_t bus_name##_from_host[NUM_DEV_PORTS]; \
-bus_name##_from_host = bus_name##_arb.to_devs; \
-bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_arb.to_hosts;
+PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_host)[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name, _to_host)) /* Value from last assignment*/ \
+PPCAT(bus_name, _dev_arb_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _dev_arb_pipelined)(PPCAT(bus_name, _to_host), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
+PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_host)[NUM_DEV_PORTS]; \
+PPCAT(bus_name, _from_host) = PPCAT(bus_name, _arb).to_devs; \
+PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
 //
 #define SHARED_BUS_MULTI_HOST_CONNECT(type, bus_name, NUM_HOST_PORTS, NUM_DEV_PORTS) \
-type##_dev_to_host_t bus_name##_to_hosts[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
-PRAGMA_MESSAGE(FEEDBACK bus_name##_to_hosts) /* Value from last assignment (by user)*/ \
-bus_name##_dev_multi_host_connect_t bus_name##_connect = bus_name##_dev_multi_host_connect(bus_name##_to_hosts, bus_name##_host_to_dev_wires_on_dev_clk); \
-type##_host_to_dev_t bus_name##_from_hosts[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
-bus_name##_from_hosts = bus_name##_connect.to_devs; \
-bus_name##_dev_to_host_wires_on_dev_clk = bus_name##_connect.to_hosts;
+PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_hosts)[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name,_to_hosts)) /* Value from last assignment (by user)*/ \
+PPCAT(bus_name, _dev_multi_host_connect_t) PPCAT(bus_name, _connect) = PPCAT(bus_name, _dev_multi_host_connect)(PPCAT(bus_name, _to_hosts), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
+PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_hosts)[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
+PPCAT(bus_name, _from_hosts) = PPCAT(bus_name, _connect).to_devs; \
+PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _connect).to_hosts;
 
 
 // Each channel of 5 channels host<->dev link needs async fifo
 // 3 write, 2 read
 // INST_ARRAY doesnt support async fifos
 #define SHARED_BUS_ASYNC_FIFO_DECL(type, bus_name, NUM_STR) \
-ASYNC_CLK_CROSSING(type##_write_req_data_t, bus_name##_fifo##NUM_STR##_write_req, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
-ASYNC_CLK_CROSSING(type##_write_burst_word_t, bus_name##_fifo##NUM_STR##_write_data, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
-ASYNC_CLK_CROSSING(type##_write_resp_data_t, bus_name##_fifo##NUM_STR##_write_resp, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
-ASYNC_CLK_CROSSING(type##_read_req_data_t, bus_name##_fifo##NUM_STR##_read_req, SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
-ASYNC_CLK_CROSSING(type##_read_burst_word_t, bus_name##_fifo##NUM_STR##_read_data, SHARED_RES_CLK_CROSS_FIFO_DEPTH)
+ASYNC_CLK_CROSSING(PPCAT(type, _write_req_data_t), PPCAT(bus_name,_fifo##NUM_STR##_write_req), SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(PPCAT(type, _write_burst_word_t), PPCAT(bus_name,_fifo##NUM_STR##_write_data), SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(PPCAT(type, _write_resp_data_t), PPCAT(bus_name,_fifo##NUM_STR##_write_resp), SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(PPCAT(type, _read_req_data_t), PPCAT(bus_name,_fifo##NUM_STR##_read_req), SHARED_RES_CLK_CROSS_FIFO_DEPTH) \
+ASYNC_CLK_CROSSING(PPCAT(type, _read_burst_word_t), PPCAT(bus_name,_fifo##NUM_STR##_read_data), SHARED_RES_CLK_CROSS_FIFO_DEPTH)
+
 
 #define SHARED_BUS_ASYNC_FIFO_HOST_WIRING(type, bus_name, NUM_STR)\
-/* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
-/* bus_name##_dev_to_host_wires_on_host_clk[NUM_STR] <= Read from fifo (from dev)*/ \
+/* Write into fifo (to dev) <= PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR]*/ \
+/* PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR] <= Read from fifo (from dev)*/ \
 /* FIFO is one of the channels...*/ \
 /**/ \
 /* Write request data into fifo*/ \
 /* Write request ready out of fifo*/ \
-type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
-bus_name##_fifo##NUM_STR##_write_req_write_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.data; \
-bus_name##_fifo##NUM_STR##_write_req_write_t bus_name##_fifo##NUM_STR##_write_req_write_req_write = \
-  bus_name##_fifo##NUM_STR##_write_req_WRITE_1(bus_name##_fifo##NUM_STR##_write_req_write_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.req_ready = bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready; \
+PPCAT(type, _write_req_data_t) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_req_data))[1]; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_req_data))[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.req.data; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_t)) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_req_write)) = \
+  PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_WRITE_1))(PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_req_data)), PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.req.valid); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.req_ready = PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_req_write_req_write)).ready; \
 /* Write data data into fifo*/ \
 /* Write data ready out of fifo*/ \
-type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
-bus_name##_fifo##NUM_STR##_write_data_write_data_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.burst; \
-bus_name##_fifo##NUM_STR##_write_data_write_t bus_name##_fifo##NUM_STR##_write_data_write_data_write = \
-  bus_name##_fifo##NUM_STR##_write_data_WRITE_1(bus_name##_fifo##NUM_STR##_write_data_write_data_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.data_ready = bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready; \
+PPCAT(type, _write_burst_word_t) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_data_data))[1]; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_data_data))[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.data.burst; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_t)) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_data_write)) = \
+  PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_WRITE_1))(PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_data_data)), PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.data.valid); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.data_ready = PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _write_data_write_data_write)).ready; \
 /* Write resp data out of fifo*/ \
 /* Write resp ready into fifo*/ \
-bus_name##_fifo##NUM_STR##_write_resp_read_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_read = \
-  bus_name##_fifo##NUM_STR##_write_resp_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.data[0]; \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_read_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_READ_1)(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).valid; \
 /* Read req data into fifo*/ \
 /* Read req ready out of fifo*/ \
-type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
-bus_name##_fifo##NUM_STR##_read_req_read_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.data; \
-bus_name##_fifo##NUM_STR##_read_req_write_t bus_name##_fifo##NUM_STR##_read_req_read_req_write = \
-  bus_name##_fifo##NUM_STR##_read_req_WRITE_1(bus_name##_fifo##NUM_STR##_read_req_read_req_data, bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.req_ready = bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready; \
+PPCAT(type, _read_req_data_t) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_read_req_data))[1]; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_read_req_data))[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.req.data; \
+PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_write_t)) PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_read_req_write)) = \
+  PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_WRITE_1))(PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_read_req_data)), PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.req.valid); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].read.req_ready = PPCAT(PPCAT(bus_name, _fifo), PPCAT(NUM_STR, _read_req_read_req_write)).ready; \
 /* Read data data out of fifo*/ \
 /* Read data ready into fifo*/ \
-bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data_read_data_read = \
-  bus_name##_fifo##NUM_STR##_read_data_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid;
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_READ_1)(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read).data[0]; \
+bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read).valid;
 
 
 #define SHARED_BUS_ASYNC_FIFO_HOST_WIRING_PIPELINED(type, bus_name, NUM_STR)\
 /* This version gates valid ready handshake based on limited number in flight*/ \
-static uint8_t bus_name##_fifo##NUM_STR##_write_req_in_flight; \
-uint1_t bus_name##_fifo##NUM_STR##_write_req_gate_open = \
-  bus_name##_fifo##NUM_STR##_write_req_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
-static uint8_t bus_name##_fifo##NUM_STR##_write_data_in_flight; \
-uint1_t bus_name##_fifo##NUM_STR##_write_data_gate_open = \
-  bus_name##_fifo##NUM_STR##_write_data_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
-static uint8_t bus_name##_fifo##NUM_STR##_read_req_in_flight; \
-uint1_t bus_name##_fifo##NUM_STR##_read_req_gate_open = \
-  bus_name##_fifo##NUM_STR##_read_req_in_flight < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
-/* Write into fifo (to dev) <= bus_name##_host_to_dev_wires_on_host_clk[NUM_STR]*/ \
-/* bus_name##_dev_to_host_wires_on_host_clk[NUM_STR] <= Read from fifo (from dev)*/ \
+static uint8_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_in_flight); \
+uint1_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_gate_open) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_in_flight) < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+static uint8_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_in_flight); \
+uint1_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_gate_open) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_in_flight) < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+static uint8_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_in_flight); \
+uint1_t PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_gate_open) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_in_flight) < SHARED_RES_CLK_CROSS_FIFO_DEPTH; \
+/* Write into fifo (to dev) <= PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR]*/ \
+/* PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR] <= Read from fifo (from dev)*/ \
 /* FIFO is one of the channels...*/ \
 /**/ \
 /* Write request data into fifo*/ \
 /* Write request ready out of fifo*/ \
-type##_write_req_data_t bus_name##_fifo##NUM_STR##_write_req_write_req_data[1]; \
-bus_name##_fifo##NUM_STR##_write_req_write_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.data; \
-bus_name##_fifo##NUM_STR##_write_req_write_t bus_name##_fifo##NUM_STR##_write_req_write_req_write = \
-  bus_name##_fifo##NUM_STR##_write_req_WRITE_1(bus_name##_fifo##NUM_STR##_write_req_write_req_data, \
-  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid & bus_name##_fifo##NUM_STR##_write_req_gate_open); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.req_ready = \
-  bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready & bus_name##_fifo##NUM_STR##_write_req_gate_open; \
+PPCAT(type, _write_req_data_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_data)[1]; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_data)[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.req.data; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_write) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_WRITE_1)(PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_data), \
+  PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.req.valid & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_gate_open)); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.req_ready = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_write).ready & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_gate_open); \
 /* Write req increments in flight counter */ \
-bus_name##_fifo##NUM_STR##_write_req_in_flight +=  \
-  (bus_name##_fifo##NUM_STR##_write_req_gate_open & \
-   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.req.valid & \
-   bus_name##_fifo##NUM_STR##_write_req_write_req_write.ready); \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_in_flight) +=  \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_gate_open) & \
+   PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.req.valid & \
+   PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_write_req_write).ready); \
 /* Write data data into fifo*/ \
 /* Write data ready out of fifo*/ \
-type##_write_burst_word_t bus_name##_fifo##NUM_STR##_write_data_write_data_data[1]; \
-bus_name##_fifo##NUM_STR##_write_data_write_data_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.burst; \
-bus_name##_fifo##NUM_STR##_write_data_write_t bus_name##_fifo##NUM_STR##_write_data_write_data_write = \
-  bus_name##_fifo##NUM_STR##_write_data_WRITE_1(bus_name##_fifo##NUM_STR##_write_data_write_data_data, \
-  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid & bus_name##_fifo##NUM_STR##_write_data_gate_open); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.data_ready = \
-  bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready & bus_name##_fifo##NUM_STR##_write_data_gate_open; \
+PPCAT(type, _write_burst_word_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_data)[1]; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_data)[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.data.burst; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_write) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_WRITE_1)(PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_data), \
+  PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.data.valid & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_gate_open)); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.data_ready = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_write).ready & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_gate_open); \
 /* Write data increments in flight counter */ \
-bus_name##_fifo##NUM_STR##_write_data_in_flight += \
-  (bus_name##_fifo##NUM_STR##_write_data_gate_open & \
-   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.data.valid & \
-   bus_name##_fifo##NUM_STR##_write_data_write_data_write.ready); \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_in_flight) += \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_gate_open) & \
+   PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.data.valid & \
+   PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_write_data_write).ready); \
 /* Write resp data out of fifo*/ \
 /* Write resp ready into fifo*/ \
-bus_name##_fifo##NUM_STR##_write_resp_read_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_read = \
-  bus_name##_fifo##NUM_STR##_write_resp_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.data = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.data[0]; \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].write.resp.valid = bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_read_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_READ_1)(PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.resp_ready); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.resp.data = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).data[0]; \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].write.resp.valid = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).valid; \
 /* Write resp decrements in flight counters*/ \
-bus_name##_fifo##NUM_STR##_write_req_in_flight -= \
-  (bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
-bus_name##_fifo##NUM_STR##_write_data_in_flight -= \
-  (bus_name##_fifo##NUM_STR##_write_resp_write_resp_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].write.resp_ready); \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_req_in_flight) -= \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).valid & PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.resp_ready); \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_data_in_flight) -= \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_write_resp_write_resp_read).valid & PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].write.resp_ready); \
 /* Read req data into fifo*/ \
 /* Read req ready out of fifo*/ \
-type##_read_req_data_t bus_name##_fifo##NUM_STR##_read_req_read_req_data[1]; \
-bus_name##_fifo##NUM_STR##_read_req_read_req_data[0] = bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.data; \
-bus_name##_fifo##NUM_STR##_read_req_write_t bus_name##_fifo##NUM_STR##_read_req_read_req_write = \
-  bus_name##_fifo##NUM_STR##_read_req_WRITE_1(bus_name##_fifo##NUM_STR##_read_req_read_req_data, \
-  bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid & bus_name##_fifo##NUM_STR##_read_req_gate_open); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.req_ready = \
-  bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready & bus_name##_fifo##NUM_STR##_read_req_gate_open; \
+PPCAT(type, _read_req_data_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_data)[1]; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_data)[0] = PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.req.data; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_write_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_write) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_WRITE_1)(PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_data), \
+  PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.req.valid & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_gate_open)); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].read.req_ready = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_write).ready & PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_gate_open); \
 /* Read req increments in flight counter */ \
-bus_name##_fifo##NUM_STR##_read_req_in_flight += \
-  (bus_name##_fifo##NUM_STR##_read_req_gate_open & \
-   bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.req.valid & \
-   bus_name##_fifo##NUM_STR##_read_req_read_req_write.ready); \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_in_flight) += \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_gate_open) & \
+   PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.req.valid & \
+   PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_read_req_write).ready); \
 /* Read data data out of fifo*/ \
 /* Read data ready into fifo*/ \
-bus_name##_fifo##NUM_STR##_read_data_read_t bus_name##_fifo##NUM_STR##_read_data_read_data_read = \
-  bus_name##_fifo##NUM_STR##_read_data_READ_1(bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready); \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.burst = bus_name##_fifo##NUM_STR##_read_data_read_data_read.data[0]; \
-bus_name##_dev_to_host_wires_on_host_clk[NUM_STR].read.data.valid = bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid; \
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_t) PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read) = \
+  PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_READ_1)(PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.data_ready); \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].read.data.burst = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read).data[0]; \
+PPCAT(bus_name, _dev_to_host_wires_on_host_clk)[NUM_STR].read.data.valid = PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read).valid; \
 /* Read data resp decrements in flight counter */ \
-bus_name##_fifo##NUM_STR##_read_req_in_flight -= \
-  (bus_name##_fifo##NUM_STR##_read_data_read_data_read.valid & bus_name##_host_to_dev_wires_on_host_clk[NUM_STR].read.data_ready);
+PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_req_in_flight) -= \
+  (PPCAT(PPCAT(PPCAT(bus_name,_fifo),NUM_STR),_read_data_read_data_read).valid & PPCAT(bus_name, _host_to_dev_wires_on_host_clk)[NUM_STR].read.data_ready);
 
 
-#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(type, bus_name,NUM_STR)\
-/* Write into fifo (to host) <= bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR] */ \
-/* bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR] <= Read from fifo (from host)*/ \
-/* FIFO is one of the channels...
+#define SHARED_BUS_ASYNC_FIFO_DEV_WIRING(type, bus_name, NUM_STR) \
+/* Write into fifo (to host) <= PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR] */ \
+/* PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR] <= Read from fifo (from host) */ \
+/* FIFO is one of the channels... */ \
 /**/ \
-/* Write request data out of fifo*/ \
-/* Write request ready back into fifo*/ \
-bus_name##_fifo##NUM_STR##_write_req_read_t bus_name##_fifo##NUM_STR##_write_req_write_req_read = \
-  bus_name##_fifo##NUM_STR##_write_req_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.req_ready); \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.req.data = bus_name##_fifo##NUM_STR##_write_req_write_req_read.data[0]; \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.req.valid = bus_name##_fifo##NUM_STR##_write_req_write_req_read.valid; \
-/* Write data data out of fifo*/ \
-/* Write data ready back into fifo*/ \
-bus_name##_fifo##NUM_STR##_write_data_read_t bus_name##_fifo##NUM_STR##_write_data_write_data_read =  \
-  bus_name##_fifo##NUM_STR##_write_data_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.data_ready); \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.burst = bus_name##_fifo##NUM_STR##_write_data_write_data_read.data[0]; \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.data.valid = bus_name##_fifo##NUM_STR##_write_data_write_data_read.valid; \
-/* Write resp data into fifo*/ \
-/* Write resp ready out of fifo*/ \
-type##_write_resp_data_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[1]; \
-bus_name##_fifo##NUM_STR##_write_resp_write_resp_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.data; \
-bus_name##_fifo##NUM_STR##_write_resp_write_t bus_name##_fifo##NUM_STR##_write_resp_write_resp_write = \
-  bus_name##_fifo##NUM_STR##_write_resp_WRITE_1(bus_name##_fifo##NUM_STR##_write_resp_write_resp_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].write.resp.valid); \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].write.resp_ready = bus_name##_fifo##NUM_STR##_write_resp_write_resp_write.ready; \
-/* Read req data out of fifo*/ \
-/* Read req ready back into fifo*/ \
-bus_name##_fifo##NUM_STR##_read_req_read_t bus_name##_fifo##NUM_STR##_read_req_read_req_read =  \
-  bus_name##_fifo##NUM_STR##_read_req_READ_1(bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.req_ready); \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.data = bus_name##_fifo##NUM_STR##_read_req_read_req_read.data[0]; \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.req.valid = bus_name##_fifo##NUM_STR##_read_req_read_req_read.valid; \
-/* Read data data into fifo*/ \
-/* Read data ready out of fifo*/ \
-type##_read_burst_word_t bus_name##_fifo##NUM_STR##_read_data_read_data_data[1]; \
-bus_name##_fifo##NUM_STR##_read_data_read_data_data[0] = bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.burst; \
-bus_name##_fifo##NUM_STR##_read_data_write_t bus_name##_fifo##NUM_STR##_read_data_read_data_write = \
-  bus_name##_fifo##NUM_STR##_read_data_WRITE_1(bus_name##_fifo##NUM_STR##_read_data_read_data_data, bus_name##_dev_to_host_wires_on_dev_clk[NUM_STR].read.data.valid); \
-bus_name##_host_to_dev_wires_on_dev_clk[NUM_STR].read.data_ready = bus_name##_fifo##NUM_STR##_read_data_read_data_write.ready;
+/* Write request data out of fifo */ \
+/* Write request ready back into fifo */ \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_req_read_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_req_write_req_read) = \
+  PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_req_READ_1)(PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].write.req_ready); \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].write.req.data = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_req_write_req_read).data[0]; \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].write.req.valid = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_req_write_req_read).valid; \
+/* Write data data out of fifo */ \
+/* Write data ready back into fifo */ \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_data_read_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_data_write_data_read) = \
+  PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_data_READ_1)(PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].write.data_ready); \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].write.data.burst = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_data_write_data_read).data[0]; \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].write.data.valid = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_data_write_data_read).valid; \
+/* Write resp data into fifo */ \
+/* Write resp ready out of fifo */ \
+PPCAT(type, _write_resp_data_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_resp_data)[1]; \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_resp_data)[0] = PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].write.resp.data; \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_resp_write) = \
+  PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_WRITE_1)(PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_resp_data), PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].write.resp.valid); \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].write.resp_ready = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_write_resp_write_resp_write).ready; \
+/* Read req data out of fifo */ \
+/* Read req ready back into fifo */ \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_req_read_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_req_read_req_read) = \
+  PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_req_READ_1)(PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].read.req_ready); \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].read.req.data = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_req_read_req_read).data[0]; \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].read.req.valid = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_req_read_req_read).valid; \
+/* Read data data into fifo */ \
+/* Read data ready out of fifo */ \
+PPCAT(type, _read_burst_word_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_read_data_data)[1]; \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_read_data_data)[0] = PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].read.data.burst; \
+PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_write_t) PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_read_data_write) = \
+  PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_WRITE_1)(PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_read_data_data), PPCAT(bus_name, _dev_to_host_wires_on_dev_clk)[NUM_STR].read.data.valid); \
+PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)[NUM_STR].read.data_ready = PPCAT(PPCAT(bus_name,_fifo), NUM_STR##_read_data_read_data_write).ready;
+
