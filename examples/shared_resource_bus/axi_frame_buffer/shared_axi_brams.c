@@ -1,5 +1,5 @@
 // Code for a single frame buffer
-#include "axi_dual_port_ram.c"
+#include "axi_dual_port_bram.c"
 
 // Dual frame buffers
 #define N_AXI_RAMS 2

@@ -13,7 +13,7 @@
 #define BYTES_PER_PIXEL 4
 #define BYTES_PER_PIXEL_LOG2 2
 #define AXI_RAM_DEPTH (((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)/AXI_BUS_BYTE_WIDTH)
-#include "shared_axi_rams.c"
+#include "shared_axi_brams.c"
 
 // Pixel x,y pos to pixel index
 uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)

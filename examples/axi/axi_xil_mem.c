@@ -42,7 +42,7 @@ and AXI device port...
 typedef struct app_to_xil_mem_t
 {
   axi32_host_to_dev_t axi_host_to_dev;
-  uint1_t         aresetn;
+  //UNUSED uint1_t         aresetn;
   uint1_t         sr_req          ;
   uint1_t         ref_req         ;
   uint1_t         zq_req          ;

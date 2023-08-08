@@ -1,58 +1,7 @@
 /////////////////// GENERIC AXI-like DUAL PORT RAM ///////////////////////////////////
 // Assumes (todo REQUIRE) that output response FIFOs are always ready
 // (since didnt implement flow control push back through RAM path yet)
-#include "uintN_t.h"
-
-#define AXI_BUS_BYTE_WIDTH 4 // 32b
-#define axi_addr_t uint32_t
-#define axi_id_t uint1_t // Not used
-typedef struct axi_write_req_t
-{
-  // Address
-  //  "Write this stream to a location in memory"
-  //  Must be valid before data starts
-  axi_id_t awid;
-  axi_addr_t awaddr; 
-  uint8_t awlen; // Number of transfer cycles minus one
-  uint3_t awsize; // 2^size = Transfer width in bytes
-  uint2_t awburst;
-}axi_write_req_t;
-typedef struct axi_write_data_t
-{
-  // Data stream to be written to memory
-  uint8_t wdata[AXI_BUS_BYTE_WIDTH]; // 4 bytes, 32b
-  uint1_t wstrb[AXI_BUS_BYTE_WIDTH];
-  uint1_t wlast;
-}axi_write_data_t;
-typedef struct axi_write_resp_t
-{
-  // Write response
-  axi_id_t bid;
-  uint2_t bresp; // Error code
-} axi_write_resp_t;
-typedef struct axi_read_req_t
-{
-  // Address
-  //   "Give me a stream from a place in memory"
-  //   Must be valid before data starts
-  axi_id_t arid;
-  axi_addr_t araddr;
-  uint8_t arlen; // Number of transfer cycles minus one
-  uint3_t arsize; // 2^size = Transfer width in bytes
-  uint2_t arburst;
-} axi_read_req_t;
-typedef struct axi_read_resp_t
-{
-  // Read response
-  axi_id_t rid;
-  uint2_t rresp;
-} axi_read_resp_t;
-typedef struct axi_read_data_t
-{
-  // Data stream from memory
-  uint8_t rdata[AXI_BUS_BYTE_WIDTH]; // 4 bytes, 32b
-  uint1_t rlast;
-} axi_read_data_t;
+#include "../axi.h"
 
 // Declare dual port RAM
 // Easiest to match AXI bus width
