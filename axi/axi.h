@@ -4,7 +4,7 @@
 // https://developer.arm.com/documentation/102202/0300/Channel-signals
 
 #define axi_id_t uint16_t // Max size=16b?
-#define axi_addr_t uint64_t // Max size=64b?
+#define axi_addr_t uint32_t // Max size=64b?
 
 #define BURST_FIXED 0 // Fixed byte lanes only defined by start address and size.
 #define BURST_INCR  1 // Incrementing burst.

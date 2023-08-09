@@ -5,6 +5,7 @@
 
 // Include types for axi shared bus axi_shared_bus_t
 #include "../axi_shared_bus.h"
+#define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ   50.0
 // Decl instance of shared bus axi_shared_bus_t
 #define SHARED_RESOURCE_BUS_NAME          axi_xil_mem
 #define SHARED_RESOURCE_BUS_TYPE_NAME     axi_shared_bus_t    
@@ -14,7 +15,7 @@
 #define SHARED_RESOURCE_BUS_RD_REQ_TYPE   axi_read_req_t
 #define SHARED_RESOURCE_BUS_RD_DATA_TYPE  axi_read_data_t   
 #define SHARED_RESOURCE_BUS_HOST_PORTS    1
-#define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  XIL_MEM_MHZ
+#define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  SHARED_AXI_XIL_MEM_HOST_CLK_MHZ
 #define SHARED_RESOURCE_BUS_DEV_PORTS     1
 #define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   XIL_MEM_MHZ
 #include "shared_resource_bus_decl.h" // TODO make helper axi_shared_resource_bus_decl.h?

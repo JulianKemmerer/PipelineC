@@ -65,11 +65,15 @@ xil_mem_to_app_t NULL_XIL_MEM_TO_APP = {0};
 app_to_xil_mem_t app_to_xil_mem;
 // Output
 xil_mem_to_app_t xil_mem_to_app;
+// Special async wire output
+uint1_t xil_mem_rst_done;
+#pragma ASYNC_WIRE xil_mem_rst_done
 
 // Top level io connection to board generated memory interface
 MAIN_MHZ(xil_mem_module, XIL_MEM_MHZ) // Set clock freq
 app_to_xil_mem_t xil_mem_module(xil_mem_to_app_t mem_to_app)
 {
   xil_mem_to_app = mem_to_app;
+  xil_mem_rst_done = !xil_mem_to_app.ui_clk_sync_rst & xil_mem_to_app.init_calib_complete;
   return app_to_xil_mem;
 }

@@ -1,4 +1,5 @@
 #include "uintN_t.h"
+#include "intN_t.h"
 #include "arrays.h"
 #include "xstr.h"
 #include "compiler.h"
@@ -9,7 +10,7 @@
 // Generic AXI-like bus with data,valid,ready ~5 channel read,write req,resp
 // Generic 5 channel bus
 // 3 write, 2 read
-#define id_t uint8_t
+#define id_t uint16_t
 #define SHARED_RES_CLK_CROSS_FIFO_DEPTH 16 // min is 16 due to Xilinx XPM FIFO
 
 typedef enum shared_res_bus_write_state_t

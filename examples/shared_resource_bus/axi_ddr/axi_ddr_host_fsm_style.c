@@ -20,11 +20,9 @@ void app()
   {
     // Wait for reset to be done
     leds = 0;
-    uint1_t mem_rst_done = 0;
     __clk();
-    while(!mem_rst_done)
+    while(!xil_mem_rst_done)
     {
-      mem_rst_done = !xil_mem_to_app.ui_clk_sync_rst & xil_mem_to_app.init_calib_complete;
       __clk();
     }
 
@@ -75,7 +73,7 @@ void app()
 #include "app_FSM.h"
 // Wrap up app FSM as top level
 // The memory test process, same clock as generated memory interface
-MAIN_MHZ(app_wrapper, XIL_MEM_MHZ)
+MAIN_MHZ(app_wrapper, SHARED_AXI_XIL_MEM_HOST_CLK_MHZ)
 void app_wrapper()
 {
   app_INPUT_t i;
