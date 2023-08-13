@@ -22,6 +22,7 @@
 
 // DEMO application incrmenting R,G,B channels of colors as test pattern
 typedef struct kernel_args_t{
+  uint1_t do_clear;
   uint2_t color_channel_to_increment;
 }kernel_args_t;
 pixel_t pixel_kernel(kernel_args_t args, pixel_t pixel, uint16_t x, uint16_t y)
@@ -52,11 +53,16 @@ void pixels_kernel_seq_range(
   {
     for(x=x_start; x<=x_end; x+=TILE_FACTOR)
     {
-      // Read the pixel from the 'read' frame buffer
-      pixel_t pixel = frame_buf_read(x, y);
-      pixel = pixel_kernel(args, pixel, x, y);
-      // Write pixel back to the 'write' frame buffer
-      frame_buf_write(x, y, pixel);
+      if(args.do_clear){
+        pixel_t pixel = {0};
+        frame_buf_write(x, y, pixel);
+      }else{
+        // Read the pixel from the 'read' frame buffer
+        pixel_t pixel = frame_buf_read(x, y);
+        pixel = pixel_kernel(args, pixel, x, y);
+        // Write pixel back to the 'write' frame buffer
+        frame_buf_write(x, y, pixel);
+      }
     }
   }
 }
@@ -117,10 +123,29 @@ DEBUG_REG_DECL(uint32_t, last_render_time)
 uint32_t host_clk_counter;
 
 // Main loop drawing kernels on the screen
+uint1_t xil_mem_rst_done_wire;
 void main()
 {
-  uint32_t start_time;
   kernel_args_t args;
+
+  // Wait for DDR reset to be done
+  #ifdef AXI_RAM_MODE_DDR
+  while(!xil_mem_rst_done_wire)
+  {
+    __clk();
+  }
+
+  // Do renders of cleared frame, for both buffers
+  args.do_clear = 1;
+  frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
+  render_demo_kernel(args, 0, FRAME_WIDTH, 0, FRAME_HEIGHT);
+  frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
+  render_demo_kernel(args, 0, FRAME_WIDTH, 0, FRAME_HEIGHT);
+  args.do_clear = 0;
+  #endif
+
+  // Start render loop
+  uint32_t start_time;
   uint32_t iter_count = 0;
   args.color_channel_to_increment = 0;
   while(1)
@@ -170,4 +195,8 @@ void main_wrapper()
   static uint32_t host_clk_counter_reg;
   host_clk_counter = host_clk_counter_reg;
   host_clk_counter_reg += 1;
+  // Reg xil signal for timing
+  static uint1_t xil_mem_rst_done_reg;
+  xil_mem_rst_done_wire = xil_mem_rst_done_reg;
+  xil_mem_rst_done_reg = xil_mem_rst_done;
 }

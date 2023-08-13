@@ -34,6 +34,7 @@ and AXI device port...
 #include "axi/axi.h"
 
 #define XIL_MEM_MHZ 83.33 // UI CLK
+#define XIL_MEM_ADDR_WIDTH 28
 #define xil_mem_addr_t uint28_t
 #define xil_mem_size_t uint29_t // Extra bit for counting over
 #define XIL_MEM_SIZE 268435456 // 2^28 , 256MB DDR3 = 28b address

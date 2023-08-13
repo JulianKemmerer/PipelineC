@@ -29,7 +29,7 @@ typedef struct vga_fifo_word_t
   pixel_t pixels[VGA_ASYNC_FIFO_N_PIXELS];
 }vga_fifo_word_t;
 // The fifo itself
-#define VGA_ASYNC_FIFO_DEPTH 16 // Min async fifo size=16
+#define VGA_ASYNC_FIFO_DEPTH 32 //16 // Min async fifo size=16
 vga_fifo_word_t vga_async_fifo[VGA_ASYNC_FIFO_DEPTH]; 
 #include "clock_crossing/vga_async_fifo.h"
 
@@ -37,7 +37,7 @@ vga_fifo_word_t vga_async_fifo[VGA_ASYNC_FIFO_DEPTH];
 #include "vga_timing.h"
 
 // Chipscope debug hooks
-#ifdef DEBUG
+#ifdef VGA_PMOD_ASYNC_FIFO_DEBUG
 #include "debug_port.h"
 DEBUG_REG_DECL(vga_signals_t, vga_in_debug)
 DEBUG_REG_DECL(uint1_t, sync_fifo_rd_en_debug)
@@ -58,7 +58,7 @@ uint1_t pmod_async_fifo_write_logic(pixel_t pixels[VGA_ASYNC_FIFO_N_PIXELS], uin
   vga_fifo_word_t async_fifo_wr_data[1];
   async_fifo_wr_data[0].pixels = pixels;
   vga_async_fifo_write_t async_fifo = vga_async_fifo_WRITE_1(async_fifo_wr_data, wr_en);
-  #ifdef DEBUG
+  #ifdef VGA_PMOD_ASYNC_FIFO_DEBUG
   async_fifo_wr_en_debug = async_fifo_wr_en;
   async_fifo_wr_data_debug = async_fifo_wr_data[0];
   async_fifo_debug = async_fifo;
@@ -72,15 +72,15 @@ void pmod_async_fifo_write(pixel_t pixels[VGA_ASYNC_FIFO_N_PIXELS])
 {
   // FSM wrap pmod_async_fifo_write_logic
   uint1_t done = 0;
-  while(!done)
+  do
   {
     done = pmod_async_fifo_write_logic(pixels, 1);
     __clk();
-  }
+  }while(!done);
 }
 
 // Chipscope debug hooks
-#ifdef DEBUG
+#ifdef VGA_PMOD_ASYNC_FIFO_DEBUG
 DEBUG_REG_DECL(uint16_t, wait_counter_debug)
 DEBUG_REG_DECL(uint1_t, async_fifo_valid_out_debug)
 DEBUG_REG_DECL(vga_fifo_word_t, async_fifo_data_out_debug)
@@ -106,7 +106,7 @@ void pmod_async_fifo_reader()
   uint1_t rd_en = ser_in_ready;
   vga_async_fifo_read_t fifo_read = vga_async_fifo_READ_1(rd_en);
   vga_fifo_word_t rd_data = fifo_read.data[0];
-  #ifdef DEBUG
+  #ifdef VGA_PMOD_ASYNC_FIFO_DEBUG
   wait_counter_debug = wait_counter;
   async_fifo_valid_out_debug = fifo_read.valid;
   async_fifo_data_out_debug = rd_data;

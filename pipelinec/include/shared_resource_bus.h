@@ -885,11 +885,11 @@ PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb)( \
   return o; \
 }\
 /* Multiple in flight 'pipelined' round robin arb*/ \
-typedef struct PPCAT(name, _dev_arb_t){ \
+typedef struct PPCAT(name, _dev_arb_pipelined_t){ \
   PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
   PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
-}PPCAT(name, _dev_arb_t); \
-PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb_pipelined)( \
+}PPCAT(name, _dev_arb_pipelined_t); \
+PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
   PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
 ) \
@@ -905,7 +905,7 @@ PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb_pipelined)( \
   /* Each channel has a valid+ready handshake */ \
  \
   /* Output signal*/ \
-  PPCAT(name, _dev_arb_t) o; /*Default all zeros single cycle pulses*/ \
+  PPCAT(name, _dev_arb_pipelined_t) o; /*Default all zeros single cycle pulses*/ \
    \
   /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
   uint32_t i; \
@@ -1067,6 +1067,128 @@ PPCAT(name, _dev_multi_host_connect_t) PPCAT(name, _dev_multi_host_connect)( \
     } \
   } \
   return o; \
+} \
+ \
+/* Multiple in flight 'pipelined' round robin arb*/ \
+/* GREEDY avoiding nothing periods of round robin waiting when possible */ \
+/* Pick next shared bus to arb based on what other ports have chosen*/ \
+typedef struct PPCAT(name, _dev_arb_pipelined_greedy_t){ \
+  PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
+  PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
+}PPCAT(name, _dev_arb_pipelined_greedy_t); \
+PPCAT(name, _dev_arb_pipelined_greedy_t) PPCAT(name, _dev_arb_pipelined_greedy)( \
+  PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
+  PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
+) \
+{ \
+  /* 5 channels between each host and device*/ \
+  /* Request to start*/ \
+  /*  Read req (addr)*/ \
+  /*  Write req (addr)*/ \
+  /* Exchange of data*/ \
+  /*  Read data+resp (data+err)*/ \
+  /*  Write data (data bytes)*/ \
+  /*  Write resp (err code)*/ \
+  /* Each channel has a valid+ready handshake */ \
+ \
+  /* Output signal*/ \
+  PPCAT(name, _dev_arb_pipelined_greedy_t) o; /*Default all zeros single cycle pulses*/ \
+   \
+  /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
+  int32_t i, j; \
+  static uint8_t dev_to_selected_host[NUM_DEV_PORTS]; /* See reset below {0, 1}*/ \
+  static uint1_t power_on_reset = 1; \
+  if(power_on_reset) \
+  { \
+    for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+    { \
+      dev_to_selected_host[i] = i; \
+    } \
+  } \
+  power_on_reset = 0;\
+ \
+  /* Each dev port has FIFOs so will allow 'streaming' multiple read/write in flight*/ \
+ \
+  /* INPUT TO DEV SIDE*/ \
+ \
+  /* Default state doesnt change*/ \
+  uint8_t next_dev_to_selected_host[NUM_DEV_PORTS] = dev_to_selected_host; \
+ \
+  /* Loop that muxes requests/inputs into the selected host bus for each dev port*/ \
+  /* What hosts have requests pending? */ \
+  uint1_t host_has_req_now[NUM_HOST_PORTS]; \
+  for (j = 0; j < NUM_HOST_PORTS; j+=1) \
+  { \
+    host_has_req_now[j] =  \
+      from_hosts[j].read.req.valid |  \
+      from_hosts[j].write.req.valid | \
+      from_hosts[j].write.data.valid; \
+  } \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    uint8_t selected_host = dev_to_selected_host[i]; \
+    /* Connect the selected requests/inputs host to dev[i] handshakes */ \
+    o.to_devs[i].read.req = from_hosts[selected_host].read.req; \
+    o.to_devs[i].read.req.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_devs[i].write.req = from_hosts[selected_host].write.req; \
+    o.to_devs[i].write.req.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_devs[i].write.data = from_hosts[selected_host].write.data; \
+    o.to_devs[i].write.data.id = selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[selected_host].read.req_ready = from_devs[i].read.req_ready; \
+    o.to_hosts[selected_host].write.req_ready = from_devs[i].write.req_ready; \
+    o.to_hosts[selected_host].write.data_ready = from_devs[i].write.data_ready; \
+    /* Default arb state doesnt change so not valid to use this host again next*/ \
+    host_has_req_now[selected_host] = 0; \
+  } \
+  \
+  /* Greedy logic to determine next arb state */ \
+  /* Allow same host to continue to be selected if others inactive*/ \
+  /* Jump to next='round robin order' host that has a request */ \
+  /* Backwards loop because 'next' is like a shift, etc*/ \
+  for (i = (NUM_DEV_PORTS-1); i >=0; i-=1) \
+  { \
+    /* find_next_host_req(dev_to_selected_host[i], host_has_req_now); */ \
+    uint8_t maybe_next_host = dev_to_selected_host[i]; \
+    uint1_t found_next_host = 0; \
+    for (j = 0; j < (NUM_HOST_PORTS-1); j+=1) \
+    {  \
+      /* If not found a next host yet, increment and check if has req */ \
+      if(!found_next_host){ \
+        maybe_next_host = PPCAT(name, _host_port_inc)(maybe_next_host); \
+        if(host_has_req_now[maybe_next_host]){ \
+          found_next_host = 1; \
+          next_dev_to_selected_host[i] = maybe_next_host; \
+          /* Clear so isnt resused by other dev */ \
+          host_has_req_now[maybe_next_host] = 0; \
+        } \
+      } \
+    } \
+  } \
+  /* Update regs with next values*/ \
+  dev_to_selected_host = next_dev_to_selected_host; \
+ \
+  /* DEV WAS HERE*/ \
+ \
+  /* Outputs from DEV is muxed into output fifos based on ID=host port*/ \
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  { \
+    /* Output write resp, err code unused*/ \
+    if(from_devs[i].write.resp.valid) \
+    { \
+      uint8_t selected_host = from_devs[i].write.resp.id; \
+      o.to_hosts[selected_host].write.resp = from_devs[i].write.resp; \
+      o.to_devs[i].write.resp_ready = from_hosts[selected_host].write.resp_ready; \
+    } \
+    /* Output read data*/ \
+    if(from_devs[i].read.data.valid) \
+    { \
+      uint8_t selected_host = from_devs[i].read.data.id; \
+      o.to_hosts[selected_host].read.data = from_devs[i].read.data; \
+      o.to_devs[i].read.data_ready = from_hosts[selected_host].read.data_ready; \
+    } \
+  } \
+ \
+  return o; \
 }
 
 // Instantiate the arb module with to-from wires for user
@@ -1081,7 +1203,7 @@ PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
 #define SHARED_BUS_ARB_PIPELINED(type, bus_name, NUM_DEV_PORTS) \
 PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_host)[NUM_DEV_PORTS]; \
 PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name, _to_host)) /* Value from last assignment*/ \
-PPCAT(bus_name, _dev_arb_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _dev_arb_pipelined)(PPCAT(bus_name, _to_host), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
+PPCAT(bus_name, _dev_arb_pipelined_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _dev_arb_pipelined)(PPCAT(bus_name, _to_host), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
 PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_host)[NUM_DEV_PORTS]; \
 PPCAT(bus_name, _from_host) = PPCAT(bus_name, _arb).to_devs; \
 PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
@@ -1093,6 +1215,14 @@ PPCAT(bus_name, _dev_multi_host_connect_t) PPCAT(bus_name, _connect) = PPCAT(bus
 PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_hosts)[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
 PPCAT(bus_name, _from_hosts) = PPCAT(bus_name, _connect).to_devs; \
 PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _connect).to_hosts;
+//
+#define SHARED_BUS_ARB_PIPELINED_GREEDY(type, bus_name, NUM_DEV_PORTS) \
+PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_host)[NUM_DEV_PORTS]; \
+PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name, _to_host)) /* Value from last assignment*/ \
+PPCAT(bus_name, _dev_arb_pipelined_greedy_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _dev_arb_pipelined_greedy)(PPCAT(bus_name, _to_host), PPCAT(bus_name, _host_to_dev_wires_on_dev_clk)); \
+PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_host)[NUM_DEV_PORTS]; \
+PPCAT(bus_name, _from_host) = PPCAT(bus_name, _arb).to_devs; \
+PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
 
 
 // Each channel of 5 channels host<->dev link needs async fifo
