@@ -4,6 +4,11 @@
 #define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ HOST_CLK_MHZ
 #include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
 
+// Div by 2 since dual frame buffer
+#if AXI_RAM_DEPTH > (XIL_MEM_32b_SIZE/2)
+#error "Two AXI_RAM_DEPTH larger than XIL_MEM_32b_SIZE"
+#endif
+
 // Use upper half of addr space to look like second ram
 uint32_t dual_ram_to_addr(uint1_t ram_sel, uint32_t addr)
 {

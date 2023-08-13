@@ -1,3 +1,11 @@
+/*
+TODO SCALE UP 
+Higher resolutions?
+  Necesary to have VGA host port at high clock than other host ports?
+    Why is this a problem? minor fifo decl change?
+    Or need Do manual secondary arb?
+*/
+
 // VGA pmod stuff
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
@@ -9,10 +17,10 @@
 #define AXI_RAM_MODE_DDR
 
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 4
-#define TILE_FACTOR_LOG2 2
+#define TILE_FACTOR 1
+#define TILE_FACTOR_LOG2 0
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
-#define NUM_Y_TILES (FRAME_WIDTH/TILE_FACTOR)
+#define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4
 #define BYTES_PER_PIXEL_LOG2 2
 #define AXI_RAM_DEPTH (((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)/AXI_BUS_BYTE_WIDTH)
