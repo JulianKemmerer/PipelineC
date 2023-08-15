@@ -41,6 +41,7 @@ architecture rtl of pipelinec_fifo_fwft is
   signal data_out_pipe : std_logic_vector(DATA_WIDTH-1 downto 0);
   signal pipe_ready       : std_logic;
   signal por : std_logic := '1';
+  signal ready_out_internal : std_logic;
   function make_mask return unsigned is
     variable rv : unsigned(ADDR_WIDTH downto 0) := (others => '0');
   begin
@@ -60,7 +61,8 @@ begin
   -- overflow within packet
   full_wr <= '1' when wr_ptr_reg = (wr_ptr_cur_reg xor mask) else '0';
 
-  ready_out <= not full and not por;
+  ready_out_internal <= not full and not por;
+  ready_out <= ready_out_internal;
   
   valid_out_pipe <= valid_out_pipe_reg;
   data_out_pipe <= data_out_pipe_reg;
@@ -73,7 +75,7 @@ begin
         wr_ptr_reg <= (others => '0');
         wr_ptr_cur_reg <= (others => '0');
       else
-        if ready_out = '1' and valid_in = '1' then
+        if ready_out_internal = '1' and valid_in = '1' then
           -- transfer in
           -- normal FIFO mode
           mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
