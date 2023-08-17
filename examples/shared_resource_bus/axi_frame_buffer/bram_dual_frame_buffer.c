@@ -1,5 +1,7 @@
 #include "shared_axi_brams.c"
 
+#define DEV_CLK_MHZ 150.0
+
 /* // Async pipelined start separate from finish
 void frame_buf_read_start(uint16_t x, uint16_t y)
 {

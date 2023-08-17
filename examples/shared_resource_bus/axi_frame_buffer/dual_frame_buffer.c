@@ -1,16 +1,14 @@
-/*
-TODO SCALE UP 
-Higher resolutions?
-  Necesary to have VGA host port at high clock than other host ports?
-    Why is this a problem? minor fifo decl change?
-    Or need Do manual secondary arb?
-*/
-
 // VGA pmod stuff
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 #define VGA_ASYNC_FIFO_N_PIXELS 1
 #include "vga/vga_pmod_async_pixels_fifo.c" // Version that expects only x,y pixels, N at a time
+
+// TODO error check rates somehow
+//#if HOST_CLK_MHZ < (1.5*PIXEL_CLK_MHZ)
+// Maybe can push as low as 1.0x
+//#error "Need faster host clock to meet display rate!"
+//#endif
 
 // Code for a shared AXI RAMs
 //#define AXI_RAM_MODE_BRAM

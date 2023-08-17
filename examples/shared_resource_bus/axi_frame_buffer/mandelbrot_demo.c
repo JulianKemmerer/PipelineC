@@ -1,4 +1,5 @@
-// DEMO application incrementing R,G,B channels of colors as test pattern
+// Copy of graphics_demo.c baseline
+// modified to do Mandelbrot demo
 
 #pragma PART "xc7a100tcsg324-1" 
 #include "compiler.h"
@@ -15,22 +16,21 @@
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
+// Mandelbrot kernel
+#include "shared_mandelbrot_dev.c"
+
 typedef struct kernel_args_t{
   uint1_t do_clear;
-  uint2_t color_channel_to_increment;
+  screen_state_t state;
 }kernel_args_t;
-pixel_t pixel_kernel(kernel_args_t args, pixel_t pixel, uint16_t x, uint16_t y)
+//pixel_t pixel, 
+pixel_t pixel_kernel(kernel_args_t args, uint16_t x, uint16_t y)
 {
-  if(args.color_channel_to_increment==0){
-    pixel.r += 1;
-  }else if(args.color_channel_to_increment==1){
-    pixel.g += 1;
-  }else if(args.color_channel_to_increment==2){
-    pixel.b += 1;
+  pixel_t pixel = {0};
+  if(args.do_clear){
+    frame_buf_write(x, y, pixel);
   }else{
-    pixel.r += 1;
-    pixel.g += 1;
-    pixel.b += 1;
+    pixel = mandelbrot_kernel(args.state, x, y);
   }
   return pixel;
 }
@@ -47,16 +47,11 @@ void pixels_kernel_seq_range(
   {
     for(x=x_start; x<=x_end; x+=TILE_FACTOR)
     {
-      if(args.do_clear){
-        pixel_t pixel = {0};
-        frame_buf_write(x, y, pixel);
-      }else{
-        // Read the pixel from the 'read' frame buffer
-        pixel_t pixel = frame_buf_read(x, y);
-        pixel = pixel_kernel(args, pixel, x, y);
-        // Write pixel back to the 'write' frame buffer
-        frame_buf_write(x, y, pixel);
-      }
+      // Read the pixel from the 'read' frame buffer
+      //pixel_t pixel = frame_buf_read(x, y);
+      pixel_t pixel = pixel_kernel(args, x, y); // pixel,
+      // Write pixel back to the 'write' frame buffer
+      frame_buf_write(x, y, pixel);
     }
   }
 }
@@ -116,8 +111,10 @@ void render_demo_kernel(
 DEBUG_REG_DECL(uint32_t, last_render_time)
 uint32_t host_clk_counter;
 
-// Main loop drawing kernels on the screen
+// Reset wire from Xilinx memory controller
 uint1_t xil_mem_rst_done_wire;
+
+// Main loop drawing kernels on the screen
 void main()
 {
   kernel_args_t args;
@@ -141,7 +138,11 @@ void main()
   // Start render loop
   uint32_t start_time;
   uint32_t iter_count = 0;
-  args.color_channel_to_increment = 0;
+  // Start zoomed in
+  args.state.re_start = -2.0;
+  args.state.re_width = 3.0;
+  args.state.im_start = -1.0;
+  args.state.im_height = 2.0;
   while(1)
   {
     // First step in rendering is reset debug counter
@@ -151,25 +152,10 @@ void main()
 
     // Demo kernel is entire frame
     render_demo_kernel(args, 0, FRAME_WIDTH, 0, FRAME_HEIGHT);
-   
-    // Change which color is changing
-    if(iter_count < 256){
-      iter_count += 1;
-    }else{
-      iter_count = 0;
-      args.color_channel_to_increment += 1;
-    }
 
     // Final step in rendering frame is switching to read from newly rendered frame buffer
     frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
     last_render_time = host_clk_counter - start_time;
-
-    // Wait to slow 256 color range over 1 second debug
-    uint32_t wait_counter = (uint32_t)((HOST_CLK_MHZ * 1.0e6) / 256.0);
-    while(wait_counter > 0){
-      wait_counter -= 1;
-      __clk();
-    }
   }
 }
 // Wrap up main FSM as top level
