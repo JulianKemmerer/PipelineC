@@ -10,10 +10,10 @@
 #define HOST_CLK_MHZ 25.0 // Can be arbitrarily slow
 
 // Threads must evenly divide frame width and height
-#define NUM_X_THREADS 1 // 8, 64 max...no way right?
-#define NUM_X_THREADS_LOG2 0
-#define NUM_Y_THREADS 1 // 4, 32 max...no way right?
-#define NUM_Y_THREADS_LOG2 0
+#define NUM_X_THREADS 8 // 64 max...no way right?
+#define NUM_X_THREADS_LOG2 3
+#define NUM_Y_THREADS 4 // 32 max...no way right?
+#define NUM_Y_THREADS_LOG2 2
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
@@ -178,16 +178,21 @@ void main()
 MAIN_MHZ(main_wrapper, HOST_CLK_MHZ)
 void main_wrapper()
 {
+  // Instantiate main()
   main_INPUT_t i;
   i.input_valid = 1;
   i.output_ready = 1;
   main_OUTPUT_t o = main_FSM(i);
+
   // Counter lives here on ticking host clock
   static uint32_t host_clk_counter_reg;
   host_clk_counter = host_clk_counter_reg;
   host_clk_counter_reg += 1;
+  
+  #ifdef AXI_RAM_MODE_DDR
   // Reg xil signal for timing
   static uint1_t xil_mem_rst_done_reg;
   xil_mem_rst_done_wire = xil_mem_rst_done_reg;
   xil_mem_rst_done_reg = xil_mem_rst_done;
+  #endif
 }
