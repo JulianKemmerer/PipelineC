@@ -29,7 +29,7 @@ typedef struct vga_fifo_word_t
   pixel_t pixels[VGA_ASYNC_FIFO_N_PIXELS];
 }vga_fifo_word_t;
 // The fifo itself
-#define VGA_ASYNC_FIFO_DEPTH 32 //16 // Min async fifo size=16
+#define VGA_ASYNC_FIFO_DEPTH 32 // 32 need for DDR access pattern it seems... // Min async fifo size=16
 vga_fifo_word_t vga_async_fifo[VGA_ASYNC_FIFO_DEPTH]; 
 #include "clock_crossing/vga_async_fifo.h"
 
