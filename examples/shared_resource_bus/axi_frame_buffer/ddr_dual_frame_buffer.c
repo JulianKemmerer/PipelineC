@@ -1,5 +1,15 @@
 // Code for AXI xilinx memory controller shared bus resource
-#define NUM_HOST_PORTS                  (NUM_USER_THREADS+1) // +1 for vga port display read port
+
+// Use a read priority port on arbiter (ifndef then use slow greedy arb where vga port can be greedy)
+#define AXI_XIL_MEM_RD_PRI_PORT
+
+/* VGA prot is priority read port*/
+/* +1 for vga port display read port if including in greedy arb*/
+#ifdef AXI_XIL_MEM_RD_PRI_PORT
+#define NUM_HOST_PORTS                  NUM_USER_THREADS 
+#else
+#define NUM_HOST_PORTS                  (NUM_USER_THREADS+1) 
+#endif
 #define SHARED_AXI_XIL_MEM_NUM_THREADS  NUM_HOST_PORTS 
 #define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ HOST_CLK_MHZ
 #include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
@@ -52,7 +62,53 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
   dual_axi_ram_write(!frame_buffer_read_port_sel, addr, data);
 }
 
+
 // Async multi in flight logic to read pixels for VGA display
+
+#ifdef AXI_XIL_MEM_RD_PRI_PORT
+// Version using read priority port
+MAIN_MHZ(host_vga_reader, XIL_MEM_MHZ)
+void host_vga_reader()
+{
+  static uint1_t frame_buffer_read_port_sel_reg;
+
+  // READ REQUEST SIDE
+  // Increment VGA counters and do read for each position
+  static vga_pos_t vga_pos;
+  // Read and increment pos if room in fifos (cant be greedy since will 100% hog priority port)
+  uint1_t fifo_ready;
+  #pragma FEEDBACK fifo_ready
+  // Read from the current read frame buffer addr
+  uint32_t addr = pos_to_addr(vga_pos.x, vga_pos.y);
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.araddr = dual_ram_to_addr(frame_buffer_read_port_sel_reg, addr);
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arsize = 2; // 2^2=4 bytes per transfer
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.valid = fifo_ready;
+  uint1_t do_increment = fifo_ready & axi_xil_rd_pri_port_mem_dev_to_host_wire.read.req_ready;
+  vga_pos = vga_frame_pos_increment(vga_pos, do_increment);
+
+  // READ RESPONSE SIDE
+  // Get read data from the AXI RAM bus
+  uint8_t data[4];
+  uint1_t data_valid = 0;
+  data = axi_xil_rd_pri_port_mem_dev_to_host_wire.read.data.burst.data_resp.user.rdata;
+  data_valid = axi_xil_rd_pri_port_mem_dev_to_host_wire.read.data.valid;
+  // Write pixel data into fifo
+  pixel_t pixel;
+  pixel.a = data[0];
+  pixel.r = data[1];
+  pixel.g = data[2];
+  pixel.b = data[3];
+  pixel_t pixels[1];
+  pixels[0] = pixel;
+  fifo_ready = pmod_async_fifo_write_logic(pixels, data_valid);
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.data_ready = fifo_ready;
+
+  frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
+}
+#else
+// Version trying to act as a greedy host among the others 
 MAIN_MHZ(host_vga_reader, HOST_CLK_MHZ)
 void host_vga_reader()
 {
@@ -86,6 +142,7 @@ void host_vga_reader()
   uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, data_valid);
   axi_xil_mem_host_to_dev_wire_on_host_clk.read.data_ready = fifo_ready;
 }
+#endif
 
 /*
 // Async multi in flight two thread with start and finish versions:

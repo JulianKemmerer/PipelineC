@@ -909,13 +909,18 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
    \
   /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
   uint32_t i; \
-  static uint8_t dev_to_selected_host[NUM_DEV_PORTS]; /* See reset below {0, 1}*/ \
+  /* See reset below {0, 1}*/ \
+  static uint8_t read_req_dev_to_selected_host[NUM_DEV_PORTS]; \
+  static uint8_t write_req_dev_to_selected_host[NUM_DEV_PORTS]; \
+  static uint8_t write_data_dev_to_selected_host[NUM_DEV_PORTS]; \
   static uint1_t power_on_reset = 1; \
   if(power_on_reset) \
   { \
     for (i = 0; i < NUM_DEV_PORTS; i+=1) \
     { \
-      dev_to_selected_host[i] = i; \
+      read_req_dev_to_selected_host[i] = i; \
+      write_req_dev_to_selected_host[i] = i; \
+      write_data_dev_to_selected_host[i] = i; \
     } \
   } \
   power_on_reset = 0;\
@@ -925,25 +930,45 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   /* INPUT TO DEV SIDE*/ \
  \
   /* Default state doesnt change*/ \
-  uint8_t next_dev_to_selected_host[NUM_DEV_PORTS] = dev_to_selected_host; \
+  uint8_t read_req_next_dev_to_selected_host[NUM_DEV_PORTS] = read_req_dev_to_selected_host; \
+  uint8_t write_req_next_dev_to_selected_host[NUM_DEV_PORTS] = write_req_dev_to_selected_host; \
+  uint8_t write_data_next_dev_to_selected_host[NUM_DEV_PORTS] = write_data_dev_to_selected_host; \
  \
   /* Loop that muxes requests/inputs into the selected host bus for each dev port*/ \
   for (i = 0; i < NUM_DEV_PORTS; i+=1) \
   { \
-    uint8_t selected_host = dev_to_selected_host[i]; \
     /* Connect the selected requests/inputs host to dev[i] handshakes */ \
-    o.to_devs[i].read.req = from_hosts[selected_host].read.req; \
-    o.to_devs[i].read.req.id = selected_host; /* Overides/ignores host value*/ \
-    o.to_devs[i].write.req = from_hosts[selected_host].write.req; \
-    o.to_devs[i].write.req.id = selected_host; /* Overides/ignores host value*/ \
-    o.to_devs[i].write.data = from_hosts[selected_host].write.data; \
-    o.to_devs[i].write.data.id = selected_host; /* Overides/ignores host value*/ \
-    o.to_hosts[selected_host].read.req_ready = from_devs[i].read.req_ready; \
-    o.to_hosts[selected_host].write.req_ready = from_devs[i].write.req_ready; \
-    o.to_hosts[selected_host].write.data_ready = from_devs[i].write.data_ready; \
-    /* Done with host inputs, move arb on*/ \
-    next_dev_to_selected_host[i] = PPCAT(name, _next_host_sel)(selected_host, next_dev_to_selected_host); \
+    uint8_t read_req_selected_host = read_req_dev_to_selected_host[i]; \
+    o.to_devs[i].read.req = from_hosts[read_req_selected_host].read.req; \
+    o.to_devs[i].read.req.id = read_req_selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[read_req_selected_host].read.req_ready = from_devs[i].read.req_ready; \
+    if(from_devs[i].read.req_ready){ \
+      read_req_next_dev_to_selected_host[i] \
+        = PPCAT(name, _next_host_sel)(read_req_selected_host, read_req_next_dev_to_selected_host); \
+    } \
+    \
+    uint8_t write_req_selected_host = write_req_dev_to_selected_host[i]; \
+    o.to_devs[i].write.req = from_hosts[write_req_selected_host].write.req; \
+    o.to_devs[i].write.req.id = write_req_selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[write_req_selected_host].write.req_ready = from_devs[i].write.req_ready; \
+    if(from_devs[i].write.req_ready){ \
+      write_req_next_dev_to_selected_host[i] \
+        = PPCAT(name, _next_host_sel)(write_req_selected_host, write_req_next_dev_to_selected_host); \
+    } \
+    \
+    uint8_t write_data_selected_host = write_data_dev_to_selected_host[i]; \
+    o.to_devs[i].write.data = from_hosts[write_data_selected_host].write.data; \
+    o.to_devs[i].write.data.id = write_data_selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[write_data_selected_host].write.data_ready = from_devs[i].write.data_ready; \
+    if(from_devs[i].write.data_ready){ \
+      write_data_next_dev_to_selected_host[i] \
+        = PPCAT(name, _next_host_sel)(write_data_selected_host, write_data_next_dev_to_selected_host); \
+    } \
   } \
+  /* Update regs with next values*/ \
+  read_req_dev_to_selected_host = read_req_next_dev_to_selected_host; \
+  write_req_dev_to_selected_host = write_req_next_dev_to_selected_host; \
+  write_data_dev_to_selected_host = write_data_next_dev_to_selected_host; \
  \
   /* DEV WAS HERE*/ \
  \
@@ -966,8 +991,6 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
     } \
   } \
  \
-  /* Update regs with next values*/ \
-  dev_to_selected_host = next_dev_to_selected_host; \
   return o; \
 } \
 \

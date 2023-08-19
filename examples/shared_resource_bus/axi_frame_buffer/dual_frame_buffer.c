@@ -47,6 +47,8 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 
 // Dual frame buffer is writing to one buffer while other is for reading
 uint1_t frame_buffer_read_port_sel;
+// Slow changing can be loose crossing domains
+#pragma ASYNC_WIRE frame_buffer_read_port_sel
 
 // Always-reading logic to drive VGA signal into pmod_async_fifo_write
 #ifdef AXI_RAM_MODE_BRAM

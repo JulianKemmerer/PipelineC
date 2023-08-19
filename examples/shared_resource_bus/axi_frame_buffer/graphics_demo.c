@@ -7,11 +7,13 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
-#define HOST_CLK_MHZ 35.0
+#define HOST_CLK_MHZ 25.0 // Can be arbitrarily slow
+
+// Threads must evenly divide frame width and height
+#define NUM_X_THREADS 1 // 8, 64 max...no way right?
 #define NUM_X_THREADS_LOG2 0
-#define NUM_X_THREADS 1
+#define NUM_Y_THREADS 1 // 4, 32 max...no way right?
 #define NUM_Y_THREADS_LOG2 0
-#define NUM_Y_THREADS 1
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
@@ -109,7 +111,6 @@ void render_demo_kernel(
     }
     __clk(); // REQUIRED
   }
-  
 }
 
 // Measure how long it takes to render frame with marked debug chipscope signal
