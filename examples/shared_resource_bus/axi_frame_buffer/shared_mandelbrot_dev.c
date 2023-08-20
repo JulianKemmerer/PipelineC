@@ -93,7 +93,9 @@ mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 #include "shared_resource_bus_pipeline.h"
 
 
+// TODO: Do more iterations ...255?
 #define MAX_ITER 16
+/*
 uint8_t iter_to_8b_func(uint32_t n)
 {
   uint8_t color = 255 - (int32_t)((float)n *(255.0/(float)MAX_ITER));
@@ -102,6 +104,50 @@ uint8_t iter_to_8b_func(uint32_t n)
 #define SHARED_RESOURCE_BUS_PIPELINE_NAME         iter_to_8b
 #define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     uint8_t
 #define SHARED_RESOURCE_BUS_PIPELINE_FUNC         iter_to_8b_func
+#define SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE      uint32_t
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_USER_THREADS
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ HOST_CLK_MHZ
+#define SHARED_RESOURCE_BUS_PIPELINE_DEV_CLK_MHZ  MANDELBROT_DEV_CLK_MHZ
+#include "shared_resource_bus_pipeline.h"
+*/
+
+/* COLOR SIMPLE LOOKUP TABLE
+https://stackoverflow.com/questions/16500656/which-color-gradient-is-used-to-color-mandelbrot-in-wikipedia
+*/
+pixel_t iter_to_color_func(uint32_t n)
+{
+  pixel_t p; // Default black
+  if((n < MAX_ITER) & (n > 0)){
+    uint4_t index = n; // % 16 when <MAX_ITER=16
+    #if MAX_ITER != 16
+    #error("Fix math!")
+    //fake mod w integer div by pow 2 to compute integer modulo 
+    //linear interpolate for more than 16 colors?
+    #endif
+    pixel_t color_lut[16];
+    color_lut[0].r =  66;  color_lut[0].g =  30;  color_lut[0].b =  15;
+    color_lut[1].r =  25;  color_lut[1].g =  7;   color_lut[1].b =  26;
+    color_lut[2].r =  9;   color_lut[2].g =  1;   color_lut[2].b =  47;
+    color_lut[3].r =  4;   color_lut[3].g =  4;   color_lut[3].b =  73;
+    color_lut[4].r =  0;   color_lut[4].g =  7;   color_lut[4].b =  100;
+    color_lut[5].r =  12;  color_lut[5].g =  44;  color_lut[5].b =  138;
+    color_lut[6].r =  24;  color_lut[6].g =  82;  color_lut[6].b =  177;
+    color_lut[7].r =  57;  color_lut[7].g =  125; color_lut[7].b =  209;
+    color_lut[8].r =  134; color_lut[8].g =  181; color_lut[8].b =  229;
+    color_lut[9].r =  211; color_lut[9].g =  236; color_lut[9].b =  248;
+    color_lut[10].r = 241; color_lut[10].g = 233; color_lut[10].b = 191;
+    color_lut[11].r = 248; color_lut[11].g = 201; color_lut[11].b = 95;
+    color_lut[12].r = 255; color_lut[12].g = 170; color_lut[12].b = 0;
+    color_lut[13].r = 204; color_lut[13].g = 128; color_lut[13].b = 0;
+    color_lut[14].r = 153; color_lut[14].g = 87;  color_lut[14].b = 0;
+    color_lut[15].r = 106; color_lut[15].g = 52;  color_lut[15].b = 3;
+    p = color_lut[index];
+  }
+  return p;
+}
+#define SHARED_RESOURCE_BUS_PIPELINE_NAME         iter_to_color
+#define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     pixel_t
+#define SHARED_RESOURCE_BUS_PIPELINE_FUNC         iter_to_color_func
 #define SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE      uint32_t
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_USER_THREADS
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ HOST_CLK_MHZ
@@ -133,13 +179,31 @@ pixel_t mandelbrot_kernel(screen_state_t state, uint16_t x, uint16_t y)
   }
 
   // The color depends on the number of iterations
-  uint8_t color = iter_to_8b(n);
   pixel_t p;
+  /*uint8_t color = iter_to_8b(n);
   p.r = color;
   p.g = color;
-  p.b = color;
+  p.b = color;*/
+  p = iter_to_color(n);
   return p;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 /*

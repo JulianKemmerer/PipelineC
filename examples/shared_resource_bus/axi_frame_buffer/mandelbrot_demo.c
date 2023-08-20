@@ -1,7 +1,14 @@
 // Copy of graphics_demo.c baseline
 // modified to do Mandelbrot demo
 
-#pragma PART "xc7a100tcsg324-1" 
+/* TODO: do scaling:
+  increase host clock single thread to max ...probably at it...
+  increase dev comb logic no pipeline clock to max ~12Mhz?
+  more threads
+  pipelining: increase dev clock rate
+*/
+
+#pragma PART "xc7a100tcsg324-1"
 #include "compiler.h"
 #include "debug_port.h"
 #include "arrays.h"
@@ -9,10 +16,11 @@
 #include "uintN_t.h"
 
 #define HOST_CLK_MHZ 35.0
-#define NUM_X_THREADS_LOG2 0
+// Threads must evenly divide frame width and height
 #define NUM_X_THREADS 1
-#define NUM_Y_THREADS_LOG2 0
+#define NUM_X_THREADS_LOG2 0
 #define NUM_Y_THREADS 1
+#define NUM_Y_THREADS_LOG2 0
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
