@@ -32,6 +32,12 @@ typedef struct screen_state_t
   float im_start;
   float im_height;
 }screen_state_t;
+screen_state_t screen_state_t_INIT = {
+  .re_start = -2.0, 
+  .re_width = 3.0,
+  .im_start = -1.0,
+  .im_height = 2.0
+};
 
 // Screen position to complex value transform device:
 
@@ -189,27 +195,11 @@ pixel_t mandelbrot_kernel(screen_state_t state, uint16_t x, uint16_t y)
 }
 
 
+// User interface + animation stuff:
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
 // Access to board buttons and switches
-#include "../buttons/buttons.c"
-#include "../switches/switches.c"
+#include "buttons/buttons.c"
+#include "switches/switches.c"
 
 // User input
 typedef struct user_input_t
@@ -221,11 +211,9 @@ typedef struct user_input_t
   uint1_t zoom_in;
   uint1_t zoom_out;
 }user_input_t;
-inline user_input_t get_user_input()
+user_input_t get_user_input()
 {
   user_input_t i;
-  // For now only exists in hardware
-  #ifdef __PIPELINEC__
   // Select which buttons and switches do what?
   i.up = buttons >> 0;
   i.down = buttons >> 1;
@@ -233,33 +221,11 @@ inline user_input_t get_user_input()
   i.right = buttons >> 3;
   i.zoom_in = switches >> 0;
   i.zoom_out = switches >> 1;
-  #else
-  // TODO user IO for running as C code
-  i.up = 0;
-  i.down = 0;
-  i.left = 0;
-  i.right = 0;
-  i.zoom_in = 0;
-  i.zoom_out = 0;
-  #endif
   return i;
 }
 
-
-// State to return to at reset
-screen_state_t reset_values()
-{
-  screen_state_t state;
-  // Start zoomed in
-  state.re_start = -2.0;
-  state.re_width = 3.0;
-  state.im_start = -1.0;
-  state.im_height = 2.0;
-  return state;
-}
-
 // Logic for animating state each frame
-screen_state_t next_state_func(uint1_t reset, screen_state_t state)
+screen_state_t next_state_func(screen_state_t state)
 {
   // Read input controls from user
   user_input_t i = get_user_input();
@@ -320,5 +286,34 @@ screen_state_t next_state_func(uint1_t reset, screen_state_t state)
   return state;
 }
 
+// Just use a slow clock and comb. compute next state since only needed as fast as 60Hz
+// Need a clock >=60Hz and slow enough to easily meet timing
+// (could make a 60Hz clock like was done for sphery
+// but in this case how to align with actual frame render etc?)
+screen_state_t next_screen_state;
+#pragma ASYNC_WIRE next_screen_state
+uint1_t start_next_state;
+#pragma ASYNC_WIRE start_next_state
+#pragma MAIN_MHZ frame_logic 6.25
+void frame_logic()
+{
+  static uint1_t power_on_reset = 1;
+  static uint1_t start_next_state_reg; // Toggle detect reg
+  static screen_state_t state_reg; // The state register TODO can use screen_state_t_INIT? in decl?
+  next_screen_state = state_reg; // Drives state wire directly
 
-*/
+  // Update date when 'start' toggle happens
+  if(start_next_state != start_next_state_reg)
+  {
+    state_reg = next_state_func(state_reg);
+  }
+
+  // Input regs
+  start_next_state_reg = start_next_state;
+
+  // Reset
+  if(power_on_reset){
+    state_reg = screen_state_t_INIT;
+  }
+  power_on_reset = 0;
+}

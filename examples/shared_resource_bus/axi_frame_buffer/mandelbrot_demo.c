@@ -147,10 +147,7 @@ void main()
   uint32_t start_time;
   uint32_t iter_count = 0;
   // Start zoomed in
-  args.state.re_start = -2.0;
-  args.state.re_width = 3.0;
-  args.state.im_start = -1.0;
-  args.state.im_height = 2.0;
+  args.state = screen_state_t_INIT;
   while(1)
   {
     // First step in rendering is reset debug counter
@@ -161,9 +158,15 @@ void main()
     // Demo kernel is entire frame
     render_demo_kernel(args, 0, FRAME_WIDTH, 0, FRAME_HEIGHT);
 
-    // Final step in rendering frame is switching to read from newly rendered frame buffer
-    frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
+    // Final steps in rendering frame:
+    // Record render time
     last_render_time = host_clk_counter - start_time;
+    // switching to read from newly rendered frame buffer
+    frame_buffer_read_port_sel = !frame_buffer_read_port_sel;
+    // Grab updated next state to render
+    args.state = next_screen_state;
+    // Signal to compute next per frame state w/ toggle
+    start_next_state = !start_next_state;
   }
 }
 // Wrap up main FSM as top level
