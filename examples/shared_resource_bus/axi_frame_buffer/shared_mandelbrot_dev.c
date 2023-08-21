@@ -100,7 +100,8 @@ mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 
 
 // TODO: Do more iterations ...255?
-#define MAX_ITER 16
+#define MAX_ITER 32
+//#define iter_t uint6_t
 /*
 uint8_t iter_to_8b_func(uint32_t n)
 {
@@ -124,12 +125,13 @@ pixel_t iter_to_color_func(uint32_t n)
 {
   pixel_t p; // Default black
   if((n < MAX_ITER) & (n > 0)){
-    uint4_t index = n; // % 16 when <MAX_ITER=16
-    #if MAX_ITER != 16
-    #error("Fix math!")
-    //fake mod w integer div by pow 2 to compute integer modulo 
-    //linear interpolate for more than 16 colors?
-    #endif
+    //uint4_t index = (iter_t)n % 16;
+    // Fake modulo since not implemented for integers yet and simple for pow2 16...
+    /*uint32_t div_16 = n >> 4; // / 16;
+    uint32_t total_16 = div_16 << 4; // * 16;
+    uint32_t mod_16 = n - total_16;
+    uint4_t index = mod_16;*/
+    uint4_t index = n; // works? same as mod pow2 only use bottom bits?
     pixel_t color_lut[16];
     color_lut[0].r =  66;  color_lut[0].g =  30;  color_lut[0].b =  15;
     color_lut[1].r =  25;  color_lut[1].g =  7;   color_lut[1].b =  26;

@@ -3,9 +3,14 @@
 
 /* TODO: do scaling:
   increase host clock single thread to max ...probably at it...
-  increase dev comb logic no pipeline clock to max ~12Mhz?
-  more threads
+  increase dev comb logic no pipeline clock to max ~12Mhz? prob at it?
+  more threads... should work up to ~3,4 then hit wall of slow dev...when dev are comb 0 cycle
+  More iters per func run, make macro N 
+    Start off unpipelined, slowing clock for more comb logic
+    increase until fits/stops helping (might need to lower threads)
   pipelining: increase dev clock rate
+    Increase until not helpful, then more threads, then back repeat
+    Adjust (lower prob?) N iters done in pipeline when done fast by more threads?
 */
 
 #pragma PART "xc7a100tcsg324-1"
