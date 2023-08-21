@@ -4,7 +4,6 @@
 //  one to calculate the x,y->complex screen position
 //  and another for the Mandelbrot iterations
 //  and a final for the iteration count to 8b color scaling output
-//  TODO one for RGB coloring?
 
 // PipelineC types
 #include "compiler.h"
@@ -72,21 +71,34 @@ complex_t screen_to_complex_func(screen_to_complex_in_t inputs)
 #include "shared_resource_bus_pipeline.h"
 
 
+// Do N Mandelbrot iterations per call to mandelbrot_iter_func
+#define ITER_CHUNK_SIZE 2
+#define MAX_ITER 32
 typedef struct mandelbrot_iter_t{
   complex_t c;
   complex_t z;
   complex_t z_squared;
   uint1_t escaped;
+  uint32_t n;
 }mandelbrot_iter_t;
 #define ESCAPE 2.0
 mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 {
   mandelbrot_iter_t rv = inputs;
-  rv.z.im = float_lshift((rv.z.re*rv.z.im), 1) + rv.c.im;
-  rv.z.re = rv.z_squared.re - rv.z_squared.im + rv.c.re;
-  rv.z_squared.re = rv.z.re * rv.z.re;
-  rv.z_squared.im = rv.z.im * rv.z.im;
-  rv.escaped = (rv.z_squared.re+rv.z_squared.im) > (ESCAPE*ESCAPE);
+  uint32_t i;
+  for(i=0;i<ITER_CHUNK_SIZE;i+=1)
+  {
+    // Mimic while loop
+    if(!rv.escaped & (rv.n < MAX_ITER))
+    {
+      rv.z.im = float_lshift((rv.z.re*rv.z.im), 1) + rv.c.im;
+      rv.z.re = rv.z_squared.re - rv.z_squared.im + rv.c.re;
+      rv.z_squared.re = rv.z.re * rv.z.re;
+      rv.z_squared.im = rv.z.im * rv.z.im;
+      rv.n = rv.n + 1;
+      rv.escaped = (rv.z_squared.re+rv.z_squared.im) > (ESCAPE*ESCAPE);
+    }
+  }
   return rv;
 }
 #define SHARED_RESOURCE_BUS_PIPELINE_NAME         mandelbrot_iter
@@ -99,9 +111,6 @@ mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 #include "shared_resource_bus_pipeline.h"
 
 
-// TODO: Do more iterations ...255?
-#define MAX_ITER 32
-//#define iter_t uint6_t
 /*
 uint8_t iter_to_8b_func(uint32_t n)
 {
@@ -179,11 +188,10 @@ pixel_t mandelbrot_kernel(screen_state_t state, uint16_t x, uint16_t y)
   iter.z.im = 0.0;
   iter.z_squared.re = 0.0;
   iter.z_squared.im = 0.0;
-  uint32_t n = 0;
+  iter.n = 0;
   iter.escaped = 0;
-  while(!iter.escaped & (n < MAX_ITER)){
+  while(!iter.escaped & (iter.n < MAX_ITER)){
     mandelbrot_iter_t iter = mandelbrot_iter(iter);
-    n += 1;
   }
 
   // The color depends on the number of iterations
@@ -192,7 +200,7 @@ pixel_t mandelbrot_kernel(screen_state_t state, uint16_t x, uint16_t y)
   p.r = color;
   p.g = color;
   p.b = color;*/
-  p = iter_to_color(n);
+  p = iter_to_color(iter.n);
   return p;
 }
 
