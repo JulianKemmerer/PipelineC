@@ -73,6 +73,7 @@ uint1_t xil_mem_rst_done;
 
 // Top level io connection to board generated memory interface
 MAIN_MHZ(xil_mem_module, XIL_MEM_MHZ) // Set clock freq
+PRAGMA_MESSAGE(FUNC_WIRES xil_mem_module)
 app_to_xil_mem_t xil_mem_module(xil_mem_to_app_t mem_to_app)
 {
   xil_mem_to_app = mem_to_app;

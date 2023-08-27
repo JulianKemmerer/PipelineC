@@ -174,6 +174,7 @@ typedef struct PPCAT(name, _write_start_logic_outputs_t) \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }PPCAT(name, _write_start_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _write_start_logic)) \
 PPCAT(name, _write_start_logic_outputs_t) PPCAT(name, _write_start_logic)( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
@@ -223,6 +224,7 @@ typedef struct PPCAT(name, _write_finish_logic_outputs_t) \
   write_resp_data_t resp; \
   uint1_t done; \
 }PPCAT(name, _write_finish_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _write_finish_logic)) \
 PPCAT(name, _write_finish_logic_outputs_t) PPCAT(name, _write_finish_logic)( \
   uint1_t ready_for_outputs,  \
   PPCAT(name, _write_dev_to_host_t) from_dev \
@@ -252,6 +254,7 @@ typedef struct PPCAT(name, _write_logic_outputs_t) \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }PPCAT(name, _write_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _write_logic)) \
 PPCAT(name, _write_logic_outputs_t) PPCAT(name, _write_logic)( \
   write_req_data_t req, /* uint32_t addr,*/ \
   write_data_word_t data, /* uint32_t data,*/ \
@@ -314,6 +317,7 @@ typedef struct PPCAT(name, _read_start_logic_outputs_t) \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }PPCAT(name, _read_start_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_start_logic)) \
 PPCAT(name, _read_start_logic_outputs_t) PPCAT(name, _read_start_logic)( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
@@ -342,6 +346,7 @@ typedef struct PPCAT(name, _read_finish_logic_outputs_t) \
   read_data_resp_word_t data; \
   uint1_t done; \
 }PPCAT(name, _read_finish_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_finish_logic)) \
 PPCAT(name, _read_finish_logic_outputs_t) PPCAT(name, _read_finish_logic)( \
   uint1_t ready_for_outputs, \
   PPCAT(name, _read_data_t) data \
@@ -374,6 +379,7 @@ typedef struct PPCAT(name, _read_logic_outputs_t) \
   uint1_t done; \
   uint1_t ready_for_inputs; \
 }PPCAT(name, _read_logic_outputs_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_logic)) \
 PPCAT(name, _read_logic_outputs_t) PPCAT(name, _read_logic)( \
   read_req_data_t req, /* uint32_t addr,*/ \
   uint1_t ready_for_outputs, \
@@ -433,6 +439,7 @@ dev_to_host_wire_on_host_clk_read_req_ready, \
 dev_to_host_wire_on_host_clk_read_data, \
 host_to_dev_wire_on_host_clk_read_data_ready \
 ) \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_start)) \
 void PPCAT(name, _read_start)(read_req_data_t req) \
 { \
   uint1_t done = 0; \
@@ -448,6 +455,7 @@ void PPCAT(name, _read_start)(read_req_data_t req) \
   while(!done); \
   host_to_dev_wire_on_host_clk_read_req.valid = 0; \
 } \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_finish)) \
 read_data_resp_word_t PPCAT(name, _read_finish)() \
 { \
   read_data_resp_word_t rv; \
@@ -470,6 +478,7 @@ typedef struct PPCAT(name, _read_finish_nonblocking_t){ \
   read_data_resp_word_t data; \
   uint1_t valid; \
 }PPCAT(name, _read_finish_nonblocking_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _read_finish_nonblocking)) \
 PPCAT(name, _read_finish_nonblocking_t) PPCAT(name, _read_finish_nonblocking)() \
 { \
   PPCAT(name, _read_finish_nonblocking_t) rv; \
@@ -590,6 +599,7 @@ write_resp_data_t PPCAT(name, _write)(write_req_data_t req, write_data_word_t da
 /* ^ TODO maybe implement full read/write using start and finish?*/ \
  \
 /* Increment with wrap around*/ \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _host_port_inc)) \
 uint8_t PPCAT(name, _host_port_inc)(uint8_t selected_host_port) \
 { \
   uint8_t rv = selected_host_port + 1; \
@@ -601,6 +611,7 @@ uint8_t PPCAT(name, _host_port_inc)(uint8_t selected_host_port) \
 } \
  \
 /* Pick next shared bus to arb based on what other ports have chosen*/ \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _next_host_sel)) \
 uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
 { \
   uint8_t rv = PPCAT(name, _host_port_inc)(selected_host_port); \
@@ -625,6 +636,7 @@ typedef struct PPCAT(name, _dev_arb_t){ \
   PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
   PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
 }PPCAT(name, _dev_arb_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _dev_arb)) \
 PPCAT(name, _dev_arb_t) PPCAT(name, _dev_arb)( \
   PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
   PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
@@ -889,6 +901,7 @@ typedef struct PPCAT(name, _dev_arb_pipelined_t){ \
   PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
   PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
 }PPCAT(name, _dev_arb_pipelined_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _dev_arb_pipelined)) \
 PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
   PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
@@ -1002,6 +1015,7 @@ typedef struct PPCAT(name, _dev_multi_host_connect_t){ \
   PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
   PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
 }PPCAT(name, _dev_multi_host_connect_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _dev_multi_host_connect)) \
 PPCAT(name, _dev_multi_host_connect_t) PPCAT(name, _dev_multi_host_connect)( \
   PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS][NUM_HOST_PORTS], \
   PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \
@@ -1099,6 +1113,7 @@ typedef struct PPCAT(name, _dev_arb_pipelined_greedy_t){ \
   PPCAT(type, _host_to_dev_t) to_devs[NUM_DEV_PORTS]; \
   PPCAT(type, _dev_to_host_t) to_hosts[NUM_HOST_PORTS]; \
 }PPCAT(name, _dev_arb_pipelined_greedy_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _dev_arb_pipelined_greedy)) \
 PPCAT(name, _dev_arb_pipelined_greedy_t) PPCAT(name, _dev_arb_pipelined_greedy)( \
   PPCAT(type, _dev_to_host_t) from_devs[NUM_DEV_PORTS], \
   PPCAT(type, _host_to_dev_t) from_hosts[NUM_HOST_PORTS] \

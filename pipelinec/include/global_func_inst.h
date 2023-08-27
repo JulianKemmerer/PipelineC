@@ -106,6 +106,7 @@ typedef struct PPCAT(inst_name,_in_reg_t){ \
   uint8_t ids[NUM_HOSTS]; \
   uint1_t valids[NUM_HOSTS]; \
 }PPCAT(inst_name,_in_reg_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_in_reg_func)) \
 PPCAT(inst_name,_in_reg_t) PPCAT(inst_name,_in_reg_func)(in_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
 { \
   static PPCAT(inst_name,_in_reg_t) the_reg; \
@@ -120,6 +121,7 @@ typedef struct PPCAT(inst_name,_out_reg_t){ \
   uint8_t ids[NUM_HOSTS]; \
   uint1_t valids[NUM_HOSTS]; \
 }PPCAT(inst_name,_out_reg_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_out_reg_func)) \
 PPCAT(inst_name,_out_reg_t) PPCAT(inst_name,_out_reg_func)(out_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
 { \
   static PPCAT(inst_name,_out_reg_t) the_reg; \
@@ -137,6 +139,7 @@ out_type PPCAT(inst_name,_outs)[NUM_HOSTS]; \
 uint8_t PPCAT(inst_name,_out_ids)[NUM_HOSTS]; \
 uint1_t PPCAT(inst_name,_out_valids)[NUM_HOSTS]; \
 MAIN(inst_name) \
+PRAGMA_MESSAGE(FUNC_NO_ADD_IO_REGS inst_name) \
 void inst_name() \
 { \
   /* IN REG*/ \
