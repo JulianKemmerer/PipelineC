@@ -9461,6 +9461,7 @@ class ParserState:
         self.func_mult_style = {}
         self.func_marked_wires = set()
         self.func_marked_blackbox = set()
+        self.func_marked_no_add_io_regs = set()
         self.func_marked_debug = set()
         self.marked_onehot = set()
         self.part = None
@@ -9522,6 +9523,7 @@ class ParserState:
         rv.func_mult_style = dict(self.func_mult_style)
         rv.func_marked_wires = set(self.func_marked_wires)
         rv.func_marked_blackbox = set(self.func_marked_blackbox)
+        rv.func_marked_no_add_io_regs = set(self.func_marked_no_add_io_regs)
         rv.func_marked_debug = set(self.func_marked_debug)
         rv.marked_onehot = set(self.marked_onehot)
         rv.part = self.part
@@ -11349,6 +11351,12 @@ def APPEND_PRAGMA_INFO(parser_state):
             toks = pragma.string.split(" ")
             main_func = toks[1]
             parser_state.func_marked_blackbox.add(main_func)
+
+        # FUNC_NO_ADD_IO_REGS
+        elif name == "FUNC_NO_ADD_IO_REGS":
+            toks = pragma.string.split(" ")
+            func = toks[1]
+            parser_state.func_marked_no_add_io_regs.add(func)
 
         # PART
         elif name == "PART":

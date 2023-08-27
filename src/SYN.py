@@ -2985,9 +2985,12 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     slices = []  # [0.0, 1.0]
                     needs_in_regs = True
                     needs_out_regs = True
+                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                        needs_in_regs = False
+                        needs_out_regs = False
                     if cache_key not in printed_slices_cache:
                         print(
-                            "Slicing w/ IO regs:",
+                            "Slicing (w/ IO regs if possible):",
                             func_logic.func_name,
                             ", mult =",
                             sweep_state.inst_sweep_state[main_func].coarse_sweep_mult,
@@ -3001,9 +3004,12 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     slices = coarse_slices_cache[cache_key]
                     needs_in_regs = True
                     needs_out_regs = True
+                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                        needs_in_regs = False
+                        needs_out_regs = False
                     if cache_key not in printed_slices_cache:
                         print(
-                            "Cached coarse grain slicing:",
+                            "Cached coarse grain slicing (w/ IO regs if possible):",
                             func_logic.func_name,
                             ", target MHz =",
                             coarse_target_mhz,
@@ -3132,13 +3138,16 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                             keep_try_for_timing_params = False
                         break
                     # Assummed met timing if here
-                    # Add IO regs to timing
+                    # Add IO regs for timing
                     slices = working_slices[:]
                     needs_in_regs = True
                     needs_out_regs = True
+                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                        needs_in_regs = False
+                        needs_out_regs = False
                     if cache_key not in printed_slices_cache:
                         print(
-                            "Coarse gain confirmed slicing (w/ IO regs):",
+                            "Coarse gain confirmed slicing (w/ IO regs if possible):",
                             func_logic.func_name,
                             ", target MHz =",
                             coarse_target_mhz,
@@ -3442,7 +3451,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                         # How many slices for that delay to meet timing
                         fake_one_clk_mhz = 1000.0 / total_delay
                         new_clks = target_mhz / fake_one_clk_mhz
-                        latency_mult = new_clks / latency
+                        latency_mult = new_clks / (latency+1)
                         new_best_guess_sweep_mult = (
                             sweep_state.inst_sweep_state[
                                 main_inst
