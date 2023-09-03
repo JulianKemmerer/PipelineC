@@ -176,3 +176,61 @@ void inst_name() \
   PPCAT(inst_name,_out_ids) = o.ids; \
   PPCAT(inst_name,_out_valids) = o.valids; \
 }
+
+
+#define GLOBAL_PIPELINE_INST_W_ARB_NO_IO_REGS(inst_name, out_type, func_name, in_type, NUM_HOSTS) \
+typedef struct PPCAT(inst_name,_in_t){ \
+  in_type datas[NUM_HOSTS]; \
+  uint8_t ids[NUM_HOSTS]; \
+  uint1_t valids[NUM_HOSTS]; \
+}PPCAT(inst_name,_in_t); \
+typedef struct PPCAT(inst_name,_out_t){ \
+  out_type datas[NUM_HOSTS]; \
+  uint8_t ids[NUM_HOSTS]; \
+  uint1_t valids[NUM_HOSTS]; \
+}PPCAT(inst_name,_out_t); \
+PPCAT(inst_name,_out_t) PPCAT(inst_name,_w_in_mux)(in_type datas[NUM_HOSTS], uint8_t ids[NUM_HOSTS], uint1_t valids[NUM_HOSTS]) \
+{ \
+  PPCAT(inst_name,_out_t) rv; \
+  /*IN MUX - TODO BINARY TREE*/ \
+  in_type one_hot_selected_in_data; \
+  uint32_t i; \
+  for(i = 0; i < NUM_HOSTS; i+=1) \
+  { \
+    if(valids[i]) \
+    { \
+      one_hot_selected_in_data = datas[i]; \
+    } \
+  } \
+  /*THE FUNC*/ \
+  out_type data_out = func_name(one_hot_selected_in_data); \
+  /*USE INPUT ONEHOT VALID FOR OUTPUT, EVERY OUT DATA IS SAME*/ \
+  out_type data_outs[NUM_HOSTS]; \
+  for(i = 0; i < NUM_HOSTS; i+=1) \
+  { \
+    rv.datas[i] = data_out; \
+  } \
+  rv.ids = ids; \
+  rv.valids = valids; \
+  return rv; \
+} \
+/* Global wires connected to instance */ \
+in_type PPCAT(inst_name,_ins)[NUM_HOSTS]; \
+uint8_t PPCAT(inst_name,_in_ids)[NUM_HOSTS]; \
+uint1_t PPCAT(inst_name,_in_valids)[NUM_HOSTS]; \
+out_type PPCAT(inst_name,_outs)[NUM_HOSTS]; \
+uint8_t PPCAT(inst_name,_out_ids)[NUM_HOSTS]; \
+uint1_t PPCAT(inst_name,_out_valids)[NUM_HOSTS]; \
+MAIN(inst_name) \
+PRAGMA_MESSAGE(FUNC_NO_ADD_IO_REGS inst_name) \
+void inst_name() \
+{ \
+  PPCAT(inst_name,_out_t) o = PPCAT(inst_name,_w_in_mux)( \
+    PPCAT(inst_name,_ins), \
+    PPCAT(inst_name,_in_ids), \
+    PPCAT(inst_name,_in_valids) \
+  ); \
+  PPCAT(inst_name,_outs) = o.datas; \
+  PPCAT(inst_name,_out_ids) = o.ids; \
+  PPCAT(inst_name,_out_valids) = o.valids; \
+}
