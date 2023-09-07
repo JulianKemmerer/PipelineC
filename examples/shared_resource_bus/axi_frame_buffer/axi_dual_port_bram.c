@@ -1,7 +1,6 @@
 /////////////////// GENERIC AXI-like DUAL PORT RAM ///////////////////////////////////
 // Assumes (todo REQUIRE) that output response FIFOs are always ready
 // (since didnt implement flow control push back through RAM path yet)
-#include "../axi.h"
 
 // Declare dual port RAM
 // Easiest to match AXI bus width

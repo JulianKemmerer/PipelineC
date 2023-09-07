@@ -1,3 +1,6 @@
+// Common AXI shared bus types
+#include "../axi_shared_bus.h"
+
 // Code for a single frame buffer
 #include "axi_dual_port_bram.c"
 
@@ -7,7 +10,7 @@
 axi_ram_in_ports_t axi_rams_in_ports[N_AXI_RAMS][AXI_RAM_N_PORTS];
 axi_ram_out_ports_t axi_rams_out_ports[N_AXI_RAMS][AXI_RAM_N_PORTS];
 // Frame buffer RAMs wired to global wires
-MAIN_MHZ(axi_rams, DEV_CLK_MHZ)
+MAIN_MHZ(axi_rams, BRAM_DEV_CLK_MHZ)
 void axi_rams()
 {
   uint32_t i;
@@ -18,49 +21,35 @@ void axi_rams()
   }
 }
 
-//////////////// EXPOSE DUAL FRAME BUFFERS AS SHARED RESOURCES //////////////////////
-// See docs: https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
-#include "shared_resource_bus.h"
-
-// Will be two instances of same type of shared resource
-SHARED_BUS_TYPE_DEF(
-  axi_ram_bus_t,
-  axi_write_req_t,
-  axi_write_data_t,
-  axi_write_resp_t,
-  axi_read_req_t,
-  axi_read_data_t
-)
-
 // Each device is a dual port RAM used by host threads
-#define NUM_DEV_PORTS AXI_RAM_N_PORTS
-#define NUM_HOST_PORTS (NUM_USER_THREADS+1) // +1 for vga port display read port
+#define BRAM_NUM_DEV_PORTS AXI_RAM_N_PORTS
+#define BRAM_NUM_HOST_PORTS NUM_USER_THREADS
 
 // First frame buffer bus
 #define SHARED_RESOURCE_BUS_NAME          axi_ram0_shared_bus
-#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_ram_bus_t    
+#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_shared_bus_t    
 #define SHARED_RESOURCE_BUS_WR_REQ_TYPE   axi_write_req_t 
 #define SHARED_RESOURCE_BUS_WR_DATA_TYPE  axi_write_data_t
 #define SHARED_RESOURCE_BUS_WR_RESP_TYPE  axi_write_resp_t
 #define SHARED_RESOURCE_BUS_RD_REQ_TYPE   axi_read_req_t
 #define SHARED_RESOURCE_BUS_RD_DATA_TYPE  axi_read_data_t   
-#define SHARED_RESOURCE_BUS_HOST_PORTS    NUM_HOST_PORTS
+#define SHARED_RESOURCE_BUS_HOST_PORTS    BRAM_NUM_HOST_PORTS
 #define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  HOST_CLK_MHZ
-#define SHARED_RESOURCE_BUS_DEV_PORTS     NUM_DEV_PORTS
-#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   DEV_CLK_MHZ
+#define SHARED_RESOURCE_BUS_DEV_PORTS     BRAM_NUM_DEV_PORTS
+#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   BRAM_DEV_CLK_MHZ
 #include "shared_resource_bus_decl.h"
 // Second frame buffer bus
 #define SHARED_RESOURCE_BUS_NAME          axi_ram1_shared_bus
-#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_ram_bus_t    
+#define SHARED_RESOURCE_BUS_TYPE_NAME     axi_shared_bus_t    
 #define SHARED_RESOURCE_BUS_WR_REQ_TYPE   axi_write_req_t 
 #define SHARED_RESOURCE_BUS_WR_DATA_TYPE  axi_write_data_t
 #define SHARED_RESOURCE_BUS_WR_RESP_TYPE  axi_write_resp_t
 #define SHARED_RESOURCE_BUS_RD_REQ_TYPE   axi_read_req_t
 #define SHARED_RESOURCE_BUS_RD_DATA_TYPE  axi_read_data_t   
-#define SHARED_RESOURCE_BUS_HOST_PORTS    NUM_HOST_PORTS
+#define SHARED_RESOURCE_BUS_HOST_PORTS    BRAM_NUM_HOST_PORTS
 #define SHARED_RESOURCE_BUS_HOST_CLK_MHZ  HOST_CLK_MHZ
-#define SHARED_RESOURCE_BUS_DEV_PORTS     NUM_DEV_PORTS
-#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   DEV_CLK_MHZ
+#define SHARED_RESOURCE_BUS_DEV_PORTS     BRAM_NUM_DEV_PORTS
+#define SHARED_RESOURCE_BUS_DEV_CLK_MHZ   BRAM_DEV_CLK_MHZ
 #include "shared_resource_bus_decl.h"
 
 // User application uses 5 channel AXI-like shared bus wires for frame buffer control
@@ -73,14 +62,14 @@ typedef struct axi_ram_port_dev_ctrl_t{
   // ex. dev inputs
   axi_ram_in_ports_t to_axi_ram;
   // Bus signals driven to host
-  axi_ram_bus_t_dev_to_host_t to_host;
+  axi_shared_bus_t_dev_to_host_t to_host;
 }axi_ram_port_dev_ctrl_t;
 axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   // Controller Inputs:
   // Ex. dev outputs
   axi_ram_out_ports_t from_axi_ram,
   // Bus signals from the host
-  axi_ram_bus_t_host_to_dev_t from_host
+  axi_shared_bus_t_host_to_dev_t from_host
 )
 {
   static uint1_t read_has_priority;
@@ -110,7 +99,8 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
     // Signal ready for inputs
     o.to_host.read.req_ready = 1;
     // Drive inputs into dev
-    o.to_axi_ram.addr = from_host.read.req.data.user.araddr;
+    // AXI addr is byte address, each pixel is 4 bytes
+    o.to_axi_ram.addr = from_host.read.req.data.user.araddr >> AXI_BUS_BYTE_WIDTH_LOG2;
     o.to_axi_ram.id = from_host.read.req.id;
     o.to_axi_ram.valid = 1;
     read_has_priority = 0;
@@ -119,7 +109,8 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
     o.to_host.write.req_ready = 1;
     o.to_host.write.data_ready = 1;
     // Drive inputs into dev
-    o.to_axi_ram.addr = from_host.write.req.data.user.awaddr;
+    // AXI addr is byte address, each pixel is 4 bytes
+    o.to_axi_ram.addr = from_host.write.req.data.user.awaddr >> AXI_BUS_BYTE_WIDTH_LOG2;
     o.to_axi_ram.wr_data.data = from_host.write.data.burst.data_word.user.wdata;
     o.to_axi_ram.wr_enable = 1;
     o.to_axi_ram.id = from_host.write.req.id;
@@ -142,28 +133,74 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   return o;
 }
 
-MAIN_MHZ(axi_ram_dev_arb_connect, DEV_CLK_MHZ)
+
+// One read only priority port on each frame buffer RAM
+// (other dev port is used normally without extra read-only arb)
+// RAM0
+axi_shared_bus_t_host_to_dev_t axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire;
+axi_shared_bus_t_dev_to_host_t axi_ram0_shared_bus_rd_pri_port_dev_to_host_wire;
+// RAM1
+axi_shared_bus_t_host_to_dev_t axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire;
+axi_shared_bus_t_dev_to_host_t axi_ram1_shared_bus_rd_pri_port_dev_to_host_wire;
+MAIN_MHZ(axi_ram_dev_arb_connect, BRAM_DEV_CLK_MHZ)
 void axi_ram_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
-  SHARED_BUS_ARB_PIPELINED(axi_ram_bus_t, axi_ram0_shared_bus, NUM_DEV_PORTS)
-  SHARED_BUS_ARB_PIPELINED(axi_ram_bus_t, axi_ram1_shared_bus, NUM_DEV_PORTS)
+  SHARED_BUS_ARB_PIPELINED(axi_shared_bus_t, axi_ram0_shared_bus, BRAM_NUM_DEV_PORTS)
+  SHARED_BUS_ARB_PIPELINED(axi_shared_bus_t, axi_ram1_shared_bus, BRAM_NUM_DEV_PORTS)
 
+  // Hard coded to 2 dev ports for now
+  #if BRAM_NUM_DEV_PORTS != 2
+  #error "Fix bram ports!"
+  #endif
+
+  // FIRST DEV PORTs (NORMAL)
+
+  // First frame buffer
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][0], axi_ram0_shared_bus_from_host[0]);
+  axi_rams_in_ports[0][0] = port_ctrl.to_axi_ram;
+  axi_ram0_shared_bus_to_host[0] = port_ctrl.to_host;
+  // Second frame buffer
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][0], axi_ram1_shared_bus_from_host[0]);
+  axi_rams_in_ports[1][0] = port_ctrl.to_axi_ram;
+  axi_ram1_shared_bus_to_host[0] = port_ctrl.to_host;
+
+
+  // SECOND DEV PORTs (HAS READ PRIORITY MUXING)
   // Connect devs to frame buffer ports
-  uint32_t i;
-  for (i = 0; i < NUM_DEV_PORTS; i+=1)
-  {
-    // First frame buffer
-    axi_ram_port_dev_ctrl_t port_ctrl
-      = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][i], axi_ram0_shared_bus_from_host[i]);
-    axi_rams_in_ports[0][i] = port_ctrl.to_axi_ram;
-    axi_ram0_shared_bus_to_host[i] = port_ctrl.to_host;
-    // Second frame buffer
-    axi_ram_port_dev_ctrl_t port_ctrl
-      = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][i], axi_ram1_shared_bus_from_host[i]);
-    axi_rams_in_ports[1][i] = port_ctrl.to_axi_ram;
-    axi_ram1_shared_bus_to_host[i] = port_ctrl.to_host;
-  }
+  // With special 2->1 arb with priority for reads
+  
+  // First frame buffer 2->1 mux
+  axi_shared_bus_t_dev_to_host_t ram0_rd_pri_port_arb_dev_to_host_in;
+  #pragma FEEDBACK ram0_rd_pri_port_arb_dev_to_host_in
+  rd_pri_port_arb_t ram0_rd_pri_arb = rd_pri_port_arb(
+    axi_ram0_shared_bus_from_host[1], axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire,
+    ram0_rd_pri_port_arb_dev_to_host_in
+  );
+  axi_ram0_shared_bus_to_host[1] = ram0_rd_pri_arb.to_other_host;
+  axi_ram0_shared_bus_rd_pri_port_dev_to_host_wire = ram0_rd_pri_arb.to_rd_pri_host;
+  // First frame buffer ctrl
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][1], ram0_rd_pri_arb.to_dev);
+  axi_rams_in_ports[0][1] = port_ctrl.to_axi_ram;
+  ram0_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
+
+  // Second frame buffer 2->1 mux
+  axi_shared_bus_t_dev_to_host_t ram1_rd_pri_port_arb_dev_to_host_in;
+  #pragma FEEDBACK ram1_rd_pri_port_arb_dev_to_host_in
+  rd_pri_port_arb_t ram1_rd_pri_arb = rd_pri_port_arb(
+    axi_ram1_shared_bus_from_host[1], axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire,
+    ram1_rd_pri_port_arb_dev_to_host_in
+  );
+  axi_ram1_shared_bus_to_host[1] = ram1_rd_pri_arb.to_other_host;
+  axi_ram1_shared_bus_rd_pri_port_dev_to_host_wire = ram1_rd_pri_arb.to_rd_pri_host;
+  // Second frame buffer
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][1], ram1_rd_pri_arb.to_dev);
+  axi_rams_in_ports[1][1] = port_ctrl.to_axi_ram;
+  ram1_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
 }
 
 // axi_ram_read and write
