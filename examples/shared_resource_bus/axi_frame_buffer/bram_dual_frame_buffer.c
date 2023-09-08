@@ -1,4 +1,4 @@
-#define BRAM_DEV_CLK_MHZ 100.0
+#define BRAM_DEV_CLK_MHZ 25.0 //100.0
 
 #include "shared_axi_brams.c"
 
@@ -33,25 +33,28 @@ void host_vga_reader()
 {
   //static uint1_t frame_buffer_read_port_sel_reg;
 
-  // Special case for BRAM
+  // Feedback from async pixel fifo if ready for data
+  uint1_t fifo_ready;
+  #pragma FEEDBACK fifo_ready
+
+  // Special case for BRAM 1 clock pipeline without buffers or feedback built in
   //  Cant push back into BRAM like can push back into DDR controller
-  // So have limit, vga fifo ready means can have 1 pixel in flight
-  // (1clk bram latency means 2 cycles per read, requires BRAM clock > 2*PIXEL CLOCK?)
-  static uint1_t has_read_in_flight;
+  //  Could add but is more complex than:
+  //  A skid buffer reg to cover latency with extra buffer space
+  static axi_read_data_t skid_reg;
+  static uint1_t skid_reg_valid;
 
   // READ REQUEST SIDE
   // Increment VGA counters and do read for each position
   static vga_pos_t vga_pos;
   // Read and increment pos if room in fifos (cant be greedy since will 100% hog priority port)
-  uint1_t fifo_ready;
-  #pragma FEEDBACK fifo_ready
   uint32_t addr = pos_to_addr(vga_pos.x, vga_pos.y);
   axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.req.data.user.araddr = addr;
   axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = 0;
   axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.req.data.user.araddr = addr;
   axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = 0;
   uint1_t do_increment = 0;
-  uint1_t rd_req_valid = fifo_ready & !has_read_in_flight;
+  uint1_t rd_req_valid = fifo_ready & !skid_reg_valid;
   /*if(frame_buffer_read_port_sel){
     axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = rd_req_valid;
     do_increment = rd_req_valid & axi_ram1_shared_bus_rd_pri_port_dev_to_host_wire.read.req_ready;
@@ -60,9 +63,6 @@ void host_vga_reader()
     do_increment = rd_req_valid & axi_ram0_shared_bus_rd_pri_port_dev_to_host_wire.read.req_ready;
   //}
   vga_pos = vga_frame_pos_increment(vga_pos, do_increment);
-  if(do_increment){
-    has_read_in_flight = 1;
-  }
   
 
   // READ RESPONSE SIDE
@@ -79,28 +79,62 @@ void host_vga_reader()
     rd_data_valid = 1;
     read_port_sel = 0;
   }
-  if(rd_data_valid){
-    has_read_in_flight = 0;
+
+  // Data into fifo is skid data or fresh from buffer
+  axi_read_data_t rd_data_into_fifo;
+  uint1_t rd_data_into_fifo_valid;
+
+  // Data from buffer?
+  if(rd_data_valid)
+  {
+    rd_data_into_fifo = rd_data;
+    rd_data_into_fifo_valid = 1;
+  }
+  // Skid data priority
+  uint1_t data_into_fifo_is_skid;
+  if(skid_reg_valid)
+  {
+    rd_data_into_fifo = skid_reg;
+    rd_data_into_fifo_valid = 1;
+    data_into_fifo_is_skid = 1;
   }
 
   // Write pixel data into fifo
   pixel_t pixel;
-  pixel.a = rd_data.rdata[3];
-  pixel.r = rd_data.rdata[2];
-  pixel.g = rd_data.rdata[1];
-  pixel.b = rd_data.rdata[0];
+  pixel.a = rd_data_into_fifo.rdata[3];
+  pixel.r = rd_data_into_fifo.rdata[2];
+  pixel.g = rd_data_into_fifo.rdata[1];
+  pixel.b = rd_data_into_fifo.rdata[0];
   pixel_t pixels[1];
   pixels[0] = pixel;
-  uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, rd_data_valid);
+  uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, rd_data_into_fifo_valid);
+  // Handle if and where to signal ready (clearing skid buf too)
   axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = 0;
   axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = 0;
-  if(rd_data_valid){
-    if(read_port_sel){
-      axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = fifo_ready;
-    }else{
-      axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = fifo_ready;
+  if(data_into_fifo_is_skid)
+  {
+    // Clear skid buf if fifo was ready for data
+    if(fifo_ready){
+      skid_reg_valid = 0;
     }
   }
-
+  else
+  {
+    // Data coming from one of RAM ports
+    // Since relying on skid buf, makes sense to always signal ready as opposed to fifo_ready
+    // Since if !fifo_ready is taken in skid buffer anyway
+    if(read_port_sel){
+      axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = 1; //fifo_ready;
+    }else{
+      axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.data_ready = 1; //fifo_ready;
+    }
+    // If fifo not ready put valid data in skid buf
+    if(!fifo_ready)
+    {
+      skid_reg = rd_data;
+      skid_reg_valid = rd_data_valid;
+    }
+  }
+  
   //frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
 }
