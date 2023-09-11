@@ -610,21 +610,53 @@ uint8_t PPCAT(name, _host_port_inc)(uint8_t selected_host_port) \
   return rv; \
 } \
  \
+/* Check if selected host value is in next list*/ \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _host_is_selected)) \
+uint1_t PPCAT(name, _host_is_selected)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
+{ \
+  uint1_t rv = 0; \
+  uint32_t i; \
+  for(i = 0; i < NUM_DEV_PORTS; i+=1) \
+  {\
+    if(next_dev_to_selected_host[i]==selected_host_port){ \
+      rv = 1; \
+    } \
+  }\
+  return rv; \
+} \
 /* Pick next shared bus to arb based on what other ports have chosen*/ \
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _next_host_sel)) \
 uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
 { \
+  /* Jumping multiple places takes alot of logic it seems*/ \
+  /* Do easy o(n^2) looking excessive muxing for now */ \
+  /* Do one less iteraiton than num of devs to avoid looping back on self*/ \
+  /* And also makes num dev=1 logic make sense, unchecked increment only*/ \
+  uint1_t rv_valid = 1; \
   uint8_t rv = PPCAT(name, _host_port_inc)(selected_host_port); \
-  int32_t i; \
-  /* Backwards loop because 'next' is like a shift, etc*/ \
-  for (i = (NUM_DEV_PORTS-1); i >=0; i-=1) \
+  uint32_t i; \
+  for (i = 0; i < (NUM_DEV_PORTS-1); i+=1) \
   { \
-    if(next_dev_to_selected_host[i]==rv) \
-    { \
+    /* Check if desired rv is in list */ \
+    if(PPCAT(name, _host_is_selected)(rv, next_dev_to_selected_host)){ \
+      /* Already in list, try to move on*/ \
       rv = PPCAT(name, _host_port_inc)(rv); \
+      rv_valid = 0; /* Still need to be verified in next iters*/ \
+    }else{ \
+      /* Not in list, keep as valid */ \
+      rv_valid = 1; \
     } \
   } \
-  return rv; \
+  /* Final extra iter for num devs > 1 */\
+  if(!rv_valid){ \
+    rv_valid = !PPCAT(name, _host_is_selected)(rv, next_dev_to_selected_host); \
+  } \
+  /* Use rv if valid */ \
+  if(rv_valid) \
+  { \
+    selected_host_port = rv; \
+  } \
+  return selected_host_port; \
 } \
  \
 /* SIMPLE ROUND ROBIN, state index can jump (loop back to state, up to only NUM_DEV_PORTS places)*/ \
@@ -1075,7 +1107,7 @@ PPCAT(name, _dev_multi_host_connect_t) PPCAT(name, _dev_multi_host_connect)( \
         o.to_hosts[j].write.data_ready = from_devs[i][j].write.data_ready; \
       } \
     } \
-    /* Rotate one hot dev_to_selected_host[i] */ \
+    /* Rotate one hot dev_to_selected_host[i] - TODO: by number of devs > 1 sometimes*/ \
     uint1_t top_selected_host_bit = dev_to_selected_host[i][NUM_HOST_PORTS-1]; \
     ARRAY_1SHIFT_INTO_BOTTOM(dev_to_selected_host[i], NUM_HOST_PORTS, top_selected_host_bit) \
   } \
