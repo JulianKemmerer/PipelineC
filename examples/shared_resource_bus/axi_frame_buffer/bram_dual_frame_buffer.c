@@ -6,7 +6,7 @@
 pixel_t frame_buf_read(uint16_t x, uint16_t y)
 {
   uint32_t addr = pos_to_addr(x, y);
-  axi_ram_data_t read = dual_axi_ram_read(0/*frame_buffer_read_port_sel*/, addr);
+  axi_ram_data_t read = dual_axi_ram_read(frame_buffer_read_port_sel, addr);
   pixel_t pixel;
   pixel.a = read.data[3];
   pixel.r = read.data[2];
@@ -22,7 +22,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
   write.data[1] = pixel.g;
   write.data[0] = pixel.b;
   uint32_t addr = pos_to_addr(x, y);
-  dual_axi_ram_write(0/*!frame_buffer_read_port_sel*/, addr, write);
+  dual_axi_ram_write(!frame_buffer_read_port_sel, addr, write);
 }
 
 // Async multi in flight logic to read pixels for VGA display
@@ -31,7 +31,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 MAIN_MHZ(host_vga_reader, BRAM_DEV_CLK_MHZ)
 void host_vga_reader()
 {
-  //static uint1_t frame_buffer_read_port_sel_reg;
+  static uint1_t frame_buffer_read_port_sel_reg;
 
   // Feedback from async pixel fifo if ready for data
   uint1_t fifo_ready;
@@ -55,13 +55,13 @@ void host_vga_reader()
   axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = 0;
   uint1_t do_increment = 0;
   uint1_t rd_req_valid = fifo_ready & !skid_reg_valid;
-  /*if(frame_buffer_read_port_sel){
+  if(frame_buffer_read_port_sel_reg){
     axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = rd_req_valid;
     do_increment = rd_req_valid & axi_ram1_shared_bus_rd_pri_port_dev_to_host_wire.read.req_ready;
-  }else{*/
+  }else{
     axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire.read.req.valid = rd_req_valid;
     do_increment = rd_req_valid & axi_ram0_shared_bus_rd_pri_port_dev_to_host_wire.read.req_ready;
-  //}
+  }
   vga_pos = vga_frame_pos_increment(vga_pos, do_increment);
   
 
@@ -136,5 +136,5 @@ void host_vga_reader()
     }
   }
   
-  //frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
+  frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
 }

@@ -13,7 +13,7 @@
 //#define float float_8_11_t
 #define float_lshift(x,shift) ((x)<<(shift))
 
-#define MANDELBROT_DEV_CLK_MHZ 6.25
+#define MANDELBROT_DEV_CLK_MHZ 25.0
 
 // Complex numbers as pair of floats
 typedef struct complex_t
@@ -72,7 +72,7 @@ complex_t screen_to_complex_func(screen_to_complex_in_t inputs)
 
 
 // Do N Mandelbrot iterations per call to mandelbrot_iter_func
-#define ITER_CHUNK_SIZE 2
+#define ITER_CHUNK_SIZE 6
 #define MAX_ITER 32
 typedef struct mandelbrot_iter_t{
   complex_t c;
@@ -108,7 +108,7 @@ mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_USER_THREADS
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ HOST_CLK_MHZ
 #define SHARED_RESOURCE_BUS_PIPELINE_DEV_CLK_MHZ  MANDELBROT_DEV_CLK_MHZ
-#include "shared_resource_bus_pipeline.h"
+#include "shared_resource_bus_pipeline.h" // Not using _no_io_regs
 
 
 /*
@@ -304,7 +304,7 @@ screen_state_t next_screen_state;
 #pragma ASYNC_WIRE next_screen_state
 uint1_t start_next_state;
 #pragma ASYNC_WIRE start_next_state
-#pragma MAIN_MHZ frame_logic 6.25
+#pragma MAIN_MHZ frame_logic 25.0 //6.25
 void frame_logic()
 {
   static uint1_t power_on_reset = 1;
@@ -327,3 +327,4 @@ void frame_logic()
   }
   power_on_reset = 0;
 }
+
