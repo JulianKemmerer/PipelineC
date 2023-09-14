@@ -72,9 +72,24 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   axi_shared_bus_t_host_to_dev_t from_host
 )
 {
+  axi_ram_port_dev_ctrl_t o;
+
+  // Avoid timing loop of write shared req+data ready logic forcing simultaneous req+data  
+  // with input regs
+  static axi_shared_bus_t_write_req_t wr_req;
+  o.to_host.write.req_ready = !wr_req.valid;
+  if(o.to_host.write.req_ready){
+    wr_req = from_host.write.req;
+  }
+  static axi_shared_bus_t_write_data_t wr_data;
+  o.to_host.write.data_ready = !wr_data.valid;
+  if(o.to_host.write.data_ready){
+    wr_data = from_host.write.data;
+  }
+
   static uint1_t read_has_priority;
   // Choose to connect read or write sides?
-  uint1_t write_start = from_host.write.req.valid & from_host.write.data.valid;
+  uint1_t write_start = wr_req.valid & wr_data.valid;
   uint1_t read_start = from_host.read.req.valid;
   uint1_t do_read;
   uint1_t do_write;
@@ -94,7 +109,6 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   }
 
   // Connect selected read or write signals to dev
-  axi_ram_port_dev_ctrl_t o;
   if(do_read){
     // Signal ready for inputs
     o.to_host.read.req_ready = 1;
@@ -105,17 +119,18 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
     o.to_axi_ram.valid = 1;
     read_has_priority = 0;
   }else if(do_write){
-    // Signal ready for inputs
-    o.to_host.write.req_ready = 1;
-    o.to_host.write.data_ready = 1;
+    // Ready handled via input regs
     // Drive inputs into dev
     // AXI addr is byte address, each pixel is 4 bytes
-    o.to_axi_ram.addr = from_host.write.req.data.user.awaddr >> AXI_BUS_BYTE_WIDTH_LOG2;
-    o.to_axi_ram.wr_data.data = from_host.write.data.burst.data_word.user.wdata;
+    o.to_axi_ram.addr = wr_req.data.user.awaddr >> AXI_BUS_BYTE_WIDTH_LOG2;
+    o.to_axi_ram.wr_data.data = wr_data.burst.data_word.user.wdata;
     o.to_axi_ram.wr_enable = 1;
-    o.to_axi_ram.id = from_host.write.req.id;
+    o.to_axi_ram.id = wr_req.id;
     o.to_axi_ram.valid = 1;
     read_has_priority = 1;
+    // Clear input regs now done with contents
+    wr_req.valid = 0;
+    wr_data.valid = 0;
   }
 
   // Drive read and write outputs from dev
