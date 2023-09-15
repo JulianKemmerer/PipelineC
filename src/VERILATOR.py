@@ -184,7 +184,7 @@ make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()} -I{REPO_ABS_DIR()}/pipel
     f.close()
 
     # Run compile
-    print(f"Compiling PipelineC VHDL output + {main_cpp_path}...", flush=True)
+    print(f"Running Verilator build w/ {main_cpp_path}...", flush=True)
     bash_cmd = f"bash {sh_path}"
     # print(bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)

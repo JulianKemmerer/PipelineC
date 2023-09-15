@@ -102,7 +102,7 @@ def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
                 # Input debug port
                 debug_vhdl_name = func.replace("__", "_") + "_val_input"
                 sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
-            else:
+            elif len(func_logic.outputs) >= 1:
                 # Output debug port
                 debug_vhdl_name = func.replace("__", "_") + "_return_output"
                 sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
