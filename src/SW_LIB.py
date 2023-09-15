@@ -1849,6 +1849,8 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
 def GET_MEM_NAME(logic):
     if logic.func_name.endswith("_" + RAM_SP_RF + "_0"):
         return RAM_SP_RF + "_0"
+    elif logic.func_name.endswith("_" + RAM_SP_RF + "_1"):
+        return RAM_SP_RF + "_1"
     elif logic.func_name.endswith("_" + RAM_SP_RF + "_2"):
         return RAM_SP_RF + "_2"
     elif logic.func_name.endswith("_" + RAM_DP_RF + "_0"):
