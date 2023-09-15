@@ -275,7 +275,8 @@ PPCAT(name, _write_logic_outputs_t) PPCAT(name, _write_logic)( \
       state = DATA_STATE; \
     } \
   } \
-  else if(state==DATA_STATE) \
+  /* Pass through req and data same cycle */ \
+  if(state==DATA_STATE) \
   { \
     /* Wait device to be ready for write data*/ \
     if(from_dev.data_ready) \
