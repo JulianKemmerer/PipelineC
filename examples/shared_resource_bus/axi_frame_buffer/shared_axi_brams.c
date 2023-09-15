@@ -2,6 +2,7 @@
 #include "../axi_shared_bus.h"
 
 // Code for a single frame buffer
+#define AXI_RAM_N_PORTS 1
 #include "axi_dual_port_bram.c"
 
 // Dual frame buffers
@@ -164,13 +165,44 @@ void axi_ram_dev_arb_connect()
   SHARED_BUS_ARB_PIPELINED(axi_shared_bus_t, axi_ram0_shared_bus, BRAM_NUM_DEV_PORTS)
   SHARED_BUS_ARB_PIPELINED(axi_shared_bus_t, axi_ram1_shared_bus, BRAM_NUM_DEV_PORTS)
 
-  // Hard coded to 2 dev ports for now
-  #if BRAM_NUM_DEV_PORTS != 2
-  #error "Fix bram ports!"
-  #endif
+  // Hard coded ports for now 
+  // todo reduce duplicate code by making dev port[0] always the read priority port
+  #if BRAM_NUM_DEV_PORTS == 1
+  // ONE DEV PORT - IT HAS READ PRIORITY MUXING
+  // Connect devs to frame buffer ports
+  // With special 2->1 arb with priority for reads
+  
+  // First frame buffer 2->1 mux
+  axi_shared_bus_t_dev_to_host_t ram0_rd_pri_port_arb_dev_to_host_in;
+  #pragma FEEDBACK ram0_rd_pri_port_arb_dev_to_host_in
+  rd_pri_port_arb_t ram0_rd_pri_arb = rd_pri_port_arb(
+    axi_ram0_shared_bus_from_host[0], axi_ram0_shared_bus_rd_pri_port_host_to_dev_wire,
+    ram0_rd_pri_port_arb_dev_to_host_in
+  );
+  axi_ram0_shared_bus_to_host[0] = ram0_rd_pri_arb.to_other_host;
+  axi_ram0_shared_bus_rd_pri_port_dev_to_host_wire = ram0_rd_pri_arb.to_rd_pri_host;
+  // First frame buffer ctrl
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][0], ram0_rd_pri_arb.to_dev);
+  axi_rams_in_ports[0][0] = port_ctrl.to_axi_ram;
+  ram0_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
+  // Second frame buffer 2->1 mux
+  axi_shared_bus_t_dev_to_host_t ram1_rd_pri_port_arb_dev_to_host_in;
+  #pragma FEEDBACK ram1_rd_pri_port_arb_dev_to_host_in
+  rd_pri_port_arb_t ram1_rd_pri_arb = rd_pri_port_arb(
+    axi_ram1_shared_bus_from_host[0], axi_ram1_shared_bus_rd_pri_port_host_to_dev_wire,
+    ram1_rd_pri_port_arb_dev_to_host_in
+  );
+  axi_ram1_shared_bus_to_host[0] = ram1_rd_pri_arb.to_other_host;
+  axi_ram1_shared_bus_rd_pri_port_dev_to_host_wire = ram1_rd_pri_arb.to_rd_pri_host;
+  // Second frame buffer
+  axi_ram_port_dev_ctrl_t port_ctrl
+    = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][0], ram1_rd_pri_arb.to_dev);
+  axi_rams_in_ports[1][0] = port_ctrl.to_axi_ram;
+  ram1_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
 
+  #elif BRAM_NUM_DEV_PORTS == 2
   // FIRST DEV PORTs (NORMAL)
-
   // First frame buffer
   axi_ram_port_dev_ctrl_t port_ctrl
     = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][0], axi_ram0_shared_bus_from_host[0]);
@@ -181,12 +213,9 @@ void axi_ram_dev_arb_connect()
     = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][0], axi_ram1_shared_bus_from_host[0]);
   axi_rams_in_ports[1][0] = port_ctrl.to_axi_ram;
   axi_ram1_shared_bus_to_host[0] = port_ctrl.to_host;
-
-
   // SECOND DEV PORTs (HAS READ PRIORITY MUXING)
   // Connect devs to frame buffer ports
   // With special 2->1 arb with priority for reads
-  
   // First frame buffer 2->1 mux
   axi_shared_bus_t_dev_to_host_t ram0_rd_pri_port_arb_dev_to_host_in;
   #pragma FEEDBACK ram0_rd_pri_port_arb_dev_to_host_in
@@ -201,7 +230,6 @@ void axi_ram_dev_arb_connect()
     = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[0][1], ram0_rd_pri_arb.to_dev);
   axi_rams_in_ports[0][1] = port_ctrl.to_axi_ram;
   ram0_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
-
   // Second frame buffer 2->1 mux
   axi_shared_bus_t_dev_to_host_t ram1_rd_pri_port_arb_dev_to_host_in;
   #pragma FEEDBACK ram1_rd_pri_port_arb_dev_to_host_in
@@ -216,6 +244,7 @@ void axi_ram_dev_arb_connect()
     = axi_ram_port_dev_ctrl_pipelined(axi_rams_out_ports[1][1], ram1_rd_pri_arb.to_dev);
   axi_rams_in_ports[1][1] = port_ctrl.to_axi_ram;
   ram1_rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
+  #endif
 }
 
 // axi_ram_read and write
