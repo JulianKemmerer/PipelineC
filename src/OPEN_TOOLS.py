@@ -393,7 +393,7 @@ export GHDL_PREFIX="""
                 + GHDL_PREFIX
                 + f"""
 # Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 """
+{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 -frelaxed """
                 + vhdl_files_texts
                 + """ -e """
                 + top_entity_name
@@ -436,7 +436,7 @@ export GHDL_PREFIX="""
                 + GHDL_PREFIX
                 + f"""
 # Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 """
+{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 -frelaxed """
                 + vhdl_files_texts
                 + """ -e """
                 + top_entity_name
@@ -468,6 +468,7 @@ export GHDL_PREFIX="""
 
 
 def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
+    print("Rendering final top level Verilog...")
     # Identify tool versions
     if not os.path.exists(f"{GHDL_BIN_PATH}/ghdl"):
         raise Exception("ghdl executable not found!")
@@ -478,10 +479,14 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     m_ghdl = ""
     if not GHDL_PLUGIN_BUILT_IN:
         m_ghdl = "-m ghdl "
+
+    # GHDL --out=verilog produces duplicate wires
+    # https://github.com/ghdl/ghdl/issues/2491
+    '''{GHDL_BIN_PATH}/ghdl synth --std=08 -frelaxed --out=verilog `cat ../vhdl_files.txt` -e {SYN.TOP_LEVEL_MODULE} > {SYN.TOP_LEVEL_MODULE}.v'''
     sh_text = f"""
-{GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
-{GHDL_BIN_PATH}/ghdl -m --std=08 {SYN.TOP_LEVEL_MODULE} && \
-{YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
+{GHDL_BIN_PATH}/ghdl -i --std=08 -frelaxed `cat ../vhdl_files.txt` && \
+{GHDL_BIN_PATH}/ghdl -m --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE} && \
+{YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
 """
     output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     sh_path = output_dir + "/" + "convert_to_verilog.sh"
@@ -493,6 +498,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     bash_cmd = f"bash {sh_path}"
     # print(bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
+    #print(log_text)
     print(f"Top level Verilog file: {output_dir}/{SYN.TOP_LEVEL_MODULE}.v")
 
 
