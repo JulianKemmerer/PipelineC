@@ -2597,6 +2597,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
             else:
                 print("What is lhs ref tok?", ref_tok)
                 sys.exit(-1)
+        ''' SHOULDNT NEED INPUT REF TOKS SINCE HASHED? 
         # input ref toks  --dont include base var name
         for ref_toks in sorted_reduced_ref_toks_set:
             for ref_tok in ref_toks[1:]:
@@ -2609,7 +2610,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
                 else:
                     print("What is lhs ref tok?", ref_tok)
                     sys.exit(-1)
-
+        '''
         # NEED HASH to account for reduced ref toks as name
         input_ref_toks_str = ""
         for ref_toks in sorted(ref_toks_set):
@@ -4019,14 +4020,14 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
     if var_name in parser_state.existing_logic.wire_to_c_type:
         base_type = parser_state.existing_logic.wire_to_c_type[var_name]
     else:
-        # print "parser_state.existing_logic",parser_state.existing_logic
-        # print "parser_state.existing_logic.func_name",parser_state.existing_logic.func_name
-        # print "known variables:",parser_state.existing_logic.variable_names
+        if debug:
+            #print("parser_state.existing_logic",parser_state.existing_logic)
+            print("parser_state.existing_logic.func_name",parser_state.existing_logic.func_name)
+            print("known variables:",parser_state.existing_logic.variable_names)
+            for wire in sorted(parser_state.existing_logic.variable_names):
+                print( wire, ":", parser_state.existing_logic.wire_to_c_type[wire])
+            #print( "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type)
         raise Exception(f"It looks like variable {var_name} is not defined? {c_ast_ref.coord}")
-        # for wire in sorted(parser_state.existing_logic.wire_to_c_type):
-        # print wire, ":", parser_state.existing_logic.wire_to_c_type[wire]
-        # print "parser_state.existing_logic.wire_to_c_type",parser_state.existing_logic.wire_to_c_type
-        # print 0/0
         #sys.exit(-1)
 
     # Is this base type an ID, array or struct ref?
@@ -4071,7 +4072,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
                         current_c_type,
                         c_ast_ref.coord,
                     )
-                    print(parser_state.struct_to_field_type_dict)
+                    #print(parser_state.struct_to_field_type_dict)
                     sys.exit(-1)
                 field_type_dict = parser_state.struct_to_field_type_dict[current_c_type]
                 if next_tok not in field_type_dict:
@@ -4419,6 +4420,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
             print("Wtf no input ref toks for ref read @", c_ast_ref.coord)
             sys.exit(-1)
 
+        ''' SHOULDNT NEED SINCE HASHED
         # Func name built with reduced list
         for driven_ref_toks in sorted_reduced_driven_ref_toks_set:
             for ref_tok in driven_ref_toks[1:]:  # Skip base var name
@@ -4431,6 +4433,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
                 else:
                     print("What is ref tok bleh?", ref_tok)
                     sys.exit(-1)
+        '''
 
         # APPEND HASH to account for differences when not reduced name
         # BLAGH
@@ -9872,7 +9875,7 @@ def PARSE_FILE(c_filename):
             ]
 
         # Parse the function definitions for code structure
-        print("Parsing function logic...", flush=True)
+        print("Elaborating function dataflow...", flush=True)
         parser_state.FuncLogicLookupTable = APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(
             parser_state
         )
@@ -11105,7 +11108,7 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
             continue
         # Special overload funcs
         if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
-            print("Parsing operator overload function:", func_def.decl.name, flush=True)
+            print("Elaborating dataflow of operator overload function:", func_def.decl.name, flush=True)
         # Skip functions that are not found in the initial from-main hierarchy mapping
         elif SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
             print("Function skipped:", func_def.decl.name)
@@ -11116,7 +11119,7 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
             parse_func_body = False
         # General user code
         else:
-            print("Parsing function:", func_def.decl.name, flush=True)
+            print("Elaborating dataflow of function:", func_def.decl.name, flush=True)
 
         # Each func def produces a single logic item
         parser_state.existing_logic = None
@@ -11459,13 +11462,14 @@ def GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename):
     try:
         # Hacky because somehow parser.parse() getting filename from cpp output?
         c_text = c_text.replace("<stdin>", c_filename)
+        #print(c_text)
         parser = c_parser.CParser()
         ast = parser.parse(c_text, filename=c_filename)
         # ast.show()
         return ast
     except c_parser.ParseError as pe:
         print("pycparser says you messed up:", pe)
-        # print(c_text)
+        #print(c_text)
         sys.exit(-1)
 
 
@@ -11475,6 +11479,7 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
     try:
         # Use preprocessor function
         c_text = preprocess_text(text)
+        #print(c_text)
         return GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename)
     except c_parser.ParseError as pe:
         print("Parsed fake file name:", c_filename)
