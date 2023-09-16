@@ -1,17 +1,9 @@
 // Copy of graphics_demo.c baseline
 // modified to do Mandelbrot demo
 
-/* TODO: do scaling:
-  FILL CHIP 1 thread:
-  More iters per func run, make macro N 
-    Start off unpipelined, slowing clock for more comb logic
-  Then more threads... 
-    Add thread, take away comb iters in dev, increase dev clock
-    Until at max number of threads
-  Then tune up dev clock fmax? auto pipeline
-
-ITER_CHUNK_SIZE DEV_CLK NUM_USER_THREADS RENDER_TIME %LUTS NOTES
-
+/* TODO:
+Make slow single clock Verilator sim work
+Does fast DDR version work now?
 */
 
 #pragma PART "xc7a100tcsg324-1"
@@ -21,12 +13,12 @@ ITER_CHUNK_SIZE DEV_CLK NUM_USER_THREADS RENDER_TIME %LUTS NOTES
 #include "intN_t.h"
 #include "uintN_t.h"
 
-#define HOST_CLK_MHZ 30.0
+#define HOST_CLK_MHZ 25.0 // 15.0
 // Threads must evenly divide frame width and height
-#define NUM_X_THREADS 1
-#define NUM_X_THREADS_LOG2 0
-#define NUM_Y_THREADS 1
-#define NUM_Y_THREADS_LOG2 0
+#define NUM_X_THREADS 2
+#define NUM_X_THREADS_LOG2 1
+#define NUM_Y_THREADS 2
+#define NUM_Y_THREADS_LOG2 1
 #define NUM_USER_THREADS (NUM_X_THREADS*NUM_Y_THREADS)
 #include "dual_frame_buffer.c"
 
@@ -126,7 +118,9 @@ DEBUG_REG_DECL(uint32_t, last_render_time)
 uint32_t host_clk_counter;
 
 // Reset wire from Xilinx memory controller
-uint1_t xil_mem_rst_done_wire;
+#ifdef AXI_RAM_MODE_DDR
+//uint1_t xil_mem_rst_done_wire;
+#endif
 
 // Main loop drawing kernels on the screen
 void main()
@@ -135,8 +129,11 @@ void main()
 
   // Wait for DDR reset to be done
   #ifdef AXI_RAM_MODE_DDR
-  while(!xil_mem_rst_done_wire)
+  /*while(!xil_mem_rst_done_wire)
   {
+    __clk();
+  }*/
+  while(host_clk_counter < (uint32_t)(HOST_CLK_MHZ*1.0e6)){
     __clk();
   }
 
@@ -188,8 +185,10 @@ void main_wrapper()
   static uint32_t host_clk_counter_reg;
   host_clk_counter = host_clk_counter_reg;
   host_clk_counter_reg += 1;
+  #ifdef AXI_RAM_MODE_DDR
   // Reg xil signal for timing
-  static uint1_t xil_mem_rst_done_reg;
-  xil_mem_rst_done_wire = xil_mem_rst_done_reg;
-  xil_mem_rst_done_reg = xil_mem_rst_done;
+  //static uint1_t xil_mem_rst_done_reg;
+  //xil_mem_rst_done_wire = xil_mem_rst_done_reg;
+  //xil_mem_rst_done_reg = xil_mem_rst_done;
+  #endif
 }
