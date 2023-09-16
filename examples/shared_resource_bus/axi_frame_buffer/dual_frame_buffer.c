@@ -15,8 +15,8 @@
 //#define AXI_RAM_MODE_DDR
 
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 4
-#define TILE_FACTOR_LOG2 2
+#define TILE_FACTOR 8 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
+#define TILE_FACTOR_LOG2 3
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4
