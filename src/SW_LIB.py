@@ -3927,6 +3927,7 @@ def GET_VAR_REF_RD_C_CODE(
     out_dir,
     parser_state,
 ):
+    debug = False
     # @@@@ Need to solve can't reutnr arry and any type NMUX name problem (struct_t_muxN name?)
     ## Fuck need to put array in struct
     # Then need to allow cast from struct wray to array type in VHDL?
@@ -4024,6 +4025,10 @@ def GET_VAR_REF_RD_C_CODE(
             partially_complete_logic_local_inst_name
         ]
     )
+    if debug:
+        print("containing_func_logic",containing_func_logic.func_name)
+        print("func",partially_complete_logic.func_name, partially_complete_logic_local_inst_name)
+        print("driven_ref_toks_list",driven_ref_toks_list)
     for input_wire in partially_complete_logic.inputs:
         if "var_dim_" not in input_wire:
             input_c_name = input_wire
@@ -4035,26 +4040,38 @@ def GET_VAR_REF_RD_C_CODE(
             ref_toks_i += 1
 
             # Expand to constant refs
+            parser_state.existing_logic = containing_func_logic # How did this work without this before? Lucky?
             expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(
                 driven_ref_toks, partially_complete_logic.c_ast_node, parser_state
             )
+            if debug:
+                print("driven_ref_toks",driven_ref_toks)
+                print("expanded_ref_tok_list",expanded_ref_tok_list)
             for expanded_ref_toks in expanded_ref_tok_list:
                 # Make str
                 lhs = "base"
+                appended_ref_tok_str = ""
                 for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name
                     if type(expanded_ref_tok) == int:
-                        lhs += "[" + str(expanded_ref_tok) + "]"
+                        appended_ref_tok_str += "[" + str(expanded_ref_tok) + "]"
                     elif type(expanded_ref_tok) == str:
-                        lhs += "." + expanded_ref_tok
+                        appended_ref_tok_str += "." + expanded_ref_tok
                     else:
                         print(
                             "WTF var ref input wire as input ref tok to var ref??",
                             expanded_ref_tok,
                         )
                         sys.exit(-1)
-
-                # Do assingment
-                text += " " + lhs + " = " + input_c_name + ";\n"
+                # Do assignment
+                lhs += appended_ref_tok_str
+                text += " " + lhs + " = " + input_c_name
+                # If this ref tok actually covers multiple lhs toks then need select on rhs too?
+                if len(expanded_ref_tok_list) > 1:
+                    # Hacky struct type needs .data
+                    if C_TYPE_IS_ARRAY_STRUCT(partially_complete_logic.wire_to_c_type[input_wire], parser_state):
+                        text += ".data"
+                    text += appended_ref_tok_str
+                text += ";\n"
 
     # Then make a bunch of constant references
     # one for each possible i,j,k variable dimension
@@ -4233,8 +4250,9 @@ def GET_VAR_REF_RD_C_CODE(
   return rv;
 }"""
 
-    # print("GET_VAR_REF_RD_C_CODE text")
-    # print(text)
+    #if debug:
+    #print("GET_VAR_REF_RD_C_CODE text")
+    #print(text)
     # sys.exit(-1)
 
     return text
