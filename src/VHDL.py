@@ -5725,21 +5725,32 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
 
     # Shared write only globals drive from 'when fully driven last' anywhere pipeline
     if len(Logic.write_only_global_wires) > 0:
-        rv += "     " + "-- Global wires driven various places in pipeline\n"
+        rv += "-- Global wires driven various places in pipeline\n"
         for var_name in Logic.write_only_global_wires:
             # # Do final read of global wire
             # driver_of_global_wire = logic.wire_driven_by[var_name]
             # text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(var_name, logic) + " := " + GET_RHS(driver_of_global_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
             # Do final write into wire var
             if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
-                rv += (
-                    "     "
-                    + "module_to_global."
-                    + WIRE_TO_VHDL_NAME(var_name, Logic)
-                    + " <= VAR_"
-                    + WIRE_TO_VHDL_NAME(var_name, Logic)
-                    + ";\n"
-                )
+                if needs_clk_en:
+                    rv += (
+                        "if CLOCK_ENABLE(0)='1' then\n" +
+                        "  module_to_global."
+                        + WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + " <= VAR_"
+                        + WIRE_TO_VHDL_NAME(var_name, Logic) + ";\n"
+                        + "else\n"
+                        + "  module_to_global."
+                        + WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + " <= "
+                        + STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state) + ";\n"
+                        + "end if;\n"
+                    )
+                else:
+                    rv += ("module_to_global."
+                        + WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + " <= VAR_"
+                        + WIRE_TO_VHDL_NAME(var_name, Logic) + ";\n")
 
     # Add wait statement if nothing in sensitivity list for simulation?
     # GHDL->Yosys doesnt like?
@@ -5838,9 +5849,10 @@ end process;
                 + vhdl_name
                 + " <= "
                 + "REG_COMB_"
-                + vhdl_name
-                + ";\n"
-            )
+                + vhdl_name )
+            if needs_clk_en:
+                rv += " when CLOCK_ENABLE(0)='1' else " + vhdl_name
+            rv += ";\n"
 
     return rv
 
