@@ -2141,7 +2141,6 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
 
     # Tack on a conversion to verilog if requested
     if CONVERT_FINAL_TOP_VERILOG:
-        print("Rendering final top level Verilog...")
         OPEN_TOOLS.RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state)
 
 
@@ -4705,7 +4704,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
             print("Writing function:", func_name, "...", flush=True)
             syn_out_dir = GET_OUTPUT_DIRECTORY(logic)
             if not os.path.exists(syn_out_dir):
-                os.makedirs(syn_out_dir)
+                os.makedirs(syn_out_dir, exist_ok=True)
             VHDL.WRITE_LOGIC_ENTITY(
                 inst_name,
                 logic,
