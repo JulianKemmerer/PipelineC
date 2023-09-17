@@ -78,6 +78,37 @@ cout <<"""
     f.write(names_text)
     f.close()
 
+    # Identify tool versions
+    if os.path.exists(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl"):
+        print(
+            OPEN_TOOLS.GHDL_BIN_PATH
+            + "\n"
+            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
+                f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"
+            ),
+            flush=True,
+        )
+    else:
+        raise Exception("ghdl executable not found!")
+    if os.path.exists(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys"):
+        print(
+            OPEN_TOOLS.YOSYS_BIN_PATH
+            + "\n"
+            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
+                f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"
+            ),
+            flush=True,
+        )
+    else:
+        raise Exception("yosys executable not found!")
+
+    # Render the final verilog for verilator to use
+    OPEN_TOOLS.RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state)
+
+    # If user is not running simulation for any duration then done now
+    if args.run <= 0:
+        sys.exit(0)
+
     # Generate main.cpp
     main_cpp_text = f"""
 // Default main.cpp template
@@ -131,33 +162,7 @@ int main(int argc, char *argv[]) {{
     if args.main_cpp is not None:
         main_cpp_path = os.path.abspath(args.main_cpp)
 
-    # Generate+compile sim .cpp from output VHDL
-    # Get all vhd files in syn output
-    vhd_files = SIM.GET_SIM_FILES(latency=0)
-
-    # Identify tool versions
-    if os.path.exists(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl"):
-        print(
-            OPEN_TOOLS.GHDL_BIN_PATH
-            + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"
-            ),
-            flush=True,
-        )
-    else:
-        raise Exception("ghdl executable not found!")
-    if os.path.exists(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys"):
-        print(
-            OPEN_TOOLS.YOSYS_BIN_PATH
-            + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"
-            ),
-            flush=True,
-        )
-    else:
-        raise Exception("yosys executable not found!")
+    # Check verilator exists
     if os.path.exists(f"{VERILATOR_BIN_PATH}/verilator"):
         print(
             VERILATOR_BIN_PATH
@@ -168,10 +173,7 @@ int main(int argc, char *argv[]) {{
             flush=True,
         )
     else:
-        raise Exception("verilator executable not found!")
-
-    # Render the final verilog for verilator to use
-    OPEN_TOOLS.RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state)
+        raise Exception("verilator executable not found!") 
 
     # Write a shell script to execute
     sh_text = f"""
