@@ -7284,6 +7284,10 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
             f.c_type = "float"
             f.base = None
             f.vhdl_to_string_toks = ["real'image(to_real(to_float(", ")))"]
+        elif format_specifier == "%c":
+            f.c_type = "char"
+            f.base = None
+            f.vhdl_to_string_toks = ["character'val(to_integer(", "))"]
         elif format_specifier == "%s":
             # Uhhh... some max size for now...todo inspect driving wire type
             f.c_type = "char[" + str(256) + "]"
