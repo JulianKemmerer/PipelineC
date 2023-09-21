@@ -959,6 +959,8 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   /* See reset below {0, 1}*/ \
   static uint8_t read_dev_to_selected_host[NUM_DEV_PORTS]; \
   static uint8_t write_dev_to_selected_host[NUM_DEV_PORTS]; \
+  static uint1_t wr_req_done; \
+  static uint1_t wr_data_done; \
   static uint1_t power_on_reset = 1; \
   if(power_on_reset) \
   { \
@@ -992,27 +994,35 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
         = PPCAT(name, _next_host_sel)(read_selected_host, read_next_dev_to_selected_host); \
     } \
     \
-    /* Write req data and id default invalid*/ \
+    /* Write req */ \
     uint8_t write_selected_host = write_dev_to_selected_host[i]; \
-    o.to_devs[i].write.req.data = from_hosts[write_selected_host].write.req.data; \
+    o.to_devs[i].write.req = from_hosts[write_selected_host].write.req; \
     o.to_devs[i].write.req.id = write_selected_host; /* Overides/ignores host value*/ \
-    /* Write data burst word and id default invalid*/ \
-    o.to_devs[i].write.data.burst = from_hosts[write_selected_host].write.data.burst; \
-    o.to_devs[i].write.data.id = write_selected_host; /* Overides/ignores host value*/ \
-    /* Write req+data shared valid+ready logic, allow through while both at same only */ \
-    uint1_t write_xfer_valid = from_hosts[write_selected_host].write.req.valid & from_hosts[write_selected_host].write.data.valid; \
-    uint1_t write_xfer_ready = from_devs[i].write.req_ready & from_devs[i].write.data_ready; \
-    /* Connect xfer */ \
-    if(write_xfer_valid & write_xfer_ready){ \
-      o.to_devs[i].write.req.valid = 1; \
-      o.to_hosts[write_selected_host].write.req_ready = 1; \
-      o.to_devs[i].write.data.valid = 1; \
-      o.to_hosts[write_selected_host].write.data_ready = 1; \
+    o.to_hosts[write_selected_host].write.req_ready = from_devs[i].write.req_ready; \
+    /* Gate xfer if done already */ \
+    if(wr_req_done){ \
+      o.to_devs[i].write.req.valid = 0; \
+      o.to_hosts[write_selected_host].write.req_ready = 0; \
+    }else{ \
+      wr_req_done = o.to_devs[i].write.req.valid & from_devs[i].write.req_ready; \
     }\
-    /* Arb next logic if xfered or not valid yet*/ \
-    if(!write_xfer_valid | write_xfer_ready){ \
+    /* Write data */ \
+    o.to_devs[i].write.data = from_hosts[write_selected_host].write.data; \
+    o.to_devs[i].write.data.id = write_selected_host; /* Overides/ignores host value*/ \
+    o.to_hosts[write_selected_host].write.data_ready = from_devs[i].write.data_ready; \
+    /* Gate xfer if done already */ \
+    if(wr_data_done){ \
+      o.to_devs[i].write.data.valid = 0; \
+      o.to_hosts[write_selected_host].write.data_ready = 0; \
+    }else{ \
+      wr_data_done = o.to_devs[i].write.data.valid & from_devs[i].write.data_ready; \
+    } \
+    /* Shared write req+data arb next logic: if both parts done or not started yet*/ \
+    if((wr_req_done&wr_data_done) | !(wr_req_done|wr_data_done)){ \
       write_next_dev_to_selected_host[i] \
         = PPCAT(name, _next_host_sel)(write_selected_host, write_next_dev_to_selected_host); \
+      wr_req_done = 0; \
+      wr_data_done = 0; \
     }\
   } \
   /* Update regs with next values*/ \
