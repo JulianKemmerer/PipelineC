@@ -3204,7 +3204,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     continue
                 main_func_logic = parser_state.LogicInstLookupTable[main_inst]
                 main_func_path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
-                target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+                target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
                 target_path_delay_ns = 1000.0 / target_mhz
                 clks = (
                     int(
@@ -3225,10 +3225,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
                 print(
                     "Best guess slicing:",
-                    main_func_logic.func_name,
-                    ", mult =",
-                    sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult,
-                    slices,
+                    main_func_logic.func_name, main_func_path_delay_ns,
+                    "(ns) in to target", target_path_delay_ns, "(ns)", ", mult =",
+                    sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult,
+                    "~=", len(slices), "clks",
                     flush=True,
                 )
                 write_files = False
