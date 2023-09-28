@@ -13,6 +13,9 @@ uint1_t name[num_states]
 #define ONE_HOT_REG_DECL(name, num_states, init_state_num) \
 static uint1_t name[num_states] = {[init_state_num]=1};
 
+#define ONE_HOT_REG_DECL_ZERO_INIT(name, num_states) \
+static uint1_t name[num_states] = {0};
+
 // Compare a enum variable to a constant state literal
 //  like: name==STATE
 #define ONE_HOT_CONST_EQ(name, state_num) \
