@@ -13,8 +13,9 @@
 //#define float float_8_11_t
 #define float_lshift(x,shift) ((x)<<(shift))
 
-#define MANDELBROT_DEV_CLK_MHZ 25.0
+#define MANDELBROT_DEV_CLK_MHZ 40.0
 
+#define NUM_FP_OP_THREADS (NUM_USER_THREADS+1) // Including main thread for next state computation
 
 // FP operator devices to share
 #define MANDELBROT_DEVS_ARE_FP_OPS
@@ -31,7 +32,7 @@ float fp_mult_func(fp_op_inputs_t i)
 #define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     float
 #define SHARED_RESOURCE_BUS_PIPELINE_FUNC         fp_mult_func
 #define SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE      fp_op_inputs_t
-#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_USER_THREADS
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_FP_OP_THREADS
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ HOST_CLK_MHZ
 #define SHARED_RESOURCE_BUS_PIPELINE_DEV_CLK_MHZ  MANDELBROT_DEV_CLK_MHZ
 #include "shared_resource_bus_pipeline.h"
@@ -52,7 +53,7 @@ float fp_add_func(fp_op_inputs_t i)
 #define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     float
 #define SHARED_RESOURCE_BUS_PIPELINE_FUNC         fp_add_func
 #define SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE      fp_op_inputs_t
-#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_USER_THREADS
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_FP_OP_THREADS
 #define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ HOST_CLK_MHZ
 #define SHARED_RESOURCE_BUS_PIPELINE_DEV_CLK_MHZ  MANDELBROT_DEV_CLK_MHZ
 #include "shared_resource_bus_pipeline.h"
@@ -114,9 +115,7 @@ complex_t screen_to_complex_func(screen_to_complex_in_t inputs)
 }
 
 
-// Do N Mandelbrot iterations per call to mandelbrot_iter_func
-#define ITER_CHUNK_SIZE 6
-#define MAX_ITER 32
+// Do Mandelbrot iteration
 typedef struct mandelbrot_iter_t{
   complex_t c;
   complex_t z;
@@ -127,24 +126,16 @@ typedef struct mandelbrot_iter_t{
 #define ESCAPE 2.0
 mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 {
-  mandelbrot_iter_t rv = inputs;
-  uint32_t i;
-  for(i=0;i<ITER_CHUNK_SIZE;i+=1)
-  {
-    // Mimic while loop
-    if(!rv.escaped & (rv.n < MAX_ITER))
-    {
-      float re_mult_im = fp_mult(rv.z.re, rv.z.im);
-      rv.z.im = fp_add(float_lshift(re_mult_im, 1), rv.c.im);
-      float im_plus_re = fp_add(rv.z_squared.im, rv.c.re);
-      rv.z.re = fp_sub(rv.z_squared.re, im_plus_re);
-      rv.z_squared.re = fp_mult(rv.z.re, rv.z.re);
-      rv.z_squared.im = fp_mult(rv.z.im, rv.z.im);
-      rv.n = rv.n + 1;
-      float re_plus_im = fp_add(rv.z_squared.re, rv.z_squared.im);
-      rv.escaped = re_plus_im > (ESCAPE*ESCAPE);
-    }
-  }
+  mandelbrot_iter_t rv = inputs;   
+  float re_mult_im = fp_mult(rv.z.re, rv.z.im);
+  rv.z.im = fp_add(float_lshift(re_mult_im, 1), rv.c.im);
+  float re_minus_im = fp_sub(rv.z_squared.re, rv.z_squared.im);
+  rv.z.re = fp_add(re_minus_im, rv.c.re);
+  rv.z_squared.re = fp_mult(rv.z.re, rv.z.re);
+  rv.z_squared.im = fp_mult(rv.z.im, rv.z.im);
+  rv.n = rv.n + 1;
+  float re_plus_im = fp_add(rv.z_squared.re, rv.z_squared.im);
+  rv.escaped = re_plus_im > (ESCAPE*ESCAPE);
   return rv;
 }
 
@@ -152,6 +143,7 @@ mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 /* COLOR SIMPLE LOOKUP TABLE
 https://stackoverflow.com/questions/16500656/which-color-gradient-is-used-to-color-mandelbrot-in-wikipedia
 */
+#define MAX_ITER 32
 pixel_t iter_to_color_func(uint32_t n)
 {
   pixel_t p; // Default black
@@ -256,8 +248,8 @@ screen_state_t next_state_func(screen_state_t state)
   
   // Move window right left (flipped) or up down
   // Using only a single FP adder
-  float re_inc = (XY_SCALE*state.re_width);
-  float im_inc = (XY_SCALE*state.im_height);
+  float re_inc = fp_mult(XY_SCALE,state.re_width);
+  float im_inc = fp_mult(XY_SCALE,state.im_height);
   float val_to_inc;
   float inc;
   if(i.left|i.right)
@@ -278,7 +270,7 @@ screen_state_t next_state_func(screen_state_t state)
     val_to_inc = state.im_start;
     inc = im_inc;
   }
-  float incremented_val = val_to_inc + inc; 
+  float incremented_val = fp_add(val_to_inc, inc);
   if(i.left|i.right)
   {
     state.re_start = incremented_val;
@@ -300,42 +292,22 @@ screen_state_t next_state_func(screen_state_t state)
   }
   if(i.zoom_in|i.zoom_out)
   {
-    state.re_width *= zoom_mult;
-    state.im_height *= zoom_mult;
+    state.re_width = fp_mult(state.re_width, zoom_mult);
+    state.im_height = fp_mult(state.im_height, zoom_mult);
   }
   
   return state;
 }
 
-// Just use a slow clock and comb. compute next state since only needed as fast as 60Hz
-// Need a clock >=60Hz and slow enough to easily meet timing
-// (could make a 60Hz clock like was done for sphery
-// but in this case how to align with actual frame render etc?)
-screen_state_t next_screen_state;
-#pragma ASYNC_WIRE next_screen_state
-uint1_t start_next_state;
-#pragma ASYNC_WIRE start_next_state
-#pragma MAIN_MHZ frame_logic 25.0 //6.25
-void frame_logic()
+screen_state_t get_next_screen_state()
 {
+  static screen_state_t state_reg;
   static uint1_t power_on_reset = 1;
-  static uint1_t start_next_state_reg; // Toggle detect reg
-  static screen_state_t state_reg; // The state register TODO can use screen_state_t_INIT? in decl?
-  next_screen_state = state_reg; // Drives state wire directly
-
-  // Update date when 'start' toggle happens
-  if(start_next_state != start_next_state_reg)
-  {
-    state_reg = next_state_func(state_reg);
-  }
-
-  // Input regs
-  start_next_state_reg = start_next_state;
-
   // Reset
   if(power_on_reset){
     state_reg = screen_state_t_INIT;
   }
+  screen_state_t rv = next_state_func(state_reg);
   power_on_reset = 0;
+  return rv;
 }
-
