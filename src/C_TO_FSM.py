@@ -188,8 +188,6 @@ def GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, pa
     else:
         text += "    // POSSIBLE EXITS: \n"
         for exit_i, poss_exit_state in enumerate(poss_exit_states):
-            if exit_i > 0: # TODO dont need else can only be one state / since one hot?
-                text += "    else " 
             text += '''    if(ONE_HOT_CONST_EQ(''' + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, " + poss_exit_state.name + '''))
     {
       ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ''' + poss_exit_state.name + ", " + state_info.name + ''')
