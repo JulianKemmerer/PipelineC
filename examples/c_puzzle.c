@@ -16,6 +16,7 @@ until a full eight bit byte/character is parsed.
 * The function is run once for each element in the sequence in order
 * Only add code inside the function
 * Only return a completed non-zero/null character once
+  * ONly one return statement allowed at end of function
 * No global variables, no pointers, pass by value only
 * No libraries, no OS functionality, etc 
 * Hint: static local variables maintain state
@@ -24,21 +25,31 @@ uint8_t the_function(bool seq_val){
   // CODE HERE
 }
 */
+// CONFIGURE:
+#define N 2 // Some integer 1,2 etc
+//#define SOLUTION0
+#define SOLUTION1
+//#define SIM
+#define SYN
+
+
 #ifndef __PIPELINEC__
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#else 
+#else
 #include "uintN_t.h"
+#include "intN_t.h"
 #define bool uint1_t
 #endif
 
-#define N 2 // Some integer 1,2,3 etc
 #define SKIP3 ((3*N)-1)
 #define SKIP2 ((2*N)-1)
 
 uint8_t the_function(bool seq_val){
+
+#ifdef SOLUTION0
   static uint8_t char_buffer; // Buffer to hold eight bits
   static uint8_t bit_counter; // Count of how many bits in buffer
   // State machine state
@@ -78,12 +89,51 @@ uint8_t the_function(bool seq_val){
     }
   }
   prev_seq_val = seq_val;
-  return rv; 
+  return rv;
+#endif
+    
+#ifdef SOLUTION1
+    const int32_t skip = 2*N;
+    static int32_t current_index = -1;
+    static int32_t next_index = skip;
+    static int32_t bit_pos = -1;
+    static uint8_t letter = 0;
+    uint8_t ret = 0;
+    current_index += 1;
+    if (current_index == next_index) {
+            if (bit_pos == -1) {
+                    if (seq_val) {
+                            next_index+=1;
+                    } else {
+                            bit_pos+=1;
+                            next_index += skip + N;
+                    }
+            } else {
+                    letter |= (uint8_t)seq_val << bit_pos;
+                    bit_pos += 1;
+                    next_index += skip;
+
+                    if (bit_pos == 8) {
+                            bit_pos = -1;
+                            ret = letter;
+                    }
+            }
+    }
+    return ret;
+#endif
+
 }
 
 #ifdef __PIPELINEC__
+#ifdef SIM
 #pragma MAIN testbench
 // pipelinec examples/c_puzzle.c --sim --comb --cocotb --ghdl --run 87
+#endif
+#ifdef SYN
+#pragma PART "xc7a35ticsg324-1l"
+#pragma MAIN the_function
+// pipelinec examples/c_puzzle.c --comb
+#endif
 #endif
 void testbench(){
   // For example these input_values sequences encode "Hi" with N=1 and N=2
