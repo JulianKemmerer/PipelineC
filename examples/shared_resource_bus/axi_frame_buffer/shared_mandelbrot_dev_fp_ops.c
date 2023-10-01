@@ -44,6 +44,17 @@ float fp_mult(float l, float r){
   float rv = fp_mult_dev(i);
   return rv;
 }
+// Async start and finish wrappers
+void fp_mult_start(float l, float r){
+  fp_op_inputs_t i;
+  i.l = l;
+  i.r = r;
+  fp_mult_dev_start(i);
+}
+float fp_mult_finish(){
+  float rv = fp_mult_dev_finish();
+  return rv;
+}
 
 float fp_add_func(fp_op_inputs_t i)
 {
@@ -65,8 +76,27 @@ float fp_add(float l, float r){
   float rv = fp_add_dev(i);
   return rv;
 }
+// Sub is inverted add
 float fp_sub(float l, float r){
   float rv = fp_add(l, -r);
+  return rv;
+}
+// Async start and finish wrappers
+void fp_add_start(float l, float r){
+  fp_op_inputs_t i;
+  i.l = l;
+  i.r = r;
+  fp_add_dev_start(i);
+}
+float fp_add_finish(){
+  float rv = fp_add_dev_finish();
+  return rv;
+}
+void fp_sub_start(float l, float r){
+  fp_add_start(l, -r);
+}
+float fp_sub_finish(){
+  float rv = fp_add_finish();
   return rv;
 }
 
@@ -126,15 +156,22 @@ typedef struct mandelbrot_iter_t{
 #define ESCAPE 2.0
 mandelbrot_iter_t mandelbrot_iter_func(mandelbrot_iter_t inputs)
 {
-  mandelbrot_iter_t rv = inputs;   
-  float re_mult_im = fp_mult(rv.z.re, rv.z.im);
-  rv.z.im = fp_add(float_lshift(re_mult_im, 1), rv.c.im);
-  float re_minus_im = fp_sub(rv.z_squared.re, rv.z_squared.im);
-  rv.z.re = fp_add(re_minus_im, rv.c.re);
-  rv.z_squared.re = fp_mult(rv.z.re, rv.z.re);
-  rv.z_squared.im = fp_mult(rv.z.im, rv.z.im);
+  mandelbrot_iter_t rv = inputs;
+
+  /*float re_mult_im = */ fp_mult_start(rv.z.re, rv.z.im); /*float re_minus_im = */ fp_sub_start(rv.z_squared.re, rv.z_squared.im);
+  float re_mult_im = fp_mult_finish(/*rv.z.re, rv.z.im*/); float re_minus_im = fp_sub_finish(/*rv.z_squared.re, rv.z_squared.im*/);
+  /////
+  /*rv.z.im = */ fp_add_start(float_lshift(re_mult_im, 1), rv.c.im); /*rv.z.re = */ fp_add_start(re_minus_im, rv.c.re);
+  rv.z.im = fp_add_finish(/*float_lshift(re_mult_im, 1), rv.c.im*/); rv.z.re = fp_add_finish(/*re_minus_im, rv.c.re*/);
+  /////
+  /*rv.z_squared.re = */ fp_mult_start(rv.z.re, rv.z.re); /*rv.z_squared.im = */ fp_mult_start(rv.z.im, rv.z.im); 
+  rv.z_squared.re = fp_mult_finish(/*rv.z.re, rv.z.re*/); rv.z_squared.im = fp_mult_finish(/*rv.z.im, rv.z.im*/); 
+  /////
+  /*float re_plus_im = */ fp_add_start(rv.z_squared.re, rv.z_squared.im); 
+  float re_plus_im = fp_add_finish(/*rv.z_squared.re, rv.z_squared.im*/); 
+
+  // Not complex FP ops:
   rv.n = rv.n + 1;
-  float re_plus_im = fp_add(rv.z_squared.re, rv.z_squared.im);
   rv.escaped = re_plus_im > (ESCAPE*ESCAPE);
   return rv;
 }
