@@ -611,6 +611,188 @@ class PipelineMap:
         rv = rv.strip("\n")
         return rv
 
+    def write_png(self, out_dir, parser_state):
+        try:
+            import graphviz
+        except:
+            return
+        s = graphviz.Digraph(
+            self.logic.func_name, 
+            filename=f'pipeline_map.gv',
+            node_attr={'shape': 'record'},
+        )
+        s.graph_attr['rankdir'] = 'LR' # Left to right ordering
+        #s.graph_attr['splines']="ortho" # Right angle lines...doesnt look right?
+
+        # SIZE IO + REGS NODES to be largest font
+        # Get average bit width (height of node)
+        smallest_font_pt = 14.0
+        def get_avg_bit_width(sub_inst, logic, parser_state):
+            sub_func_name = logic.submodule_instances[sub_inst]
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            # See registers estiamte .log
+            input_ffs = 0
+            for input_port in sub_logic.inputs:
+                input_type = sub_logic.wire_to_c_type[input_port]
+                input_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(input_type, parser_state)
+                input_ffs += input_bits
+            output_ffs = 0
+            for output_port in sub_logic.outputs:
+                output_type = sub_logic.wire_to_c_type[output_port]
+                output_bits = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(output_type, parser_state)
+                output_ffs += output_bits
+            return (input_ffs+output_ffs)/2.0
+        
+        # Bit width(height) scaling
+        MIN_AVG_BIT_WIDTH = 999999
+        MAX_AVG_BIT_WIDTH = 0
+        for sub_inst,sub_func_name in self.logic.submodule_instances.items():
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            if sub_logic.delay is not None and sub_logic.delay > 0: # Skip zero delay
+                avg_bit_width = get_avg_bit_width(sub_inst, self.logic, parser_state)
+                if avg_bit_width < MIN_AVG_BIT_WIDTH:
+                    MIN_AVG_BIT_WIDTH = avg_bit_width
+                if avg_bit_width > MAX_AVG_BIT_WIDTH:
+                    MAX_AVG_BIT_WIDTH = avg_bit_width
+
+        # Delay (width) scaling
+        MIN_NON_ZERO_DELAY = 999999
+        MAX_DELAY = 0
+        for sub_inst,sub_func_name in self.logic.submodule_instances.items():
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            if sub_logic.delay is not None and sub_logic.delay > 0:  # Skip zero delay
+                if sub_logic.delay < MIN_NON_ZERO_DELAY:
+                    MIN_NON_ZERO_DELAY = sub_logic.delay
+                if sub_logic.delay > MAX_DELAY:
+                    MAX_DELAY = sub_logic.delay
+
+        by_eye_scale = 4.0 # By-eye const adjust...
+        max_font_pt = smallest_font_pt + ((MAX_DELAY / MIN_NON_ZERO_DELAY)*by_eye_scale)
+        for wire in self.logic.wires:
+            # Constants(Node)
+            if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+                # TODO resolve to const str and manually add location on next line
+                val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire, self.logic, parser_state)
+                s.node(wire, r'{ '+val_str+' | {<const> CONST}}')
+
+            # Inputs(Node)
+            if wire in self.logic.inputs:
+                s.node(wire, r'{ '+wire+' | {<in> IN}}', **{'fontsize':str(max_font_pt)})
+
+            # Clock enable(Node)
+            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(self.logic, parser_state):
+                s.node(C_TO_LOGIC.CLOCK_ENABLE_NAME, r'{ '+C_TO_LOGIC.CLOCK_ENABLE_NAME+' | {<in> IN}}', **{'fontsize':str(max_font_pt)})            
+
+            # Outputs(Node)
+            if wire in self.logic.outputs:
+                s.node(wire, r'{ {<out> OUT} | '+wire+' }', **{'fontsize':str(max_font_pt)})
+
+            # State regs
+            if wire in self.logic.state_regs:
+                #s.node(wire, r'{ <in> NEXT | '+wire+' | <out> NOW }')
+                s.node(wire+"_in", r'{ {<in> NEXT} | '+wire+' }', **{'fontsize':str(max_font_pt)})
+                s.node(wire+"_out", r'{ '+wire+' | {<out> NOW} }', **{'fontsize':str(max_font_pt)})
+
+        # Submodules/Nodes with ports
+        for sub_inst,sub_func_name in self.logic.submodule_instances.items():
+            # Need to lookup input ports, and output ports
+            # Location
+            # And total width of inputs/outputs for height
+            # width is based on delay of func logic
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            inputs_text = ""
+            for input_port in sub_logic.inputs:
+                inputs_text += f"<{input_port}> {input_port}" + " |"
+            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state): 
+                inputs_text += f"<{C_TO_LOGIC.CLOCK_ENABLE_NAME}> {C_TO_LOGIC.CLOCK_ENABLE_NAME}" + " |"
+            inputs_text = inputs_text.strip('|')
+            outputs_text = ""
+            for output_port in sub_logic.outputs:
+                outputs_text += f"<{output_port}> {output_port}" + " |"
+            outputs_text = outputs_text.strip('|')
+            func_name_text = sub_func_name
+            c_ast_node_coord = self.logic.submodule_instance_to_c_ast_node[sub_inst].coord
+            location_text = ( #str(os.path.basename(c_ast_node_coord.file)) + r'\n' +
+                            "line " + str(c_ast_node_coord.line) + " " +
+                            "col. " + str(c_ast_node_coord.column) )
+            avg_bit_width = get_avg_bit_width(sub_inst, self.logic, parser_state)
+            width = 1
+            height = 1
+            font_pt = smallest_font_pt
+            if sub_logic.delay is not None and sub_logic.delay > 0:
+                width = float(sub_logic.delay) / MIN_NON_ZERO_DELAY
+                font_pt += (width*by_eye_scale) 
+                width *= by_eye_scale
+                height = float(avg_bit_width) / MIN_AVG_BIT_WIDTH
+                height /= by_eye_scale
+            ns = float(sub_logic.delay) / DELAY_UNIT_MULT
+            shape_text = f"{ns:.1f}ns x ~{avg_bit_width}bits" 
+            s.node(sub_inst, r'{{' + inputs_text + r'} | ' + func_name_text + r'\n' + location_text + r'\n' + shape_text + r'| {' + outputs_text + r'}}', **{'width':str(width), 'height':str(height), 'fontsize':str(font_pt)})
+
+        # Connections/Edges
+        for driving_wire, driven_wires in self.logic.wire_drives.items():
+            def wire_to_gv_text(wire, dir):
+                # Constants(Node)
+                if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+                    return wire + ':' + 'const'
+
+                # Inputs(Node)
+                if wire in self.logic.inputs:
+                    return wire + ':' + 'in'
+                
+                # Clock enable(Node)
+                if wire==C_TO_LOGIC.CLOCK_ENABLE_NAME:
+                    return wire
+
+                # Outputs(Node)
+                if wire in self.logic.outputs:
+                    return wire + ':' + 'out'
+
+                # State regs
+                if wire in self.logic.state_regs:
+                    return wire + "_" + dir + ':' + dir
+                
+                # Submodule
+                if C_TO_LOGIC.SUBMODULE_MARKER in wire:
+                    return wire.replace(C_TO_LOGIC.SUBMODULE_MARKER,":")
+                
+                return None
+                #raise Exception(f"GV text for wire? {wire}")
+              
+            for driven_wire in driven_wires:
+                drive_text = wire_to_gv_text(driving_wire, 'out')
+                if drive_text is None:
+                    continue
+                # Follow wire-wire connections to submodules
+                # Quickly hacked together...
+                next_driven_wires = []
+                if driven_wire in self.logic.wire_drives:
+                    next_driven_wires = self.logic.wire_drives[driven_wire]
+                driven_text = wire_to_gv_text(driven_wire, 'in')
+                if driven_text is not None:
+                    s.edges([
+                            (drive_text, driven_text)
+                            ])
+                while driven_text is None and len(next_driven_wires)>0:
+                    new_next_driven_wires = []
+                    for next_driven_wire in next_driven_wires:
+                        driven_text = wire_to_gv_text(next_driven_wire, 'in')
+                        if driven_text is None:
+                            if next_driven_wire in self.logic.wire_drives:
+                                new_next_driven_wires += self.logic.wire_drives[next_driven_wire]
+                        else:
+                            s.edges([
+                                (drive_text, driven_text)
+                                ])
+                    next_driven_wires = new_next_driven_wires[:]
+
+        s.format = 'png'
+        try:
+            s.render(directory=out_dir)
+        except Exception as e:
+            print(f"graphviz render exception: {e}")
+        return
+
 
 """
 ___          ___     __   __   ___  __       . ___ 
@@ -3321,16 +3503,18 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             main_func_timing_params = (
                 sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
             )
-            print(
-                main_func,
-                ":",
-                main_func_timing_params.GET_TOTAL_LATENCY(
+            main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
                     parser_state,
                     sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                ),
-                "clocks latency...",
-                flush=True,
-            )
+                )
+            if main_func_latency > 0:
+                print(
+                    main_func,
+                    ":",
+                    main_func_latency,
+                    "clocks latency...",
+                    flush=True,
+                )
 
         # Run syn on multi main top
         sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
@@ -4416,6 +4600,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 f = open(out_path, "w")
                 f.write(zero_clk_pipeline_map_str)
                 f.close()
+
+                # Picture too?
+                zero_clk_pipeline_map.write_png(out_dir, parser_state)
 
         # Start parallel syn for parallel_func_names
         # Parallelized
