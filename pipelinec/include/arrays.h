@@ -36,6 +36,16 @@ for(ARRAY_SHIFT_INTO_TOP_i=0;ARRAY_SHIFT_INTO_TOP_i<IN_SIZE;ARRAY_SHIFT_INTO_TOP
   dst_array[SIZE-IN_SIZE+ARRAY_SHIFT_INTO_TOP_i] = src_array[ARRAY_SHIFT_INTO_TOP_i]; \
 }
 
+#define ARRAY_1SHIFT_INTO_TOP(array,SIZE,in_elem)\
+ARRAY_SHIFT_DOWN(array,SIZE,1)\
+array[SIZE-1] = in_elem;
+
+#define ARRAY_1ROT_DOWN(type_t, array, SIZE)\
+/* Save bot element */ \
+type_t ARRAY_1ROT_DOWN_##type_t##_temp = array[0]; \
+/* Do shift and insert */ \
+ARRAY_1SHIFT_INTO_TOP(array, SIZE, ARRAY_1ROT_DOWN_##type_t##_temp)
+
 #define ARRAY_SHIFT_INTO_BOTTOM(dst_array,SIZE,src_array,IN_SIZE)\
 ARRAY_SHIFT_UP(dst_array,SIZE,IN_SIZE)\
 uint32_t ARRAY_SHIFT_INTO_BOTTOM_i; \
@@ -47,6 +57,12 @@ for(ARRAY_SHIFT_INTO_BOTTOM_i=0;ARRAY_SHIFT_INTO_BOTTOM_i<IN_SIZE;ARRAY_SHIFT_IN
 #define ARRAY_1SHIFT_INTO_BOTTOM(array,SIZE,in_elem)\
 ARRAY_SHIFT_UP(array,SIZE,1)\
 array[0] = in_elem;
+
+#define ARRAY_1ROT_UP(type_t, array, SIZE) \
+/* Save top element */ \
+type_t ARRAY_1ROT_UP_##type_t##_temp = array[SIZE-1]; \
+/* Do shift and insert */ \
+ARRAY_1SHIFT_INTO_BOTTOM(array, SIZE, ARRAY_1ROT_UP_##type_t##_temp)
 
 #define UINT_TO_BIT_ARRAY(bit_array,BIT_WIDTH,uint_val)\
 uint32_t UINT_TO_ARRAY_i; \
