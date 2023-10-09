@@ -1,8 +1,9 @@
 /**
-Imagine a sequence of zeros and ones: 1,1,0,1,0,0,1,etc
+# Problem
+Imagine a sequence of zeros and ones: `1,1,0,1,0,0,1` etc
 
 Binary bytes (ASCII characters) have been encoded into the sequence
-based on some integer constant N(ex.=1,2,etc) as follows:
+based on some given integer constant N(ex.=1,2,etc) as follows:
 * The sequence begins with 2N or more 1's
 * Upon seeing the first 1->0 transition skip the next 3N-1 values
 * The value arrived at is the first and least significant bit in the byte
@@ -11,24 +12,30 @@ based on some integer constant N(ex.=1,2,etc) as follows:
 * After the 8th bit completing the byte, repeat the above for next byte,
   beginning with looking for the 1->0 transition
 
-Fill in this C function such that returns zero/NULL
+# Constraints
+Fill in this C function such that it returns zero/NULL
 until a full eight bit byte/character is parsed.
 * The function is run once for each element in the sequence in order
 * Only add code inside the function
 * Only return a completed non-zero/null character once
-  * ONly one return statement allowed at end of function
+  * Use a single return statement at the end of the function
 * No global variables, no pointers, pass by value only
 * No libraries, no OS functionality, etc 
+* Use `+=1` or `-=1` instead of `++` or `--`
+* Use `bool|u/int_t` types
 * Hint: static local variables maintain state
 
 uint8_t the_function(bool seq_val){
+  uint8_t return_value = 0;
   // CODE HERE
+  // One return statement at end of function
+  return return_value;
 }
 */
+
 // CONFIGURE:
 #define N 2 // Some integer 1,2 etc
-//#define SOLUTION0
-#define SOLUTION1
+#define SOLUTION 2 // 0,1,2
 //#define SIM
 #define SYN
 
@@ -49,7 +56,7 @@ uint8_t the_function(bool seq_val){
 
 uint8_t the_function(bool seq_val){
 
-#ifdef SOLUTION0
+#if SOLUTION == 0
   static uint8_t char_buffer; // Buffer to hold eight bits
   static uint8_t bit_counter; // Count of how many bits in buffer
   // State machine state
@@ -92,7 +99,7 @@ uint8_t the_function(bool seq_val){
   return rv;
 #endif
     
-#ifdef SOLUTION1
+#if SOLUTION == 1
     const int32_t skip = 2*N;
     static int32_t current_index = -1;
     static int32_t next_index = skip;
@@ -120,6 +127,37 @@ uint8_t the_function(bool seq_val){
             }
     }
     return ret;
+#endif
+
+#if SOLUTION == 2
+#define v seq_val
+  static int8_t r=0,a=0,b=0,s=0xFF;
+  a= (~s!=0) ?
+      ( (s!=0) ? 
+        a :
+        (a | ((int8_t)v<<b))
+      ) :
+      ((a!=0)|v) ?
+      !v :
+      0;
+  b= (~s!=0) ?
+      b+!s :
+      0;
+  r= ((s!=0)|(b!=7)) ?
+      0:
+      a;
+  s= (~s!=0) ?
+      ( (s!=0) ? 
+        (s-1) :
+          (b>7) ?
+            0xFF :
+            SKIP2
+      ) : 
+        ((a!=0)|v) ?
+          s :
+          SKIP3;
+  return r;
+#undef v
 #endif
 
 }
