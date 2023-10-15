@@ -5461,6 +5461,23 @@ def C_AST_WHILE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_sta
     return parser_state.existing_logic
 
 
+
+# Helper for if(cond) meaning if(cond!=0)
+def C_AST_BOOL_COND_NODE_TO_LOGIC(c_ast_node_cond, driven_wire_names, prepend_text, parser_state):
+    # Like cond!=0 op
+    # Do as AST manip like C_AST_AUG_ASSIGNMENT_TO_RHS_LOGIC
+    op = "!="
+    const_zero = c_ast.Constant(type="int", value="0")
+    const_zero.coord = c_ast_node_cond.coord
+    fake_bin_op = c_ast.BinaryOp(
+        op, left=c_ast_node_cond, right=const_zero
+    )
+    fake_bin_op.coord = c_ast_node_cond.coord
+    return C_AST_BINARY_OP_TO_LOGIC(
+        fake_bin_op, driven_wire_names, prepend_text, parser_state
+    )
+
+
 def C_AST_TERNARY_OP_TO_LOGIC(
     c_ast_node, driven_wire_names, prepend_text, parser_state
 ):
@@ -5478,12 +5495,21 @@ def C_AST_TERNARY_OP_TO_LOGIC(
     ter_op_false_input = (
         func_inst_name + SUBMODULE_MARKER + ter_op_false_input_port_name
     )
+
+    # Get logic for condition wire
+    parser_state.existing_logic.wire_to_c_type[ter_op_cond_input] = BOOL_C_TYPE
+    parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
+        c_ast_node.cond,
+        [ter_op_cond_input],
+        prepend_text,
+        parser_state,
+    )
+
+    # Then evaluate true/false branch input wires
     c_ast_node_to_driven_input_wire_names = OrderedDict()
-    c_ast_node_to_driven_input_wire_names[c_ast_node.cond] = [ter_op_cond_input]
     c_ast_node_to_driven_input_wire_names[c_ast_node.iftrue] = [ter_op_true_input]
     c_ast_node_to_driven_input_wire_names[c_ast_node.iffalse] = [ter_op_false_input]
     # Set types if known since this is a MUX
-    parser_state.existing_logic.wire_to_c_type[ter_op_cond_input] = BOOL_C_TYPE
     output_type = None
     for driven_wire_name in driven_wire_names:
         if driven_wire_name in parser_state.existing_logic.wire_to_c_type:
@@ -5608,7 +5634,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
         mux_intermediate_cond_wire_wo_var_name
     ] = BOOL_C_TYPE
     # Get logic for this if condition with it driving the shared condition wire
-    cond_logic = C_AST_NODE_TO_LOGIC(
+    cond_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
         c_ast_node.cond,
         [mux_intermediate_cond_wire_wo_var_name],
         prepend_text,
@@ -6453,39 +6479,45 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 sys.exit(-1)
 
             # What type of binary op
-            if func_base_name.endswith(BIN_OP_PLUS_NAME):
+            if func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_PLUS_NAME):
                 const_val_str = str(lhs_val + rhs_val)
-            elif func_base_name.endswith(BIN_OP_MINUS_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_MINUS_NAME):
                 const_val_str = str(lhs_val - rhs_val)
-            elif func_base_name.endswith(BIN_OP_OR_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_OR_NAME):
                 const_val_str = str(lhs_val | rhs_val)
-            elif func_base_name.endswith(BIN_OP_AND_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_XOR_NAME):
+                const_val_str = str(lhs_val ^ rhs_val)
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_AND_NAME):
                 const_val_str = str(lhs_val & rhs_val)
-            elif func_base_name.endswith(BIN_OP_MULT_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_MULT_NAME):
                 const_val_str = str(lhs_val * rhs_val)
-            elif func_base_name.endswith(BIN_OP_DIV_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_INFERRED_MULT_NAME):
+                const_val_str = str(lhs_val * rhs_val)
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_DIV_NAME):
                 # Div leaves group of ints and returns float
                 if is_ints:
                     const_val_str = str(int(lhs_val / rhs_val))
                 else:
                     const_val_str = str(lhs_val / rhs_val)
-            elif func_base_name.endswith(BIN_OP_MOD_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_MOD_NAME):
                 const_val_str = str(lhs_val % rhs_val)
-            elif func_base_name.endswith(BIN_OP_LT_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_LT_NAME):
                 const_val_str = "1" if lhs_val < rhs_val else "0"
-            elif func_base_name.endswith(BIN_OP_LTE_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_LTE_NAME):
                 const_val_str = "1" if lhs_val <= rhs_val else "0"
-            elif func_base_name.endswith(BIN_OP_GT_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_GT_NAME):
                 const_val_str = "1" if lhs_val > rhs_val else "0"
-            elif func_base_name.endswith(BIN_OP_GTE_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_GTE_NAME):
                 const_val_str = "1" if lhs_val >= rhs_val else "0"
-            elif func_base_name.endswith(BIN_OP_EQ_NAME):
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_EQ_NAME):
                 const_val_str = "1" if lhs_val == rhs_val else "0"
+            elif func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_NEQ_NAME):
+                const_val_str = "1" if lhs_val != rhs_val else "0"
             # Bit operations
-            elif func_base_name.endswith(BIN_OP_SR_NAME) or func_base_name.endswith(
-                BIN_OP_SL_NAME
+            elif ( func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SR_NAME) or func_base_name==(
+                BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SL_NAME)
             ):
-                if is_ints and func_base_name.endswith(BIN_OP_SR_NAME):
+                if is_ints and func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SR_NAME):
                     # Output type is type of LHS
                     c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
                     width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
@@ -6500,7 +6532,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     output_int = to_int(output_bin_str, signed)
                     const_val_str = str(output_int)
                     # print(lhs_bin_str,">>",rhs_val, const_val_str)
-                elif is_ints and func_base_name.endswith(BIN_OP_SL_NAME):
+                elif is_ints and func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SL_NAME):
                     # Int constants are made as wide as possible
                     # ex.
                     # uint32 = 1 << 3;
@@ -6520,14 +6552,14 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 elif (
                     C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
                     and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
-                    and func_base_name.endswith(BIN_OP_SL_NAME)
+                    and func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SL_NAME)
                 ):
                     # Implement pow2 mult for <<
                     const_val_str = str(lhs_val * pow(2, rhs_val))
                 elif (
                     C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
                     and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
-                    and func_base_name.endswith(BIN_OP_SL_NAME)
+                    and func_base_name==(BIN_OP_LOGIC_NAME_PREFIX+"_"+BIN_OP_SL_NAME)
                 ):
                     # Implement pow2 div for >>
                     const_val_str = str(lhs_val / pow(2, rhs_val))
@@ -6574,7 +6606,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             if C_TYPE_IS_FLOAT_TYPE(in_c_type):
                 # Floats
                 # What op?
-                if func_base_name.endswith(UNARY_OP_NEGATE_NAME):
+                if func_base_name==(UNARY_OP_LOGIC_NAME_PREFIX+"_"+UNARY_OP_NEGATE_NAME):
                     const_val_str = str(in_val * -1.0)
                 else:
                     print(
@@ -6589,14 +6621,14 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
                 in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
                 # What op?
-                if func_base_name.endswith(UNARY_OP_NOT_NAME):
+                if func_base_name==(UNARY_OP_LOGIC_NAME_PREFIX+"_"+UNARY_OP_NOT_NAME):
                     in_bin_str = int2bin(in_val, in_width)
                     out_bin_str = (
                         in_bin_str.replace("0", "T").replace("1", "0").replace("T", "1")
                     )
                     out_val = to_int(out_bin_str, signed)
                     const_val_str = str(out_val)
-                elif func_base_name.endswith(UNARY_OP_NEGATE_NAME):
+                elif func_base_name==(UNARY_OP_LOGIC_NAME_PREFIX+"_"+UNARY_OP_NEGATE_NAME):
                     const_val_str = str(int(in_val * -1))
                 else:
                     print(
@@ -6850,6 +6882,52 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         new_input_port_names = ["x"]  # Port name on submodule (from SW_LIB.GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT)
         APPEND_BIT_MANIP_FUNC(new_func_base_name, parser_state)
         is_reducable = True
+    # Turn uint1_t!=0, and uint1_t==1 into pass through wires (mostly for bool supporting inserting NEQ 0)
+    elif(
+        (
+            func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME) or
+            func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)
+        )  
+        and 
+        (
+            (const_input_wires[0] is not None and input_driver_types[1]==BOOL_C_TYPE) or
+            (const_input_wires[1] is not None and input_driver_types[0]==BOOL_C_TYPE)
+        )
+    ):
+        # Which is var?
+        if const_input_wires[0] is not None:
+            const_input_wire = const_input_wires[0]
+            var_input_driver = input_drivers[1]
+        if const_input_wires[1] is not None:
+            const_input_wire = const_input_wires[1]
+            var_input_driver = input_drivers[0]
+        # What is const value?
+        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            const_input_wire, parser_state.existing_logic, parser_state
+        )
+        val, unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
+            const_val_str, func_c_ast_node, is_negated=False, expected_c_type=BOOL_C_TYPE
+        )
+        # uint1_t!=0, and uint1_t==1 #TODO  uint1_t==0 and uint1_t!=1 is NOT
+        if (
+            (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME) and val==0) or
+            (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME) and val==1)
+        ):
+            # Not reducing to replacement func, is just wire from input driver output wires
+            # Remove old submodule instance
+            parser_state.existing_logic.REMOVE_SUBMODULE(
+                func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+            )
+            # And connect input port drive to output driven wires
+            parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
+                parser_state,
+                var_input_driver,
+                output_driven_wire_names,
+                prepend_text,
+                func_c_ast_node,
+                check_types_do_cast=False,
+            )
+            return parser_state.existing_logic
 
     # Not a reducable function
     if not is_reducable:
@@ -7792,8 +7870,6 @@ def C_AST_CAST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     output_driven_wire_names = driven_wire_names
     # Record output port type as the to_type
     output_wire_name = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
-    # casthelp(c_ast_node.to_type.type.type.names[0])
-    # sys.exit(-1)
     parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
 
     # TODO Sanity dont make submodule doing pass through wire?
@@ -7893,7 +7969,11 @@ def C_AST_UNARY_OP_TO_LOGIC(
         )
 
     # Determine op string to use in func name
-    if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
+    is_bool_op = False
+    if c_ast_unary_op_str == "!":
+        is_bool_op = True
+        c_ast_op_str = UNARY_OP_NOT_NAME
+    elif c_ast_unary_op_str == "~":
         c_ast_op_str = UNARY_OP_NOT_NAME
     elif c_ast_unary_op_str == "-":
         c_ast_op_str = UNARY_OP_NEGATE_NAME
@@ -7910,32 +7990,28 @@ def C_AST_UNARY_OP_TO_LOGIC(
     input_driver_types = []  # Might be none if not known
     input_port_names = []  # Port names on submodule
 
-    # Get input wire type by evaluating input expressions
+    # Get input wire type by evaluating input expression
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_unary_op)
     unary_op_input_port_name = c_ast_unary_op.children()[0][0]
     input_port_names.append(unary_op_input_port_name)
     unary_op_input = func_inst_name + SUBMODULE_MARKER + unary_op_input_port_name
     unary_op_output = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
-
-    # Inputs
-    # Decompose inputs to N ARG FUNCTION
-    # dict[c_ast_input_node] => [list of driven wire names]
-    c_ast_node_2_driven_input_wire_names = OrderedDict()
-    c_ast_node_2_driven_input_wire_names[c_ast_unary_op.expr] = [unary_op_input]
-
-    # Before evaluating input nodes make sure type of port is there so constants can be evaluated
-    # Input must be non const or wtf guys
-    parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(
-        c_ast_node_2_driven_input_wire_names, prepend_text, parser_state
-    )
-    if unary_op_input in parser_state.existing_logic.wire_to_c_type:
-        input_type = parser_state.existing_logic.wire_to_c_type[unary_op_input]
+    # Evaluate input node
+    if is_bool_op: # TODO invert bool !=0 check since know this is !(input!=0)
+        parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
+            c_ast_unary_op.expr, [unary_op_input], prepend_text, parser_state
+        )
     else:
+        parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
+            c_ast_unary_op.expr, [unary_op_input], prepend_text, parser_state
+        )
+
+    # Input types must be known for constant type resolve
+    if unary_op_input not in parser_state.existing_logic.wire_to_c_type:
         print(func_inst_name, "looks like a constant unary op, what's going on?")
         print("parser_state.existing_logic.wire_to_c_type")
         print(parser_state.existing_logic.wire_to_c_type)
         sys.exit(-1)
-
     expr_type = parser_state.existing_logic.wire_to_c_type[unary_op_input]
     input_driver_types.append(expr_type)
     in_driver_wire = parser_state.existing_logic.wire_driven_by[unary_op_input]
@@ -7951,7 +8027,9 @@ def C_AST_UNARY_OP_TO_LOGIC(
     # Determine output type based on operator or driving wire type
     else:
         # Most unary ops use the type of the driven wire
-        if c_ast_unary_op_str == "!" or c_ast_unary_op_str == "~":
+        if c_ast_unary_op_str == "!":
+            output_c_type = BOOL_C_TYPE
+        elif c_ast_unary_op_str == "~":
             output_c_type = expr_type
         # Negate is like signed mult by -1
         elif c_ast_unary_op_str == "-":
@@ -8076,7 +8154,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
 
     # Determine op string to use in func name
     is_bit_shift = False
-    is_bitwise = False
+    is_bool_op = False
     if c_ast_bin_op_str == ">":
         c_ast_op_str = BIN_OP_GT_NAME
     elif c_ast_bin_op_str == ">=":
@@ -8101,13 +8179,10 @@ def C_AST_BINARY_OP_TO_LOGIC(
         c_ast_op_str = BIN_OP_NEQ_NAME
     elif c_ast_bin_op_str == "&":
         c_ast_op_str = BIN_OP_AND_NAME
-        is_bitwise = True
     elif c_ast_bin_op_str == "|":
         c_ast_op_str = BIN_OP_OR_NAME
-        is_bitwise = True
     elif c_ast_bin_op_str == "^":
         c_ast_op_str = BIN_OP_XOR_NAME
-        is_bitwise = True
     elif c_ast_bin_op_str == "<<":
         c_ast_op_str = BIN_OP_SL_NAME
         is_bit_shift = True
@@ -8116,9 +8191,12 @@ def C_AST_BINARY_OP_TO_LOGIC(
         is_bit_shift = True
     elif c_ast_bin_op_str == "%":
         c_ast_op_str = BIN_OP_MOD_NAME
-    elif c_ast_bin_op_str == "&&" or c_ast_bin_op_str == "||":
-        print("No bool types, use bitwise operators, &,|, etc..", c_ast_binary_op.coord)
-        sys.exit(-1)
+    elif c_ast_bin_op_str == "&&":
+        is_bool_op = True
+        c_ast_op_str = BIN_OP_AND_NAME
+    elif c_ast_bin_op_str == "||":
+        is_bool_op = True
+        c_ast_op_str = BIN_OP_OR_NAME
     else:
         print("BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?")
         sys.exit(-1)
@@ -8139,13 +8217,21 @@ def C_AST_BINARY_OP_TO_LOGIC(
     bin_op_right_input = (
         func_inst_name + SUBMODULE_MARKER + bin_op_right_input_port_name
     )
-    c_ast_node_2_driven_input_wire_names = OrderedDict()
-    c_ast_node_2_driven_input_wire_names[c_ast_binary_op.left] = [bin_op_left_input]
-    c_ast_node_2_driven_input_wire_names[c_ast_binary_op.right] = [bin_op_right_input]
-    parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(
-        c_ast_node_2_driven_input_wire_names, prepend_text, parser_state
-    )
-
+    if is_bool_op:
+        parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
+            c_ast_binary_op.left, [bin_op_left_input], prepend_text, parser_state
+        )
+        parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
+            c_ast_binary_op.right, [bin_op_right_input], prepend_text, parser_state
+        )
+    else:
+        parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
+            c_ast_binary_op.left, [bin_op_left_input], prepend_text, parser_state
+        )
+        parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
+            c_ast_binary_op.right, [bin_op_right_input], prepend_text, parser_state
+        )
+    
     # Was either input type evaluated?
     left_type = None
     if bin_op_left_input in parser_state.existing_logic.wire_to_c_type:
@@ -8325,6 +8411,10 @@ def C_AST_BINARY_OP_TO_LOGIC(
     elif c_ast_bin_op_str == "==":
         output_c_type = BOOL_C_TYPE
     elif c_ast_bin_op_str == "!=":
+        output_c_type = BOOL_C_TYPE
+    elif c_ast_bin_op_str == "&&":
+        output_c_type = BOOL_C_TYPE
+    elif c_ast_bin_op_str == "||":
         output_c_type = BOOL_C_TYPE
     else:
         # Not bool operation
@@ -9084,6 +9174,7 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
 _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache = set()
 
 
+# Wow this is post elab and includes adjustments to global table of instance names etc...
 def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
     # Done already?
     if func_logic.func_name in _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache:
@@ -11014,8 +11105,6 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
                 field_name, base_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(
                     child.type, parser_state
                 )
-                # dim = int(child.type.dim.value)
-                # base_type = child.type.type.type.names[0]
                 type_name = base_type + "[" + str(dim) + "]"
             else:
                 # Non array

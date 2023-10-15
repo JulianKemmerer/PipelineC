@@ -631,11 +631,11 @@ def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             parser_state,
             str(logic.c_ast_node.op),
         )
-    elif str(logic.c_ast_node.op) == "&":
+    elif str(logic.c_ast_node.op) == "&" or str(logic.c_ast_node.op) == "&&":
         return GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, LogicInstLookupTable, timing_params, parser_state
         )
-    elif str(logic.c_ast_node.op) == "|":
+    elif str(logic.c_ast_node.op) == "|" or str(logic.c_ast_node.op) == "||":
         return GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, LogicInstLookupTable, timing_params, parser_state
         )

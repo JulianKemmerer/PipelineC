@@ -1921,7 +1921,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   """
                 + result_uint_t
                 + """ x_wide_neg;
-  x_wide_neg = !x_wide;
+  x_wide_neg = ~x_wide;
   
   """
                 + result_uint_t
@@ -2004,7 +2004,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
   """
                 + result_t
                 + """ x_uint_minus1_neg;
-  x_uint_minus1_neg = !x_uint_minus1;
+  x_uint_minus1_neg = ~x_uint_minus1;
   
   """
                 + result_t
@@ -3418,7 +3418,7 @@ def GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(
   """
         + result_uint_t
         + """ x_wide_neg;
-  x_wide_neg = !x_wide;
+  x_wide_neg = ~x_wide;
   
   """
         + result_uint_t
@@ -7077,7 +7077,7 @@ P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[
                 + """;
   """
                 + p_shifted_msb_neg
-                + """ = !"""
+                + """ = ~"""
                 + p_shifted_msb
                 + """;"""
             )
@@ -7202,7 +7202,7 @@ P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[
                 + """;
   """
                 + p_shifted_upper_lsbs_neg
-                + """ = !"""
+                + """ = ~"""
                 + p_shifted_upper_lsbs
                 + """;"""
             )
@@ -7331,7 +7331,7 @@ P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[
                 + """;
   """
                 + p_shifted_msb_neg
-                + """ = !"""
+                + """ = ~"""
                 + p_shifted_msb
                 + """;"""
             )
