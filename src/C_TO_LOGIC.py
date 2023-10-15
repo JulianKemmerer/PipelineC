@@ -4878,6 +4878,9 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
             bits = value.bit_length()
             if bits == 0:
                 bits = 1
+            # If user provides extra bits then use them
+            if bits < len(hex_str)*4:
+                bits = len(hex_str)*4
             if is_negated:
                 c_type_str = "int" + str(bits + 1) + "_t"
             else:
@@ -4894,6 +4897,9 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
             bits = value.bit_length()
             if bits == 0:
                 bits = 1
+            # If user provides extra bits then use them
+            if bits < len(bin_str):
+                bits = len(bin_str)
             if is_negated:
                 c_type_str = "int" + str(bits + 1) + "_t"
             else:
@@ -6594,7 +6600,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             in_val, in_c_type_from_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
                 in_val_str_no_neg, func_c_ast_node, in_negated
             )
-            if in_c_type != in_c_type_from_str:
+            '''if in_c_type != in_c_type_from_str:
                 print(
                     "Mismatching c types for unary op const?",
                     in_val_str,
@@ -6602,7 +6608,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     in_c_type_from_str,
                     func_c_ast_node.coord,
                 )
-                sys.exit(-1)
+                sys.exit(-1)'''
             if C_TYPE_IS_FLOAT_TYPE(in_c_type):
                 # Floats
                 # What op?
