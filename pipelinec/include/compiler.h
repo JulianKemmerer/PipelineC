@@ -12,21 +12,8 @@
  */
 #define PPCAT(A, B) PPCAT_NX(A, B)
 
-// Temp work around for C++/bool types, see github issue
-// https://github.com/JulianKemmerer/PipelineC/issues/24
-#ifdef __PIPELINEC__
-#define bool uint1_t
-#define true 1
-#define false 0
-#define and &
-#define or |
-#else
-#ifndef __cplusplus
-#define and &&
-#define or ||
-#define uint1_t bool
-#endif
-#endif
+// Bool stuff
+#include "bool.h"
 
 // Can't parse attributes
 // https://github.com/eliben/pycparser/wiki/FAQ#what-do-i-do-about-__attribute__
