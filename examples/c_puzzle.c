@@ -34,10 +34,10 @@ uint8_t the_function(bool seq_val){
 */
 
 // CONFIGURE:
-#define N 2 // Some integer 1,2 etc
-#define SOLUTION 2 // 0,1,2
-//#define SIM
-#define SYN
+#define N 2 // Some integer, ex. 1 or 2
+#define SOLUTION 3 // 0,1,2,3
+//#define SIM // Simulation
+#define SYN // Synthesis, ex. Xilinx Artix 7 part
 
 
 #ifndef __PIPELINEC__
@@ -48,7 +48,7 @@ uint8_t the_function(bool seq_val){
 #else
 #include "uintN_t.h"
 #include "intN_t.h"
-#define bool uint1_t
+#include "bool.h"
 #endif
 
 #define SKIP3 ((3*N)-1)
@@ -158,6 +158,44 @@ uint8_t the_function(bool seq_val){
           SKIP3;
   return r;
 #undef v
+#endif
+
+#if SOLUTION == 3
+  #define WAIT_FOR_SEQ 0
+  #define SEQ_ONES 1
+  #define SEQ_PARSE 2
+  static uint8_t state = WAIT_FOR_SEQ;
+  static uint8_t remaining = 0;
+  static uint8_t skip = 0;
+  static uint8_t char_buffer; // Buffer to hold eight bits
+  const uint8_t MSB = 0b10000000;
+  uint8_t return_value = 0;
+  if(state==WAIT_FOR_SEQ){
+    if (seq_val == true) {
+        state = SEQ_ONES;
+    }
+  }
+  else if(state==SEQ_ONES){
+    if (seq_val == false) {
+        state = SEQ_PARSE;
+        remaining = 8;
+        skip = 3 * N;
+    }
+  }
+  else if(state==SEQ_PARSE){
+    skip -= 1;
+    if (skip == 0) {
+        uint8_t next_bit = seq_val ? MSB : 0;
+        char_buffer = (char_buffer >> 1) | next_bit;
+        skip = 2 * N;
+        remaining -= 1;
+    }
+    if (remaining == 0) {
+        state = WAIT_FOR_SEQ;
+        return_value = char_buffer;
+    }
+  }
+  return return_value;
 #endif
 
 }
