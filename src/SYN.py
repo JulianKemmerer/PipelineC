@@ -621,6 +621,11 @@ class PipelineMap:
             filename=f'pipeline_map.gv',
             node_attr={'shape': 'record'},
         )
+
+        # Dont bother if more than 128 nodes...
+        if len(self.logic.submodule_instances) > 128:
+            return
+
         s.graph_attr['rankdir'] = 'LR' # Left to right ordering
         #s.graph_attr['splines']="ortho" # Right angle lines...doesnt look right?
 
