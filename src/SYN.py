@@ -4426,6 +4426,8 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
         + f"/../{dir_name}/"
         + str(SYN_TOOL.__name__).lower()
     )
+    if SYN_TOOL is PYRTL:
+        PATH_DELAY_CACHE_DIR += "_" + str(PYRTL.TECH_IN_NM)+"nm"
     if parser_state.part is not None:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
     if TOOL_DOES_PNR():
