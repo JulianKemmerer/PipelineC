@@ -5,7 +5,8 @@ import OPEN_TOOLS
 import SYN
 import VHDL
 
-TECH_IN_NM=130
+TECH_IN_NM=45
+FF_OVERHEAD=0
 
 def IS_INSTALLED():
     try:
@@ -208,7 +209,7 @@ timing = pyrtl.TimingAnalysis()
 print("Critical path:")
 critical_path_info = timing.critical_path(cp_limit=1)
 #print(critical_path_info)
-print("Fmax (MHz):", timing.max_freq(tech_in_nm={TECH_IN_NM}), flush=True)
+print("Fmax (MHz):", timing.max_freq(tech_in_nm={TECH_IN_NM}, ffoverhead={FF_OVERHEAD}), flush=True)
 """
         py_file = top_entity_name + ".py"
         py_path = output_directory + "/" + py_file
