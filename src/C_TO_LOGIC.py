@@ -13,11 +13,15 @@ from collections import OrderedDict
 from subprocess import PIPE, Popen
 
 import C_TO_FSM
+#import CLANG_TO_LOGIC
 import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
 from utilities import REPO_ABS_DIR, GET_TOOL_PATH
+
+# Use clang for C++?
+CPP_MODE = False
 
 # Detect cpp install
 if GET_TOOL_PATH("cpp") is None:
@@ -1918,13 +1922,15 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
 
     # C_AST nodes can represent pure structure logic
 
-    if type(c_ast_node) == c_ast.Compound:
+    ast_node = new_ASTNode(c_ast_node)
+
+    if ast_node.type_eq(c_ast.Compound):
         return C_AST_COMPOUND_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.Decl:
         return C_AST_DECL_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.If:
         return C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state)
-    elif type(c_ast_node) == c_ast.Return:
+    elif ast_node.type_eq(c_ast.Return):
         return C_AST_RETURN_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.FuncCall:
         return C_AST_FUNC_CALL_TO_LOGIC(
@@ -1938,7 +1944,7 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
         return C_AST_UNARY_OP_TO_LOGIC(
             c_ast_node, driven_wire_names, prepend_text, parser_state
         )
-    elif type(c_ast_node) == c_ast.Constant:
+    elif ast_node.type_eq(c_ast.Constant):
         return C_AST_CONSTANT_TO_LOGIC(
             c_ast_node, driven_wire_names, prepend_text, parser_state
         )
@@ -1988,8 +1994,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     else:
         # start here
         print("Animal Collective - The Purple Bottle")
-        print("Cannot parse c ast node to logic:", c_ast_node.coord)
-        print(c_ast_node)
+        print("Cannot parse c ast node to logic:", ast_node.coord_str())
+        #print(c_ast_node)
         raise Exception("C ast node cannot be parsed to logic")
 
 
@@ -2046,6 +2052,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
 
 
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
+    ast_return = new_ASTNode(c_ast_return)
     # Check for double return
     if RETURN_WIRE_NAME in parser_state.existing_logic.wire_driven_by:
         print(
@@ -2061,7 +2068,7 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
     driven_wire_names = [RETURN_WIRE_NAME]
     prepend_text = ""
     return_logic = C_AST_NODE_TO_LOGIC(
-        c_ast_return.expr, driven_wire_names, prepend_text, parser_state
+        ast_return.return_expr(), driven_wire_names, prepend_text, parser_state
     )
 
     parser_state.existing_logic = return_logic
@@ -4828,7 +4835,8 @@ def BUILD_CONST_WIRE(value_str, c_ast_node, is_negated=False):
 def C_AST_CONSTANT_TO_LOGIC(
     c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated=False
 ):
-    value_str = c_ast_node.value
+    ast_node = new_ASTNode(c_ast_node)
+    value_str = ast_node.const_val_str()
     return NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
         value_str, c_ast_node, driven_wire_names, prepend_text, parser_state, is_negated
     )
@@ -5237,9 +5245,9 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
     rv = existing_logic
     if existing_logic is None:
         rv = Logic()
-
-    if not (c_ast_compound.block_items is None):
-        for block_item in c_ast_compound.block_items:
+    ast_compound = new_ASTNode(c_ast_compound)
+    if not (ast_compound.compound_items() is None):
+        for block_item in ast_compound.compound_items():
             # print "block_item in c_ast_compound.block_items"
             # casthelp(block_item)
             # print '"leading_zeros" in rv.wire_to_c_type', ("leading_zeros" in rv.wire_to_c_type)
@@ -5294,6 +5302,11 @@ def C_AST_NODE_COORD_STR(c_ast_node):
         return rv
     except:
         pass
+    if CPP_MODE:
+        print("TODO clang coord_str")
+        return "FAKE_FILE_C"
+        #ast_node = new_ASTNode(c_ast_node) 
+        #ast_node.coord_str()
 
     c_ast_node_cord = c_ast_node.coord
 
@@ -8986,7 +8999,8 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     parser_state.existing_logic = None
 
     # Since no existing logic, can cache entire existing logic here
-    if c_ast_funcdef.decl.name in _C_AST_FUNC_DEF_TO_LOGIC_cache:
+    ast_funcdef = new_ASTNode(c_ast_funcdef)
+    if ast_funcdef.funcdef_name() in _C_AST_FUNC_DEF_TO_LOGIC_cache:
         parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[
             c_ast_funcdef.decl.name
         ]
@@ -8999,7 +9013,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     parser_state.existing_logic.c_ast_node = c_ast_funcdef
 
     # All func def logic has an output wire called "return"
-    return_type = c_ast_funcdef.decl.type.type.type.names[0]
+    return_type = ast_funcdef.funcdef_return_type()
     if return_type != "void":
         return_wire_name = RETURN_WIRE_NAME
         parser_state.existing_logic.outputs.append(return_wire_name)
@@ -9008,12 +9022,12 @@ def C_AST_FUNC_DEF_TO_LOGIC(
         parser_state.existing_logic.wire_to_c_type[return_wire_name] = return_type
 
     # First get name of function from the declaration
-    parser_state.existing_logic.func_name = c_ast_funcdef.decl.name
+    parser_state.existing_logic.func_name = ast_funcdef.funcdef_name()
 
     # Then get input wire names from the function def
     # print "func def:",c_ast_funcdef
-    if c_ast_funcdef.decl.type.args is not None:
-        for param_decl in c_ast_funcdef.decl.type.args.params:
+    if ast_funcdef.funcdef_args() is not None:
+        for param_decl in ast_funcdef.funcdef_args().params:
             input_wire_name = param_decl.name
             parser_state.existing_logic.inputs.append(input_wire_name)
             parser_state.existing_logic.wires.add(input_wire_name)
@@ -9028,7 +9042,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     # All func bodys can see globally defined variable names
     # Instead of processing upon finding global names multiple times
     # do a single copy of info from global to local func
-    all_ids = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_funcdef.body)
+    all_ids = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(ast_funcdef.funcdef_body())
     for id_node in all_ids:
         var_name = str(id_node.name)
         parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(
@@ -9044,7 +9058,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     # print(parser_state.existing_logic.func_name,"is_fsm_clk_func",parser_state.existing_logic.is_fsm_clk_func)
     if parser_state.existing_logic.is_fsm_clk_func and only_fsm_clk_funcs:
         parser_state.existing_logic = C_TO_FSM.C_AST_FSM_FUNDEF_BODY_TO_LOGIC(
-            c_ast_funcdef.body, parser_state
+            ast_funcdef.funcdef_body(), parser_state
         )
     elif not only_fsm_clk_funcs:
         # OR default comb logic
@@ -9053,7 +9067,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
         prepend_text = ""
         if parse_body:
             body_logic = C_AST_NODE_TO_LOGIC(
-                c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state
+                ast_funcdef.funcdef_body(), driven_wire_names, prepend_text, parser_state
             )
             parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
 
@@ -9115,7 +9129,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
 
     # Write cache
     _C_AST_FUNC_DEF_TO_LOGIC_cache[
-        c_ast_funcdef.decl.name
+        ast_funcdef.funcdef_name()
     ] = parser_state.existing_logic
 
     return parser_state.existing_logic
@@ -9654,6 +9668,9 @@ def GET_PARSER_STATE_CACHE_FILEPATH(c_filename):
 
 
 def WRITE_PARSER_STATE_CACHE(parser_state, c_filename):
+    if CPP_MODE:
+        print("TOOD parse state caching")
+        return
     # Write dir first if needed
     output_directory = SYN.SYN_OUTPUT_DIRECTORY
     if not os.path.exists(output_directory):
@@ -9685,7 +9702,8 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     # Do this by manually recursing through all nodes in each func def
     c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for c_ast_func_def in c_ast_func_defs:
-        func_name = c_ast_func_def.decl.name
+        ast_func_def = new_ASTNode(c_ast_func_def)
+        func_name = ast_func_def.funcdef_name()
         # print "c_ast_func_def",c_ast_func_def.decl.name
         func_call_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(
             c_ast_func_def, c_ast.FuncCall
@@ -9754,6 +9772,7 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
 
 
 def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
+    ast_node = new_ASTNode(c_ast_node)
     if nodes is None:
         nodes = []
     if type(c_ast_node) == c_ast.ID:
@@ -9764,30 +9783,236 @@ def C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node, nodes=None):
     # an individual c_ast.ID node for 'my_var' 
     # when thats not the same as using 'my_var' as an actual variable
     # Only need node for the .name variable name not the .field struct field
-    if type(c_ast_node) == c_ast.StructRef:
-        nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node.name, nodes)
+    if ast_node.type_eq(c_ast.StructRef):
+        nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(ast_node.structref_name(), nodes)
         return nodes
     
     # Normal case look at all children of node
-    children_tuples = c_ast_node.children()
-    for children_tuple in children_tuples:
-        child_name = children_tuple[0]
-        child_node = children_tuple[1]
+    children = ast_node.children()
+    for child_node in children:
         nodes = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(child_node, nodes)
 
     return nodes
 
+class AST:
+    def is_pycparser(thing):
+        return str(thing.__module__) == "pycparser.c_ast"
+
+    def is_clangcindex(thing):
+        return str(thing.__module__) == "clang.cindex"
+    
+    def type_const_eq(type_const_l, type_const_r):
+        if AST.is_pycparser(type_const_l) and AST.is_pycparser(type_const_r):
+            return type_const_l == type_const_r
+        else:
+            raise Exception(f"How to compare type constants? {type_const_l} {type_const_r}")
+
+import clang.cindex
+from clang.cindex import *
+from clang.cindex import conf, register_function, c_int, c_object_p
+
+# Couldnt get __new__ to work?
+def new_ASTNode(some_ast_node):
+    if type(some_ast_node) == ASTNode:
+        return some_ast_node
+    return ASTNode(some_ast_node)
+
+class ASTNode:
+    '''def __new__(cls, some_ast_node):
+        if type(some_ast_node) == ASTNode:
+            return some_ast_node
+        return super(ASTNode, cls).__new__(cls, some_ast_node)'''
+
+    def __init__(self, some_ast_node):
+        if some_ast_node is None:
+            raise Exception("Null node!")
+        if type(some_ast_node) == ASTNode:
+            raise Exception("Self init!?")
+        self.ast_node = some_ast_node
+
+    def is_pycparser_node(self):
+        return AST.is_pycparser(self.ast_node)
+
+    def is_clangcindex_node(self):
+        return AST.is_clangcindex(self.ast_node)
+
+    def type_eq(self, type_const):
+        if self.is_pycparser_node() and AST.is_pycparser(type_const):
+            return type(self.ast_node) == type_const
+        elif self.is_clangcindex_node():
+            #print("self.ast_node.kind",self.ast_node.kind, "==", type_const)
+            if self.ast_node.kind == clang.cindex.CursorKind.TRANSLATION_UNIT:
+                return False # No pycparser equivalent
+            elif self.ast_node.kind == clang.cindex.CursorKind.TYPEDEF_DECL:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.Typedef)
+            elif self.ast_node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.FuncDef) or AST.type_const_eq(type_const, c_ast.FuncDecl)
+            elif self.ast_node.kind == clang.cindex.CursorKind.TYPE_REF:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.Typename)
+            elif self.ast_node.kind == clang.cindex.CursorKind.COMPOUND_STMT:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.Compound)
+            elif self.ast_node.kind == clang.cindex.CursorKind.RETURN_STMT:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.Return)
+            elif self.ast_node.kind == clang.cindex.CursorKind.INTEGER_LITERAL:
+                if AST.is_pycparser(type_const):
+                    return AST.type_const_eq(type_const, c_ast.Constant)
+            else:
+                raise Exception(f"How to compare clang.cindex type? {self.ast_node.kind} {type_const}")
+        
+        raise Exception(f"How to compare types? {self.ast_node} {type_const}")
+
+    def children(self):
+        if self.is_pycparser_node():
+            children_tuples = self.ast_node.children()
+            childs = []
+            for children_tuple in children_tuples:
+                child_node = children_tuple[1]
+                childs.append(child_node)
+            return childs
+        elif self.is_clangcindex_node():
+            return list(self.ast_node.get_children())
+        else:
+            raise Exception(f"How to get children of? {self.ast_node}")
+        
+    def structref_name(self):
+        if self.is_pycparser_node():
+            return self.ast_node.name
+        else:
+            raise Exception(f"How to get structref_name of? {self.ast_node}")
+
+    def typedef_enum(self):
+        if self.is_pycparser_node():
+            thing = self.ast_node.children()[0][1].children()[0][1]
+            if type(thing) == c_ast.Enum:
+                return thing
+            else:
+                return None
+        elif self.is_clangcindex_node():
+            print("TODO: typedef_enum for clang cindex")
+            return None
+        else:
+            raise Exception(f"How to get typedef enum node for {self.ast_node}?")
+        
+    def typedef_struct(self):
+        if self.is_pycparser_node():
+            thing = self.ast_node.children()[0][1].children()[0][1]
+            if type(thing) == c_ast.Struct:
+                return thing
+        elif self.is_clangcindex_node():
+            print("TODO: typedef_struct for clang cindex")
+            return None
+        else:
+            raise Exception(f"How to get typedef_struct for {self.ast_node}?")
+
+    def funcdef_name(self):
+        if self.is_pycparser_node():
+            return self.ast_node.decl.name
+        elif self.is_clangcindex_node():
+            return str(self.ast_node.spelling)
+        else:
+            raise Exception(f"How to get funcdef_name for {self.ast_node}?")
+
+    def funcdef_body(self):
+        if self.is_pycparser_node():
+            return self.ast_node.body
+        elif self.is_clangcindex_node():
+            compound_node = None
+            for child in self.children():
+                if child.kind == clang.cindex.CursorKind.COMPOUND_STMT:
+                    compound_node = child
+                    break
+            return compound_node
+        else:
+            raise Exception(f"How to get funcdef_body for {self.ast_node}?")
+    
+    def funcdef_args(self):
+        if self.is_pycparser_node():
+            return self.ast_node.decl.type.args
+        elif self.is_clangcindex_node():
+            print("TODO funcdef_args for clang")
+            return None
+            print(dir(self.ast_node))
+            compound_node = None
+            for child in self.children():
+                print("child",child.kind,dir(child))
+            sys.exit(0)
+        else:
+            raise Exception(f"How to get funcdef_args for {self.ast_node}?")
+
+    def funcdef_return_type(self):
+        if self.is_pycparser_node():
+            return self.ast_node.decl.type.type.type.names[0]
+        elif self.is_clangcindex_node():
+            type_node = None
+            for child in self.children():
+                if child.kind == clang.cindex.CursorKind.TYPE_REF:
+                    type_node = child
+                    break
+            #print(dir(type_node))
+            #print(type_node.spelling)
+            return str(type_node.spelling)
+            #sys.exit(0)
+        else:
+            raise Exception(f"How to get funcdef_return_type for {self.ast_node}?")
+
+    def coord_str(self):
+        if self.is_pycparser_node():
+            return str(self.ast_node.coord)
+        elif self.is_clangcindex_node():
+            #print(self.ast_node.kind, dir(self.ast_node))
+            return str(self.ast_node.kind) +" "+ str(self.ast_node.location)
+        else:
+            raise Exception(f"How to get coord_str for {self.ast_node}?")
+        
+    def compound_items(self):
+        if self.is_pycparser_node():
+            return self.ast_node.block_items
+        elif self.is_clangcindex_node():
+            return list(self.ast_node.get_children())
+            #print(self.ast_node.kind, dir(self.ast_node))
+            #sys.exit(0)
+        else:
+            raise Exception(f"How to get compound_items for {self.ast_node}?")
+    
+    def return_expr(self):
+        if self.is_pycparser_node():
+            return self.ast_node.expr
+        elif self.is_clangcindex_node():
+            return self.children()[0]
+        else:
+            raise Exception(f"How to get return_expr for {self.ast_node}?")
+
+    def const_val_str(self):
+        if self.is_pycparser_node():
+            return str(self.ast_node.value)
+        elif self.is_clangcindex_node():
+            #print(self.ast_node.kind, dir(self.ast_node))
+            #print(self.ast_node.spelling)
+            import CLANG_TO_LOGIC
+            from clang.cindex import conf
+            eval = conf.lib.clang_Cursor_Evaluate(self.ast_node)
+            if (eval):
+                eval = CLANG_TO_LOGIC.EvalResult(eval)
+                return str(eval.getAsInt())
+            raise Exception(f"How to eval const_val_str for {self.ast_node}?")
+        else:
+            raise Exception(f"How to get const_val_str for {self.ast_node}?")
+
 
 def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
+    ast_node = new_ASTNode(c_ast_node)
     if nodes is None:
         nodes = []
-        if c_ast_type == c_ast.ID:
+        if AST.type_const_eq(c_ast_type, c_ast.ID):
             raise Exception(f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
-    if type(c_ast_node) == c_ast_type:
+    if ast_node.type_eq(c_ast_type):
         nodes.append(c_ast_node)
-    children_tuples = c_ast_node.children()
-    for children_tuple in children_tuples:
-        child_node = children_tuple[1]
+    for child_node in ast_node.children():
         nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(child_node, c_ast_type, nodes)
     return nodes
 
@@ -9804,6 +10029,13 @@ def PARSE_FILE(c_filename):
 
     # Otherwise do for real
     parser_state = ParserState()
+
+    #TEMP
+    if CPP_MODE:
+        parser_state.main_mhz["main"] = 100.0
+        parser_state.main_syn_mhz["main"] = 100.0
+        parser_state.main_clk_group["main"] = None
+        parser_state.part = "xc7a100tcsg324-1"
 
     # Catch pycparser exceptions
     try:
@@ -10285,7 +10517,8 @@ def GET_GLOBAL_VAR_INFO(parser_state):
     # Hacky pre-parsing func body logic, determine what funcs contain use of the global
     c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for c_ast_func_def in c_ast_func_defs:
-        func_name = c_ast_func_def.decl.name
+        ast_func_def = new_ASTNode(c_ast_func_def)
+        func_name = ast_func_def.funcdef_name()
         if not SKIP_PARSING_FUNC(func_name, parser_state):
             ids_in_func = C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_func_def)
             for id_node in ids_in_func:
@@ -10316,14 +10549,15 @@ def GET_LOCAL_VAR_INFO(parser_state):
     # INCLUDES INPUT PARAMs AND LOCALs
     c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for c_ast_func_def in c_ast_func_defs:
-        func_name = c_ast_func_def.decl.name
+        ast_func_def = new_ASTNode(c_ast_func_def)
+        func_name = ast_func_def.funcdef_name()
         local_decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(
-            c_ast_func_def.body, c_ast.Decl
+            ast_func_def.funcdef_body(), c_ast.Decl
         )
         param_decl_c_ast_nodes = []
-        if c_ast_func_def.decl.type.args is not None:
+        if ast_func_def.funcdef_args() is not None:
             param_decl_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(
-                c_ast_func_def.decl.type.args, c_ast.Decl
+                ast_func_def.funcdef_args(), c_ast.Decl
             )
         decl_c_ast_nodes = local_decl_c_ast_nodes + param_decl_c_ast_nodes
         for decl_c_ast_node in decl_c_ast_nodes:
@@ -11196,29 +11430,31 @@ def SKIP_PARSING_FUNC(func_name, parser_state):
 def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
     # Each func def needs existing logic func name lookup
     # Read in file with C parser and get function def nodes
+    #print("parser_state.c_file_ast",parser_state.c_file_ast)
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
+        ast_func_def = new_ASTNode(func_def)
         # Silently skip fsm clk funcs
         parse_func_body = parse_body
         if (
-            func_def.decl.name in parser_state.FuncLogicLookupTable
-            and parser_state.FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func
+            ast_func_def.funcdef_name() in parser_state.FuncLogicLookupTable
+            and parser_state.FuncLogicLookupTable[ast_func_def.funcdef_name()].is_fsm_clk_func
         ):
             continue
         # Special overload funcs
-        if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
-            print("Elaborating dataflow of operator overload function:", func_def.decl.name, flush=True)
+        if FUNC_IS_OP_OVERLOAD(ast_func_def.funcdef_name()):
+            print("Elaborating dataflow of operator overload function:", ast_func_def.funcdef_name(), flush=True)
         # Skip functions that are not found in the initial from-main hierarchy mapping
-        elif SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
-            print("Function skipped:", func_def.decl.name)
+        elif SKIP_PARSING_FUNC(ast_func_def.funcdef_name(), parser_state):
+            print("Function skipped:", ast_func_def.funcdef_name())
             continue
         # Prims
-        elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
-            print("Parsing primitive function:", func_def.decl.name, flush=True)
+        elif FUNC_IS_PRIMITIVE(ast_func_def.funcdef_name(), parser_state):
+            print("Parsing primitive function:", ast_func_def.funcdef_name(), flush=True)
             parse_func_body = False
         # General user code
         else:
-            print("Elaborating dataflow of function:", func_def.decl.name, flush=True)
+            print("Elaborating dataflow of function:", ast_func_def.funcdef_name(), flush=True)
 
         # Each func def produces a single logic item
         parser_state.existing_logic = None
@@ -11555,6 +11791,10 @@ def GET_C_AST_FUNC_DEFS_FROM_C_CODE_TEXT(text, fake_filename):
 
 
 def GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename):
+    if CPP_MODE:
+        import CLANG_TO_LOGIC
+        return CLANG_TO_LOGIC.GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(c_text, c_filename)
+    
     # print "========="
     # print "fake_filename",fake_filename
     # print "preprocessed text",c_text
@@ -11590,46 +11830,58 @@ def GET_C_FILE_AST_FROM_C_CODE_TEXT(text, c_filename):
 
 
 def GET_C_AST_FUNC_DEFS(c_file_ast):
+    ast_node = new_ASTNode(c_file_ast)
     # c_file_ast.show()
     # children are "external declarations",
     # and are stored in a list called ext[]
-    func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, c_file_ast.ext)
+    children = ast_node.children()
+    #print("children",children)
+    func_defs = GET_TYPE_FROM_LIST(c_ast.FuncDef, ast_node.children())
+    #print("func_defs",func_defs)
     return func_defs
 
 
+
+
 def GET_C_AST_STRUCT_DEFS(c_file_ast):
+    ast_node = new_ASTNode(c_file_ast)
     # Get type defs
-    type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
+    type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, ast_node.children())
     struct_defs = []
     for type_def in type_defs:
-        # casthelp(type_def)
-        thing = type_def.children()[0][1].children()[0][1]
-        if type(thing) == c_ast.Struct:
-            struct_defs.append(thing)
-
+        type_def_ast_node = new_ASTNode(type_def)
+        if type_def_ast_node.typedef_struct():
+            struct_defs.append(type_def_ast_node.typedef_struct())
     return struct_defs
 
 
 def GET_C_AST_ENUM_DEFS(c_file_ast):
+    ast_node = new_ASTNode(c_file_ast)
     # Get type defs
-    type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, c_file_ast.ext)
+    type_defs = GET_TYPE_FROM_LIST(c_ast.Typedef, ast_node.children())
     enum_defs = []
     for type_def in type_defs:
         # casthelp(type_def)
-        thing = type_def.children()[0][1].children()[0][1]
-        if type(thing) == c_ast.Enum:
-            enum_defs.append(thing)
+        type_def_ast_node = new_ASTNode(type_def)
+        if type_def_ast_node.typedef_enum():
+            enum_defs.append(type_def_ast_node.typedef_enum())
     # print enum_defs
     # sys.exit(-1)
     return enum_defs
 
 
 def GET_C_AST_GLOBAL_DECLS(c_file_ast):
+    ast_node = new_ASTNode(c_file_ast)
     # Get type defs
-    variable_defs = GET_TYPE_FROM_LIST(c_ast.Decl, c_file_ast.ext)
+    variable_defs = GET_TYPE_FROM_LIST(c_ast.Decl, ast_node.children())
 
     return variable_defs
 
 
-def GET_TYPE_FROM_LIST(py_type, list):
-    return [item for item in list if type(item) == py_type]
+def GET_TYPE_FROM_LIST(py_type, l):
+    rv = []
+    for node in l:
+        ast_node = new_ASTNode(node)
+        if ast_node.type_eq(py_type):
+            rv.append(node)
+    return rv

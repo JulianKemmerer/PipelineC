@@ -4309,7 +4309,11 @@ def GET_OUTPUT_DIRECTORY(Logic):
         )
     else:
         # Use source file if not built in?
-        src_file = str(Logic.c_ast_node.coord.file)
+        if C_TO_LOGIC.CPP_MODE:
+            print("TODO coord file name for output dir")
+            src_file = "fake_cpp_file.cpp"
+        else:
+            src_file = str(Logic.c_ast_node.coord.file)
         # # hacky catch files from same dir as script?
         # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
         repo_dir = REPO_ABS_DIR()

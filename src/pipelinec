@@ -10,7 +10,6 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import OPEN_TOOLS
 import SIM
-#import CLANG_TO_LOGIC
 import SYN
 
 # Defaults
@@ -20,7 +19,8 @@ default_top_module = "top"
 # Parse args
 parser = argparse.ArgumentParser(description="PipelineC:")
 parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
-                    help=f"C file containing main functions. Default is {default_c_file}.")
+                    help=f"C/C++ file containing main functions. Default is {default_c_file}.")
+parser.add_argument("--cpp", help="C++ mode. Uses clang.cindex Python API.", action="store_true")
 parser.add_argument("--top", help=f"Set the name of the top-level module generated. Default is {default_top_module}.", type=str, default=default_top_module)                    
 parser.add_argument("--out_dir", type=str, default=None,
                     help=f"Output directory. Default is a new directory inside the current directory.")
@@ -64,6 +64,8 @@ c_file = os.path.abspath(args.c_file)
 
 # Apply arguments to global modules
 
+# C/C++ mode
+C_TO_LOGIC.CPP_MODE = args.cpp
 # Set top level module name
 SYN.TOP_LEVEL_MODULE = args.top
 # Flag for verilog conversion
@@ -108,9 +110,6 @@ print("================== Parsing C Code to Logical Hierarchy ==================
 # Do parsing
 print("Parsing:",c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-#CLANG_TO_LOGIC.PARSE_FILE(c_file)
-#print("TEMP END")
-#sys.exit(0)
 
 print("================== Writing Resulting Logic to File ================================", flush=True)
 C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
@@ -142,14 +141,80 @@ print("Done.", flush=True)
 
 # No need to scare folks with my big dumb todo list printing...
 """
-TODO:
+TODO: 
+Try new clang cindex python api test demo from discord person?
+  See recent #dev chat
+  Try making return const work
+  make return +1 work
+  Then plus1 func and return that
+  Then try template/make branch?
+  Does clang does constexpr/templates well?
+    Only in C++ API has EvaluateAsConstExpr?
+    Try cindex test w/ example.cpp 
+    Try w/ preprocessing too
+    Isolate .pipelinec specific files to be parsed by clang in isolation
+    Simple example could be multiplier func inferring out bits from in...
+    Ideal example is FIR bit width growth calc
+    Need abitrary bit width integer type?
+    Fixed point stuff?
+SDR project? 
+  1) passthrough loopback of samples through FPGA
+    probably using Arty ethernet port (w/ free xilinx MAC ive tested)
+    confirm bandwidth
+  2) Buy RTL SDR
+  3) without FPGA recreate https://github.com/ha7ilm/csdr demo listening to a FM radio station
+  4) Replace pieces with FPGA, start with passthrough
+  ex. 'csdr convert_f_s16 | mplayer' is the last step of demo
+  do 'csdr convert_f_s16 | pipe_to_from_fpga | mplayer' 
+  5) Then work backwards, implement convert_f_s16 in FPGA, (yes start off dumb using FP, assuming can fit)
+  6) End with entire working DSP chain in FPGA if possible
+  ethernet bandwidth might be a limit idk
+  7) Try this in my companies FPGA SDR
+  https://github.com/ha7ilm/csdr
+    Use RTLSDR Receive FM radio and incremental replace parts of csdr DSP chain with 
+    stream to and from FPGA samples, start with pass through, work backwards
+  Implement support for fixed point numbers (like float e m t since dont have templates yet?)
+    Do built in Q number types
+  Implement as library with operator.h C++ compatible overloading
+FSM Style w/ long render pipeline
+  Get msponge working
+  Can use Mandelbrot setup
+FSM Style + RISCV CPU support?
+  prob w/ ready+valid?
+  RISCV CPU and stuff:
+  How to connect to shared resource buffers as a thread?
+  Multiple RISCV CPUs compiled from multiple MAIN funcs?
+  Frame buf extra ports cant be global arrya must be single port per var
+  Continue with async/arbitrated full custom hardware version from wiki?
+  FOSIX NoC stuff?
+  CPU Mandelbrot demo w/ BRAM of floats? with frame buffer FSM style and pipelined iterations?
+Try to optimize derived FSMs to merge states etc #163
+  Default FSM style code to subroutines taking a cycle/more?
+    Arrange VAR_ASSIGN to FSM state all to end w/ return?
+  Replace assign to entire one hot for func return vars with if() compare for all possible exit paths
 Do little EDIF experiment
   "-03" lolz
+  ghdl/yosys cuts structs off after first level of nesting
+  Maybe flatten top level VHDL option see issue 130
+SYCL-like 'command group' - COPY vector add example from video?
+  submit kernels to queues
+  Accessor is port, ports show up as array variables accessor1[array_index]
+  Kernel code, buffer is the data
+    Buffer is 1,2,3d array of elements
+  accessors for how to get data in and out of a kernel, 'communication'
+  Graph of dependencies, schedular schedules onto device (data+kernel presenece requirements)
+  Async submit of command group
+  Can organize into 'work groups' of threads with small chunks of shared memory
+    With atomic sync stuff for between threads    CUDA like
+  Can fall back to unified shared memory USM, typical C code pointer global memory stuff
 Python cleanup PRs
   DarkKnight PR on pycparser submodule
   Clone copy of repo
   Try to build recent GoL demo
      Results in some more LUTs...wtf? does it matter?
+     Test with litex+arty sphery build
+BUGS: Missing typedef support!?
+  Shouldnt be too bad, can hack around 
 Try to do short youtube video fixing a bug or introducing how tool works
   Would declaring IF interator in INIT statement support be good first/video issue?
     Any other issues?
@@ -157,26 +222,9 @@ Try to do short youtube video fixing a bug or introducing how tool works
   tutorial that explains how to fix some github issues, ex. stream handshake?
   would like to help with some features but I don't like to spent like many weeks understanding
   Some kind of step by step how a + b function is pipelined to vhdl?
-SDR project? 
-  https://github.com/ha7ilm/csdr
-  Do FIR DEMO first?
-  Receive FM radio audio?
-How to do async start and complete with shared resource bus
-  For stuff like long pipelines
-  Multi in flight support?
-  start read, finish read etc
-  CPU support? prob w/ ready+valid?
-Multiple RISCV CPUs compiled from multiple MAIN funcs?
-Try to optimize derived FSMs to merge states etc
-Does clang does constexpr/templates well?
-  Only in C++ API has EvaluateAsConstExpr?
-  Try cindex test w/ example.cpp 
-  Try w/ preprocessing too
-  Isolate .pipelinec specific files to be parsed by clang in isolation
-  Simple example could be multiplier func inferring out bits from in...
-  Ideal example is FIR bit width growth calc
-  Need abitrary bit width integer type?
-  Fixed point stuff?
+Present RAM functions as N separate ports that can be used once anywhere (in func if local)
+  See SYCL accessors and advanced port concepts from other hdls
+  Related issue 121
 Redo FSM Style arb with inst array sharing wires
   User will need to specify number of users of SINGLE INST (inst array size)
   Allow setting slower FSM style arb styles with more regs, not zero cycle
@@ -205,8 +253,6 @@ Victor's RT
     Find a working design and then backs down to fewer stages
   Try verilating whole pipeline?
 Make VHDL IEEE committee suggestion for record to-from slv like verilog packing
-BUGS: Missing typedef support!?
-  Shouldnt be too bad, can hack around 
 Victor wave pipelining small example
   Measure min and max delays 
     (also applies to existing pipelined circuit not just comb logic)
@@ -220,11 +266,6 @@ Victor wave pipelining small example
   Craft multi path, try it?
 Analogue Pocket FPGA Sphery demo
   Fix timing for hsync and vsync?
-CPU Mandelbrot demo w/ BRAM of floats? with frame buffer FSM style and pipelined iterations?
-RISCV CPU and stuff?
-  Frame buf extra ports cant be global arrya must be single port per var
-  Continue with async/arbitrated full custom hardware version from wiki?
-  FOSIX NoC stuff?
 Do more basic tutorials like nandland+hdlbits
   NOT FULL tutorials just refresh basics categories?
 Make const SR SL into vhdl funcs not modules
@@ -277,7 +318,6 @@ Go AST?
 Rust AST? rustc -Z ast-json, traverse the json? Do minimum viable?
 Aetherling style re/unrolling of logic into different timings/util
 Put modelsim files all in syn out dir, not in cwd from launching tool (w/ reset of modelsim proj files)
-Do write up on one or two optimizations to DKs riscv
 Fix fine grain sweep to work again after coarse/middle out sweep
 Do tagged unions as union type w/ gen tag type, and gen funcs taking union type and tag, decoding to struct type
 Set write-back/'volatile feedback'? connection markers in code that make volatiles work like CPU pipeline feedback to specific stages C code labels and gotos?
@@ -330,7 +370,6 @@ No good? reason to combine variable latency array of regs for pipelining and sta
 Compiler pass to make sequences ex. ORS, into binary trees
 Add auto switch between inferred and fabric mult, etc?
 Do more DSP prim functions ideally with backing fabric c code for if on different device
-Do built in Q number types
 Could make an undefined/Xs constant only meaningful in synthesis
 Default dont put IO regs around single inst funcs in mid out sweep?
 Add support for IO regs from timing params to primitives (fix intel mult to prefer manual io since LPM_PIPELINE isnt precise enough)
@@ -347,4 +386,5 @@ Need to re-do clock crossings/wires used in pipelineable logic to be like volati
 Macros using preprocessing integer math checks for sizes?
   Software does this somehow? hold N value type?
 What happens if use orignal non-INST_ARRAY var instead of the array?
+Do write up on one or two optimizations to DKs riscv
 """
