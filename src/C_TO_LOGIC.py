@@ -3688,6 +3688,8 @@ def C_TYPES_ARE_ENUMS(c_types, parser_state):
 
 
 def C_TYPE_IS_ARRAY(c_type):
+    if c_type is None:
+        return False
     return "[" in c_type and c_type.endswith("]")
 
 
@@ -4985,6 +4987,12 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
             parser_state.existing_logic.wire_to_c_type[wire_name] = c_type_str
     else:
         parser_state.existing_logic.wire_to_c_type[wire_name] = known_c_type
+
+    # Set type of driven wires if not yet set
+    for driven_wire_name in driven_wire_names:
+        if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driven_wire_name] = parser_state.existing_logic.wire_to_c_type[wire_name]
+
     # Connect the constant to the wire it drives
     # print("connecting",wire_name, driven_wire_names,parser_state.existing_logic.wire_to_c_type[wire_name])
     parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
@@ -5584,7 +5592,12 @@ def C_AST_TERNARY_OP_TO_LOGIC(
         input_port_names,  # Port names on submodule
         driven_wire_names,
         parser_state,
+        output_type
     )
+
+    for driven_wire_name in driven_wire_names:
+        if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driven_wire_name] = output_type  
 
     return parser_state.existing_logic
 
@@ -6976,6 +6989,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     input_port_names,  # Port names on submodule
     output_driven_wire_names,
     parser_state,
+    expected_output_type = None
 ):
 
     # @@@@@@@@@ Maybe just require casting operation instead?  don't allow float + int  (bin op still changes to float+float  and errors connecting int to float ???
@@ -7204,6 +7218,9 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         ]  # First increment is same as output type,storage
 
     # Only add output wire if there is one
+    # Fall back to expected?
+    if output_type is None:
+        output_type = expected_output_type
     if output_type is None:
         print(
             "Unknown output type for func",
@@ -7228,6 +7245,14 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 prepend_text,
                 func_c_ast_node,
             )
+        for output_driven_wire_name in output_driven_wire_names:
+            if (
+                output_driven_wire_name
+                not in parser_state.existing_logic.wire_to_c_type
+            ):
+                parser_state.existing_logic.wire_to_c_type[
+                    output_driven_wire_name
+                ] = output_type
     else:
         if len(output_driven_wire_names) > 0:
             print(
@@ -8014,7 +8039,7 @@ def C_AST_UNARY_OP_TO_LOGIC(
 
     # Input types must be known for constant type resolve
     if unary_op_input not in parser_state.existing_logic.wire_to_c_type:
-        print(func_inst_name, "looks like a constant unary op, what's going on?")
+        print(func_inst_name, "looks like unknown type unary op, what's going on?")
         print("parser_state.existing_logic.wire_to_c_type")
         print(parser_state.existing_logic.wire_to_c_type)
         sys.exit(-1)
@@ -8050,7 +8075,7 @@ def C_AST_UNARY_OP_TO_LOGIC(
             sys.exit(-1)
 
     # Set type for output wire
-    parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
+    #parser_state.existing_logic.wire_to_c_type[unary_op_output] = output_c_type
 
     func_c_ast_node = c_ast_unary_op
     func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
@@ -8063,7 +8088,11 @@ def C_AST_UNARY_OP_TO_LOGIC(
         input_port_names,  # Port names on submodule
         driven_wire_names,
         parser_state,
+        output_c_type
     )
+    for driven_wire_name in driven_wire_names:
+        if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driven_wire_name] = output_c_type  
 
     parser_state.existing_logic = func_logic
 
@@ -8625,7 +8654,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
 
     # Set type for output wire
     bin_op_output = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
-    parser_state.existing_logic.wire_to_c_type[bin_op_output] = output_c_type
+    
     # print " ----- ", bin_op_output, output_c_type
     func_c_ast_node = c_ast_binary_op
     func_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
@@ -8638,7 +8667,16 @@ def C_AST_BINARY_OP_TO_LOGIC(
         input_port_names,  # Port names on submodule
         driven_wire_names,
         parser_state,
+        output_c_type
     )
+    # Dont add bin_op_output wire, might have optimized away...
+    #if bin_op_output not in parser_state.existing_logic.wire_to_c_type:
+    #    parser_state.existing_logic.wire_to_c_type[bin_op_output] = output_c_type
+    # But do resolve driven wire if not set??
+    for driven_wire_name in driven_wire_names:
+        if driven_wire_name not in parser_state.existing_logic.wire_to_c_type:
+            parser_state.existing_logic.wire_to_c_type[driven_wire_name] = output_c_type    
+
     # Save c ast node of binary op
 
     parser_state.existing_logic = func_logic
