@@ -4071,7 +4071,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
                         "Struct ref tok but not struct type?",
                         remaining_toks,
                         current_c_type,
-                        c_ast_ref.coord,
+                        str(c_ast_ref.coord),
                     )
                     #print(parser_state.struct_to_field_type_dict)
                     sys.exit(-1)
