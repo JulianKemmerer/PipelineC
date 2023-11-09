@@ -74,38 +74,3 @@ uint32_t main_add_const_array(uint32_t x)
 {
   return add_const_array(x, 3);
 }
-
-
-#include "xstr.h"
-
-typedef int template_t; // Ignored by PipelineC
-
-#define template_typename(T)\
-typedef template_t T##_t;
-
-#define template(T)\
-T##_t
-
-#define type(T)\
-xstr(T) // Make into string literal
-
-//#define template_func2(func_name, T0, T1, 
-
-template_typename(I)
-template_typename(O)
-template(O) add_type_template(
-  template_t O, template_t I, template(I) x, template(I) y
-){
-  template(O) rv;
-  rv = x + y;
-  return rv;
-}
-#define add_type(out_t, in_t, x, y)\
-add_type_template(type(out_t), type(in_t), x, y)
-
-#define MY_TYPE uint32_t
-#pragma MAIN main_type_add
-MY_TYPE main_type_add(MY_TYPE x, MY_TYPE y)
-{
-  return add_type(MY_TYPE, MY_TYPE, x, y);
-}
