@@ -1,14 +1,29 @@
 #include "compiler.h"
 #include "uintN_t.h"
 
-// Types for arrays of data and coeffs
-#define fir_samples_window_t PPCAT(fir_name,_samples_window_t)
+#include "fir_names.h"
+
+// Not continuous, only somtimes valid, stream of samples
+#define fir_in_data_stream_t fir_in_data_stream_type(fir_name)
+typedef struct fir_in_data_stream_t{
+  fir_data_t data;
+  uint1_t valid;
+}fir_in_data_stream_t;
+#define fir_out_data_stream_t fir_out_data_stream_type(fir_name)
+typedef struct fir_out_data_stream_t{
+  fir_out_t data;
+  uint1_t valid;
+}fir_out_data_stream_t;
+
+// Type for array of data
+#define fir_samples_window_t fir_samples_window_type(fir_name)
 typedef struct fir_samples_window_t{
   fir_data_t data[FIR_N_TAPS];
 }fir_samples_window_t;
 
-#define fir_samples_window_func PPCAT(fir_name,_sample_window_func)
-fir_samples_window_t fir_samples_window_func(fir_data_t input)
+#define fir_samples_window fir_samples_window_func(fir_name)
+PRAGMA_MESSAGE(FUNC_WIRES fir_samples_window) // Not worried about delay of this func
+fir_samples_window_t fir_samples_window(fir_data_t input)
 {
   static fir_samples_window_t window;
   fir_samples_window_t rv = window;
@@ -21,15 +36,13 @@ fir_samples_window_t fir_samples_window_func(fir_data_t input)
   return rv;
 }
 
-// The FIR filter pipeline
-fir_out_t fir_name(fir_data_t input)
+// The FIR pure function to be pipelined
+#define fir fir_func(fir_name)
+fir_out_t fir(fir_data_t data[FIR_N_TAPS])
 {
   // Constant set of coeffs
   fir_coeff_t coeffs[FIR_N_TAPS] = FIR_COEFFS;
 
-  // buffer up N datas in shift reg
-  fir_samples_window_t sample_window = fir_samples_window_func(input);
-  
   // A binary tree of adders is used to sum the results of the coeff*data multiplies
   // This binary tree has 
   //    FIR_N_TAPS elements at the base
@@ -49,7 +62,7 @@ fir_out_t fir_name(fir_data_t input)
   uint32_t i;
   for(i=0; i < FIR_N_TAPS; i+=1)
   {
-    tree_nodes[0][i] = sample_window.data[i] * coeffs[i];
+    tree_nodes[0][i] = data[i] * coeffs[i];
   }
     
   // Do the summation starting at level 1
@@ -69,8 +82,19 @@ fir_out_t fir_name(fir_data_t input)
     
   // Sum is last node in tree
   fir_out_t sum = tree_nodes[FIR_LOG2_N_TAPS][0];
-    
+
   return sum;
+}
+
+// The FIR filter pipeline
+// Always inputting and outputting a sample each cycle
+fir_out_t fir_name(fir_data_t input)
+{
+  // buffer up N datas in shift reg
+  fir_samples_window_t sample_window = fir_samples_window(input);
+  
+  // compute FIR func on the sample window
+  return fir(sample_window.data);
 }
 
 
@@ -81,3 +105,10 @@ fir_out_t fir_name(fir_data_t input)
 #undef fir_coeff_t
 #undef fir_out_t
 #undef FIR_COEFFS
+#undef fir_in_data_stream_t
+#undef fir_out_data_stream_t
+#undef fir_samples_window_t
+#undef fir_samples_window
+#undef fir
+
+
