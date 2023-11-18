@@ -7108,7 +7108,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         output_type = "void"
 
     # Try to infer out type from driven wires if not set by now? # Hacky?
-    if output_type is None:
+    if output_type is None and expected_output_type is None:
         for output_driven_wire_name in output_driven_wire_names:
             if (
                 output_driven_wire_name in parser_state.existing_logic.wire_to_c_type
