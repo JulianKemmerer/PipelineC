@@ -8381,23 +8381,19 @@ def C_AST_BINARY_OP_TO_LOGIC(
     # No cast need for bit shifts
     if not is_bit_shift:
         if C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
-            # output_c_type = left_type
-            print(
-                "TODO: Float int ops? shouldnt occur. Add cast for now.",
-                left_type,
+            raise Exception(
+                "TODO: Floats ops mixing types? Shouldn't occur. Add cast for now.",
+                left_type, c_ast_bin_op_str,
                 right_type,
-                c_ast_binary_op.coord,
+                str(c_ast_binary_op.coord),
             )
-            sys.exit(-1)
         elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
-            # output_c_type = right_type
-            print(
-                "TODO: Int float ops? shouldnt occur. Add cast for now.",
-                left_type,
+            raise Exception(
+                "TODO: Floats ops mixing types? Shouldn't occur. Add cast for now.",
+                left_type, c_ast_bin_op_str,
                 right_type,
-                c_ast_binary_op.coord,
+                str(c_ast_binary_op.coord),
             )
-            sys.exit(-1)
 
     # Hack in resizing single dim arrays to max size
     if C_TYPE_IS_ARRAY(left_type) and C_TYPE_IS_ARRAY(right_type):
