@@ -55,10 +55,14 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   {
     active_color = color;
   }
-  dvi_red_reg = active_color.r;
-  dvi_green_reg = active_color.g;
-  dvi_blue_reg = active_color.b;
-  vga_reg = vga;
+  // Output delay regs written when valid
+  if(vga.valid){
+    dvi_red_reg = active_color.r;
+    dvi_green_reg = active_color.g;
+    dvi_blue_reg = active_color.b;
+    vga_reg = vga;
+  }
+  vga_reg.valid = vga.valid;
 }
 
 #endif // ifdef __PIPELINEC__
