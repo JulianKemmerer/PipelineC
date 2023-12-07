@@ -173,7 +173,9 @@ vga_signals_t vga_timing()
   o.vsync = v_sync_reg;
   o.pos.x = h_cntr_reg;
   o.pos.y = v_cntr_reg;
+  o.overclock_counter = overclock_counter_out_reg;
   o.valid = valid_reg;
+  
   o.active = 0;
   if((h_cntr_reg < FRAME_WIDTH) & (v_cntr_reg < FRAME_HEIGHT))
   {
