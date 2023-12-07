@@ -293,7 +293,8 @@ void verilator_output(Vtop* g_top)
   uint1_t active = g_top->dvi_active;
   uint12_t x = g_top->dvi_x;
   uint12_t y = g_top->dvi_y;
-  if(active)
+  uint1_t valid = g_top->dvi_valid;
+  if(active & valid)
   {
     fb_setpixel(x, y, r, g, b);
     if((x==0) && (y==0))

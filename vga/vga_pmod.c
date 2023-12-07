@@ -182,9 +182,9 @@ void verilator_output(Vtop* g_top)
   uint8_t g = g_top->vga_green ;
   uint8_t b = g_top->vga_blue ;
   uint1_t active = g_top->vga_active;
-  uint1_t valid = g_top->vga_valid;
   uint12_t x = g_top->vga_x;
   uint12_t y = g_top->vga_y;
+  uint1_t valid = g_top->vga_valid;
   if(active & valid)
   {
     // Shift 4b to 8b colors
