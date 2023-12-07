@@ -85,6 +85,7 @@ DEBUG_OUTPUT_DECL(uint1_t, hsync)
 DEBUG_OUTPUT_DECL(uint1_t, vga_active)
 DEBUG_OUTPUT_DECL(uint12_t, vga_x)
 DEBUG_OUTPUT_DECL(uint12_t, vga_y)
+DEBUG_OUTPUT_DECL(uint1_t, vga_valid)
 
 void pmod_register_outputs(vga_signals_t vga, pixel_t color)
 {
@@ -97,6 +98,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   static uint1_t active_reg;
   static uint12_t x_reg;
   static uint12_t y_reg;
+  static uint1_t valid_reg;
   
   // Connect to VGA PMOD board IO via app_to_vga wire
   app_to_vga_t o;
@@ -116,6 +118,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   vga_active = active_reg;
   vga_x = x_reg;
   vga_y = y_reg;
+  vga_valid = valid_reg;
   
   // Black color when inactive
   color_12b_t active_color;
@@ -126,15 +129,18 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
     active_color.g = color.g >> 4;
     active_color.b = color.b >> 4;
   }
-  // Output delay regs
-  vga_red_reg = active_color.r;
-  vga_green_reg = active_color.g;
-  vga_blue_reg = active_color.b;
-  active_reg = vga.active;
-  v_sync_dly_reg = vga.vsync;
-  h_sync_dly_reg = vga.hsync;
-  x_reg = vga.pos.x;
-  y_reg = vga.pos.y;
+  // Output delay regs written when valid
+  if(vga.valid){
+    vga_red_reg = active_color.r;
+    vga_green_reg = active_color.g;
+    vga_blue_reg = active_color.b;
+    active_reg = vga.active;
+    v_sync_dly_reg = vga.vsync;
+    h_sync_dly_reg = vga.hsync;
+    x_reg = vga.pos.x;
+    y_reg = vga.pos.y;
+  }
+  valid_reg = vga.valid;
 }
 
 #endif // ifdef __PIPELINEC__
@@ -148,7 +154,7 @@ void pmod_register_outputs(vga_signals_t current_timing, pixel_t current_color)
 {
   //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.r);
 
-  if(current_timing.active)
+  if(current_timing.active & current_timing.valid)
   {
     fb_setpixel(current_timing.pos.x, current_timing.pos.y,
      current_color.r, current_color.g, current_color.b);
@@ -178,11 +184,12 @@ void verilator_output(Vtop* g_top)
   uint1_t active = g_top->vga_active;
   uint12_t x = g_top->vga_x;
   uint12_t y = g_top->vga_y;
-  if(active)
+  uint1_t valid = g_top->vga_valid;
+  if(active & valid)
   {
     // Shift 4b to 8b colors
     fb_setpixel(x, y, r << 4, g << 4, b<< 4);
-    if((x==0) && (y==0))
+    if((x==0) ) // Per line && (y==0)
     {
       fb_update();
       frame += 1;
