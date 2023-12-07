@@ -11,8 +11,11 @@
 
 // See top level IO wiring
 // Can use VGA or DVI/HDMI pmods
-//#include "vga_pmod.c"
-#include "../dvi/dvi_pmod.c"
+#define FRAME_WIDTH 640
+#define FRAME_HEIGHT 480
+//#define PIXEL_OVER_CLK_RATIO 3
+#include "vga_pmod.c"
+//#include "../dvi/dvi_pmod.c"
 
 // Moving box module
 #define BOX_WIDTH 8
@@ -70,11 +73,11 @@ inline vga_pos_t moving_box_logic()
                   
   if(update_box == 1)
   {
-    if((box_x_dir == 1 and (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 and (box_x_tmp == BOX_X_MIN + 1)))
+    if((box_x_dir == 1 && (box_x_tmp == BOX_X_MAX - 1)) | (box_x_dir == 0 && (box_x_tmp == BOX_X_MIN + 1)))
     {
       box_x_dir = !(box_x_dir);
     }
-    if((box_y_dir == 1 and (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 and (box_y_tmp == BOX_Y_MIN + 1))) 
+    if((box_y_dir == 1 && (box_y_tmp == BOX_Y_MAX - 1)) | (box_y_dir == 0 && (box_y_tmp == BOX_Y_MIN + 1))) 
     {
       box_y_dir = !(box_y_dir);
     }
@@ -101,53 +104,53 @@ inline pixel_t get_pixel_color(uint1_t active, vga_pos_t pos, vga_pos_t box_pos)
   
   uint1_t pixel_in_box;
   pixel_in_box = 0;
-  if(((pos.x >= box_pos.x) and (pos.x < (box_pos.x + BOX_WIDTH))) and
-     ((pos.y >= box_pos.y) and (pos.y < (box_pos.y + BOX_WIDTH))))
+  if(((pos.x >= box_pos.x) && (pos.x < (box_pos.x + BOX_WIDTH))) &&
+     ((pos.y >= box_pos.y) && (pos.y < (box_pos.y + BOX_WIDTH))))
   {
     pixel_in_box = 1;
   }  
   
   vga_red = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and uint12_8_8(pos.x) == 1))
+  if(active == 1 && ((pos.x < 512 && pos.y < 256) && uint12_8_8(pos.x) == 1))
   {
     vga_red = uint12_7_0(pos.x);
   }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1)))
+  else if(active == 1 && ((pos.x < 512 && !(pos.y < 256)) && !(pixel_in_box == 1)))
   {
     vga_red = 0b11111111;
   }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1))))
+  else if(active == 1 && ((!(pos.x < 512) && (uint12_8_8(pos.y) == 1 && uint12_3_3(pos.x) == 1)) |
+           (!(pos.x < 512) && (uint12_8_8(pos.y) == 0 && uint12_3_3(pos.y) == 1))))
   {
     vga_red = 0b11111111;
   }
      
   vga_blue = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and  uint12_6_6(pos.x) == 1))
+  if(active == 1 && ((pos.x < 512 && pos.y < 256) &&  uint12_6_6(pos.x) == 1))
   {
     vga_blue = uint12_7_0(pos.x); 
   }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1)))
+  else if(active == 1 && ((pos.x < 512 && !(pos.y < 256)) && !(pixel_in_box == 1)))
   {
     vga_blue = 0b11111111;
   }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1))))
+  else if(active == 1 && ((!(pos.x < 512) && (uint12_8_8(pos.y) == 1 && uint12_3_3(pos.x) == 1)) |
+           (!(pos.x < 512) && (uint12_8_8(pos.y) == 0 && uint12_3_3(pos.y) == 1))))
   {
     vga_blue = 0b11111111;
   }                      
                          
   vga_green = 0;
-  if(active == 1 and ((pos.x < 512 and pos.y < 256) and uint12_7_7(pos.x) == 1))
+  if(active == 1 && ((pos.x < 512 && pos.y < 256) && uint12_7_7(pos.x) == 1))
   {
     vga_green = uint12_7_0(pos.x); 
   }
-  else if(active == 1 and ((pos.x < 512 and !(pos.y < 256)) and !(pixel_in_box == 1))) 
+  else if(active == 1 && ((pos.x < 512 && !(pos.y < 256)) && !(pixel_in_box == 1))) 
   {
     vga_green = 0b11111111;
   }
-  else if(active == 1 and ((!(pos.x < 512) and (uint12_8_8(pos.y) == 1 and uint12_3_3(pos.x) == 1)) |
-           (!(pos.x < 512) and (uint12_8_8(pos.y) == 0 and uint12_3_3(pos.y) == 1)))) 
+  else if(active == 1 && ((!(pos.x < 512) && (uint12_8_8(pos.y) == 1 && uint12_3_3(pos.x) == 1)) |
+           (!(pos.x < 512) && (uint12_8_8(pos.y) == 0 && uint12_3_3(pos.y) == 1)))) 
   {
     vga_green = 0b11111111;
   }
