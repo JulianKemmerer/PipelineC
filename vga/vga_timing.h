@@ -206,7 +206,7 @@ vga_signals_t vga_timing()
   valid &= !stall_req;
   if(valid){
     overclock_counter = 0;
-  }else{
+  }else if(!stall_req){
     overclock_counter += 1;
   }
   
