@@ -34,7 +34,11 @@
 
 ////***640x480@60Hz***//  Requires 25 MHz clock
 #if FRAME_HEIGHT == 480
+#if PIXEL_OVER_CLK_RATIO==1
 #define PIXEL_CLK_MHZ 25.0
+#elif PIXEL_OVER_CLK_RATIO==3
+#define PIXEL_CLK_MHZ 75.0
+#endif
 
 #define H_FP 16 //H front porch width (pixels)
 #define H_PW 96 //H sync pulse width (pixels)
@@ -51,7 +55,12 @@
 
 ////***800x600@60Hz***//  Requires 40 MHz clock
 #if FRAME_HEIGHT == 600
+#if PIXEL_OVER_CLK_RATIO==1
 #define PIXEL_CLK_MHZ 40.0
+#elif PIXEL_OVER_CLK_RATIO==3
+#define PIXEL_CLK_MHZ 120.0
+#endif
+
 //#define FRAME_WIDTH 800
 //#define FRAME_HEIGHT 600
 
