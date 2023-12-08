@@ -194,6 +194,7 @@ DEBUG_OUTPUT_DECL(uint1_t, hsync)
 DEBUG_OUTPUT_DECL(uint1_t, dvi_active)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_x)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_y)
+DEBUG_OUTPUT_DECL(uint8_t, dvi_overclock_counter)
 DEBUG_OUTPUT_DECL(uint1_t, dvi_valid)
 
 // TODO organize to use vga_signals_t reg type instead
@@ -208,6 +209,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   static uint1_t active_reg;
   static uint12_t x_reg;
   static uint12_t y_reg;
+  static uint8_t overclock_counter_reg;
   static uint1_t valid_reg;
   
   // Connect to DVI PMOD board IO via app_to_dvi wire
@@ -229,6 +231,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   dvi_active = o.vga_timing.active;
   dvi_x = x_reg;
   dvi_y = y_reg;
+  dvi_overclock_counter = overclock_counter_reg;
   dvi_valid = valid_reg;
   
   // Black color when inactive
@@ -249,6 +252,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
     x_reg = vga.pos.x;
     y_reg = vga.pos.y;
   }
+  overclock_counter_reg = vga.overclock_counter;
   valid_reg = vga.valid;
 }
 

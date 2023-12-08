@@ -85,6 +85,7 @@ DEBUG_OUTPUT_DECL(uint1_t, hsync)
 DEBUG_OUTPUT_DECL(uint1_t, vga_active)
 DEBUG_OUTPUT_DECL(uint12_t, vga_x)
 DEBUG_OUTPUT_DECL(uint12_t, vga_y)
+DEBUG_OUTPUT_DECL(uint8_t, vga_overclock_counter)
 DEBUG_OUTPUT_DECL(uint1_t, vga_valid)
 
 void pmod_register_outputs(vga_signals_t vga, pixel_t color)
@@ -98,6 +99,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   static uint1_t active_reg;
   static uint12_t x_reg;
   static uint12_t y_reg;
+  static uint8_t overclock_counter_reg;
   static uint1_t valid_reg;
   
   // Connect to VGA PMOD board IO via app_to_vga wire
@@ -118,6 +120,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   vga_active = active_reg;
   vga_x = x_reg;
   vga_y = y_reg;
+  vga_overclock_counter = overclock_counter_reg;
   vga_valid = valid_reg;
   
   // Black color when inactive
@@ -140,6 +143,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
     x_reg = vga.pos.x;
     y_reg = vga.pos.y;
   }
+  overclock_counter_reg = vga.overclock_counter;
   valid_reg = vga.valid;
 }
 

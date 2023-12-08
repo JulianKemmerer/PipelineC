@@ -22,6 +22,7 @@ DEBUG_OUTPUT_DECL(uint1_t, hsync)
 DEBUG_OUTPUT_DECL(uint1_t, dvi_active)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_x)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_y)
+DEBUG_OUTPUT_DECL(uint8_t, dvi_overclock_counter)
 DEBUG_OUTPUT_DECL(uint1_t, dvi_valid)
 
 // TODO rename pmod_register_outputs everywhere to be register_video_outputs
@@ -48,6 +49,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   dvi_active = vga_reg.active;
   dvi_x = vga_reg.pos.x;
   dvi_y = vga_reg.pos.y;
+  dvi_overclock_counter = vga_reg.overclock_counter;
   dvi_valid = vga_reg.valid;
 
   // Register inputs to be output next cycle
@@ -64,6 +66,7 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
     dvi_blue_reg = active_color.b;
     vga_reg = vga;
   }
+  vga_reg.overclock_counter = vga.overclock_counter;
   vga_reg.valid = vga.valid;
 }
 
