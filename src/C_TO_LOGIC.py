@@ -9753,11 +9753,14 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     submodule_func_names = set(parser_state.main_mhz.keys())
     # Ahh hackey hack help
     # ~~~Nobody Speak - Run The Jewels
-    # Also include FSM funcs as always included?
+    # Also include FSM funcs as always included
+    # and operator overload funcs that wont look like func call
     for func_name in func_name_to_calls:
         if func_name + C_TO_FSM.FSM_EXT in func_name_to_calls:
             submodule_func_names.add(func_name)
             submodule_func_names.add(func_name + C_TO_FSM.FSM_EXT)
+        if FUNC_IS_OP_OVERLOAD(func_name):
+            submodule_func_names.add(func_name)
     # print("submodule_func_names",submodule_func_names)
     while len(submodule_func_names) > 0:
         next_submodule_func_names = set()
