@@ -4463,6 +4463,9 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
 
 
 def GET_CACHED_PATH_DELAY(logic, parser_state):
+    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+        return None
+    
     # Look in cache dir
     file_path = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
     if os.path.exists(file_path):
