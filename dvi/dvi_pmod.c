@@ -194,6 +194,8 @@ DEBUG_OUTPUT_DECL(uint1_t, hsync)
 DEBUG_OUTPUT_DECL(uint1_t, dvi_active)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_x)
 DEBUG_OUTPUT_DECL(uint12_t, dvi_y)
+DEBUG_OUTPUT_DECL(uint8_t, dvi_overclock_counter)
+DEBUG_OUTPUT_DECL(uint1_t, dvi_valid)
 
 // TODO organize to use vga_signals_t reg type instead
 void pmod_register_outputs(vga_signals_t vga, pixel_t color)
@@ -207,6 +209,8 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   static uint1_t active_reg;
   static uint12_t x_reg;
   static uint12_t y_reg;
+  static uint8_t overclock_counter_reg;
+  static uint1_t valid_reg;
   
   // Connect to DVI PMOD board IO via app_to_dvi wire
   app_to_dvi_t o;
@@ -227,6 +231,8 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
   dvi_active = o.vga_timing.active;
   dvi_x = x_reg;
   dvi_y = y_reg;
+  dvi_overclock_counter = overclock_counter_reg;
+  dvi_valid = valid_reg;
   
   // Black color when inactive
   pixel_t active_color;
@@ -235,15 +241,19 @@ void pmod_register_outputs(vga_signals_t vga, pixel_t color)
     active_color = color;
   }
 
-  // Output delay regs
-  dvi_red_reg = active_color.r;
-  dvi_green_reg = active_color.g;
-  dvi_blue_reg = active_color.b;
-  active_reg = vga.active;
-  v_sync_dly_reg = vga.vsync;
-  h_sync_dly_reg = vga.hsync;
-  x_reg = vga.pos.x;
-  y_reg = vga.pos.y;
+  // Output delay regs written when valid
+  if(vga.valid){
+    dvi_red_reg = active_color.r;
+    dvi_green_reg = active_color.g;
+    dvi_blue_reg = active_color.b;
+    active_reg = vga.active;
+    v_sync_dly_reg = vga.vsync;
+    h_sync_dly_reg = vga.hsync;
+    x_reg = vga.pos.x;
+    y_reg = vga.pos.y;
+  }
+  overclock_counter_reg = vga.overclock_counter;
+  valid_reg = vga.valid;
 }
 
 #endif // ifdef __PIPELINEC__
@@ -257,7 +267,7 @@ void pmod_register_outputs(vga_signals_t current_timing, pixel_t current_color)
 {
   //printf("color at %d,%d=%d (red)\n", current_timing.pos.x, current_timing.pos.y, current_color.r);
 
-  if(current_timing.active)
+  if(current_timing.active & current_timing.valid)
   {
     fb_setpixel(current_timing.pos.x, current_timing.pos.y,
      current_color.r, current_color.g, current_color.b);
@@ -287,7 +297,8 @@ void verilator_output(Vtop* g_top)
   uint1_t active = g_top->dvi_active;
   uint12_t x = g_top->dvi_x;
   uint12_t y = g_top->dvi_y;
-  if(active)
+  uint1_t valid = g_top->dvi_valid;
+  if(active & valid)
   {
     fb_setpixel(x, y, r, g, b);
     if((x==0) && (y==0))
