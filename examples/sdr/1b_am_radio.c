@@ -44,6 +44,7 @@ CIC_t CIC(uint8_t gain, int12_t d_in){
   //TODO
 }
 
+// Doesnt use osc_clk ? clk=CIC1_out_clkSin instead?
 typedef struct AMDemodulator_t{
   uint12_t d_out;
 }AMDemodulator_t;

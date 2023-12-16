@@ -1,3 +1,4 @@
+#pragma once
 // Generated names for FIRs
 #include "compiler.h"
 #include "fir_names.h"

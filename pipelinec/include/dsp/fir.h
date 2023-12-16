@@ -23,16 +23,18 @@ typedef struct fir_samples_window_t{
 
 #define fir_samples_window fir_samples_window_func(fir_name)
 PRAGMA_MESSAGE(FUNC_WIRES fir_samples_window) // Not worried about delay of this func
-fir_samples_window_t fir_samples_window(fir_data_t input)
+fir_samples_window_t fir_samples_window(fir_in_data_stream_t input)
 {
   static fir_samples_window_t window;
   fir_samples_window_t rv = window;
-  uint32_t i;
-  for(i=(FIR_N_TAPS-1); i>0; i=i-1)
-  {
-    window.data[i] = window.data[i-1];
+  if(input.valid){
+    uint32_t i;
+    for(i=(FIR_N_TAPS-1); i>0; i=i-1)
+    {
+      window.data[i] = window.data[i-1];
+    }
+    window.data[0] = input.data;
   }
-  window.data[0] = input;
   return rv;
 }
 
@@ -88,13 +90,15 @@ fir_out_t fir(fir_data_t data[FIR_N_TAPS])
 
 // The FIR filter pipeline
 // Always inputting and outputting a sample each cycle
-fir_out_t fir_name(fir_data_t input)
+fir_out_data_stream_t fir_name(fir_in_data_stream_t input)
 {
   // buffer up N datas in shift reg
   fir_samples_window_t sample_window = fir_samples_window(input);
-  
   // compute FIR func on the sample window
-  return fir(sample_window.data);
+  fir_out_data_stream_t rv;
+  rv.valid = input.valid;
+  rv.data = fir(sample_window.data);
+  return rv;
 }
 
 

@@ -38,10 +38,7 @@ uint1_t fir_decim_counter()
 fir_out_data_stream_t fir_decim_name(fir_in_data_stream_t input)
 {
   // Buffer up samples in shift reg
-  fir_samples_window_t sample_window;
-  if(input.valid){
-    sample_window = fir_samples_window(input.data);
-  }
+  fir_samples_window_t sample_window = fir_samples_window(input);
 
   // Count off every N samples to decimate
   uint1_t decim_count_ellapsed;
@@ -61,6 +58,7 @@ fir_out_data_stream_t fir_decim_name(fir_in_data_stream_t input)
   return rv;
 }
 
+#undef base_fir_name
 #undef fir_decim_name
 #undef FIR_DECIM_N_TAPS
 #undef FIR_DECIM_LOG2_N_TAPS

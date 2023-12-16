@@ -20,20 +20,22 @@ typedef struct ci16_stream_t{
   uint1_t valid;
 } ci16_stream_t;
 
-// FIR decimator instance // TODO ADJUST FIR PARAMS, taps etc?
-#define fir_decim_name decimate_fir
+// Primary FIR decimator instance to bring sample rate down
+// from radio front end to single FM radio channel ~300KSPS
+// TODO ADJUST FIR PARAMS, taps etc
+#define fir_decim_name frontend_decimate_fir
 #define FIR_DECIM_N_TAPS 128
 #define FIR_DECIM_LOG2_N_TAPS 7
-#define FIR_DECIM_FACTOR 5 // TODO 416x for 125MSPS-> ~300KSPS?
+#define FIR_DECIM_FACTOR 500 // For 125MSPS-> ~300KSPS
 #define fir_decim_data_t int16_t
 #define fir_decim_coeff_t int16_t
 #define fir_decim_out_t int16_t
 #define FIR_DECIM_COEFFS {2, 6, 9, 7, 0, -12, -24, -29, -22, 0, 31, 59, 69, 49, 0, -65, -121, -138, -96, 0, 123, 223, 249, 171, 0, -211, -378, -417, -284, 0, 342, 606, 663, 447, 0, -532, -937, -1019, -684, 0, 807, 1418, 1539, 1032, 0, -1218, -2144, -2336, -1575, 0, 1888, 3361, 3713, 2549, 0, -3213, -5924, -6848, -4985, 0, 7588, 16449, 24754, 30647, 32760, 30597, 24674, 16370, 7539, 0, -4937, -6771, -5848, -3166, 0, 2503, 3641, 3290, 1845, 0, -1534, -2271, -2081, -1180, 0, 996, 1482, 1363, 774, 0, -654, -972, -892, -505, 0, 423, 625, 570, 321, 0, -265, -388, -351, -195, 0, 157, 228, 203, 111, 0, -87, -124, -108, -58, 0, 43, 60, 51, 26, 0, -18, -24, -19, -9, 0, 5, 6, 4}
 #include "dsp/fir_decim.h"
-#define decimate_fir_out_t fir_decim_out_data_stream_type(decimate_fir)
-#define decimate_fir_in_t fir_decim_in_data_stream_type(decimate_fir)
+#define frontend_decimate_fir_out_t fir_decim_out_data_stream_type(frontend_decimate_fir)
+#define frontend_decimate_fir_in_t fir_decim_in_data_stream_type(frontend_decimate_fir)
 
-// FM demodulation using diferentiator
+// FM demodulation using differentiator
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   static ci16_t iq_history[3];
   static ci16_t iq_dot;
@@ -58,6 +60,34 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   i16_stream_t output_stream = {.data = output, .valid = iq_sample.valid};
   return output_stream;
 }
+
+// Interpolation Part of (24/125) sample rate change
+// TODO ADJUST FIR PARAMS, taps etc
+#define fir_interp_name interpolate_fir
+#define FIR_INTERP_N_TAPS 4
+#define FIR_INTERP_LOG2_N_TAPS 2
+#define FIR_INTERP_FACTOR 24 
+#define fir_interp_data_t int16_t
+#define fir_interp_coeff_t int16_t
+#define fir_interp_out_t int16_t
+#define FIR_INTERP_COEFFS {2, 6, 9, 7}
+#include "dsp/fir_interp.h"
+#define interpolate_fir_out_t fir_interp_out_data_stream_type(interpolate_fir)
+#define interpolate_fir_in_t fir_interp_in_data_stream_type(interpolate_fir)
+
+// Decimation Part of (24/125) sample rate change
+// TODO ADJUST FIR PARAMS, taps etc
+#define fir_decim_name decimate_fir
+#define FIR_DECIM_N_TAPS 4
+#define FIR_DECIM_LOG2_N_TAPS 2
+#define FIR_DECIM_FACTOR 125 
+#define fir_decim_data_t int16_t
+#define fir_decim_coeff_t int16_t
+#define fir_decim_out_t int16_t
+#define FIR_DECIM_COEFFS {2, 6, 9, 7}
+#include "dsp/fir_decim.h"
+#define decimate_fir_out_t fir_decim_out_data_stream_type(decimate_fir)
+#define decimate_fir_in_t fir_decim_in_data_stream_type(decimate_fir)
 
 // Deemphasis
 // 75e-6 Tau (USA)
@@ -96,13 +126,13 @@ i16_stream_t deemphasis_wfm(i16_stream_t input){
 // One sample per clock (maximum), ex. 125MHz = 125MSPS
 #pragma MAIN_MHZ fm_radio_datapath 125.0
 i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
-  // First FIR+decimate to reduce sample rate to ~300KSPS
+  // First FIR+decimate to reduce frontend radio sample rate down to ~300KSPS
   // I
-  decimate_fir_in_t fir_in_stream_I = {.data=in_sample.data.real, .valid=in_sample.valid};
-  decimate_fir_out_t fir_out_stream_I = decimate_fir(fir_in_stream_I);
+  frontend_decimate_fir_in_t fir_in_stream_I = {.data=in_sample.data.real, .valid=in_sample.valid};
+  frontend_decimate_fir_out_t fir_out_stream_I = frontend_decimate_fir(fir_in_stream_I);
   // Q
-  decimate_fir_in_t fir_in_stream_Q = {.data=in_sample.data.imag, .valid=in_sample.valid};
-  decimate_fir_out_t fir_out_stream_Q = decimate_fir(fir_in_stream_Q);
+  frontend_decimate_fir_in_t fir_in_stream_Q = {.data=in_sample.data.imag, .valid=in_sample.valid};
+  frontend_decimate_fir_out_t fir_out_stream_Q = frontend_decimate_fir(fir_in_stream_Q);
 
   // FM demodulation
   ci16_stream_t fm_demod_in = {
@@ -111,8 +141,17 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   };
   i16_stream_t demod_raw = fm_demodulate(fm_demod_in);
 
-  // FM deemphasis 
-  i16_stream_t deemph_raw = deemphasis_wfm(demod_raw);
+  // Down sample to audio sample rate with fixed ratio
+  // (N times interpolation/M times decimation) resampler
+  // applies FIR low pass for ~15KHz? band
+  interpolate_fir_in_t interp_in = {.data=demod_raw.data, .valid=demod_raw.valid};
+  interpolate_fir_out_t interp_out = interpolate_fir(interp_in);
+  decimate_fir_in_t decim_in = {.data=interp_out.data, .valid=interp_out.valid};
+  decimate_fir_out_t decim_out = decimate_fir(decim_in);
 
-  return deemph_raw;
+  // FM deemphasis of audio samples
+  i16_stream_t deemph_in = {.data=decim_out.data, .valid=decim_out.valid};
+  i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
+
+  return deemph_out;
 }
