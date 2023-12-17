@@ -17,9 +17,6 @@
 // Base FIR types
 #define fir_in_data_stream_t fir_in_data_stream_type(base_fir_name)
 #define fir_out_data_stream_t fir_out_data_stream_type(base_fir_name)
-#define fir_samples_window_t fir_samples_window_type(base_fir_name)
-#define fir_samples_window fir_samples_window_func(base_fir_name)
-#define fir fir_func(base_fir_name)
 
 // Insert zeros
 #define fir_interp_insert_n_zeros fir_interp_insert_n_zeros_func(fir_interp_name)
@@ -51,7 +48,7 @@ fir_out_data_stream_t fir_interp_name(fir_in_data_stream_t in_sample){
   fir_in_data_stream_t samples_w_zeros = fir_interp_insert_n_zeros(in_sample);
 
   // Smooth the samples pulses with FIR
-  fir_out_data_stream_t interp_out = fir(samples_w_zeros);
+  fir_out_data_stream_t interp_out = base_fir_name(samples_w_zeros);
   
   return interp_out;
 }
@@ -68,6 +65,3 @@ fir_out_data_stream_t fir_interp_name(fir_in_data_stream_t in_sample){
 #undef fir_interp_insert_n_zeros
 #undef fir_in_data_stream_t
 #undef fir_out_data_stream_t
-#undef fir_samples_window_t
-#undef fir_samples_window
-#undef fir
