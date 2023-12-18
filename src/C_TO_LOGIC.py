@@ -1754,28 +1754,28 @@ def BUILD_LOGIC_AS_C_CODE(
                 partially_complete_logic, out_dir
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME
-        ):
-            c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(
-                partially_complete_logic, out_dir, op_str=">"
-            )
-        elif partially_complete_logic.func_name.startswith(
             BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME
         ):
             c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(
                 partially_complete_logic, out_dir, op_str=">="
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME
+            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(
-                partially_complete_logic, out_dir, op_str="<"
+            c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(
+                partially_complete_logic, out_dir, op_str=">"
             )
         elif partially_complete_logic.func_name.startswith(
             BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME
         ):
             c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(
                 partially_complete_logic, out_dir, op_str="<="
+            )
+        elif partially_complete_logic.func_name.startswith(
+            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME
+        ):
+            c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(
+                partially_complete_logic, out_dir, op_str="<"
             )
         elif partially_complete_logic.func_name.startswith(
             BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME
