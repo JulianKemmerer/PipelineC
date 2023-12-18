@@ -5318,8 +5318,10 @@ def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
+    elif VHDL.C_TYPES_ARE_INTEGERS([left_t, right_t]):
+        return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
-        print("GET_BIN_OP_LT_LTE_C_CODE Only between float for now!")
+        raise Exception("GET_BIN_OP_LT_LTE_C_CODE for types!", [left_t, right_t])
         sys.exit(-1)
 
 
@@ -5525,10 +5527,95 @@ def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
+    elif VHDL.C_TYPES_ARE_INTEGERS([left_t, right_t]):
+        return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
-        print("GET_BIN_OP_GT_GTE_C_CODE Only between float for now!")
+        raise Exception("GET_BIN_OP_GT_GTE_C_CODE for types!", [left_t, right_t])
         sys.exit(-1)
 
+
+def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    left_sized_out_t_width = left_width+1
+    left_sized_out_t = "int"+str(left_sized_out_t_width)+"_t"
+    left_t_signed = left_t
+    left_t_signed_width = left_width
+    if not VHDL.C_TYPE_IS_INT_N(left_t):
+        left_t_signed_width = left_width+1
+        left_t_signed = "int" + str(left_t_signed_width) + "_t"
+        left_sized_out_t_width = left_t_signed_width
+        left_sized_out_t = left_t_signed
+    right_sized_out_t_width = right_width+1
+    right_sized_out_t = "int"+str(right_sized_out_t_width)+"_t"
+    right_t_signed = right_t
+    right_t_signed_width = right_width
+    if not VHDL.C_TYPE_IS_INT_N(right_t):
+        right_t_signed_width = right_width + 1
+        right_t_signed = "int" + str(right_t_signed_width) + "_t"
+        right_sized_out_t_width = right_t_signed_width
+        right_sized_out_t = right_t_signed
+
+    # TODO remove extra padding bit when not needed if was already padded for uint->int?
+    max_width = max(left_t_signed_width, right_t_signed_width)
+    in_t = "int"+str(max_width)+"_t"
+    out_t_width = max_width+1
+    out_t = "int"+str(out_t_width)+"_t"
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+//#include "bit_manip.h"
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{""")
+    if op_str == ">=":
+        text += f"""
+    {out_t} sub = ({in_t})left - right;
+  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+  return !lt_zero;
+        """
+    elif op_str == ">":
+        text += f"""
+    {out_t} sub = ({in_t})right - left;
+  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+  return lt_zero;
+        """
+    elif op_str == "<":
+        text += f"""
+    {out_t} sub = ({in_t})left - right;
+  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+  return lt_zero;
+        """
+    elif op_str == "<=":
+        text += f"""
+    {out_t} sub = ({in_t})right - left;
+  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+  return !lt_zero;
+        """
+
+    text += """  
+}"""
+
+    #print(text)
+
+    return text
 
 # GT/GTE
 def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
