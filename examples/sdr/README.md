@@ -12,13 +12,16 @@ FIR w/ decim by (N/M): 15KHz band low pass for mono audio
 FM deemphasis (flatten noise) -> 48KSPS 16b audio samples .wav file
 ```
 
-# `Future Radio Platform`:
-IQ from radio 125MSPS
-125MSPS decim by D=500 = 250KSPS (~300KSPS requirement)
-  FIR transition width ~= 1/3 of band
-  Stopband + transition width should all fall WITHIN the Nyquist freq
-  fs = 125e6
-  for d in [5,10,10]:
+## `FIR Design`:
+* FIR transition width ~= 1/3 of band
+* Stopband + transition width should all fall WITHIN the Nyquist freq
+* http://t-filter.engineerjs.com/
+```py
+# Last two FIRs are same 
+# 10x decim ratio to sample rate
+# (Same FIR taps)
+def print_fir_config(fs, decim_factors):
+  for d in decim_factors: 
     bw_in = fs/2
     fs_out = fs/d
     bw_out = fs_out/2
@@ -29,8 +32,20 @@ IQ from radio 125MSPS
     print("pass",0,"Hz->",pass_width,"Hz","tw",tw)
     print("stop",stop,"Hz->",bw_in,"Hz")
     fs = fs_out
+
+print_fir_config(125e6, [5,10,10])
+print_fir_config(6e6, [5,5,5])
+```
+
+
+# `Future Radio Platform`:
+IQ from radio 125MSPS
+125MSPS decim by D=500 = 250KSPS (~300KSPS requirement)
+  stages=[5,10,10]
 250KSPS upsample by N=24 = 6MSPS
 then downsample by M=125 = 48KSPS
+  stages=[5,5,5 # can reuse 5x decim?]
+
 
 
 # `Simulation`:
