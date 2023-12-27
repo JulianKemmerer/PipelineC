@@ -1,3 +1,5 @@
+// See README.md for info on this design
+
 #pragma PART "xc7a100tcsg324-1"
 #include "intN_t.h"
 #include "uintN_t.h"
@@ -20,20 +22,178 @@ typedef struct ci16_stream_t{
   uint1_t valid;
 } ci16_stream_t;
 
-// Primary FIR decimator instance to bring sample rate down
-// from radio front end to single FM radio channel ~300KSPS
-// TODO ADJUST FIR PARAMS, taps etc
-#define fir_decim_name frontend_decimate_fir
-#define FIR_DECIM_N_TAPS 128
-#define FIR_DECIM_LOG2_N_TAPS 7
-#define FIR_DECIM_FACTOR 500 // For 125MSPS-> ~300KSPS
+// Declare decimation FIR modules to use
+// radio front end to single FM radio channel ~300KSPS
+// 5x Decim
+#define fir_decim_name decim_5x
+#define FIR_DECIM_N_TAPS 49
+#define FIR_DECIM_LOG2_N_TAPS 6
+#define FIR_DECIM_FACTOR 5
 #define fir_decim_data_t int16_t
 #define fir_decim_coeff_t int16_t
 #define fir_decim_out_t int16_t
-#define FIR_DECIM_COEFFS {2, 6, 9, 7, 0, -12, -24, -29, -22, 0, 31, 59, 69, 49, 0, -65, -121, -138, -96, 0, 123, 223, 249, 171, 0, -211, -378, -417, -284, 0, 342, 606, 663, 447, 0, -532, -937, -1019, -684, 0, 807, 1418, 1539, 1032, 0, -1218, -2144, -2336, -1575, 0, 1888, 3361, 3713, 2549, 0, -3213, -5924, -6848, -4985, 0, 7588, 16449, 24754, 30647, 32760, 30597, 24674, 16370, 7539, 0, -4937, -6771, -5848, -3166, 0, 2503, 3641, 3290, 1845, 0, -1534, -2271, -2081, -1180, 0, 996, 1482, 1363, 774, 0, -654, -972, -892, -505, 0, 423, 625, 570, 321, 0, -265, -388, -351, -195, 0, 157, 228, 203, 111, 0, -87, -124, -108, -58, 0, 43, 60, 51, 26, 0, -18, -24, -19, -9, 0, 5, 6, 4}
+#define FIR_DECIM_COEFFS { \
+  -165, \
+  -284, \
+  -219, \
+  -303, \
+  -190, \
+  -102, \
+  98,   \
+  268,  \
+  430,  \
+  482,  \
+  420,  \
+  207,  \
+  -117, \
+  -498, \
+  -835, \
+  -1022,\
+  -957, \
+  -576, \
+  135,  \
+  1122, \
+  2272, \
+  3429, \
+  4419, \
+  5086, \
+  5321, \
+  5086, \
+  4419, \
+  3429, \
+  2272, \
+  1122, \
+  135,  \
+  -576, \
+  -957, \
+  -1022,\
+  -835, \
+  -498, \
+  -117, \
+  207,  \
+  420,  \
+  482,  \
+  430,  \
+  268,  \
+  98,   \
+  -102, \
+  -190, \
+  -303, \
+  -219, \
+  -284, \
+  -165  \
+}            
 #include "dsp/fir_decim.h"
-#define frontend_decimate_fir_out_t fir_decim_out_data_stream_type(frontend_decimate_fir)
-#define frontend_decimate_fir_in_t fir_decim_in_data_stream_type(frontend_decimate_fir)
+#define decim_5x_out_t fir_decim_out_data_stream_type(decim_5x)
+#define decim_5x_in_t fir_decim_in_data_stream_type(decim_5x)
+// 10x decim
+#define fir_decim_name decim_10x
+#define FIR_DECIM_N_TAPS 95
+#define FIR_DECIM_LOG2_N_TAPS 7
+#define FIR_DECIM_FACTOR 10
+#define fir_decim_data_t int16_t
+#define fir_decim_coeff_t int16_t
+#define fir_decim_out_t int16_t
+#define FIR_DECIM_COEFFS { \
+  -199,\
+  -90, \
+  -103,\
+  -113,\
+  -116,\
+  -113,\
+  -101,\
+  -82, \
+  -54, \
+  -19, \
+  22,  \
+  68,  \
+  115, \
+  161, \
+  202, \
+  235, \
+  257, \
+  265, \
+  257, \
+  231, \
+  187, \
+  126, \
+  50,  \
+  -37, \
+  -132,\
+  -227,\
+  -318,\
+  -396,\
+  -456,\
+  -490,\
+  -493,\
+  -459,\
+  -385,\
+  -269,\
+  -111,\
+  86,  \
+  318, \
+  579, \
+  860, \
+  1154,\
+  1448,\
+  1732,\
+  1995,\
+  2227,\
+  2418,\
+  2560,\
+  2648,\
+  2678,\
+  2648,\
+  2560,\
+  2418,\
+  2227,\
+  1995,\
+  1732,\
+  1448,\
+  1154,\
+  860, \
+  579, \
+  318, \
+  86,  \
+  -111,\
+  -269,\
+  -385,\
+  -459,\
+  -493,\
+  -490,\
+  -456,\
+  -396,\
+  -318,\
+  -227,\
+  -132,\
+  -37, \
+  50,  \
+  126, \
+  187, \
+  231, \
+  257, \
+  265, \
+  257, \
+  235, \
+  202, \
+  161, \
+  115, \
+  68,  \
+  22,  \
+  -19, \
+  -54, \
+  -82, \
+  -101,\
+  -113,\
+  -116,\
+  -113,\
+  -103,\
+  -90, \
+  -199 \
+}
+#include "dsp/fir_decim.h"
+#define decim_10x_out_t fir_decim_out_data_stream_type(decim_10x)
+#define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
 
 // FM demodulation using differentiator
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
@@ -63,7 +223,7 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 
 // Interpolation Part of (24/125) sample rate change
 // TODO ADJUST FIR PARAMS, taps etc
-#define fir_interp_name interpolate_fir
+#define fir_interp_name interp_24x
 #define FIR_INTERP_N_TAPS 4
 #define FIR_INTERP_LOG2_N_TAPS 2
 #define FIR_INTERP_FACTOR 24 
@@ -72,22 +232,8 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define fir_interp_out_t int16_t
 #define FIR_INTERP_COEFFS {2, 6, 9, 7}
 #include "dsp/fir_interp.h"
-#define interpolate_fir_out_t fir_interp_out_data_stream_type(interpolate_fir)
-#define interpolate_fir_in_t fir_interp_in_data_stream_type(interpolate_fir)
-
-// Decimation Part of (24/125) sample rate change
-// TODO ADJUST FIR PARAMS, taps etc
-#define fir_decim_name decimate_fir
-#define FIR_DECIM_N_TAPS 4
-#define FIR_DECIM_LOG2_N_TAPS 2
-#define FIR_DECIM_FACTOR 125 
-#define fir_decim_data_t int16_t
-#define fir_decim_coeff_t int16_t
-#define fir_decim_out_t int16_t
-#define FIR_DECIM_COEFFS {2, 6, 9, 7}
-#include "dsp/fir_decim.h"
-#define decimate_fir_out_t fir_decim_out_data_stream_type(decimate_fir)
-#define decimate_fir_in_t fir_decim_in_data_stream_type(decimate_fir)
+#define interp_24x_out_t fir_interp_out_data_stream_type(interp_24x)
+#define interp_24x_in_t fir_interp_in_data_stream_type(interp_24x)
 
 // Deemphasis
 // 75e-6 Tau (USA)
@@ -127,30 +273,52 @@ i16_stream_t deemphasis_wfm(i16_stream_t input){
 #pragma MAIN_MHZ fm_radio_datapath 125.0
 i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   // First FIR+decimate to reduce frontend radio sample rate down to ~300KSPS
-  // I
-  frontend_decimate_fir_in_t fir_in_stream_I = {.data=in_sample.data.real, .valid=in_sample.valid};
-  frontend_decimate_fir_out_t fir_out_stream_I = frontend_decimate_fir(fir_in_stream_I);
-  // Q
-  frontend_decimate_fir_in_t fir_in_stream_Q = {.data=in_sample.data.imag, .valid=in_sample.valid};
-  frontend_decimate_fir_out_t fir_out_stream_Q = frontend_decimate_fir(fir_in_stream_Q);
+  //  Stage 0
+  //    I
+  decim_5x_in_t I_decim_5x_in = {.data=in_sample.data.real, .valid=in_sample.valid};
+  decim_5x_out_t I_decim_5x_out = decim_5x(I_decim_5x_in);
+  //    Q
+  decim_5x_in_t Q_decim_5x_in = {.data=in_sample.data.imag, .valid=in_sample.valid};
+  decim_5x_out_t Q_decim_5x_out = decim_5x(Q_decim_5x_in);
+  //  Stage 1
+  //    I
+  decim_10x_in_t I_decim_10x_in = {.data=I_decim_5x_out.data, .valid=I_decim_5x_out.valid};
+  decim_10x_out_t I_decim_10x_out = decim_10x(I_decim_10x_in);
+  //    Q
+  decim_10x_in_t Q_decim_10x_in = {.data=Q_decim_5x_out.data, .valid=Q_decim_5x_out.valid};
+  decim_10x_out_t Q_decim_10x_out = decim_10x(Q_decim_10x_in);
+  //  Stage 2 (same decim func as stage 1)
+  //    I
+  decim_10x_in_t I_decim_10x_in = {.data=I_decim_10x_out.data, .valid=I_decim_10x_out.valid};
+  decim_10x_out_t I_radio_decim = decim_10x(I_decim_10x_in);
+  //    Q
+  decim_10x_in_t Q_decim_10x_in = {.data=Q_decim_10x_out.data, .valid=Q_decim_10x_out.valid};
+  decim_10x_out_t Q_radio_decim = decim_10x(Q_decim_10x_in);
 
   // FM demodulation
   ci16_stream_t fm_demod_in = {
-    .data = {.real=fir_out_stream_I.data, .imag=fir_out_stream_Q.data},
-    .valid = fir_out_stream_I.valid & fir_out_stream_Q.valid
+    .data = {.real=I_radio_decim.data, .imag=Q_radio_decim.data},
+    .valid = I_radio_decim.valid & Q_radio_decim.valid
   };
   i16_stream_t demod_raw = fm_demodulate(fm_demod_in);
 
   // Down sample to audio sample rate with fixed ratio
   // (N times interpolation/M times decimation) resampler
-  // applies FIR low pass for ~15KHz? band
-  interpolate_fir_in_t interp_in = {.data=demod_raw.data, .valid=demod_raw.valid};
-  interpolate_fir_out_t interp_out = interpolate_fir(interp_in);
-  decimate_fir_in_t decim_in = {.data=interp_out.data, .valid=interp_out.valid};
-  decimate_fir_out_t decim_out = decimate_fir(decim_in);
+  //  Interpolation:
+  interp_24x_in_t audio_interp_in = {.data=demod_raw.data, .valid=demod_raw.valid};
+  interp_24x_out_t audio_interp_out = interp_24x(audio_interp_in);
+  //  Decimation:
+  decim_5x_in_t audio_decim_in = {.data=audio_interp_out.data, .valid=audio_interp_out.valid};
+  decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
+  //
+  decim_5x_in_t audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
+  decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
+  //
+  decim_5x_in_t audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
+  decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
 
   // FM deemphasis of audio samples
-  i16_stream_t deemph_in = {.data=decim_out.data, .valid=decim_out.valid};
+  i16_stream_t deemph_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
   i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
 
   return deemph_out;
