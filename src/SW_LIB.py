@@ -5318,7 +5318,9 @@ def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
-    elif VHDL.C_TYPES_ARE_INTEGERS([left_t, right_t]):
+    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
+    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
         raise Exception("GET_BIN_OP_LT_LTE_C_CODE for types!", [left_t, right_t])
@@ -5527,14 +5529,18 @@ def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
-    elif VHDL.C_TYPES_ARE_INTEGERS([left_t, right_t]):
+    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
+    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
         raise Exception("GET_BIN_OP_GT_GTE_C_CODE for types!", [left_t, right_t])
         sys.exit(-1)
 
-
 def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
+    # implement using unsigned compare and signed logic
+    # Only for the shared bit range of left/right, extra upper bits handled extra
+    # Sign is included in extra bits compare
     left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
@@ -5544,6 +5550,136 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
     ]
     left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
     right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    max_width = max(left_width, right_width)
+    left_has_extra_bits = left_width > right_width
+    right_has_extra_bits = right_width > left_width
+    sign_bits = 1
+    extra_bits = 0
+    if left_has_extra_bits:
+        extra_bits = left_width - right_width
+    if right_has_extra_bits:
+        extra_bits = right_width - left_width
+    sign_bits += extra_bits
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{""")
+    text += f"""
+    // Sign extend as needed
+    uint1_t lsign = left({left_width-1},{left_width-1});
+    uint1_t rsign = right({right_width-1},{right_width-1});
+    int{max_width}_t lsigned = left;
+    int{max_width}_t rsigned = right;
+"""
+    if left_has_extra_bits:
+        text += f"""
+    uint{sign_bits}_t extra_sign_bits = lsigned >> {max_width-sign_bits};
+    uint{sign_bits}_t sign_ext_like_zero = rsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(rsign);
+"""
+    else: # right_has_extra_bits AND Default both single sign bits no extra bits
+        text += f"""
+    uint{sign_bits}_t extra_sign_bits = rsigned >> {max_width-sign_bits};
+    uint{sign_bits}_t sign_ext_like_zero = lsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(lsign);
+"""
+    text += f"""
+    // unsigned at minimum width
+    uint{max_width-sign_bits}_t lunsigned = left;
+    uint{max_width-sign_bits}_t runsigned = right;
+    """
+
+    text += """
+    uint1_t rv;
+    if(extra_sign_bits==sign_ext_like_zero){
+        // Do unsigned compare
+        rv = lunsigned """+op_str+""" runsigned;
+    }else{
+"""
+    if op_str == ">=" or op_str == ">":
+        #// Sign difference
+        #// + > - true1 (!lsign, rsign)
+        #// - > + false0 (!lsign, rsign)
+        if left_has_extra_bits:
+            text += f"""        
+        // and or same sign left magnitude larger
+        // -LEFT > -right false  (!lsign,!rsign)
+        // LEFT > right true  (!lsign,!rsign)
+        rv = ~lsign;
+"""
+        elif right_has_extra_bits: 
+            text += f"""        
+        // and or same sign right magnitude larger
+        // -left > -RIGHT true (lsign, rsign)
+        // left > RIGHT false (lsign, rsign)
+        rv = rsign;
+"""
+        else:
+            text += f"""
+        // Sign difference (picked sign without invert)
+        rv = rsign;
+""" 
+    elif op_str == "<" or op_str == "<=":
+        #// Sign difference
+        #// + < - false0 (lsign, !rsign)
+        #// - < + true1 (lsign, !rsign)
+        if left_has_extra_bits:
+            text += f"""        
+        // and or same sign left magnitude larger
+        // -LEFT < -right true (lsign, rsign)
+        // LEFT < right false (lsign, rsign)
+        rv = lsign;
+"""
+        elif right_has_extra_bits: 
+            text += f"""        
+        // and or same sign right magnitude larger
+        // -left < -RIGHT false (!lsign, !rsign)
+        // left < RIGHT true (!lsign, !rsign)
+        rv = ~rsign;
+"""
+        else:
+            text += f"""
+        // Sign difference (picked sign without invert)
+        rv = lsign;
+"""
+            
+    text += """    }
+    return rv;  
+}"""
+
+    #print(text)
+
+    return text
+
+
+def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    left_has_extra_bits = left_width > right_width
+    right_has_extra_bits = right_width > left_width
+    has_extra_bits = left_has_extra_bits or right_has_extra_bits
+    extra_bits = 0
+    if left_has_extra_bits:
+        extra_bits = left_width - right_width
+    if right_has_extra_bits:
+        extra_bits = right_width - left_width  
     left_sized_out_t_width = left_width+1
     left_sized_out_t = "int"+str(left_sized_out_t_width)+"_t"
     left_t_signed = left_t
@@ -5563,10 +5699,9 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         right_sized_out_t_width = right_t_signed_width
         right_sized_out_t = right_t_signed
 
-    # TODO remove extra padding bit when not needed if was already padded for uint->int?
-    max_width = max(left_t_signed_width, right_t_signed_width)
-    in_t = "int"+str(max_width)+"_t"
-    out_t_width = max_width+1
+    max_width = max(left_width, right_width)
+    in_t = "int"+str(max_width+1-extra_bits)+"_t"
+    out_t_width = max_width+1-extra_bits
     out_t = "int"+str(out_t_width)+"_t"
 
     text = ""
@@ -5584,31 +5719,85 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         + """ left, """
         + right_t
         + """ right)
-{""")
-    if op_str == ">=":
+{
+""")
+    
+    text += f"""
+    // Bottom without any extra bits    
+    uint{max_width-extra_bits}_t left_bot = left;
+    uint{max_width-extra_bits}_t right_bot = right;
+"""
+    if has_extra_bits:
+        text += f"""    
+  uint{extra_bits}_t top;
+"""
+        if left_has_extra_bits:
+            text += f"""  top = left >> {left_width-extra_bits};
+"""     
+        else:
+            text += f"""  top = right >> {right_width-extra_bits};
+"""
+    text += "    uint1_t rv;\n"
+
+    if has_extra_bits:
+        text += """  if(top==0){"""
+
+    text += f"""
+    // Subtractor based compare"""
+    if op_str == ">":
         text += f"""
-    {out_t} sub = ({in_t})left - right;
-  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
-  return !lt_zero;
-        """
-    elif op_str == ">":
+    {out_t} sub = ({in_t})right_bot - left_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = lt_zero;
+"""
+    elif op_str == ">=":
         text += f"""
-    {out_t} sub = ({in_t})right - left;
-  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
-  return lt_zero;
-        """
+    {out_t} sub = ({in_t})left_bot - right_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = ~lt_zero;
+"""
     elif op_str == "<":
         text += f"""
-    {out_t} sub = ({in_t})left - right;
-  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
-  return lt_zero;
-        """
+    {out_t} sub = ({in_t})left_bot - right_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = lt_zero;
+"""
     elif op_str == "<=":
         text += f"""
-    {out_t} sub = ({in_t})right - left;
-  uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
-  return !lt_zero;
-        """
+    {out_t} sub = ({in_t})right_bot - left_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = ~lt_zero;
+"""
+
+    if left_has_extra_bits:
+        if op_str.startswith('>'):
+            text += """  }else{
+    // Left is large, GT/E is true
+    rv = 1;
+  }
+"""
+        if op_str.startswith('<'):
+            text += """  }else{
+    // Left is large, LT/E is false
+    rv = 0;
+  }
+"""
+    if right_has_extra_bits:
+        if op_str.startswith('>'):
+            text += """  }else{
+    // Right is large, GT/E is false
+    rv = 0;
+  }
+"""
+        if op_str.startswith('<'):
+            text += """  }else{
+    // Right is large, LT/E is true
+    rv = 1;
+  }
+"""
+
+    text += """
+  return rv;"""
 
     text += """  
 }"""
