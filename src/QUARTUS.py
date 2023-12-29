@@ -502,6 +502,12 @@ set_global_assignment -name SDC_FILE """
 
     # Do compile
     text += """
+
+set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE AREA"
+set_global_assignment -name OPTIMIZATION_TECHNIQUE area
+set_global_assignment -name ALM_REGISTER_PACKING_EFFORT high
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA on
+
 # compile the project
 make_all_pins_virtual
 execute_flow -compile
