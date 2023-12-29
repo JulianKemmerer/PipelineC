@@ -2014,12 +2014,6 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type, pa
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
                 C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
@@ -2055,24 +2049,6 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type, pa
         or (
             logic_func_name.startswith(
                 C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_XOR_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
@@ -2163,6 +2139,30 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(logic_func_name, input_c_types, output_c_type, pa
         )
         or (
             logic_func_name.startswith(C_TO_LOGIC.ONE_HOT_EQ_LOGIC_NAME)
+        )
+        or (
+            logic_func_name.startswith(
+                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
         )
     ):
         return False
