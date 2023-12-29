@@ -2320,6 +2320,11 @@ def MAYBE_GLOBAL_DECL_TO_LOGIC(maybe_global_name, parser_state, is_lhs_assign):
             ]
         ):
             return parser_state.existing_logic
+    else:
+        #raise Exception("Why looking for globals inside func?", parser_state.existing_logic.func_name)
+        # Assume wont be global since not in user functions?
+        #print("Missing local vars for func", parser_state.existing_logic.func_name)
+        return parser_state.existing_logic
 
     # Catch read only global regs
     # If has same name as global and hasnt been declared as (local) variable already
@@ -2417,6 +2422,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
     # ^^^^^^^^^^^^^^^^^
 
     # Special handling of writing to globals
+    # Why is this needed - special is_lhs_assign that doesnt happen elsewhere? sigh...
     parser_state.existing_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(
         lhs_orig_var_name, parser_state, is_lhs_assign=True
     )
@@ -10363,13 +10369,15 @@ def GET_LOCAL_VAR_INFO(parser_state):
                 c_ast_func_def.decl.type.args, c_ast.Decl
             )
         decl_c_ast_nodes = local_decl_c_ast_nodes + param_decl_c_ast_nodes
+        # All funcs recorded as exists with no locals to start
+        # This misses built in funcs and bit math, mem.h etc
+        if func_name not in parser_state.func_to_local_variables:
+            parser_state.func_to_local_variables[func_name] = set()
         for decl_c_ast_node in decl_c_ast_nodes:
             c_type, var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(
                 decl_c_ast_node, parser_state
             )
             # Record all declared vars
-            if func_name not in parser_state.func_to_local_variables:
-                parser_state.func_to_local_variables[func_name] = set()
             parser_state.func_to_local_variables[func_name].add(var_name)
             # Record static state registers
             if "static" not in decl_c_ast_node.storage:
