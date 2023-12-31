@@ -4963,7 +4963,7 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
 
     # Could pad up to make diff in exponents/max shifting amount = 255?
     # Software 32b implementations pad with 6 zeros
-    pad = 6
+    pad = 0
 
     mantissa_w_hidden_bit_width = mantissa_width + 1  # 24
     mantissa_w_hidden_bit_sign_adj_width = mantissa_w_hidden_bit_width + 1  # 25
@@ -5165,7 +5165,9 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   {
     y_mantissa_w_hidden_bit_sign_adj = y_mantissa_w_hidden_bit;
   }
-  
+""")
+    if pad > 0:
+        text += ("""
   // Padd both x and y on right with zeros (shift left) such that 
   // when y is shifted to the right it doesnt drop mantissa lsbs (as much)
   int"""
@@ -5182,7 +5184,18 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
         + """_uint"""
         + str(pad)
         + """(y_mantissa_w_hidden_bit_sign_adj, 0);
-
+""")
+    else:
+        text += ("""
+  // No padding
+  int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width)
+        + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = x_mantissa_w_hidden_bit_sign_adj;
+  int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width)
+        + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = y_mantissa_w_hidden_bit_sign_adj;
+""")
+    text += ("""
   // Step 3: Un-normalize Y (including hidden bit) so that xexp == yexp.
   // Already swapped left/right based on exponent
   // diff will be >= 0
