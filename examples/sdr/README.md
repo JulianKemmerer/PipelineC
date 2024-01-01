@@ -35,6 +35,7 @@ def print_fir_config(fs, decim_factors):
 
 print_fir_config(125e6, [5,10,10])
 print_fir_config(6e6, [5,5,5])
+print_fir_config(6e6, [24])
 ```
 
 
@@ -46,6 +47,9 @@ IQ from radio 125MSPS
 then downsample by M=125 = 48KSPS
   stages=[5,5,5 # can reuse 5x decim?]
 
+
+TODO DECIDE on how to handle some `static` stateful functions not meeting 125MHz
+...likely need CDC in final design running after radio decim slower...
 
 
 # `Simulation`:
