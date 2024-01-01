@@ -84,10 +84,10 @@
 // CVT-RBv2 timings
 #if PIXEL_OVER_CLK_RATIO==1
 //60FPS#define PIXEL_CLK_MHZ 39.124
-#define PIXEL_CLK_MHZ 27.3868 // 42FPS
+#define PIXEL_CLK_MHZ 30.647133333 // 47FPS
 #elif PIXEL_OVER_CLK_RATIO==3
 //60FPS#define PIXEL_CLK_MHZ 117.372
-#define PIXEL_CLK_MHZ 82.1604 // 42FPS
+#define PIXEL_CLK_MHZ 91.9414 // 47FPS
 #endif
 #define H_MAX 880 //H total period (pixels)
 #define H_FP 8 //H front porch width (pixels)
