@@ -1466,12 +1466,19 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                 submodule_inst_name
                             ].delay
                             if submodule_delay is None:
-                                print(
-                                    "What cant do this without delay!",
+                                print("ERROR 0: Please mention encountering this at:\n",
+                                    "https://github.com/JulianKemmerer/PipelineC/issues/187\n",
+                                    "WTF MISSING INST DELAY FOR",
                                     inst_name,
                                     submodule_inst_name,
                                 )
-                                sys.exit(-1)
+                                submodule_delay = parser_state.FuncLogicLookupTable[submodule_logic.func_name].delay
+                            if submodule_delay is None:
+                                raise Exception(
+                                    "What cant do this without delay!?",
+                                    inst_name,
+                                    submodule_inst_name,
+                                )
                             submodule_latency = (
                                 submodule_timing_params.GET_TOTAL_LATENCY(
                                     parser_state, TimingParamsLookupTable
@@ -1628,6 +1635,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                         submodule_delay = parser_state.LogicInstLookupTable[
                             submodule_inst_name
                         ].delay
+                        if submodule_delay is None:
+                            print("ERROR 1: Please mention encountering this at:\n",
+                                "https://github.com/JulianKemmerer/PipelineC/issues/187\n",
+                                "WTF MISSING INST DELAY FOR",
+                                inst_name,
+                                submodule_inst_name,
+                            )
+                            submodule_delay = parser_state.FuncLogicLookupTable[submodule_logic.func_name].delay
                         abs_delay_offset = rv.zero_clk_submodule_end_offset[
                             submodule_inst
                         ]

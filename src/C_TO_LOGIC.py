@@ -5478,6 +5478,9 @@ def C_AST_WHILE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_sta
             c_ast_node.stmt, [], iter_prepend_text, parser_state
         )
 
+        # Next iteration
+        i = i + 1
+
     return parser_state.existing_logic
 
 
