@@ -8,8 +8,8 @@ use ieee.numeric_std.all;
 
 entity pipelinec_fifo_fwft is
   generic (
-    DATA_WIDTH    : integer;
-    DEPTH_LOG2    : integer
+    DATA_WIDTH    : integer := 1;
+    DEPTH_LOG2    : integer := 1
   );
   port (
     clk            : in  std_logic;
