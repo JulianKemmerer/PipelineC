@@ -138,6 +138,7 @@ prj_project new -name "'''
             + DIAMOND_TOOL
             + """"
 prj_strgy set_value -strategy Strategy1 syn_pipelining_retiming=None
+prj_strgy set_value -strategy Strategy1 syn_vhdl2008=True
 """
         )
         # All the generated vhdl files
