@@ -139,6 +139,7 @@ prj_project new -name "'''
             + """"
 prj_strgy set_value -strategy Strategy1 syn_pipelining_retiming=None
 prj_strgy set_value -strategy Strategy1 syn_vhdl2008=True
+prj_strgy set_value -strategy Strategy1 lse_vhdl2008=True
 """
         )
         # All the generated vhdl files
@@ -216,7 +217,10 @@ class ParsedTimingReport:
         for path_text in maybe_path_texts:
             if "Number of logic level(s):" in path_text:
                 path_report = PathReport(path_text)
-
+                # WTF is system clock that shows up with zero delay?
+                # Skip it?
+                if path_report.path_delay_ns == 0.0:
+                    continue 
                 # Only save the worst delay per path group
                 do_add = False
                 if path_report.path_group in self.path_reports:
@@ -312,7 +316,7 @@ class PathReport:
                 toks = list(filter(None, line.split(" ")))
                 tok = toks[6].strip()
                 self.path_group = tok
-                # print("path_group",self.path_group)
+                #print("path_group",self.path_group)
             tok1 = "The end   point is clocked by"
             if tok1 in line:
                 toks = list(filter(None, line.split(" ")))
@@ -346,7 +350,7 @@ class PathReport:
             prev_line = line
 
         self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-        # print("path_delay_ns",self.path_delay_ns)
+        #print("path_delay_ns",self.path_delay_ns)
 
     def init_lse(self, path_report_text):
         # print("path_report_text",path_report_text)
