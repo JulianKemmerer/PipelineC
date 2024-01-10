@@ -26,7 +26,7 @@ PRAGMA_MESSAGE(FUNC_WIRES fir_samples_window) // Not worried about delay of this
 fir_samples_window_t fir_samples_window(fir_in_data_stream_t input)
 {
   static fir_samples_window_t window;
-  fir_samples_window_t rv = window;
+  //fir_samples_window_t rv = window;
   if(input.valid){
     uint32_t i;
     for(i=(FIR_N_TAPS-1); i>0; i=i-1)
@@ -35,12 +35,12 @@ fir_samples_window_t fir_samples_window(fir_in_data_stream_t input)
     }
     window.data[0] = input.data;
   }
-  return rv;
+  return window;
 }
 
 // Declare binary tree of adders for after the sample*coeff
 #include "binary_tree.h"
-DECL_BINARY_OP_TREE(PPCAT(fir_name,_adder_tree), fir_out_t, fir_accum_t, fir_accum_t, +, FIR_N_TAPS, FIR_LOG2_N_TAPS)
+DECL_BINARY_OP_TREE(PPCAT(fir_name,_adder_tree), fir_accum_t, fir_accum_t, fir_accum_t, +, FIR_N_TAPS, FIR_LOG2_N_TAPS)
 
 // The FIR pure function to be pipelined
 #define fir fir_func(fir_name)
@@ -54,11 +54,13 @@ fir_out_t fir(fir_data_t data[FIR_N_TAPS])
   uint32_t i;
   for(i=0; i < FIR_N_TAPS; i+=1)
   {
-    products[i] = data[i] * coeffs[i];
+    products[i] = data[i] * coeffs[i]; // Apply FIR_POW2_SCALE here?
   }
    
   // A binary tree of adders is used to sum the results of the coeff*data multiplies
-  return PPCAT(fir_name,_adder_tree)(products);
+  fir_accum_t rv = PPCAT(fir_name,_adder_tree)(products);
+  rv = rv >> FIR_POW2_SCALE; // TODO apply scale earlier instead?
+  return rv;
 }
 
 // The FIR filter pipeline
@@ -83,6 +85,7 @@ fir_out_data_stream_t fir_name(fir_in_data_stream_t input)
 #undef fir_accum_t
 #undef fir_out_t
 #undef FIR_COEFFS
+#undef FIR_POW2_SCALE
 #undef fir_in_data_stream_t
 #undef fir_out_data_stream_t
 #undef fir_samples_window_t

@@ -12,6 +12,7 @@
 #define fir_coeff_t     fir_interp_coeff_t
 #define fir_accum_t     fir_interp_accum_t
 #define fir_out_t       fir_interp_out_t
+#define FIR_POW2_SCALE  FIR_INTERP_POW2_SCALE
 #define FIR_COEFFS      FIR_INTERP_COEFFS
 #include "dsp/fir.h"
 
@@ -63,6 +64,7 @@ fir_out_data_stream_t fir_interp_name(fir_in_data_stream_t in_sample){
 #undef fir_interp_coeff_t
 #undef fir_interp_accum_t
 #undef fir_interp_out_t
+#undef FIR_INTERP_POW2_SCALE
 #undef FIR_INTERP_COEFFS
 #undef fir_interp_insert_n_zeros
 #undef fir_in_data_stream_t

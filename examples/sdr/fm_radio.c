@@ -33,6 +33,7 @@ typedef struct ci16_stream_t{
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int38_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
+#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -165, \
   -284, \
@@ -96,6 +97,7 @@ typedef struct ci16_stream_t{
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
+#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -199,\
   -90, \
@@ -237,6 +239,7 @@ You then have to remove them*/
 #define fir_interp_coeff_t int16_t
 #define fir_interp_accum_t int40_t // data_width + coeff_width + log2(taps#)
 #define fir_interp_out_t int16_t
+#define FIR_INTERP_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_INTERP_COEFFS { \
   -173, \
   -34,  \
