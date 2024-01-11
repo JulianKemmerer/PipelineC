@@ -11,6 +11,7 @@
 #define fir_coeff_t     fir_decim_coeff_t
 #define fir_accum_t     fir_decim_accum_t
 #define fir_out_t       fir_decim_out_t
+#define FIR_POW2_SCALE  FIR_DECIM_POW2_SCALE
 #define FIR_COEFFS      FIR_DECIM_COEFFS
 #include "dsp/fir.h"
 
@@ -69,6 +70,7 @@ fir_out_data_stream_t fir_decim_name(fir_in_data_stream_t input)
 #undef fir_decim_accum_t
 #undef fir_decim_out_t
 #undef FIR_DECIM_COEFFS
+#undef FIR_DECIM_POW2_SCALE
 #undef fir_decim_counter
 #undef fir_in_data_stream_t
 #undef fir_out_data_stream_t

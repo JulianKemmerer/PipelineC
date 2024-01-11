@@ -54,9 +54,9 @@ TODO DECIDE on how to handle some `static` stateful functions not meeting 125MHz
 
 # `Simulation`:
 
-IIRC there was a `--sim --cocotb --ghdl` based approach
-
-Do we want to setup some way of injecting a signal into that sim? ex. some script to gen input samples as C array, run sim, and some script to parse the output of sim (which you already have something like I think)
+* Work in progress `tb/` dir.
+* `compare_samples.py` produces input samples and compares output.
+* `rm sim_output.log && python3 compare_samples.py && ../../../src/pipelinec tb.c --sim --comb --cocotb --ghdl --run 250 &> sim_output.log && python3 compare_samples.py`
 
 
 # `Hardware Test`:

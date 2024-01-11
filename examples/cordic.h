@@ -75,13 +75,13 @@ cordic_float_t cordic_float_fixed32_n32(float theta)
 
 //#pragma MAIN_MHZ cordic_fixed32_n32 166.0
 //#pragma MAIN_MHZ cordic_float_fixed32_n32 166.0
-#pragma MAIN tb
+/*#pragma MAIN tb
 void tb()
 {
   float rads = 1.0471975512; //~pi/3;
   cordic_float_t result = cordic_float_fixed32_n32(rads);
   printf("sin(%f)=%f, cos(%f)=%f\n", rads, result.s, rads, result.c);
-} 
+}*/
 
 /*
 // Cordic float -inf - inf
