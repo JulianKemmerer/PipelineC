@@ -114,23 +114,30 @@ fir_decim_out_data_stream_type(my_fir) main(fir_decim_in_data_stream_type(my_fir
 void tb()
 {
   static uint32_t cycle_counter;
-  static int16_t samples[SAMPLES_SIZE] = SAMPLES;
+  static int16_t i_samples[I_SAMPLES_SIZE] = I_SAMPLES;
+  static int16_t q_samples[Q_SAMPLES_SIZE] = Q_SAMPLES;
 
   // Prepare input sample into FIR
-  fir_decim_in_data_stream_type(my_fir) input;
-  input.data = samples[0];
-  input.valid = 1;
+  fir_decim_in_data_stream_type(my_fir) i_input;
+  i_input.data = i_samples[0];
+  i_input.valid = 1;
+  fir_decim_in_data_stream_type(my_fir) q_input;
+  q_input.data = q_samples[0];
+  q_input.valid = 1;
 
   // Do one clock cycle, input valid and get output
-  fir_decim_out_data_stream_type(my_fir) output;
-  output = my_fir(input);
+  fir_decim_out_data_stream_type(my_fir) i_output;
+  i_output = my_fir(i_input);
+  fir_decim_out_data_stream_type(my_fir) q_output;
+  q_output = my_fir(q_input);
 
   // Print valid output samples
-  if(output.valid){
-    printf("Cycle %d, Sample = %d\n", cycle_counter, output.data);
+  if(i_output.valid&q_output.valid){
+    printf("Cycle %d,Sample IQ =,%d,%d\n", cycle_counter, i_output.data, q_output.data);
   }
 
   // Prepare for next sample
-  ARRAY_SHIFT_DOWN(samples, SAMPLES_SIZE, 1)
+  ARRAY_SHIFT_DOWN(i_samples, I_SAMPLES_SIZE, 1)
+  ARRAY_SHIFT_DOWN(q_samples, Q_SAMPLES_SIZE, 1)
   cycle_counter+=1;
 }

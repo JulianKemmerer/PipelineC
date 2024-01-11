@@ -12,15 +12,20 @@ from os import path
 # Create a signal for demonstration.
 #------------------------------------------------
 
+# For now make same signal on both I(real) and Q(imaginary) channels
 sample_rate = 100.0
-nsamples = 250
-t = arange(nsamples) / sample_rate
-x = cos(2*pi*0.5*t) + 0.2*sin(2*pi*2.5*t+0.1) + \
+nsamples_in = 250
+t = arange(nsamples_in) / sample_rate
+s = cos(2*pi*0.5*t) + 0.2*sin(2*pi*2.5*t+0.1) + \
         0.2*sin(2*pi*15.3*t) + 0.1*sin(2*pi*16.7*t + 0.1) + \
             0.1*sin(2*pi*23.45*t+.8)
+
+s_i = array(s)
+s_q = array(s)
  
 # Normalize to between -1.0 and +1.0
-x /= max(abs(x),axis=0)
+s_i /= max(abs(s_i),axis=0)
+s_q /= max(abs(s_q),axis=0)
 
 # Convert float to-from i16
 i16_max = (2**15)-1
@@ -44,12 +49,13 @@ def i16_c_array_txt(x, name):
 
 # Write samples as a C int16 array
 f=open("samples.h","w")
-f.write(i16_c_array_txt(x,"SAMPLES"))
+f.write(i16_c_array_txt(s_i,"I_SAMPLES"))
+f.write(i16_c_array_txt(s_q,"Q_SAMPLES"))
 f.close()
 
 
 #------------------------------------------------
-# Create a FIR filter and apply it to x.
+# Create a FIR filter and apply it to s.
 #------------------------------------------------
 
 # The Nyquist rate of the signal.
@@ -75,33 +81,42 @@ taps = firwin(N, cutoff_hz/nyq_rate, window=('kaiser', beta))
 #print(i16_c_array_txt(taps, "TAPS"))
 #print("conv",to_float(to_int16(taps)))
 
-# Use lfilter to filter x with the FIR filter.
-filtered_x = lfilter(taps, 1.0, x)
-
+# Use lfilter to filter s with the FIR filter.
+filtered_s_i = lfilter(taps, 1.0, s_i)
+filtered_s_q = lfilter(taps, 1.0, s_q)
+nsamples_out = nsamples_in
 
 # Read simulation filtered output, start with zeros
-sim_filtered_x = array([0]*len(filtered_x))
+sim_filtered_s_i = array([0]*nsamples_out)
+sim_filtered_s_q = array([0]*nsamples_out)
 fname = "sim_output.log"
 if path.isfile(fname):
   # Parse samples values
+  list_sim_filtered_s_i = list(sim_filtered_s_i)
+  list_sim_filtered_s_q = list(sim_filtered_s_q)
   i16_values = []
   f = open(fname,"r")
   lines = f.readlines()
   i = 0
   for line in lines:
-    tok = "Sample ="
-    if tok in line and i < len(filtered_x):
-      int_val = int(line.split(tok)[1])
-      f_val = float(int_val)/float(i16_max)
+    tok = "Sample IQ ="
+    if tok in line and i < nsamples_out:
+      toks = line.split(",")
+      i_int_val = int(toks[2])
+      i_f_val = float(i_int_val)/float(i16_max)
+      q_int_val = int(toks[3])
+      q_f_val = float(q_int_val)/float(i16_max)
       #print("Sample =", i, int_val, f_val)
       #i16_values.append(int_val)
-      #sim_filtered_x[i] = f_val # WTF doesnt work?
-      list_sim_filtered_x = list(sim_filtered_x)
-      list_sim_filtered_x[i] = f_val
-      sim_filtered_x = array(list_sim_filtered_x)
+      list_sim_filtered_s_i[i] = i_f_val
+      list_sim_filtered_s_q[i] = q_f_val
       i+=1
       #print("sim_filtered_x",sim_filtered_x)
-  #sim_filtered_x = to_float(array(i16_values))
+  sim_filtered_s_i = array(list_sim_filtered_s_i)
+  sim_filtered_s_q = array(list_sim_filtered_s_q)
+else:
+  # No sim output yet to compare, just stop
+  exit(0)
 
 
 #------------------------------------------------
@@ -161,20 +176,30 @@ xlabel('t')
 grid(True)
 """
 
-
-# Plot the expected output vs simulation output
 # NO DELAY?
 delay = 0.0
+# Plot the expected output vs simulation output
 figure(1)
-title('Expected (green) vs. Sim (blue)')
+title('I - Expected (green) vs. Sim (blue)')
 # Plot the filtered signal, shifted to compensate for the phase delay.
-plot(t-delay, filtered_x, 'r-')
+plot(t-delay, filtered_s_i, 'r-')
 # Plot just the "good" part of the filtered signal.  The first N-1
 # samples are "corrupted" by the initial conditions.
-plot(t[N-1:]-delay, filtered_x[N-1:], 'g', linewidth=4)
+plot(t[N-1:]-delay, filtered_s_i[N-1:], 'g', linewidth=4)
 # Plot the simulated signal, shifted to compensate for the phase delay.
-plot(t-delay, sim_filtered_x, 'b')
+plot(t-delay, sim_filtered_s_i, 'b')
+xlabel('t')
+grid(True)
 
+figure(2)
+title('Q - Expected (green) vs. Sim (blue)')
+# Plot the filtered signal, shifted to compensate for the phase delay.
+plot(t-delay, filtered_s_q, 'r-')
+# Plot just the "good" part of the filtered signal.  The first N-1
+# samples are "corrupted" by the initial conditions.
+plot(t[N-1:]-delay, filtered_s_q[N-1:], 'g', linewidth=4)
+# Plot the simulated signal, shifted to compensate for the phase delay.
+plot(t-delay, sim_filtered_s_q, 'b')
 xlabel('t')
 grid(True)
 
