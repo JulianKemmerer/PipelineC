@@ -468,6 +468,8 @@ export GHDL_PREFIX="""
 
 
 def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
+    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
+    out_file = f"{output_dir}/{SYN.TOP_LEVEL_MODULE}.v"
     print("Rendering final top level Verilog...")
     # Identify tool versions
     if not os.path.exists(f"{GHDL_BIN_PATH}/ghdl"):
@@ -488,7 +490,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
 {GHDL_BIN_PATH}/ghdl -m --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE} && \
 {YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
 """
-    output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
+    
     sh_path = output_dir + "/" + "convert_to_verilog.sh"
     f = open(sh_path, "w")
     f.write(sh_text)
@@ -499,20 +501,24 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     # print(bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
     #print(log_text)
-    print(f"Top level Verilog file: {output_dir}/{SYN.TOP_LEVEL_MODULE}.v")
+    print(f"Top level Verilog file: {out_file}")
 
 
 def FUNC_IS_PRIMITIVE(func_name):
-    if func_name == "ECP5_MUL18X18":
+    if func_name.startswith("ECP5_MUL"):
         return True
     return False
 
 
 def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    if Logic.func_name != "ECP5_MUL18X18":
-        print("TODO other prims!")
-        sys.exit(-1)
-    # Assume ECP5_MUL18X18
+    if Logic.func_name.startswith("ECP5_MUL"):
+        mul_size_strs = Logic.func_name.replace("ECP5_MUL","").split("X")
+    else:
+        raise Exception("TODO other prims!")
+    # Assume equal size for now
+    if len(mul_size_strs)!=2 or mul_size_strs[0] != mul_size_strs[1]:
+        raise Exception("Bad mult size",mul_size_strs)
+    width = int(mul_size_strs[0])
     needs_clk = VHDL.LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
@@ -565,10 +571,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
                 n_extra_output_regs += 1
                 slice_latency -= 1
 
-    text = (
-        """
-  
-  component MULT18X18D is
+    text = f"""
+  component MULT{width}X{width}D is
   generic (
     REG_INPUTA_CLK : string := "NONE";
     REG_INPUTA_CE : string := "CE0";
@@ -601,7 +605,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SOURCEB_MODE : string := "B_SHIFT";
     --mult_bypass : string := "DISABLED";
     RESETMODE : string := "SYNC"  );
-  port (
+  port ("""
+    if width > 9:
+        text += f"""
     A17 :   in  std_logic;
     A16 :   in  std_logic;
     A15 :   in  std_logic;
@@ -610,7 +616,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     A12 :   in  std_logic;
     A11 :   in  std_logic;
     A10 :   in  std_logic;
-    A9 :   in  std_logic;
+    A9 :   in  std_logic;"""
+    text += f"""
     A8 :   in  std_logic;
     A7 :   in  std_logic;
     A6 :   in  std_logic;
@@ -619,7 +626,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     A3 :   in  std_logic;
     A2 :   in  std_logic;
     A1 :   in  std_logic;
-    A0 :   in  std_logic;
+    A0 :   in  std_logic;"""
+    if width > 9:
+        text += f"""
     B17 :   in  std_logic;
     B16 :   in  std_logic;
     B15 :   in  std_logic;
@@ -628,7 +637,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     B12 :   in  std_logic;
     B11 :   in  std_logic;
     B10 :   in  std_logic;
-    B9 :   in  std_logic;
+    B9 :   in  std_logic;"""
+    text += f"""
     B8 :   in  std_logic;
     B7 :   in  std_logic;
     B6 :   in  std_logic;
@@ -637,7 +647,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     B3 :   in  std_logic;
     B2 :   in  std_logic;
     B1 :   in  std_logic;
-    B0 :   in  std_logic;
+    B0 :   in  std_logic;"""
+    if width > 9:
+        text += f"""
     C17 :   in  std_logic;
     C16 :   in  std_logic;
     C15 :   in  std_logic;
@@ -646,7 +658,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     C12 :   in  std_logic;
     C11 :   in  std_logic;
     C10 :   in  std_logic;
-    C9 :   in  std_logic;
+    C9 :   in  std_logic;"""
+    text += f"""
     C8 :   in  std_logic;
     C7 :   in  std_logic;
     C6 :   in  std_logic;
@@ -671,43 +684,51 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     RST3 :   in  std_logic;
     RST2 :   in  std_logic;
     RST1 :   in  std_logic;
-    RST0 :   in  std_logic;
-    -- SRIA17 :   in  std_logic;
-    -- SRIA16 :   in  std_logic;
-    -- SRIA15 :   in  std_logic;
-    -- SRIA14 :   in  std_logic;
-    -- SRIA13 :   in  std_logic;
-    -- SRIA12 :   in  std_logic;
-    -- SRIA11 :   in  std_logic;
-    -- SRIA10 :   in  std_logic;
-    -- SRIA9 :   in  std_logic;
-    -- SRIA8 :   in  std_logic;
-    -- SRIA7 :   in  std_logic;
-    -- SRIA6 :   in  std_logic;
-    -- SRIA5 :   in  std_logic;
-    -- SRIA4 :   in  std_logic;
-    -- SRIA3 :   in  std_logic;
-    -- SRIA2 :   in  std_logic;
-    -- SRIA1 :   in  std_logic;
-    -- SRIA0 :   in  std_logic;
-    -- SRIB17 :   in  std_logic;
-    -- SRIB16 :   in  std_logic;
-    -- SRIB15 :   in  std_logic;
-    -- SRIB14 :   in  std_logic;
-    -- SRIB13 :   in  std_logic;
-    -- SRIB12 :   in  std_logic;
-    -- SRIB11 :   in  std_logic;
-    -- SRIB10 :   in  std_logic;
-    -- SRIB9 :   in  std_logic;
-    -- SRIB8 :   in  std_logic;
-    -- SRIB7 :   in  std_logic;
-    -- SRIB6 :   in  std_logic;
-    -- SRIB5 :   in  std_logic;
-    -- SRIB4 :   in  std_logic;
-    -- SRIB3 :   in  std_logic;
-    -- SRIB2 :   in  std_logic;
-    -- SRIB1 :   in  std_logic;
-    -- SRIB0 :   in  std_logic;
+    RST0 :   in  std_logic;"""
+    if width > 9:
+        text += f"""
+    SRIA17 :   in  std_logic;
+    SRIA16 :   in  std_logic;
+    SRIA15 :   in  std_logic;
+    SRIA14 :   in  std_logic;
+    SRIA13 :   in  std_logic;
+    SRIA12 :   in  std_logic;
+    SRIA11 :   in  std_logic;
+    SRIA10 :   in  std_logic;
+    SRIA9 :   in  std_logic;"""
+    text += f"""
+    SRIA8 :   in  std_logic;
+    SRIA7 :   in  std_logic;
+    SRIA6 :   in  std_logic;
+    SRIA5 :   in  std_logic;
+    SRIA4 :   in  std_logic;
+    SRIA3 :   in  std_logic;
+    SRIA2 :   in  std_logic;
+    SRIA1 :   in  std_logic;
+    SRIA0 :   in  std_logic;"""
+    if width > 9:
+        text += f"""
+    SRIB17 :   in  std_logic;
+    SRIB16 :   in  std_logic;
+    SRIB15 :   in  std_logic;
+    SRIB14 :   in  std_logic;
+    SRIB13 :   in  std_logic;
+    SRIB12 :   in  std_logic;
+    SRIB11 :   in  std_logic;
+    SRIB10 :   in  std_logic;
+    SRIB9 :   in  std_logic;"""
+    text += f"""
+    SRIB8 :   in  std_logic;
+    SRIB7 :   in  std_logic;
+    SRIB6 :   in  std_logic;
+    SRIB5 :   in  std_logic;
+    SRIB4 :   in  std_logic;
+    SRIB3 :   in  std_logic;
+    SRIB2 :   in  std_logic;
+    SRIB1 :   in  std_logic;
+    SRIB0 :   in  std_logic;"""
+    if width > 9:
+        text += f"""
     SROA17 :   out  std_logic;
     SROA16 :   out  std_logic;
     SROA15 :   out  std_logic;
@@ -716,7 +737,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROA12 :   out  std_logic;
     SROA11 :   out  std_logic;
     SROA10 :   out  std_logic;
-    SROA9 :   out  std_logic;
+    SROA9 :   out  std_logic;"""
+    text += f"""
     SROA8 :   out  std_logic;
     SROA7 :   out  std_logic;
     SROA6 :   out  std_logic;
@@ -725,7 +747,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROA3 :   out  std_logic;
     SROA2 :   out  std_logic;
     SROA1 :   out  std_logic;
-    SROA0 :   out  std_logic;
+    SROA0 :   out  std_logic;"""
+    if width > 9:
+        text += f"""
     SROB17 :   out  std_logic;
     SROB16 :   out  std_logic;
     SROB15 :   out  std_logic;
@@ -734,7 +758,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROB12 :   out  std_logic;
     SROB11 :   out  std_logic;
     SROB10 :   out  std_logic;
-    SROB9 :   out  std_logic;
+    SROB9 :   out  std_logic;"""
+    text += f"""
     SROB8 :   out  std_logic;
     SROB7 :   out  std_logic;
     SROB6 :   out  std_logic;
@@ -743,7 +768,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROB3 :   out  std_logic;
     SROB2 :   out  std_logic;
     SROB1 :   out  std_logic;
-    SROB0 :   out  std_logic;
+    SROB0 :   out  std_logic;"""
+    if width > 9:
+        text += f"""
     ROA17 :   out  std_logic;
     ROA16 :   out  std_logic;
     ROA15 :   out  std_logic;
@@ -752,7 +779,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROA12 :   out  std_logic;
     ROA11 :   out  std_logic;
     ROA10 :   out  std_logic;
-    ROA9 :   out  std_logic;
+    ROA9 :   out  std_logic;"""
+    text += f"""
     ROA8 :   out  std_logic;
     ROA7 :   out  std_logic;
     ROA6 :   out  std_logic;
@@ -761,7 +789,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROA3 :   out  std_logic;
     ROA2 :   out  std_logic;
     ROA1 :   out  std_logic;
-    ROA0 :   out  std_logic;
+    ROA0 :   out  std_logic;"""
+    if width > 9:
+        text += f"""
     ROB17 :   out  std_logic;
     ROB16 :   out  std_logic;
     ROB15 :   out  std_logic;
@@ -770,7 +800,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROB12 :   out  std_logic;
     ROB11 :   out  std_logic;
     ROB10 :   out  std_logic;
-    ROB9 :   out  std_logic;
+    ROB9 :   out  std_logic;"""
+    text += f"""  
     ROB8 :   out  std_logic;
     ROB7 :   out  std_logic;
     ROB6 :   out  std_logic;
@@ -779,7 +810,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROB3 :   out  std_logic;
     ROB2 :   out  std_logic;
     ROB1 :   out  std_logic;
-    ROB0 :   out  std_logic;
+    ROB0 :   out  std_logic;"""
+    if width > 9:
+        text += f"""
     ROC17 :   out  std_logic;
     ROC16 :   out  std_logic;
     ROC15 :   out  std_logic;
@@ -788,7 +821,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROC12 :   out  std_logic;
     ROC11 :   out  std_logic;
     ROC10 :   out  std_logic;
-    ROC9 :   out  std_logic;
+    ROC9 :   out  std_logic;"""
+    text += f"""
     ROC8 :   out  std_logic;
     ROC7 :   out  std_logic;
     ROC6 :   out  std_logic;
@@ -797,7 +831,9 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROC3 :   out  std_logic;
     ROC2 :   out  std_logic;
     ROC1 :   out  std_logic;
-    ROC0 :   out  std_logic;
+    ROC0 :   out  std_logic;"""
+    if width > 9:
+        text += f"""
     P35 :   out  std_logic;
     P34 :   out  std_logic;
     P33 :   out  std_logic;
@@ -815,7 +851,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     P21 :   out  std_logic;
     P20 :   out  std_logic;
     P19 :   out  std_logic;
-    P18 :   out  std_logic;
+    P18 :   out  std_logic;"""
+    text += (f"""
     P17 :   out  std_logic;
     P16 :   out  std_logic;
     P15 :   out  std_logic;
@@ -843,28 +880,28 @@ end component;
         + """;
   constant N_EXTRA_OUTPUT_REGS : integer := """
         + str(n_extra_output_regs)
-        + """;
-  type input_array_t is array(0 to N_EXTRA_INPUT_REGS-1) of unsigned(17 downto 0);
-  type output_array_t is array(0 to N_EXTRA_OUTPUT_REGS-1) of unsigned(35 downto 0);
+        + f""";
+  type input_array_t is array(0 to N_EXTRA_INPUT_REGS-1) of unsigned({width-1} downto 0);
+  type output_array_t is array(0 to N_EXTRA_OUTPUT_REGS-1) of unsigned({(width*2)-1} downto 0);
 
   signal a_in_r : input_array_t;
   signal b_in_r : input_array_t;
   signal p_out_r : output_array_t;
 
   -- Mult instance ports
-  signal a_i : unsigned(17 downto 0);
-  signal b_i : unsigned(17 downto 0);
-  signal p_o : unsigned(35 downto 0);
+  signal a_i : unsigned({width-1} downto 0);
+  signal b_i : unsigned({width-1} downto 0);
+  signal p_o : unsigned({(width*2)-1} downto 0);
 
   -- Maybe with extra io regs
-  --signal a_c : unsigned(17 downto 0);
-  --signal b_c : unsigned(17 downto 0);
-  --signal return_output_c : unsigned(35 downto 0);
+  --signal a_c : unsigned({width-1} downto 0);
+  --signal b_c : unsigned({width-1} downto 0);
+  --signal return_output_c : unsigned({(width*2)-1} downto 0);
 
   begin
 
-  """
-    )
+  """)
+    
     if n_extra_input_regs > 0:
         text += """
     -- Delay regs
@@ -890,8 +927,8 @@ end component;
     """
 
     text += (
-        '''
-  mult18x18d_inst : MULT18X18D
+        f'''
+  mult{width}x{width}d_inst : MULT{width}X{width}D
   generic map (
     REG_INPUTA_CLK => "'''
         + in_reg
@@ -933,7 +970,9 @@ end component;
     --mult_bypass => "DISABLED",
     RESETMODE => "ASYNC"  
   )
-  port map(
+  port map(""")
+    if width > 9:
+        text += f"""
     A17 => a_i(17),
     A16 => a_i(16),
     A15 => a_i(15),
@@ -942,7 +981,8 @@ end component;
     A12 => a_i(12),
     A11 => a_i(11),
     A10 => a_i(10),
-    A9 => a_i(9),
+    A9 => a_i(9),"""
+    text += f"""
     A8 => a_i(8),
     A7 => a_i(7),
     A6 => a_i(6),
@@ -951,7 +991,9 @@ end component;
     A3 => a_i(3),
     A2 => a_i(2),
     A1 => a_i(1),
-    A0 => a_i(0),
+    A0 => a_i(0),"""
+    if width > 9:
+        text += f"""
     B17 => b_i(17),
     B16 => b_i(16),
     B15 => b_i(15),
@@ -960,7 +1002,8 @@ end component;
     B12 => b_i(12),
     B11 => b_i(11),
     B10 => b_i(10),
-    B9 => b_i(9),
+    B9 => b_i(9),"""
+    text += f"""
     B8 => b_i(8),
     B7 => b_i(7),
     B6 => b_i(6),
@@ -969,7 +1012,9 @@ end component;
     B3 => b_i(3),
     B2 => b_i(2),
     B1 => b_i(1),
-    B0 => b_i(0),
+    B0 => b_i(0),"""
+    if width > 9:
+        text += f"""
     C17 => '0',
     C16 => '0',
     C15 => '0',
@@ -978,7 +1023,8 @@ end component;
     C12 => '0',
     C11 => '0',
     C10 => '0',
-    C9 => '0',
+    C9 => '0',"""
+    text += f"""
     C8 => '0',
     C7 => '0',
     C6 => '0',
@@ -996,7 +1042,6 @@ end component;
     CLK2 => '0',
     CLK1 => '0',
     """
-    )
     if needs_clk:
         text += """
     CLK0 => clk,
@@ -1013,43 +1058,51 @@ end component;
     RST3 => '0',
     RST2 => '0',
     RST1 => '0',
-    RST0 => '0',
-    -- SRIA17 => '0',
-    -- SRIA16 => '0',
-    -- SRIA15 => '0',
-    -- SRIA14 => '0',
-    -- SRIA13 => '0',
-    -- SRIA12 => '0',
-    -- SRIA11 => '0',
-    -- SRIA10 => '0',
-    -- SRIA9 => '0',
-    -- SRIA8 => '0',
-    -- SRIA7 => '0',
-    -- SRIA6 => '0',
-    -- SRIA5 => '0',
-    -- SRIA4 => '0',
-    -- SRIA3 => '0',
-    -- SRIA2 => '0',
-    -- SRIA1 => '0',
-    -- SRIA0 => '0',
-    -- SRIB17 => '0',
-    -- SRIB16 => '0',
-    -- SRIB15 => '0',
-    -- SRIB14 => '0',
-    -- SRIB13 => '0',
-    -- SRIB12 => '0',
-    -- SRIB11 => '0',
-    -- SRIB10 => '0',
-    -- SRIB9 => '0',
-    -- SRIB8 => '0',
-    -- SRIB7 => '0',
-    -- SRIB6 => '0',
-    -- SRIB5 => '0',
-    -- SRIB4 => '0',
-    -- SRIB3 => '0',
-    -- SRIB2 => '0',
-    -- SRIB1 => '0',
-    -- SRIB0 => '0',
+    RST0 => '0',"""
+    if width > 9:
+        text += f"""
+    SRIA17 => '0',
+    SRIA16 => '0',
+    SRIA15 => '0',
+    SRIA14 => '0',
+    SRIA13 => '0',
+    SRIA12 => '0',
+    SRIA11 => '0',
+    SRIA10 => '0',
+    SRIA9 => '0',"""
+    text += f"""
+    SRIA8 => '0',
+    SRIA7 => '0',
+    SRIA6 => '0',
+    SRIA5 => '0',
+    SRIA4 => '0',
+    SRIA3 => '0',
+    SRIA2 => '0',
+    SRIA1 => '0',
+    SRIA0 => '0',"""
+    if width > 9:
+        text += f"""
+    SRIB17 => '0',
+    SRIB16 => '0',
+    SRIB15 => '0',
+    SRIB14 => '0',
+    SRIB13 => '0',
+    SRIB12 => '0',
+    SRIB11 => '0',
+    SRIB10 => '0',
+    SRIB9 => '0',"""
+    text += f"""
+    SRIB8 => '0',
+    SRIB7 => '0',
+    SRIB6 => '0',
+    SRIB5 => '0',
+    SRIB4 => '0',
+    SRIB3 => '0',
+    SRIB2 => '0',
+    SRIB1 => '0',
+    SRIB0 => '0',"""
+    if width > 9:
+        text += f"""
     SROA17 => open,
     SROA16 => open,
     SROA15 => open,
@@ -1058,7 +1111,8 @@ end component;
     SROA12 => open,
     SROA11 => open,
     SROA10 => open,
-    SROA9 => open,
+    SROA9 => open,"""
+    text += """
     SROA8 => open,
     SROA7 => open,
     SROA6 => open,
@@ -1067,7 +1121,9 @@ end component;
     SROA3 => open,
     SROA2 => open,
     SROA1 => open,
-    SROA0 => open,
+    SROA0 => open,"""
+    if width > 9:
+        text += f"""
     SROB17 => open,
     SROB16 => open,
     SROB15 => open,
@@ -1076,7 +1132,8 @@ end component;
     SROB12 => open,
     SROB11 => open,
     SROB10 => open,
-    SROB9 => open,
+    SROB9 => open,"""
+    text += f"""
     SROB8 => open,
     SROB7 => open,
     SROB6 => open,
@@ -1085,7 +1142,9 @@ end component;
     SROB3 => open,
     SROB2 => open,
     SROB1 => open,
-    SROB0 => open,
+    SROB0 => open,"""
+    if width > 9:
+        text += f"""
     ROA17 => open,
     ROA16 => open,
     ROA15 => open,
@@ -1094,7 +1153,8 @@ end component;
     ROA12 => open,
     ROA11 => open,
     ROA10 => open,
-    ROA9 => open,
+    ROA9 => open,"""
+    text += f"""
     ROA8 => open,
     ROA7 => open,
     ROA6 => open,
@@ -1103,7 +1163,9 @@ end component;
     ROA3 => open,
     ROA2 => open,
     ROA1 => open,
-    ROA0 => open,
+    ROA0 => open,"""
+    if width > 9:
+        text += f"""
     ROB17 => open,
     ROB16 => open,
     ROB15 => open,
@@ -1113,7 +1175,8 @@ end component;
     ROB11 => open,
     ROB10 => open,
     ROB9 => open,
-    ROB8 => open,
+    ROB8 => open,"""
+    text += f"""
     ROB7 => open,
     ROB6 => open,
     ROB5 => open,
@@ -1121,7 +1184,9 @@ end component;
     ROB3 => open,
     ROB2 => open,
     ROB1 => open,
-    ROB0 => open,
+    ROB0 => open,"""
+    if width > 9:
+        text += f"""
     ROC17 => open,
     ROC16 => open,
     ROC15 => open,
@@ -1131,6 +1196,8 @@ end component;
     ROC11 => open,
     ROC10 => open,
     ROC9 => open,
+    """
+    text += f"""
     ROC8 => open,
     ROC7 => open,
     ROC6 => open,
@@ -1139,7 +1206,9 @@ end component;
     ROC3 => open,
     ROC2 => open,
     ROC1 => open,
-    ROC0 => open,
+    ROC0 => open,"""
+    if width > 9:
+        text += f"""
     P35 => p_o(35),
     P34 => p_o(34),
     P33 => p_o(33),
@@ -1157,7 +1226,8 @@ end component;
     P21 => p_o(21),
     P20 => p_o(20),
     P19 => p_o(19),
-    P18 => p_o(18),
+    P18 => p_o(18),"""
+    text += f"""
     P17 => p_o(17),
     P16 => p_o(16),
     P15 => p_o(15),

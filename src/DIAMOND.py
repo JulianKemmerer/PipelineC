@@ -4,6 +4,7 @@ import sys
 import C_TO_LOGIC
 import SYN
 import VHDL
+import OPEN_TOOLS
 from utilities import GET_TOOL_PATH
 
 TOOL_EXE = "diamondc"
@@ -446,3 +447,11 @@ class PathReport:
                     if toks[len(toks) - 1] != "reg":
                         self.end_reg_name = "_".join(toks[0 : len(toks) - 1])
                     # print("end_reg_name",self.end_reg_name)
+
+
+# For now it seems that open tools uses same primitives
+def FUNC_IS_PRIMITIVE(func_name):
+    return OPEN_TOOLS.FUNC_IS_PRIMITIVE(func_name)
+
+def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    return OPEN_TOOLS.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
