@@ -1,8 +1,4 @@
-
-# FIR stuff from
-# https://scipy-cookbook.readthedocs.io/items/FIRFilter.html
-
-from numpy import cos, sin, pi, absolute, arange, array, zeros, max, abs, round, int16
+from numpy import cos, sin, pi, absolute, arange, array, zeros, max, abs, round, int16, exp, arctan2, diff, unwrap, imag, real
 from scipy.signal import kaiserord, lfilter, firwin, freqz
 from pylab import figure, clf, plot, xlabel, ylabel, xlim, ylim, title, grid, axes, show
 from os import path
@@ -26,23 +22,60 @@ def i16_c_array_txt(x, name):
     else:
       c_txt += "\\\n}\n"
   return c_txt
+# Convert to IQ samples
+def real_to_iq(t, s, fc):
+  # Could do IQ separate real values:
+  #   I=s*np.cos(2 * pi * fc * t)
+  #   Q=s*np.sin(2 * pi * fc * t)
+  # Typically do as imaginary:
+  #   e^(j*theta) = cos(theta) + j * sin(theta)
+  iq = s * exp(1.0j * 2 * pi * fc * t)
+  return iq
 
 
 #------------------------------------------------
 # Create a signal for demonstration.
 #------------------------------------------------
-sample_rate = 100.0
-nsamples_in = 250
-t = arange(nsamples_in) / sample_rate
-s = cos(2*pi*0.5*t) + 0.2*sin(2*pi*2.5*t+0.1) + \
-        0.2*sin(2*pi*15.3*t) + 0.1*sin(2*pi*16.7*t + 0.1) + \
-            0.1*sin(2*pi*23.45*t+.8)
 
-# Normalize to between -1.0 and +1.0
-s /= max(abs(s),axis=0)
-# For now make same signal on both I(real) and Q(imaginary) channels
-s_i = array(s)
-s_q = array(s)
+def make_fir_demo_samples(sample_rate, nsamples_in):
+  # FIR stuff from
+  # https://scipy-cookbook.readthedocs.io/items/FIRFilter.html
+  t = arange(nsamples_in) / sample_rate
+  s = cos(2*pi*0.5*t) + 0.2*sin(2*pi*2.5*t+0.1) + \
+          0.2*sin(2*pi*15.3*t) + 0.1*sin(2*pi*16.7*t + 0.1) + \
+              0.1*sin(2*pi*23.45*t+.8)
+
+  # Normalize to between -1.0 and +1.0
+  s /= max(abs(s),axis=0)
+  # For now make same signal on both I(real) and Q(imaginary) channels
+  s_i = array(s)
+  s_q = array(s)
+  return s_i,s_q
+#sample_rate = 100.0
+#nsamples_in = 250
+#s_i,s_q = make_fir_demo_samples(sample_rate,nsamples_in)
+
+def make_fm_test_input(Fs, fc):
+  # FM Modulation Python Script
+  # https://www.rfwireless-world.com/source-code/Python/FM-modulation-demodulation-python-code.html
+  # Setting up FM modulation simulation parameters
+  t = arange(0,0.2,1/Fs)
+  fm1 = 30 # Signal frequency-1 to construct message signal
+  fm2 = 45 # Signal frequency-2 to construct message signal
+  b = 1 # modulation index
+  m_signal = sin(2*pi*fm1*t) + sin(2*pi*fm2*t)
+  #carrier_signal = sin(2 * pi * fc * t)
+  # Generate Frequency modulated signal
+  fmd = sin(2*pi*fc*t + b*m_signal)
+  return t,fmd
+fc = 100 # carrier frequency
+sample_rate = 2000
+t,fmd = make_fm_test_input(sample_rate, fc)
+nsamples_in = len(fmd)
+fmd_iq = real_to_iq(t, fmd, fc)
+s_i = fmd_iq.real
+s_q = fmd_iq.imag
+
 
 # Write samples as a C int16 array input for simulation
 f=open("samples.h","w")
@@ -158,10 +191,46 @@ def decim_5x(sample_rate, s_i, s_q):
     i += decim_fac
   return sample_rate_out,array(dec_filt_s_i),array(dec_filt_s_q)
 
+def fm_demod(x, df=1.0, fc=0.0):
+    ''' Perform FM demodulation of complex carrier.
+
+    Args:
+        x (array):  FM modulated complex carrier.
+        df (float): Normalized frequency deviation [Hz/V].
+        fc (float): Normalized carrier frequency.
+
+    Returns:
+        Array of real modulating signal.
+    '''
+    # https://stackoverflow.com/questions/60193112/python-fm-demod-implementation
+
+    # Remove carrier.
+    n = arange(len(x)) 
+    rx = x*exp(-1j*2*pi*fc*n) #Not needed?
+
+    # Extract phase of carrier.
+    phi = arctan2(imag(rx), real(rx))
+
+    # Calculate frequency from phase.
+    y = diff(unwrap(phi)/(2*pi*df))
+
+    return y
+
+
+
 # Get expected output by applying some DSP
-sample_rate_out,filtered_s_i,filtered_s_q = decim_5x(sample_rate, s_i, s_q)
-nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
-t_out = arange(nsamples_out) / sample_rate_out
+# FIR decim example:
+#sample_rate_out,filtered_s_i,filtered_s_q = decim_5x(sample_rate, s_i, s_q)
+#nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
+#t_out = arange(nsamples_out) / sample_rate_out
+# FM demod example
+sample_rate_out = sample_rate
+nsamples_out = nsamples_in-1 #? Why one less?
+t_out = t[1:] #? Why one less?
+df = 1.0 # ?1.0 / sample_rate_out #? What is norm freq dev?
+filtered_s_i = fm_demod(fmd_iq, df, fc) 
+filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
+
 
 
 #------------------------------------------------
@@ -196,35 +265,35 @@ if path.isfile(fname):
   sim_filtered_s_q = array(list_sim_filtered_s_q)
 else:
   # No sim output yet to compare, just stop
-  exit(0)
+  #exit(0)
+  pass
 
 
 
 #------------------------------------------------
 # Plot the original and filtered signals.
 #------------------------------------------------
-
 # Plot the original signal.
 figure(1)
-title('I - Input')
-plot(t, s_i)
-xlabel('t')
-grid(True)
-figure(2)
-title('Q - Input')
-plot(t, s_q)
+title('IQ Input')
+plot(t, s_i, 'k', label='I')
+#xlabel('t')
+#grid(True)
+#figure(2)
+#title('Q - Input')
+plot(t, s_q, 'r', label='Q')
 xlabel('t')
 grid(True)
 
 
 # Plot the expected output vs simulation output
-figure(3)
-title('I - Expected (green) vs. Sim (blue)')
+figure(2)
+title('I (or single channel) - Expected (green) vs. Sim (blue)')
 plot(t_out, filtered_s_i, 'g', linewidth=4)
 plot(t_out, sim_filtered_s_i, 'b')
 xlabel('t')
 grid(True)
-figure(4)
+figure(3)
 title('Q - Expected (green) vs. Sim (blue)')
 plot(t_out, filtered_s_q, 'g', linewidth=4)
 plot(t_out, sim_filtered_s_q, 'b')
