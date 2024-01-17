@@ -1,6 +1,6 @@
 from numpy import cos, sin, pi, absolute, arange, array, zeros, max, abs, round, int16, exp, arctan2, diff, unwrap, imag, real
 from scipy.signal import kaiserord, lfilter, firwin, freqz
-from pylab import figure, clf, plot, xlabel, ylabel, xlim, ylim, title, grid, axes, show
+from pylab import figure, clf, plot, xlabel, ylabel, xlim, ylim, title, grid, axes, show, subplot, tight_layout
 from os import path
 
 # Helpers to convert float to-from i16
@@ -55,7 +55,7 @@ def make_fir_demo_samples(sample_rate, nsamples_in):
 #nsamples_in = 250
 #s_i,s_q = make_fir_demo_samples(sample_rate,nsamples_in)
 
-def make_fm_test_input(Fs, fc):
+def make_fm_test_input(Fs, fc, show_plots=False):
   # FM Modulation Python Script
   # https://www.rfwireless-world.com/source-code/Python/FM-modulation-demodulation-python-code.html
   # Setting up FM modulation simulation parameters
@@ -64,13 +64,27 @@ def make_fm_test_input(Fs, fc):
   fm2 = 45 # Signal frequency-2 to construct message signal
   b = 1 # modulation index
   m_signal = sin(2*pi*fm1*t) + sin(2*pi*fm2*t)
-  #carrier_signal = sin(2 * pi * fc * t)
+  
   # Generate Frequency modulated signal
   fmd = sin(2*pi*fc*t + b*m_signal)
+  if show_plots:
+    # Plots
+    carrier_signal = sin(2 * pi * fc * t)
+    subplot(3,1,1)
+    plot(t, m_signal)
+    title("Analog Message signal")
+    subplot(3,1,2)
+    plot(t, carrier_signal)
+    title("RF carrier signal")
+    subplot(3,1,3)
+    plot(t, fmd)
+    title("Frequency Modulated Signal")
+    tight_layout()
+    #show()
   return t,fmd
 fc = 100 # carrier frequency
 sample_rate = 2000
-t,fmd = make_fm_test_input(sample_rate, fc)
+t,fmd = make_fm_test_input(sample_rate, fc, True)
 nsamples_in = len(fmd)
 fmd_iq = real_to_iq(t, fmd, fc)
 s_i = fmd_iq.real
@@ -227,7 +241,7 @@ def fm_demod(x, df=1.0, fc=0.0):
 sample_rate_out = sample_rate
 nsamples_out = nsamples_in-1 #? Why one less?
 t_out = t[1:] #? Why one less?
-df = 1.0 # ?1.0 / sample_rate_out #? What is norm freq dev?
+df = 0.1 # ?1.0 / sample_rate_out #? What is norm freq dev?
 filtered_s_i = fm_demod(fmd_iq, df, fc) 
 filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
 
@@ -274,7 +288,7 @@ else:
 # Plot the original and filtered signals.
 #------------------------------------------------
 # Plot the original signal.
-figure(1)
+figure()
 title('IQ Input')
 plot(t, s_i, 'k', label='I')
 #xlabel('t')
@@ -287,13 +301,13 @@ grid(True)
 
 
 # Plot the expected output vs simulation output
-figure(2)
+figure()
 title('I (or single channel) - Expected (green) vs. Sim (blue)')
 plot(t_out, filtered_s_i, 'g', linewidth=4)
 plot(t_out, sim_filtered_s_i, 'b')
 xlabel('t')
 grid(True)
-figure(3)
+figure()
 title('Q - Expected (green) vs. Sim (blue)')
 plot(t_out, filtered_s_q, 'g', linewidth=4)
 plot(t_out, sim_filtered_s_q, 'b')
