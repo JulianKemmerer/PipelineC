@@ -23,6 +23,7 @@ def i16_c_array_txt(x, name):
       c_txt += "\\\n}\n"
   return c_txt
 # Convert to IQ samples
+""" BROKEN?
 def real_to_iq(t, s, fc):
   # Could do IQ separate real values:
   #   I=s*np.cos(2 * pi * fc * t)
@@ -31,6 +32,8 @@ def real_to_iq(t, s, fc):
   #   e^(j*theta) = cos(theta) + j * sin(theta)
   iq = s * exp(1.0j * 2 * pi * fc * t)
   return iq
+"""
+# Prob broken too?
 def real_from_iq(t, fmd_iq, fc):
   # s = I * np.cos(2 * pi * fc * t) + Q * np.sin(2 * pi * fc * t)
   s = fmd_iq.real * cos(2 * pi * fc * t) + fmd_iq.imag * sin(2 * pi * fc * t)
@@ -67,9 +70,22 @@ def make_fm_test_input(Fs, fc, show_plots=False):
   fm2 = 45 # Signal frequency-2 to construct message signal
   b = 1 # modulation index
   m_signal = sin(2*pi*fm1*t) + sin(2*pi*fm2*t)
+  # Normalize to between -1.0 and +1.0
+  m_signal /= max(abs(m_signal),axis=0)
   
   # Generate Frequency modulated signal
   fmd = sin(2*pi*fc*t + b*m_signal)
+  fmd_iq = cos(m_signal) + 1.0j*sin(m_signal)
+  #fmd_iq = sin(m_signal) + 1.0j*sin(m_signal)
+  #figure()
+  #title('IQ Input TEST')
+  #plot(t, m_signal, 'b')
+  #plot(t, fmd_iq.real, 'k', label='I')
+  #plot(t, fmd_iq.imag, 'r', label='Q')
+  #xlabel('t')
+  #show()
+  #exit()
+
   if show_plots:
     # Plots
     carrier_signal = sin(2 * pi * fc * t)
@@ -84,12 +100,15 @@ def make_fm_test_input(Fs, fc, show_plots=False):
     title("Frequency Modulated Signal")
     tight_layout()
     #show()
-  return t,fmd
+
+    
+
+  return t,fmd,fmd_iq
 fc = 100 # carrier frequency
 sample_rate = 2000
-t,fmd = make_fm_test_input(sample_rate, fc, True)
+t,fmd,fmd_iq = make_fm_test_input(sample_rate, fc, True)
 nsamples_in = len(fmd)
-fmd_iq = real_to_iq(t, fmd, fc)
+#fmd_iq = real_to_iq(t, fmd, fc)
 s_i = fmd_iq.real
 s_q = fmd_iq.imag
 
@@ -253,8 +272,9 @@ def fm_demod(x, df=1.0, fc=0.0):
 sample_rate_out = sample_rate
 nsamples_out = nsamples_in-1 #? Why one less?
 t_out = t[1:] #? Why one less?
-df = 0.1 # ?1.0 / sample_rate_out #? What is norm freq dev?
-filtered_s_i = fm_demod(fmd_iq, df, fc) 
+df = 1.0 # normalized freq dev
+fc_norm = fc / sample_rate
+filtered_s_i = fm_demod(fmd_iq, df, fc_norm) 
 filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
 
 
@@ -319,12 +339,13 @@ plot(t_out, filtered_s_i, 'g', linewidth=4)
 plot(t_out, sim_filtered_s_i, 'b')
 xlabel('t')
 grid(True)
-figure()
-title('Q - Expected (green) vs. Sim (blue)')
-plot(t_out, filtered_s_q, 'g', linewidth=4)
-plot(t_out, sim_filtered_s_q, 'b')
-xlabel('t')
-grid(True)
+if sum(filtered_s_q) > 0.0:
+  figure()
+  title('Q - Expected (green) vs. Sim (blue)')
+  plot(t_out, filtered_s_q, 'g', linewidth=4)
+  plot(t_out, sim_filtered_s_q, 'b')
+  xlabel('t')
+  grid(True)
 
 
 show()
