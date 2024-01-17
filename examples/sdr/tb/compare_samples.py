@@ -31,7 +31,10 @@ def real_to_iq(t, s, fc):
   #   e^(j*theta) = cos(theta) + j * sin(theta)
   iq = s * exp(1.0j * 2 * pi * fc * t)
   return iq
-
+def real_from_iq(t, fmd_iq, fc):
+  # s = I * np.cos(2 * pi * fc * t) + Q * np.sin(2 * pi * fc * t)
+  s = fmd_iq.real * cos(2 * pi * fc * t) + fmd_iq.imag * sin(2 * pi * fc * t)
+  return s
 
 #------------------------------------------------
 # Create a signal for demonstration.
@@ -89,6 +92,15 @@ nsamples_in = len(fmd)
 fmd_iq = real_to_iq(t, fmd, fc)
 s_i = fmd_iq.real
 s_q = fmd_iq.imag
+
+
+# TEST IQ conversion
+#fmd_real_from_iq = real_from_iq(t, fmd_iq, fc)
+#figure()
+#plot(t, fmd, 'g', linewidth=5)
+#plot(t, fmd_real_from_iq, 'b')
+#title("Frequency Modulated Signal IQ Conv. Test")
+#show() # LOOKS RIGHT
 
 
 # Write samples as a C int16 array input for simulation
