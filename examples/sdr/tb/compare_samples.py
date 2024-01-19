@@ -323,14 +323,14 @@ grid(True)
 
 # Plot the expected output vs simulation output
 figure()
-title('I (or single channel) - Expected vs. Sim')
+title('Output I (or single channel) - Expected vs. Sim')
 plot(t_out, filtered_s_i, 'g', linewidth=4, label="Expected")
 plot(t_out, sim_filtered_s_i, 'b', label="Simulation")
 xlabel('t')
 grid(True)
 if sum(filtered_s_q) > 0.0:
   figure()
-  title('Q - Expected vs. Sim')
+  title('Output Q - Expected vs. Sim')
   plot(t_out, filtered_s_q, 'g', linewidth=4, label="Expected")
   plot(t_out, sim_filtered_s_q, 'b', label="Simulation")
   xlabel('t')
