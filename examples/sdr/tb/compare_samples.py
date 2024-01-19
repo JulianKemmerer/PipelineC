@@ -81,6 +81,7 @@ def make_fm_test_input(Fs, show_plots=False):
   for i in range(len(m_signal)):
       phase_accumulator += m_signal[i]
       output[i] = cos(phase_accumulator) + 1.0j*sin(phase_accumulator)   
+      
   if show_plots:
     figure()
     title('Modulated IQ Input to FM demod')
@@ -259,10 +260,10 @@ def fm_demod(x, df=1.0, fc=0.0):
 # FM demod example
 sample_rate_out = sample_rate
 nsamples_out = nsamples_in-1 #? Why one less?
-t_out = t[1:] #? Why one less?
-df = 1.0 # normalized freq dev
-fc_norm = fc / sample_rate
-filtered_s_i = fm_demod(fmd_iq, df, fc_norm) 
+t_out = t[1:] # t[0:len(t)-1] # #? Why one less?
+df = 25.0 # normalized freq dev
+fc = 0.0 # baseband IQ
+filtered_s_i = fm_demod(fmd_iq, df, fc) 
 filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
 
 
