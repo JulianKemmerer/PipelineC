@@ -198,28 +198,37 @@ typedef struct ci16_stream_t{
 #define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
 
 // FM demodulation using differentiator
+#define FM_DEV_HZ 25.0 // TODO fix for real radio FM data?
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   static ci16_t iq_history[3];
   static ci16_t iq_dot;
   static int16_t output;
   if(iq_sample.valid){
-    // scale input
-    iq_history[0].real = iq_sample.data.real >> 11;
-    iq_history[0].imag = iq_sample.data.imag >> 11;
+    // save input
+    iq_history[0].real = iq_sample.data.real;
+    iq_history[0].imag = iq_sample.data.imag;
 
     // Calculate derivative
     iq_dot.real = iq_history[0].real - iq_history[2].real;
     iq_dot.imag = iq_history[0].imag - iq_history[2].imag;
 
-    // Calculate output (I[1] * Q') - (Q[1] * I')
-    output = (iq_history[1].real * iq_dot.imag);
-    output -= (iq_history[1].imag * iq_dot.real);
+    // Calculate output (I[1] * Q') - (Q[1] * I') w/ fixed point correction
+    output = (iq_history[1].real * iq_dot.imag) >> 15;
+    output -= (iq_history[1].imag * iq_dot.real) >> 15;
 
     // update history & return
     iq_history[1] = iq_history[0];
     iq_history[2] = iq_history[1];
   }
-  i16_stream_t output_stream = {.data = output, .valid = iq_sample.valid};
+  // Output scaling factor
+  float scale_factor_f = (FM_DEV_HZ/(2.0*3.14)); // FM deviation / 2pi?
+  float f_i16_max = (float)(((int16_t)1<<15)-1);
+  int32_t scale_factor_qN_15 = (int32_t)(scale_factor_f * f_i16_max);
+  int16_t scaled_output_q1_15 = (output * scale_factor_qN_15) >> 15;
+  i16_stream_t output_stream = {
+    .data = scaled_output_q1_15,
+    .valid = iq_sample.valid
+  };
   return output_stream;
 }
 
