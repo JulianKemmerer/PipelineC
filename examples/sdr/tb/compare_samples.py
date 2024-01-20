@@ -61,27 +61,24 @@ def make_fir_demo_samples(sample_rate, nsamples_in):
 #nsamples_in = 250
 #s_i,s_q = make_fir_demo_samples(sample_rate,nsamples_in)
 
-def make_fm_test_input(Fs, show_plots=False):
+def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
   # sample rate
-  Fs = 1000.0
-  fm_deviation = 25.0
-
+  #sample_rate = 1000.0
+  #freq_deviation = 25.0
   # time array
-  t = arange(0.0, 0.1 , 1.0/Fs)
-
+  t = arange(0.0, 0.1 , 1.0/sample_rate)
   # freq of message
   fm1 = 25.0
-
   # entire message
   m_signal = sin(2.0*pi*fm1*t)
-
+  # output
   output = zeros((len(m_signal)), dtype=complex_)
-
   phase_accumulator = 0
   for i in range(len(m_signal)):
-      phase_accumulator += m_signal[i]
+      #phase_accumulator += m_signal[i]
+      phase_accumulator += ((2*pi*freq_deviation/sample_rate)*m_signal[i])
       output[i] = cos(phase_accumulator) + 1.0j*sin(phase_accumulator)   
-      
+  # plots   
   if show_plots:
     figure()
     title('Modulated IQ Input to FM demod')
@@ -95,7 +92,8 @@ def make_fm_test_input(Fs, show_plots=False):
 
 fc = 100 # carrier frequency
 sample_rate = 1000
-t,m_signal,fmd_iq = make_fm_test_input(sample_rate, True)
+freq_deviation = 25.0
+t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
 nsamples_in = len(fmd_iq)
 #fmd_iq = real_to_iq(t, fmd, fc)
 s_i = fmd_iq.real
@@ -227,27 +225,21 @@ def decim_5x(sample_rate, s_i, s_q):
 
 def fm_demod(x, df=1.0, fc=0.0):
     ''' Perform FM demodulation of complex carrier.
-
     Args:
         x (array):  FM modulated complex carrier.
         df (float): Normalized frequency deviation [Hz/V].
         fc (float): Normalized carrier frequency.
-
     Returns:
         Array of real modulating signal.
     '''
     # https://stackoverflow.com/questions/60193112/python-fm-demod-implementation
-
     # Remove carrier.
     n = arange(len(x)) 
     rx = x*exp(-1j*2*pi*fc*n) #Not needed?
-
     # Extract phase of carrier.
     phi = arctan2(imag(rx), real(rx))
-
     # Calculate frequency from phase.
     y = diff(unwrap(phi)/(2*pi*df))
-
     return y
 
 
@@ -261,7 +253,7 @@ def fm_demod(x, df=1.0, fc=0.0):
 sample_rate_out = sample_rate
 nsamples_out = nsamples_in-1 #? Why one less?
 t_out = t[1:] # t[0:len(t)-1] # #? Why one less?
-df = 25.0 # normalized freq dev
+df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
 fc = 0.0 # baseband IQ
 filtered_s_i = fm_demod(fmd_iq, df, fc) 
 filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
@@ -329,6 +321,12 @@ plot(t_out, filtered_s_i, 'g', linewidth=4, label="Expected")
 plot(t_out, sim_filtered_s_i, 'b', label="Simulation")
 xlabel('t')
 grid(True)
+
+# TODO FREQ DOMAIN if I only singla channel
+#figure()
+#plot(fftfreq(len(output),d= 1.0/ sample_rate), 10*log10(abs(fft(output))))
+
+
 if sum(filtered_s_q) > 0.0:
   figure()
   title('Output Q - Expected vs. Sim')
