@@ -250,13 +250,17 @@ def fm_demod(x, df=1.0, fc=0.0):
 #nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
 #t_out = arange(nsamples_out) / sample_rate_out
 # FM demod example
-sample_rate_out = sample_rate
-nsamples_out = nsamples_in-1 #? Why one less?
-t_out = t[1:] # t[0:len(t)-1] # #? Why one less?
 df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
 fc = 0.0 # baseband IQ
 filtered_s_i = fm_demod(fmd_iq, df, fc) 
-filtered_s_q = array([0]*len(filtered_s_i)) # no output second channel
+sample_rate_out = sample_rate
+# fm_demod uses diff differentiation which has delay of 1 sample
+# Preprend a zero to still have [0] sample alignment in time
+filtered_s_i = array(([0] + list(filtered_s_i)))
+nsamples_out = nsamples_in
+t_out = t
+# no output second channel
+filtered_s_q = array([0]*len(filtered_s_i))
 
 
 

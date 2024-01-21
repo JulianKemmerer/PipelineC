@@ -199,6 +199,7 @@ typedef struct ci16_stream_t{
 
 // FM demodulation using differentiator
 #define FM_DEV_HZ 25.0 // TODO fix for real radio FM data?
+#define SAMPLE_RATE_HZ 1000.0
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   static ci16_t iq_history[3];
   static ci16_t iq_dot;
@@ -221,7 +222,8 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
     iq_history[2] = iq_history[1];
   }
   // Output scaling factor
-  float scale_factor_f = (FM_DEV_HZ/(2.0*3.14)); // FM deviation / 2pi?
+  float df = FM_DEV_HZ/SAMPLE_RATE_HZ;
+  float scale_factor_f = 1.0 / (2.0 * 3.14 * df); // 1/(2 pi df)
   float f_i16_max = (float)(((int16_t)1<<15)-1);
   int32_t scale_factor_qN_15 = (int32_t)(scale_factor_f * f_i16_max);
   int16_t scaled_output_q1_15 = (output * scale_factor_qN_15) >> 15;
