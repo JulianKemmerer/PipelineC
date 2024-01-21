@@ -198,7 +198,8 @@ typedef struct ci16_stream_t{
 #define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
 
 // FM demodulation using differentiator
-#define FM_DEV_HZ 25.0 // TODO fix for real radio FM data?
+// TODO fix for real radio FM data?
+#define FM_DEV_HZ 25.0 
 #define SAMPLE_RATE_HZ 1000.0
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   static ci16_t iq_history[3];
@@ -235,11 +236,6 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 }
 
 // Interpolation Part of (24/125) sample rate change
-// TODO ADJUST FIR PARAMS, taps etc
-/* you need a 125 kHz cutoff or lower 
-The zero insertion causes aliasing
-You essentially get 23 aliases 
-You then have to remove them*/
 #define fir_interp_name interp_24x
 #define FIR_INTERP_N_TAPS 227
 #define FIR_INTERP_LOG2_N_TAPS 8
