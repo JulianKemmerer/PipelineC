@@ -5,6 +5,7 @@ from os import path
 
 # Helpers to convert float to-from i16
 i16_max = (2**15)-1
+fp_one_i16 = 1.0/i16_max #hack, ==1 when converted to i16
 def to_int16(f):
   return round(f*i16_max).astype(int16)
 def to_float(i16):
@@ -43,7 +44,7 @@ def real_from_iq(t, fmd_iq, fc):
 # Create a signal for demonstration.
 #------------------------------------------------
 
-def make_fir_demo_samples(sample_rate, nsamples_in):
+def make_fir_decim_demo_samples(sample_rate, nsamples_in):
   # FIR stuff from
   # https://scipy-cookbook.readthedocs.io/items/FIRFilter.html
   t = arange(nsamples_in) / sample_rate
@@ -59,7 +60,8 @@ def make_fir_demo_samples(sample_rate, nsamples_in):
   return s_i,s_q
 #sample_rate = 100.0
 #nsamples_in = 250
-#s_i,s_q = make_fir_demo_samples(sample_rate,nsamples_in)
+#s_i,s_q = make_fir_decim_demo_samples(sample_rate,nsamples_in)
+#s_valid = [fp_one_i16] * len(s_i)
 
 def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
   # sample rate
@@ -89,16 +91,43 @@ def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
     legend()
     #show()
   return t,m_signal,output
-
-fc = 100 # carrier frequency
-sample_rate = 1000
-freq_deviation = 25.0
-t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
-nsamples_in = len(fmd_iq)
+#fc = 100 # carrier frequency
+#sample_rate = 1000
+#freq_deviation = 25.0
+#t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
+#nsamples_in = len(fmd_iq)
 #fmd_iq = real_to_iq(t, fmd, fc)
-s_i = fmd_iq.real
-s_q = fmd_iq.imag
+#s_i = fmd_iq.real
+#s_q = fmd_iq.imag
+#s_valid = [fp_one_i16] * len(fmd_iq)
 
+def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
+  # FIR stuff from
+  # https://scipy-cookbook.readthedocs.io/items/FIRFilter.html
+  t = arange(nsamples_in) / sample_rate
+  s = cos(2*pi*0.5*t) + 0.2*sin(2*pi*2.5*t+0.1) + \
+          0.2*sin(2*pi*15.3*t) + 0.1*sin(2*pi*16.7*t + 0.1) + \
+              0.1*sin(2*pi*23.45*t+.8)
+  # Normalize to between -1.0 and +1.0
+  s /= max(abs(s),axis=0)
+
+  # Input needs to be slow enough 
+  # that interpolating up in sample rate doesnt exceed max rate
+  # Add invalid idle gaps into signal
+  s_w_gaps = []
+  s_valid = []
+  for sample in s:
+    s_w_gaps.append(sample)
+    s_valid.append(fp_one_i16)
+    for _ in range(0,interp_fac-1):
+      s_w_gaps.append(0)
+      s_valid.append(0)
+  return array(s_w_gaps),array(s_valid),t
+interp_fac = 24
+sample_rate = 100.0
+nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
+s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
+s_q = array([0]*len(s_i))
 
 # TEST IQ conversion
 #fmd_real_from_iq = real_from_iq(t, fmd_iq, fc)
@@ -113,8 +142,19 @@ s_q = fmd_iq.imag
 f=open("samples.h","w")
 f.write(i16_c_array_txt(s_i,"I_SAMPLES"))
 f.write(i16_c_array_txt(s_q,"Q_SAMPLES"))
+f.write(i16_c_array_txt(s_valid,"SAMPLES_VALID"))
 f.close()
 
+
+# For rest of python logic, dont need valid flags, remove those invalid samples
+s_i_new = []
+s_q_new = []
+for i in range(0,len(s_valid)):
+  if list(s_valid)[i]!=0:
+    s_i_new.append(list(s_i)[i])
+    s_q_new.append(list(s_q)[i])
+s_i = array(s_i_new)
+s_q = array(s_q_new)
 
 #------------------------------------------------
 # Create a filter and apply it to s.
@@ -242,6 +282,252 @@ def fm_demod(x, df=1.0, fc=0.0):
     y = diff(unwrap(phi)/(2*pi*df))
     return y
 
+def interp_24x(sample_rate, s):
+  # Interp by 24x insert 23 zeros and 1 sample
+  sample_rate_out = sample_rate * interp_fac
+  interp_s = []
+  for sample in s:
+    interp_s.append(sample)
+    for _ in range(0,interp_fac-1):
+      interp_s.append(0)
+
+  # Filter the pulses and zeros to interpolate
+  taps_int16 = [ \
+  -173, \
+  -34,  \
+  -36,  \
+  -39,  \
+  -41,  \
+  -44,  \
+  -45,  \
+  -47,  \
+  -48,  \
+  -49,  \
+  -49,  \
+  -49,  \
+  -48,  \
+  -46,  \
+  -44,  \
+  -42,  \
+  -38,  \
+  -35,  \
+  -30,  \
+  -25,  \
+  -20,  \
+  -13,  \
+  -7,   \
+  0,    \
+  7,    \
+  15,   \
+  23,   \
+  31,   \
+  39,   \
+  48,   \
+  56,   \
+  64,   \
+  71,   \
+  78,   \
+  85,   \
+  91,   \
+  97,   \
+  101,  \
+  105,  \
+  108,  \
+  110,  \
+  110,  \
+  110,  \
+  108,  \
+  105,  \
+  100,  \
+  95,   \
+  88,   \
+  79,   \
+  70,   \
+  59,   \
+  47,   \
+  34,   \
+  20,   \
+  6,    \
+  -10,  \
+  -26,  \
+  -42,  \
+  -59,  \
+  -75,  \
+  -92,  \
+  -108, \
+  -124, \
+  -139, \
+  -153, \
+  -166, \
+  -177, \
+  -187, \
+  -195, \
+  -201, \
+  -205, \
+  -207, \
+  -206, \
+  -203, \
+  -197, \
+  -188, \
+  -176, \
+  -161, \
+  -143, \
+  -122, \
+  -97,  \
+  -70,  \
+  -40,  \
+  -8,   \
+  28,   \
+  66,   \
+  107,  \
+  150,  \
+  194,  \
+  241,  \
+  289,  \
+  338,  \
+  389,  \
+  440,  \
+  491,  \
+  542,  \
+  593,  \
+  643,  \
+  693,  \
+  741,  \
+  787,  \
+  831,  \
+  873,  \
+  913,  \
+  949,  \
+  983,  \
+  1013, \
+  1040, \
+  1063, \
+  1082, \
+  1096, \
+  1107, \
+  1114, \
+  1116, \
+  1114, \
+  1107, \
+  1096, \
+  1082, \
+  1063, \
+  1040, \
+  1013, \
+  983,  \
+  949,  \
+  913,  \
+  873,  \
+  831,  \
+  787,  \
+  741,  \
+  693,  \
+  643,  \
+  593,  \
+  542,  \
+  491,  \
+  440,  \
+  389,  \
+  338,  \
+  289,  \
+  241,  \
+  194,  \
+  150,  \
+  107,  \
+  66,   \
+  28,   \
+  -8,   \
+  -40,  \
+  -70,  \
+  -97,  \
+  -122, \
+  -143, \
+  -161, \
+  -176, \
+  -188, \
+  -197, \
+  -203, \
+  -206, \
+  -207, \
+  -205, \
+  -201, \
+  -195, \
+  -187, \
+  -177, \
+  -166, \
+  -153, \
+  -139, \
+  -124, \
+  -108, \
+  -92,  \
+  -75,  \
+  -59,  \
+  -42,  \
+  -26,  \
+  -10,  \
+  6,    \
+  20,   \
+  34,   \
+  47,   \
+  59,   \
+  70,   \
+  79,   \
+  88,   \
+  95,   \
+  100,  \
+  105,  \
+  108,  \
+  110,  \
+  110,  \
+  110,  \
+  108,  \
+  105,  \
+  101,  \
+  97,   \
+  91,   \
+  85,   \
+  78,   \
+  71,   \
+  64,   \
+  56,   \
+  48,   \
+  39,   \
+  31,   \
+  23,   \
+  15,   \
+  7,    \
+  0,    \
+  -7,   \
+  -13,  \
+  -20,  \
+  -25,  \
+  -30,  \
+  -35,  \
+  -38,  \
+  -42,  \
+  -44,  \
+  -46,  \
+  -48,  \
+  -49,  \
+  -49,  \
+  -49,  \
+  -48,  \
+  -47,  \
+  -45,  \
+  -44,  \
+  -41,  \
+  -39,  \
+  -36,  \
+  -34,  \
+  -173  ]
+  taps_int16 = array(taps_int16)
+  taps = to_float(taps_int16)
+
+  # Use lfilter to filter s with the FIR filter.
+  filtered_interp_s = lfilter(taps, 1.0, array(interp_s))
+
+  return sample_rate_out,filtered_interp_s
+
 
 
 # Get expected output by applying some DSP
@@ -250,15 +536,21 @@ def fm_demod(x, df=1.0, fc=0.0):
 #nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
 #t_out = arange(nsamples_out) / sample_rate_out
 # FM demod example
-df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
-fc = 0.0 # baseband IQ
-filtered_s_i = fm_demod(fmd_iq, df, fc) 
-sample_rate_out = sample_rate
+#df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
+#fc = 0.0 # baseband IQ
+#filtered_s_i = fm_demod(fmd_iq, df, fc) 
+#sample_rate_out = sample_rate
 # fm_demod uses diff differentiation which has delay of 1 sample
 # Preprend a zero to still have [0] sample alignment in time
-filtered_s_i = array(([0] + list(filtered_s_i)))
-nsamples_out = nsamples_in
-t_out = t
+#filtered_s_i = array(([0] + list(filtered_s_i)))
+#nsamples_out = nsamples_in
+#t_out = t
+# no output second channel
+#filtered_s_q = array([0]*len(filtered_s_i))
+# FIR interp example
+sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
+nsamples_out = len(filtered_s_i)
+t_out = arange(nsamples_out) / sample_rate_out
 # no output second channel
 filtered_s_q = array([0]*len(filtered_s_i))
 
@@ -314,7 +606,7 @@ plot(t, s_i, 'k', label='I')
 #title('Q - Input')
 plot(t, s_q, 'r', label='Q')
 legend()
-xlabel('t')
+xlabel(f't ({nsamples_in} samples)')
 grid(True)
 
 
@@ -323,7 +615,7 @@ figure()
 title('Output I (or single channel) - Expected vs. Sim')
 plot(t_out, filtered_s_i, 'g', linewidth=4, label="Expected")
 plot(t_out, sim_filtered_s_i, 'b', label="Simulation")
-xlabel('t')
+xlabel(f't ({nsamples_out} samples)')
 grid(True)
 
 # TODO FREQ DOMAIN if I only singla channel
@@ -336,7 +628,7 @@ if sum(filtered_s_q) > 0.0:
   title('Output Q - Expected vs. Sim')
   plot(t_out, filtered_s_q, 'g', linewidth=4, label="Expected")
   plot(t_out, sim_filtered_s_q, 'b', label="Simulation")
-  xlabel('t')
+  xlabel(f't ({nsamples_out} samples)')
   grid(True)
 legend()
 
