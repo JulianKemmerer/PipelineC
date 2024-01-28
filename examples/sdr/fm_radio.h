@@ -197,39 +197,48 @@ typedef struct ci16_stream_t{
 #define decim_10x_out_t fir_decim_out_data_stream_type(decim_10x)
 #define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
 
+
+typedef struct window_t{
+    ci16_t data[3];
+} window_t;
+
+window_t samples_window(ci16_stream_t iq){
+  static window_t state;
+
+  if(iq.valid){
+    // shift data (reverse order with save ?)
+    state.data[1].real = state.data[0].real;
+    state.data[1].imag = state.data[0].imag;
+    state.data[2].real = state.data[1].real;
+    state.data[2].imag = state.data[1].imag;
+
+    // save input sample
+    state.data[0].real = iq.data.real;
+    state.data[0].imag = iq.data.imag;
+  }
+    
+  return state;
+}
+
 // FM demodulation using differentiator
 // TODO fix FM dev and sample rate for real radio FM data?
 #define FM_DEV_HZ 25.0 
 #define SAMPLE_RATE_HZ 1000.0
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
-  static ci16_t iq_history[3];
-  static ci16_t iq_dot;
-  static int16_t output;
-  if(iq_sample.valid){
-    // save input
-    iq_history[0].real = iq_sample.data.real;
-    iq_history[0].imag = iq_sample.data.imag;
-
-    // Calculate derivative
-    iq_dot.real = iq_history[0].real - iq_history[2].real;
-    iq_dot.imag = iq_history[0].imag - iq_history[2].imag;
-
-    // Calculate output (I[1] * Q') - (Q[1] * I') w/ fixed point correction
-    output = (iq_history[1].real * iq_dot.imag) >> 15;
-    output -= (iq_history[1].imag * iq_dot.real) >> 15;
-
-    // update history & return
-    iq_history[1] = iq_history[0];
-    iq_history[2] = iq_history[1];
-  }
-  // Output scaling factor
+  window_t multi_samples = samples_window(iq_sample);
+  int16_t i_dot = multi_samples.data[0].real - multi_samples.data[2].real;
+  int16_t q_dot = multi_samples.data[0].imag - multi_samples.data[2].imag;
+  int16_t output_a = (multi_samples.data[1].real * q_dot) >> 15;
+  int16_t output_b = (multi_samples.data[1].imag * i_dot) >> 15;
+  int16_t output = output_a - output_b;
+  /*// Output scaling factor
   float df = FM_DEV_HZ/SAMPLE_RATE_HZ;
   float scale_factor_f = 1.0 / (2.0 * 3.14 * df); // 1/(2 pi df)
   float f_i16_max = (float)(((int16_t)1<<15)-1);
   int32_t scale_factor_qN_15 = (int32_t)(scale_factor_f * f_i16_max);
-  int16_t scaled_output_q1_15 = (output * scale_factor_qN_15) >> 15;
+  int16_t scaled_output_q1_15 = (output * scale_factor_qN_15) >> 15;*/
   i16_stream_t output_stream = {
-    .data = scaled_output_q1_15,
+    .data = output,
     .valid = iq_sample.valid
   };
   return output_stream;
