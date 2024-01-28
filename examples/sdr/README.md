@@ -48,10 +48,6 @@ then downsample by M=125 = 48KSPS
   stages=[5,5,5 # can reuse 5x decim?]
 
 
-TODO DECIDE on how to handle some `static` stateful functions not meeting 125MHz
-...likely need CDC in final design running after radio decim slower...
-
-
 # `Simulation`:
 
 * Work in progress `tb/` dir.
