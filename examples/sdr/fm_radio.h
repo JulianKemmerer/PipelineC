@@ -198,7 +198,7 @@ typedef struct ci16_stream_t{
 #define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
 
 // FM demodulation using differentiator
-// TODO fix for real radio FM data?
+// TODO fix FM dev and sample rate for real radio FM data?
 #define FM_DEV_HZ 25.0 
 #define SAMPLE_RATE_HZ 1000.0
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
