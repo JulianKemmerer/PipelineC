@@ -61,7 +61,7 @@ def make_fir_decim_demo_samples(sample_rate, nsamples_in):
 #sample_rate = 100.0
 #nsamples_in = 250
 #s_i,s_q = make_fir_decim_demo_samples(sample_rate,nsamples_in)
-#s_valid = [fp_one_i16] * len(s_i)
+#s_valid = array([fp_one_i16] * len(s_i))
 
 def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
   # sample rate
@@ -91,15 +91,14 @@ def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
     legend()
     #show()
   return t,m_signal,output
-#fc = 100 # carrier frequency
-#sample_rate = 1000
-#freq_deviation = 25.0
-#t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
-#nsamples_in = len(fmd_iq)
-#fmd_iq = real_to_iq(t, fmd, fc)
-#s_i = fmd_iq.real
-#s_q = fmd_iq.imag
-#s_valid = [fp_one_i16] * len(fmd_iq)
+fc = 100 # carrier frequency
+sample_rate = 1000
+freq_deviation = 25.0
+t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
+nsamples_in = len(fmd_iq)
+s_i = fmd_iq.real
+s_q = fmd_iq.imag
+s_valid = array([fp_one_i16] * len(fmd_iq))
 
 def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
   # FIR stuff from
@@ -123,11 +122,11 @@ def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
       s_w_gaps.append(0)
       s_valid.append(0)
   return array(s_w_gaps),array(s_valid),t
-interp_fac = 24
-sample_rate = 100.0
-nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
-s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
-s_q = array([0]*len(s_i))
+#interp_fac = 24
+#sample_rate = 100.0
+#nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
+#s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
+#s_q = array([0]*len(s_i))
 
 # TEST IQ conversion
 #fmd_real_from_iq = real_from_iq(t, fmd_iq, fc)
@@ -536,23 +535,23 @@ def interp_24x(sample_rate, s):
 #nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
 #t_out = arange(nsamples_out) / sample_rate_out
 # FM demod example
-#df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
-#fc = 0.0 # baseband IQ
-#filtered_s_i = fm_demod(fmd_iq, df, fc) 
-#sample_rate_out = sample_rate
+df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
+fc = 0.0 # baseband IQ
+filtered_s_i = fm_demod(fmd_iq, df, fc) 
+sample_rate_out = sample_rate
 # fm_demod uses diff differentiation which has delay of 1 sample
 # Preprend a zero to still have [0] sample alignment in time
-#filtered_s_i = array(([0] + list(filtered_s_i)))
-#nsamples_out = nsamples_in
-#t_out = t
-# no output second channel
-#filtered_s_q = array([0]*len(filtered_s_i))
-# FIR interp example
-sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
-nsamples_out = len(filtered_s_i)
-t_out = arange(nsamples_out) / sample_rate_out
+filtered_s_i = array(([0] + list(filtered_s_i)))
+nsamples_out = nsamples_in
+t_out = t
 # no output second channel
 filtered_s_q = array([0]*len(filtered_s_i))
+# FIR interp example
+#sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
+#nsamples_out = len(filtered_s_i)
+#t_out = arange(nsamples_out) / sample_rate_out
+# no output second channel
+#filtered_s_q = array([0]*len(filtered_s_i))
 
 
 
