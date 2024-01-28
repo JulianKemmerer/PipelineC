@@ -52,7 +52,7 @@ then downsample by M=125 = 48KSPS
 
 * Work in progress `tb/` dir.
 * `compare_samples.py` produces input samples and compares output.
-* `rm sim_output.log; python3 compare_samples.py && ../../../src/pipelinec tb.c --sim --comb --cocotb --ghdl --run 100 &> sim_output.log && python3 compare_samples.py`
+* `rm sim_output.log; python3 compare_samples.py && ../../../src/pipelinec tb.c --sim --comb --cocotb --ghdl --run 123 &> sim_output.log && python3 compare_samples.py`
 
 
 # `Hardware Test`:

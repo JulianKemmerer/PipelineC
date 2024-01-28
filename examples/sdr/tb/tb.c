@@ -50,7 +50,7 @@ void tb()
 
   // Print valid output samples
   if(i_output.valid&q_output.valid){
-    printf("Cycle %d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
+    printf("Cycle,%d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
   }
 
   // Prepare for next sample (rotating to loop samples if run longer)
