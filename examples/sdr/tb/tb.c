@@ -14,15 +14,17 @@
 #include "samples.h"
 
 // Configure IO for the unit under test
-#define in_stream_t interp_24x_in_t
-#define out_stream_t interp_24x_out_t
+#define in_stream_t i16_stream_t
+#define out_stream_t i16_stream_t
 #define DO_IQ_IN_IQ_OUT \
-interp_24x_in_t audio_interp_in = {.data=i_input.data, .valid=q_input.valid}; \
-interp_24x_out_t audio_interp_out = interp_24x(audio_interp_in); \
-i_output.data = audio_interp_out.data; \
-i_output.valid = audio_interp_out.valid; \
+ci16_stream_t fm_demod_in = { \
+  .data = {.real=i_input.data, .imag=q_input.data}, \
+  .valid = i_input.valid & q_input.valid \
+}; \
+i_output = fm_demodulate(fm_demod_in); \
 q_output.data = 0; \
 q_output.valid = 1;
+
 
 // The test bench sending samples into a module and printing output sampples
 #pragma MAIN tb
