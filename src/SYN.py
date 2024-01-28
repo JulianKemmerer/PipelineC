@@ -18,6 +18,7 @@ import DEVICE_MODELS
 import DIAMOND
 import EFINITY
 import OPEN_TOOLS
+import OPEN_TOOLS_GOWIN
 import PYRTL
 import QUARTUS
 import RAW_VHDL
@@ -168,6 +169,11 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                         print("Diamond:", DIAMOND.DIAMOND_PATH, flush=True)
                     else:
                         raise Exception("Diamond install not found!")
+            elif part_str.lower().startswith("gw1"):
+                SYN_TOOL = OPEN_TOOLS_GOWIN
+            #elif part_str.lower().startswith("gw2"):
+            #    # NextPNR only supports one specific part for GW2
+            #    SYN_TOOL = GOWIN_EDA
             elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
                 SYN_TOOL = EFINITY
                 if os.path.exists(EFINITY.EFINITY_PATH):
