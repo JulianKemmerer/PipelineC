@@ -53,8 +53,9 @@ void tb()
     printf("Cycle %d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
   }
 
-  // Prepare for next sample
-  ARRAY_SHIFT_DOWN(i_samples, I_SAMPLES_SIZE, 1)
-  ARRAY_SHIFT_DOWN(q_samples, Q_SAMPLES_SIZE, 1)
+  // Prepare for next sample (rotating to loop samples if run longer)
+  ARRAY_1ROT_DOWN(in_data_t, i_samples, I_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(in_data_t, q_samples, Q_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(uint1_t, samples_valid, SAMPLES_VALID_SIZE)
   cycle_counter+=1;
 }
