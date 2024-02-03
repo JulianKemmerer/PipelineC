@@ -15,20 +15,25 @@ else:
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
-        print("TODO parse GOWIN output into path reports")
-        # Split output into path texts
+        # Split report into individual paths
+        path_tok = "						Path"
+        # Only look at first path for now
+        path_texts = syn_output.split(path_tok)[1:2]
+        # Parse each path
         self.path_reports = {}
-        # path_report = PathReport(path_text) etc
+        for path_text in path_texts:
+            path_report = PathReport(path_text)
+            self.path_reports[path_report.path_group] = path_report
         if len(self.path_reports) == 0:
             raise Exception(f"Bad synthesis log?:\n{syn_output}")
 
 
 class PathReport:
     def __init__(self, path_report_text):
-        # print("path_report_text",path_report_text)
+        #print("path_report_text",path_report_text) 
         self.path_delay_ns = None  # nanoseconds
         self.slack_ns = None
-        self.source_ns_per_clock = None  # From latch edge time
+        self.source_ns_per_clock = None
         self.path_group = None  # Clock name?
         self.netlist_resources = set()  # Set of strings
         self.start_reg_name = None
@@ -37,50 +42,57 @@ class PathReport:
         prev_line = None
         in_netlist_resources = False
         for line in path_report_text.split("\n"):
-            # Start reg
-            tok1 = "Path Begin    : "
+            # SLACK
+            tok1 = "Slack             : "
             if tok1 in line:
                 toks = line.split(tok1)
-                self.start_reg_name = NODE_TO_ELEM(toks[1].strip())
-                # print("start_reg_name",self.start_reg_name)
-
-            # End reg
-            tok1 = "Path End      : "
-            if tok1 in line:
-                toks = line.split(tok1)
-                self.end_reg_name = NODE_TO_ELEM(toks[1].strip())
-                # print("end_reg_name",self.end_reg_name)
+                self.slack_ns = float(toks[1].strip())
+                #print("Slack",self.slack_ns)
 
             # CLOCK NAME / PATH GROUP?
-            tok1 = "Launch Clock  : "
+            tok1 = "Data Required Time: "
             if tok1 in line:
                 toks = line.split(tok1)
-                tok = toks[1].split("(")[0].strip()
-                self.path_group = tok
-                # print("path_group",self.path_group)
+                tok = toks[1].strip()
+                self.source_ns_per_clock = float(tok)
+                self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
+                #print("source_ns_per_clock",self.source_ns_per_clock)
+                #print("path_delay_ns",self.path_delay_ns)
 
-            # SLACK
-            tok1 = "Slack         : "
+            # Start reg
+            tok1 = "From              : "
             if tok1 in line:
                 toks = line.split(tok1)
-                toks = toks[1].split("(")
-                self.slack_ns = float(toks[0].strip())
-                # print("Slack",self.slack_ns)
+                self.start_reg_name = toks[1].strip()
+                #print("start_reg_name",self.start_reg_name)
+
+            # End reg
+            tok1 = "To                : "
+            if tok1 in line:
+                toks = line.split(tok1)
+                self.end_reg_name = toks[1].strip()
+                #print("end_reg_name",self.end_reg_name)
+
+            # CLOCK NAME / PATH GROUP?
+            tok1 = "Launch Clk        : "
+            if tok1 in line:
+                toks = line.split(":")
+                tok = toks[1].strip()
+                self.path_group = tok
+                #print("path_group",self.path_group)
 
             # Netlist resources
-            tok1 = "Capture Clock Path"
-            if line.startswith(tok1):
+            toks = list(filter(None, line.split(" ")))
+            if len(toks)==0:
                 in_netlist_resources = False
             if in_netlist_resources:
-                toks = list(filter(None, line.split(" ")))
-                # pin name  model name    delay (ns)   cumulative delay (ns)    pins on net   location
-                if len(toks) == 6:
-                    s = toks[0]
-                    resource = NODE_TO_ELEM(s)
-                    # print("resource",resource)
-                    self.netlist_resources.add(resource)
-            tok1 = "Data Path"
-            if line.startswith(tok1):
+                #print(toks)
+                if len(toks) == 7:
+                    s = toks[6]
+                    #print("resource",s)
+                    self.netlist_resources.add(s)
+            tok1 = "active clock edge time"
+            if tok1 in line:
                 in_netlist_resources = True
 
 
