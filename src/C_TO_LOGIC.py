@@ -11511,7 +11511,7 @@ def APPEND_PRAGMA_INFO(parser_state):
         # PART
         elif name == "PART":
             toks = pragma.string.split(" ")
-            part = toks[1].strip('"').strip()
+            part = " ".join(toks[1:]).strip('"').strip()
             # print("part",part)
             # sys.exit(0)
             if parser_state.part is not None and parser_state.part != part:
