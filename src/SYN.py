@@ -179,8 +179,8 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 SYN_TOOL = GOWIN
                 if os.path.exists(GOWIN.GOWIN_PATH):
                     print("Gowin:", GOWIN.GOWIN_PATH, flush=True)
-                #else: TODO reenable after tools installed...
-                #    raise Exception("Gowin install not found!")
+                else:
+                    raise Exception("Gowin install not found!")
             else:
                 if not allow_fail:
                     print(
