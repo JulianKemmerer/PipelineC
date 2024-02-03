@@ -307,15 +307,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
             if clock_name in all_user_clks:
                 get_thing_cmd = "get_nets"
             f.write(
-                "create_clock -add -name "
-                + clock_name
-                + " -period "
-                + str(ns)
-                + " -waveform {0 "
-                + str(ns / 2.0)
-                + "} [" + get_thing_cmd + " "
-                + clock_name
-                + "]\n"
+                f"create_clock -add -name {clock_name} -period {ns} -waveform {{0 {ns/2.0}}} [{get_thing_cmd} {{{clock_name}}}]\n"
             )
 
         # All clock assumed async? Doesnt matter for internal syn

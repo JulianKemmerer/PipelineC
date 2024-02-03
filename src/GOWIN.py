@@ -9,21 +9,22 @@ TOOL_EXE = "gw_sh"
 # Default to env if there
 ENV_TOOL_PATH = GET_TOOL_PATH(TOOL_EXE)
 if ENV_TOOL_PATH:
-    GOWIN_PATH = os.path.abspath(os.path.dirname(ENV_TOOL_PATH))
+    GOWIN_PATH = ENV_TOOL_PATH
 else:
-    GOWIN_PATH = "/todo/install/gowin/tools"
+    GOWIN_PATH = "/usr/local/share/gowin/IDE/bin/gw_sh"
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
-        # Split report into individual paths
-        path_tok = "						Path"
-        # Only look at first path for now
-        path_texts = syn_output.split(path_tok)[1:2]
-        # Parse each path
         self.path_reports = {}
-        for path_text in path_texts:
-            path_report = PathReport(path_text)
-            self.path_reports[path_report.path_group] = path_report
+        PATH_REPORT_BEGIN = '''3.3.1 Setup Analysis Report'''
+        PATH_REPORT_END = '''3.3.2 Hold Analysis Report'''
+        syn_report = syn_output.split(PATH_REPORT_BEGIN)[-1].split(PATH_REPORT_END)[0]
+        PATH_SPLIT = "\t\t\t\t\t\tPath"
+        maybe_path_texts = syn_report.split(PATH_SPLIT)
+        for path_text in maybe_path_texts:
+            if "Data Arrival Path:" in path_text:
+                path_report = PathReport(path_text)
+                self.path_reports[path_report.path_group] = path_report
         if len(self.path_reports) == 0:
             raise Exception(f"Bad synthesis log?:\n{syn_output}")
 
@@ -39,7 +40,6 @@ class PathReport:
         self.start_reg_name = None
         self.end_reg_name = None
 
-        prev_line = None
         in_netlist_resources = False
         for line in path_report_text.split("\n"):
             # SLACK
@@ -53,8 +53,7 @@ class PathReport:
             tok1 = "Data Required Time: "
             if tok1 in line:
                 toks = line.split(tok1)
-                tok = toks[1].strip()
-                self.source_ns_per_clock = float(tok)
+                self.source_ns_per_clock = float(toks[1].strip())
                 self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
                 #print("source_ns_per_clock",self.source_ns_per_clock)
                 #print("path_delay_ns",self.path_delay_ns)
@@ -77,18 +76,17 @@ class PathReport:
             tok1 = "Launch Clk        : "
             if tok1 in line:
                 toks = line.split(":")
-                tok = toks[1].strip()
-                self.path_group = tok
+                self.path_group = toks[1].strip()
                 #print("path_group",self.path_group)
 
             # Netlist resources
-            toks = list(filter(None, line.split(" ")))
-            if len(toks)==0:
+            toks = [x for x in line.split(" ") if x]
+            if len(toks) == 0:
                 in_netlist_resources = False
             if in_netlist_resources:
                 #print(toks)
                 if len(toks) == 7:
-                    s = toks[6]
+                    s = toks[-1]
                     #print("resource",s)
                     self.netlist_resources.add(s)
             tok1 = "active clock edge time"
@@ -137,8 +135,8 @@ def SYN_AND_REPORT_TIMING_NEW(
     vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
         multimain_timing_params, parser_state, inst_name
     )
-    log_file_name = top_entity_name + ".tr"
-    # Single inst
+
+    # Single instance
     if inst_name:
         Logic = parser_state.LogicInstLookupTable[inst_name]
 
@@ -163,7 +161,7 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-    log_path = output_directory + "/" + "impl/pnr/" + log_file_name
+    log_path = output_directory + "/impl/pnr/pipelinec.tr"
     # Use same configs based on to speed up run time?
     log_to_read = log_path
 
@@ -171,13 +169,9 @@ def SYN_AND_REPORT_TIMING_NEW(
     if os.path.exists(log_to_read) and use_existing_log_file:
         # print "SKIPPED:", syn_imp_bash_cmd
         print("Reading log", log_to_read)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-        return ParsedTimingReport(log_text)
-
-    # Not from log:
-
+        with open(log_to_read, "r") as f:
+            log_text = f.read()
+            return ParsedTimingReport(log_text)
     # Write top level vhdl for this module/multimain
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(
@@ -206,42 +200,44 @@ def SYN_AND_REPORT_TIMING_NEW(
         parser_state, inst_name
     )
 
-    # Generate tcl file TODO use real generated vhdl files
-    tcl_txt = ""
-    tcl_txt += f'''
-set_device -name {parser_state.part}
-'''
-    # All the generated vhdl files
-    for vhdl_file_text in vhdl_files_texts.split(" "):  # hacky
-        vhdl_file_text = vhdl_file_text.strip()
-        if vhdl_file_text != "":
-            tcl_txt += (
-                """add_file -type vhdl """
-                + vhdl_file_text
-                + "\n")
-    tcl_txt += f'''
+    # Which VHDL files?
+    vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
+        multimain_timing_params, parser_state, inst_name
+    )
+
+    # Generate TCL file
+    tcl_file = top_entity_name + ".tcl"
+    tcl_path = output_directory + "/" + tcl_file
+
+    with open(tcl_path, "w") as f:
+         # user must add --device-version <NA|B|C|D> or --device_name <name> for parts that have same part number
+        f.write(f"set_device {parser_state.part}\n")
+        for vhdl_file_text in vhdl_files_texts.split(" "):
+            vhdl_file_text = vhdl_file_text.strip()
+            if vhdl_file_text != "":
+                f.write(f"add_file -type vhdl {vhdl_file_text}\n")
+        f.write(
+            f'''
 add_file -type sdc {constraints_filepath}
 set_option -output_base_name pipelinec
 set_option -top_module {top_entity_name}
 set_option -vhdl_std vhd2008
 set_option -gen_text_timing_rpt 1
 run all
-'''
-    tcl_file = top_entity_name + ".tcl"
-    tcl_path = output_directory + "/" + tcl_file
-    f = open(tcl_path, "w")
-    f.write(tcl_txt)
-    f.close()
-
-    # Run the build script
-    print("Running Gowin:", tcl_path, flush=True)
-    syn_imp_bash_cmd = (
-        GOWIN_PATH + "/" + TOOL_EXE + " " + tcl_path
-    )
+''')
+    syn_imp_bash_cmd = f"{GOWIN_PATH} {tcl_path}"
+    print("Running:", log_path, flush=True)
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
-    
+
     # Read and parse log
-    f = open(log_path, "r")
-    log_text = f.read()
-    f.close()
+    with open(log_path, "r", errors="replace") as f:
+        log_text = f.read()
     return ParsedTimingReport(log_text)
+
+def FUNC_IS_PRIMITIVE(func_name):
+    return func_name in [
+        
+    ]
+
+def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    pass
