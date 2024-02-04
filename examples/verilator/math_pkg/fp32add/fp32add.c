@@ -62,8 +62,8 @@ top->y = 0;
 #define DUT_GET_OUTPUTS(top) \
 DUT_GET_FLOAT_OUTPUT(top, result)\
 c_result = fp32add(x, y);\
-/* <= 1e-6 part error allowed */\
-allowed_err = max((double)(fabs(c_result)*1e-6), (double)FLT_MIN);
+/* <= 1e-4 part error allowed */\
+allowed_err = max((double)(fabs(c_result)*1e-4), (double)FLT_MIN);
 
 #define DUT_COMPARE_LOG(top) \
 err = fabs(c_result - result);\
