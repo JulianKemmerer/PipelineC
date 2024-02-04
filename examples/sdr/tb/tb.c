@@ -21,11 +21,10 @@ ci16_stream_t fm_demod_in = { \
   .data = {.real=i_input.data, .imag=q_input.data}, \
   .valid = i_input.valid & q_input.valid \
 }; \
-i16_stream_t demod_raw = fm_demodulate(fm_demod_in); \
-i_output.data = demod_raw.data; \
-i_output.valid = demod_raw.valid; \
+i_output = fm_demodulate(fm_demod_in); \
 q_output.data = 0; \
 q_output.valid = 1;
+
 
 // The test bench sending samples into a module and printing output sampples
 #pragma MAIN tb
@@ -34,14 +33,15 @@ void tb()
   static uint32_t cycle_counter;
   static in_data_t i_samples[I_SAMPLES_SIZE] = I_SAMPLES;
   static in_data_t q_samples[Q_SAMPLES_SIZE] = Q_SAMPLES;
+  static uint1_t samples_valid[SAMPLES_VALID_SIZE] = SAMPLES_VALID;
 
   // Prepare input sample into DUT
   in_stream_t i_input;
   i_input.data = i_samples[0];
-  i_input.valid = 1;
+  i_input.valid = samples_valid[0];
   in_stream_t q_input;
   q_input.data = q_samples[0];
-  q_input.valid = 1;
+  q_input.valid = samples_valid[0];
 
   // Do one clock cycle, input valid and get output
   out_stream_t i_output;
@@ -50,11 +50,12 @@ void tb()
 
   // Print valid output samples
   if(i_output.valid&q_output.valid){
-    printf("Cycle %d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
+    printf("Cycle,%d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
   }
 
-  // Prepare for next sample
-  ARRAY_SHIFT_DOWN(i_samples, I_SAMPLES_SIZE, 1)
-  ARRAY_SHIFT_DOWN(q_samples, Q_SAMPLES_SIZE, 1)
+  // Prepare for next sample (rotating to loop samples if run longer)
+  ARRAY_1ROT_DOWN(in_data_t, i_samples, I_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(in_data_t, q_samples, Q_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(uint1_t, samples_valid, SAMPLES_VALID_SIZE)
   cycle_counter+=1;
 }
