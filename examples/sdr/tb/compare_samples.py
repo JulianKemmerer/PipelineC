@@ -174,7 +174,6 @@ else:
 
 
 # Duplicate/reduce input samples for plotting to match how long sim was actually run (repeating samples buffer)
-sim_cycle_count
 i_in = 0
 i_resized = 0
 s_i_resized = []
@@ -340,6 +339,7 @@ def fm_demod(x, df=1.0, fc=0.0):
 
 def interp_24x(sample_rate, s):
   # Interp by 24x insert 23 zeros and 1 sample
+  interp_fac = 24
   sample_rate_out = sample_rate * interp_fac
   interp_s = []
   for sample in s:

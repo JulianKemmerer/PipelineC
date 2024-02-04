@@ -1,6 +1,6 @@
 // See README.md for info on this design
 
-#pragma PART "xc7a100tcsg324-1"
+#pragma PART "xc7a200tffg1156-2"
 #include "intN_t.h"
 #include "uintN_t.h"
 
