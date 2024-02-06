@@ -74,87 +74,6 @@ class PathHTMLReport:
                                 self.netlist_resources.add(row[5].text)
                     
 
-class ParsedTimingReport:
-    def __init__(self, syn_output):
-        self.path_reports = {}
-        PATH_REPORT_BEGIN = '''3.3.1 Setup Analysis Report'''
-        PATH_REPORT_END = '''3.3.2 Hold Analysis Report'''
-        syn_report = syn_output.split(PATH_REPORT_BEGIN)[-1].split(PATH_REPORT_END)[0]
-        PATH_SPLIT = "\t\t\t\t\t\tPath"
-        maybe_path_texts = syn_report.split(PATH_SPLIT)
-        for path_text in maybe_path_texts:
-            if "Data Arrival Path:" in path_text:
-                path_report = PathReport(path_text)
-                self.path_reports[path_report.path_group] = path_report
-        if len(self.path_reports) == 0:
-            raise Exception(f"Bad synthesis log?:\n{syn_output}")
-
-
-class PathReport:
-    def __init__(self, path_report_text):
-        #print("path_report_text",path_report_text) 
-        self.path_delay_ns = None  # nanoseconds
-        self.slack_ns = None
-        self.source_ns_per_clock = None
-        self.path_group = None  # Clock name?
-        self.netlist_resources = set()  # Set of strings
-        self.start_reg_name = None
-        self.end_reg_name = None
-
-        in_netlist_resources = False
-        for line in path_report_text.split("\n"):
-            # SLACK
-            tok1 = "Slack             : "
-            if tok1 in line:
-                toks = line.split(tok1)
-                self.slack_ns = float(toks[1].strip())
-                #print("Slack",self.slack_ns)
-
-            # CLOCK NAME / PATH GROUP?
-            tok1 = "Data Required Time: "
-            if tok1 in line:
-                toks = line.split(tok1)
-                self.source_ns_per_clock = float(toks[1].strip())
-                self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-                #print("source_ns_per_clock",self.source_ns_per_clock)
-                #print("path_delay_ns",self.path_delay_ns)
-
-            # Start reg
-            tok1 = "From              : "
-            if tok1 in line:
-                toks = line.split(tok1)
-                self.start_reg_name = toks[1].strip()
-                #print("start_reg_name",self.start_reg_name)
-
-            # End reg
-            tok1 = "To                : "
-            if tok1 in line:
-                toks = line.split(tok1)
-                self.end_reg_name = toks[1].strip()
-                #print("end_reg_name",self.end_reg_name)
-
-            # CLOCK NAME / PATH GROUP?
-            tok1 = "Launch Clk        : "
-            if tok1 in line:
-                toks = line.split(":")
-                self.path_group = toks[1].strip()
-                #print("path_group",self.path_group)
-
-            # Netlist resources
-            toks = [x for x in line.split(" ") if x]
-            if len(toks) == 0:
-                in_netlist_resources = False
-            if in_netlist_resources:
-                #print(toks)
-                if len(toks) == 7:
-                    s = toks[-1]
-                    #print("resource",s)
-                    self.netlist_resources.add(s)
-            tok1 = "active clock edge time"
-            if tok1 in line:
-                in_netlist_resources = True
-
-
 # Based on available devices and checked against device_list.csv inside Gowin tools v1.9.9
 # might not be entirely comprehensive, but one can apply sensible defaults based on this
 # (won't copy data from that list as it would not fit the license)
@@ -473,11 +392,18 @@ def SYN_AND_REPORT_TIMING_NEW(
     tcl_path = output_directory + "/" + tcl_file
 
     # parse part name to direct the synthesis 
-    part_name = parser_state.part
+    part_name_parts = parser_state.part.split(":")
+    if len(part_name_parts) > 1:
+        part_name, device_version = part_name_parts
+    else:
+        part_name = part_name_parts[0]
+        device_version = None
     tool_part_name, device_versions = PART_TO_DEVICE_VERSIONS(part_name)
 
     with open(tcl_path, "w") as f:
-        if len(device_versions) > 1:
+        if device_version:
+            f.write(f"set_device --device_version {device_version} {tool_part_name}\n")
+        elif len(device_versions) > 1:
             f.write(f"set_device --device_version {device_versions[-1]} {tool_part_name}\n")
         else:
             f.write(f"set_device {tool_part_name}\n")
