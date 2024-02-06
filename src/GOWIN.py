@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 
 import C_TO_LOGIC
 import SYN
@@ -12,6 +13,66 @@ if ENV_TOOL_PATH:
     GOWIN_PATH = ENV_TOOL_PATH
 else:
     GOWIN_PATH = "/usr/local/share/gowin/IDE/bin/gw_sh"
+
+
+class ParsedHTMLTimingReport:
+    def __init__(self, syn_output):
+        self.path_reports = {}
+        # fixing GowinSynthesis timing output html one error at a time,
+        # and massaging it to be readable by python's default XML parser.
+        syn_output = syn_output.replace("<br>", "<br/>").replace("</br>", "<br/>") # fixing html5 auto-closing tags (including badly-formed ones)
+        syn_output = syn_output.replace("&nbsp;", " ").replace("&nbsp", " ") # fixing space entities (including badly-formed ones)
+        syn_output = syn_output.replace("<1%", "&lt;1%") # WTH gowin?
+        syn_out_root = ET.fromstring(syn_output).find('body').find('div')[1]
+        current_path_nodes = None
+        path_nodes = []
+        # split the main report node based on the <h3> items in it
+        for path_report_node in syn_out_root:
+            if path_report_node.tag == 'h3':
+                if current_path_nodes:
+                    path_nodes += [current_path_nodes]
+                current_path_nodes = []
+                #print(f"h3: {path_report_node.text}")
+            elif current_path_nodes != None:
+                current_path_nodes += [path_report_node]
+                #print(f"path node: {path_report_node.tag}")
+        path_nodes += [current_path_nodes]
+        for path_node_items in path_nodes:
+            path_report = PathHTMLReport(path_node_items)
+            self.path_reports[path_report.path_group] = path_report
+        #print(path_nodes)
+        #raise Exception(f"Parsed HTML Root: {syn_out_root.tag} {syn_out_root.attrib}")
+        if len(self.path_reports) == 0:
+            raise Exception(f"Bad synthesis log?:\n{syn_output}")
+    
+
+class PathHTMLReport:
+    def __init__(self, path_node_items):
+        self.path_delay_ns = None # nanoseconds
+        self.slack_ns = None
+        self.source_ns_per_clock = None
+        self.path_group = None  # Clock name?
+        self.netlist_resources = set()  # Set of strings
+        self.start_reg_name = None
+        self.end_reg_name = None
+        looking_for = ""
+        for node in path_node_items:
+            if node.tag == "b":
+                looking_for = node.text # will be "Path Summary:", "Data Arrival Path:", etc
+            elif node.tag == "table":
+                match looking_for:
+                    case "Path Summary:":
+                        self.slack_ns = float(node[0][1].text)
+                        self.source_ns_per_clock = float(node[2][1].text)
+                        self.start_reg_name = node[3][1].text
+                        self.end_reg_name = node[4][1].text
+                        self.path_group = node[5][1].text
+                        self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
+                    case "Data Arrival Path:":
+                        for row in node:
+                            if row[5].tag != 'th':
+                                self.netlist_resources.add(row[5].text)
+                    
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
@@ -94,26 +155,7 @@ class PathReport:
                 in_netlist_resources = True
 
 
-GW_PART_REGEX = r"(GW[125][AEFNRSTZ]+)-([A-Z0-9]+)(\([ABCD]\))?"
-
-def PART_SPEED_GRADE_FIXUP(
-    speed, allowed=[
-        "C9/I8", "C8/I7", "C7/I6", "C6/I5", "C5/I4",
-        "C4/I3", "C3/I2", "C2/I1", "C1/I0",
-        "ES", "A6", "A5", "A4", "A3", "A0"
-        ]):
-    """
-    Returns the speed grade that is expected by gw_sh,
-    for parts that can have complex commercial/industrial
-    speed grades
-    """
-    if len(speed) > 1:
-        for item in allowed:
-            if item.find(speed) != -1:
-                return item
-    raise Exception(f"Bad part speed grade: {speed}")
-
-# Based on available devices and checked against device_list.csv inside Gowin tools
+# Based on available devices and checked against device_list.csv inside Gowin tools v1.9.9
 # might not be entirely comprehensive, but one can apply sensible defaults based on this
 # (won't copy data from that list as it would not fit the license)
 GOWIN_PART_PACKAGES_GRADES_VERSIONS = {
@@ -287,7 +329,7 @@ GOWIN_PART_PACKAGES_GRADES_VERSIONS = {
     "GW5AT": [[["LV75"], ["UG484"], ["ES"], ["B"]]]
 }
 
-def PATH_GRADE_TO_TOOL_GRADE(part_grade, grades):
+def PART_GRADE_TO_TOOL_GRADE(part_grade, grades):
     if len(part_grade) == 2 or len(part_grade) == 5:
         for grade in grades:
             if grade.find(part_grade) != -1:
@@ -310,7 +352,7 @@ def PART_TO_DEVICE_VERSIONS(part_str):
                     for package in packages:
                         if split_part[1].startswith(package, l):
                             l += len(package)
-                            grade = PATH_GRADE_TO_TOOL_GRADE(split_part[1][l:], grades)
+                            grade = PART_GRADE_TO_TOOL_GRADE(split_part[1][l:], grades)
                             return f"{split_part[0]}-{split_part[1][:l]}{grade}", versions
     raise Exception(f"Cannot derive device versions from part string {part_str} - please check GOWIN.py if part exists")
 
@@ -381,7 +423,8 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-    log_path = f"{output_directory}/impl/pnr/{top_entity_name}.tr"
+    log_path = f"{output_directory}/impl/gwsynthesis/{top_entity_name}_syn.rpt.html"
+    #log_path = f"{output_directory}/impl/pnr/{top_entity_name}.tr"
     # Use same configs based on to speed up run time?
     log_to_read = log_path
 
@@ -449,7 +492,7 @@ set_option -output_base_name {top_entity_name}
 set_option -top_module {top_entity_name}
 set_option -vhdl_std vhd2008
 set_option -gen_text_timing_rpt 1
-run all
+run syn
 ''')
     syn_imp_bash_cmd = f"{GOWIN_PATH} {tcl_path}"
     print("Running:", log_path, flush=True)
@@ -458,7 +501,7 @@ run all
     # Read and parse log
     with open(log_path, "r", errors="replace") as f:
         log_text = f.read()
-    return ParsedTimingReport(log_text)
+    return ParsedHTMLTimingReport(log_text)
 
 def FUNC_IS_PRIMITIVE(func_name):
     return func_name in [
