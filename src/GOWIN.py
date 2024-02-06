@@ -94,6 +94,226 @@ class PathReport:
                 in_netlist_resources = True
 
 
+GW_PART_REGEX = r"(GW[125][AEFNRSTZ]+)-([A-Z0-9]+)(\([ABCD]\))?"
+
+def PART_SPEED_GRADE_FIXUP(
+    speed, allowed=[
+        "C9/I8", "C8/I7", "C7/I6", "C6/I5", "C5/I4",
+        "C4/I3", "C3/I2", "C2/I1", "C1/I0",
+        "ES", "A6", "A5", "A4", "A3", "A0"
+        ]):
+    """
+    Returns the speed grade that is expected by gw_sh,
+    for parts that can have complex commercial/industrial
+    speed grades
+    """
+    if len(speed) > 1:
+        for item in allowed:
+            if item.find(speed) != -1:
+                return item
+    raise Exception(f"Bad part speed grade: {speed}")
+
+# Based on available devices and checked against device_list.csv inside Gowin tools
+# might not be entirely comprehensive, but one can apply sensible defaults based on this
+# (won't copy data from that list as it would not fit the license)
+GOWIN_PART_PACKAGES_GRADES_VERSIONS = {
+    "GW1N": [
+        [["LV1S", "LV1"], # device variants
+         ["CS30", "QN32", "QN48", "LQ100"], # packages
+         ["C6/I5", "C5/I4"], # grades
+         ["NA"]], # versions
+        [["LV1P5", "UV1P5"], # device variants
+         ["LQ100X", "LQ100", "QN48X"], # packages
+         ["C7/I6", "C6/I5"], # grades
+         ["NA", "B", "C"]], # versions
+        [["LV2", "UV2"], # device variants
+         ["LQ100X", "LQ144X", "LQ100", "LQ144",
+          "CS42H", "CS42", "CS100H", "CS100",
+          "MG121X", "MG121", "MG132X", "MG132H", "MG132", "MG49",
+          "QN32X", "QN32", "QN48E", "QN48H", "QN48", "QN32X", "QN32" ], # packages
+         ["C7/I6", "C6/I5"], # grades
+         ["NA", "B", "C"]], # versions
+        [["LV4", "UV4"], # device variants
+         ["QN32", "QN48", "QN88",
+          "CS72",
+          "LQ100", "LQ144",
+          "MG132X", "MG160",
+          "PG256M", "PG256"], # packages
+         ["C7/I6", "C6/I5", "C5/I4", "A4"], # grades
+         ["NA", "B", "D"]], # versions
+        [["LV9", "UV9"], # device variants
+         ["CM64", "CS81M",
+          "QN48", "QN60", "QN88",
+          "LQ100", "LQ144", "LQ176",
+          "MG160", "MG196",
+          "PG256", "PG332",
+          "UG169", "UG256", "UG332"], # packages
+          ["C6/I5", "C5/I4", "ES"], # grades
+          ["NA", "B", "C"]] # versions
+    ],
+    "GW1NZ": [
+        [["LV1", "ZV1"], # device variants
+         ["FN24", "FN32", "FN32F", "CS16", "CG25", "QN48"], # packages
+         ["C6/I5", "C5/I4", "I3", "I2", "ES", "A3"], # grades
+         ["NA", "C"]], # versions
+        [["LV2", "ZV2"], # device variants
+         ["CS100H", "QN48", "CS42"], # packages
+         ["C6/I5", "C5/I4", "I3", "I2"], # grades
+         ["NA", "B", "C"]] # versions
+    ],
+    "GW1NR": [
+        [["LV1"], # device variants
+         ["FN32G", "EQ144G",
+          "QN32X", "QN48G", "QN48X",
+          "LQ100G"], # packages
+         ["C6/I5", "C5/I4","ES"], # grades
+         ["NA"]], # versions
+        [["LV2", "UV2"], # device variants
+         ["MG49P", "MG49PG", "MG49G"], # packages
+         ["C7/I6", "C6/I5"], # grades
+         ["NA", "B", "C"]], # versions
+        [["LV4", "UV4"], # device variants
+         ["QN88P", "QN88", "MG81P"], # packages
+         ["C7/I6", "C6/I5", "C5/I4", "ES"], # grades
+         ["NA", "B", "C"]], # versions
+        [["LV9", "UV9"], # device variants
+         ["QN88P", "QN88",
+          "LQ144P", "MG100P"], # packages
+         ["C7/I6", "C6/I5", "C5/I4", "ES"], # grades
+         ["NA", "C"]] # versions
+    ],
+    "GW1NS": [
+        [["LV4C"], # device variants
+         ["QN32", "QN48", "CS49", "MG64"], # packages
+         ["C7/I6", "C6/I5", "C5/I4", "ES"], # grades
+         ["NA"]] # versions
+    ],
+    "GW1NSR": [
+        [["LV4C"], # device variants
+         ["QN48G", "QN48P", "MG64P"], # packages
+         ["C7/I6", "C6/I5", "C5/I4"], # grades
+         ["NA"]] # versions
+    ],
+    "GW1NSER": [
+        [["LV4C"], # device variants
+         ["QN48G", "QN48P"], # packages
+         ["C7/I6", "C6/I5", "C5/I4"], # grades
+         ["NA"]] # versions
+    ],
+    "GW1NRF": [
+        [["LV4", "UV4"], # device variants
+         ["QN48E", "QN48"], # packages
+         ["C6/I5", "C5/I4"], # grades
+         ["NA"]] # versions
+    ],
+    "GW2A": [
+        [["LV18"], # device variants
+         ["PG256CF", "PG256SF", "PG256S", "PG256C", "PG256E", "PG256",
+          "PG484C", "PG484",
+          "MG195", "EQ144", "UG484", "UG324",
+          "QN88"], # packages
+         ["C9/I8", "C8/I7", "C7/I6", "A6", "ES"], # grades
+         ["NA", "C"]], # versions
+        [["LV55"], # device variants
+         ["PG484S", "PG484", "PG1156",
+          "UG324D", "UG324F", "UG324", "UG484S", "UG676"], # packages
+         ["C9/I8", "C8/I7", "C7/I6", "ES"], # grades
+         ["NA", "C"]] # versions
+    ],
+    "GW2AR": [
+        [["LV18"], # device variants
+         ["QN88PF", "QN88P", "QN88",
+          "EQ144P", "EQ144", "EQ176"], # packages
+         ["C9/I8", "C8/I7", "C7/I6", "ES"], # grades
+         ["NA", "C"]] # versions
+    ],
+    "GW2ANR": [
+        [["LV18"], # device variants
+         ["QN88"], # packages
+         ["C9/I8", "C8/I7", "C7/I6", "ES"], # grades
+         ["C"]] # versions
+    ],
+    "GW2AN": [
+        [["LV9", "EV9"], # device variants
+         ["PG256",
+          "UG324", "UG400", "UG484"], # packages
+         ["C7/I6"], # grades
+         ["NA"]], # versions
+        [["LV18", "EV18"], # device variants
+         ["PG256", "PG484",
+          "UG256", "UG324", "UG332", "UG400", "UG484", "UG676"], # packages
+         ["C7/I6"], # grades
+         ["NA"]], # versions
+        [["LV55"], # device variants
+         ["UG676"], # packages
+         ["C9/I8", "C8/I7", "C7/I6"], # grades
+         ["C"]] # versions
+    ],
+    "GW5A": [
+        [["LV138"], # device variants
+         ["UG324A"], # packages
+         ["C2/I1", "C1/I0", "ES"],
+         ["B"]], # versions
+        [["LV25", "EV25"], # device variants
+         ["MG121N", "MG196S",
+          "UG225S", "UG256C", "UG324",
+          "PG256S", "PG256C", "PG256",
+          "LQ100", "LQ144"], # packages
+         ["C2/I1", "C1/I0", "ES", "A0"], # grades
+         ["A"]] # versions
+    ],
+    "GW5AR": [
+        [["LV25"], # device variants
+         ["UG256P"], # packages
+         ["C2/I1", "C1/I0", "ES"], # grades
+         ["A"]] # versions
+    ],
+    "GW5AS": [
+        [["LV138"], # device variants
+         ["UG324A"], # packages
+         ["C2/I1", "C1/I0", "ES"], # grades
+         ["B"]], # versions
+        [["EV25"], # device variants
+         ["UG256"], # packages
+         ["C2/I1", "C1/I0", "ES"], # grades
+         ["A"]] # versions
+    ],
+    "GW5AST": [
+        [["LV138F", "LV138"], # device variants
+         ["PG484A", "PG676A"], # packages
+         ["C2/I1", "C1/I0", "ES"], # grades
+         ["B"]] # versions
+    ],
+    "GW5AT": [[["LV75"], ["UG484"], ["ES"], ["B"]]]
+}
+
+def PATH_GRADE_TO_TOOL_GRADE(part_grade, grades):
+    if len(part_grade) == 2 or len(part_grade) == 5:
+        for grade in grades:
+            if grade.find(part_grade) != -1:
+                return grade
+    raise Exception(f"Cannot derive part grade from part subsection: {part_grade}")
+
+
+def PART_TO_DEVICE_VERSIONS(part_str):
+    """
+    Returns the allowed device version strings - which are expected
+    by gw_sh, otherwise it won't synthesize for that part number.
+    """
+    split_part = part_str.upper().split("-")
+    if split_part[0] in GOWIN_PART_PACKAGES_GRADES_VERSIONS:
+        subparts = GOWIN_PART_PACKAGES_GRADES_VERSIONS[split_part[0]]
+        for [prefixes, packages, grades, versions] in subparts:
+            for package_prefix in prefixes:
+                if split_part[1].startswith(package_prefix):
+                    l = len(package_prefix)
+                    for package in packages:
+                        if split_part[1].startswith(package, l):
+                            l += len(package)
+                            grade = PATH_GRADE_TO_TOOL_GRADE(split_part[1][l:], grades)
+                            return f"{split_part[0]}-{split_part[1][:l]}{grade}", versions
+    raise Exception(f"Cannot derive device versions from part string {part_str} - please check GOWIN.py if part exists")
+
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(
     inst_name,
@@ -161,7 +381,7 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-    log_path = output_directory + "/impl/pnr/pipelinec.tr"
+    log_path = f"{output_directory}/impl/pnr/{top_entity_name}.tr"
     # Use same configs based on to speed up run time?
     log_to_read = log_path
 
@@ -209,9 +429,15 @@ def SYN_AND_REPORT_TIMING_NEW(
     tcl_file = top_entity_name + ".tcl"
     tcl_path = output_directory + "/" + tcl_file
 
+    # parse part name to direct the synthesis 
+    part_name = parser_state.part
+    tool_part_name, device_versions = PART_TO_DEVICE_VERSIONS(part_name)
+
     with open(tcl_path, "w") as f:
-         # user must add --device-version <NA|B|C|D> or --device_name <name> for parts that have same part number
-        f.write(f"set_device {parser_state.part}\n")
+        if len(device_versions) > 1:
+            f.write(f"set_device --device_version {device_versions[-1]} {tool_part_name}\n")
+        else:
+            f.write(f"set_device {tool_part_name}\n")
         for vhdl_file_text in vhdl_files_texts.split(" "):
             vhdl_file_text = vhdl_file_text.strip()
             if vhdl_file_text != "":
@@ -219,7 +445,7 @@ def SYN_AND_REPORT_TIMING_NEW(
         f.write(
             f'''
 add_file -type sdc {constraints_filepath}
-set_option -output_base_name pipelinec
+set_option -output_base_name {top_entity_name}
 set_option -top_module {top_entity_name}
 set_option -vhdl_std vhd2008
 set_option -gen_text_timing_rpt 1
