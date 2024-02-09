@@ -48,15 +48,11 @@ then downsample by M=125 = 48KSPS
   stages=[5,5,5 # can reuse 5x decim?]
 
 
-TODO DECIDE on how to handle some `static` stateful functions not meeting 125MHz
-...likely need CDC in final design running after radio decim slower...
-
-
 # `Simulation`:
 
 * Work in progress `tb/` dir.
 * `compare_samples.py` produces input samples and compares output.
-* `rm sim_output.log; python3 compare_samples.py && ../../../src/pipelinec tb.c --sim --comb --cocotb --ghdl --run 100 &> sim_output.log && python3 compare_samples.py`
+* `rm sim_output.log; python3 compare_samples.py && ../../../src/pipelinec tb.c --sim --comb --cocotb --ghdl --run 123 &> sim_output.log && python3 compare_samples.py`
 
 
 # `Hardware Test`:

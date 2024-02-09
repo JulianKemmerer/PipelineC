@@ -56,9 +56,8 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   decim_5x_in_t audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
   decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
 
-  // FM deemphasis of audio samples
+  // SKIPPED FOR NOW // FM deemphasis of audio samples
   i16_stream_t deemph_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
-  i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
-
-  return deemph_out;
+  // SKIPPED FOR NOW i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
+  return deemph_in;
 }

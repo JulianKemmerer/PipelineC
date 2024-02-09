@@ -61,7 +61,7 @@ def make_fir_decim_demo_samples(sample_rate, nsamples_in):
 #sample_rate = 100.0
 #nsamples_in = 250
 #s_i,s_q = make_fir_decim_demo_samples(sample_rate,nsamples_in)
-#s_valid = [fp_one_i16] * len(s_i)
+#s_valid = array([fp_one_i16] * len(s_i))
 
 def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
   # sample rate
@@ -87,19 +87,18 @@ def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
     plot(t, m_signal, 'o', label='M')
     plot(t, output.real, 'k', label='I')
     plot(t, output.imag, 'r', label='Q')
-    xlabel('t')
+    xlabel(f't ({len(t)} samples)')
     legend()
     #show()
   return t,m_signal,output
-#fc = 100 # carrier frequency
-#sample_rate = 1000
-#freq_deviation = 25.0
-#t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
-#nsamples_in = len(fmd_iq)
-#fmd_iq = real_to_iq(t, fmd, fc)
-#s_i = fmd_iq.real
-#s_q = fmd_iq.imag
-#s_valid = [fp_one_i16] * len(fmd_iq)
+fc = 100 # carrier frequency
+sample_rate = 1000
+freq_deviation = 25.0
+t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
+nsamples_in = len(fmd_iq)
+s_i = fmd_iq.real
+s_q = fmd_iq.imag
+s_valid = array([fp_one_i16] * len(fmd_iq))
 
 def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
   # FIR stuff from
@@ -123,19 +122,11 @@ def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
       s_w_gaps.append(0)
       s_valid.append(0)
   return array(s_w_gaps),array(s_valid),t
-interp_fac = 24
-sample_rate = 100.0
-nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
-s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
-s_q = array([0]*len(s_i))
-
-# TEST IQ conversion
-#fmd_real_from_iq = real_from_iq(t, fmd_iq, fc)
-#figure()
-#plot(t, fmd, 'g', linewidth=5)
-#plot(t, fmd_real_from_iq, 'b')
-#title("Frequency Modulated Signal IQ Conv. Test")
-#show() # LOOKS RIGHT
+#interp_fac = 24
+#sample_rate = 100.0
+#nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
+#s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
+#s_q = array([0]*len(s_i))
 
 
 # Write samples as a C int16 array input for simulation
@@ -146,7 +137,72 @@ f.write(i16_c_array_txt(s_valid,"SAMPLES_VALID"))
 f.close()
 
 
-# For rest of python logic, dont need valid flags, remove those invalid samples
+#------------------------------------------------
+# # Read simulation filtered output, start with zeros
+#------------------------------------------------
+list_sim_filtered_s_i = []
+list_sim_filtered_s_q = []
+sim_cycle_count = 0
+fname = "sim_output.log"
+if path.isfile(fname):
+  # Parse samples values
+  i16_values = []
+  f = open(fname,"r")
+  lines = f.readlines()
+  i = 0
+  for line in lines:
+    tok = "Sample IQ ="
+    if tok in line:
+      toks = line.split(",")
+      sim_cycle_count = int(toks[1]) + 1
+      i_int_val = int(toks[3])
+      i_f_val = float(i_int_val)/float(i16_max)
+      q_int_val = int(toks[4])
+      q_f_val = float(q_int_val)/float(i16_max)
+      #print("Sample =", i, int_val, f_val)
+      #i16_values.append(int_val)
+      list_sim_filtered_s_i.append(i_f_val)
+      list_sim_filtered_s_q.append(q_f_val)
+      i+=1
+      #print("sim_filtered_x",sim_filtered_x)
+  sim_filtered_s_i = array(list_sim_filtered_s_i)
+  sim_filtered_s_q = array(list_sim_filtered_s_q)
+else:
+  # No sim output yet to compare, just stop
+  exit(0)
+  #pass
+
+
+# Duplicate/reduce input samples for plotting to match how long sim was actually run (repeating samples buffer)
+sim_cycle_count
+i_in = 0
+i_resized = 0
+s_i_resized = []
+s_q_resized = []
+s_valid_resized = []
+t_resized = []
+nsamples_in_resized = 0
+while i_resized < sim_cycle_count:
+  # Take input sample
+  s_i_resized.append(list(s_i)[i_in])
+  s_q_resized.append(list(s_q)[i_in])
+  v = list(s_valid)[i_in]
+  s_valid_resized.append(v)
+  if v != 0:
+    nsamples_in_resized += 1
+  # Next sample
+  i_resized += 1
+  if i_in == len(s_valid)-1:
+    i_in = 0
+  else:
+    i_in += 1
+s_i = array(s_i_resized)
+s_q = array(s_q_resized)
+s_valid = array(s_valid_resized)
+nsamples_in = nsamples_in_resized
+t = arange(nsamples_in) / sample_rate
+
+# For rest of python logic, dont need per-cycle valid flags, remove those invalid samples
 s_i_new = []
 s_q_new = []
 for i in range(0,len(s_valid)):
@@ -536,61 +592,24 @@ def interp_24x(sample_rate, s):
 #nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
 #t_out = arange(nsamples_out) / sample_rate_out
 # FM demod example
-#df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
-#fc = 0.0 # baseband IQ
-#filtered_s_i = fm_demod(fmd_iq, df, fc) 
-#sample_rate_out = sample_rate
+df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
+fc = 0.0 # baseband IQ
+fmd_iq = s_i + 1j*s_q
+filtered_s_i = fm_demod(fmd_iq, df, fc)
+sample_rate_out = sample_rate
 # fm_demod uses diff differentiation which has delay of 1 sample
 # Preprend a zero to still have [0] sample alignment in time
-#filtered_s_i = array(([0] + list(filtered_s_i)))
-#nsamples_out = nsamples_in
-#t_out = t
-# no output second channel
-#filtered_s_q = array([0]*len(filtered_s_i))
-# FIR interp example
-sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
-nsamples_out = len(filtered_s_i)
-t_out = arange(nsamples_out) / sample_rate_out
+filtered_s_i = array(([0] + list(filtered_s_i)))
+nsamples_out = nsamples_in
+t_out = t
 # no output second channel
 filtered_s_q = array([0]*len(filtered_s_i))
-
-
-
-#------------------------------------------------
-# # Read simulation filtered output, start with zeros
-#------------------------------------------------
-sim_filtered_s_i = array([0]*nsamples_out)
-sim_filtered_s_q = array([0]*nsamples_out)
-fname = "sim_output.log"
-if path.isfile(fname):
-  # Parse samples values
-  list_sim_filtered_s_i = list(sim_filtered_s_i)
-  list_sim_filtered_s_q = list(sim_filtered_s_q)
-  i16_values = []
-  f = open(fname,"r")
-  lines = f.readlines()
-  i = 0
-  for line in lines:
-    tok = "Sample IQ ="
-    if tok in line and i < nsamples_out:
-      toks = line.split(",")
-      i_int_val = int(toks[2])
-      i_f_val = float(i_int_val)/float(i16_max)
-      q_int_val = int(toks[3])
-      q_f_val = float(q_int_val)/float(i16_max)
-      #print("Sample =", i, int_val, f_val)
-      #i16_values.append(int_val)
-      list_sim_filtered_s_i[i] = i_f_val
-      list_sim_filtered_s_q[i] = q_f_val
-      i+=1
-      #print("sim_filtered_x",sim_filtered_x)
-  sim_filtered_s_i = array(list_sim_filtered_s_i)
-  sim_filtered_s_q = array(list_sim_filtered_s_q)
-else:
-  # No sim output yet to compare, just stop
-  exit(0)
-  #pass
-
+# FIR interp example
+#sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
+#nsamples_out = len(filtered_s_i)
+#t_out = arange(nsamples_out) / sample_rate_out
+# no output second channel
+#filtered_s_q = array([0]*len(filtered_s_i))
 
 
 #------------------------------------------------

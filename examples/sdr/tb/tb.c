@@ -14,15 +14,17 @@
 #include "samples.h"
 
 // Configure IO for the unit under test
-#define in_stream_t interp_24x_in_t
-#define out_stream_t interp_24x_out_t
+#define in_stream_t i16_stream_t
+#define out_stream_t i16_stream_t
 #define DO_IQ_IN_IQ_OUT \
-interp_24x_in_t audio_interp_in = {.data=i_input.data, .valid=q_input.valid}; \
-interp_24x_out_t audio_interp_out = interp_24x(audio_interp_in); \
-i_output.data = audio_interp_out.data; \
-i_output.valid = audio_interp_out.valid; \
+ci16_stream_t fm_demod_in = { \
+  .data = {.real=i_input.data, .imag=q_input.data}, \
+  .valid = i_input.valid & q_input.valid \
+}; \
+i_output = fm_demodulate(fm_demod_in); \
 q_output.data = 0; \
 q_output.valid = 1;
+
 
 // The test bench sending samples into a module and printing output sampples
 #pragma MAIN tb
@@ -48,11 +50,12 @@ void tb()
 
   // Print valid output samples
   if(i_output.valid&q_output.valid){
-    printf("Cycle %d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
+    printf("Cycle,%d,Sample IQ =,"out_data_format","out_data_format"\n", cycle_counter, i_output.data, q_output.data);
   }
 
-  // Prepare for next sample
-  ARRAY_SHIFT_DOWN(i_samples, I_SAMPLES_SIZE, 1)
-  ARRAY_SHIFT_DOWN(q_samples, Q_SAMPLES_SIZE, 1)
+  // Prepare for next sample (rotating to loop samples if run longer)
+  ARRAY_1ROT_DOWN(in_data_t, i_samples, I_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(in_data_t, q_samples, Q_SAMPLES_SIZE)
+  ARRAY_1ROT_DOWN(uint1_t, samples_valid, SAMPLES_VALID_SIZE)
   cycle_counter+=1;
 }

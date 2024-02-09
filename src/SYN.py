@@ -17,6 +17,7 @@ import C_TO_LOGIC
 import DEVICE_MODELS
 import DIAMOND
 import EFINITY
+import GOWIN
 import OPEN_TOOLS
 import OPEN_TOOLS_GOWIN
 import PYRTL
@@ -180,6 +181,12 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                     print("Efinity:", EFINITY.EFINITY_PATH, flush=True)
                 else:
                     raise Exception("Efinity install not found!")
+            elif part_str.upper().startswith("GW"):
+                SYN_TOOL = GOWIN
+                if os.path.exists(GOWIN.GOWIN_PATH):
+                    print("Gowin:", GOWIN.GOWIN_PATH, flush=True)
+                else:
+                    raise Exception("Gowin install not found!")
             else:
                 if not allow_fail:
                     print(
@@ -189,6 +196,161 @@ def PART_SET_TOOL(part_str, allow_fail=False):
 
         if SYN_TOOL is not None:
             print("Using", SYN_TOOL.__name__, "synthesizing for part:", part_str)
+
+
+def TOOL_DOES_PNR():
+    # Does tool do full PNR or just syn?
+    if SYN_TOOL is VIVADO:
+        return VIVADO.DO_PNR == "all"
+    # Uses PNR
+    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY) or (SYN_TOOL is GOWIN):
+        return True
+    # Uses synthesis estimates
+    elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
+        return False
+    else:
+        raise Exception("Need syn tool!")
+
+
+def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+    parser_state, inst_name=None, allow_no_syn_tool=False
+):
+    ext = None
+    if SYN_TOOL is VIVADO:
+        ext = ".xdc"
+    elif SYN_TOOL is QUARTUS:
+        ext = ".sdc"
+    elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL == "lse":
+        ext = ".ldc"
+    elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL == "synplify":
+        ext = ".sdc"
+    elif SYN_TOOL is OPEN_TOOLS:
+        ext = ".py"
+    elif SYN_TOOL is EFINITY:
+        ext = ".sdc"
+    elif SYN_TOOL is GOWIN:
+        ext = ".sdc"
+    elif SYN_TOOL is PYRTL:
+        ext = ".sdc"
+    else:
+        if not allow_no_syn_tool:
+            # Sufjan Stevens - Video Game
+            raise Exception(
+                f"Add constraints file ext for syn tool {SYN_TOOL.__name__}"
+            )
+            # sys.exit(-1)
+        ext = ""
+
+    clock_name_to_mhz = {}
+    if inst_name:
+        # Default instances get max fmax
+        clock_name_to_mhz["clk"] = INF_MHZ
+        """
+    # Unless happens to be main with fixed freq
+    if inst_name in parser_state.main_mhz:
+      clock_mhz = GET_TARGET_MHZ(inst_name, parser_state, allow_no_syn_tool)
+      clock_name_to_mhz["clk"] = clock_mhz
+    """
+        out_filename = "clock" + ext
+        Logic = parser_state.LogicInstLookupTable[inst_name]
+        output_dir = GET_OUTPUT_DIRECTORY(Logic)
+        out_filepath = output_dir + "/" + out_filename
+    else:
+        out_filename = "clocks" + ext
+        out_filepath = SYN_OUTPUT_DIRECTORY + "/" + out_filename
+        for main_func in parser_state.main_mhz:
+            clock_mhz = GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool)
+            clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
+            clk_name = "clk_" + clk_ext_str
+            clock_name_to_mhz[clk_name] = clock_mhz
+
+    return clock_name_to_mhz, out_filepath
+
+
+# return path
+def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
+
+    # Use specified mhz is multimain top
+    clock_name_to_mhz, out_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+        parser_state, inst_name
+    )
+    f = open(out_filepath, "w")
+
+    if SYN_TOOL is OPEN_TOOLS:
+        # All clock assumed async in nextpnr constraints
+        for clock_name in clock_name_to_mhz:
+            clock_mhz = clock_name_to_mhz[clock_name]
+            if clock_mhz is None:
+                print(
+                    f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated..."
+                )
+                clock_mhz = INF_MHZ
+            f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ")\n")
+    else:
+        # Collect all user generated clocks, no groups for now
+        all_user_clks = set()
+        for clk_mhz in parser_state.clk_mhz.values():
+            clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+            all_user_clks.add(clk_name)
+
+        # Standard sdc like constraints
+        for clock_name in clock_name_to_mhz:
+            clock_mhz = clock_name_to_mhz[clock_name]
+            if clock_mhz is None:
+                print(
+                    f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated..."
+                )
+                clock_mhz = INF_MHZ
+            ns = 1000.0 / clock_mhz
+            # Quartus has some maximum acceptable clock period < 8333333 ns
+            if SYN_TOOL is QUARTUS:
+                MAX_NS = 80000
+                if ns > MAX_NS:
+                    print("Clipping clock",clock_name,"period to", MAX_NS,"ns...")
+                    ns = MAX_NS
+            # Default cmd is get_ports unless need internal user clk net name
+            get_thing_cmd = "get_ports"
+            if clock_name in all_user_clks:
+                get_thing_cmd = "get_nets"
+            f.write(
+                f"create_clock -add -name {clock_name} -period {ns} -waveform {{0 {ns/2.0}}} [{get_thing_cmd} {{{clock_name}}}]\n"
+            )
+
+        # All clock assumed async? Doesnt matter for internal syn
+        # Rely on generated/board provided constraints for real hardware
+        if len(clock_name_to_mhz) > 1:
+            if SYN_TOOL is VIVADO:
+                f.write(
+                    "set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n"
+                )
+            elif SYN_TOOL is QUARTUS:
+                # Ignored set_clock_groups at clocks.sdc(3): The clock clk_100p0 was found in more than one -group argument.
+                # Uh do the hard way?
+                clk_sets = set()
+                for clock_name1 in clock_name_to_mhz:
+                    for clock_name2 in clock_name_to_mhz:
+                        if clock_name1 != clock_name2:
+                            clk_set = frozenset([clock_name1, clock_name2])
+                            if clk_set not in clk_sets:
+                                f.write(
+                                    "set_clock_groups -asynchronous -group [get_clocks "
+                                    + clock_name1
+                                    + "] -group [get_clocks "
+                                    + clock_name2
+                                    + "]"
+                                )
+                                clk_sets.add(clk_set)
+            elif SYN_TOOL is DIAMOND:
+                # f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]")
+                # ^ is wrong, makes 200mhx system clock?
+                pass  # rely on clock cross path detection error in timing report
+            else:
+                raise Exception(
+                    f"How does tool {SYN_TOOL.__name__} deal with async clocks?"
+                )
+
+    f.close()
+    return out_filepath
 
 
 # These are the parameters that describe how multiple pipelines are timed
@@ -2066,167 +2228,6 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
                 )
 
     return TimingParamsLookupTable
-
-
-def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-    parser_state, inst_name=None, allow_no_syn_tool=False
-):
-    ext = None
-    if SYN_TOOL is VIVADO:
-        ext = ".xdc"
-    elif SYN_TOOL is QUARTUS:
-        ext = ".sdc"
-    elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL == "lse":
-        ext = ".ldc"
-    elif SYN_TOOL is DIAMOND and DIAMOND.DIAMOND_TOOL == "synplify":
-        ext = ".sdc"
-    elif SYN_TOOL is OPEN_TOOLS:
-        ext = ".py"
-    elif SYN_TOOL is EFINITY:
-        ext = ".sdc"
-    elif SYN_TOOL is PYRTL:
-        ext = ".sdc"
-    else:
-        if not allow_no_syn_tool:
-            # Sufjan Stevens - Video Game
-            raise Exception(
-                f"Add constraints file ext for syn tool {SYN_TOOL.__name__}"
-            )
-            # sys.exit(-1)
-        ext = ""
-
-    clock_name_to_mhz = {}
-    if inst_name:
-        # Default instances get max fmax
-        clock_name_to_mhz["clk"] = INF_MHZ
-        """
-    # Unless happens to be main with fixed freq
-    if inst_name in parser_state.main_mhz:
-      clock_mhz = GET_TARGET_MHZ(inst_name, parser_state, allow_no_syn_tool)
-      clock_name_to_mhz["clk"] = clock_mhz
-    """
-        out_filename = "clock" + ext
-        Logic = parser_state.LogicInstLookupTable[inst_name]
-        output_dir = GET_OUTPUT_DIRECTORY(Logic)
-        out_filepath = output_dir + "/" + out_filename
-    else:
-        out_filename = "clocks" + ext
-        out_filepath = SYN_OUTPUT_DIRECTORY + "/" + out_filename
-        for main_func in parser_state.main_mhz:
-            clock_mhz = GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool)
-            clk_ext_str = VHDL.CLK_EXT_STR(main_func, parser_state)
-            clk_name = "clk_" + clk_ext_str
-            clock_name_to_mhz[clk_name] = clock_mhz
-
-    return clock_name_to_mhz, out_filepath
-
-
-# return path
-def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
-
-    # Use specified mhz is multimain top
-    clock_name_to_mhz, out_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-        parser_state, inst_name
-    )
-    f = open(out_filepath, "w")
-
-    if SYN_TOOL is OPEN_TOOLS:
-        # All clock assumed async in nextpnr constraints
-        for clock_name in clock_name_to_mhz:
-            clock_mhz = clock_name_to_mhz[clock_name]
-            if clock_mhz is None:
-                print(
-                    f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated..."
-                )
-                clock_mhz = INF_MHZ
-            f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ")\n")
-    else:
-        # Collect all user generated clocks, no groups for now
-        all_user_clks = set()
-        for clk_mhz in parser_state.clk_mhz.values():
-            clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-            all_user_clks.add(clk_name)
-
-        # Standard sdc like constraints
-        for clock_name in clock_name_to_mhz:
-            clock_mhz = clock_name_to_mhz[clock_name]
-            if clock_mhz is None:
-                print(
-                    f"WARNING: No frequency associated with clock {clock_name}. Missing MAIN_MHZ pragma? Setting to maximum rate = {INF_MHZ}MHz so timing report can be generated..."
-                )
-                clock_mhz = INF_MHZ
-            ns = 1000.0 / clock_mhz
-            # Quartus has some maximum acceptable clock period < 8333333 ns
-            if SYN_TOOL is QUARTUS:
-                MAX_NS = 80000
-                if ns > MAX_NS:
-                    print("Clipping clock",clock_name,"period to", MAX_NS,"ns...")
-                    ns = MAX_NS
-            # Default cmd is get_ports unless need internal user clk net name
-            get_thing_cmd = "get_ports"
-            if clock_name in all_user_clks:
-                get_thing_cmd = "get_nets"
-            f.write(
-                "create_clock -add -name "
-                + clock_name
-                + " -period "
-                + str(ns)
-                + " -waveform {0 "
-                + str(ns / 2.0)
-                + "} [" + get_thing_cmd + " "
-                + clock_name
-                + "]\n"
-            )
-
-        # All clock assumed async? Doesnt matter for internal syn
-        # Rely on generated/board provided constraints for real hardware
-        if len(clock_name_to_mhz) > 1:
-            if SYN_TOOL is VIVADO:
-                f.write(
-                    "set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]\n"
-                )
-            elif SYN_TOOL is QUARTUS:
-                # Ignored set_clock_groups at clocks.sdc(3): The clock clk_100p0 was found in more than one -group argument.
-                # Uh do the hard way?
-                clk_sets = set()
-                for clock_name1 in clock_name_to_mhz:
-                    for clock_name2 in clock_name_to_mhz:
-                        if clock_name1 != clock_name2:
-                            clk_set = frozenset([clock_name1, clock_name2])
-                            if clk_set not in clk_sets:
-                                f.write(
-                                    "set_clock_groups -asynchronous -group [get_clocks "
-                                    + clock_name1
-                                    + "] -group [get_clocks "
-                                    + clock_name2
-                                    + "]"
-                                )
-                                clk_sets.add(clk_set)
-            elif SYN_TOOL is DIAMOND:
-                # f.write("set_clock_groups -name async_clks_group -asynchronous -group [get_clocks *] -group [get_clocks *]")
-                # ^ is wrong, makes 200mhx system clock?
-                pass  # rely on clock cross path detection error in timing report
-            else:
-                raise Exception(
-                    f"How does tool {SYN_TOOL.__name__} deal with async clocks?"
-                )
-
-    f.close()
-    return out_filepath
-
-
-def TOOL_DOES_PNR():
-    # Does tool do full PNR or just syn?
-    if SYN_TOOL is VIVADO:
-        return VIVADO.DO_PNR == "all"
-    # Uses PNR
-    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
-        return True
-    # Uses synthesis estimates
-    elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
-        return False
-    else:
-        raise Exception("Need syn tool!")
 
 
 # Target mhz is internal name for whatever mhz we are using in this run
@@ -4716,9 +4717,15 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 logic.delay = 0
 
             # Syn results are delay and clock
-            print(
-                f"{logic_func_name} Path delay: {path_report.path_delay_ns:.3f} ns ({mhz:.3f} MHz)"
-            )
+            # Try to communicate if is a problem path that can be autopipelined
+            if logic.CAN_BE_SLICED():
+                print(
+                    f"{logic_func_name} Path delay (maybe to be pipelined): {path_report.path_delay_ns:.3f} ns"
+                )
+            else:
+                print(
+                    f"{logic_func_name} FMAX: {mhz:.3f} MHz ({path_report.path_delay_ns:.3f} ns path delay)"
+                )
             print("")
             # Record worst non slicable logic
             if not logic.CAN_BE_SLICED():
