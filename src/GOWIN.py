@@ -60,18 +60,17 @@ class PathHTMLReport:
             if node.tag == "b":
                 looking_for = node.text # will be "Path Summary:", "Data Arrival Path:", etc
             elif node.tag == "table":
-                match looking_for:
-                    case "Path Summary:":
-                        self.slack_ns = float(node[0][1].text)
-                        self.source_ns_per_clock = float(node[2][1].text)
-                        self.start_reg_name = node[3][1].text
-                        self.end_reg_name = node[4][1].text
-                        self.path_group = node[5][1].text
-                        self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-                    case "Data Arrival Path:":
-                        for row in node:
-                            if row[5].tag != 'th':
-                                self.netlist_resources.add(row[5].text)
+                if looking_for == "Path Summary:":
+                    self.slack_ns = float(node[0][1].text)
+                    self.source_ns_per_clock = float(node[2][1].text)
+                    self.start_reg_name = node[3][1].text
+                    self.end_reg_name = node[4][1].text
+                    self.path_group = node[5][1].text
+                    self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
+                elif looking_for == "Data Arrival Path:":
+                    for row in node:
+                        if row[5].tag != 'th':
+                            self.netlist_resources.add(row[5].text)
                     
 
 # Based on available devices and checked against device_list.csv inside Gowin tools v1.9.9
