@@ -38,6 +38,8 @@ class ParsedHTMLTimingReport:
                 #print(f"path node: {path_report_node.tag}")
         path_nodes += [current_path_nodes]
         for path_node_items in path_nodes:
+            if path_node_items is None:
+                continue
             path_report = PathHTMLReport(path_node_items)
             self.path_reports[path_report.path_group] = path_report
         #print(path_nodes)
@@ -352,7 +354,7 @@ def SYN_AND_REPORT_TIMING_NEW(
         print("Reading log", log_to_read)
         with open(log_to_read, "r") as f:
             log_text = f.read()
-            return ParsedTimingReport(log_text)
+            return ParsedHTMLTimingReport(log_text)
     # Write top level vhdl for this module/multimain
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(

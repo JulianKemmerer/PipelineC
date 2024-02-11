@@ -4373,6 +4373,10 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         return True
     elif logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
         return True
+    elif (SYN_TOOL == GOWIN) and logic.func_name.startswith("UNARY_OP_NOT_"):
+        # for some reason, GowinSynthesis (GOWIN EDA version 1.9.9.01)
+        # fails to generate timing reports for this particular setup, so we skip it
+        return True
     else:
         # Maybe all submodules are zero delay?
         if len(logic.submodule_instances) > 0:
