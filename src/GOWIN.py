@@ -422,7 +422,7 @@ set_option -output_base_name {top_entity_name}
 set_option -top_module {top_entity_name}
 set_option -vhdl_std vhd2008
 set_option -gen_text_timing_rpt 1
-run {"all" if DO_PNR is "all" else "syn"} 
+run {"all" if DO_PNR == "all" else "syn"} 
 ''')
     syn_imp_bash_cmd = f"{GOWIN_PATH} {tcl_path}"
     print("Running:", log_path, flush=True)
