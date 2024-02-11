@@ -196,8 +196,10 @@ def TOOL_DOES_PNR():
     # Does tool do full PNR or just syn?
     if SYN_TOOL is VIVADO:
         return VIVADO.DO_PNR == "all"
+    elif SYN_TOOL is GOWIN:
+        return GOWIN.DO_PNR == "all"
     # Uses PNR
-    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY) or (SYN_TOOL is GOWIN):
+    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
         return True
     # Uses synthesis estimates
     elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
@@ -307,15 +309,7 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
             if clock_name in all_user_clks:
                 get_thing_cmd = "get_nets"
             f.write(
-                "create_clock -add -name "
-                + clock_name
-                + " -period "
-                + str(ns)
-                + " -waveform {0 "
-                + str(ns / 2.0)
-                + "} [" + get_thing_cmd + " "
-                + clock_name
-                + "]\n"
+                f"create_clock -add -name {clock_name} -period {ns} -waveform {{0 {ns/2.0}}} [{get_thing_cmd} {{{clock_name}}}]\n"
             )
 
         # All clock assumed async? Doesnt matter for internal syn
@@ -4380,6 +4374,10 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     elif logic.is_vhdl_func or logic.is_vhdl_expr:
         return True
     elif logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
+        return True
+    elif (SYN_TOOL is GOWIN) and logic.func_name.startswith(f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.UNARY_OP_NOT_NAME}_"):
+        # for some reason, GowinSynthesis (GOWIN EDA version 1.9.9.01)
+        # fails to generate timing reports for this particular setup, so we skip it
         return True
     else:
         # Maybe all submodules are zero delay?
