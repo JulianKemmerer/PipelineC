@@ -19,7 +19,7 @@ else:
 DO_PNR = None  # None|"all"
 
 class ParsedHTMLTimingReport:
-    def __init__(self, syn_output):
+    def __init__(self, syn_output, clk_to_mhz):
         self.path_reports = {}
         # fixing GowinSynthesis timing output html one error at a time,
         # and massaging it to be readable by python's default XML parser.
@@ -43,7 +43,7 @@ class ParsedHTMLTimingReport:
         for path_node_items in path_nodes:
             if path_node_items is None:
                 continue
-            path_report = PathHTMLReport(path_node_items)
+            path_report = PathHTMLReport(path_node_items, clk_to_mhz)
             # Only take first path from each group/clock domain
             if path_report.path_group not in self.path_reports:
                 self.path_reports[path_report.path_group] = path_report
@@ -54,7 +54,7 @@ class ParsedHTMLTimingReport:
     
 
 class PathHTMLReport:
-    def __init__(self, path_node_items):
+    def __init__(self, path_node_items, clk_to_mhz):
         self.path_delay_ns = None # nanoseconds
         self.slack_ns = None
         self.source_ns_per_clock = None
@@ -69,10 +69,19 @@ class PathHTMLReport:
             elif node.tag == "table":
                 if looking_for == "Path Summary:":
                     self.slack_ns = float(node[0][1].text)
-                    self.source_ns_per_clock = float(node[2][1].text)
                     self.start_reg_name = node[3][1].text
                     self.end_reg_name = node[4][1].text
-                    self.path_group = node[5][1].text
+                    launch_clk = node[5][1].text
+                    latch_clk = node[6][1].text
+                    if launch_clk != latch_clk:
+                        raise NotImplementedError("Add multi clock domain support!")
+                    launch_clk = launch_clk.replace("[R]","")
+                    self.path_group = launch_clk
+                    # Lookup clock period instead of parsing since easier for now...
+                    clk_mhz = clk_to_mhz[launch_clk]
+                    if clk_mhz is None:
+                        clk_mhz = SYN.INF_MHZ # 1GHz
+                    self.source_ns_per_clock = 1000.0 / clk_mhz   
                     self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
                 elif looking_for == "Data Arrival Path:":
                     for row in node:
@@ -353,13 +362,18 @@ def SYN_AND_REPORT_TIMING_NEW(
     # Use same configs based on to speed up run time?
     log_to_read = log_path
 
+    # Lookup clock info
+    clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+        parser_state, inst_name
+    )
+
     # If log file exists dont run syn
     if os.path.exists(log_to_read) and use_existing_log_file:
         # print "SKIPPED:", syn_imp_bash_cmd
         print("Reading log", log_to_read)
         with open(log_to_read, "r") as f:
             log_text = f.read()
-            return ParsedHTMLTimingReport(log_text)
+            return ParsedHTMLTimingReport(log_text, clk_to_mhz)
     # Write top level vhdl for this module/multimain
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(
@@ -384,9 +398,6 @@ def SYN_AND_REPORT_TIMING_NEW(
     # Constraints
     # Write clock xdc and include it
     constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
-    clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-        parser_state, inst_name
-    )
 
     # Which VHDL files?
     vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
@@ -433,7 +444,7 @@ run {"all" if DO_PNR == "all" else "syn"}
     # Read and parse log
     with open(log_path, "r", errors="replace") as f:
         log_text = f.read()
-    return ParsedHTMLTimingReport(log_text)
+    return ParsedHTMLTimingReport(log_text, clk_to_mhz)
 
 def FUNC_IS_PRIMITIVE(func_name):
     return func_name in [
