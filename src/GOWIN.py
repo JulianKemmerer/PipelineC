@@ -44,7 +44,9 @@ class ParsedHTMLTimingReport:
             if path_node_items is None:
                 continue
             path_report = PathHTMLReport(path_node_items)
-            self.path_reports[path_report.path_group] = path_report
+            # Only take first path from each group/clock domain
+            if path_report.path_group not in self.path_reports:
+                self.path_reports[path_report.path_group] = path_report
         #print(path_nodes)
         #raise Exception(f"Parsed HTML Root: {syn_out_root.tag} {syn_out_root.attrib}")
         if len(self.path_reports) == 0:
