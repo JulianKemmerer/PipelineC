@@ -2296,8 +2296,14 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
                 or line.startswith("add_files")
                 or line.startswith("set_property")
             ):
+                line = line.replace(SYN_OUTPUT_DIRECTORY, "$thisDir")
+                line = line.replace(VIVADO.VIVADO_DIR, "$vivadoDir")
+                line = line.replace("{","[subst {").replace("}", "}]")
                 rv_lines.append(line)
         rv = ""
+        rv += f"set vivadoDir {VIVADO.VIVADO_DIR}\n"
+        rv += "set thisFile [ dict get [ info frame 0 ] file ] \n"
+        rv += "set thisDir [file dirname $thisFile] \n"
         for line in rv_lines:
             rv += line + "\n"
 
