@@ -58,3 +58,7 @@ then downsample by M=125 = 48KSPS
 # `Hardware Test`:
 
 Hear audio? :)
+
+
+# TODO:
+How to deal with flow control needed for more complicated interpolation? Currently datapath is free flowing with valid flag - but not ready flag to push back flow control.
