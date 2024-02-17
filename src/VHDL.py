@@ -3622,8 +3622,8 @@ package c_structs_pkg is
     # Do this stupid dumb loop to resolve dependencies
     # Hacky resolve dependencies
     types_written = []
-    # Uhh sooopppaa hacky
-    for i in range(1, 257):
+    # Uhh sooopppaa hacky - act a fool
+    for i in range(1, max_bit_width+1):
         types_written.append("uint" + str(i) + "_t")
         types_written.append("int" + str(i) + "_t")
     for e in range(0, 24):
