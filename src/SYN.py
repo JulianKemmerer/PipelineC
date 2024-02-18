@@ -2888,6 +2888,20 @@ def DO_THROUGHPUT_SWEEP(
     # Write multi-main top
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
 
+    # Re-write black box modules that are no longer in final state starting throughput sweep
+    for func_name in parser_state.func_marked_blackbox:
+        if func_name in parser_state.FuncToInstances:
+            blackbox_func_logic = parser_state.FuncLogicLookupTable[func_name]
+            for inst_name in parser_state.FuncToInstances[func_name]:
+                bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
+                VHDL.WRITE_LOGIC_ENTITY(
+                    inst_name,
+                    blackbox_func_logic,
+                    bb_out_dir,
+                    parser_state,
+                    multimain_timing_params.TimingParamsLookupTable
+                )
+
     # Can only do comb. logic with yosys json for now
     if OPEN_TOOLS.YOSYS_JSON_ONLY:
         print(
