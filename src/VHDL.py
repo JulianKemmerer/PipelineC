@@ -1445,7 +1445,10 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
 
     # Dont touch IO
     rv += "attribute syn_keep : boolean;\n"
-    rv += "attribute keep : string;\n"
+    if SYN.SYN_TOOL is QUARTUS:
+        rv += "attribute keep : boolean;\n"
+    else:
+        rv += "attribute keep : string;\n"
     rv += "attribute dont_touch : string;\n"
 
     # The inputs regs of the logic
@@ -1470,9 +1473,11 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
         )
         rv += (
             "attribute keep of "
-            + WIRE_TO_VHDL_NAME(input_name, Logic)
-            + """_input_reg : signal is "true";\n"""
-        )
+            + WIRE_TO_VHDL_NAME(input_name, Logic))
+        if SYN.SYN_TOOL is QUARTUS:
+            rv += """_input_reg : signal is true;\n"""
+        else:
+            rv += """_input_reg : signal is "true";\n"""
         rv += (
             "attribute dont_touch of "
             + WIRE_TO_VHDL_NAME(input_name, Logic)
@@ -1500,9 +1505,12 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
         )
         rv += (
             "attribute keep of "
-            + WIRE_TO_VHDL_NAME(output_port, Logic)
-            + """_output_reg : signal is "true";\n"""
-        )
+            + WIRE_TO_VHDL_NAME(output_port, Logic))
+        if SYN.SYN_TOOL is QUARTUS:
+            rv += """_output_reg : signal is true;\n"""
+        else:
+            rv += """_output_reg : signal is "true";\n"""
+        
         rv += (
             "attribute dont_touch of "
             + WIRE_TO_VHDL_NAME(output_port, Logic)
@@ -1518,7 +1526,7 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
     rv += " " + "-- IO regs\n"
     rv += " " + "process(clk) is" + "\n"
     rv += " " + "begin" + "\n"
-    rv += " " + " " + "if rising_edge(clk) then" + "\n"
+    rv += " " + " " + "if rising_edge(clk) and CLOCK_ENABLE(0)='1' then" + "\n"
 
     # Register inputs
     for input_name in Logic.inputs:
@@ -1534,6 +1542,16 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
             + ";"
             + "\n"
         )
+
+    # Make output register?
+    for out_wire in Logic.outputs:
+        rv += (
+                "   " + WIRE_TO_VHDL_NAME(out_wire, Logic)
+                + "_output_reg <= "
+                + WIRE_TO_VHDL_NULL_STR(out_wire, Logic, parser_state)
+                + ";"
+                + "\n"
+            )
 
     rv += " " + " " + "end if;" + "\n"
     rv += " " + "end process;" + "\n"
