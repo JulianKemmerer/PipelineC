@@ -2244,24 +2244,28 @@ def GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=False):
         return parser_state.main_syn_mhz[main_func]
 
 
+def WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top):
+    for func_name in parser_state.func_marked_blackbox:
+            if func_name in parser_state.FuncToInstances:
+                blackbox_func_logic = parser_state.FuncLogicLookupTable[func_name]
+                for inst_name in parser_state.FuncToInstances[func_name]:
+                    bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
+                    VHDL.WRITE_LOGIC_ENTITY(
+                        inst_name,
+                        blackbox_func_logic,
+                        bb_out_dir,
+                        parser_state,
+                        multimain_timing_params.TimingParamsLookupTable,
+                        is_final_top,
+                    )
+                    
+
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     is_final_top = True
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
     # Black boxes are different in final files
-    for func_name in parser_state.func_marked_blackbox:
-        if func_name in parser_state.FuncToInstances:
-            blackbox_func_logic = parser_state.FuncLogicLookupTable[func_name]
-            for inst_name in parser_state.FuncToInstances[func_name]:
-                bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
-                VHDL.WRITE_LOGIC_ENTITY(
-                    inst_name,
-                    blackbox_func_logic,
-                    bb_out_dir,
-                    parser_state,
-                    multimain_timing_params.TimingParamsLookupTable,
-                    is_final_top,
-                )
+    WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top)
 
     # Copy pipelinec vhdl directory to output so users can export output directory alone
     copy_tree(f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl", SYN_OUTPUT_DIRECTORY + "/built_in")
@@ -2889,18 +2893,7 @@ def DO_THROUGHPUT_SWEEP(
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
 
     # Re-write black box modules that are no longer in final state starting throughput sweep
-    for func_name in parser_state.func_marked_blackbox:
-        if func_name in parser_state.FuncToInstances:
-            blackbox_func_logic = parser_state.FuncLogicLookupTable[func_name]
-            for inst_name in parser_state.FuncToInstances[func_name]:
-                bb_out_dir = GET_OUTPUT_DIRECTORY(blackbox_func_logic)
-                VHDL.WRITE_LOGIC_ENTITY(
-                    inst_name,
-                    blackbox_func_logic,
-                    bb_out_dir,
-                    parser_state,
-                    multimain_timing_params.TimingParamsLookupTable
-                )
+    WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
 
     # Can only do comb. logic with yosys json for now
     if OPEN_TOOLS.YOSYS_JSON_ONLY:
@@ -4529,6 +4522,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
     multimain_timing_params = MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
+
+    # Re-write black box modules that are no longer in final state starting throughput sweep
+    WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
 
     # Record stats on functions with globals - TODO per main func?
     min_mhz = 999999999
