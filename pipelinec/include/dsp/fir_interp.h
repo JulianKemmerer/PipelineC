@@ -24,12 +24,12 @@
 #define fir_interp_insert_n_zeros fir_interp_insert_n_zeros_func(fir_interp_name)
 PRAGMA_MESSAGE(FUNC_WIRES fir_interp_insert_n_zeros) // Not worried about delay of this func
 fir_in_data_stream_t fir_interp_insert_n_zeros(fir_in_data_stream_t in_sample){
-  static uint8_t zero_counter;
+  static uint8_t zero_counter;  // TODO size counter?
   fir_in_data_stream_t o;
   o.valid = 0;
   if(in_sample.valid){
     // restart zeros
-    zero_counter = (FIR_INTERP_FACTOR-1) - 1;
+    zero_counter = FIR_INTERP_FACTOR - 1;
     // output real original sample pulse
     o.valid = 1;
     o.data = in_sample.data;
