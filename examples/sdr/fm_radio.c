@@ -101,7 +101,21 @@ void sdr_wrapper(){
     .valid = iq_valid
   };
   i16_stream_t out_sample = fm_radio_datapath(in_sample);  
-  
+  /* TEMP counter test
+  uint32_t RATE_COUNT = 2604; //(125e6 / 48e3)
+  static uint32_t rate_counter;
+  static i16_stream_t out_sample = {.data = -32768, .valid = 0};
+  out_sample.valid = 0;
+  rate_counter += 1;
+  if(rate_counter==RATE_COUNT){
+    out_sample.valid = 1;
+    if(out_sample.data==-1){
+      out_sample.data = -32768;
+    }else{
+      out_sample.data += 1;
+    }    
+    rate_counter = 0;
+  }*/
   // Deserializer to 2 samples wide output
   u32_stream_t out_stream = two_sample_buffer(out_sample);
   audio_samples_data = out_stream.data;
