@@ -688,11 +688,8 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     else:
         # Sanity?
         if has_delay:
-            print(
-                "has delay for subs but did not calc in zero clk map?",
-                zero_clk_pipeline_map.logic.func_name,
-            )
-            sys.exit(-1)
+            # Seems to early catch designs optimizing away
+            raise Exception(f"It looks like the function {zero_clk_pipeline_map.logic.func_name} reduces to constants/wires in an unexpected way? Missing '#pragma FUNC_WIRES {zero_clk_pipeline_map.logic.func_name}' ? ")
 
     return zero_clk_pipeline_map
 
@@ -1881,6 +1878,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         if is_zero_clk_has_delay:
             # Get max delay
             if len(list(rv.zero_clk_per_delay_submodules_map.keys())) == 0:
+                if print_debug:
+                    print("No submodules with delay")
                 rv.zero_clk_max_delay = 0
             else:
                 rv.zero_clk_max_delay = (
