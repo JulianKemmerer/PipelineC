@@ -39,6 +39,11 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
     .data = {.real=I_radio_decim.data, .imag=Q_radio_decim.data},
     .valid = I_radio_decim.valid & Q_radio_decim.valid
   };
+  //return fm_demod_in;
+  // From testing, determined need 64x gain here due to received in-band gain being too low from radio
+  // (decim FIRs should be normalized)
+  fm_demod_in.data.real <<= 6;
+  fm_demod_in.data.imag <<= 6;
   i16_stream_t demod_raw = fm_demodulate(fm_demod_in);
 
   // Down sample to audio sample rate with fixed ratio
@@ -100,22 +105,10 @@ void sdr_wrapper(){
     .data = {.real = i_data, .imag = q_data}, 
     .valid = iq_valid
   };
-  i16_stream_t out_sample = fm_radio_datapath(in_sample);  
-  /* TEMP counter test
-  uint32_t RATE_COUNT = 2604; //(125e6 / 48e3)
-  static uint32_t rate_counter;
-  static i16_stream_t out_sample = {.data = -32768, .valid = 0};
-  out_sample.valid = 0;
-  rate_counter += 1;
-  if(rate_counter==RATE_COUNT){
-    out_sample.valid = 1;
-    if(out_sample.data==-1){
-      out_sample.data = -32768;
-    }else{
-      out_sample.data += 1;
-    }    
-    rate_counter = 0;
-  }*/
+  //ci16_stream_t out_sample = fm_radio_datapath(in_sample);
+  //audio_samples_data = uint16_uint16(out_sample.data.imag, out_sample.data.real);
+  //audio_samples_valid = out_sample.valid;
+  i16_stream_t out_sample = fm_radio_datapath(in_sample);
   // Deserializer to 2 samples wide output
   u32_stream_t out_stream = two_sample_buffer(out_sample);
   audio_samples_data = out_stream.data;
