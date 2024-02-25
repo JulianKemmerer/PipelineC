@@ -51,6 +51,11 @@ fir_out_data_stream_t fir_interp_name(fir_in_data_stream_t in_sample){
 
   // Smooth the samples pulses with FIR
   fir_out_data_stream_t interp_out = base_fir_name(samples_w_zeros);
+
+  #ifdef FIR_INTERP_OUT_SCALE
+  // Do extra output scaling to account for inserted zeros
+  interp_out.data *= FIR_INTERP_OUT_SCALE;
+  #endif
   
   return interp_out;
 }
@@ -65,6 +70,9 @@ fir_out_data_stream_t fir_interp_name(fir_in_data_stream_t in_sample){
 #undef fir_interp_accum_t
 #undef fir_interp_out_t
 #undef FIR_INTERP_POW2_SCALE
+#ifdef FIR_INTERP_OUT_SCALE
+#undef FIR_INTERP_OUT_SCALE
+#endif
 #undef FIR_INTERP_COEFFS
 #undef fir_interp_insert_n_zeros
 #undef fir_in_data_stream_t
