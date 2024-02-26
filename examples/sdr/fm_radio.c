@@ -39,7 +39,6 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
     .data = {.real=I_radio_decim.data, .imag=Q_radio_decim.data},
     .valid = I_radio_decim.valid & Q_radio_decim.valid
   };
-  //return fm_demod_in;
   // From testing, determined need 64x gain here due to received in-band gain being too low from radio
   // (decim FIRs should be normalized)
   fm_demod_in.data.real <<= 6;
@@ -57,14 +56,14 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   //
   decim_5x_in_t audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
   decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
-  //
-  decim_5x_in_t audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
-  decim_5x_out_t audio_decim_out = decim_5x(audio_decim_in);
+  //    Last decimation stage is configured with extra audio low pass 15Khz
+  decim_5x_audio_in_t final_audio_decim_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
+  decim_5x_audio_out_t final_audio_decim_out = decim_5x_audio(final_audio_decim_in);
 
-  // SKIPPED FOR NOW // FM deemphasis of audio samples
-  i16_stream_t deemph_in = {.data=audio_decim_out.data, .valid=audio_decim_out.valid};
-  // SKIPPED FOR NOW i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
-  return deemph_in;
+  // FM deemphasis of audio samples
+  i16_stream_t deemph_in = {.data=final_audio_decim_out.data, .valid=final_audio_decim_out.valid};
+  i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
+  return deemph_out;
 }
 
 // Wrap the primary fm_radio_datapath for test SDR platform:
@@ -100,14 +99,14 @@ DECL_INPUT(uint1_t, iq_valid)
 DECL_OUTPUT(uint32_t, audio_samples_data)
 DECL_OUTPUT(uint1_t, audio_samples_valid)
 #pragma MAIN_MHZ sdr_wrapper 125.0
+// BAH DEEMPHASIS doesnt meet timing when synthesizing full design since multipliers gets replaced with fabric!
+// Fake lower timing target a smidge during syn
+#pragma MAIN_SYN_MHZ sdr_wrapper 123.0  
 void sdr_wrapper(){
   ci16_stream_t in_sample = {
     .data = {.real = i_data, .imag = q_data}, 
     .valid = iq_valid
   };
-  //ci16_stream_t out_sample = fm_radio_datapath(in_sample);
-  //audio_samples_data = uint16_uint16(out_sample.data.imag, out_sample.data.real);
-  //audio_samples_valid = out_sample.valid;
   i16_stream_t out_sample = fm_radio_datapath(in_sample);
   // Deserializer to 2 samples wide output
   u32_stream_t out_stream = two_sample_buffer(out_sample);

@@ -222,8 +222,8 @@ window_t samples_window(ci16_stream_t iq){
 
 // FM demodulation using differentiator
 // TODO fix FM dev and sample rate for real radio FM data?
-#define FM_DEV_HZ 25.0 
-#define SAMPLE_RATE_HZ 1000.0
+//#define FM_DEV_HZ 25.0 
+//#define SAMPLE_RATE_HZ 1000.0
 i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   window_t multi_samples = samples_window(iq_sample);
   int16_t i_dot = multi_samples.data[0].real - multi_samples.data[2].real;
@@ -253,7 +253,8 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define fir_interp_coeff_t int16_t
 #define fir_interp_accum_t int40_t // data_width + coeff_width + log2(taps#)
 #define fir_interp_out_t int16_t
-#define FIR_INTERP_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
+#define FIR_INTERP_POW2_SCALE 15 // data_width + coeff_width - out_width - 1 // fixed point adjust
+#define FIR_INTERP_OUT_SCALE FIR_INTERP_FACTOR // normalize
 #define FIR_INTERP_COEFFS { \
   -173, \
   -34,  \
@@ -487,6 +488,118 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define interp_24x_out_t fir_interp_out_data_stream_type(interp_24x)
 #define interp_24x_in_t fir_interp_in_data_stream_type(interp_24x)
 
+
+// Declare 5x decim FIR module to use in final decim to audio rate
+// Includes low pass of just up to 15Khz. TW@11KHz,STOP@15KHz 
+#define fir_decim_name decim_5x_audio
+#define FIR_DECIM_N_TAPS 93
+#define FIR_DECIM_LOG2_N_TAPS 7
+#define FIR_DECIM_FACTOR 5
+#define fir_decim_data_t int16_t
+#define fir_decim_coeff_t int16_t
+#define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
+#define fir_decim_out_t int16_t
+#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
+#define FIR_DECIM_COEFFS { \
+  215, \
+  119, \
+  138, \
+  149, \
+  149, \
+  135, \
+  107, \
+  65,  \
+  14,  \
+  -44, \
+  -102,\
+  -154,\
+  -195,\
+  -217,\
+  -217,\
+  -192,\
+  -142,\
+  -69, \
+  19,  \
+  114, \
+  207, \
+  285, \
+  339, \
+  357, \
+  335, \
+  268, \
+  160, \
+  16,  \
+  -152,\
+  -327,\
+  -490,\
+  -621,\
+  -700,\
+  -708,\
+  -632,\
+  -463,\
+  -200,\
+  150, \
+  574, \
+  1050,\
+  1552,\
+  2050,\
+  2512,\
+  2909,\
+  3214,\
+  3406,\
+  3471,\
+  3406,\
+  3214,\
+  2909,\
+  2512,\
+  2050,\
+  1552,\
+  1050,\
+  574, \
+  150, \
+  -200,\
+  -463,\
+  -632,\
+  -708,\
+  -700,\
+  -621,\
+  -490,\
+  -327,\
+  -152,\
+  16,  \
+  160, \
+  268, \
+  335, \
+  357, \
+  339, \
+  285, \
+  207, \
+  114, \
+  19,  \
+  -69, \
+  -142,\
+  -192,\
+  -217,\
+  -217,\
+  -195,\
+  -154,\
+  -102,\
+  -44, \
+  14,  \
+  65,  \
+  107, \
+  135, \
+  149, \
+  149, \
+  138, \
+  119, \
+  215  \
+}            
+#include "dsp/fir_decim.h"
+#define decim_5x_audio_out_t fir_decim_out_data_stream_type(decim_5x_audio)
+#define decim_5x_audio_in_t fir_decim_in_data_stream_type(decim_5x_audio)
+
+
 // Deemphasis
 // 75e-6 Tau (USA)
 // 50e-6 Tau (EU)
@@ -497,6 +610,13 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define fm_alpha (int16_t)(9637)
 #endif // TAU
 i16_stream_t deemphasis_wfm(i16_stream_t input){
+  // IO regs to meet timing instead of re-writing for autopipelining somehow
+  static i16_stream_t input_r;
+  static i16_stream_t output_r;
+
+  // Output reg
+  i16_stream_t output_stream = output_r;
+
   /*
       Sample rate: 48000Hz
       typical time constant (tau) values:
@@ -508,14 +628,18 @@ i16_stream_t deemphasis_wfm(i16_stream_t input){
   // variables
   static int16_t last_output = 0;
   static int16_t output = 0;
-  if(input.valid){
-    // process
-    output = (fm_alpha*input.data) >> 15;
-    output += ((32767-fm_alpha)*last_output) >> 15;
-
+  // process
+  output = (fm_alpha*input_r.data) >> 15;
+  output += ((32767-fm_alpha)*last_output) >> 15;
+  if(input_r.valid){
     // save last & return
     last_output = output;
   }
-  i16_stream_t output_stream = {.data = output, .valid = input.valid};
+  output_r.data = output;
+  output_r.valid = input_r.valid;
+
+  // Input reg
+  input_r = input;
+
   return output_stream;
 }

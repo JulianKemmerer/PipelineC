@@ -52,10 +52,10 @@ fir_out_data_stream_t fir_decim_name(fir_in_data_stream_t input)
   fir_out_data_stream_t rv;
   rv.valid = decim_count_ellapsed;
   // IF() not needed in hardware since pure FIR func and have valid flag
-  // Can leave IF() for efficient CPU implementation
-  if(decim_count_ellapsed){ 
+  // Can add IF() for efficient CPU implementation
+  //if(decim_count_ellapsed){ 
     rv.data = fir(sample_window.data);
-  }
+  //}
 
   return rv;
 }
