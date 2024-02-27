@@ -50,6 +50,16 @@ void name(type_t val_input) \
 { \
   name = val_input;\
 }
+#define DECL_INPUT_REG(type_t, name) \
+type_t name; \
+PRAGMA_MESSAGE(MAIN name) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+void name(type_t val_input) \
+{ \
+  static type_t the_reg; \
+  name = the_reg; \
+  the_reg = val_input;\
+}
 #define DECL_OUTPUT(type_t, name) \
 type_t name; \
 PRAGMA_MESSAGE(MAIN name) \
@@ -57,6 +67,17 @@ PRAGMA_MESSAGE(FUNC_WIRES name) \
 type_t name() \
 { \
   return name; \
+}
+#define DECL_OUTPUT_REG(type_t, name) \
+type_t name; \
+PRAGMA_MESSAGE(MAIN name) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+type_t name() \
+{ \
+  static type_t the_reg; \
+  type_t rv = the_reg; \
+  the_reg = name; \
+  return rv; \
 }
 
 // Split a main funciton instance into N globally available function calls
