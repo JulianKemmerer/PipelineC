@@ -31,7 +31,7 @@ typedef struct ci16_stream_t{
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int38_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
-#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
+#define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -165, \
   -284, \
@@ -87,6 +87,9 @@ typedef struct ci16_stream_t{
 #define decim_5x_out_t fir_decim_out_data_stream_type(decim_5x)
 #define decim_5x_in_t fir_decim_in_data_stream_type(decim_5x)
 // 10x decim
+// Includes an output gain of 8x (<<3) 
+// because tests show gain too low from radio
+// even with AGC off and gain at max...
 #define fir_decim_name decim_10x
 #define FIR_DECIM_N_TAPS 95
 #define FIR_DECIM_LOG2_N_TAPS 7
@@ -95,7 +98,7 @@ typedef struct ci16_stream_t{
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
-#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
+#define FIR_DECIM_POW2_DN_SCALE (15-3) // 8x gain // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -199,\
   -90, \
@@ -253,8 +256,8 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define fir_interp_coeff_t int16_t
 #define fir_interp_accum_t int40_t // data_width + coeff_width + log2(taps#)
 #define fir_interp_out_t int16_t
-#define FIR_INTERP_POW2_SCALE 15 // data_width + coeff_width - out_width - 1 // fixed point adjust
-#define FIR_INTERP_OUT_SCALE FIR_INTERP_FACTOR // normalize
+#define FIR_INTERP_OUT_SCALE 3 // normalize, // 3x then 8x(<<3) w pow2 scale = 24
+#define FIR_INTERP_POW2_DN_SCALE (15-3) // data_width + coeff_width - out_width - 1 // fixed point adjust
 #define FIR_INTERP_COEFFS { \
   -173, \
   -34,  \
@@ -499,7 +502,7 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
-#define FIR_DECIM_POW2_SCALE 15 // data_width + coeff_width - out_width - 1
+#define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   215, \
   119, \
@@ -609,10 +612,11 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #else
 #define fm_alpha (int16_t)(9637)
 #endif // TAU
-i16_stream_t deemphasis_wfm(i16_stream_t input){
+i16_stream_t deemphasis_wfm(i16_stream_t input, int16_t input_mult_alpha){
   // IO regs to meet timing instead of re-writing for autopipelining somehow
   static i16_stream_t input_r;
   static i16_stream_t output_r;
+  static int16_t input_mult_alpha_r;
 
   // Output reg
   i16_stream_t output_stream = output_r;
@@ -627,9 +631,8 @@ i16_stream_t deemphasis_wfm(i16_stream_t input){
   */
   // variables
   static int16_t last_output = 0;
-  static int16_t output = 0;
   // process
-  output = (fm_alpha*input_r.data) >> 15;
+  int16_t output = input_mult_alpha_r; //(fm_alpha*input_r.data) >> 15;
   output += ((32767-fm_alpha)*last_output) >> 15;
   if(input_r.valid){
     // save last & return
@@ -640,6 +643,15 @@ i16_stream_t deemphasis_wfm(i16_stream_t input){
 
   // Input reg
   input_r = input;
+  input_mult_alpha_r = input_mult_alpha;
 
   return output_stream;
+}
+
+// Allow initial alpha multiply to be pipelined
+i16_stream_t deemphasis_wfm_pipeline(i16_stream_t input){
+  // Precalc as stateless pipeline input*alpha
+  int16_t input_mult_alpha = (fm_alpha*input.data) >> 15;
+  // Then do stateful deemph math
+  return deemphasis_wfm(input, input_mult_alpha);
 }

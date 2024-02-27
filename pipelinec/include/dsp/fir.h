@@ -54,12 +54,18 @@ fir_out_t fir(fir_data_t data[FIR_N_TAPS])
   uint32_t i;
   for(i=0; i < FIR_N_TAPS; i+=1)
   {
-    products[i] = data[i] * coeffs[i]; // Apply FIR_POW2_SCALE here?
+    products[i] = data[i] * coeffs[i]; // Apply SCALE here?
   }
    
   // A binary tree of adders is used to sum the results of the coeff*data multiplies
   fir_accum_t rv = PPCAT(fir_name,_adder_tree)(products);
-  rv = rv >> FIR_POW2_SCALE; // TODO apply scale earlier instead?
+
+  // TODO apply scale earlier instead?
+  #ifdef FIR_OUT_SCALE
+  rv = (rv * FIR_OUT_SCALE) >> FIR_POW2_DN_SCALE;
+  #else
+  rv = rv >> FIR_POW2_DN_SCALE;
+  #endif
   return rv;
 }
 
@@ -85,7 +91,10 @@ fir_out_data_stream_t fir_name(fir_in_data_stream_t input)
 #undef fir_accum_t
 #undef fir_out_t
 #undef FIR_COEFFS
-#undef FIR_POW2_SCALE
+#ifdef FIR_OUT_SCALE
+#undef FIR_OUT_SCALE
+#endif
+#undef FIR_POW2_DN_SCALE
 #undef fir_in_data_stream_t
 #undef fir_out_data_stream_t
 #undef fir_samples_window_t

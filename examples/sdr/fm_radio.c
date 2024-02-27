@@ -7,6 +7,10 @@
 // Building blocks for design in header
 #include "fm_radio.h"
 
+// Declare debug ports as secondary output channel
+DECL_OUTPUT(uint32_t, debug_data)
+DECL_OUTPUT(uint1_t, debug_data_valid)
+
 // The datapath to be pipelined to meet the clock rate
 // One sample per clock (maximum), ex. 125MHz = 125MSPS
 //#pragma MAIN_MHZ fm_radio_datapath 125.0
@@ -19,7 +23,7 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   //    Q
   decim_5x_in_t Q_decim_5x_in = {.data=in_sample.data.imag, .valid=in_sample.valid};
   decim_5x_out_t Q_decim_5x_out = decim_5x(Q_decim_5x_in);
-  //  Stage 1
+  //  Stage 1 (8x gain)
   //    I
   decim_10x_in_t I_decim_10x_in = {.data=I_decim_5x_out.data, .valid=I_decim_5x_out.valid};
   decim_10x_out_t I_decim_10x_out = decim_10x(I_decim_10x_in);
@@ -34,15 +38,15 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   decim_10x_in_t Q_decim_10x_in = {.data=Q_decim_10x_out.data, .valid=Q_decim_10x_out.valid};
   decim_10x_out_t Q_radio_decim = decim_10x(Q_decim_10x_in);
 
+  // Connect debug output to be after decim, before demod
+  debug_data = uint16_uint16(Q_radio_decim.data, I_radio_decim.data);
+  debug_data_valid = I_radio_decim.valid & Q_radio_decim.valid;
+
   // FM demodulation
   ci16_stream_t fm_demod_in = {
     .data = {.real=I_radio_decim.data, .imag=Q_radio_decim.data},
     .valid = I_radio_decim.valid & Q_radio_decim.valid
   };
-  // From testing, determined need 64x gain here due to received in-band gain being too low from radio
-  // (decim FIRs should be normalized)
-  fm_demod_in.data.real <<= 6;
-  fm_demod_in.data.imag <<= 6;
   i16_stream_t demod_raw = fm_demodulate(fm_demod_in);
 
   // Down sample to audio sample rate with fixed ratio
@@ -62,7 +66,7 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
 
   // FM deemphasis of audio samples
   i16_stream_t deemph_in = {.data=final_audio_decim_out.data, .valid=final_audio_decim_out.valid};
-  i16_stream_t deemph_out = deemphasis_wfm(deemph_in);
+  i16_stream_t deemph_out = deemphasis_wfm_pipeline(deemph_in);
   return deemph_out;
 }
 
@@ -99,9 +103,7 @@ DECL_INPUT(uint1_t, iq_valid)
 DECL_OUTPUT(uint32_t, audio_samples_data)
 DECL_OUTPUT(uint1_t, audio_samples_valid)
 #pragma MAIN_MHZ sdr_wrapper 125.0
-// BAH DEEMPHASIS doesnt meet timing when synthesizing full design since multipliers gets replaced with fabric!
-// Fake lower timing target a smidge during syn
-#pragma MAIN_SYN_MHZ sdr_wrapper 123.0  
+//#pragma MAIN_SYN_MHZ sdr_wrapper 147.0
 void sdr_wrapper(){
   ci16_stream_t in_sample = {
     .data = {.real = i_data, .imag = q_data}, 
