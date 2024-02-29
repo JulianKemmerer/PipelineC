@@ -87,9 +87,6 @@ typedef struct ci16_stream_t{
 #define decim_5x_out_t fir_decim_out_data_stream_type(decim_5x)
 #define decim_5x_in_t fir_decim_in_data_stream_type(decim_5x)
 // 10x decim
-// Includes an output gain of 8x (<<3) 
-// because tests show gain too low from radio
-// even with AGC off and gain at max...
 #define fir_decim_name decim_10x
 #define FIR_DECIM_N_TAPS 95
 #define FIR_DECIM_LOG2_N_TAPS 7
@@ -98,7 +95,7 @@ typedef struct ci16_stream_t{
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
-#define FIR_DECIM_POW2_DN_SCALE (15-3) // 8x gain // data_width + coeff_width - out_width - 1
+#define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -199,\
   -90, \
@@ -207,19 +204,13 @@ typedef struct window_t{
 
 window_t samples_window(ci16_stream_t iq){
   static window_t state;
-
   if(iq.valid){
-    // shift data (reverse order with save ?)
-    state.data[1].real = state.data[0].real;
-    state.data[1].imag = state.data[0].imag;
-    state.data[2].real = state.data[1].real;
-    state.data[2].imag = state.data[1].imag;
-
+    // shift data (reverse order with save)
+    state.data[2] = state.data[1];
+    state.data[1] = state.data[0];
     // save input sample
-    state.data[0].real = iq.data.real;
-    state.data[0].imag = iq.data.imag;
+    state.data[0] = iq.data;
   }
-    
   return state;
 }
 

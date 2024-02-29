@@ -8,8 +8,8 @@
 #include "fm_radio.h"
 
 // Declare debug ports as secondary output channel
-DECL_OUTPUT(uint32_t, debug_data)
-DECL_OUTPUT(uint1_t, debug_data_valid)
+DECL_OUTPUT_REG(uint32_t, debug_data)
+DECL_OUTPUT_REG(uint1_t, debug_data_valid)
 
 // The datapath to be pipelined to meet the clock rate
 // One sample per clock (maximum), ex. 125MHz = 125MSPS
@@ -23,7 +23,7 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   //    Q
   decim_5x_in_t Q_decim_5x_in = {.data=in_sample.data.imag, .valid=in_sample.valid};
   decim_5x_out_t Q_decim_5x_out = decim_5x(Q_decim_5x_in);
-  //  Stage 1 (8x gain)
+  //  Stage 1
   //    I
   decim_10x_in_t I_decim_10x_in = {.data=I_decim_5x_out.data, .valid=I_decim_5x_out.valid};
   decim_10x_out_t I_decim_10x_out = decim_10x(I_decim_10x_in);
@@ -97,11 +97,11 @@ u32_stream_t two_sample_buffer(i16_stream_t in_sample){
   }
   return rv;
 }
-DECL_INPUT(int16_t, i_data)
-DECL_INPUT(int16_t, q_data)
-DECL_INPUT(uint1_t, iq_valid)
-DECL_OUTPUT(uint32_t, audio_samples_data)
-DECL_OUTPUT(uint1_t, audio_samples_valid)
+DECL_INPUT_REG(int16_t, i_data)
+DECL_INPUT_REG(int16_t, q_data)
+DECL_INPUT_REG(uint1_t, iq_valid)
+DECL_OUTPUT_REG(uint32_t, audio_samples_data)
+DECL_OUTPUT_REG(uint1_t, audio_samples_valid)
 #pragma MAIN_MHZ sdr_wrapper 125.0
 //#pragma MAIN_SYN_MHZ sdr_wrapper 147.0
 void sdr_wrapper(){
