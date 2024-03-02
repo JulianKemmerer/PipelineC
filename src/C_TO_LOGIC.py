@@ -1849,9 +1849,10 @@ def BUILD_LOGIC_AS_C_CODE(
         # Merge into existing
         for sw_func_name in sw_func_name_2_logic:
             # print "sw_func_name",sw_func_name
-            parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
-                sw_func_name
-            ]
+            if sw_func_name not in parser_state.FuncLogicLookupTable:
+                parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
+                    sw_func_name
+                ]
 
         FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
             c_code_text, fake_filename, parser_state, parse_body=True
@@ -4074,11 +4075,11 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
                 # Struct
                 # Sanity check
                 if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
-                    print(
+                    raise Exception(
                         "Struct ref tok but not struct type?",
                         remaining_toks,
                         current_c_type,
-                        c_ast_ref.coord,
+                        str(c_ast_ref.coord),
                     )
                     #print(parser_state.struct_to_field_type_dict)
                     sys.exit(-1)
@@ -5037,7 +5038,27 @@ def C_AST_STATIC_NON_CONST_DECL_TO_LOGIC(
     return parser_state.existing_logic
 
 
+def C_AST_DECL_TO_VAR_NAME(c_ast_decl):
+    if not hasattr(c_ast_decl, "type"):
+        raise Exception(f"No type on variable?: {c_ast_decl.coord}")
+    if type(c_ast_decl.type) == c_ast.ArrayDecl:
+        # Just want name from type def, not array decl dims
+        type_decls = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_decl, c_ast.TypeDecl)
+        type_decl = type_decls[0]
+        wire_name = type_decl.declname
+    elif type(c_ast_decl.type) == c_ast.TypeDecl:
+        wire_name = c_ast_decl.name
+    elif type(c_ast_decl.type) == c_ast.PtrDecl:
+        c_ast_typedecl = c_ast_decl.type.type  # one type node lower down
+        wire_name = c_ast_decl.name
+    else:
+        raise Exception(
+            f"C_AST_DECL_TO_VAR_NAME {c_ast_decl} {c_ast_decl.type.coord}"
+        )
+    return wire_name
+
 def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
+    wire_name = C_AST_DECL_TO_VAR_NAME(c_ast_decl)
     if not hasattr(c_ast_decl, "type"):
         raise Exception(f"No type on variable?: {c_ast_decl.coord}")
     if type(c_ast_decl.type) == c_ast.ArrayDecl:
@@ -5045,15 +5066,12 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
         name, elem_type, dim = C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(
             c_ast_array_decl, parser_state
         )
-        wire_name = name
         c_type = elem_type + "[" + str(dim) + "]"
     elif type(c_ast_decl.type) == c_ast.TypeDecl:
         c_ast_typedecl = c_ast_decl.type
-        wire_name = c_ast_decl.name
         c_type = c_ast_typedecl.type.names[0]
     elif type(c_ast_decl.type) == c_ast.PtrDecl:
         c_ast_typedecl = c_ast_decl.type.type  # one type node lower down
-        wire_name = c_ast_decl.name
         c_type = c_ast_typedecl.type.names[0]
         print(
             f"Ignoring pointer declaration: {c_type} {wire_name} {c_ast_decl.type.coord}"
@@ -6956,6 +6974,66 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 check_types_do_cast=False,
             )
             return parser_state.existing_logic
+    elif func_base_name in parser_state.FuncSignatureLogicLookupTable:
+        # Decide on new name based on what args are constant
+        new_func_base_name = func_base_name
+        new_base_name_is_name = True
+        new_input_drivers = []
+        new_input_driver_types = []
+        constant_names = []
+        constant_types = []
+        constant_values = []
+        for i,const_input_wire in enumerate(const_input_wires):
+            # Remove const input ports
+            input_port_name = input_port_names[i]
+            if const_input_wire is not None:
+                const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                    const_input_wire, parser_state.existing_logic, parser_state
+                )
+                new_func_base_name += "_" + input_port_name + "_" + VHDL.WIRE_TO_VHDL_NAME(const_val_str)
+                constant_names.append(input_port_name)
+                constant_types.append(input_driver_types[i])
+                constant_values.append(const_val_str)
+            else:
+                # Save non const ports
+                new_input_drivers.append(input_drivers[i])
+                new_input_driver_types.append(input_driver_types[i])
+                new_input_port_names.append(input_port_name)
+
+        # Create new func logic dataflow if needed
+        if new_func_base_name not in parser_state.FuncLogicLookupTable:
+            print("Found function constant argument variant:", new_func_base_name, func_c_ast_node.coord)
+            # Start off with empty body signature
+            func_sig_logic = parser_state.FuncSignatureLogicLookupTable[func_base_name]
+            old_existing_logic = parser_state.existing_logic
+            parser_state.existing_logic = func_sig_logic.DEEPCOPY()
+            parser_state.existing_logic.func_name = new_func_base_name
+            # Update some related records
+            if func_base_name in parser_state.func_to_local_state_regs:
+                parser_state.func_to_local_state_regs[new_func_base_name] = parser_state.func_to_local_state_regs[func_base_name]
+
+            # Remove input ports and
+            # Add constant information into dataflow
+            for j in range(0,len(constant_names)):
+                # Remove input port
+                parser_state.existing_logic.inputs.remove(constant_names[j])
+                c_type = parser_state.existing_logic.wire_to_c_type.pop(constant_names[j])
+                # Insert constant
+                parser_state.existing_logic = NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
+                    constant_values[j], func_c_ast_node, [constant_names[j]], prepend_text, parser_state, is_negated=False, known_c_type=c_type
+                )
+
+            # Then evaluate body of func
+            parser_state.existing_logic = C_AST_FUNCDEF_BODY_TO_LOGIC(func_sig_logic.c_ast_node.body, parser_state)
+            
+            # Add this evaluated logic to lookups
+            parser_state.FuncLogicLookupTable[new_func_base_name] = parser_state.existing_logic
+            
+            # Restore existing logic ptr
+            parser_state.existing_logic = old_existing_logic
+
+        # Reduce to calling this new func
+        is_reducable = True
 
     # Not a reducable function
     if not is_reducable:
@@ -7067,6 +7145,12 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         if len(func_def_logic_object.outputs) > 0:
             # Get type of output
             output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
+    elif func_base_name in parser_state.FuncSignatureLogicLookupTable:  # Wont have SW lib funcs?
+        output_type = "void"
+        func_def_logic_object = parser_state.FuncSignatureLogicLookupTable[func_base_name]
+        if len(func_def_logic_object.outputs) > 0:
+            # Get type of output
+            output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
     # Set type for outputs based on output port if possible
     elif output_wire_name in parser_state.existing_logic.wire_to_c_type:
         output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
@@ -7152,6 +7236,21 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     )
     if const_reduced_logic is not None:
         return const_reduced_logic
+
+    # Did not reduce to a different func call, time to elaborate the func def
+    if ( func_base_name in parser_state.FuncSignatureLogicLookupTable and 
+        func_base_name not in parser_state.FuncLogicLookupTable):
+        print("Elaborating function call:", func_base_name)#, func_c_ast_node.coord)
+        # Start off with empty body signature
+        func_sig_logic = parser_state.FuncSignatureLogicLookupTable[func_base_name]
+        old_existing_logic = parser_state.existing_logic
+        parser_state.existing_logic = func_sig_logic
+        # Then evaluate body of func
+        parser_state.existing_logic = C_AST_FUNCDEF_BODY_TO_LOGIC(func_sig_logic.c_ast_node.body, parser_state)
+        # Add this evaluated logic to lookups
+        parser_state.FuncLogicLookupTable[func_base_name] = parser_state.existing_logic
+        # Restore existing logic ptr
+        parser_state.existing_logic = old_existing_logic
 
     # Build func name
     func_name = BUILD_FUNC_NAME(
@@ -7743,16 +7842,23 @@ def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(
 def C_AST_FUNC_CALL_TO_LOGIC(
     c_ast_func_call, driven_wire_names, prepend_text, parser_state
 ):
+    # Make this recursive-like, only doing C_AST_FUNC_DEF_TO_LOGIC as new func encountered in FUNC_CALL_TO_LOGIC
     FuncLogicLookupTable = parser_state.FuncLogicLookupTable
     func_name = str(c_ast_func_call.name.name)
+    not_inst_func_logic = None
     if not (func_name in FuncLogicLookupTable):
-        # Uhh.. lets check for some built in compiler things because
-        # stacking complexity without real planning is like totally rad
-        # Dude - rad indeed, lets keep it going with printf
-        # Aww can brams get in on this too?
-        # Animal Collective - Sand That Moves
-        # Just wait and see how vars as func names works out!
-        if func_name == VHDL_FUNC_NAME:
+        # First try not to parse the def from C code
+        if func_name in parser_state.FuncSignatureLogicLookupTable:
+            func_sig_logic = parser_state.FuncSignatureLogicLookupTable[func_name]
+            not_inst_func_logic = func_sig_logic
+
+            # Uhh.. lets check for some built in compiler things because
+            # stacking complexity without real planning is like totally rad
+            # Dude - rad indeed, lets keep it going with printf
+            # Aww can brams get in on this too?
+            # Animal Collective - Sand That Moves
+            # Just wait and see how vars as func names works out!
+        elif func_name == VHDL_FUNC_NAME:
             return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
@@ -7836,7 +7942,8 @@ def C_AST_FUNC_CALL_TO_LOGIC(
             sys.exit(-1)
 
     # Lookup the parsed C function def
-    not_inst_func_logic = FuncLogicLookupTable[func_name]
+    if not_inst_func_logic is None:
+        not_inst_func_logic = FuncLogicLookupTable[func_name]
     # print "FUNC CALL:",func_name,c_ast_func_call.coord
     func_base_name = func_name
 
@@ -8980,16 +9087,21 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
     while len(children) > 1 and children[1][0] == "dim":
         # Get the dimension with dummies
         dummy_parser_state = parser_state.DEEPCOPY()  # ParserState() # too slow?
-        dummy_parser_state.existing_logic = Logic()
-        dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
+        #dummy_parser_state.existing_logic = Logic()
+        #dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
         dummy_wire = "ARRAY_DECL_DIM"
         dummy_parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
             children[1][1], [dummy_wire], "", dummy_parser_state
         )
         driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
+        # Find const value of wire
+        const_driving_wire = FIND_CONST_DRIVING_WIRE(driving_wire, dummy_parser_state.existing_logic)
+        if const_driving_wire is None:
+            raise Exception(f"Array declaration has non-constant dimension? {children[1][1].coord} value from non-constant {driving_wire}...")
+        # Dimension is value string from the const wire
         dim = int(
             GET_VAL_STR_FROM_CONST_WIRE(
-                driving_wire, dummy_parser_state.existing_logic, dummy_parser_state
+                const_driving_wire, dummy_parser_state.existing_logic, dummy_parser_state
             )
         )
         # dim = int(children[1][1].value)
@@ -9019,7 +9131,72 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
     return type_decl.declname, elem_type, dim
 
 
-_C_AST_FUNC_DEF_TO_LOGIC_cache = {}
+def C_AST_FUNCDEF_BODY_TO_LOGIC(c_ast_funcdef_body, parser_state):
+    # OR default comb logic
+    # Merge with logic from the body of the func def
+    driven_wire_names = []
+    prepend_text = ""
+    body_logic = C_AST_NODE_TO_LOGIC(
+        c_ast_funcdef_body, driven_wire_names, prepend_text, parser_state
+    )
+    parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
+
+    # Connect globals at end of func logic
+    parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(
+        prepend_text, parser_state, c_ast_funcdef_body
+    )
+
+    # Check if global vars are used as wires, and move them out of being recorded as state regs
+    parser_state.existing_logic = MOVE_UNREAD_GLOBAL_STATE_REGS_TO_WIRES(
+        prepend_text, parser_state, c_ast_funcdef_body
+    )
+
+    # Final chance for SW_LIB generated code to do stuff to func logic
+    # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
+    # Bright Eyes - An Attempt to Tip the Scales
+    parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(
+        parser_state.existing_logic, parser_state
+    )
+
+    # Sanity check for return wire
+    if (
+        not parser_state.existing_logic.is_vhdl_text_module
+        and not parser_state.existing_logic.is_clock_crossing
+    ):
+        for out_wire in parser_state.existing_logic.outputs:
+            if out_wire not in parser_state.existing_logic.wire_driven_by:
+                print(
+                    "Not all function outputs driven!? No return value for function?",
+                    parser_state.existing_logic.func_name,
+                    out_wire,
+                )
+                print(
+                    "(undeclared return value type is assumed 'int', explicitly declare as void instead)"
+                )
+                sys.exit(-1)
+
+    # Check for mixing volatile and not
+    has_volatile = False
+    for state_reg in parser_state.existing_logic.state_regs:
+        if parser_state.existing_logic.state_regs[state_reg].is_volatile:
+            has_volatile = True
+            break
+    for state_reg in parser_state.existing_logic.state_regs:
+        if (
+            parser_state.existing_logic.state_regs[state_reg].is_volatile
+            != has_volatile
+        ):
+            print(
+                "Globals for func",
+                parser_state.existing_logic.func_name,
+                "do not match volatile usage for all globals!",
+            )
+            sys.exit(-1)
+
+    return parser_state.existing_logic
+
+
+#_C_AST_FUNC_DEF_TO_LOGIC_cache = {}
 
 
 def C_AST_FUNC_DEF_TO_LOGIC(
@@ -9029,11 +9206,11 @@ def C_AST_FUNC_DEF_TO_LOGIC(
     parser_state.existing_logic = None
 
     # Since no existing logic, can cache entire existing logic here
-    if c_ast_funcdef.decl.name in _C_AST_FUNC_DEF_TO_LOGIC_cache:
-        parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[
-            c_ast_funcdef.decl.name
-        ]
-        return parser_state.existing_logic
+    #if (c_ast_funcdef.decl.name, parse_body, only_fsm_clk_funcs) in _C_AST_FUNC_DEF_TO_LOGIC_cache:
+    #    parser_state.existing_logic = _C_AST_FUNC_DEF_TO_LOGIC_cache[
+    #        (c_ast_funcdef.decl.name, parse_body, only_fsm_clk_funcs)
+    #    ]
+    #    return parser_state.existing_logic
 
     # print("FUNC_DEF",c_ast_funcdef, flush=True)
 
@@ -9090,76 +9267,17 @@ def C_AST_FUNC_DEF_TO_LOGIC(
             c_ast_funcdef.body, parser_state
         )
     elif not only_fsm_clk_funcs:
-        # OR default comb logic
-        # Merge with logic from the body of the func def
-        driven_wire_names = []
-        prepend_text = ""
+        # Regular dataflow parsing
         if parse_body:
-            body_logic = C_AST_NODE_TO_LOGIC(
-                c_ast_funcdef.body, driven_wire_names, prepend_text, parser_state
-            )
-            parser_state.existing_logic.MERGE_COMB_LOGIC(body_logic)
-
-        # Connect globals at end of func logic
-        parser_state.existing_logic = CONNECT_FINAL_STATE_WIRES(
-            prepend_text, parser_state, c_ast_funcdef
-        )
-
-        # Check if global vars are used as wires, and move them out of being recorded as state regs
-        parser_state.existing_logic = MOVE_UNREAD_GLOBAL_STATE_REGS_TO_WIRES(
-            prepend_text, parser_state, c_ast_funcdef
-        )
-
-        # Final chance for SW_LIB generated code to do stuff to func logic
-        # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
-        # Bright Eyes - An Attempt to Tip the Scales
-        parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(
-            parser_state.existing_logic, parser_state
-        )
-
-        # Sanity check for return wire
-        if parse_body:
-            if (
-                not parser_state.existing_logic.is_vhdl_text_module
-                and not parser_state.existing_logic.is_clock_crossing
-            ):
-                for out_wire in parser_state.existing_logic.outputs:
-                    if out_wire not in parser_state.existing_logic.wire_driven_by:
-                        print(
-                            "Not all function outputs driven!? No return value for function?",
-                            parser_state.existing_logic.func_name,
-                            out_wire,
-                        )
-                        print(
-                            "(undeclared return value type is assumed 'int', explicitly declare as void instead)"
-                        )
-                        sys.exit(-1)
-
-        # Check for mixing volatile and not
-        has_volatile = False
-        for state_reg in parser_state.existing_logic.state_regs:
-            if parser_state.existing_logic.state_regs[state_reg].is_volatile:
-                has_volatile = True
-                break
-        for state_reg in parser_state.existing_logic.state_regs:
-            if (
-                parser_state.existing_logic.state_regs[state_reg].is_volatile
-                != has_volatile
-            ):
-                print(
-                    "Globals for func",
-                    parser_state.existing_logic.func_name,
-                    "do not match volatile usage for all globals!",
-                )
-                sys.exit(-1)
+            parser_state.existing_logic = C_AST_FUNCDEF_BODY_TO_LOGIC(c_ast_funcdef.body, parser_state)
     else:
         # No body parsing at all - return None this logic was not parsed
         return None
 
     # Write cache
-    _C_AST_FUNC_DEF_TO_LOGIC_cache[
-        c_ast_funcdef.decl.name
-    ] = parser_state.existing_logic
+    #_C_AST_FUNC_DEF_TO_LOGIC_cache[
+    #    (c_ast_funcdef.decl.name, parse_body, only_fsm_clk_funcs)
+    #] = parser_state.existing_logic
 
     return parser_state.existing_logic
 
@@ -9572,6 +9690,9 @@ class ParserState:
         # The file of parsed C code
         self.c_file_ast = None  # Single C file tree
 
+        # TODO anything not-func-body related, but func-body indexed make part of Logic object
+        # ex. func_marked_wires make logic.is_wires
+
         # Parsed pre func defintions
         # Build map just of func names and where there are used
         self.func_name_to_calls = {}  # dict[func_name] = set(called_func_names)
@@ -9587,6 +9708,9 @@ class ParserState:
         self.func_to_local_state_regs = {}  # funcname-> [state,reg,infos]
         #   Local vars needed since doing MAYBE global all names in func body before parsing decls?
         self.func_to_local_variables = {}  # funcname-> set(vars)
+
+        # Functions signatures only
+        self.FuncSignatureLogicLookupTable = {}
 
         # Parsed from function defintions
         # Function definitons as logic
@@ -9634,9 +9758,15 @@ class ParserState:
         # Fuck me how many times will I get caught with objects getting copied incorrectly?
         rv = ParserState()
 
+        rv.c_file_ast = self.c_file_ast
+
         rv.FuncLogicLookupTable = {}
         for fname in self.FuncLogicLookupTable:
             rv.FuncLogicLookupTable[fname] = self.FuncLogicLookupTable[fname].DEEPCOPY()
+
+        rv.FuncSignatureLogicLookupTable = {}
+        for fname in self.FuncSignatureLogicLookupTable:
+            rv.FuncSignatureLogicLookupTable[fname] = self.FuncSignatureLogicLookupTable[fname].DEEPCOPY()
 
         rv.PrimFuncLogicLookupTable = {}
         for fname in self.PrimFuncLogicLookupTable:
@@ -9957,6 +10087,11 @@ def PARSE_FILE(c_filename):
             parser_state = DERIVE_ARB_CLK_CROSSING_INFO(
                 preprocessed_c_text, parser_state
             )
+
+            # First step in parsing funcs is just a pass for signatures
+            print("Parsing function signatures...", flush=True)
+            parser_state = APPEND_FUNC_SIGNATURE_LOGIC_LOOKUP_TABLE(parser_state)
+
             # Get FSM clock func logics only - dont really parse their function body in details,
             # different and needs to be before regular func parsing below
             print("Parsing derived fsm logic functions...", flush=True)
@@ -10017,9 +10152,11 @@ def PARSE_FILE(c_filename):
         )
         # Merge into existing
         for sw_func_name in sw_func_name_2_logic:
-            parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
-                sw_func_name
-            ]
+            if sw_func_name not in parser_state.FuncLogicLookupTable:
+                parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
+                    sw_func_name
+                ]
+
 
         # Parse the function definitions for code structure
         print("Elaborating function dataflow...", flush=True)
@@ -10377,9 +10514,7 @@ def GET_LOCAL_VAR_INFO(parser_state):
         if func_name not in parser_state.func_to_local_variables:
             parser_state.func_to_local_variables[func_name] = set()
         for decl_c_ast_node in decl_c_ast_nodes:
-            c_type, var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(
-                decl_c_ast_node, parser_state
-            )
+            var_name = C_AST_DECL_TO_VAR_NAME(decl_c_ast_node)
             # Record all declared vars
             parser_state.func_to_local_variables[func_name].add(var_name)
             # Record static state registers
@@ -10387,7 +10522,7 @@ def GET_LOCAL_VAR_INFO(parser_state):
                 continue
             var_info = VariableInfo()
             var_info.name = var_name
-            var_info.type_name = c_type
+            var_info.type_name = None # Can local vars have types resolved later? c_type
             var_info.init = decl_c_ast_node.init
             # Resolved when evaluating containing func
             # var_info.resolved_const_str = RESOLVE_C_AST_NODE_TO_CONSTANT_STR(decl_c_ast_node.init, "", parser_state)
@@ -11239,13 +11374,38 @@ def SKIP_PARSING_FUNC(func_name, parser_state):
         and (func_name not in parser_state.main_mhz)
     )
 
+def APPEND_FUNC_SIGNATURE_LOGIC_LOOKUP_TABLE(parser_state):
+    func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
+    for func_def in func_defs:
+        # Each func def produces a single logic item
+        parser_state.existing_logic = None
+        driven_wire_names = []
+        prepend_text = ""
+        logic = C_AST_FUNC_DEF_TO_LOGIC(
+            func_def, parser_state, parse_body=False
+        )
+        #print("Signature found:", logic.func_name)
+        parser_state.FuncSignatureLogicLookupTable[logic.func_name] = logic
+
+    return parser_state
+
+
 
 # This will likely be called multiple times when loading multiple C files
 def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
+    # Make this recursive-like, only doing C_AST_FUNC_DEF_TO_LOGIC as new func encountered in FUNC_CALL_TO_LOGIC
+    start_func_names = []
+    # Use MAIN funcs
+    for main_func in parser_state.main_mhz:
+        start_func_names.append(main_func)
+
     # Each func def needs existing logic func name lookup
     # Read in file with C parser and get function def nodes
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
+        # Only starting funcs
+        if func_def.decl.name not in start_func_names:
+            continue
         # Silently skip fsm clk funcs
         parse_func_body = parse_body
         if (
