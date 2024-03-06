@@ -301,6 +301,133 @@ ci16_stream_t iq_decim_5x(ci16_stream_t sample){
   -199 \
 }
 #include "dsp/fir_decim.h"
+// Multi 10x decim
+#define multi_fir_decim_name multi_decim_10x
+#define MULTI_FIR_DECIM_N_STREAMS 2
+#define MULTI_FIR_DECIM_N_TAPS 95
+#define MULTI_FIR_DECIM_LOG2_N_TAPS 7
+#define MULTI_FIR_DECIM_FACTOR 10
+#define multi_fir_decim_data_t int16_t
+#define multi_fir_decim_data_stream_t i16_stream_t
+#define multi_fir_decim_coeff_t int16_t
+#define multi_fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
+#define multi_fir_decim_out_t int16_t
+#define multi_fir_decim_out_stream_t i16_stream_t
+#define MULTI_FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
+#define MULTI_FIR_DECIM_COEFFS { \
+  -199,\
+  -90, \
+  -103,\
+  -113,\
+  -116,\
+  -113,\
+  -101,\
+  -82, \
+  -54, \
+  -19, \
+  22,  \
+  68,  \
+  115, \
+  161, \
+  202, \
+  235, \
+  257, \
+  265, \
+  257, \
+  231, \
+  187, \
+  126, \
+  50,  \
+  -37, \
+  -132,\
+  -227,\
+  -318,\
+  -396,\
+  -456,\
+  -490,\
+  -493,\
+  -459,\
+  -385,\
+  -269,\
+  -111,\
+  86,  \
+  318, \
+  579, \
+  860, \
+  1154,\
+  1448,\
+  1732,\
+  1995,\
+  2227,\
+  2418,\
+  2560,\
+  2648,\
+  2678,\
+  2648,\
+  2560,\
+  2418,\
+  2227,\
+  1995,\
+  1732,\
+  1448,\
+  1154,\
+  860, \
+  579, \
+  318, \
+  86,  \
+  -111,\
+  -269,\
+  -385,\
+  -459,\
+  -493,\
+  -490,\
+  -456,\
+  -396,\
+  -318,\
+  -227,\
+  -132,\
+  -37, \
+  50,  \
+  126, \
+  187, \
+  231, \
+  257, \
+  265, \
+  257, \
+  235, \
+  202, \
+  161, \
+  115, \
+  68,  \
+  22,  \
+  -19, \
+  -54, \
+  -82, \
+  -101,\
+  -113,\
+  -116,\
+  -113,\
+  -103,\
+  -90, \
+  -199 \
+}
+#include "dsp/multi_fir_decim.h"
+ci16_stream_t iq_decim_10x(ci16_stream_t sample){
+  // Break apart IQ into separate channels
+  i16_stream_t multi_decim_in[2];
+  multi_decim_in[0].data = sample.data.real;
+  multi_decim_in[1].data = sample.data.imag;
+  multi_decim_in[0].valid = sample.valid;
+  multi_decim_in[1].valid = sample.valid;
+  // Decimate+FIR both channels
+  multi_decim_10x_t multi_decim_out = multi_decim_10x(multi_decim_in);
+  // Ensure the two separate channels are aligned
+  sample = iq_align(
+    multi_decim_out.out_stream[0], 
+    multi_decim_out.out_stream[1]
+  );
+  return sample;
+}
 
 typedef struct window_t{
     ci16_t data[3];
@@ -704,7 +831,7 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #else
 #define fm_alpha (int16_t)(9637)
 #endif // TAU
-i16_stream_t deemphasis_wfm(i16_stream_t input, int16_t input_mult_alpha){
+i16_stream_t deemphasis_accum(i16_stream_t input, int16_t input_mult_alpha){
   // IO regs to meet timing instead of re-writing for autopipelining somehow
   static i16_stream_t input_r;
   static i16_stream_t output_r;
@@ -741,9 +868,9 @@ i16_stream_t deemphasis_wfm(i16_stream_t input, int16_t input_mult_alpha){
 }
 
 // Allow initial alpha multiply to be pipelined
-i16_stream_t deemphasis_wfm_pipeline(i16_stream_t input){
+i16_stream_t deemphasis(i16_stream_t input){
   // Precalc as stateless pipeline input*alpha
   int16_t input_mult_alpha = (fm_alpha*input.data) >> 15;
   // Then do stateful deemph math
-  return deemphasis_wfm(input, input_mult_alpha);
+  return deemphasis_accum(input, input_mult_alpha);
 }
