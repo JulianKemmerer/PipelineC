@@ -130,7 +130,7 @@ multi_fir_decim_t multi_fir_decim_name(multi_fir_decim_data_stream_t in_stream[M
 #undef base_fir_name
 #undef multi_fir_decim_name
 #undef MULTI_FIR_DECIM_N_STREAMS
-#undef multi_FIR_DECIM_N_TAPS
+#undef MULTI_FIR_DECIM_N_TAPS
 #undef MULTI_FIR_DECIM_LOG2_N_TAPS
 #undef MULTI_FIR_DECIM_FACTOR
 #undef multi_fir_decim_data_t
