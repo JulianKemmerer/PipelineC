@@ -23,6 +23,26 @@ typedef struct ci16_stream_t{
   uint1_t valid;
 } ci16_stream_t;
 
+// Helper to align two streams of I and Q to be valid on the same cycle
+ci16_stream_t iq_align(i16_stream_t i_stream, i16_stream_t q_stream){
+  static i16_stream_t iq_streams_reg[2];
+  ci16_stream_t rv;
+  rv.data.real = iq_streams_reg[0].data;
+  rv.data.imag = iq_streams_reg[1].data;
+  rv.valid = iq_streams_reg[0].valid & iq_streams_reg[1].valid;
+  if(rv.valid){
+    iq_streams_reg[0].valid = 0;
+    iq_streams_reg[1].valid = 0;
+  }
+  if(i_stream.valid){
+    iq_streams_reg[0] = i_stream;
+  }
+  if(q_stream.valid){
+    iq_streams_reg[1] = q_stream;
+  }
+  return rv;
+}
+
 // Declare decimation FIR modules to use
 // radio front end to single FM radio channel ~300KSPS
 // 5x Decim
@@ -89,6 +109,88 @@ typedef struct ci16_stream_t{
   -165  \
 }            
 #include "dsp/fir_decim.h"
+// Multiple stream 5x Decim
+#define multi_fir_decim_name multi_decim_5x
+#define MULTI_FIR_DECIM_N_STREAMS 2
+#define MULTI_FIR_DECIM_N_TAPS 49
+#define MULTI_FIR_DECIM_LOG2_N_TAPS 6
+#define MULTI_FIR_DECIM_FACTOR 5
+#define multi_fir_decim_data_t int16_t
+#define multi_fir_decim_data_stream_t i16_stream_t
+#define multi_fir_decim_coeff_t int16_t
+#define multi_fir_decim_accum_t int38_t // data_width + coeff_width + log2(taps#)
+#define multi_fir_decim_out_t int16_t
+#define multi_fir_decim_out_stream_t i16_stream_t
+#define MULTI_FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
+#define MULTI_FIR_DECIM_COEFFS { \
+  -165, \
+  -284, \
+  -219, \
+  -303, \
+  -190, \
+  -102, \
+  98,   \
+  268,  \
+  430,  \
+  482,  \
+  420,  \
+  207,  \
+  -117, \
+  -498, \
+  -835, \
+  -1022,\
+  -957, \
+  -576, \
+  135,  \
+  1122, \
+  2272, \
+  3429, \
+  4419, \
+  5086, \
+  5321, \
+  5086, \
+  4419, \
+  3429, \
+  2272, \
+  1122, \
+  135,  \
+  -576, \
+  -957, \
+  -1022,\
+  -835, \
+  -498, \
+  -117, \
+  207,  \
+  420,  \
+  482,  \
+  430,  \
+  268,  \
+  98,   \
+  -102, \
+  -190, \
+  -303, \
+  -219, \
+  -284, \
+  -165  \
+}            
+#include "dsp/multi_fir_decim.h"
+ci16_stream_t iq_decim_5x(ci16_stream_t sample){
+  // Break apart IQ into separate channels
+  i16_stream_t multi_decim_in[2];
+  multi_decim_in[0].data = sample.data.real;
+  multi_decim_in[1].data = sample.data.imag;
+  multi_decim_in[0].valid = sample.valid;
+  multi_decim_in[1].valid = sample.valid;
+  // Decimate+FIR both channels
+  multi_decim_5x_t multi_decim_out = multi_decim_5x(multi_decim_in);
+  // Ensure the two separate channels are aligned
+  sample = iq_align(
+    multi_decim_out.out_stream[0], 
+    multi_decim_out.out_stream[1]
+  );
+  return sample;
+}
+
 // 10x decim
 #define fir_decim_name decim_10x
 #define FIR_DECIM_N_TAPS 95

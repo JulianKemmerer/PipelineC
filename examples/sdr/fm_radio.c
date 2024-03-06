@@ -15,14 +15,13 @@ DECL_OUTPUT_REG(uint1_t, debug_data_valid)
 // One sample per clock (maximum), ex. 125MHz = 125MSPS
 //#pragma MAIN_MHZ fm_radio_datapath 125.0 // Datapath can be synthesized alone
 i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
+  // First FIR+decimate to reduce frontend radio sample rate down to ~300KSPS
+  //  Stage 0
+  //    I and Q decimated by one shared FIR
+  in_sample = iq_decim_5x(in_sample);
   // Create separate I and Q streams to work with
   i16_stream_t i_sample = {.data=in_sample.data.real, .valid=in_sample.valid};
   i16_stream_t q_sample = {.data=in_sample.data.imag, .valid=in_sample.valid};
-
-  // First FIR+decimate to reduce frontend radio sample rate down to ~300KSPS
-  //  Stage 0
-  i_sample = decim_5x(i_sample);
-  q_sample = decim_5x(q_sample);
   //  Stage 1
   i_sample = decim_10x(i_sample);
   q_sample = decim_10x(q_sample);
