@@ -2,6 +2,9 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
+// TODO switch stream_t types over to
+// #include "stream/stream.h" -> stream(type)
+
 // int16_t w/ valid flag
 typedef struct i16_stream_t{
   int16_t data;
@@ -28,9 +31,11 @@ typedef struct ci16_stream_t{
 #define FIR_DECIM_LOG2_N_TAPS 6
 #define FIR_DECIM_FACTOR 5
 #define fir_decim_data_t int16_t
+#define fir_decim_data_stream_t i16_stream_t
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int38_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
+#define fir_decim_out_stream_t i16_stream_t
 #define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -165, \
@@ -84,17 +89,17 @@ typedef struct ci16_stream_t{
   -165  \
 }            
 #include "dsp/fir_decim.h"
-#define decim_5x_out_t fir_decim_out_data_stream_type(decim_5x)
-#define decim_5x_in_t fir_decim_in_data_stream_type(decim_5x)
 // 10x decim
 #define fir_decim_name decim_10x
 #define FIR_DECIM_N_TAPS 95
 #define FIR_DECIM_LOG2_N_TAPS 7
 #define FIR_DECIM_FACTOR 10
 #define fir_decim_data_t int16_t
+#define fir_decim_data_stream_t i16_stream_t
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
+#define fir_decim_out_stream_t i16_stream_t
 #define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   -199,\
@@ -194,14 +199,10 @@ typedef struct ci16_stream_t{
   -199 \
 }
 #include "dsp/fir_decim.h"
-#define decim_10x_out_t fir_decim_out_data_stream_type(decim_10x)
-#define decim_10x_in_t fir_decim_in_data_stream_type(decim_10x)
-
 
 typedef struct window_t{
     ci16_t data[3];
 } window_t;
-
 window_t samples_window(ci16_stream_t iq){
   static window_t state;
   if(iq.valid){
@@ -244,9 +245,11 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define FIR_INTERP_LOG2_N_TAPS 8
 #define FIR_INTERP_FACTOR 24 
 #define fir_interp_data_t int16_t
+#define fir_interp_data_stream_t i16_stream_t
 #define fir_interp_coeff_t int16_t
 #define fir_interp_accum_t int40_t // data_width + coeff_width + log2(taps#)
 #define fir_interp_out_t int16_t
+#define fir_interp_out_stream_t i16_stream_t
 #define FIR_INTERP_OUT_SCALE 3 // normalize, // 3x then 8x(<<3) w pow2 scale = 24
 #define FIR_INTERP_POW2_DN_SCALE (15-3) // data_width + coeff_width - out_width - 1 // fixed point adjust
 #define FIR_INTERP_COEFFS { \
@@ -479,9 +482,6 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   -173  \
 }
 #include "dsp/fir_interp.h"
-#define interp_24x_out_t fir_interp_out_data_stream_type(interp_24x)
-#define interp_24x_in_t fir_interp_in_data_stream_type(interp_24x)
-
 
 // Declare 5x decim FIR module to use in final decim to audio rate
 // Includes low pass of just up to 15Khz. TW@11KHz,STOP@15KHz 
@@ -490,9 +490,11 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
 #define FIR_DECIM_LOG2_N_TAPS 7
 #define FIR_DECIM_FACTOR 5
 #define fir_decim_data_t int16_t
+#define fir_decim_data_stream_t i16_stream_t
 #define fir_decim_coeff_t int16_t
 #define fir_decim_accum_t int39_t // data_width + coeff_width + log2(taps#)
 #define fir_decim_out_t int16_t
+#define fir_decim_out_stream_t i16_stream_t
 #define FIR_DECIM_POW2_DN_SCALE 15 // data_width + coeff_width - out_width - 1
 #define FIR_DECIM_COEFFS { \
   215, \
@@ -590,9 +592,6 @@ i16_stream_t fm_demodulate(ci16_stream_t iq_sample){
   215  \
 }            
 #include "dsp/fir_decim.h"
-#define decim_5x_audio_out_t fir_decim_out_data_stream_type(decim_5x_audio)
-#define decim_5x_audio_in_t fir_decim_in_data_stream_type(decim_5x_audio)
-
 
 // Deemphasis
 // 75e-6 Tau (USA)
