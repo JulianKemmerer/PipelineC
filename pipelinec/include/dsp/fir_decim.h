@@ -32,7 +32,10 @@
 PRAGMA_MESSAGE(FUNC_WIRES fir_decim_counter) // Not worried about delay of this func
 uint1_t fir_decim_counter()
 {
-  static uint8_t counter; // TODO size counter?
+  static uint5_t counter;
+  #if FIR_DECIM_FACTOR > 32
+  #error "Need larger decim counter"
+  #endif
   uint1_t ellapsed; 
   if(counter==(FIR_DECIM_FACTOR-1)){
     counter = 0;
