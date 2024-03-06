@@ -4,16 +4,25 @@
 #include "fir_names.h"
 
 // Not continuous, only somtimes valid, stream of samples
-#define fir_in_data_stream_t fir_in_data_stream_type(fir_name)
-typedef struct fir_in_data_stream_t{
+
+// Use can optionally supply their own stream types
+// TODO if not defined then make default stream(fir_data_t)
+// i.e. expect user to have defined stream type always 
+#ifndef fir_data_stream_t
+#define fir_data_stream_t fir_in_data_stream_type(fir_name)
+typedef struct fir_data_stream_t{
   fir_data_t data;
   uint1_t valid;
-}fir_in_data_stream_t;
-#define fir_out_data_stream_t fir_out_data_stream_type(fir_name)
-typedef struct fir_out_data_stream_t{
+}fir_data_stream_t;
+#endif
+// TODO similar make output default type be data_t stream(fir_data_t) 
+#ifndef fir_out_stream_t
+#define fir_out_stream_t fir_out_data_stream_type(fir_name)
+typedef struct fir_out_stream_t{
   fir_out_t data;
   uint1_t valid;
-}fir_out_data_stream_t;
+}fir_out_stream_t;
+#endif
 
 // Type for array of data
 #define fir_samples_window_t fir_samples_window_type(fir_name)
@@ -23,7 +32,7 @@ typedef struct fir_samples_window_t{
 
 #define fir_samples_window fir_samples_window_func(fir_name)
 PRAGMA_MESSAGE(FUNC_WIRES fir_samples_window) // Not worried about delay of this func
-fir_samples_window_t fir_samples_window(fir_in_data_stream_t input)
+fir_samples_window_t fir_samples_window(fir_data_stream_t input)
 {
   static fir_samples_window_t window;
   //fir_samples_window_t rv = window;
@@ -71,12 +80,12 @@ fir_out_t fir(fir_data_t data[FIR_N_TAPS])
 
 // The FIR filter pipeline
 // Always inputting and outputting a sample each cycle
-fir_out_data_stream_t fir_name(fir_in_data_stream_t input)
+fir_out_stream_t fir_name(fir_data_stream_t input)
 {
   // buffer up N datas in shift reg
   fir_samples_window_t sample_window = fir_samples_window(input);
   // compute FIR func on the sample window
-  fir_out_data_stream_t rv;
+  fir_out_stream_t rv;
   rv.valid = input.valid;
   rv.data = fir(sample_window.data);
   return rv;
@@ -95,8 +104,8 @@ fir_out_data_stream_t fir_name(fir_in_data_stream_t input)
 #undef FIR_OUT_SCALE
 #endif
 #undef FIR_POW2_DN_SCALE
-#undef fir_in_data_stream_t
-#undef fir_out_data_stream_t
+#undef fir_data_stream_t
+#undef fir_out_stream_t
 #undef fir_samples_window_t
 #undef fir_samples_window
 #undef fir
