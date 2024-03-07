@@ -6433,7 +6433,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     #
     # ALL INPUTS CONSTANT - REPLACE WITH CONSTANT
     if all_inputs_constant:
-
         # Thanks stackoverflow for twos comp BullSHEEIITITT FUCK ECE 200
         def int2bin(integer, digits):
             if integer >= 0:
@@ -6451,8 +6450,29 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 
         const_val_str = None
         const_val_str_known_c_type = None
+        # TRINARY OPS = MUX
+        if func_base_name==MUX_LOGIC_NAME and not base_name_is_name:
+            sel_wire = const_input_wires[0]
+            t_wire = const_input_wires[1]
+            f_wire = const_input_wires[2]
+            # Get values from constants
+            sel_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                sel_wire, parser_state.existing_logic, parser_state
+            )
+            t_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                t_wire, parser_state.existing_logic, parser_state
+            )
+            f_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                f_wire, parser_state.existing_logic, parser_state
+            )
+            if sel_val_str=="1":
+                const_val_str = t_val_str
+            elif sel_val_str=="0":
+                const_val_str = f_val_str
+            else:
+                raise Exception("Bad cond value")
         # BINARY OPERATIONS
-        if (
+        elif (
             func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX)
             and not base_name_is_name
         ):
@@ -6873,11 +6893,37 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         is_reducable = True
     # CONSTANT condition MUX
     elif func_base_name == MUX_LOGIC_NAME and const_input_wires[0] is not None:
-        # Easier to do in C_AST_IF, can not evaluate branch in full instead of just removing MUX func here
-        print(
-            "Hey you did a bad job at your job reducing MUXES. Atlas Sound w. Noah Lennox - Walkabout"
+        # What is const value for condition?
+        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            const_input_wires[0], parser_state.existing_logic, parser_state
         )
-        sys.exit(-1)
+        val, unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
+            const_val_str, func_c_ast_node, is_negated=False, expected_c_type=BOOL_C_TYPE
+        )
+        # Not reducing to replacement func, 
+        # is just wire from selected input driver to output wires
+        # Remove old submodule instance
+        parser_state.existing_logic.REMOVE_SUBMODULE(
+            func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+        )
+        if val==1:
+            # Select true branch
+            sel_input_driver = input_drivers[1]
+        elif val==0:
+            # Select false branch
+            sel_input_driver = input_drivers[2]
+        else:
+            raise Exception("Bad cond value")
+        # And connect input port drive to output driven wires
+        parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
+            parser_state,
+            sel_input_driver,
+            output_driven_wire_names,
+            prepend_text,
+            func_c_ast_node,
+            check_types_do_cast=False,
+        )
+        return parser_state.existing_logic
     # Constant one hot enum compare eq
     elif func_base_name == ONE_HOT_EQ_LOGIC_NAME and (
         const_input_wires[0] is not None or
@@ -8987,11 +9033,16 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
             children[1][1], [dummy_wire], "", dummy_parser_state
         )
         driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
+        const_driving_wire = FIND_CONST_DRIVING_WIRE(driving_wire, dummy_parser_state.existing_logic)
+        if const_driving_wire is None:
+            raise Exception("Array dimensions not constant!",str(array_decl.coord))
         dim = int(
             GET_VAL_STR_FROM_CONST_WIRE(
-                driving_wire, dummy_parser_state.existing_logic, dummy_parser_state
+                const_driving_wire, dummy_parser_state.existing_logic, dummy_parser_state
             )
         )
+        if dim <= 0:
+            raise Exception("Array dimensions not >=1!", dim, str(array_decl.coord))
         # dim = int(children[1][1].value)
         dims.append(dim)
         array_decl = children[0][1]
