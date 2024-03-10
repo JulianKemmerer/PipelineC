@@ -1,19 +1,3 @@
-
-
-/*
-// II=II slow binary tree of II elements
-// II=3 is faked as II=2 would be just one op
-stream(uint8_t) test_3tree(uint8_t x[3], uint1_t valid){
-  stream(uint8_t) rv;
-  rv.data = x[0] + x[1] + x[2];
-  rv.valid = valid;
-  return rv;
-}
-
-#define slow_name test
-#define slow_II 3
-#define slow_IIdiv2_II_tree test_3tree
-*/
 #pragma PART "xc7a35ticsg324-1l"
 #include "uintN_t.h"
 #include "intN_t.h"
