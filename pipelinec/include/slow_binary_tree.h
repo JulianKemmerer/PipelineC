@@ -65,7 +65,7 @@ PPCAT(name,_input_ser_t) PPCAT(name,_input_ser)(in_t in_data[N_INPUTS], uint1_t 
 /* Can only declare the not slow tree inside this macro since recursion is hard*/\
 /* Not slow II=1 pipeline of fewer HW OPS*/\
 DECL_BINARY_OP_TREE(\
-  partial_bin_op_tree_func,\
+  PPCAT(name,_partial_bin_op_tree_func),\
   tree_t, tree_t, in_t, OP, CEIL_DIV(N_INPUTS,II), CLOG2(CEIL_DIV(N_INPUTS,II))\
 )\
 \
@@ -98,12 +98,17 @@ PPCAT(name,_out_deser_t) PPCAT(name,_out_deser)(tree_t partial_out, uint1_t shif
 /* and then one final slow binary tree for those */\
 stream(out_t) name(in_t in_data[N_INPUTS], uint1_t valid)\
 {\
+  /* Sanity check params?*/\
+  if(II==1){\
+    do_not_use_slow_funcs_with_II_of_1();\
+  }\
+  \
   /* Register input entire data, shift out chunks at a time*/\
   /* One valid in produces produces stream of N=II valids out*/\
   PPCAT(name,_input_ser_t) serializer = PPCAT(name,_input_ser)(in_data, valid);\
 \
   /* Iteration pieces through normal II=1 pipeline*/\
-  tree_t single_iter_data_out = partial_bin_op_tree_func(serializer.single_iter_data);\
+  tree_t single_iter_data_out = PPCAT(name,_partial_bin_op_tree_func)(serializer.single_iter_data);\
 \
   /* Buffer iters outputs*/\
   /* Produces one slow II=N stream of N iters elements */\
