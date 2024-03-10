@@ -15,12 +15,44 @@
 // Bool stuff
 #include "bool.h"
 
+// Mathy stuff
+#define ROUND0UP1(x)\
+((x)==0 ? 1 : x)
+
+#define CLOG2(N)\
+(\
+(N)<=1 ? 0 :\
+(N)<=2 ? 1 :\
+(N)<=4 ? 2 :\
+(N)<=8 ? 3 :\
+(N)<=16 ? 4 :\
+(N)<=32 ? 5 :\
+(N)<=64 ? 6 :\
+(N)<=128 ? 7 :\
+(N)<=256 ? 8 :\
+(N)<=512 ? 9 :\
+(N)<=1024 ? 10 :\
+(N)<=2048 ? 11 :\
+(N)<=4096 ? 12 :\
+(N)<=8192 ? 13 :\
+(N)<=16384 ? 14 :\
+(N)<=32768 ? 15 :\
+(N)<=65536 ? 16 :\
+-1)
+
+#define CEIL(f)\
+( ((f)-(float)(int64_t)(f)) > 0.0 ? (int64_t)(f) + 1 : (int64_t)(f) )
+
+#define CEIL_DIV(N,D)\
+CEIL((float)(N)/(float)(D))
+
 // Can't parse attributes
 // https://github.com/eliben/pycparser/wiki/FAQ#what-do-i-do-about-__attribute__
 #ifdef __PIPELINEC__
 #define __attribute__(x)
 #endif
 
+// Pragma helpers
 #define PRAGMA_MESSAGE_(x) _Pragma(#x)
 #define PRAGMA_MESSAGE(x) PRAGMA_MESSAGE_(x)
 
