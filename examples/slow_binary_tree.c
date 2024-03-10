@@ -5,7 +5,7 @@
 
 #include "slow_binary_tree.h"
 
-// Adder tree of u8s
+// Adder tree of u16s
 DECL_STREAM_TYPE(uint16_t)
 #define slow_out_t uint16_t
 #define slow_tree_t uint16_t
