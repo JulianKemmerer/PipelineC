@@ -4,7 +4,7 @@
 #include "compiler.h"
 
 #define DECL_SLOW_BINARY_TREE(\
-  name, II, ii_div2_slow_ii_tree, /* II slow binary tree of II elements*/\
+  name, II, ii_div2_slow_ii_tree, /* II/2 slow binary tree of II elements*/\
   out_t, tree_t, in_t, OP, N_INPUTS)\
 typedef struct PPCAT(name,_input_ser_t){\
   in_t single_iter_data[CEIL_DIV(N_INPUTS,II)];\

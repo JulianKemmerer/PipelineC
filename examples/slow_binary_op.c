@@ -17,7 +17,7 @@ DECL_STREAM_TYPE(uint16_t)
 // Base binary tree, II=n inputs/2
 DECL_SLOW_BINARY_OP(
   the_binary_ops, slow_II,
-  slow_out_t, slow_in_t, slow_OP, SLOW_N_INPUTS
+  slow_out_t, slow_OP, slow_in_t, slow_in_t, SLOW_N_INPUTS
 )
 
 #pragma MAIN main

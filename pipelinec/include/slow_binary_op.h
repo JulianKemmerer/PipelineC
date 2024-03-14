@@ -5,21 +5,21 @@
 
 #define DECL_SLOW_BINARY_OP(\
   name, II,\
-  out_t, in_t, OP, N_INPUTS)\
+  out_t, OP, left_t, right_t, N_INPUTS)\
 typedef struct PPCAT(name,_input_ser_t){\
-  in_t l[CEIL_DIV(N_INPUTS,II)];\
-  in_t r[CEIL_DIV(N_INPUTS,II)];\
+  left_t l[CEIL_DIV(N_INPUTS,II)];\
+  right_t r[CEIL_DIV(N_INPUTS,II)];\
   uint1_t valid;\
 }PPCAT(name,_input_ser_t);\
-PPCAT(name,_input_ser_t) PPCAT(name,_input_ser)(in_t l[N_INPUTS], in_t r[N_INPUTS], uint1_t in_valid)\
+PPCAT(name,_input_ser_t) PPCAT(name,_input_ser)(left_t l[N_INPUTS], right_t r[N_INPUTS], uint1_t in_valid)\
 {\
   /* If active */\
   static uint1_t valid;\
   /* Count of iters */\
   static uint16_t counter;\
   /* Data for each iter*/\
-  static in_t l_datas[II][CEIL_DIV(N_INPUTS,II)];\
-  static in_t r_datas[II][CEIL_DIV(N_INPUTS,II)];\
+  static left_t l_datas[II][CEIL_DIV(N_INPUTS,II)];\
+  static right_t r_datas[II][CEIL_DIV(N_INPUTS,II)];\
 \
   /* Reg input data*/\
   if(in_valid){\
@@ -92,7 +92,7 @@ PPCAT(name,_out_t) PPCAT(name,_out_deser)(out_t partial_outs[CEIL_DIV(N_INPUTS,I
 \
 /* The slow II=N binary op*/\
 /* Break into N_INPUTS/II sized chunks */\
-PPCAT(name,_out_t) name(in_t l[N_INPUTS], in_t r[N_INPUTS], uint1_t valid)\
+PPCAT(name,_out_t) name(left_t l[N_INPUTS], right_t r[N_INPUTS], uint1_t valid)\
 {\
   /* Register input entire data, shift out chunks at a time*/\
   /* One valid in produces produces stream of N=II valids out*/\
