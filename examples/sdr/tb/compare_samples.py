@@ -91,14 +91,14 @@ def make_fm_test_input(sample_rate, freq_deviation, show_plots=False):
     legend()
     #show()
   return t,m_signal,output
-fc = 100 # carrier frequency
+'''fc = 100 # carrier frequency
 sample_rate = 1000
 freq_deviation = 25.0
 t,m_signal,fmd_iq = make_fm_test_input(sample_rate, freq_deviation, True)
 nsamples_in = len(fmd_iq)
 s_i = fmd_iq.real
 s_q = fmd_iq.imag
-s_valid = array([fp_one_i16] * len(fmd_iq))
+s_valid = array([fp_one_i16] * len(fmd_iq))'''
 
 def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
   # FIR stuff from
@@ -127,6 +127,16 @@ def make_fir_interp_demo_samples(sample_rate, nsamples_in, interp_fac):
 #nsamples_in = 1000  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
 #s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,interp_fac)
 #s_q = array([0]*len(s_i))
+
+# Slow fir samples
+# copied make_fir_interp_demo_samples
+slow_fac = 20
+sample_rate = 100.0
+nsamples_in = 100  # 227 taps on interp FIR , want more than that input - very slow to sim need to rewrite testbench
+s_i, s_valid, t = make_fir_interp_demo_samples(sample_rate,nsamples_in,slow_fac)
+s_q = array([0]*len(s_i))
+
+
 
 
 # Write samples as a C int16 array input for simulation
@@ -585,6 +595,247 @@ def interp_24x(sample_rate, s):
   return sample_rate_out,filtered_interp_s
 
 
+# slow fir is test fir func from 24x interp
+def slow_fir(sample_rate, s):
+  sample_rate_out = sample_rate
+  # Filter
+  taps_int16 = [ \
+  -173, \
+  -34,  \
+  -36,  \
+  -39,  \
+  -41,  \
+  -44,  \
+  -45,  \
+  -47,  \
+  -48,  \
+  -49,  \
+  -49,  \
+  -49,  \
+  -48,  \
+  -46,  \
+  -44,  \
+  -42,  \
+  -38,  \
+  -35,  \
+  -30,  \
+  -25,  \
+  -20,  \
+  -13,  \
+  -7,   \
+  0,    \
+  7,    \
+  15,   \
+  23,   \
+  31,   \
+  39,   \
+  48,   \
+  56,   \
+  64,   \
+  71,   \
+  78,   \
+  85,   \
+  91,   \
+  97,   \
+  101,  \
+  105,  \
+  108,  \
+  110,  \
+  110,  \
+  110,  \
+  108,  \
+  105,  \
+  100,  \
+  95,   \
+  88,   \
+  79,   \
+  70,   \
+  59,   \
+  47,   \
+  34,   \
+  20,   \
+  6,    \
+  -10,  \
+  -26,  \
+  -42,  \
+  -59,  \
+  -75,  \
+  -92,  \
+  -108, \
+  -124, \
+  -139, \
+  -153, \
+  -166, \
+  -177, \
+  -187, \
+  -195, \
+  -201, \
+  -205, \
+  -207, \
+  -206, \
+  -203, \
+  -197, \
+  -188, \
+  -176, \
+  -161, \
+  -143, \
+  -122, \
+  -97,  \
+  -70,  \
+  -40,  \
+  -8,   \
+  28,   \
+  66,   \
+  107,  \
+  150,  \
+  194,  \
+  241,  \
+  289,  \
+  338,  \
+  389,  \
+  440,  \
+  491,  \
+  542,  \
+  593,  \
+  643,  \
+  693,  \
+  741,  \
+  787,  \
+  831,  \
+  873,  \
+  913,  \
+  949,  \
+  983,  \
+  1013, \
+  1040, \
+  1063, \
+  1082, \
+  1096, \
+  1107, \
+  1114, \
+  1116, \
+  1114, \
+  1107, \
+  1096, \
+  1082, \
+  1063, \
+  1040, \
+  1013, \
+  983,  \
+  949,  \
+  913,  \
+  873,  \
+  831,  \
+  787,  \
+  741,  \
+  693,  \
+  643,  \
+  593,  \
+  542,  \
+  491,  \
+  440,  \
+  389,  \
+  338,  \
+  289,  \
+  241,  \
+  194,  \
+  150,  \
+  107,  \
+  66,   \
+  28,   \
+  -8,   \
+  -40,  \
+  -70,  \
+  -97,  \
+  -122, \
+  -143, \
+  -161, \
+  -176, \
+  -188, \
+  -197, \
+  -203, \
+  -206, \
+  -207, \
+  -205, \
+  -201, \
+  -195, \
+  -187, \
+  -177, \
+  -166, \
+  -153, \
+  -139, \
+  -124, \
+  -108, \
+  -92,  \
+  -75,  \
+  -59,  \
+  -42,  \
+  -26,  \
+  -10,  \
+  6,    \
+  20,   \
+  34,   \
+  47,   \
+  59,   \
+  70,   \
+  79,   \
+  88,   \
+  95,   \
+  100,  \
+  105,  \
+  108,  \
+  110,  \
+  110,  \
+  110,  \
+  108,  \
+  105,  \
+  101,  \
+  97,   \
+  91,   \
+  85,   \
+  78,   \
+  71,   \
+  64,   \
+  56,   \
+  48,   \
+  39,   \
+  31,   \
+  23,   \
+  15,   \
+  7,    \
+  0,    \
+  -7,   \
+  -13,  \
+  -20,  \
+  -25,  \
+  -30,  \
+  -35,  \
+  -38,  \
+  -42,  \
+  -44,  \
+  -46,  \
+  -48,  \
+  -49,  \
+  -49,  \
+  -49,  \
+  -48,  \
+  -47,  \
+  -45,  \
+  -44,  \
+  -41,  \
+  -39,  \
+  -36,  \
+  -34,  \
+  -173  ]
+  taps_int16 = array(taps_int16)
+  taps = to_float(taps_int16)
+
+  # Use lfilter to filter s with the FIR filter.
+  filtered_interp_s = lfilter(taps, 1.0, array(s))
+
+  return sample_rate_out,filtered_interp_s[:-2] # Why 2?
+
+
 
 # Get expected output by applying some DSP
 # FIR decim example:
@@ -592,6 +843,7 @@ def interp_24x(sample_rate, s):
 #nsamples_out = min(len(filtered_s_i),len(filtered_s_q))
 #t_out = arange(nsamples_out) / sample_rate_out
 # FM demod example
+'''
 df = freq_deviation/sample_rate # df Deviation(Hz) / SampleRate(Hz) ....25.0 #1.0 # normalized freq dev?
 fc = 0.0 # baseband IQ
 fmd_iq = s_i + 1j*s_q
@@ -604,12 +856,19 @@ nsamples_out = nsamples_in
 t_out = t
 # no output second channel
 filtered_s_q = array([0]*len(filtered_s_i))
+'''
 # FIR interp example
 #sample_rate_out,filtered_s_i = interp_24x(sample_rate, s_i)
 #nsamples_out = len(filtered_s_i)
 #t_out = arange(nsamples_out) / sample_rate_out
 # no output second channel
 #filtered_s_q = array([0]*len(filtered_s_i))
+# Copied FIR interp for slwo interp
+sample_rate_out,filtered_s_i = slow_fir(sample_rate, s_i)
+nsamples_out = len(filtered_s_i)
+t_out = arange(nsamples_out) / sample_rate_out
+# no output second channel
+filtered_s_q = array([0]*len(filtered_s_i))
 
 
 #------------------------------------------------
