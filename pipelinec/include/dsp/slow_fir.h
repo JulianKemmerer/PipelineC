@@ -27,7 +27,7 @@ typedef struct slow_fir_samples_window_t{
 
 #define slow_fir_samples_window PPCAT(slow_fir_name,_samples_window)
 PRAGMA_MESSAGE(FUNC_WIRES slow_fir_samples_window) // Not worried about delay of this func
-slow_fir_samples_window_t slow_fir_samples_window(slow_fir_data_stream_t input)
+slow_fir_samples_window_t slow_fir_samples_window(stream(slow_fir_data_t) input)
 {
   static slow_fir_samples_window_t window;
   if(input.valid){
@@ -38,27 +38,27 @@ slow_fir_samples_window_t slow_fir_samples_window(slow_fir_data_stream_t input)
 
 // The FIR filter pipeline
 // Always inputting and outputting a sample each cycle
-slow_fir_out_stream_t slow_fir_name(slow_fir_data_stream_t input)
+stream(slow_fir_out_t) slow_fir_name(stream(slow_fir_data_t) input)
 {
   // Constant set of coeffs
-  fir_coeff_t coeffs[FIR_N_TAPS] = FIR_COEFFS;
+  slow_fir_coeff_t coeffs[SLOW_FIR_N_TAPS] = SLOW_FIR_COEFFS;
   // buffer up N datas in shift reg
   slow_fir_samples_window_t sample_window = slow_fir_samples_window(input);
 
   // Slow multiply samples*coeffs
   PPCAT(slow_mult_func,_out_t) slow_mult = slow_mult_func(sample_window.data, coeffs, input.valid);
   // Then slow binary tree sum those results
-  stream(fir_accum_t) sum_stream = slow_fir_binary_tree_func(slow_mult.data, slow_mult.valid);
+  stream(slow_fir_accum_t) sum_stream = slow_fir_binary_tree_func(slow_mult.data, slow_mult.valid);
 
   // Output scaling
-  fir_accum_t sum = sum_stream.data;
+  slow_fir_accum_t sum = sum_stream.data;
   #ifdef SLOW_FIR_OUT_SCALE
   sum = (sum * SLOW_FIR_OUT_SCALE) >> SLOW_FIR_POW2_DN_SCALE;
   #else
   sum = sum >> SLOW_FIR_POW2_DN_SCALE;
   #endif
 
-  slow_fir_out_stream_t out_stream;
+  stream(slow_fir_out_t) out_stream;
   out_stream.data = sum;
   out_stream.valid = sum_stream.valid;
   return out_stream;
@@ -79,8 +79,6 @@ slow_fir_out_stream_t slow_fir_name(slow_fir_data_stream_t input)
 #undef SLOW_FIR_OUT_SCALE
 #endif
 #undef SLOW_FIR_POW2_DN_SCALE
-#undef slow_fir_data_stream_t
-#undef slow_fir_out_stream_t
 #undef slow_fir_samples_window_t
 #undef slow_fir_samples_window
 
