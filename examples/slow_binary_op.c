@@ -6,13 +6,13 @@
 #include "slow_binary_op.h"
 
 // Do many binary operations using fewer resources at slow II
-DECL_STREAM_TYPE(uint16_t)
-#define slow_out_t uint16_t
-#define slow_in_t uint16_t
-#define slow_OP +
-#define SLOW_N_INPUTS 255
+DECL_STREAM_TYPE(int40_t)
+#define slow_out_t int40_t
+#define slow_in_t int40_t
+#define slow_OP *
+#define SLOW_N_INPUTS 227
 // How slow?
-#define slow_II SLOW_N_INPUTS // maximum=N inputs
+#define slow_II 20 // maximum=N inputs
 
 // Base binary tree, II=n inputs/2
 DECL_SLOW_BINARY_OP(

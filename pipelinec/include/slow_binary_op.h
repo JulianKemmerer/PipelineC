@@ -74,16 +74,20 @@ typedef struct PPCAT(name,_out_t){\
 }PPCAT(name,_out_t);\
 PPCAT(name,_out_t) PPCAT(name,_out_deser)(out_t partial_outs[CEIL_DIV(N_INPUTS,II)], uint1_t shifter_out_valid)\
 {\
-  static out_t buff[N_INPUTS];\
+  static out_t buff[(II)*CEIL_DIV(N_INPUTS,II)];\
   static uint16_t counter;\
   static uint1_t valid;\
   PPCAT(name,_out_t) rv;\
   if(shifter_out_valid){\
-    ARRAY_SHIFT_INTO_TOP(buff,N_INPUTS,partial_outs,CEIL_DIV(N_INPUTS,II))\
+    ARRAY_SHIFT_INTO_TOP(buff, (II)*CEIL_DIV(N_INPUTS,II), partial_outs, CEIL_DIV(N_INPUTS,II))\
     rv.valid = counter==(II-1);\
     counter += 1;\
   }\
-  rv.data = buff;\
+  uint32_t i;\
+  for(i = 0; i < N_INPUTS; i+=1)\
+  {\
+    rv.data[i] = buff[i];\
+  }\
   if(rv.valid){\
     counter = 0;\
   }\
