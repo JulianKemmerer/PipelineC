@@ -40,11 +40,20 @@
 (N)<=32768 ? 15 :\
 (N)<=65536 ? 16 :\*/
 
+#define INT_CAST_ROUNDS_DOWN(f)\
+( ((f)-(float)(int64_t)(f)) > 0.0 )
+
 #define CEIL(f)\
-( ((f)-(float)(int64_t)(f)) > 0.0 ? (int64_t)(f) + 1 : (int64_t)(f) )
+( INT_CAST_ROUNDS_DOWN(f) ? (int64_t)(f) + 1 : (int64_t)(f) )
+
+#define FLOOR(f)\
+( INT_CAST_ROUNDS_DOWN(f) ? (int64_t)(f) : (int64_t)(f) - 1 )
 
 #define CEIL_DIV(N,D)\
 CEIL((float)(N)/(float)(D))
+
+#define FLOOR_DIV(N,D)\
+FLOOR((float)(N)/(float)(D))
 
 // Can't parse attributes
 // https://github.com/eliben/pycparser/wiki/FAQ#what-do-i-do-about-__attribute__
