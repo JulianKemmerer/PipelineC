@@ -95,4 +95,5 @@ with open(in_file, 'rb') as f:
 				word_str += ",\\n\\\n"
 			s += word_str
 		s += ')"\n'
+		s += f'#define MEM_INIT_SIZE {MEM_SIZE_IN_BYTES}\n'
 		of.write(s)
