@@ -1,3 +1,5 @@
+// To be used with risc-v.c
+
 // Memory mapped IO addresses to drive hardware wires
 // ex. debug ports, devices, accelerator FSMs
 #include "mem_map.h"
@@ -11,6 +13,7 @@
 //DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 #include "leds/leds_port.c"
 #define riscv_mem_map mem_map_module
+#define riscv_mmio_mod_out_t mem_map_out_t
 mem_map_out_t mem_map_module(
   uint32_t addr,
   uint32_t wr_data,
