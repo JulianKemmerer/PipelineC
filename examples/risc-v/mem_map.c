@@ -6,14 +6,9 @@
 #include "mem_map.h"
 
 // Debug ports for simulation
-DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
-DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
+//DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
+//DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 #include "leds/leds_port.c"
-typedef struct mem_map_out_t
-{
-  uint1_t addr_is_mapped;
-  uint32_t rd_data;
-}mem_map_out_t;
 mem_map_out_t mem_map_module(
   uint32_t addr,
   uint32_t wr_data,
@@ -55,8 +50,8 @@ mem_map_out_t mem_map_module(
     o.addr_is_mapped = 1;
     o.rd_data = 0;
     if(wr_byte_ens[0]){
-      main_return = wr_data;
-      halt = 1;
+      //main_return = wr_data;
+      //halt = 1;
     }
   }
   WORD_MM_ENTRY(LEDS_ADDR, leds)

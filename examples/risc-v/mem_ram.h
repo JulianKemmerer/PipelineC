@@ -2,12 +2,11 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
-#include "debug_port.h"
 
 // Combined instruction and data memory initialized from gcc compile
 #define MEM_SIZE_IN_BYTES 2048
 #define MEM_NUM_WORDS (MEM_SIZE_IN_BYTES/4)
-#include "gcc_test/mem_init.h"
+
 // Need a RAM with one read port for instructions, one r/w port for data mem
 // Was using ram.h DECL_RAM_DP_RW_R_0 macro, 
 // but does not include byte enables needed for RISC-V SH and SB
@@ -83,8 +82,6 @@ begin \n\
 ");
 }
 
-// Memory mapped IO modules to drive hardware wires, ex. debug ports, devices
-#include "mem_map.c"
 
 // Split main memory the_mem into two parts,
 // one read port for instructions, one r/w port for data mem
@@ -93,7 +90,7 @@ typedef struct mem_out_t
   uint32_t inst;
   uint32_t rd_data;
 }mem_out_t;
-DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
+//DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
 mem_out_t mem(
   uint32_t inst_addr,
   uint32_t rw_addr,
@@ -117,9 +114,9 @@ mem_out_t mem(
   //uint32_t inst_addr_word_index = inst_addr >> 2;
 
   // Sanity check, stop sim if out of range access
-  if((mem_rw_word_index >= MEM_NUM_WORDS) & wr_byte_ens[0]){
-    mem_out_of_range = 1;
-  }
+  //if((mem_rw_word_index >= MEM_NUM_WORDS) & wr_byte_ens[0]){
+  //  mem_out_of_range = 1;
+  //}
 
   // The single RAM instance with connections splitting in two
   the_mem_outputs_t ram_out = the_mem(mem_rw_word_index,

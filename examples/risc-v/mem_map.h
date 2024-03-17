@@ -214,6 +214,13 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
 
 // Hardware memory address mappings
 
+// Memory map module type
+typedef struct mem_map_out_t
+{
+  uint1_t addr_is_mapped;
+  uint32_t rd_data;
+}mem_map_out_t;
+
 #ifdef __PIPELINEC__
 #include "compiler.h"
 #include "uintN_t.h"
