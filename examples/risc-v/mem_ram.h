@@ -3,9 +3,10 @@
 #include "intN_t.h"
 #include "compiler.h"
 
+#include "mem_map.h"
+
 // Combined instruction and data memory initialized from gcc compile
-#define MEM_SIZE_IN_BYTES 2048
-#define MEM_NUM_WORDS (MEM_SIZE_IN_BYTES/4)
+#define RISCV_MEM_NUM_WORDS (RISCV_MEM_SIZE_BYTES/4)
 
 // Need a RAM with one read port for instructions, one r/w port for data mem
 // Was using ram.h DECL_RAM_DP_RW_R_0 macro, 
@@ -29,9 +30,9 @@ the_mem_outputs_t the_mem(
   uint1_t valid1
 ){
   __vhdl__("\n\
-  constant SIZE : integer := " xstr(MEM_NUM_WORDS) "; \n\
+  constant SIZE : integer := " xstr(RISCV_MEM_NUM_WORDS) "; \n\
   type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
-  signal the_ram : ram_t := " MEM_INIT "; \n\
+  signal the_ram : ram_t := " RISCV_MEM_INIT "; \n\
   -- Limit zero latency comb. read addr range to SIZE \n\
   -- since invalid addresses can occur as logic propogates \n\
   -- (this includes out of int32 range u32 values) \n\
@@ -98,7 +99,7 @@ mem_out_t mem(
   uint1_t wr_byte_ens[4]
 ){
   // Check for write to memory mapped IO addresses
-  mem_map_out_t mem_map_out = mem_map_module(
+  mem_map_out_t mem_map_out = riscv_mem_map(
     rw_addr,
     wr_data,
     wr_byte_ens);
@@ -114,7 +115,7 @@ mem_out_t mem(
   //uint32_t inst_addr_word_index = inst_addr >> 2;
 
   // Sanity check, stop sim if out of range access
-  //if((mem_rw_word_index >= MEM_NUM_WORDS) & wr_byte_ens[0]){
+  //if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & wr_byte_ens[0]){
   //  mem_out_of_range = 1;
   //}
 

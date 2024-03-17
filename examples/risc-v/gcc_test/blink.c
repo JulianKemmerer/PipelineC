@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "../mem_map.h"
+#include "mem_map.h"
 
 void main() {
 	int count = 0;

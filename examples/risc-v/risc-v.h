@@ -1,3 +1,6 @@
+#pragma once
+// Common riscv things across all cores
+
 #include "compiler.h"
 #include "uintN_t.h"
 #include "intN_t.h"
@@ -6,9 +9,8 @@
 // Register file w/ read+write ports
 #include "reg_file.h"
 
-// Combined instruction and data memory w/ ports
-// Also includes memory mapped IO
-#include "mem_ram.h"
+// Helpers for building memory maps
+#include "mem_map.h"
 
 // OPCODES and such
 #define OP_ADD    0b0110011
@@ -398,3 +400,4 @@ execute_t execute(
   }
   return rv;
 }
+

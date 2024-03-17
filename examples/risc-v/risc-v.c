@@ -3,17 +3,23 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 
+// Base RISCV components
+#include "risc-v.h"
+
 // Configure CPU:
 //  Clock
 #define CPU_CLK_MHZ 40.0
 MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 //  Program
 #include "gcc_test/mem_init.h"
+#define RISCV_MEM_INIT MEM_INIT
+#define RISCV_MEM_SIZE_BYTES 2048
 //  Memory mapped IO modules to drive hardware wires, ex. debug ports, devices
 #include "mem_map.c"
 
-// Base RISCV components
-#include "risc-v.h"
+// Combined instruction and data memory w/ ports
+// Also includes memory mapped IO
+#include "mem_ram.h"
 
 // CPU top level
 uint32_t risc_v()

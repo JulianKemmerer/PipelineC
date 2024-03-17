@@ -1,3 +1,4 @@
+#pragma once
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"

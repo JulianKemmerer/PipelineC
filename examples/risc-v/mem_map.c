@@ -1,14 +1,16 @@
-// // GoL accelerators are enabled inside hw.c (some or none)
-// #include "gcc_test/gol/hw.c"
-
 // Memory mapped IO addresses to drive hardware wires
 // ex. debug ports, devices, accelerator FSMs
 #include "mem_map.h"
+#include "gcc_test/mem_map.h"
+
+// // GoL accelerators are enabled inside hw.c (some or none)
+// #include "gcc_test/gol/hw.c"
 
 // Debug ports for simulation
 //DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
 //DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 #include "leds/leds_port.c"
+#define riscv_mem_map mem_map_module
 mem_map_out_t mem_map_module(
   uint32_t addr,
   uint32_t wr_data,
@@ -103,3 +105,4 @@ mem_map_out_t mem_map_module(
 
   return o;
 }
+
