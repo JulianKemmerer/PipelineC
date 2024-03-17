@@ -1,13 +1,31 @@
 #pragma once
 
-// Finally include helpers for building memory maps
+// Helpers for building memory maps
 // TODO move into risc-v.h?
 
+// Base/default version without user types
 typedef struct mem_map_out_t
 {
   uint1_t addr_is_mapped;
   uint32_t rd_data;
 }mem_map_out_t;
+
+// Base struct builder helper with user types
+#define riscv_mem_map_mod_out_t(mem_map_outputs_t)\
+PPCAT(mem_map_outputs_t,_riscv_mem_map_mod_out_t)
+
+#define DECL_MEM_MAP_MOD_OUT_T(mem_map_outputs_t)\
+typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
+{\
+  uint1_t addr_is_mapped;\
+  uint32_t rd_data;\
+  mem_map_outputs_t outputs;\
+}riscv_mem_map_mod_out_t(mem_map_outputs_t);
+
+#define RISCV_MEM_MAP_MOD_INPUTS(mem_map_inputs_t)\
+uint32_t addr, uint32_t wr_data, uint1_t wr_byte_ens[4],\
+mem_map_inputs_t inputs
+
 
 // Helper macros to reduce code in and around mem_map_module
 //  TODO: Make read-write struct byte array muxing simpler, not all alignments handled are possible.

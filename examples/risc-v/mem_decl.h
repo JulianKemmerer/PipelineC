@@ -1,4 +1,4 @@
-// Combined instruction and data memory
+// Combined instruction and data memory, used with risc-v_decl.h
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
@@ -90,19 +90,33 @@ typedef struct mem_out_t
 {
   uint32_t inst;
   uint32_t rd_data;
+  uint1_t mem_out_of_range; // Exception, stop sim
+  #ifdef riscv_mem_map_outputs_t
+  riscv_mem_map_outputs_t mem_map_outputs;
+  #endif
 }mem_out_t;
-//DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
 mem_out_t mem(
   uint32_t inst_addr,
   uint32_t rw_addr,
   uint32_t wr_data,
   uint1_t wr_byte_ens[4]
+  #ifdef riscv_mem_map_inputs_t
+  , riscv_mem_map_inputs_t mem_map_inputs
+  #endif
 ){
   // Check for write to memory mapped IO addresses
-  mem_map_out_t mem_map_out = riscv_mem_map(
+  riscv_mmio_mod_out_t mem_map_out = riscv_mem_map(
     rw_addr,
     wr_data,
-    wr_byte_ens);
+    wr_byte_ens
+    #ifdef riscv_mem_map_inputs_t
+    , mem_map_inputs
+    #endif
+  );
+  mem_out_t mem_out;
+  #ifdef riscv_mem_map_outputs_t
+  mem_out.mem_map_outputs = mem_map_out.outputs;
+  #endif
   
   // Mem map write does not write actual RAM memory
   uint32_t i;
@@ -115,15 +129,14 @@ mem_out_t mem(
   //uint32_t inst_addr_word_index = inst_addr >> 2;
 
   // Sanity check, stop sim if out of range access
-  //if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & wr_byte_ens[0]){
-  //  mem_out_of_range = 1;
-  //}
+  if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & wr_byte_ens[0]){
+    mem_out.mem_out_of_range = 1;
+  }
 
-  // The single RAM instance with connections splitting in two
+  // The single RAM instance
   the_mem_outputs_t ram_out = the_mem(mem_rw_word_index,
                                       wr_data, wr_byte_ens, 1,
                                        inst_addr, 1);
-  mem_out_t mem_out;
   mem_out.rd_data = ram_out.rd_data0;
   mem_out.inst = ram_out.rd_data1;
 

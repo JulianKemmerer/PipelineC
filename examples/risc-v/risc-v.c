@@ -19,7 +19,7 @@ MAIN_MHZ(risc_v, CPU_CLK_MHZ)
 
 // Combined instruction and data memory w/ ports
 // Also includes memory mapped IO
-#include "mem_ram.h"
+#include "mem_decl.h"
 
 // CPU top level
 uint32_t risc_v()

@@ -1,6 +1,8 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 
+#include "mem_map.h"
+
 /*
 #define riscv_name my_riscv
 #define RISCV_MEM_SIZE_BYTES 2048
@@ -8,12 +10,29 @@
 #define riscv_mem_map mem_map_module
 */
 
+#ifdef riscv_mem_map_outputs_t
+#define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
+#else
+#define riscv_mmio_mod_out_t mem_map_out_t
+#endif
+
 // Combined instruction and data memory w/ ports
 // Also includes memory mapped IO
-#include "mem_ram.h"
+#include "mem_decl.h"
 
 // CPU top level
-uint32_t riscv_name()
+// Optional outputs from memory map
+#ifdef riscv_mem_map_outputs_t
+riscv_mem_map_outputs_t
+#else
+uint32_t // Dummy output pc
+#endif
+riscv_name(
+  // Optional inputs to memory map
+  #ifdef riscv_mem_map_inputs_t
+  riscv_mem_map_inputs_t mem_map_inputs
+  #endif
+)
 {
   // Program counter
   static uint32_t pc = 0;
@@ -34,6 +53,10 @@ uint32_t riscv_name()
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
     mem_wr_byte_ens // Main memory write data byte enables
+    // Optional memory map inputs
+    #ifdef riscv_mem_map_inputs_t
+    , mem_map_inputs
+    #endif
   );
 
   // Decode the instruction to control signals
@@ -110,8 +133,13 @@ uint32_t riscv_name()
     pc = pc_plus4;
   }
 
+  // Optional outputs from memory map
+  #ifdef riscv_mem_map_outputs_t
+  return mem_out.mem_map_outputs;
+  #else
   // Dummy output
   return pc;
+  #endif
 }
 
 
@@ -120,3 +148,6 @@ uint32_t riscv_name()
 #undef RISCV_MEM_NUM_WORDS
 #undef RISCV_MEM_INIT
 #undef riscv_mem_map
+#undef riscv_mmio_mod_out_t
+#undef riscv_mem_map_inputs_t
+#undef riscv_mem_map_outputs_t

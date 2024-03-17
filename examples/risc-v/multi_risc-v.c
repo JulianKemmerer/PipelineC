@@ -17,6 +17,12 @@
 #define RISCV_MEM_INIT MEM_INIT
 #define RISCV_MEM_SIZE_BYTES MEM_INIT_SIZE
 #define riscv_mem_map my_mem_map_module
+// Optional mem map IO wiring
+//#define riscv_mem_map_inputs_t
+//#define riscv_mem_map_outputs_t
+//DECL_MEM_MAP_MOD_OUT_T(riscv_mem_map_outputs_t)
+// inputs RISCV_MEM_MAP_MOD_INPUTS(riscv_mem_map_inputs_t)
+// return riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
 mem_map_out_t my_mem_map_module(
   uint32_t addr,
   uint32_t wr_data,
@@ -37,7 +43,7 @@ mem_map_out_t my_mem_map_module(
   WORD_MM_ENTRY(LEDS_ADDR, leds)
   return o;
 }
-#include "risc-v_instance.h"
+#include "risc-v_decl.h"
 
 // Set clock of instances of CPU
 #define CPU_CLK_MHZ 40.0
