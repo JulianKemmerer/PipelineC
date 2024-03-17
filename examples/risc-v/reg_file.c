@@ -20,39 +20,21 @@ DECL_RAM_TP_R_R_W_0(
 // Split the_reg_file into three parts, 2 read ports, 1 write
 typedef struct reg_file_out_t
 {
-  uint32_t reg_read0;
-  uint32_t reg_read1;
-  uint1_t reg_write; // Dummy output
+  uint32_t rd_data1;
+  uint32_t rd_data2;
 }reg_file_out_t;
-typedef struct reg_file_wr_in_t{
-  uint5_t wr_addr;
-  uint32_t wr_data;
-  uint1_t wr_en;
-}reg_file_wr_in_t;
 reg_file_out_t reg_file(
-  uint5_t rd_addr0,
   uint5_t rd_addr1,
-  reg_file_wr_in_t reg_write
+  uint5_t rd_addr2,
+  uint5_t wr_addr,
+  uint32_t wr_data,
+  uint1_t wr_en
 ){
-  reg_write.wr_en &= (reg_write.wr_addr!=0); // No writes to reg0, always 0
-  the_reg_file_out_t ram_out = the_reg_file(rd_addr0, rd_addr1, 
-                              reg_write.wr_addr, reg_write.wr_data, reg_write.wr_en);
+  wr_en &= (wr_addr!=0); // No writes to reg0, always 0
+  the_reg_file_out_t ram_out = the_reg_file(rd_addr1, rd_addr2, 
+                              wr_addr, wr_data, wr_en);
   reg_file_out_t reg_file_out;
-  reg_file_out.reg_read0 = ram_out.rd_data0;
-  reg_file_out.reg_read1 = ram_out.rd_data1;
-  reg_file_out.reg_write = reg_write.wr_en; // Dummy output
+  reg_file_out.rd_data1 = ram_out.rd_data0;
+  reg_file_out.rd_data2 = ram_out.rd_data1;
   return reg_file_out;
 }
-MAIN_SPLIT3(
-  reg_file_out_t,
-  reg_file,
-  reg_read0,
-  uint5_t,
-  uint32_t,
-  reg_read1,
-  uint5_t,
-  uint32_t,
-  reg_write,
-  reg_file_wr_in_t,
-  uint1_t
-)

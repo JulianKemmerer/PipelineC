@@ -90,62 +90,49 @@ begin \n\
 // one read port for instructions, one r/w port for data mem
 typedef struct mem_out_t
 {
-  uint32_t inst_read;
-  uint32_t mem_read_write;
+  uint32_t inst;
+  uint32_t rd_data;
 }mem_out_t;
-typedef struct mem_rw_in_t{
-  uint32_t addr;
-  uint32_t wr_data;
-  uint1_t wr_byte_ens[4];
-}mem_rw_in_t;
 DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
 mem_out_t mem(
-  uint32_t rd_addr,
-  mem_rw_in_t mem_rw
+  uint32_t inst_addr,
+  uint32_t rw_addr,
+  uint32_t wr_data,
+  uint1_t wr_byte_ens[4]
 ){
   // Check for write to memory mapped IO addresses
   mem_map_out_t mem_map_out = mem_map_module(
-    mem_rw.addr,
-    mem_rw.wr_data,
-    mem_rw.wr_byte_ens);
+    rw_addr,
+    wr_data,
+    wr_byte_ens);
   
   // Mem map write does not write actual RAM memory
   uint32_t i;
   for(i=0;i<4;i+=1){
-    mem_rw.wr_byte_ens[i] &= !mem_map_out.addr_is_mapped;
+    wr_byte_ens[i] &= !mem_map_out.addr_is_mapped;
   }  
 
   // Convert byte addresses to aligned 4-byte word address
-  uint32_t mem_rw_word_index = mem_rw.addr >> 2;
-  uint32_t rd_addr_word_index = rd_addr >> 2;
+  uint32_t mem_rw_word_index = rw_addr >> 2;
+  //uint32_t inst_addr_word_index = inst_addr >> 2;
 
   // Sanity check, stop sim if out of range access
-  if((mem_rw_word_index >= MEM_NUM_WORDS) & mem_rw.wr_byte_ens[0]){
+  if((mem_rw_word_index >= MEM_NUM_WORDS) & wr_byte_ens[0]){
     mem_out_of_range = 1;
   }
 
   // The single RAM instance with connections splitting in two
   the_mem_outputs_t ram_out = the_mem(mem_rw_word_index,
-                                      mem_rw.wr_data, mem_rw.wr_byte_ens, 1,
-                                       rd_addr, 1);
+                                      wr_data, wr_byte_ens, 1,
+                                       inst_addr, 1);
   mem_out_t mem_out;
-  mem_out.mem_read_write = ram_out.rd_data0;
-  mem_out.inst_read = ram_out.rd_data1;
+  mem_out.rd_data = ram_out.rd_data0;
+  mem_out.inst = ram_out.rd_data1;
 
   // Mem map read comes from memory map module not RAM memory
   if(mem_map_out.addr_is_mapped){
-    mem_out.mem_read_write = mem_map_out.rd_data;
+    mem_out.rd_data = mem_map_out.rd_data;
   }
 
   return mem_out;
 }
-MAIN_SPLIT2(
-  mem_out_t,
-  mem,
-  inst_read,
-  uint32_t,
-  uint32_t,
-  mem_read_write,
-  mem_rw_in_t,
-  uint32_t
-)

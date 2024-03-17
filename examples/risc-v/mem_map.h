@@ -238,6 +238,6 @@ static volatile uint32_t* LEDS = (uint32_t*)LEDS_ADDR;
 // So manually add padding fields for 32b|4B alignment (otherwise need packed)
 // (if not PipelineC built in to-from bytes functions won't work)
 
-// For now use separate input and output structs for accelerators
-// that have special input and output valid flags
-#include "gcc_test/gol/hw_config.h"
+// // For now use separate input and output structs for accelerators
+// // that have special input and output valid flags
+// #include "gcc_test/gol/hw_config.h"

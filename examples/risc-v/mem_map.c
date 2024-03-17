@@ -1,5 +1,5 @@
-// GoL accelerators are enabled inside hw.c (some or none)
-#include "gcc_test/gol/hw.c"
+// // GoL accelerators are enabled inside hw.c (some or none)
+// #include "gcc_test/gol/hw.c"
 
 // Memory mapped IO addresses to drive hardware wires
 // ex. debug ports, devices, accelerator FSMs
