@@ -14,7 +14,7 @@ typedef struct mem_map_out_t
 #define riscv_mem_map_mod_out_t(mem_map_outputs_t)\
 PPCAT(mem_map_outputs_t,_riscv_mem_map_mod_out_t)
 
-#define DECL_MEM_MAP_MOD_OUT_T(mem_map_outputs_t)\
+#define RISCV_DECL_MEM_MAP_MOD_OUT_T(mem_map_outputs_t)\
 typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
 {\
   uint1_t addr_is_mapped;\
@@ -31,6 +31,7 @@ mem_map_inputs_t inputs
 //  TODO: Make read-write struct byte array muxing simpler, not all alignments handled are possible.
 
 // Assign a word variable to the memory map
+// TODO maybe make not else-if so independent mem map vars arent sharing logic?
 #define WORD_MM_ENTRY(ADDR, var)\
 else if(addr==ADDR){\
   o.addr_is_mapped = 1;\
