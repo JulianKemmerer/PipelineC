@@ -13,7 +13,7 @@
 // Zero latency
 DECL_RAM_TP_R_R_W_0(
   uint32_t,
-  the_reg_file,
+  reg_file_ram,
   NUM_REGS,
   RAM_INIT_INT_ZEROS
 )
@@ -32,7 +32,7 @@ reg_file_out_t reg_file(
   uint1_t wr_en
 ){
   wr_en &= (wr_addr!=0); // No writes to reg0, always 0
-  the_reg_file_out_t ram_out = the_reg_file(rd_addr1, rd_addr2, 
+  the_reg_file_out_t ram_out = reg_file_ram(rd_addr1, rd_addr2, 
                               wr_addr, wr_data, wr_en);
   reg_file_out_t reg_file_out;
   reg_file_out.rd_data1 = ram_out.rd_data0;
