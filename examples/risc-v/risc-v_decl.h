@@ -1,23 +1,16 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 
+// Support old single core using mem_map_out_t
 #include "mem_map.h"
-
-/*
-#define riscv_name my_riscv
-#define RISCV_MEM_SIZE_BYTES 2048
-#define RISCV_MEM_INIT MEM_INIT
-#define riscv_mem_map mem_map_module
-*/
-
 #ifdef riscv_mem_map_outputs_t
 #define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
 #else
 #define riscv_mmio_mod_out_t mem_map_out_t
 #endif
 
-// Combined instruction and data memory w/ ports
-// Also includes memory mapped IO
+// Declare a combined instruction and data memory
+// also includes memory mapped IO
 #include "mem_decl.h"
 
 // CPU top level
@@ -48,7 +41,7 @@ riscv_name(
   #pragma FEEDBACK mem_addr
   #pragma FEEDBACK mem_wr_data
   #pragma FEEDBACK mem_wr_byte_ens
-  mem_out_t mem_out = mem(
+  riscv_mem_out_t mem_out = riscv_mem(
     pc>>2, // Instruction word read address based on PC
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
@@ -151,3 +144,7 @@ riscv_name(
 #undef riscv_mmio_mod_out_t
 #undef riscv_mem_map_inputs_t
 #undef riscv_mem_map_outputs_t
+#undef riscv_mem_ram_out_t
+#undef riscv_mem_ram
+#undef riscv_mem_out_t
+#undef riscv_mem

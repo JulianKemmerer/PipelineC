@@ -31,9 +31,8 @@ mem_map_inputs_t inputs
 //  TODO: Make read-write struct byte array muxing simpler, not all alignments handled are possible.
 
 // Assign a word variable to the memory map
-// TODO maybe make not else-if so independent mem map vars arent sharing logic?
-#define WORD_MM_ENTRY(ADDR, var)\
-else if(addr==ADDR){\
+#define WORD_MM_ENTRY(o, ADDR, var)\
+if(addr==ADDR){\
   o.addr_is_mapped = 1;\
   o.rd_data = var;\
   if(wr_byte_ens[0]){\
@@ -43,7 +42,7 @@ else if(addr==ADDR){\
 
 // Assign a struct variable to the memory map
 #define STRUCT_MM_ENTRY(ADDR, type_t, var)\
-else if( (addr>=ADDR) & (addr<(ADDR+sizeof(type_t))) ){\
+if( (addr>=ADDR) & (addr<(ADDR+sizeof(type_t))) ){\
   o.addr_is_mapped = 1;\
   /* Convert to bytes*/\
   type_t##_bytes_t var##_bytes = type_t##_to_bytes(var);\
@@ -67,7 +66,7 @@ else if( (addr>=ADDR) & (addr<(ADDR+sizeof(type_t))) ){\
 
 // Assign input register word to mem map
 #define IN_REG_WORD_MM_ENTRY(ADDR, name, field)\
-WORD_MM_ENTRY(ADDR, name##_in_reg.field)
+WORD_MM_ENTRY(o, ADDR, name##_in_reg.field)
 
 // Connect outputs to registers for better fmax
 #define OUT_REG(name)\
@@ -86,7 +85,7 @@ name##_in_reg.valid = 0;
 // mostly for frame buffer IO type regs
 // w/ .valid pulse, and rd,wr data fields, etc
 #define VALID_PULSE_RW_DATA_WORD_MM_ENTRY(ADDR, name)\
-else if(addr==ADDR){\
+if(addr==ADDR){\
   o.addr_is_mapped = 1;\
   o.rd_data = name##_out_reg.rd_data;\
   name##_in_reg.valid = 1;\

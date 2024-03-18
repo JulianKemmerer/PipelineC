@@ -12,6 +12,7 @@
 //DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
 //DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 #include "leds/leds_port.c"
+#define riscv_name riscv
 #define riscv_mem_map mem_map_module
 #define riscv_mmio_mod_out_t mem_map_out_t
 mem_map_out_t mem_map_module(
@@ -59,7 +60,7 @@ mem_map_out_t mem_map_module(
       //halt = 1;
     }
   }
-  WORD_MM_ENTRY(LEDS_ADDR, leds)
+  WORD_MM_ENTRY(o, LEDS_ADDR, leds)
   #ifdef FRAME_BUFFER
   #ifndef FRAME_BUFFER_DISABLE_CPU_PORT
   IN_REG_WORD_MM_ENTRY(FRAME_BUF_X_ADDR, cpu_frame_buffer, x)

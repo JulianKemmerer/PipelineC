@@ -12,7 +12,8 @@
 // Was using ram.h DECL_RAM_DP_RW_R_0 macro, 
 // but does not include byte enables needed for RISC-V SH and SB
 // So manually copied that macro def and modified vhdl here to add byte enables:
-typedef struct the_mem_outputs_t
+#define riscv_mem_ram_out_t PPCAT(riscv_name,_mem_ram_out_t)
+typedef struct riscv_mem_ram_out_t
 {
   uint32_t addr0;
   uint32_t wr_data0; uint1_t wr_byte_ens0[4];
@@ -21,8 +22,9 @@ typedef struct the_mem_outputs_t
   uint32_t addr1;
   uint32_t rd_data1;
   uint1_t valid1;
-}the_mem_outputs_t;
-the_mem_outputs_t the_mem(
+}riscv_mem_ram_out_t;
+#define riscv_mem_ram PPCAT(riscv_name,_mem_ram)
+riscv_mem_ram_out_t riscv_mem_ram(
   uint32_t addr0,
   uint32_t wr_data0, uint1_t wr_byte_ens0[4],
   uint1_t valid0,
@@ -84,9 +86,10 @@ begin \n\
 }
 
 
-// Split main memory the_mem into two parts,
+// Split main memory riscv_mem_ram into two parts,
 // one read port for instructions, one r/w port for data mem
-typedef struct mem_out_t
+#define riscv_mem_out_t PPCAT(riscv_name,_mem_out_t)
+typedef struct riscv_mem_out_t
 {
   uint32_t inst;
   uint32_t rd_data;
@@ -94,8 +97,9 @@ typedef struct mem_out_t
   #ifdef riscv_mem_map_outputs_t
   riscv_mem_map_outputs_t mem_map_outputs;
   #endif
-}mem_out_t;
-mem_out_t mem(
+}riscv_mem_out_t;
+#define riscv_mem PPCAT(riscv_name,_mem)
+riscv_mem_out_t riscv_mem(
   uint32_t inst_addr,
   uint32_t rw_addr,
   uint32_t wr_data,
@@ -113,7 +117,7 @@ mem_out_t mem(
     , mem_map_inputs
     #endif
   );
-  mem_out_t mem_out;
+  riscv_mem_out_t mem_out;
   #ifdef riscv_mem_map_outputs_t
   mem_out.mem_map_outputs = mem_map_out.outputs;
   #endif
@@ -134,7 +138,7 @@ mem_out_t mem(
   }
 
   // The single RAM instance
-  the_mem_outputs_t ram_out = the_mem(mem_rw_word_index,
+  riscv_mem_ram_out_t ram_out = riscv_mem_ram(mem_rw_word_index,
                                       wr_data, wr_byte_ens, 1,
                                        inst_addr, 1);
   mem_out.rd_data = ram_out.rd_data0;

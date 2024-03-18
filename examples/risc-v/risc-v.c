@@ -38,7 +38,7 @@ uint32_t risc_v()
   #pragma FEEDBACK mem_addr
   #pragma FEEDBACK mem_wr_data
   #pragma FEEDBACK mem_wr_byte_ens
-  mem_out_t mem_out = mem(
+  riscv_mem_out_t mem_out = riscv_mem(
     pc>>2, // Instruction word read address based on PC
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
