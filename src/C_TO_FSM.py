@@ -3,6 +3,11 @@ import sys
 import os
 
 import C_TO_LOGIC
+
+from utilities import REPO_ABS_DIR
+
+# TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
+sys.path.append(REPO_ABS_DIR() + '/submodule/pycparser')
 from pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
