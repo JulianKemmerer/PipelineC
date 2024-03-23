@@ -32,7 +32,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Uses helper comparing word address and driving a variable
   WORD_MM_ENTRY(o, RETURN_OUTPUT_ADDR, o.outputs.return_value)
   o.outputs.halt = wr_byte_ens[0] & (addr==RETURN_OUTPUT_ADDR);
-  WORD_MM_ENTRY(o, LEDS_ADDR, o.outputs.led)
+  WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
   return o;
 }
 

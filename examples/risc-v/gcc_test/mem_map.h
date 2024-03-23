@@ -15,9 +15,9 @@
 #define RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
 static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)RETURN_OUTPUT_ADDR;
 
-// LEDs
-#define LEDS_ADDR (RETURN_OUTPUT_ADDR + sizeof(uint32_t))
-static volatile uint32_t* LEDS = (uint32_t*)LEDS_ADDR;
+// LED
+#define LED_ADDR (RETURN_OUTPUT_ADDR + sizeof(uint32_t))
+static volatile uint32_t* LED = (uint32_t*)LED_ADDR;
 
 // Re: memory mapped structs
 //__attribute__((packed)) increases code size bringing in memcpy

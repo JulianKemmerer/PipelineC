@@ -5,8 +5,8 @@
 void main() {
 	int count = 0;
 	while(1){
-		// 4b leds get slow changing upper bits
-		*LEDS = count >> 22;
+		// 1b leds get slow changing upper bits
+		*LED = count >> 22;
 		count += 1;
 	}
 }
@@ -15,8 +15,8 @@ void main() {
 int main() {
 	int count = 0;
 	while(count < 10){
-		// 4b leds get slow changing upper bits
-		*LEDS = count >> 12;
+		// 1b led get slow changing upper bits
+		*LED = count >> 12;
 		count += 1;
 	}
 	*RETURN_OUTPUT = count;
