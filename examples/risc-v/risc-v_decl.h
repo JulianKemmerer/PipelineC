@@ -14,13 +14,19 @@
 #include "mem_decl.h"
 
 // CPU top level
-// Optional outputs from memory map
-#ifdef riscv_mem_map_outputs_t
-riscv_mem_map_outputs_t
-#else
-uint32_t // Dummy output pc
-#endif
-riscv_name(
+#define riscv_out_t PPCAT(riscv_name,_out_t)
+typedef struct riscv_out_t{
+  // Debug IO
+  uint1_t halt;
+  uint32_t return_value;
+  uint32_t pc;
+  uint1_t unknown_op;
+  uint1_t mem_out_of_range;
+  #ifdef riscv_mem_map_outputs_t
+  riscv_mem_map_outputs_t mem_map_outputs;
+  #endif
+}riscv_out_t;
+riscv_out_t riscv_name(
   // Optional inputs to memory map
   #ifdef riscv_mem_map_inputs_t
   riscv_mem_map_inputs_t mem_map_inputs
@@ -130,13 +136,16 @@ riscv_name(
     pc = pc_plus4;
   }
 
+  // Debug outputs
+  riscv_out_t o;
+  o.pc = pc;
+  o.unknown_op = decoded.unknown_op;
+  o.mem_out_of_range = mem_out.mem_out_of_range;
   // Optional outputs from memory map
   #ifdef riscv_mem_map_outputs_t
-  return mem_out.mem_map_outputs;
-  #else
-  // Dummy output
-  return pc;
+  o.mem_map_outputs = mem_out.mem_map_outputs;
   #endif
+  return o;
 }
 
 

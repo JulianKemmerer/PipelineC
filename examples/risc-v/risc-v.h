@@ -57,9 +57,10 @@ typedef struct decoded_t{
   // Printf controls
   uint1_t print_rs1_read;
   uint1_t print_rs2_read;
+  // Debug
+  uint1_t unknown_op;
 } decoded_t;
 decoded_t decode(uint32_t inst){
-  uint1_t unknown_op = 0;
   decoded_t rv;
   rv.opcode = inst(6,0);
   rv.dest = inst(11, 7);
@@ -157,7 +158,7 @@ decoded_t decode(uint32_t inst){
       printf("BNE: PC = r%d != r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
     }else {
       printf("Unsupported OP_BRANCH instruction: 0x%X\n", inst);
-      unknown_op = 1;
+      rv.unknown_op = 1;
     }
   }else if(rv.opcode==OP_IMM){
     int12_t imm11_0 = inst(31, 20);
@@ -207,7 +208,7 @@ decoded_t decode(uint32_t inst){
       printf("XORI: r%d ^ %d -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else{
       printf("Unsupported OP_IMM instruction: 0x%X\n", inst);
-      unknown_op = 1;
+      rv.unknown_op = 1;
     }
   }else if(rv.opcode==OP_JAL){
     // JAL - Jump and link
@@ -254,7 +255,7 @@ decoded_t decode(uint32_t inst){
       printf("LW: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     } else {
       printf("Unsupported OP_LOAD instruction: 0x%X\n", inst);
-      unknown_op = 1;
+      rv.unknown_op = 1;
     }
   }else if(rv.opcode==OP_LUI){
     // LUI
@@ -291,11 +292,11 @@ decoded_t decode(uint32_t inst){
       printf("SB: addr = r%d + %d, mem[addr](7 downto 0) <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
     }else {
       printf("Unsupported OP_STORE instruction: 0x%X\n", inst);
-      unknown_op = 1;
+      rv.unknown_op = 1;
     }
   }else{
     printf("Unsupported instruction: 0x%X\n", inst);
-    unknown_op = 1;
+    rv.unknown_op = 1;
   }
   return rv;
 }
