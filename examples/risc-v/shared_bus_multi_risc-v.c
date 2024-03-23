@@ -25,6 +25,8 @@ typedef struct my_mmio_in_t{
   uint1_t button;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
+  uint32_t return_value;
+  uint1_t halt; // return value valid
   uint1_t led;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
@@ -48,7 +50,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  WORD_MM_ENTRY(o, LEDS_ADDR, o.outputs.led)
+  WORD_MM_ENTRY(o, RETURN_OUTPUT_ADDR, o.outputs.return_value)
+  o.outputs.halt = wr_byte_ens[0] & (addr==RETURN_OUTPUT_ADDR);
+  WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
+
   // Mem map the handshake regs
   STRUCT_MM_ENTRY(o, RAM_WR_REQ_ADDR, riscv_ram_write_req_t, ram_write_req_reg)
   STRUCT_MM_ENTRY(o, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t, ram_write_resp_reg)
@@ -153,13 +158,25 @@ MAIN_MHZ(risc_v_cores, CPU_CLK_MHZ)
 
 void risc_v_cores()
 {
-  // CPU instances with LED output connected to LED port
-  leds = 0;
+  // CPU instances
   uint32_t i;
+  my_riscv_out_t out[NUM_CORES];
   for (i = 0; i < NUM_CORES; i+=1)
   {
     my_mmio_in_t in; // Disconnected for now
-    my_mmio_out_t out = my_riscv(in);
-    leds |= ((uint4_t)out.led << i);
+    out[i] = my_riscv(in);
   }
+
+  // Temp leds from core 0 only
+  static uint1_t unknown_op;
+  unknown_op = unknown_op | out[0].unknown_op; // Sticky
+  static uint1_t mem_out_of_range;
+  mem_out_of_range = mem_out_of_range | out[0].mem_out_of_range; // Sticky
+  static uint1_t halt;
+  halt = halt | out[0].halt; // Sticky
+  leds = 0;
+  leds |= ((uint4_t)out[0].mem_map_outputs.led << 0);
+  leds |= ((uint4_t)unknown_op << 1);
+  leds |= ((uint4_t)mem_out_of_range << 2);
+  leds |= ((uint4_t)halt << 3);
 }
