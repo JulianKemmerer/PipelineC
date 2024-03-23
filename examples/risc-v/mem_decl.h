@@ -103,7 +103,8 @@ riscv_mem_out_t riscv_mem(
   uint32_t inst_addr,
   uint32_t rw_addr,
   uint32_t wr_data,
-  uint1_t wr_byte_ens[4]
+  uint1_t wr_byte_ens[4],
+  uint1_t rd_en
   #ifdef riscv_mem_map_inputs_t
   , riscv_mem_map_inputs_t mem_map_inputs
   #endif
@@ -112,7 +113,8 @@ riscv_mem_out_t riscv_mem(
   riscv_mmio_mod_out_t mem_map_out = riscv_mem_map(
     rw_addr,
     wr_data,
-    wr_byte_ens
+    wr_byte_ens,
+    rd_en
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
     #endif

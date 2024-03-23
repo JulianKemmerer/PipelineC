@@ -38,14 +38,17 @@ riscv_name(
   uint32_t mem_addr;
   uint32_t mem_wr_data;
   uint1_t mem_wr_byte_ens[4];
+  uint1_t mem_rd_en;
   #pragma FEEDBACK mem_addr
   #pragma FEEDBACK mem_wr_data
   #pragma FEEDBACK mem_wr_byte_ens
+  #pragma FEEDBACK mem_rd_en
   riscv_mem_out_t mem_out = riscv_mem(
     pc>>2, // Instruction word read address based on PC
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
-    mem_wr_byte_ens // Main memory write data byte enables
+    mem_wr_byte_ens, // Main memory write data byte enables
+    mem_rd_en // Main memory read enable
     // Optional memory map inputs
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
@@ -90,6 +93,7 @@ riscv_name(
   mem_addr = exe.result; // addr always from execute module, not always used
   mem_wr_data = reg_file_out.rd_data2;
   mem_wr_byte_ens = decoded.mem_wr_byte_ens;
+  mem_rd_en = decoded.mem_rd;
   if(decoded.mem_wr_byte_ens[0]){
     printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
   }

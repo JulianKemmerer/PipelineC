@@ -23,7 +23,9 @@ typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
 }riscv_mem_map_mod_out_t(mem_map_outputs_t);
 
 #define RISCV_MEM_MAP_MOD_INPUTS(mem_map_inputs_t)\
-uint32_t addr, uint32_t wr_data, uint1_t wr_byte_ens[4],\
+uint32_t addr,\
+uint32_t wr_data, uint1_t wr_byte_ens[4],\
+uint1_t rd_en,\
 mem_map_inputs_t inputs
 
 
@@ -41,7 +43,7 @@ if(addr==ADDR){\
 }
 
 // Assign a struct variable to the memory map
-#define STRUCT_MM_ENTRY(ADDR, type_t, var)\
+#define STRUCT_MM_ENTRY(o, ADDR, type_t, var)\
 if( (addr>=ADDR) & (addr<(ADDR+sizeof(type_t))) ){\
   o.addr_is_mapped = 1;\
   /* Convert to bytes*/\

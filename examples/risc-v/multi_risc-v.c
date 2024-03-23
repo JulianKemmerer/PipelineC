@@ -6,11 +6,11 @@
 #include "risc-v.h"
 
 // Include test gcc compiled program
-#include "gcc_test/mem_init.h"
+#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
 
 // Declare memory map information
 // Starts with shared with software memory map info
-#include "gcc_test/mem_map.h" // MEM_INIT,MEM_INIT_SIZE
+#include "gcc_test/mem_map.h" 
 // Define inputs and outputs
 typedef struct my_mmio_in_t{
   uint1_t button;
