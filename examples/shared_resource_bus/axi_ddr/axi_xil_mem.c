@@ -26,6 +26,7 @@
 #include "shared_resource_bus_decl.h" // TODO make helper axi_shared_resource_bus_decl.h?
 
 // Connect Xilinx MIG example AXI types to shared bus AXI types
+MAIN_MHZ(axi_shared_bus_dev_arb_connect, XIL_MEM_MHZ)
 
 // Sometimes you want an special priority port, typically for reading
 // ex. for streaming read data meeting a frame buffer display rate
@@ -33,7 +34,6 @@
 // Global wires for the priority read port
 axi_shared_bus_t_host_to_dev_t axi_xil_rd_pri_port_mem_host_to_dev_wire;
 axi_shared_bus_t_dev_to_host_t axi_xil_rd_pri_port_mem_dev_to_host_wire;
-MAIN_MHZ(axi_shared_bus_dev_arb_connect, XIL_MEM_MHZ)
 void axi_shared_bus_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
@@ -56,11 +56,11 @@ void axi_shared_bus_dev_arb_connect()
   rd_pri_port_arb_dev_to_host_in = port_ctrl.to_host;
 }
 #else
-// Regular greedy arb to allow VGA read port to be greedy
+// Regular arb with no priority ports
 void axi_shared_bus_dev_arb_connect()
 {
   // Arbitrate M hosts to N devs
-  SHARED_BUS_ARB_PIPELINED_GREEDY(axi_shared_bus_t, axi_xil_mem, 1)
+  SHARED_BUS_ARB_PIPELINED(axi_shared_bus_t, axi_xil_mem, 1)
   // Connect devs to frame buffer ports
   axi_shared_bus_dev_ctrl_t port_ctrl
     = axi_shared_bus_dev_ctrl_pipelined(xil_mem_to_app.axi_dev_to_host, axi_xil_mem_from_host[0]);

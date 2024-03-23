@@ -241,7 +241,6 @@ PPCAT(name, _write_finish_logic_outputs_t) PPCAT(name, _write_finish_logic)( \
       /* Done (error code not checked, just returned)*/ \
       o.done = 1; \
       o.resp = from_dev.resp.data.user; \
-      state = REQ_STATE; \
     } \
   } \
   return o; \
@@ -1298,7 +1297,7 @@ PPCAT(bus_name, _dev_arb_pipelined_t) PPCAT(bus_name, _arb) = PPCAT(bus_name, _d
 PPCAT(type, _host_to_dev_t) PPCAT(bus_name, _from_host)[NUM_DEV_PORTS]; \
 PPCAT(bus_name, _from_host) = PPCAT(bus_name, _arb).to_devs; \
 PPCAT(bus_name, _dev_to_host_wires_on_dev_clk) = PPCAT(bus_name, _arb).to_hosts;
-//
+// For pipelines where arb muxing is done in pipeline, module only does wire connecting w/ state
 #define SHARED_BUS_MULTI_HOST_READ_ONLY_CONNECT(type, bus_name, NUM_HOST_PORTS, NUM_DEV_PORTS) \
 PPCAT(type, _dev_to_host_t) PPCAT(bus_name, _to_hosts)[NUM_DEV_PORTS][NUM_HOST_PORTS]; \
 PRAGMA_MESSAGE(FEEDBACK PPCAT(bus_name,_to_hosts)) /* Value from last assignment (by user)*/ \
