@@ -57,7 +57,7 @@ void risc_v_cores()
   for (i = 0; i < NUM_CORES; i+=1)
   {
     my_mmio_in_t in; // Disconnected for now
-    my_mmio_out_t out = my_riscv(in);
-    leds |= ((uint4_t)out.led << i);
+    my_riscv_out_t out = my_riscv(in);
+    leds |= ((uint4_t)out.mem_map_outputs.led << i);
   }
 }
