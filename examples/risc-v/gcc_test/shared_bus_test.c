@@ -50,5 +50,5 @@ int32_t main() {
     *LED = ~*LED;
     // Mem test time = 4:36
   }
-  return passing;
+  *RETURN_OUTPUT = passing; // Halt sim/light debug leds maybe
 }
