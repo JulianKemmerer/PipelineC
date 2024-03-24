@@ -65,6 +65,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   axi_xil_mem_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
 
   // Write start
+  // SW sets req valid, hardware clears when accepted
   if(ram_write_req.valid){
     axi_write_req_t wr_req;
     wr_req.awaddr = ram_write_req.addr;
@@ -91,6 +92,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
   // Read start
+  // SW sets req valid, hardware clears when accepted
   if(ram_read_req.valid){
     axi_read_req_t rd_req;
     rd_req.araddr = ram_read_req.addr;
@@ -109,6 +111,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }
 
   // Write Finish
+  // HW sets resp valid, hardware auto clears when read by software
+  // (since not using AXI write resp data, only valid flag)
+  //  TODO is it better to just have write behave like read 
+  //  and make software clear the resp valid reg?
   if(ram_write_resp.valid){
     if(rd_en & ADDR_IS_VALID_FLAG(addr, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t)){
       ram_write_resp_reg.valid = 0;
@@ -124,11 +130,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
   // Read finish
-  if(ram_read_resp.valid){
-    if(rd_en & ADDR_IS_VALID_FLAG(addr, RAM_RD_RESP_ADDR, riscv_ram_read_resp_t)){
-      ram_read_resp_reg.valid = 0;
-    }
-  }else{
+  // HW sets resp valid, software clears when accepted
+  if(!ram_read_resp.valid){
     axi_shared_bus_t_read_finish_logic_outputs_t read_finish = axi_shared_bus_t_read_finish_logic(
       1,
       axi_xil_mem_dev_to_host_wire_on_host_clk.read.data

@@ -77,23 +77,70 @@ static volatile riscv_ram_read_req_t* RAM_RD_REQ = (riscv_ram_read_req_t*)RAM_RD
 #define RAM_RD_RESP_ADDR (RAM_RD_REQ_ADDR + sizeof(riscv_ram_read_req_t))
 static volatile riscv_ram_read_resp_t* RAM_RD_RESP = (riscv_ram_read_resp_t*)RAM_RD_RESP_ADDR;
 
-// TODO support multiple in flight
-//  as-is while loops dont always work if valid cleared on read
-
-void ram_write(uint32_t addr, uint32_t data){
-  // Start write
+// Multiple in flight versions:
+riscv_valid_flag_t try_start_ram_write(uint32_t addr, uint32_t data){
+  // If the request flag is valid from a previous req
+  // then done now, couldnt start
+  if(RAM_WR_REQ->valid){
+    return 0;
+  }
+  // Start
   RAM_WR_REQ->addr = addr;
   RAM_WR_REQ->data = data;
   RAM_WR_REQ->valid = 1;
-  // Wait for finish
-  while(!(RAM_WR_RESP->valid)){} 
+  return 1;
+}
+riscv_valid_flag_t try_finish_ram_write(){
+  // No write response data
+  // Simply read and return response valid bit
+  // Hardware automatically clears valid bit on read
+  return RAM_WR_RESP->valid;
+}
+riscv_valid_flag_t try_start_ram_read(uint32_t addr){
+  // If the request flag is valid from a previous req
+  // then done now, couldnt start
+  if(RAM_RD_REQ->valid){
+    return 0;
+  }
+  // Start
+  RAM_RD_REQ->addr = addr;
+  RAM_RD_REQ->valid = 1;
+  return 1;
+}
+typedef struct ram_rd_try_t{
+  uint32_t data;
+  riscv_valid_flag_t valid;
+}ram_rd_try_t;
+ram_rd_try_t try_finish_ram_read(){
+  ram_rd_try_t rv;
+  // Have valid read response data?
+  rv.valid = RAM_RD_RESP->valid;
+  // If not then done now
+  if(!rv.valid){
+    return rv;
+  }
+  // Valid is not auto cleared by hardware
+  // Save the valid data
+  rv.data = RAM_RD_RESP->data;
+  // Manually clear the valid buffer
+  RAM_RD_RESP->valid = 0;
+  // Done
+  return rv;
+}
+
+// One in flight, start one and finishes one
+// Mem test time = 132sec for wr, 236 sec for read, 6:08 total
+void ram_write(uint32_t addr, uint32_t data){
+  while(!try_start_ram_write(addr, data)){}
+  while(!try_finish_ram_write()){}
   return;
 }
 uint32_t ram_read(uint32_t addr){
-  // Start read
-  RAM_RD_REQ->addr = addr;
-  RAM_RD_REQ->valid = 1;
-  // Wait for finish
-  while(!(RAM_RD_RESP->valid)){}
-  return RAM_RD_RESP->data;
+  while(!try_start_ram_read(addr)){}
+  ram_rd_try_t rd;
+  do
+  {
+    rd = try_finish_ram_read();
+  } while (!rd.valid);
+  return rd.data;
 }
