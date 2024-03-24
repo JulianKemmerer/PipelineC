@@ -220,7 +220,7 @@ PPCAT(name, _write_start_logic_outputs_t) PPCAT(name, _write_start_logic)( \
 } \
 typedef struct PPCAT(name, _write_finish_logic_outputs_t) \
 { \
-  PPCAT(name, _write_host_to_dev_t) to_dev; \
+  uint1_t resp_ready; \
   write_resp_data_t resp; \
   uint1_t done; \
 }PPCAT(name, _write_finish_logic_outputs_t); \
@@ -234,7 +234,7 @@ PPCAT(name, _write_finish_logic_outputs_t) PPCAT(name, _write_finish_logic)( \
   if(ready_for_outputs) \
   { \
     /* Then signal to device that ready for response*/ \
-    o.to_dev.resp_ready = 1; \
+    o.resp_ready = 1; \
     /* And wait for valid output response*/ \
     if(from_dev.resp.valid) \
     { \
