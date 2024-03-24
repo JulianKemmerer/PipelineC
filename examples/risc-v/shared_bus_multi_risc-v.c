@@ -61,6 +61,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   STRUCT_MM_ENTRY(o, RAM_RD_RESP_ADDR, riscv_ram_read_resp_t, ram_read_resp_reg)
 
   // Handshake logic using signals from regs
+  // Default null
+  axi_xil_mem_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
 
   // Write start
   if(ram_write_req.valid){
@@ -116,7 +118,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       1,
       axi_xil_mem_dev_to_host_wire_on_host_clk.write
     );
-    axi_xil_mem_host_to_dev_wire_on_host_clk.write = write_finish.to_dev;
+    axi_xil_mem_host_to_dev_wire_on_host_clk.write.resp_ready = write_finish.resp_ready;
     if(write_finish.done){
       ram_write_resp_reg.valid = 1;
     }
