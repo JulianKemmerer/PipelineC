@@ -3,7 +3,7 @@
 
 #define MEM_SIZE 268435456 // 2^28 bytes , 256MB DDR3 = 28b address
 
-void main() {
+int32_t main() {
   int32_t passing = 1;
   *LED = 1;
   while(passing){
