@@ -26,7 +26,9 @@
 #define FUNCT3_ANDI  0b111
 #define FUNCT3_BEQ   0b000
 #define FUNCT3_BLT   0b100
+#define FUNCT3_BLTU  0b110
 #define FUNCT3_BGE   0b101
+#define FUNCT3_BGEU  0b111
 #define FUNCT3_BNE   0b001
 #define FUNCT3_LB_SB 0b000
 #define FUNCT3_LH_SH 0b001
@@ -99,6 +101,25 @@ decoded_t decode(uint32_t inst){
       // Execute stage does pc related math
       rv.exe_to_pc = 1;
       printf("BLT: PC = r%d < r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
+    }else if(rv.funct3==FUNCT3_BLTU){
+      // BLTU
+      uint1_t imm12 = inst(31);
+      uint6_t imm10_5 = inst(30, 25);
+      uint4_t imm4_1 = inst(11, 8);
+      uint1_t imm11 = inst(7);
+      // BLT offset
+      int12_t bltu_offset;
+      bltu_offset = int12_uint1_12(bltu_offset, imm12);
+      bltu_offset = int12_uint6_5(bltu_offset, imm10_5);
+      bltu_offset = int12_uint4_1(bltu_offset, imm4_1);
+      bltu_offset = int12_uint1_11(bltu_offset, imm11);
+      rv.signed_immediate = bltu_offset;
+      // Compare two regs
+      rv.print_rs1_read = 1;
+      rv.print_rs2_read = 1;
+      // Execute stage does pc related math
+      rv.exe_to_pc = 1;
+      printf("BLTU: PC = r%d < r%d ? PC+%d : PC+4;\n", (uint32_t)rv.src1, (uint32_t)rv.src2, rv.signed_immediate);
     }else if(rv.funct3==FUNCT3_BGE){
       // BGE
       uint1_t imm12 = inst(31);
@@ -118,6 +139,25 @@ decoded_t decode(uint32_t inst){
       // Execute stage does pc related math
       rv.exe_to_pc = 1;
       printf("BGE: PC = r%d >= r%d ? PC+%d : PC+4;\n", rv.src1, rv.src2, rv.signed_immediate);
+    }else if(rv.funct3==FUNCT3_BGEU){
+      // BGEU
+      uint1_t imm12 = inst(31);
+      uint6_t imm10_5 = inst(30, 25);
+      uint4_t imm4_1 = inst(11, 8);
+      uint1_t imm11 = inst(7);
+      // BGEU offset
+      int12_t bgeu_offset;
+      bgeu_offset = int12_uint1_12(bgeu_offset, imm12);
+      bgeu_offset = int12_uint6_5(bgeu_offset, imm10_5);
+      bgeu_offset = int12_uint4_1(bgeu_offset, imm4_1);
+      bgeu_offset = int12_uint1_11(bgeu_offset, imm11);
+      rv.signed_immediate = bgeu_offset;
+      // Compare two regs
+      rv.print_rs1_read = 1;
+      rv.print_rs2_read = 1;
+      // Execute stage does pc related math
+      rv.exe_to_pc = 1;
+      printf("BGEU: PC = r%d >= r%d ? PC+%d : PC+4;\n", (uint32_t)rv.src1, (uint32_t)rv.src2, rv.signed_immediate);
     }else if(rv.funct3==FUNCT3_BEQ){
       // BEQ
       uint1_t imm12 = inst(31);
@@ -326,6 +366,14 @@ execute_t execute(
         rv.result = pc_plus4;
       }
       printf("BLT: PC = %d < %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
+    }else if(decoded.funct3==FUNCT3_BLTU){
+      int32_t pc_plus_imm = pc + decoded.signed_immediate;
+      if((uint32_t)reg1 < (uint32_t)reg2){
+        rv.result = pc_plus_imm;
+      } else {
+        rv.result = pc_plus4;
+      }
+      printf("BLTU: PC = %d < %d ? 0x%X : PC+4 0x%X;\n", (uint32_t)reg1, (uint32_t)reg2, pc_plus_imm, pc_plus4);
     }else if(decoded.funct3==FUNCT3_BGE){
       int32_t pc_plus_imm = pc + decoded.signed_immediate;
       if((int32_t)reg1 >= (int32_t)reg2){
@@ -334,6 +382,14 @@ execute_t execute(
         rv.result = pc_plus4;
       }
       printf("BGE: PC = %d >= %d ? 0x%X : PC+4 0x%X;\n", reg1, reg2, pc_plus_imm, pc_plus4);
+    }else if(decoded.funct3==FUNCT3_BGEU){
+      int32_t pc_plus_imm = pc + decoded.signed_immediate;
+      if((uint32_t)reg1 >= (uint32_t)reg2){
+        rv.result = pc_plus_imm;
+      } else {
+        rv.result = pc_plus4;
+      }
+      printf("BGEU: PC = %d >= %d ? 0x%X : PC+4 0x%X;\n", (uint32_t)reg1, (uint32_t)reg2, pc_plus_imm, pc_plus4);
     }else if(decoded.funct3==FUNCT3_BEQ){
       int32_t pc_plus_imm = pc + decoded.signed_immediate;
       if(reg1 == reg2){
