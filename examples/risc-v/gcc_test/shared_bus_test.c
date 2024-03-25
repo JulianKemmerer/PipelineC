@@ -3,13 +3,24 @@
 
 #define MEM_SIZE 268435456 // 2^28 bytes , 256MB DDR3 = 28b address
 
-int32_t main() {
-  int32_t passing = 1;
-  // Calculate bounds based on which core you are
-  uint32_t chunk_size = MEM_SIZE/NUM_CORES;
+void main() {
+  // Calculate memory bounds based on which core you are
+  // Chunk size in bytes rounded to u32 4 byte units
+  uint32_t chunk_size = ((MEM_SIZE/NUM_CORES)/sizeof(uint32_t))*sizeof(uint32_t);
   uint32_t start_addr = *CORE_ID * chunk_size;
+  // Adjust for if mem size divides unevenly
+  uint32_t chunks_sum = chunk_size * NUM_CORES;
+  // Last core gets different chunk size
+  int32_t last_chunk_extra = MEM_SIZE - chunks_sum;
+  int32_t last_chunk_size = chunk_size + last_chunk_extra;
+  if(*CORE_ID==(NUM_CORES-1)){
+    chunk_size = last_chunk_size;
+  }
   uint32_t end_addr = start_addr + chunk_size;
+
+  // Do mem test
   *LED = 1;
+  int32_t passing = 1;
   while(passing){
     // Read and write the entire memory space with data=address
     //  Try to start a write, then try to finish a write
@@ -52,7 +63,8 @@ int32_t main() {
     }
     // Toggle LEDs to show working
     *LED = ~*LED;
-    // Mem test time = 1:09
+    // Mem test time = 12cores=23sec,8cores=35sec,4cores=1:09,1core=4:36
   }
   *RETURN_OUTPUT = passing; // Halt sim/light debug leds maybe
+  return;
 }
