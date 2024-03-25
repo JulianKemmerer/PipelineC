@@ -11,12 +11,14 @@
 
 #define MEM_MAP_BASE_ADDR 0x10000000
 
-// The output/stop/halt peripheral
-#define RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
-static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)RETURN_OUTPUT_ADDR;
+// Read: Core ID, Write: output/stop/halt peripheral
+#define NUM_CORES 4
+#define CORE_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
+static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
+static volatile uint32_t* CORE_ID = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
 
 // LED
-#define LED_ADDR (RETURN_OUTPUT_ADDR + sizeof(uint32_t))
+#define LED_ADDR (CORE_ID_RETURN_OUTPUT_ADDR + sizeof(uint32_t))
 static volatile uint32_t* LED = (uint32_t*)LED_ADDR;
 
 // Re: memory mapped structs

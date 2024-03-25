@@ -3,7 +3,8 @@
 #include "intN_t.h"
 
 #define CPU_CLK_MHZ 40.0
-#define NUM_CORES 1
+// Shared with software memory map info
+#include "gcc_test/mem_map.h"
 
 // Include instance of Xilinx DDR memory with AXI-lite compatible shared bus
 #define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ CPU_CLK_MHZ
@@ -13,16 +14,10 @@
 // RISC-V components
 #include "risc-v.h"
 
-// Include test gcc compiled program
-#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
-
 // Declare memory map information
-// Starts with shared with software memory map info
-#include "gcc_test/mem_map.h" 
-
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
-  uint1_t button;
+  uint32_t core_id;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
   uint32_t return_value;
@@ -50,8 +45,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  WORD_MM_ENTRY(o, RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  o.outputs.halt = wr_byte_ens[0] & (addr==RETURN_OUTPUT_ADDR);
+  o.outputs.return_value = inputs.core_id; // Override typical reg read behavior
+  WORD_MM_ENTRY(o, CORE_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
+  o.outputs.halt = wr_byte_ens[0] & (addr==CORE_ID_RETURN_OUTPUT_ADDR);
   WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
 
   // Mem map the handshake regs
@@ -147,6 +143,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 }
 
 // Declare a RISCV core type using memory info
+// Include test gcc compiled program
+#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
 #define riscv_name              my_riscv
 #define RISCV_MEM_INIT          MEM_INIT // from gcc_test
 #define RISCV_MEM_SIZE_BYTES    MEM_INIT_SIZE // from gcc_test
@@ -168,20 +166,22 @@ void risc_v_cores()
   my_riscv_out_t out[NUM_CORES];
   for (i = 0; i < NUM_CORES; i+=1)
   {
-    my_mmio_in_t in; // Disconnected for now
+    my_mmio_in_t in;
+    in.core_id = i;
     out[i] = my_riscv(in);
   }
 
-  // Temp leds from core 0 only
-  static uint1_t unknown_op;
-  unknown_op = unknown_op | out[0].unknown_op; // Sticky
-  static uint1_t mem_out_of_range;
-  mem_out_of_range = mem_out_of_range | out[0].mem_out_of_range; // Sticky
-  static uint1_t halt;
-  halt = halt | out[0].halt; // Sticky
+  // led0 is core0 led for some sign of life
   leds = 0;
   leds |= ((uint4_t)out[0].mem_map_outputs.led << 0);
-  leds |= ((uint4_t)unknown_op << 1);
-  leds |= ((uint4_t)mem_out_of_range << 2);
-  leds |= ((uint4_t)halt << 3);
+  // led1,2 unused
+  // led3 is combined error flag from all cores
+  static uint1_t error;
+  leds |= ((uint4_t)error << 3);
+  for (i = 0; i < NUM_CORES; i+=1)
+  {
+    error |= out[i].unknown_op; // Sticky
+    error |= out[i].mem_out_of_range; // Sticky
+    error |= out[i].halt; // Sticky
+  }  
 }
