@@ -12,7 +12,7 @@
 #define MEM_MAP_BASE_ADDR 0x10000000
 
 // Read: Core ID, Write: output/stop/halt peripheral
-#define NUM_CORES 4
+#define NUM_CORES 8 // 14 max w/ resource optimization in vivado turned on
 #define CORE_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
 static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
 static volatile uint32_t* CORE_ID = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
