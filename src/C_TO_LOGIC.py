@@ -1897,7 +1897,7 @@ def GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
 
     for func_def in func_defs:
         if parse_body:
-            print("...", func_def.decl.name, flush=True)
+            print("... found:", func_def.decl.name, flush=True)
         # Each func def produces a single logic item
         parser_state.existing_logic = None
         logic = C_AST_FUNC_DEF_TO_LOGIC(func_def, parser_state, parse_body)
@@ -6979,29 +6979,33 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
             const_input_wire, parser_state.existing_logic, parser_state
         )
-        val, unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
-            const_val_str, func_c_ast_node, is_negated=False, expected_c_type=BOOL_C_TYPE
-        )
-        # uint1_t!=0, and uint1_t==1 #TODO  uint1_t==0 and uint1_t!=1 is NOT
-        if (
-            (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME) and val==0) or
-            (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME) and val==1)
-        ):
-            # Not reducing to replacement func, is just wire from input driver output wires
-            # Remove old submodule instance
-            parser_state.existing_logic.REMOVE_SUBMODULE(
-                func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+        if WIRE_IS_ENUM(const_input_wire, parser_state.existing_logic, parser_state):
+            # TODO const enum compare reduce...and only for 1b enums...come on...
+            is_reducable = False
+        else:
+            val, unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
+                const_val_str, func_c_ast_node, is_negated=False, expected_c_type=BOOL_C_TYPE
             )
-            # And connect input port drive to output driven wires
-            parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
-                parser_state,
-                var_input_driver,
-                output_driven_wire_names,
-                prepend_text,
-                func_c_ast_node,
-                check_types_do_cast=False,
-            )
-            return parser_state.existing_logic
+            # uint1_t!=0, and uint1_t==1 #TODO  uint1_t==0 and uint1_t!=1 is NOT
+            if (
+                (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME) and val==0) or
+                (func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME) and val==1)
+            ):
+                # Not reducing to replacement func, is just wire from input driver output wires
+                # Remove old submodule instance
+                parser_state.existing_logic.REMOVE_SUBMODULE(
+                    func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+                )
+                # And connect input port drive to output driven wires
+                parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
+                    parser_state,
+                    var_input_driver,
+                    output_driven_wire_names,
+                    prepend_text,
+                    func_c_ast_node,
+                    check_types_do_cast=False,
+                )
+                return parser_state.existing_logic
 
     # Not a reducable function
     if not is_reducable:
@@ -9780,6 +9784,8 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     c_ast_func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for c_ast_func_def in c_ast_func_defs:
         func_name = c_ast_func_def.decl.name
+        if type(func_name) != str:
+            raise Exception("Bad func name?", str(c_ast_func_def.decl.name.coord), str(c_ast_func_def.decl.name))
         # print "c_ast_func_def",c_ast_func_def.decl.name
         func_call_c_ast_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(
             c_ast_func_def, c_ast.FuncCall
@@ -9787,6 +9793,8 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
         # print "Called",len(func_call_c_ast_nodes)
         for func_call_c_ast_node in func_call_c_ast_nodes:
             called_func_name = func_call_c_ast_node.name.name
+            if type(called_func_name) != str:
+                raise Exception("Bad func name?", str(called_func_name.coord), str(called_func_name))
             # print " called_func_name",called_func_name
             # Record
             # Calls
@@ -11252,9 +11260,9 @@ def FUNC_IS_PRIMITIVE(func_name, parser_state):
 def GET_FSM_CLK_FUNC_LOGICS(parser_state):
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
-        # if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
-        #  print("Function skipped:",func_def.decl.name)
-        #  continue
+        if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
+            print("Function skipped:",func_def.decl.name)
+            continue
         parser_state.existing_logic = None
         driven_wire_names = []
         prepend_text = ""
