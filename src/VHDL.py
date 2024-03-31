@@ -69,14 +69,17 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
             # Array
             elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             expr_node = init_expr
+            expr_type_dims = dims[1:]
             expr_type = elem_t
+            for expr_type_dim in expr_type_dims:
+                expr_type += "[" + str(expr_type_dim) + "]"            
             # Assign this pos in array, or specified pos
             if type(init_expr) == c_ast.NamedInitializer:
                 # pos name
                 pos = int(init_expr.name[0].value)
                 expr_node = init_expr.expr
             index_to_vhdl_str[pos] = INIT_C_AST_NODE_TO_VHDL_INIT_STR(
-                expr_node, elem_t, logic, parser_state
+                expr_node, expr_type, logic, parser_state
             )
 
         elif type(c_ast_init) == c_ast.InitList and C_TO_LOGIC.C_TYPE_IS_STRUCT(
@@ -110,7 +113,7 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
         for array_index in index_to_vhdl_str:
             text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
-        text += "others => " + C_TYPE_STR_TO_VHDL_NULL_STR(elem_t, parser_state) + ",\n"
+        text += "others => " + C_TYPE_STR_TO_VHDL_NULL_STR(expr_type, parser_state) + ",\n"
     elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
         field_type_dict = parser_state.struct_to_field_type_dict[c_type]
         field_names_list = list(field_type_dict.keys())
