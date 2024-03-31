@@ -121,10 +121,8 @@ unified_out_t unified(
   return rv;
 }
 
-
-#define N_POINTS 4
+#include "ram_init.h" // Defines N_POINTS, test data etc
 // TODO parameterize by N points at once read from RAM being processed instead of 1
-// TODO RAM INIT VALUES
 
 // Globally visible RAMs
 
@@ -141,11 +139,14 @@ uint1_t p0p1_ram_out_last;
 void p0p1_ram_module()
 {
   // Most simple same cycle comb. logic implementation
-  static float2 p0[N_POINTS];
-  static float2 p1[N_POINTS];
+  static float2 p0[N_POINTS] = P0_TEST_POINTS;
+  static float2 p1[N_POINTS] = P1_TEST_POINTS;
   p0p1_ram_out_valid = p0p1_ram_in_valid;
   p0p1_ram_out_last = p0p1_ram_in_last;
   p0p1_ram_out_addr = p0p1_ram_in_addr;
+  // TODO use block RAM with extra cycle of delay
+  //float2 NULL_WR_DATA;
+  //p0_ram_out_data = p0_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0);
   p0_ram_out_data = p0[p0p1_ram_in_addr];
   p1_ram_out_data = p1[p0p1_ram_in_addr];
 }
@@ -163,8 +164,8 @@ float2 T_ram_out_data;
 void fit_ram_module()
 {
   // Most simple same cycle comb. logic implementation
-  static float fi[N_POINTS];
-  static float2 T[N_POINTS];
+  static float fi[N_POINTS] = FI_TEST_DATA;
+  static float2 T[N_POINTS] = T_TEST_DATA;
   fit_ram_out_valid = fit_ram_in_valid;
   fit_ram_out_last = fit_ram_in_last;
   fit_ram_out_addr = fit_ram_in_addr;
