@@ -145,10 +145,14 @@ void p0p1_ram_module()
   p0p1_ram_out_last = p0p1_ram_in_last;
   p0p1_ram_out_addr = p0p1_ram_in_addr;
   // TODO use block RAM with extra cycle of delay
-  //float2 NULL_WR_DATA;
-  //p0_ram_out_data = p0_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0);
-  p0_ram_out_data = p0[p0p1_ram_in_addr];
-  p1_ram_out_data = p1[p0p1_ram_in_addr];
+  float2 NULL_WR_DATA;
+  //
+  //p0_ram_out_data = p0[p0p1_ram_in_addr]; // REGS+MUXES
+  p0_ram_out_data = p0_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
+  //p0_ram_out_data = p0_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
+  //p1_ram_out_data = p1[p0p1_ram_in_addr]; // REGS+MUXES
+  p1_ram_out_data = p1_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
+  //p1_ram_out_data = p1_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
 }
 
 // fi, T
@@ -169,8 +173,16 @@ void fit_ram_module()
   fit_ram_out_valid = fit_ram_in_valid;
   fit_ram_out_last = fit_ram_in_last;
   fit_ram_out_addr = fit_ram_in_addr;
-  fi_ram_out_data = fi[fit_ram_in_addr];
-  T_ram_out_data = T[fit_ram_in_addr];
+  // TODO use block RAM with extra cycle of delay
+  float NULL_WR_DATA_F;
+  float2 NULL_WR_DATA_F2;
+  //
+  //fi_ram_out_data = fi[fit_ram_in_addr]; // REGS+MUXES
+  fi_ram_out_data = fi_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // LUTRAM
+  //fi_ram_out_data = fi_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // BRAM
+  //T_ram_out_data = T[fit_ram_in_addr]; // REGS+MUXES
+  T_ram_out_data = T_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // LUTRAM
+  //T_ram_out_data = T_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // BRAM
 }
 
 // Globally visible pipeline instances
@@ -235,7 +247,7 @@ typedef enum state_t{
   DONE
 }state_t;
 #pragma MAIN control_fsm
-void control_fsm()
+unified_out_t control_fsm() // Output some data so doesnt synthesize away
 {
   // State regs
   static state_t state; // FSM state
@@ -299,4 +311,5 @@ void control_fsm()
   }
 
   cycle_counter += 1; // For sim printfs
+  return unified_pipeline_out; // For not synth away
 }
