@@ -141,18 +141,30 @@ void p0p1_ram_module()
   // Most simple same cycle comb. logic implementation
   static float2 p0[N_POINTS] = P0_TEST_POINTS;
   static float2 p1[N_POINTS] = P1_TEST_POINTS;
+  /* // Zero delay pass through (not used when BRAM)
   p0p1_ram_out_valid = p0p1_ram_in_valid;
   p0p1_ram_out_last = p0p1_ram_in_last;
-  p0p1_ram_out_addr = p0p1_ram_in_addr;
-  // TODO use block RAM with extra cycle of delay
+  p0p1_ram_out_addr = p0p1_ram_in_addr; */
+  // Delay regs(_r) to match RAM BRAM delay
+  static uint1_t p0p1_ram_out_valid_r;
+  p0p1_ram_out_valid = p0p1_ram_out_valid_r;
+  p0p1_ram_out_valid_r = p0p1_ram_in_valid;
+  static uint1_t p0p1_ram_out_last_r;
+  p0p1_ram_out_last = p0p1_ram_out_last_r;
+  p0p1_ram_out_last_r = p0p1_ram_in_last;
+  static uint32_t p0p1_ram_out_addr_r;
+  p0p1_ram_out_addr = p0p1_ram_out_addr_r;
+  p0p1_ram_out_addr_r = p0p1_ram_in_addr;
+  //
   float2 NULL_WR_DATA;
   //
   //p0_ram_out_data = p0[p0p1_ram_in_addr]; // REGS+MUXES
-  p0_ram_out_data = p0_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
-  //p0_ram_out_data = p0_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
+  //p0_ram_out_data = p0_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
+  p0_ram_out_data = p0_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
+  //
   //p1_ram_out_data = p1[p0p1_ram_in_addr]; // REGS+MUXES
-  p1_ram_out_data = p1_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
-  //p1_ram_out_data = p1_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
+  //p1_ram_out_data = p1_RAM_DP_RF_0(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // LUTRAM
+  p1_ram_out_data = p1_RAM_DP_RF_1(p0p1_ram_in_addr, 0, NULL_WR_DATA, 0); // BRAM
 }
 
 // fi, T
@@ -170,19 +182,30 @@ void fit_ram_module()
   // Most simple same cycle comb. logic implementation
   static float fi[N_POINTS] = FI_TEST_DATA;
   static float2 T[N_POINTS] = T_TEST_DATA;
+  /* // Zero delay pass through (not used when BRAM)
   fit_ram_out_valid = fit_ram_in_valid;
   fit_ram_out_last = fit_ram_in_last;
-  fit_ram_out_addr = fit_ram_in_addr;
-  // TODO use block RAM with extra cycle of delay
+  fit_ram_out_addr = fit_ram_in_addr;*/
+  // Delay regs(_r) to match RAM BRAM delay
+  static uint1_t fit_ram_out_valid_r;
+  fit_ram_out_valid = fit_ram_out_valid_r;
+  fit_ram_out_valid_r = fit_ram_in_valid;
+  static uint1_t fit_ram_out_last_r;
+  fit_ram_out_last = fit_ram_out_last_r;
+  fit_ram_out_last_r = fit_ram_in_last;
+  static uint32_t fit_ram_out_addr_r;
+  fit_ram_out_addr = fit_ram_out_addr_r;
+  fit_ram_out_addr_r = fit_ram_in_addr;
+  //
   float NULL_WR_DATA_F;
   float2 NULL_WR_DATA_F2;
   //
   //fi_ram_out_data = fi[fit_ram_in_addr]; // REGS+MUXES
-  fi_ram_out_data = fi_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // LUTRAM
-  //fi_ram_out_data = fi_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // BRAM
+  //fi_ram_out_data = fi_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // LUTRAM
+  fi_ram_out_data = fi_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F, 0); // BRAM
   //T_ram_out_data = T[fit_ram_in_addr]; // REGS+MUXES
-  T_ram_out_data = T_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // LUTRAM
-  //T_ram_out_data = T_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // BRAM
+  //T_ram_out_data = T_RAM_DP_RF_0(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // LUTRAM
+  T_ram_out_data = T_RAM_DP_RF_1(fit_ram_in_addr, 0, NULL_WR_DATA_F2, 0); // BRAM
 }
 
 // Globally visible pipeline instances
