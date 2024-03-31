@@ -4,6 +4,14 @@
 #include "uintN_t.h"
 #include "examples/cordic.h"
 
+typedef struct float2{
+  float data[2];
+}float2;
+
+typedef struct float3{
+  float data[3];
+}float3;
+
 /*```py
 def unified(p0, p1, fi, T):
     #Input
@@ -59,15 +67,15 @@ def unified(p0, p1, fi, T):
     #    ]
     #b = [a, b, c]*/
 //#pragma MAIN unified
-typedef struct hb_t{
+typedef struct unified_out_t{
   float h[3][3];
-  float b[3];
+  float3 b;
   uint1_t valid;
   uint32_t addr;
   uint1_t last;
-}hb_t;
-hb_t unified(
-  float p0[2], float p1[2], float fi, float T[2],
+}unified_out_t;
+unified_out_t unified(
+  float2 p0, float2 p1, float fi, float2 T,
   uint1_t valid,
   uint32_t addr,
   uint1_t last
@@ -82,19 +90,19 @@ hb_t unified(
   R[0][1] = -sin_fi;
   R[1][0] = sin_fi;
   R[1][1] = cos_fi;
-  float sin_fi_p10 = sin_fi * p1[0];
-  float cos_fi_p11 = cos_fi * p1[1];
-  float cos_fi_p10 = cos_fi * p1[0];
-  float sin_fi_p11 = sin_fi * p1[1];
+  float sin_fi_p10 = sin_fi * p1.data[0];
+  float cos_fi_p11 = cos_fi * p1.data[1];
+  float cos_fi_p10 = cos_fi * p1.data[0];
+  float sin_fi_p11 = sin_fi * p1.data[1];
   float n_sin_fi_p10_n_fi_p11 = -sin_fi_p10 - cos_fi_p11;
   float cos_fi_p10_n_sin_fi_p11 = cos_fi_p10 - sin_fi_p11;
   float p1_rotated[2];
-  p1_rotated[0] = R[0][0]*p1[0]+R[0][1]*p1[1];
-  p1_rotated[1] = R[1][0]*p1[0]+R[1][1]*p1[1];
+  p1_rotated[0] = R[0][0]*p1.data[0]+R[0][1]*p1.data[1];
+  p1_rotated[1] = R[1][0]*p1.data[0]+R[1][1]*p1.data[1];
   float e[2];
-  e[0] = p1_rotated[0]+T[0]-p0[0];
-  e[1] = p1_rotated[1]+T[1]-p0[1];
-  hb_t rv;
+  e[0] = p1_rotated[0]+T.data[0]-p0.data[0];
+  e[1] = p1_rotated[1]+T.data[1]-p0.data[1];
+  unified_out_t rv;
   rv.last = last;
   rv.addr = addr;
   rv.valid = valid;
@@ -107,9 +115,9 @@ hb_t unified(
   rv.h[2][0] = n_sin_fi_p10_n_fi_p11;
   rv.h[2][1] = cos_fi_p10_n_sin_fi_p11;
   rv.h[2][2] = (n_sin_fi_p10_n_fi_p11*n_sin_fi_p10_n_fi_p11) + (cos_fi_p10_n_sin_fi_p11*cos_fi_p10_n_sin_fi_p11);
-  rv.b[0] = e[0];
-  rv.b[1] = e[1];
-  rv.b[2] = n_sin_fi_p10_n_fi_p11*e[0]+cos_fi_p10_n_sin_fi_p11*e[1];
+  rv.b.data[0] = e[0];
+  rv.b.data[1] = e[1];
+  rv.b.data[2] = n_sin_fi_p10_n_fi_p11*e[0]+cos_fi_p10_n_sin_fi_p11*e[1];
   return rv;
 }
 
@@ -124,8 +132,8 @@ hb_t unified(
 uint32_t p0p1_ram_in_addr;
 uint1_t p0p1_ram_in_valid;
 uint1_t p0p1_ram_in_last;
-float p0_ram_out_data[2];
-float p1_ram_out_data[2];
+float2 p0_ram_out_data;
+float2 p1_ram_out_data;
 uint32_t p0p1_ram_out_addr;
 uint1_t p0p1_ram_out_valid;
 uint1_t p0p1_ram_out_last;
@@ -133,8 +141,8 @@ uint1_t p0p1_ram_out_last;
 void p0p1_ram_module()
 {
   // Most simple same cycle comb. logic implementation
-  static float p0[N_POINTS][2];
-  static float p1[N_POINTS][2];
+  static float2 p0[N_POINTS];
+  static float2 p1[N_POINTS];
   p0p1_ram_out_valid = p0p1_ram_in_valid;
   p0p1_ram_out_last = p0p1_ram_in_last;
   p0p1_ram_out_addr = p0p1_ram_in_addr;
@@ -150,13 +158,13 @@ uint1_t fit_ram_out_valid;
 uint1_t fit_ram_out_last;
 uint32_t fit_ram_out_addr;
 float fi_ram_out_data;
-float T_ram_out_data[2];
+float2 T_ram_out_data;
 #pragma MAIN fit_ram_module
 void fit_ram_module()
 {
   // Most simple same cycle comb. logic implementation
   static float fi[N_POINTS];
-  static float T[N_POINTS][2];
+  static float2 T[N_POINTS];
   fit_ram_out_valid = fit_ram_in_valid;
   fit_ram_out_last = fit_ram_in_last;
   fit_ram_out_addr = fit_ram_in_addr;
@@ -170,11 +178,11 @@ void fit_ram_module()
 uint1_t unified_pipeline_in_valid;
 uint32_t unified_pipeline_in_addr;
 uint1_t unified_pipeline_in_last;
-float unified_pipeline_in_p0[2];
-float unified_pipeline_in_p1[2];
+float2 unified_pipeline_in_p0;
+float2 unified_pipeline_in_p1;
 float unified_pipeline_in_fi;
-float unified_pipeline_in_T[2];
-hb_t unified_pipeline_out;
+float2 unified_pipeline_in_T;
+unified_out_t unified_pipeline_out;
 #pragma MAIN_MHZ unified_instance 50.0
 void unified_instance()
 {
@@ -190,13 +198,13 @@ void unified_instance()
 // Globally visible instances
 
 // H,B accumulator
-hb_t hb_accum_in_data;
-hb_t hb_accum_out_data;
+unified_out_t hb_accum_in_data;
+unified_out_t hb_accum_out_data;
 uint1_t hb_accum_out_done;
 #pragma MAIN hb_accum
 void hb_accum()
 {
-  static hb_t out_reg;
+  static unified_out_t out_reg;
   hb_accum_out_data = out_reg;
   hb_accum_out_done = out_reg.valid & out_reg.last;
   out_reg.valid = 0;
@@ -205,7 +213,7 @@ void hb_accum()
     uint32_t i;
     for (i = 0; i < 3; i+=1)
     {
-      out_reg.b[i] += hb_accum_in_data.b[i];
+      out_reg.b.data[i] += hb_accum_in_data.b.data[i];
       uint32_t j;
       for (j = 0; j < 3; j+=1)
       {
