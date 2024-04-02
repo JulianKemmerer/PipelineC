@@ -125,22 +125,33 @@ unified_out_t unified(
 // TODO parameterize by N points at once read from RAM being processed instead of 1
 
 // Globally visible RAMs
+/* // TODO connect to shared AXI RAM
+// Starting with one AXI BRAM shared to look like multiple independent RAMs
+#include "examples/shared_resource_bus/shared_axi_bram.c"
+*/
 
 // p0,p1
 uint32_t p0p1_ram_in_addr;
 uint1_t p0p1_ram_in_valid;
 uint1_t p0p1_ram_in_last;
+uint1_t p0p1_ram_ready_for_in;
 float2 p0_ram_out_data;
 float2 p1_ram_out_data;
 uint32_t p0p1_ram_out_addr;
 uint1_t p0p1_ram_out_valid;
 uint1_t p0p1_ram_out_last;
+uint1_t p0p1_ram_ready_for_out;
 #pragma MAIN p0p1_ram_module
 void p0p1_ram_module()
 {
-  // Most simple same cycle comb. logic implementation
+  // Most simple implementations
   static float2 p0[N_POINTS] = P0_TEST_POINTS;
   static float2 p1[N_POINTS] = P1_TEST_POINTS;
+
+  // Always ready for inputs
+  p0p1_ram_ready_for_in = 1;
+  // TODO use p0p1_ram_ready_for_out
+
   /* // Zero delay pass through (not used when BRAM)
   p0p1_ram_out_valid = p0p1_ram_in_valid;
   p0p1_ram_out_last = p0p1_ram_in_last;
@@ -171,17 +182,24 @@ void p0p1_ram_module()
 uint32_t fit_ram_in_addr;
 uint1_t fit_ram_in_valid;
 uint1_t fit_ram_in_last;
+uint1_t fit_ram_ready_for_in;
 uint1_t fit_ram_out_valid;
 uint1_t fit_ram_out_last;
 uint32_t fit_ram_out_addr;
+uint1_t fit_ram_ready_for_out;
 float fi_ram_out_data;
 float2 T_ram_out_data;
 #pragma MAIN fit_ram_module
 void fit_ram_module()
 {
-  // Most simple same cycle comb. logic implementation
+  // Most simple implementations
   static float fi[N_POINTS] = FI_TEST_DATA;
   static float2 T[N_POINTS] = T_TEST_DATA;
+
+  // Always ready for inputs
+  fit_ram_ready_for_in = 1;
+  // TODO use fit_ram_ready_for_out
+
   /* // Zero delay pass through (not used when BRAM)
   fit_ram_out_valid = fit_ram_in_valid;
   fit_ram_out_last = fit_ram_in_last;
@@ -209,6 +227,8 @@ void fit_ram_module()
 }
 
 // Globally visible pipeline instances
+// TODO convert to shared resource bus pipeline instance
+//  1 host 1 dev but the flow control fifos etc will be needed
 
 // Unified pipeline
 uint1_t unified_pipeline_in_valid;
@@ -216,12 +236,16 @@ uint32_t unified_pipeline_in_addr;
 uint1_t unified_pipeline_in_last;
 float2 unified_pipeline_in_p0;
 float2 unified_pipeline_in_p1;
+uint1_t unified_pipeline_ready_for_in;
 float unified_pipeline_in_fi;
 float2 unified_pipeline_in_T;
 unified_out_t unified_pipeline_out;
+uint1_t unified_pipeline_ready_for_out;
 #pragma MAIN_MHZ unified_instance 50.0
 void unified_instance()
 {
+  unified_pipeline_ready_for_in = 1;
+  // TODO use unified_pipeline_ready_for_out
   unified_pipeline_out = unified(
     unified_pipeline_in_p0, unified_pipeline_in_p1,
     unified_pipeline_in_fi, unified_pipeline_in_T,
@@ -232,11 +256,14 @@ void unified_instance()
 }
 
 // Globally visible instances
+// TODO add valid+ready interface
 
 // H,B accumulator
 unified_out_t hb_accum_in_data;
+uint1_t hb_accum_ready_for_in;
 unified_out_t hb_accum_out_data;
 uint1_t hb_accum_out_done;
+uint1_t hb_accum_ready_for_out;
 #pragma MAIN hb_accum
 void hb_accum()
 {
@@ -244,6 +271,8 @@ void hb_accum()
   hb_accum_out_data = out_reg;
   hb_accum_out_done = out_reg.valid & out_reg.last;
   out_reg.valid = 0;
+  hb_accum_ready_for_in = 1;
+  // TODO use hb_accum_ready_for_out
   if(hb_accum_in_data.valid){
     // Do accumulate // TODO right logic?
     uint32_t i;
@@ -298,7 +327,7 @@ unified_out_t control_fsm() // Output some data so doesnt synthesize away
     fit_ram_in_addr = address;
     fit_ram_in_valid = valid;
     fit_ram_in_last = last;
-    if(valid){
+    if(valid & p0p1_ram_ready_for_in){
       printf("Cycle %d: Start read of P0,P1,FI,T [%d]...\n", cycle_counter, address); 
       address += 1;
     }
@@ -312,6 +341,8 @@ unified_out_t control_fsm() // Output some data so doesnt synthesize away
     unified_pipeline_in_p1 = p1_ram_out_data;
     unified_pipeline_in_fi = fi_ram_out_data;
     unified_pipeline_in_T = T_ram_out_data;
+    p0p1_ram_ready_for_out = unified_pipeline_ready_for_in;
+    fit_ram_ready_for_out = unified_pipeline_ready_for_in;
     if(p0p1_ram_out_valid){
       printf("Cycle %d: P0,P1,FI,T [%d] read data into unified pipeline...\n", cycle_counter, p0p1_ram_out_addr); 
     }
@@ -322,10 +353,13 @@ unified_out_t control_fsm() // Output some data so doesnt synthesize away
     hb_accum_in_data.last = unified_pipeline_out.last;
     hb_accum_in_data.b = unified_pipeline_out.b;
     hb_accum_in_data.h = unified_pipeline_out.h;
+    unified_pipeline_ready_for_out = hb_accum_ready_for_in;
     if(unified_pipeline_out.valid){
       printf("Cycle %d: unified pipeline output for P0,P1,FI,T [%d] into H,B accumulator...\n", cycle_counter, unified_pipeline_out.addr); 
     }
 
+    // Always ready for hb accum output
+    hb_accum_ready_for_out = 1;
     // Last element out of unified pipeline produces accumulator done flag
     if(hb_accum_out_done){
       printf("Cycle %d: All points done. Result ready.\n", cycle_counter);
