@@ -847,7 +847,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
                     + "(x);\n"
                 )
         elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(type_t):
-            float_bytes = C_TYPE_SIZE(type_t, parser_state)
+            float_bytes = C_TO_LOGIC.C_TYPE_SIZE(type_t, parser_state)
             for float_byte_i in range(0, float_bytes):
                 text += f"rv.data[{float_byte_i}] = {type_t}_{((float_byte_i+1)*8)-1}_{float_byte_i*8}(x);\n"
         elif C_TO_LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
