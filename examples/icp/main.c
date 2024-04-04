@@ -166,6 +166,7 @@ void unified_instance()
 // TODO how to init AXI DDR RAM? Needs runtime load?
 //#include "ram_init.h"
 #define N_POINTS 128
+
 // Starting with one AXI BRAM shared to look like multiple independent RAMs
 #define SHARED_AXI_RAM_DEPTH 1024 // 1024 u32's
 #define SHARED_AXI_RAM_NUM_HOST_PORTS 2
@@ -174,29 +175,26 @@ void unified_instance()
 #define SHARED_AXI_RAM_DEV_CLK_MHZ 50.0
 #include "examples/shared_resource_bus/shared_axi_bram.c"
 
-// p0,p1
-typedef struct points_t{
-  float2 p[2];
-}points_t;
-#include "points_t_bytes_t.h"
 // Logic for how to start and finish a read from RAM
-typedef struct p0p1_ram_read_start_t{
+// (generic already, not type specific, just need sizeof(type))
+typedef struct axi_shared_bus_sized_read_start_t{
   uint1_t ready_for_inputs;
   uint1_t done;
   axi_shared_bus_t_read_req_t bus_req;
-}p0p1_ram_read_start_t;
-p0p1_ram_read_start_t p0p1_ram_axi_shared_bus_read_start(
+}axi_shared_bus_sized_read_start_t;
+axi_shared_bus_sized_read_start_t axi_shared_bus_sized_read_start(
   uint1_t rd_valid,
   uint32_t rd_index, // Not to be confused with axi addr
+  uint32_t rd_size,
   uint1_t ready_for_outputs,
   uint32_t bus_base_addr, 
   uint1_t bus_req_ready
 ){
   // Begin N u32 reads using bus helper FSM
-  uint8_t NUM_WORDS = sizeof(points_t) / sizeof(uint32_t);
-  static uint8_t word_counter = sizeof(points_t) / sizeof(uint32_t);
+  uint8_t NUM_WORDS = rd_size >> 2; // / sizeof(uint32_t);
+  static uint8_t word_counter = 0xFF; //max rd_size / sizeof(uint32_t);
   static uint32_t bus_addr;
-  p0p1_ram_read_start_t rv;
+  axi_shared_bus_sized_read_start_t rv;
   rv.ready_for_inputs = 0;
   rv.done = 0;
   if(ready_for_outputs)
@@ -226,12 +224,19 @@ p0p1_ram_read_start_t p0p1_ram_axi_shared_bus_read_start(
       rv.ready_for_inputs = 1;
       if(rd_valid){
         word_counter = 0;
-        bus_addr = bus_base_addr + (rd_index * sizeof(points_t));
+        bus_addr = bus_base_addr + (rd_index * rd_size);
       }
     }
   }
   return rv;
 }
+
+
+// p0,p1
+typedef struct points_t{
+  float2 p[2];
+}points_t;
+#include "points_t_bytes_t.h"
 typedef struct p0p1_ram_read_finish_t{
   points_t data;
   uint1_t done;
@@ -301,9 +306,10 @@ void p0p1_ram_ctrl()
   // Streams of reads starting and finishing at same time
 
   // Start
-  p0p1_ram_read_start_t read_start = p0p1_ram_axi_shared_bus_read_start(
+  axi_shared_bus_sized_read_start_t read_start = axi_shared_bus_sized_read_start(
     p0p1_ram_in_valid,
     p0p1_ram_in_addr,
+    sizeof(points_t),
     1,
     0, // TODO BASE ADDR
     shared_axi_ram_dev_to_host_wire_on_host_clk.read.req_ready
@@ -327,59 +333,6 @@ typedef struct fi_T_t{
   float2 T;
 }fi_T_t;
 #include "fi_T_t_bytes_t.h"
-// Logic for how to start and finish a read from RAM
-typedef struct fit_ram_read_start_t{
-  uint1_t ready_for_inputs;
-  uint1_t done;
-  axi_shared_bus_t_read_req_t bus_req;
-}fit_ram_read_start_t;
-fit_ram_read_start_t fit_ram_axi_shared_bus_read_start(
-  uint1_t rd_valid,
-  uint32_t rd_index, // Not to be confused with axi addr
-  uint1_t ready_for_outputs,
-  uint32_t bus_base_addr, 
-  uint1_t bus_req_ready
-){
-  // Begin N u32 reads using bus helper FSM
-  uint8_t NUM_WORDS = sizeof(fi_T_t) / sizeof(uint32_t);
-  static uint8_t word_counter = sizeof(fi_T_t) / sizeof(uint32_t);
-  static uint32_t bus_addr;
-  fit_ram_read_start_t rv;
-  rv.ready_for_inputs = 0;
-  rv.done = 0;
-  if(ready_for_outputs)
-  {
-    // Active state
-    if(word_counter < NUM_WORDS){
-      // Try to start a u32 read
-      axi_read_req_t req = axi_addr_to_read(bus_addr);
-      axi_shared_bus_t_read_start_logic_outputs_t read_start = 
-        axi_shared_bus_t_read_start_logic(
-          req,
-          1,
-          bus_req_ready
-        );
-      rv.bus_req = read_start.req;
-      // Move to next u32 when done
-      if(read_start.done){
-        // Last word?
-        if(word_counter==(NUM_WORDS-1)){
-          rv.done = 1;
-        }      
-        bus_addr += sizeof(uint32_t);
-        word_counter += 1;
-      }
-    }else{
-      // IDLE state, wait for valid input
-      rv.ready_for_inputs = 1;
-      if(rd_valid){
-        word_counter = 0;
-        bus_addr = bus_base_addr + (rd_index * sizeof(fi_T_t));
-      }
-    }
-  }
-  return rv;
-}
 typedef struct fit_ram_read_finish_t{
   fi_T_t data;
   uint1_t done;
@@ -449,9 +402,10 @@ void fit_ram_ctrl()
   // Streams of reads starting and finishing at same time
 
   // Start
-  fit_ram_read_start_t read_start = fit_ram_axi_shared_bus_read_start(
+  axi_shared_bus_sized_read_start_t read_start = axi_shared_bus_sized_read_start(
     fit_ram_in_valid,
     fit_ram_in_addr,
+    sizeof(fi_T_t),
     1,
     0, // TODO BASE ADDR
     shared_axi_ram_dev_to_host_wire_on_host_clk.read.req_ready
