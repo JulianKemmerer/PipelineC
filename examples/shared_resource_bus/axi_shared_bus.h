@@ -58,6 +58,45 @@ typedef struct axi_read_data_t
   // USE shared bus last, uint1_t rlast;
 } axi_read_data_t;
 
+// Helpers to fill in single word requests and responses
+axi_read_req_t axi_addr_to_read(uint32_t addr)
+{
+  axi_read_req_t req;
+  req.araddr = addr;
+  req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+  req.arsize = 2; // 2^2=4 bytes per transfer
+  req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
+  return req;
+}
+uint32_t axi_read_to_data(axi_read_data_t resp)
+{
+  uint32_t rv = uint8_array4_le(resp.rdata);
+  return rv;
+}
+typedef struct axi_write_t{
+  axi_write_req_t req;
+  axi_write_data_t data;
+}axi_write_t;
+axi_write_t axi_addr_data_to_write(uint32_t addr, uint32_t data)
+{
+  axi_write_t rv;
+  axi_write_req_t req;
+  req.awaddr = addr;
+  req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+  req.awsize = 2; // 2^2=4 bytes per transfer
+  req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
+  axi_write_data_t wr_data;
+  // All 4 bytes are being transfered (uint to array)
+  uint32_t i;
+  for(i=0; i<4; i+=1)
+  {
+    wr_data.wdata[i] = data >> (i*8);
+    wr_data.wstrb[i] = 1;
+  }
+  rv.req = req;
+  rv.data = wr_data;
+}
+
 
 // See docs: https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 #include "shared_resource_bus.h"
