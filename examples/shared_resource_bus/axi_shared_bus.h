@@ -261,3 +261,118 @@ rd_pri_port_arb_t rd_pri_port_arb(
   
   return o;
 }
+
+// Logic for how to start and finish a read of some words from RAM
+// (generic already, not type specific, just need sizeof(type))
+typedef struct axi_shared_bus_sized_read_start_t{
+  uint1_t ready_for_inputs;
+  uint1_t done;
+  axi_shared_bus_t_read_req_t bus_req;
+}axi_shared_bus_sized_read_start_t;
+axi_shared_bus_sized_read_start_t axi_shared_bus_sized_read_start(
+  uint1_t rd_valid,
+  uint32_t rd_index, // Not to be confused with axi addr
+  uint32_t rd_size,
+  uint1_t ready_for_outputs,
+  uint32_t bus_base_addr, 
+  uint1_t bus_req_ready
+){
+  // Begin N u32 reads using bus helper FSM
+  uint8_t NUM_WORDS = rd_size >> 2; // / sizeof(uint32_t);
+  static uint8_t word_counter = 0xFF; //max rd_size / sizeof(uint32_t);
+  static uint32_t bus_addr;
+  axi_shared_bus_sized_read_start_t rv;
+  rv.ready_for_inputs = 0;
+  rv.done = 0;
+  if(ready_for_outputs)
+  {
+    // Active state
+    if(word_counter < NUM_WORDS){
+      // Try to start a u32 read
+      axi_read_req_t req = axi_addr_to_read(bus_addr);
+      axi_shared_bus_t_read_start_logic_outputs_t read_start = 
+        axi_shared_bus_t_read_start_logic(
+          req,
+          1,
+          bus_req_ready
+        );
+      rv.bus_req = read_start.req;
+      // Move to next u32 when done
+      if(read_start.done){
+        // Last word?
+        if(word_counter==(NUM_WORDS-1)){
+          rv.done = 1;
+        }      
+        bus_addr += sizeof(uint32_t);
+        word_counter += 1;
+      }
+    }else{
+      // IDLE state, wait for valid input
+      rv.ready_for_inputs = 1;
+      if(rd_valid){
+        word_counter = 0;
+        bus_addr = bus_base_addr + (rd_index * rd_size);
+      }
+    }
+  }
+  return rv;
+}
+// Logic for how to finish read of some words assembled into a struct type
+#define DECL_AXI_SHARED_BUS_TYPE_READ_FINISH(type) \
+typedef struct PPCAT(type,_axi_shared_bus_read_finish_t){\
+  type data;\
+  uint1_t done;\
+  uint1_t bus_data_ready;\
+}PPCAT(type,_axi_shared_bus_read_finish_t);\
+PPCAT(type,_axi_shared_bus_read_finish_t) PPCAT(type,_axi_shared_bus_read_finish)(\
+  uint1_t ready_for_outputs,\
+  axi_shared_bus_t_read_data_t bus_read_data\
+){\
+  /* End N u32 reads using bus helper FSM */ \
+  /* Assemble read responses into output data */ \
+  static uint8_t word_counter; \
+  static uint8_t bytes[sizeof(type)]; \
+  static uint1_t done; \
+  uint8_t NUM_WORDS = sizeof(type) / sizeof(uint32_t); \
+  PPCAT(type,_axi_shared_bus_read_finish_t) rv; \
+  rv.done = done; \
+  rv.data = PPCAT(bytes_to_,type)(bytes); \
+  rv.bus_data_ready = 0; \
+  /* Active state*/\
+  if(word_counter < NUM_WORDS){ \
+    /* Try to finish a u32 read*/\
+    axi_shared_bus_t_read_finish_logic_outputs_t read_finish =  \
+      axi_shared_bus_t_read_finish_logic( \
+        1, \
+        bus_read_data \
+      ); \
+    rv.bus_data_ready = read_finish.data_ready; \
+    if(read_finish.done){ \
+      /* Put u32 data into byte buffer*/\
+      uint32_t rd_data = axi_read_to_data(read_finish.data); \
+      uint8_t rd_bytes[sizeof(uint32_t)]; \
+      uint32_t i; \
+      for(i = 0; i < sizeof(uint32_t); i+=1) \
+      { \
+        rd_bytes[i] = rd_data >> (i*8); \
+      } \
+      ARRAY_SHIFT_INTO_TOP(bytes, sizeof(type), rd_bytes, sizeof(uint32_t)) \
+      /* Last word?*/\
+      if(word_counter==(NUM_WORDS-1)){ \
+        done = 1; \
+      }       \
+      word_counter += 1; \
+    } \
+  }else{ \
+    /* IDLE/DONE state*/\
+    /* Ready for output clears done*/\
+    if(ready_for_outputs){ \
+      done = 0; \
+    } \
+    /* Restart resets word counter*/\
+    if(~done){ \
+      word_counter = 0; \
+    } \
+  } \
+  return rv; \
+}

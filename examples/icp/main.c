@@ -55,18 +55,6 @@ def unified(p0, p1, fi, T):
     return h, b
 ```*/
 
-/*    #Input
-    #P0 = [x, y]
-    #P1 = [y, y]
-    #FI = x
-    #T = [x, y]
-    #Returns
-    #h = [
-    #        [a, b, c],
-    #        [d, e, f],
-    #        [g, h, i]
-    #    ]
-    #b = [a, b, c]*/
 //#pragma MAIN unified
 typedef struct unified_out_t{
   float h[3][3];
@@ -74,7 +62,7 @@ typedef struct unified_out_t{
   uint1_t valid;
 }unified_out_t;
 unified_out_t unified(
-  float2 p0, float2 p1, float fi, float2 T,
+  float2 p0, float2 p1, float fi, float2 T, // unified_in_t
   uint1_t valid
 ){
   //float sin_fi = sin(fi);
@@ -137,6 +125,7 @@ void unified_instance()
 
   // Use input and output registers for now
   // so unpipelined sim shows some 2 cycle delay for calc
+  // TODO remove when ready to try pipelining...
   static unified_out_t unified_pipeline_out_r;
   static uint1_t unified_pipeline_in_valid_r;
   static float2 unified_pipeline_in_p0_r;
@@ -164,136 +153,24 @@ void unified_instance()
 
 // Globally visible RAMs
 // TODO how to init AXI DDR RAM? Needs runtime load?
+// TODO at least add write port that could be used so RAM doesnt turn into ROM of zeros?
 //#include "ram_init.h"
 #define N_POINTS 128
 
 // Starting with one AXI BRAM shared to look like multiple independent RAMs
 #define SHARED_AXI_RAM_DEPTH 1024 // 1024 u32's
-#define SHARED_AXI_RAM_NUM_HOST_PORTS 2
+#define SHARED_AXI_RAM_NUM_HOST_PORTS 2 // P0P1 RAM interface and FI,T RAM interface
 #define SHARED_AXI_RAM_HOST_CLK_MHZ 50.0
 #define SHARED_AXI_RAM_N_DEV_PORTS 1 // BRAM ports
 #define SHARED_AXI_RAM_DEV_CLK_MHZ 50.0
 #include "examples/shared_resource_bus/shared_axi_bram.c"
 
-// Logic for how to start and finish a read from RAM
-// (generic already, not type specific, just need sizeof(type))
-typedef struct axi_shared_bus_sized_read_start_t{
-  uint1_t ready_for_inputs;
-  uint1_t done;
-  axi_shared_bus_t_read_req_t bus_req;
-}axi_shared_bus_sized_read_start_t;
-axi_shared_bus_sized_read_start_t axi_shared_bus_sized_read_start(
-  uint1_t rd_valid,
-  uint32_t rd_index, // Not to be confused with axi addr
-  uint32_t rd_size,
-  uint1_t ready_for_outputs,
-  uint32_t bus_base_addr, 
-  uint1_t bus_req_ready
-){
-  // Begin N u32 reads using bus helper FSM
-  uint8_t NUM_WORDS = rd_size >> 2; // / sizeof(uint32_t);
-  static uint8_t word_counter = 0xFF; //max rd_size / sizeof(uint32_t);
-  static uint32_t bus_addr;
-  axi_shared_bus_sized_read_start_t rv;
-  rv.ready_for_inputs = 0;
-  rv.done = 0;
-  if(ready_for_outputs)
-  {
-    // Active state
-    if(word_counter < NUM_WORDS){
-      // Try to start a u32 read
-      axi_read_req_t req = axi_addr_to_read(bus_addr);
-      axi_shared_bus_t_read_start_logic_outputs_t read_start = 
-        axi_shared_bus_t_read_start_logic(
-          req,
-          1,
-          bus_req_ready
-        );
-      rv.bus_req = read_start.req;
-      // Move to next u32 when done
-      if(read_start.done){
-        // Last word?
-        if(word_counter==(NUM_WORDS-1)){
-          rv.done = 1;
-        }      
-        bus_addr += sizeof(uint32_t);
-        word_counter += 1;
-      }
-    }else{
-      // IDLE state, wait for valid input
-      rv.ready_for_inputs = 1;
-      if(rd_valid){
-        word_counter = 0;
-        bus_addr = bus_base_addr + (rd_index * rd_size);
-      }
-    }
-  }
-  return rv;
-}
-
-
-// p0,p1
+// p0,p1 RAM interface using AXI shared bus
 typedef struct points_t{
   float2 p[2];
 }points_t;
 #include "points_t_bytes_t.h"
-typedef struct p0p1_ram_read_finish_t{
-  points_t data;
-  uint1_t done;
-  uint1_t bus_data_ready;
-}p0p1_ram_read_finish_t;
-p0p1_ram_read_finish_t p0p1_ram_axi_shared_bus_read_finish(
-  uint1_t ready_for_outputs,
-  axi_shared_bus_t_read_data_t bus_read_data
-){
-  // End N u32 reads using bus helper FSM
-  // Assemble read responses into output data
-  static uint8_t word_counter;
-  static uint8_t bytes[sizeof(points_t)];
-  static uint1_t done;
-  uint8_t NUM_WORDS = sizeof(points_t) / sizeof(uint32_t);
-  p0p1_ram_read_finish_t rv;
-  rv.done = done;
-  rv.data = bytes_to_points_t(bytes);
-  rv.bus_data_ready = 0;
-  // Active state
-  if(word_counter < NUM_WORDS){
-    // Try to finish a u32 read
-    axi_shared_bus_t_read_finish_logic_outputs_t read_finish = 
-      axi_shared_bus_t_read_finish_logic(
-        1,
-        bus_read_data
-      );
-    rv.bus_data_ready = read_finish.data_ready;
-    if(read_finish.done){
-      // Put u32 data into byte buffer
-      uint32_t rd_data = axi_read_to_data(read_finish.data);
-      uint8_t rd_bytes[sizeof(uint32_t)];
-      uint32_t i;
-      for(i = 0; i < sizeof(uint32_t); i+=1)
-      {
-        rd_bytes[i] = rd_data >> (i*8);
-      }
-      ARRAY_SHIFT_INTO_TOP(bytes, sizeof(points_t), rd_bytes, sizeof(uint32_t))
-      // Last word?
-      if(word_counter==(NUM_WORDS-1)){
-        done = 1;
-      }      
-      word_counter += 1;
-    }
-  }else{
-    // IDLE/DONE state
-    // Ready for output clears done
-    if(ready_for_outputs){
-      done = 0;
-    }
-    // Restart resets word counter
-    if(~done){
-      word_counter = 0;
-    }
-  }
-  return rv;
-}
+DECL_AXI_SHARED_BUS_TYPE_READ_FINISH(points_t)
 uint32_t p0p1_ram_in_addr;
 uint1_t p0p1_ram_in_valid;
 uint1_t p0p1_ram_ready_for_in;
@@ -318,7 +195,7 @@ void p0p1_ram_ctrl()
   shared_axi_ram_host_to_dev_wire_on_host_clk.read.req = read_start.bus_req;
 
   // Finish
-  p0p1_ram_read_finish_t read_finish = p0p1_ram_axi_shared_bus_read_finish(
+  points_t_axi_shared_bus_read_finish_t read_finish = points_t_axi_shared_bus_read_finish(
     p0p1_ram_ready_for_out,
     shared_axi_ram_dev_to_host_wire_on_host_clk.read.data
   );
@@ -327,69 +204,13 @@ void p0p1_ram_ctrl()
   shared_axi_ram_host_to_dev_wire_on_host_clk.read.data_ready = read_finish.bus_data_ready; 
 }
 
-// fi, T
+// fi, T RAM interface using AXI shared bus
 typedef struct fi_T_t{
   float fi;
   float2 T;
 }fi_T_t;
 #include "fi_T_t_bytes_t.h"
-typedef struct fit_ram_read_finish_t{
-  fi_T_t data;
-  uint1_t done;
-  uint1_t bus_data_ready;
-}fit_ram_read_finish_t;
-fit_ram_read_finish_t fit_ram_axi_shared_bus_read_finish(
-  uint1_t ready_for_outputs,
-  axi_shared_bus_t_read_data_t bus_read_data
-){
-  // End N u32 reads using bus helper FSM
-  // Assemble read responses into output data
-  static uint8_t word_counter;
-  static uint8_t bytes[sizeof(fi_T_t)];
-  static uint1_t done;
-  uint8_t NUM_WORDS = sizeof(fi_T_t) / sizeof(uint32_t);
-  fit_ram_read_finish_t rv;
-  rv.done = done;
-  rv.data = bytes_to_fi_T_t(bytes);
-  rv.bus_data_ready = 0;
-  // Active state
-  if(word_counter < NUM_WORDS){
-    // Try to finish a u32 read
-    axi_shared_bus_t_read_finish_logic_outputs_t read_finish = 
-      axi_shared_bus_t_read_finish_logic(
-        1,
-        bus_read_data
-      );
-    rv.bus_data_ready = read_finish.data_ready;
-    if(read_finish.done){
-      // Put u32 data into byte buffer
-      uint32_t rd_data = axi_read_to_data(read_finish.data);
-      uint8_t rd_bytes[sizeof(uint32_t)];
-      uint32_t i;
-      for(i = 0; i < sizeof(uint32_t); i+=1)
-      {
-        rd_bytes[i] = rd_data >> (i*8);
-      }
-      ARRAY_SHIFT_INTO_TOP(bytes, sizeof(fi_T_t), rd_bytes, sizeof(uint32_t))
-      // Last word?
-      if(word_counter==(NUM_WORDS-1)){
-        done = 1;
-      }      
-      word_counter += 1;
-    }
-  }else{
-    // IDLE/DONE state
-    // Ready for output clears done
-    if(ready_for_outputs){
-      done = 0;
-    }
-    // Restart resets word counter
-    if(~done){
-      word_counter = 0;
-    }
-  }
-  return rv;
-}
+DECL_AXI_SHARED_BUS_TYPE_READ_FINISH(fi_T_t)
 uint32_t fit_ram_in_addr;
 uint1_t fit_ram_in_valid;
 uint1_t fit_ram_ready_for_in;
@@ -414,7 +235,7 @@ void fit_ram_ctrl()
   shared_axi_ram_host_to_dev_wire_on_host_clk.read.req = read_start.bus_req;
 
   // Finish
-  fit_ram_read_finish_t read_finish = fit_ram_axi_shared_bus_read_finish(
+  fi_T_t_axi_shared_bus_read_finish_t read_finish = fi_T_t_axi_shared_bus_read_finish(
     fit_ram_ready_for_out,
     shared_axi_ram_dev_to_host_wire_on_host_clk.read.data
   );
@@ -537,5 +358,5 @@ unified_out_t control_fsm() // Output some data so doesnt synthesize away
   }
 
   cycle_counter += 1; // For sim printfs
-  return unified_pipeline_out; // For not synth away
+  return hb_accum_out_data; // For not synth away
 }
