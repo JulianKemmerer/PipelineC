@@ -23,6 +23,71 @@ typedef struct ci16_stream_t{
   uint1_t valid;
 } ci16_stream_t;
 
+// Hacky pow2 scaling auto gain control
+i16_stream_t agc_hack(i16_stream_t in_sample){
+  // Scale input to output
+  static uint4_t gain_pow2; // shift amount
+  uint4_t gain_pow2_next = gain_pow2;
+  i16_stream_t out_sample;
+  out_sample.valid = in_sample.valid;
+  out_sample.data = in_sample.data << gain_pow2;
+
+  // Keep track of max abs value output
+  static int16_t max;
+  int16_t max_next = max;
+  int16_t abs = out_sample.data >= 0 ? out_sample.data : -out_sample.data;
+  if(out_sample.valid & (abs > max)){
+    max_next = abs;
+  }
+
+  // At decay rate if observed max is less than half,
+  // increase gain amount and reset max measurement
+  static uint28_t decay_counter;
+  uint28_t DECAY_COUNT = 125000000; // once per sec at 125MHz
+  float THRES_PER = 0.95;
+  int16_t MIN_THRES = (int16_t)((float)(1<<14) * THRES_PER);
+  if(decay_counter==(DECAY_COUNT-1)){
+    if((max > 0) & (max < MIN_THRES)){
+      if(gain_pow2 < 15){
+        gain_pow2_next = gain_pow2 + 1;
+      }
+    }
+    max_next = 0;
+    decay_counter = 0;
+  }else{
+    decay_counter += 1;
+  }
+  
+  // Immediately decrease gain if sample is above near max thres
+  int16_t MAX_THRES = (int16_t)((float)(1<<15) * THRES_PER);
+  if(out_sample.valid & (abs > MAX_THRES)){
+    if(gain_pow2 > 0){
+      gain_pow2_next = gain_pow2 - 1;
+    }
+  }
+
+  gain_pow2 = gain_pow2_next;
+  max = max_next;
+
+  return out_sample;
+}
+ci16_stream_t iq_agc_hack(ci16_stream_t in_sample){
+  i16_stream_t i_sample = {
+    .data = in_sample.data.real, .valid = in_sample.valid
+  };
+  i16_stream_t q_sample = {
+    .data = in_sample.data.imag, .valid = in_sample.valid
+  };
+  // TODO whoops how to guarantee same gain on both I and Q channels?
+  i16_stream_t i_sample_out = agc_hack(i_sample);
+  i16_stream_t q_sample_out = agc_hack(q_sample);
+  ci16_stream_t out_sample;
+  out_sample.valid = i_sample_out.valid & q_sample_out.valid;
+  out_sample.data.real = i_sample_out.data;
+  out_sample.data.imag = q_sample_out.data;
+  return out_sample;
+}
+
 // Helper to align two streams of I and Q to be valid on the same cycle
 ci16_stream_t iq_align(i16_stream_t i_stream, i16_stream_t q_stream){
   static i16_stream_t iq_streams_reg[2];

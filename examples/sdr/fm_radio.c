@@ -19,6 +19,9 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
   in_sample = iq_decim_5x(in_sample);
   in_sample = iq_decim_10x(in_sample);
   in_sample = iq_decim_10x(in_sample);
+
+  // AGC after decim
+  in_sample = iq_agc_hack(in_sample);
   
   // Connect debug output to be after decim, before demod
   debug_data = uint16_uint16(in_sample.data.imag, in_sample.data.real); // Concat
@@ -39,6 +42,10 @@ i16_stream_t fm_radio_datapath(ci16_stream_t in_sample){
 
   // FM deemphasis of audio samples
   out_sample = deemphasis(out_sample);
+
+  // AGC on final output
+  out_sample = agc_hack(out_sample);
+
   return out_sample;
 }
 
@@ -76,7 +83,7 @@ DECL_OUTPUT_REG(uint32_t, audio_samples_data)
 DECL_OUTPUT_REG(uint1_t, audio_samples_valid)
 #pragma MAIN_MHZ sdr_wrapper 125.0
 // Meet timing by a larger margin in synthesis to aid place and route
-#pragma MAIN_SYN_MHZ sdr_wrapper 147.0
+#pragma MAIN_SYN_MHZ sdr_wrapper 144.0
 void sdr_wrapper(){
   ci16_stream_t in_sample = {
     .data = {.real = i_data, .imag = q_data}, 
