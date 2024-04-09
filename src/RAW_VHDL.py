@@ -418,7 +418,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     process(clk) is
     begin
       if rising_edge(clk) then
-        if CLOCK_ENABLE(0)='1' then
+        if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
           if we(0) = '1' then
             """
                 + var_name
@@ -439,7 +439,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     process(clk) is
     begin
       if rising_edge(clk) then
-        if CLOCK_ENABLE(0)='1' then
+        if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
           if we(0) = '1' then
             """
                 + var_name
@@ -463,7 +463,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       process(clk) is
       begin
         if rising_edge(clk) then
-          if CLOCK_ENABLE(0)='1' then            
+          if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then            
             -- Read first
             return_output_r <= """
                 + var_name
@@ -487,7 +487,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
         process(clk)
         begin
           if rising_edge(clk) then
-            if CLOCK_ENABLE(0)='1' then
+            if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
               -- Write port
               if we(0) = '1' then
                 """
@@ -515,7 +515,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       process(clk) is
       begin
         if rising_edge(clk) then
-          if CLOCK_ENABLE(0)='1' then
+          if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
             -- Register inputs
             addr_r <= addr;
             wd_r <= wd;
@@ -544,7 +544,7 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
         process(clk)
         begin
           if rising_edge(clk) then
-            if CLOCK_ENABLE(0)='1' then
+            if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
               -- Register inputs
               addr_w_r <= addr_w;
               addr_r_r <= addr_r;
