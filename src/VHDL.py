@@ -5166,27 +5166,33 @@ type raw_hdl_register_pipeline_t is array(0 to PIPELINE_LATENCY) of raw_hdl_vari
                             )
     # Input registers
     if timing_params._has_input_regs:
-        rv += """
--- Type holding all input registers
-type input_registers_t is record\n"""
+        in_regs_rec = ""
         for input_port in Logic.inputs:
             vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_port, Logic, parser_state)
             vhdl_name = WIRE_TO_VHDL_NAME(input_port, Logic)
-            rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"   
+            in_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"   
         if needs_clk_en:
-            rv += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
-        rv += "end record;\n"
+            in_regs_rec += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
+        if in_regs_rec != "":
+            rv += """
+-- Type holding all input registers
+type input_registers_t is record\n"""
+            rv += in_regs_rec
+            rv += "end record;\n"
 
     # Output registers
     if timing_params._has_output_regs:
-        rv += """
--- Type holding all output registers
-type output_registers_t is record\n"""
+        out_regs_rec = ""
         for output_port in Logic.outputs:
             vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port, Logic, parser_state)
             vhdl_name = WIRE_TO_VHDL_NAME(output_port, Logic)
-            rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
-        rv += "end record;\n"
+            out_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+        if out_regs_rec != "":
+            rv += """
+-- Type holding all output registers
+type output_registers_t is record\n"""
+            rv += out_regs_rec
+            rv += "end record;\n"
 
     # State registers
     if len(Logic.state_regs) > 0:
