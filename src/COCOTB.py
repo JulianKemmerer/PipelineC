@@ -115,16 +115,16 @@ async def my_first_test(dut):
     print("Clock: ", cycle, flush=True)
     DUMP_PIPELINEC_DEBUG(dut)
     dut.{clock_name}.value = 1
-    await Timer({ns/2}, units="ns")
+    await Timer({(ns/2):.3f}, units="ns")
     print("^End Clock: ", cycle, flush=True)
     for i in range({args.run-1}):
         dut.{clock_name}.value = 0
-        await Timer({ns/2}, units="ns")
+        await Timer({(ns/2):.3f}, units="ns")
         print("")
         print("Clock: ", i+1, flush=True)
         DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 1
-        await Timer({ns/2}, units="ns")
+        await Timer({(ns/2):.3f}, units="ns")
 '''
         py_filepath = COCOTB_OUT_DIR + "/" + py_basename + ".py"
         f = open(py_filepath, "w")
