@@ -2381,6 +2381,7 @@ class InstSweepState:
         self.mhz_to_latency = {}  # BEST dict[mhz] = latency
         self.latency_to_mhz = {}  # BEST dict[latency] = mhz
         self.last_mhz = None
+        self.last_latency = None
 
         # Coarse grain sweep
         self.coarse_latency = None
@@ -3663,8 +3664,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 better_mhz = curr_mhz > best_mhz_so_far
                 better_latency = curr_mhz > best_mhz_this_latency
                 # Log result
-                got_same_mhz_again = curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
+                got_same_mhz_again = (curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz) and (latency != sweep_state.inst_sweep_state[main_inst].last_latency)
                 sweep_state.inst_sweep_state[main_inst].last_mhz = curr_mhz
+                sweep_state.inst_sweep_state[main_inst].last_latency = latency
                 if better_mhz or better_latency:
                     sweep_state.inst_sweep_state[main_inst].mhz_to_latency[
                         curr_mhz
