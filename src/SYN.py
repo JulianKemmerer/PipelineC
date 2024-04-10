@@ -380,7 +380,7 @@ class TimingParams:
 
         # Have the current params (slices) been fixed,
         # Default to fixed if known cant be sliced
-        self.params_are_fixed = not logic.CAN_BE_SLICED()
+        self.params_are_fixed = False #not logic.CAN_BE_SLICED()
         # Params, private _ since cached
         self._slices = (
             []
@@ -438,7 +438,7 @@ class TimingParams:
             pipeline_latency = len(self._slices)
         else:
             # If cant be sliced then latency must be zero right?
-            if not self.logic.CAN_BE_SLICED():
+            if not self.logic.CAN_BE_SLICED(parser_state):
                 if self._has_input_regs or self._has_output_regs:
                     print("Bad io regs on non sliceable!")
                     sys.exit(-1)
@@ -1985,149 +1985,164 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
     if timing_params.params_are_fixed:
         print("Trying to add slice to fixed params?", inst_name)
         sys.exit(-1)
-    # Add slice
-    timing_params.ADD_SLICE(new_slice_pos)
-    slice_index = timing_params._slices.index(new_slice_pos)
-    slice_ends_stage = slice_index
-    slice_starts_stage = slice_ends_stage + 1
-    prev_slice_pos = None
-    if len(timing_params._slices) > 1:
-        prev_slice_pos = timing_params._slices[slice_index - 1]
 
+    # If body cant be sliced then can only add IO regs
+    if not logic.BODY_CAN_BE_SLICED(parser_state):
+        if new_slice_pos > 0.5:
+            # Output reg
+            timing_params.SET_HAS_OUT_REGS(True)
+            if print_debug:
+                print(inst_name,"output reg")
+        else:
+            # Input reg
+            timing_params.SET_HAS_IN_REGS(True)
+            if print_debug:
+                print(inst_name,"input reg")
+        TimingParamsLookupTable[inst_name] = timing_params
+    else:    
+        # Add slice to body
+        timing_params.ADD_SLICE(new_slice_pos)
+        slice_index = timing_params._slices.index(new_slice_pos)
+        slice_ends_stage = slice_index
+        slice_starts_stage = slice_ends_stage + 1
+        prev_slice_pos = None
+        if len(timing_params._slices) > 1:
+            prev_slice_pos = timing_params._slices[slice_index - 1]
+
+        """
+    # Sanity check if not adding last slice then must be skipping boundary right?
+    if slice_index != len(timing_params._slices)-1 and not skip_boundary_slice:
+        print "Wtf added old/to left slice",new_slice_pos,"while not skipping boundary?",timing_params._slices
+        print 0/0
+        sys.exit(-1)
     """
-  # Sanity check if not adding last slice then must be skipping boundary right?
-  if slice_index != len(timing_params._slices)-1 and not skip_boundary_slice:
-    print "Wtf added old/to left slice",new_slice_pos,"while not skipping boundary?",timing_params._slices
-    print 0/0
-    sys.exit(-1)
-  """
 
-    # Write into timing params dict, almost certainly unecessary
-    TimingParamsLookupTable[inst_name] = timing_params
+        # Write into timing params dict, almost certainly unecessary
+        TimingParamsLookupTable[inst_name] = timing_params
 
-    # Check if can slice
-    if not logic.CAN_BE_SLICED():
-        # Can't slice globals, return index of bad slice
+        # # Check if can slice
+        #if not logic.CAN_BE_SLICED():
+        #    # Can't slice globals, return index of bad slice
+        #    if print_debug:
+        #        print("Can't slice")
+        #    return slice_index
+
         if print_debug:
-            print("Can't slice")
-        return slice_index
-
-    if print_debug:
-        print(
-            "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES",
-            inst_name,
-            new_slice_pos,
-            "write_files",
-            write_files,
-        )
-
-    # Raw HDL doesnt need further slicing, bottom of hierarchy
-    if len(logic.submodule_instances) > 0:
-        # print "logic.submodule_instances",logic.submodule_instances
-        # Get the zero clock pipeline map for this logic
-        zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(
-            inst_name, logic, parser_state
-        )
-        total_delay = zero_clk_pipeline_map.zero_clk_max_delay
-        if total_delay is None:
-            print("No delay for module?", logic.func_name)
-            sys.exit(-1)
-        epsilon = SLICE_EPSILON(total_delay)
-
-        # Sanity?
-        if logic.func_name != zero_clk_pipeline_map.logic.func_name:
-            print("Zero clk inst name:", zero_clk_pipeline_map.logic.func_name)
-            print("Wtf using pipeline map from other func?")
-            sys.exit(-1)
-
-        # Get the offset as float
-        delay_offset_float = new_slice_pos * total_delay
-        delay_offset = math.floor(delay_offset_float)
-        # Clamp to max?
-        max_delay = max(zero_clk_pipeline_map.zero_clk_per_delay_submodules_map.keys())
-        if delay_offset > max_delay:
-            delay_offset = max_delay
-        delay_offset_decimal = delay_offset_float - delay_offset
-
-        # Slice can be through modules or on the boundary between modules
-        # The boundary between modules is important for moving slices right up against global logic?
-
-        # Get submodules at this offset
-        submodule_insts = zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
-            delay_offset
-        ]
-        # Get submodules in previous and next delay units
-        prev_submodule_insts = []
-        if delay_offset - 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
-            prev_submodule_insts = (
-                zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
-                    delay_offset - 1
-                ]
-            )
-        next_submodule_insts = []
-        if delay_offset + 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
-            next_submodule_insts = (
-                zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
-                    delay_offset + 1
-                ]
+            print(
+                "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES",
+                inst_name,
+                new_slice_pos,
+                "write_files",
+                write_files,
             )
 
-        # Slice each submodule at offset
-        # Record if submodules need to be artifically delayed to start in a later stage
-        for submodule_inst in submodule_insts:
-            # Slice through submodule
-            submodule_inst_name = (
-                inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        # Raw HDL doesnt need further slicing, bottom of hierarchy
+        if len(logic.submodule_instances) > 0:
+            # print "logic.submodule_instances",logic.submodule_instances
+            # Get the zero clock pipeline map for this logic
+            zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(
+                inst_name, logic, parser_state
             )
-            submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
-            # Only continue slicing down if not fixed slices already (trying to slice deeper and make fixed slices)
-            if not submodule_timing_params.params_are_fixed:
-                # Slice through submodule
-                # Only slice when >= 1 delay unit?
-                submodule_func_name = logic.submodule_instances[submodule_inst]
-                submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-                containing_logic = logic
+            total_delay = zero_clk_pipeline_map.zero_clk_max_delay
+            if total_delay is None:
+                print("No delay for module?", logic.func_name)
+                sys.exit(-1)
+            epsilon = SLICE_EPSILON(total_delay)
 
-                start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[
-                    submodule_inst
-                ]
-                local_offset = delay_offset - start_offset
-                local_offset_w_decimal = local_offset + delay_offset_decimal
+            # Sanity?
+            if logic.func_name != zero_clk_pipeline_map.logic.func_name:
+                print("Zero clk inst name:", zero_clk_pipeline_map.logic.func_name)
+                print("Wtf using pipeline map from other func?")
+                sys.exit(-1)
 
-                # print "start_offset",start_offset
-                # print "local_offset",local_offset
-                # print "local_offset_w_decimal",local_offset_w_decimal
+            # Get the offset as float
+            delay_offset_float = new_slice_pos * total_delay
+            delay_offset = math.floor(delay_offset_float)
+            # Clamp to max?
+            max_delay = max(zero_clk_pipeline_map.zero_clk_per_delay_submodules_map.keys())
+            if delay_offset > max_delay:
+                delay_offset = max_delay
+            delay_offset_decimal = delay_offset_float - delay_offset
 
-                # Convert to percent to add slice
-                submodule_total_delay = submodule_logic.delay
-                slice_pos = float(local_offset_w_decimal) / float(submodule_total_delay)
-                if print_debug:
-                    print(" Slicing:", submodule_inst)
-                    print("   @", slice_pos)
+            # Slice can be through modules or on the boundary between modules
+            # The boundary between modules is important for moving slices right up against global logic?
 
-                # Slice into that submodule
-                skip_boundary_slice = False
-                TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
-                    submodule_inst_name,
-                    submodule_logic,
-                    slice_pos,
-                    parser_state,
-                    TimingParamsLookupTable,
-                    skip_boundary_slice,
-                    write_files,
+            # Get submodules at this offset
+            submodule_insts = zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+                delay_offset
+            ]
+            # Get submodules in previous and next delay units
+            prev_submodule_insts = []
+            if delay_offset - 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
+                prev_submodule_insts = (
+                    zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+                        delay_offset - 1
+                    ]
+                )
+            next_submodule_insts = []
+            if delay_offset + 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
+                next_submodule_insts = (
+                    zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+                        delay_offset + 1
+                    ]
                 )
 
-                # Might be bad slice
-                if type(TimingParamsLookupTable) is int:
-                    # Slice into submodule was bad
+            # Slice each submodule at offset
+            # Record if submodules need to be artifically delayed to start in a later stage
+            for submodule_inst in submodule_insts:
+                # Slice through submodule
+                submodule_inst_name = (
+                    inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                )
+                submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
+                # Only continue slicing down if not fixed slices already (trying to slice deeper and make fixed slices)
+                if not submodule_timing_params.params_are_fixed:
+                    # Slice through submodule
+                    # Only slice when >= 1 delay unit?
+                    submodule_func_name = logic.submodule_instances[submodule_inst]
+                    submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+                    containing_logic = logic
+
+                    start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[
+                        submodule_inst
+                    ]
+                    local_offset = delay_offset - start_offset
+                    local_offset_w_decimal = local_offset + delay_offset_decimal
+
+                    # print "start_offset",start_offset
+                    # print "local_offset",local_offset
+                    # print "local_offset_w_decimal",local_offset_w_decimal
+
+                    # Convert to percent to add slice
+                    submodule_total_delay = submodule_logic.delay
+                    slice_pos = float(local_offset_w_decimal) / float(submodule_total_delay)
                     if print_debug:
-                        print("Adding slice", slice_pos)
-                        print("To", submodule_inst)
-                        print("Submodule Slice index", TimingParamsLookupTable)
-                        print("Container slice index", slice_index)
-                        print("Was bad")
-                    # Return the slice in the container that was bad
-                    return slice_index
+                        print(" Slicing:", submodule_inst)
+                        print("   @", slice_pos)
+
+                    # Slice into that submodule
+                    skip_boundary_slice = False
+                    TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
+                        submodule_inst_name,
+                        submodule_logic,
+                        slice_pos,
+                        parser_state,
+                        TimingParamsLookupTable,
+                        skip_boundary_slice,
+                        write_files,
+                    )
+
+                    # Might be bad slice
+                    if type(TimingParamsLookupTable) is int:
+                        # Slice into submodule was bad
+                        if print_debug:
+                            print("Adding slice", slice_pos)
+                            print("To", submodule_inst)
+                            print("Submodule Slice index", TimingParamsLookupTable)
+                            print("Container slice index", slice_index)
+                            print("Was bad")
+                        # Return the slice in the container that was bad
+                        return slice_index
 
     if write_files:
         # Final write package
@@ -2156,7 +2171,7 @@ def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(
         # Maybe unfix
         if override_fixed:
             # Reset value
-            timing_params.params_are_fixed = not timing_params.logic.CAN_BE_SLICED()
+            timing_params.params_are_fixed = not timing_params.logic.CAN_BE_SLICED(parser_state)
         # Repeat down through submodules since not fixed
         logic = parser_state.LogicInstLookupTable[inst_name]
         for local_sub_inst in logic.submodule_instances:
@@ -2441,7 +2456,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
             if target_mhz is not None:
                 target_path_delay_ns = 1000.0 / target_mhz
                 sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
-                if delay > 0.0 and func_logic.CAN_BE_SLICED():
+                if delay > 0.0 and func_logic.CAN_BE_SLICED(parser_state):
                     sweep_state.inst_sweep_state[
                         main_inst_name
                     ].slice_ep = SLICE_EPSILON(delay)
@@ -2948,7 +2963,7 @@ def DO_THROUGHPUT_SWEEP(
             possible_mains = []
             for main_func in parser_state.main_mhz:
                 main_logic = parser_state.FuncLogicLookupTable[main_func]
-                if main_logic.delay != 0 and main_logic.CAN_BE_SLICED():
+                if main_logic.delay != 0 and main_logic.BODY_CAN_BE_SLICED(parser_state):
                     possible_mains.append(main_func)
             if len(possible_mains) == 1:
                 main_func = possible_mains[0]
@@ -3062,7 +3077,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             lowest_level_insts_to_pipeline = set()
             for main_inst in parser_state.main_mhz:
                 main_func_logic = parser_state.LogicInstLookupTable[main_inst]
-                if main_func_logic.CAN_BE_SLICED():
+                if main_func_logic.CAN_BE_SLICED(parser_state):
                     lowest_level_insts_to_pipeline.add(main_inst)
             # Do this not recursive down the multi main hier tree walk
             # Looking for lowest level submodule large enough to pipeline lowest_level_insts_to_pipeline is lowest_level_insts_to_pipeline
@@ -3110,7 +3125,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                                 sweep_state.inst_sweep_state[
                                     main_func
                                 ].smallest_not_sliced_hier_mult = hsm_i
-                    elif func_logic.CAN_BE_SLICED():
+                    elif func_logic.CAN_BE_SLICED(parser_state):
                         # Might need pipelining here if no submodules are also large enough pipeline
                         # Invalidate timing param caches similar to how slicing down does
                         func_inst_timing_params = (
@@ -3135,7 +3150,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                                     * sub_func_path_delay_ns
                                 ) > target_path_delay_ns:
                                     # Submodule DOES need pipelining
-                                    if sub_logic.CAN_BE_SLICED():
+                                    if sub_logic.CAN_BE_SLICED(parser_state):
                                         lowest_level_insts_to_pipeline.add(
                                             sub_inst_name
                                         )
@@ -3661,7 +3676,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 # Make adjustment if can be sliced
                 if not main_met_timing:
                     print_path = False
-                    if main_func_logic.CAN_BE_SLICED():
+                    if main_func_logic.BODY_CAN_BE_SLICED(parser_state):
                         # How would best guess mult increase?
                         # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
                         max_path_delay_ns = 1000.0 / curr_mhz
@@ -3861,12 +3876,12 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             if mult > 1.0:
                 # Divide up into that many clocks as a starting guess
                 # If doesnt have global wires
-                if logic.CAN_BE_SLICED():
+                if logic.BODY_CAN_BE_SLICED(parser_state):
                     clks = int(math.ceil(mult)) - 1
                     inst_sweep_state.coarse_latency = clks
                     inst_sweep_state.initial_guess_latency = clks
     else:
-        if logic.CAN_BE_SLICED():
+        if logic.BODY_CAN_BE_SLICED(parser_state):
             inst_sweep_state.coarse_latency = starting_guess_latency
             inst_sweep_state.initial_guess_latency = starting_guess_latency
 
@@ -4059,7 +4074,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                 continue
 
             # Make adjustment if can be sliced
-            if not met_timing and func_logic.CAN_BE_SLICED():
+            if not met_timing and func_logic.CAN_BE_SLICED(parser_state):
                 # DO incremental guesses based on time report results
                 if do_incremental_guesses:
                     max_path_delay = path_report.path_delay_ns
@@ -4733,7 +4748,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 
             # Syn results are delay and clock
             # Try to communicate if is a problem path that can be autopipelined
-            if logic.CAN_BE_SLICED():
+            if logic.BODY_CAN_BE_SLICED(parser_state):
                 print(
                     f"{logic_func_name} Path delay (maybe to be pipelined): {path_report.path_delay_ns:.3f} ns"
                 )
@@ -4743,7 +4758,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 )
             print("")
             # Record worst non slicable logic
-            if not logic.CAN_BE_SLICED():
+            if not logic.BODY_CAN_BE_SLICED(parser_state):
                 if mhz < min_mhz:
                     min_mhz_func_name = logic.func_name
                     min_mhz = mhz

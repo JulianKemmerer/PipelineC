@@ -1529,7 +1529,7 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
     rv += " " + "-- IO regs\n"
     rv += " " + "process(clk) is" + "\n"
     rv += " " + "begin" + "\n"
-    rv += " " + " " + "if rising_edge(clk) and CLOCK_ENABLE(0)='1' then" + "\n"
+    rv += " " + " " + "if rising_edge(clk) and "+C_TO_LOGIC.CLOCK_ENABLE_NAME+"(0)='1' then" + "\n"
 
     # Register inputs
     for input_name in Logic.inputs:
@@ -4337,7 +4337,7 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
     text += ") is \nbegin\n"
     text += (
         """
-if CLOCK_ENABLE(0) = '1' then
+if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0) = '1' then
   write(output, """
         + vhdl_format_string
         + """);
@@ -5059,10 +5059,6 @@ def LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTa
         inst_name, Logic, parser_state, TimingParamsLookupTable
     ):
         return True
-    if timing_params._has_input_regs:
-        return True
-    if timing_params._has_output_regs:
-        return True
     return False
 
 
@@ -5176,7 +5172,9 @@ type input_registers_t is record\n"""
         for input_port in Logic.inputs:
             vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_port, Logic, parser_state)
             vhdl_name = WIRE_TO_VHDL_NAME(input_port, Logic)
-            rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+            rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"   
+        if needs_clk_en:
+            rv += " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
         rv += "end record;\n"
 
     # Output registers
@@ -5234,13 +5232,9 @@ type feedback_vars_t is record"""
             rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
         rv += "end record;\n"
 
-    # ALL MANUAL REGISTERS
-    if needs_manual_regs:
+    has_io_regs = timing_params._has_input_regs or timing_params._has_output_regs
+    if has_io_regs:
         record_text = ""
-        # Self regs
-        if wrote_variables_t and is_raw_hdl:
-            record_text += """
-    raw_hdl_pipeline : raw_hdl_register_pipeline_t;"""
         # Input regs
         if timing_params._has_input_regs:
             record_text += """
@@ -5249,6 +5243,23 @@ type feedback_vars_t is record"""
         if timing_params._has_output_regs:
             record_text += """
     output_regs : output_registers_t;"""
+        if record_text != "":
+            rv += """ 
+  -- Type holding all IO regs (not part of body slicing)
+  type io_registers_t is record"""
+            rv += record_text
+            # End
+            rv += """ 
+  end record;
+  """
+
+    # ALL MANUAL REGISTERS
+    if needs_manual_regs:
+        record_text = ""
+        # Self regs
+        if wrote_variables_t and is_raw_hdl:
+            record_text += """
+    raw_hdl_pipeline : raw_hdl_register_pipeline_t;"""
         if record_text != "":
             rv += """ 
   -- Type holding all manually (not auto generated in pipelining) registers for this function
@@ -5260,12 +5271,9 @@ type feedback_vars_t is record"""
   end record;
   """
 
-    if needs_manual_regs:
+    # Func for nulling out IO regs
+    if has_io_regs:
         func_text = ""
-        # Raw hdl regs
-        if wrote_variables_NULL and is_raw_hdl:
-            func_text += "-- Not nulling raw hdl\n"
-        #  rv += " rv.raw_hdl_pipeline := (others => raw_hdl_variables_NULL);\n"
         # Input regs
         if timing_params._has_input_regs:
             for input_port in Logic.inputs:
@@ -5276,6 +5284,16 @@ type feedback_vars_t is record"""
                     + WIRE_TO_VHDL_NULL_STR(input_port, Logic, parser_state)
                     + ";\n"
                 )
+            # Clock enable
+            if needs_clk_en:
+                func_text += (
+                        " rv.input_regs."
+                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + " := "
+                        + WIRE_TO_VHDL_NULL_STR(C_TO_LOGIC.CLOCK_ENABLE_NAME, Logic, parser_state)
+                        + ";\n"
+                    )
+
         # Output regs
         if timing_params._has_output_regs:
             for output_port in Logic.outputs:
@@ -5286,7 +5304,42 @@ type feedback_vars_t is record"""
                     + WIRE_TO_VHDL_NULL_STR(output_port, Logic, parser_state)
                     + ";\n"
                 )
-        # if func_text != "":
+        # Function to null out IO regs
+        rv += "\n-- Function to null out IO regs \n"
+        rv += "function io_registers_NULL return io_registers_t is\n"
+        rv += """ variable rv : io_registers_t;
+  begin
+"""
+        rv += func_text
+        rv += """
+  return rv;
+end function;\n
+"""
+    # Special resolved to be input reg or not internal clock enable
+    if needs_clk_en:
+        rv += "-- Resolved maybe from input reg clock enable\n"
+        rv += "signal clk_en_internal : std_logic;\n"
+
+    if has_io_regs:
+        rv += """-- IO regs and signals for this function\n"""
+        # Comb signal
+        rv += "signal " + "io_registers : io_registers_t;\n"
+        # Regs nulled out
+        rv += (
+            "signal "
+            + "io_registers_r : io_registers_t := io_registers_NULL;\n"
+        )
+        # Mark debug?
+        if Logic.func_name in parser_state.func_marked_debug:
+            rv += """attribute mark_debug of io_registers_r : signal is "true";\n"""
+        rv += "\n"
+
+    # Func for nulling out manual regs
+    if needs_manual_regs:
+        func_text = ""
+        # Raw hdl regs
+        if wrote_variables_NULL and is_raw_hdl:
+            func_text += "-- Not nulling raw hdl\n"
         # Function to null out manual regs
         rv += "\n-- Function to null out manual regs \n"
         rv += "function manual_registers_NULL return manual_registers_t is\n"
@@ -5409,13 +5462,25 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
     # needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
+    has_io_regs = timing_params._has_input_regs or timing_params._has_output_regs
     rv = ""
     rv += "\n"
+
+    # Resolve what clock enable to use for user logic
+    # the clock enable port, of input delayed reg version
+    if needs_clk_en:
+        rv += "-- Resolve what clock enable to use for user logic\n"
+        if timing_params._has_input_regs:
+            rv += "clk_en_internal <= io_registers_r.input_regs." + C_TO_LOGIC.CLOCK_ENABLE_NAME + "(0);\n"
+        else:
+            rv += "clk_en_internal <= " + C_TO_LOGIC.CLOCK_ENABLE_NAME + "(0);\n"
+    
     rv += "-- Combinatorial process for pipeline stages\n"
     rv += "process "
     process_sens_list = ""
     if needs_clk_en:
-        process_sens_list += " CLOCK_ENABLE,\n"
+        process_sens_list += "CLOCK_ENABLE,\n"
+        process_sens_list += "clk_en_internal,\n"
     if len(Logic.inputs) > 0:
         process_sens_list += " -- Inputs\n"
         for input_wire in Logic.inputs:
@@ -5454,6 +5519,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                             + write_pipe_wire_var_vhdl
                             + ",\n"
                         )
+        if has_io_regs:
+            process_sens_list += " " + "io_registers_r,\n"
         if needs_manual_regs:
             process_sens_list += " " + "manual_registers_r,\n"
     if needs_global_to_module:
@@ -5548,10 +5615,18 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         rv += " -- Input regs\n"
         for input_port in Logic.inputs:
             rv += (
-                """ manual_registers.input_regs."""
+                """ io_registers.input_regs."""
                 + WIRE_TO_VHDL_NAME(input_port, Logic)
                 + """ <= """
                 + WIRE_TO_VHDL_NAME(input_port, Logic)
+                + """;\n"""
+            )
+        if needs_clk_en:
+            rv += (
+                """ io_registers.input_regs."""
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """ <= """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
                 + """;\n"""
             )
 
@@ -5628,20 +5703,18 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         rv += " " + " " + "if STAGE=0 then\n"
 
         if needs_clk_en:
-            rv += " " + " " + " " + "-- Mux in clock enable\n"
+            rv += " " + " " + " " + "-- Raw hdl mux in clock enable\n"
             rv += (
                 " "
                 + " "
                 + " "
                 + "read_pipe."
                 + WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, Logic)
-                + " := "
-                + WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, Logic)
-                + ";\n"
+                + "(0) := clk_en_internal;\n"
             )
 
         if len(Logic.inputs) > 0:
-            rv += " " + " " + " " + "-- Mux in inputs\n"
+            rv += " " + " " + " " + "-- raw hdl mux in inputs\n"
             for input_wire in Logic.inputs:
                 if timing_params._has_input_regs:
                     rv += (
@@ -5650,7 +5723,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                         + " "
                         + "read_pipe."
                         + WIRE_TO_VHDL_NAME(input_wire, Logic)
-                        + " := manual_registers_r.input_regs."
+                        + " := io_registers_r.input_regs."
                         + WIRE_TO_VHDL_NAME(input_wire, Logic)
                         + ";\n"
                     )
@@ -5714,12 +5787,12 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
             )
         # Outputs
         if len(Logic.outputs) > 0:
-            rv += " " + "-- Last stage of pipeline return wire to return port/reg\n"
+            rv += " " + "-- raw hdl last stage of pipeline return wire to return port/reg\n"
             for output_wire in Logic.outputs:
                 if timing_params._has_output_regs:
                     rv += (
                         " "
-                        + "manual_registers.output_regs."
+                        + "io_registers.output_regs."
                         + WIRE_TO_VHDL_NAME(output_wire, Logic)
                         + " <= "
                         + "write_raw_hdl_pipeline_regs(PIPELINE_LATENCY)."
@@ -5755,7 +5828,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
             if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
                 if needs_clk_en:
                     rv += (
-                        "if CLOCK_ENABLE(0)='1' then\n" +
+                        "if clk_en_internal='1' then\n" +
                         "  module_to_global."
                         + WIRE_TO_VHDL_NAME(var_name, Logic)
                         + " <= VAR_"
@@ -5785,6 +5858,12 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
 
     rv += "end process;\n"
 
+    # Register IO regs, only delaying signals clock enable - not responding to them
+    if has_io_regs:
+        rv += """-- Register IO reg signal
+io_registers_r <= io_registers when rising_edge(clk);
+"""
+
     # Register comb pipelining signals
     if needs_regs:
         rv += """
@@ -5793,7 +5872,7 @@ process(clk) is
 begin
  if rising_edge(clk) then\n"""
         if needs_clk_en:
-            rv += " if CLOCK_ENABLE(0)='1' then\n"
+            rv += " if clk_en_internal='1' then\n"
 
         if len(Logic.state_regs) > 0:
             for state_reg in Logic.state_regs:
@@ -5840,7 +5919,7 @@ begin
 end process;
 """
 
-    # Connect manual_registers_r.output_regs. to output port
+    # Connect io_registers_r.output_regs. to output port
     if timing_params._has_output_regs:
         rv += " -- Output regs\n"
         for output_wire in Logic.outputs:
@@ -5848,7 +5927,7 @@ end process;
                 " "
                 + WIRE_TO_VHDL_NAME(output_wire, Logic)
                 + " <= "
-                + "manual_registers_r.output_regs."
+                + "io_registers_r.output_regs."
                 + WIRE_TO_VHDL_NAME(output_wire, Logic)
                 + ";\n"
             )
@@ -5872,7 +5951,7 @@ end process;
                 + "REG_COMB_"
                 + vhdl_name )
             if needs_clk_en:
-                rv += " when CLOCK_ENABLE(0)='1' else " + vhdl_name
+                rv += " when clk_en_internal='1' else " + vhdl_name
             rv += ";\n"
 
     return rv
@@ -5938,9 +6017,7 @@ def GET_STAGE_TEXT(
                 "     "
                 + "VAR_"
                 + WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, logic)
-                + " := "
-                + WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, logic)
-                + ";\n"
+                + "(0) := clk_en_internal;\n"
             )
 
         if len(logic.inputs) > 0:
@@ -5951,7 +6028,7 @@ def GET_STAGE_TEXT(
                         "     "
                         + "VAR_"
                         + WIRE_TO_VHDL_NAME(input_wire, logic)
-                        + " := manual_registers_r.input_regs."
+                        + " := io_registers_r.input_regs."
                         + WIRE_TO_VHDL_NAME(input_wire, logic)
                         + ";\n"
                     )
@@ -6066,7 +6143,7 @@ def GET_STAGE_TEXT(
                 if timing_params._has_output_regs:
                     text += (
                         "     "
-                        + "manual_registers.output_regs."
+                        + "io_registers.output_regs."
                         + WIRE_TO_VHDL_NAME(output_wire, logic)
                         + " <= "
                         + "VAR_"
