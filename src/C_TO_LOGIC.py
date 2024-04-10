@@ -1392,20 +1392,30 @@ class Logic:
                 new_inst
             ] = self.ref_submodule_instance_to_ref_toks[old_inst]
 
-    def CAN_BE_SLICED(self):
-        if self.uses_nonvolatile_state_regs:
-            return False
-        if len(self.feedback_vars) > 0:
+    def CAN_BE_SLICED(self, parser_state):
+        if self.is_vhdl_text_module:
             return False
         if self.is_vhdl_func:
             return False
         if self.is_vhdl_expr:
             return False
-        if self.is_vhdl_text_module:
-            return False
         if self.is_clock_crossing:
             return False
-
+        if SW_LIB.IS_MEM(self):
+            # TODO support IO regs on built in RAM prim funcs
+            return False
+        if FUNC_IS_PRIMITIVE(self.func_name, parser_state):
+            return False
+        if self.func_name in parser_state.func_marked_blackbox:
+            return False
+        return True
+    def BODY_CAN_BE_SLICED(self, parser_state):
+        if not self.CAN_BE_SLICED(parser_state):
+            return False
+        if self.uses_nonvolatile_state_regs:
+            return False
+        if len(self.feedback_vars) > 0:
+            return False
         return True
 
 
