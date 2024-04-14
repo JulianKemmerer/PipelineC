@@ -11,6 +11,7 @@ uint4_t leds;
 // Declares leds_module as a module with top level ports, no set clock frequency
 // Return value is wire out to LEDs
 #pragma MAIN leds_module
+#pragma FUNC_WIRES leds_module
 void leds_module()
 {
   // Read uint4 port wire
