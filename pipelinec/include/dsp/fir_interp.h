@@ -34,9 +34,18 @@
 fir_interp_data_stream_t fir_interp_insert_n_zeros(fir_interp_data_stream_t in_sample)
 {
   // Keep counting up to interp ratio
+  // Resets to align with new samples
+  // cautious to count current input cycle as 0 by resetting to 1 for next cycle
+  // this is critical for ~rounding to a faster output II
+  // at input II=interp factor:
+  // interp_ratio_elapsed occurs a cycle before next input and periods_since_sample_count=1
+  // also ex. II=5 interp by 4x yields II=1 output bursts
+  // expected to compare period count with zeros_interp_period_cycles_counter=0, so '-1' exists below
   static uint8_t interp_ratio_counter;
   uint1_t interp_ratio_elapsed = interp_ratio_counter==(FIR_INTERP_FACTOR-1);
-  if(interp_ratio_elapsed){
+  if(in_sample.valid){
+    interp_ratio_counter = 1;
+  }else if(interp_ratio_elapsed){
     interp_ratio_counter = 0;
   }else{
     interp_ratio_counter += 1;
