@@ -440,8 +440,9 @@ class TimingParams:
             # If cant be sliced then latency must be zero right?
             if not self.logic.CAN_BE_SLICED(parser_state):
                 if self._has_input_regs or self._has_output_regs:
-                    print("Bad io regs on non sliceable!")
-                    sys.exit(-1)
+                    raise Exception(f"{self.logic.func_name} cannot have IO regs but has been given them!?")
+                    #print("Bad io regs on non sliceable!")
+                    #sys.exit(-1)
                 return 0
 
             if TimingParamsLookupTable is None:
@@ -1987,7 +1988,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
         sys.exit(-1)
 
     # If body cant be sliced then can only add IO regs
-    if not logic.BODY_CAN_BE_SLICED(parser_state):
+    if not logic.BODY_CAN_BE_SLICED(parser_state) and logic.CAN_BE_SLICED(parser_state):
         if new_slice_pos > 0.5:
             # Output reg
             timing_params.SET_HAS_OUT_REGS(True)
@@ -1999,7 +2000,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
             if print_debug:
                 print(inst_name,"input reg")
         TimingParamsLookupTable[inst_name] = timing_params
-    else:    
+    elif logic.BODY_CAN_BE_SLICED(parser_state):    
         # Add slice to body
         timing_params.ADD_SLICE(new_slice_pos)
         slice_index = timing_params._slices.index(new_slice_pos)
@@ -2020,8 +2021,9 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
         # Write into timing params dict, almost certainly unecessary
         TimingParamsLookupTable[inst_name] = timing_params
 
-        # # Check if can slice
-        #if not logic.CAN_BE_SLICED():
+        ## Already checked getting here
+        ## Check if can slice
+        #if not logic.CAN_BE_SLICED(parser_state):
         #    # Can't slice globals, return index of bad slice
         #    if print_debug:
         #        print("Can't slice")
@@ -3563,7 +3565,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     main_func,
                     ":",
                     main_func_latency,
-                    "clocks latency...",
+                    "clocks latency added...",
                     flush=True,
                 )
 
@@ -3909,7 +3911,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             logic.func_name,
             ": sliced coarsely ~=",
             inst_sweep_state.coarse_latency,
-            "clocks latency...",
+            "clocks latency added...",
             flush=True,
         )
         # Do slicing and dont write vhdl this way since slow
@@ -4072,7 +4074,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                 stop_at_latency is not None
                 and inst_sweep_state.coarse_latency >= stop_at_latency
             ):
-                print("Stopping at", stop_at_latency, "clocks latency...")
+                print("Stopping at", stop_at_latency, "clocks latency added...")
                 continue
 
             # Make adjustment if can be sliced
