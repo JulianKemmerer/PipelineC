@@ -62,7 +62,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 uint1_t thread_id;
 uint1_t thread_valid;
 uint32_t pc;
-//uint32_t pc_plus4;
+uint32_t next_pc;
 uint32_t instruction;
 decoded_t decoded;
 reg_file_out_t reg_file_out;
@@ -70,12 +70,28 @@ execute_t exe;
 uint32_t mem_rd_data;
 uint1_t mem_out_of_range[N_THREADS]; // Exception, stop sim
 uint1_t unknown_op; // Exception, stop sim
-#ifdef riscv_mem_map_inputs_t
 riscv_mem_map_inputs_t  mem_map_inputs[N_THREADS];
-#endif
-#ifdef riscv_mem_map_outputs_t
 riscv_mem_map_outputs_t mem_map_outputs[N_THREADS];
-#endif
+
+
+// Current PC reg + thread ID + valid bit
+// TODO how to stop and start threads?
+#pragma MAIN pc_thread_start_top
+void pc_thread_start_top(){
+  static uint32_t pc_reg;
+  static uint8_t thread_id_reg;
+  static uint1_t thread_valid_reg = 1;
+  pc = pc_reg;
+  thread_id = thread_id_reg;
+  thread_valid = thread_valid_reg;
+  if(thread_valid)
+  {
+    printf("Thread %d: PC = 0x%X\n", thread_id, pc);
+  }
+  // TODO logic to update thread id+valid
+  pc_reg = next_pc;
+}
+
 
 // Main memory  instance
 // IMEM, 1 rd port
@@ -158,6 +174,7 @@ void mm_io_connections()
 #endif
 #endif
 
+
 #pragma MAIN decode_stages
 void decode_stages()
 {
@@ -165,6 +182,7 @@ void decode_stages()
   decoded = decode(instruction);
   unknown_op = decoded.unknown_op;
 }
+
 
 #pragma MAIN reg_file_stages
 void reg_file_stages()
@@ -222,6 +240,7 @@ void reg_file_stages()
   reg_file_out = reg_file_outs[thread_id];
 }
 
+
 #pragma MAIN execute_stages
 void execute_stages()
 {
@@ -236,7 +255,8 @@ void execute_stages()
 }
 
 
-// TODO use buffer once doing pipelining
+// Calculate the next PC
+// and depending on selected thread update PC regs
 /*uint32_t pc_buffer(uint32_t next_pc, uint1_t wr_en){
   static uint32_t pc_reg;
   uint32_t rv  = pc_reg;
@@ -248,40 +268,29 @@ void execute_stages()
 #pragma MAIN branch_next_pc_stages
 void branch_next_pc_stages()
 {
-  // TODO how to start and stop threads?
-  thread_id = 0;
-  thread_valid = 1;
-
-  // TODO USE ISOLATED BUFFER ONCE DOING PIPELINING
-  static uint32_t pc_regs[N_THREADS];
-  // Mux select PC based on thread id
-  pc = pc_regs[thread_id];
-  printf("Thread %d: PC = 0x%X\n", thread_id, pc);
   uint32_t pc_plus4 = pc + 4;
-
-  uint8_t tid;
-  uint32_t pcs[N_THREADS];
-  for(tid = 0; tid < N_THREADS; tid+=1)
-  {
+  uint8_t tid = 0;
+  next_pc = 0;
+  //uint32_t pcs[N_THREADS];
+  //uint32_t next_pcs[N_THREADS];
+  //for(tid = 0; tid < N_THREADS; tid+=1)
+  //{
     uint1_t thread_sel = thread_valid & (thread_id==tid);
-    uint32_t next_pc;
     if(thread_sel){
       // Branch/Increment PC
       if(decoded.exe_to_pc){
         printf("Thread %d: Next PC: Execute Result = 0x%X...\n", tid, exe.result);
+        //next_pcs[tid] = exe.result;
         next_pc = exe.result;
       }else{
         // Default next pc
         printf("Thread %d: Next PC: Default = 0x%X...\n", tid, pc_plus4);
+        //next_pcs[tid] = pc_plus4;
         next_pc = pc_plus4;
       }
     }
-    //pcs[tid] = pc_buffer(next_pc, thread_sel);
-    if(thread_sel){
-      pc_regs[tid] = next_pc;
-    }
-  }
-
-  // Mux select PC based on thread id
-  //pc = pcs[thread_id];
+    //pcs[tid] = pc_buffer(next_pcs[i], thread_sel);
+  //}
+  // Mux select next PC based on thread id
+  //next_pc = next_pcs[thread_id];
 }
