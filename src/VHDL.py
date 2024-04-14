@@ -1115,6 +1115,8 @@ begin
             raise Exception(
                 f"More than one function trying to write to global {var_name}: {write_funcs}!"
             )
+        if len(write_funcs) <= 0:
+            raise Exception(f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?")
         write_func = list(write_funcs)[0]
 
         # Find the one write inst
@@ -5242,11 +5244,11 @@ type feedback_vars_t is record"""
     if has_io_regs:
         record_text = ""
         # Input regs
-        if timing_params._has_input_regs:
+        if timing_params._has_input_regs and ((len(Logic.inputs) > 0) or needs_clk_en):
             record_text += """
     input_regs : input_registers_t;"""
         # Output regs
-        if timing_params._has_output_regs:
+        if timing_params._has_output_regs and len(Logic.outputs) > 0:
             record_text += """
     output_regs : output_registers_t;"""
         if record_text != "":
@@ -5468,7 +5470,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
     # needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
-    has_io_regs = timing_params._has_input_regs or timing_params._has_output_regs
+    has_in_regs = timing_params._has_input_regs and ((len(Logic.inputs) > 0) or needs_clk_en)
+    has_out_regs = timing_params._has_output_regs and (len(Logic.outputs) > 0)
+    has_io_regs = has_in_regs or has_out_regs
     rv = ""
     rv += "\n"
 
