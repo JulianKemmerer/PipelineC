@@ -84,6 +84,22 @@ uint1_t unknown_op[N_THREADS]; // Exception, stop sim
 riscv_mem_map_inputs_t  mem_map_inputs[N_THREADS];
 riscv_mem_map_outputs_t mem_map_outputs[N_THREADS];
 
+// Temp control fsm trying to start up to max threads
+uint1_t barrel_start_ready;
+uint32_t barrel_start_pc;
+uint8_t barrel_start_thread_id;
+uint1_t barrel_start_valid;
+#pragma MAIN thread_starter_fsm
+void thread_starter_fsm(){
+  static uint8_t running_threads;
+  barrel_start_valid = running_threads < N_THREADS;
+  barrel_start_thread_id = running_threads;
+  barrel_start_pc = 0;
+  if(barrel_start_ready){
+    printf("Thread %d: Started!\n", barrel_start_thread_id);
+    running_threads += 1;
+  }
+}
 
 // Current PC reg + thread ID + valid bit
 // TODO how to stop and start threads?
@@ -91,11 +107,12 @@ riscv_mem_map_outputs_t mem_map_outputs[N_THREADS];
 void pc_thread_start_top(){
   // Stage thread context, input from prev stage
   thread_context_t inputs = branch_to_pc;
-  thread_context_t outputs = inputs;
+  // PC is start of pipelined and does not ned to pass through outputs to inputs
+  thread_context_t outputs;
   //
   static uint32_t pc_reg;
   static uint8_t thread_id_reg;
-  static uint1_t thread_valid_reg = 1;
+  static uint1_t thread_valid_reg;
   outputs.pc = pc_reg;
   outputs.thread_id = thread_id_reg;
   outputs.thread_valid = thread_valid_reg;
@@ -103,8 +120,24 @@ void pc_thread_start_top(){
   {
     printf("Thread %d: PC = 0x%X\n", outputs.thread_id, outputs.pc);
   }
-  // TODO logic to update thread id+valid
-  pc_reg = inputs.next_pc;
+  pc_reg = 0;
+  thread_id_reg = 0;
+  thread_valid_reg = 0;
+  barrel_start_ready = 0;
+  if(inputs.thread_valid){
+    pc_reg = inputs.next_pc;
+    thread_id_reg = inputs.thread_id;
+    thread_valid_reg = 1;
+  }else{
+    // No next thread input to stage, accept stage
+    barrel_start_ready = 1;
+    if(barrel_start_valid){
+      pc_reg = barrel_start_pc;
+      thread_id_reg = barrel_start_thread_id;
+      thread_valid_reg = 1;
+    }
+  }
+
   //
   // Output to next stage
   pc_to_imem = outputs;
@@ -210,8 +243,10 @@ void decode_stages()
   thread_context_t inputs = imem_to_decode;
   thread_context_t outputs = inputs;
   //
-  printf("Thread %d: Instruction: 0x%X\n", inputs.thread_id, inputs.instruction);
-  outputs.decoded = decode(inputs.instruction);
+  if(inputs.thread_valid){
+    printf("Thread %d: Instruction: 0x%X\n", inputs.thread_id, inputs.instruction);
+    outputs.decoded = decode(inputs.instruction);
+  }
   // Multiple unknown op outputs per thread
   uint8_t tid;
   for(tid = 0; tid < N_THREADS; tid+=1)
@@ -302,13 +337,15 @@ void execute_stages()
   thread_context_t outputs = inputs;
   // 
   // Execute stage
-  printf("Thread %d: Execute stage...\n", inputs.thread_id);
   uint32_t pc_plus4 = inputs.pc + 4;
-  outputs.exe = execute(
-    inputs.pc, pc_plus4, 
-    inputs.decoded, 
-    inputs.reg_file_rd_datas.rd_data1, inputs.reg_file_rd_datas.rd_data2
-  );
+  if(inputs.thread_valid){
+    printf("Thread %d: Execute stage...\n", inputs.thread_id);
+    outputs.exe = execute(
+      inputs.pc, pc_plus4, 
+      inputs.decoded, 
+      inputs.reg_file_rd_datas.rd_data1, inputs.reg_file_rd_datas.rd_data2
+    );
+  }
   // Output to next stage
   exe_to_dmem = outputs;
 }
