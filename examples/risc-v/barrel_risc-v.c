@@ -58,9 +58,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
 // Interconnect wires
-#define N_THREADS 1 // TODO 4
+#define N_THREADS 4
 typedef struct thread_context_t{
-  uint1_t thread_id;
+  uint8_t thread_id;
   uint1_t thread_valid;
   uint32_t pc;
   uint32_t next_pc;
@@ -84,6 +84,7 @@ uint1_t unknown_op[N_THREADS]; // Exception, stop sim
 riscv_mem_map_inputs_t  mem_map_inputs[N_THREADS];
 riscv_mem_map_outputs_t mem_map_outputs[N_THREADS];
 
+
 // Temp control fsm trying to start up to max threads
 uint1_t barrel_start_ready;
 uint32_t barrel_start_pc;
@@ -100,6 +101,7 @@ void thread_starter_fsm(){
     running_threads += 1;
   }
 }
+
 
 // Current PC reg + thread ID + valid bit
 // TODO how to stop and start threads?
@@ -137,7 +139,6 @@ void pc_thread_start_top(){
       thread_valid_reg = 1;
     }
   }
-
   //
   // Output to next stage
   pc_to_imem = outputs;
@@ -210,7 +211,7 @@ void mem_stages()
   // Mux output based on current thread
   imem_outputs.instruction = instructions[imem_inputs.thread_id];
   dmem_outputs.mem_rd_data = mem_rd_datas[dmem_inputs.thread_id];
-
+  //
   // Output to next stage
   imem_to_decode = imem_outputs;
   dmem_to_reg_wr = dmem_outputs;
@@ -322,7 +323,7 @@ void reg_file_stages()
   }
   // Mux output for selected thread
   reg_rd_outputs.reg_file_rd_datas = reg_file_rd_datas[reg_rd_inputs.thread_id];
-
+  //
   // Output to next stage
   reg_rd_to_exe = reg_rd_outputs;
   reg_wr_to_branch = reg_wr_outputs;
@@ -334,8 +335,7 @@ void execute_stages()
 {
   // Stage thread context, input from prev stage
   thread_context_t inputs = reg_rd_to_exe;
-  thread_context_t outputs = inputs;
-  // 
+  thread_context_t outputs = inputs; 
   // Execute stage
   uint32_t pc_plus4 = inputs.pc + 4;
   if(inputs.thread_valid){
@@ -352,15 +352,6 @@ void execute_stages()
 
 
 // Calculate the next PC
-// and depending on selected thread update PC regs
-/*uint32_t pc_buffer(uint32_t next_pc, uint1_t wr_en){
-  static uint32_t pc_reg;
-  uint32_t rv  = pc_reg;
-  if(wr_en){
-    pc_reg = next_pc;
-  }
-  return rv;
-}*/
 #pragma MAIN branch_next_pc_stages
 void branch_next_pc_stages()
 {
@@ -368,32 +359,20 @@ void branch_next_pc_stages()
   thread_context_t inputs = reg_wr_to_branch;
   thread_context_t outputs = inputs;
   //
-  uint32_t pc_plus4 = inputs.pc + 4;
-  uint8_t tid = 0;
   outputs.next_pc = 0;
-  //uint32_t pcs[N_THREADS];
-  //uint32_t next_pcs[N_THREADS];
-  //for(tid = 0; tid < N_THREADS; tid+=1)
-  //{
-    uint1_t thread_sel = inputs.thread_valid & (inputs.thread_id==tid);
-    if(thread_sel){
-      // Branch/Increment PC
-      if(inputs.decoded.exe_to_pc){
-        printf("Thread %d: Next PC: Execute Result = 0x%X...\n", tid, inputs.exe.result);
-        //next_pcs[tid] = exe.result;
-        outputs.next_pc = inputs.exe.result;
-      }else{
-        // Default next pc
-        printf("Thread %d: Next PC: Default = 0x%X...\n", tid, pc_plus4);
-        //next_pcs[tid] = pc_plus4;
-        outputs.next_pc = pc_plus4;
-      }
+  if(inputs.thread_valid){
+    // Branch/Increment PC
+    if(inputs.decoded.exe_to_pc){
+      printf("Thread %d: Next PC: Execute Result = 0x%X...\n", inputs.thread_id, inputs.exe.result);
+      //next_pcs[tid] = exe.result;
+      outputs.next_pc = inputs.exe.result;
+    }else{
+      // Default next pc
+      uint32_t pc_plus4 = inputs.pc + 4;
+      printf("Thread %d: Next PC: Default = 0x%X...\n", inputs.thread_id, pc_plus4);
+      outputs.next_pc = pc_plus4;
     }
-    //pcs[tid] = pc_buffer(next_pcs[i], thread_sel);
-  //}
-  // Mux select next PC based on thread id
-  //next_pc = next_pcs[thread_id];
-
+  }
   // Output to next stage
   branch_to_pc = outputs;
 }
