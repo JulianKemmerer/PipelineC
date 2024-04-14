@@ -57,8 +57,12 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #endif
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
-// Interconnect wires
-#define N_THREADS 4
+// Config threads
+// Mhz               | ~40    150
+// Threads(~#stages) | 1      16?
+#define CPU_CLK_MHZ 25.0
+#define N_THREADS 1
+// Interconnect wires between stages
 typedef struct thread_context_t{
   uint8_t thread_id;
   uint1_t thread_valid;
@@ -70,14 +74,44 @@ typedef struct thread_context_t{
   execute_t exe;
   uint32_t mem_rd_data;
 }thread_context_t;
-thread_context_t pc_to_imem;
-thread_context_t imem_to_decode;
-thread_context_t decode_to_reg_rd;
-thread_context_t reg_rd_to_exe;
-thread_context_t exe_to_dmem;
-thread_context_t dmem_to_reg_wr;
-thread_context_t reg_wr_to_branch;
-thread_context_t branch_to_pc;
+thread_context_t pc_inputs;
+thread_context_t pc_outputs;
+thread_context_t imem_inputs;
+thread_context_t imem_outputs;
+thread_context_t decode_inputs;
+thread_context_t decode_outputs;
+thread_context_t reg_rd_inputs;
+thread_context_t reg_rd_outputs;
+thread_context_t exe_inputs;
+thread_context_t exe_outputs;
+thread_context_t dmem_inputs;
+thread_context_t dmem_outputs;
+thread_context_t reg_wr_inputs;
+thread_context_t reg_wr_outputs;
+thread_context_t branch_inputs;
+thread_context_t branch_outputs;
+#pragma MAIN inter_stage_connections
+void inter_stage_connections(){
+  //static thread_context_t pc_to_imem;
+  //imem_inputs = pc_to_imem;
+  //pc_to_imem = pc_outputs;
+  //static thread_context_t imem_to_decode;
+  //static thread_context_t decode_to_reg_rd;
+  //static thread_context_t reg_rd_to_exe;
+  //static thread_context_t exe_to_dmem;
+  //static thread_context_t dmem_to_reg_wr;
+  //static thread_context_t reg_wr_to_branch;
+  //static thread_context_t branch_to_pc;
+  // Comb for now, measure fmax ...
+  imem_inputs = pc_outputs;
+  decode_inputs = imem_outputs;
+  reg_rd_inputs = decode_outputs;
+  exe_inputs = reg_rd_outputs;
+  dmem_inputs = exe_outputs;
+  reg_wr_inputs = dmem_outputs;
+  branch_inputs = reg_wr_outputs;
+  pc_inputs = branch_outputs;
+}
 // Per thread IO
 uint1_t mem_out_of_range[N_THREADS]; // Exception, stop sim
 uint1_t unknown_op[N_THREADS]; // Exception, stop sim
@@ -105,10 +139,10 @@ void thread_starter_fsm(){
 
 // Current PC reg + thread ID + valid bit
 // TODO how to stop and start threads?
-#pragma MAIN pc_thread_start_top
-void pc_thread_start_top(){
+#pragma MAIN pc_thread_start_stage
+void pc_thread_start_stage(){
   // Stage thread context, input from prev stage
-  thread_context_t inputs = branch_to_pc;
+  thread_context_t inputs = pc_inputs;
   // PC is start of pipelined and does not ned to pass through outputs to inputs
   thread_context_t outputs;
   //
@@ -141,7 +175,7 @@ void pc_thread_start_top(){
   }
   //
   // Output to next stage
-  pc_to_imem = outputs;
+  pc_outputs = outputs;
 }
 
 
@@ -155,10 +189,8 @@ void pc_thread_start_top(){
 void mem_stages()
 {
   // Stage thread context, input from prev stages
-  thread_context_t imem_inputs = pc_to_imem;
-  thread_context_t imem_outputs = imem_inputs;
-  thread_context_t dmem_inputs = exe_to_dmem;
-  thread_context_t dmem_outputs = dmem_inputs;
+  imem_outputs = imem_inputs;
+  dmem_outputs = dmem_inputs;
   //
   // Each thread has own instances of a shared instruction and data memory
   uint8_t tid;
@@ -211,27 +243,28 @@ void mem_stages()
   // Mux output based on current thread
   imem_outputs.instruction = instructions[imem_inputs.thread_id];
   dmem_outputs.mem_rd_data = mem_rd_datas[dmem_inputs.thread_id];
-  //
-  // Output to next stage
-  imem_to_decode = imem_outputs;
-  dmem_to_reg_wr = dmem_outputs;
 }
 #ifdef riscv_mem_map_outputs_t
 #ifdef riscv_mem_map_inputs_t
 // LEDs for demo
 #include "leds/leds_port.c"
-#define CPU_CLK_MHZ 25.0
 MAIN_MHZ(mm_io_connections, CPU_CLK_MHZ)
+#pragma FUNC_WIRES mm_io_connections
 void mm_io_connections()
 {
   // Output LEDs for hardware debug
   leds = 0;
+
+  // temp dumb AND together
+  uint1_t led = 1;
   uint8_t tid;
   for(tid = 0; tid < N_THREADS; tid+=1)
   {
     mem_map_inputs[tid].core_id = tid;
-    leds |= (uint4_t)mem_map_outputs[tid].led << tid;
+    led &= mem_map_outputs[tid].led;
+    //leds |= (uint4_t)mem_map_outputs[tid].led << tid;
   }
+  leds = led;
 }
 #endif
 #endif
@@ -241,7 +274,7 @@ void mm_io_connections()
 void decode_stages()
 {
   // Stage thread context, input from prev stage
-  thread_context_t inputs = imem_to_decode;
+  thread_context_t inputs = decode_inputs;
   thread_context_t outputs = inputs;
   //
   if(inputs.thread_valid){
@@ -258,7 +291,7 @@ void decode_stages()
     }
   }
   // Output to next stage
-  decode_to_reg_rd = outputs;
+  decode_outputs = outputs;
 }
 
 
@@ -266,10 +299,8 @@ void decode_stages()
 void reg_file_stages()
 {
   // Stage thread context, input from prev stages
-  thread_context_t reg_rd_inputs = decode_to_reg_rd;
-  thread_context_t reg_rd_outputs = reg_rd_inputs;
-  thread_context_t reg_wr_inputs = dmem_to_reg_wr;
-  thread_context_t reg_wr_outputs = reg_wr_inputs;
+  reg_rd_outputs = reg_rd_inputs;
+  reg_wr_outputs = reg_wr_inputs;
   // 
   // Each thread has own instances of a shared instruction and data memory
   uint8_t tid;
@@ -323,10 +354,6 @@ void reg_file_stages()
   }
   // Mux output for selected thread
   reg_rd_outputs.reg_file_rd_datas = reg_file_rd_datas[reg_rd_inputs.thread_id];
-  //
-  // Output to next stage
-  reg_rd_to_exe = reg_rd_outputs;
-  reg_wr_to_branch = reg_wr_outputs;
 }
 
 
@@ -334,7 +361,7 @@ void reg_file_stages()
 void execute_stages()
 {
   // Stage thread context, input from prev stage
-  thread_context_t inputs = reg_rd_to_exe;
+  thread_context_t inputs = exe_inputs;
   thread_context_t outputs = inputs; 
   // Execute stage
   uint32_t pc_plus4 = inputs.pc + 4;
@@ -347,7 +374,7 @@ void execute_stages()
     );
   }
   // Output to next stage
-  exe_to_dmem = outputs;
+  exe_outputs = outputs;
 }
 
 
@@ -356,7 +383,7 @@ void execute_stages()
 void branch_next_pc_stages()
 {
   // Stage thread context, input from prev stage
-  thread_context_t inputs = reg_wr_to_branch;
+  thread_context_t inputs = branch_inputs;
   thread_context_t outputs = inputs;
   //
   outputs.next_pc = 0;
@@ -374,5 +401,5 @@ void branch_next_pc_stages()
     }
   }
   // Output to next stage
-  branch_to_pc = outputs;
+  branch_outputs = outputs;
 }
