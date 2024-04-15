@@ -58,10 +58,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
 // Config threads
-// Mhz               | ~40    150
-// Threads(~#stages) | 1      16?
-#define CPU_CLK_MHZ 25.0
-#define N_THREADS 1
+// Mhz               | ~40    150?
+// Threads(~#stages) | 1      9
+#define CPU_CLK_MHZ 150.0
+#define N_THREADS 9
 // Interconnect wires between stages
 typedef struct thread_context_t{
   uint8_t thread_id;
@@ -92,17 +92,37 @@ thread_context_t branch_inputs;
 thread_context_t branch_outputs;
 #pragma MAIN inter_stage_connections
 void inter_stage_connections(){
-  //static thread_context_t pc_to_imem;
-  //imem_inputs = pc_to_imem;
-  //pc_to_imem = pc_outputs;
-  //static thread_context_t imem_to_decode;
-  //static thread_context_t decode_to_reg_rd;
-  //static thread_context_t reg_rd_to_exe;
-  //static thread_context_t exe_to_dmem;
-  //static thread_context_t dmem_to_reg_wr;
-  //static thread_context_t reg_wr_to_branch;
-  //static thread_context_t branch_to_pc;
-  // Comb for now, measure fmax ...
+  #define INTER_STAGE_REGS
+  #ifdef INTER_STAGE_REGS
+  // PC stage is 1 cycle delay +
+  // 8 interconnect delay regs
+  // = baseline 9 threads from handpipelining alone
+  static thread_context_t pc_to_imem;
+  imem_inputs = pc_to_imem;
+  pc_to_imem = pc_outputs;
+  static thread_context_t imem_to_decode;
+  decode_inputs = imem_to_decode;
+  imem_to_decode = imem_outputs;
+  static thread_context_t decode_to_reg_rd;
+  reg_rd_inputs = decode_to_reg_rd;
+  decode_to_reg_rd = decode_outputs;
+  static thread_context_t reg_rd_to_exe;
+  exe_inputs = reg_rd_to_exe;
+  reg_rd_to_exe = reg_rd_outputs;
+  static thread_context_t exe_to_dmem;
+  dmem_inputs = exe_to_dmem;
+  exe_to_dmem = exe_outputs;
+  static thread_context_t dmem_to_reg_wr;
+  reg_wr_inputs = dmem_to_reg_wr;
+  dmem_to_reg_wr = dmem_outputs;
+  static thread_context_t reg_wr_to_branch;
+  branch_inputs = reg_wr_to_branch;
+  reg_wr_to_branch = reg_wr_outputs;
+  static thread_context_t branch_to_pc;
+  pc_inputs = branch_to_pc;
+  branch_to_pc = branch_outputs;
+  #else // #ifndef INTER_STAGE_REGS
+  // Comb for now, measure fmax ~40Mhz ...
   imem_inputs = pc_outputs;
   decode_inputs = imem_outputs;
   reg_rd_inputs = decode_outputs;
@@ -111,6 +131,7 @@ void inter_stage_connections(){
   reg_wr_inputs = dmem_outputs;
   branch_inputs = reg_wr_outputs;
   pc_inputs = branch_outputs;
+  #endif
 }
 // Per thread IO
 uint1_t mem_out_of_range[N_THREADS]; // Exception, stop sim
@@ -146,6 +167,7 @@ void pc_thread_start_stage(){
   // PC is start of pipelined and does not ned to pass through outputs to inputs
   thread_context_t outputs;
   //
+  // These regs give this pc stage 1 cycle of delay as baseline (not comb pass through)
   static uint32_t pc_reg;
   static uint8_t thread_id_reg;
   static uint1_t thread_valid_reg;
