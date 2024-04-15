@@ -1401,10 +1401,11 @@ class Logic:
             return False
         if self.is_clock_crossing:
             return False
-        if self.uses_nonvolatile_state_regs and len(self.write_only_global_wires) > 0:
-            return False 
-        if self.uses_nonvolatile_state_regs and len(self.read_only_global_wires) > 0:
-            return False
+        # Is actually OK since global wires arent registered like func/pipelined IO regs
+        #if self.uses_nonvolatile_state_regs and len(self.write_only_global_wires) > 0:
+        #    return False 
+        #if self.uses_nonvolatile_state_regs and len(self.read_only_global_wires) > 0:
+        #    return False
         if SW_LIB.IS_MEM(self):
             # TODO support IO regs on built in RAM prim funcs
             return False
