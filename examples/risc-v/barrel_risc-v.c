@@ -1,9 +1,9 @@
-//barrel_risc-v.c
-// START OFF AS COPY OF SINGLE CYCLE CPU rewritten ~netlist/multi MAIN graph style
+// Copy or single cycle CPU rewritten ~netlist/multi MAIN graph style
 // For now has no flow control
-// Main memory is a LUTRAM pipeline that is always flowing
+// TODO make multi instances of this barrel
+
 // Need more ports since feedback to mems?
-#pragma PART "xc7a35ticsg324-1l"
+#pragma PART "xc7a100tcsg324-1"
 
 // RISC-V components
 #include "risc-v.h"
@@ -58,10 +58,16 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
 // Config threads
-// Mhz               | ~40    150?
-// Threads(~#stages) | 1      9
-#define CPU_CLK_MHZ 150.0
-#define N_THREADS 9
+// Mhz               | ~40  ~55 150  160  ...~fmax 400Mhz?
+// Threads(~#stages) | 1    3   9    16      64?
+// LIMITING FACTOR IS LUTRAM
+// CONVERT TO BRAM
+// THEN LIMITING FACTOR BRAM
+// At ~max~64 threads how much BRAM is used?
+//   How many copies of the ~max~64 thread single barrel could exist?
+//  MULTI BARRELS!
+#define CPU_CLK_MHZ 50.0
+#define N_THREADS 3
 // Interconnect wires between stages
 typedef struct thread_context_t{
   uint8_t thread_id;
@@ -91,45 +97,66 @@ thread_context_t reg_wr_outputs;
 thread_context_t branch_inputs;
 thread_context_t branch_outputs;
 #pragma MAIN inter_stage_connections
+#pragma FUNC_WIRES inter_stage_connections
 void inter_stage_connections(){
-  #define INTER_STAGE_REGS
-  #ifdef INTER_STAGE_REGS
+  // Each inter stage connection is configurable
   // PC stage is 1 cycle delay +
-  // 8 interconnect delay regs
+  // All 8 interconnect delay regs
   // = baseline 9 threads from handpipelining alone
+  #ifdef pc_to_imem_REG
   static thread_context_t pc_to_imem;
   imem_inputs = pc_to_imem;
   pc_to_imem = pc_outputs;
+  #else
+  imem_inputs = pc_outputs;
+  #endif
+  #ifdef imem_to_decode_REG
   static thread_context_t imem_to_decode;
   decode_inputs = imem_to_decode;
   imem_to_decode = imem_outputs;
+  #else
+  decode_inputs = imem_outputs;
+  #endif
+  #ifdef decode_to_reg_rd_REG
   static thread_context_t decode_to_reg_rd;
   reg_rd_inputs = decode_to_reg_rd;
   decode_to_reg_rd = decode_outputs;
+  #else
+  reg_rd_inputs = decode_outputs;
+  #endif
+  #ifdef reg_rd_to_exe_REG
   static thread_context_t reg_rd_to_exe;
   exe_inputs = reg_rd_to_exe;
   reg_rd_to_exe = reg_rd_outputs;
+  #else
+  exe_inputs = reg_rd_outputs;
+  #endif
+  #ifdef exe_to_dmem_REG
   static thread_context_t exe_to_dmem;
   dmem_inputs = exe_to_dmem;
   exe_to_dmem = exe_outputs;
+  #else
+  dmem_inputs = exe_outputs;
+  #endif
+  #ifdef dmem_to_reg_wr_REG
   static thread_context_t dmem_to_reg_wr;
   reg_wr_inputs = dmem_to_reg_wr;
   dmem_to_reg_wr = dmem_outputs;
+  #else
+   reg_wr_inputs = dmem_outputs;
+  #endif
+  #ifdef reg_wr_to_branch_REG
   static thread_context_t reg_wr_to_branch;
   branch_inputs = reg_wr_to_branch;
   reg_wr_to_branch = reg_wr_outputs;
+  #else
+  branch_inputs = reg_wr_outputs;
+  #endif
+  #ifdef branch_to_pc_REG
   static thread_context_t branch_to_pc;
   pc_inputs = branch_to_pc;
   branch_to_pc = branch_outputs;
-  #else // #ifndef INTER_STAGE_REGS
-  // Comb for now, measure fmax ~40Mhz ...
-  imem_inputs = pc_outputs;
-  decode_inputs = imem_outputs;
-  reg_rd_inputs = decode_outputs;
-  exe_inputs = reg_rd_outputs;
-  dmem_inputs = exe_outputs;
-  reg_wr_inputs = dmem_outputs;
-  branch_inputs = reg_wr_outputs;
+  #else
   pc_inputs = branch_outputs;
   #endif
 }
@@ -161,6 +188,7 @@ void thread_starter_fsm(){
 // Current PC reg + thread ID + valid bit
 // TODO how to stop and start threads?
 #pragma MAIN pc_thread_start_stage
+#pragma FUNC_LATENCY pc_thread_start_stage 1
 void pc_thread_start_stage(){
   // Stage thread context, input from prev stage
   thread_context_t inputs = pc_inputs;
@@ -207,8 +235,8 @@ void pc_thread_start_stage(){
 //  Data memory signals are not driven until later
 //  but are used now, requiring FEEDBACK pragma
 //  + memory mapped IO signals
-#pragma MAIN mem_stages
-void mem_stages()
+#pragma MAIN mem_2_stages
+void mem_2_stages()
 {
   // Stage thread context, input from prev stages
   imem_outputs = imem_inputs;
@@ -317,8 +345,8 @@ void decode_stages()
 }
 
 
-#pragma MAIN reg_file_stages
-void reg_file_stages()
+#pragma MAIN reg_file_2_stages
+void reg_file_2_stages()
 {
   // Stage thread context, input from prev stages
   reg_rd_outputs = reg_rd_inputs;
