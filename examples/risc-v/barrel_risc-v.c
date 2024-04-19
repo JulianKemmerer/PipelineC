@@ -58,17 +58,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
 // Config threads
-// Mhz               | ~40  ~55-60 150  160  ...~fmax 400Mhz?
-// Threads(~#stages) | 1    3      9    16      64?
-// LIMITING FACTOR IS LUTRAM
-// CONVERT TO BRAM
-// THEN LIMITING FACTOR BRAM
-// At ~max~64 threads how much BRAM is used?
-//   How many copies of the ~max~64 thread single barrel could exist?
-//  MULTI BARRELS!
-#define CPU_CLK_MHZ 50.0
-#define N_THREADS_PER_BARREL 3
-#define N_BARRELS 32 
+// Mhz               | ~40  ~55-60 ~100  ~158  ~164  (comb->  150  160  ...~fmax 400Mhz?
+// Threads(~#stages) | 1    3      4     5     6              9    16      64?
+// max ops/sec       |      ~1.6G  
+#define CPU_CLK_MHZ 150.0
+#define N_THREADS_PER_BARREL 6
+#define N_BARRELS 20
+//TODO determine next best pipeline stage to enable
+//what does that fmax+resources scale ot ops per sec?
 // Interconnect wires between stages
 typedef struct thread_context_t{
   uint8_t thread_id;
@@ -111,6 +108,9 @@ void inter_stage_connections(){
   #else
   imem_inputs = pc_outputs;
   #endif
+  #if N_THREADS_PER_BARREL >= 6
+  #define imem_to_decode_REG
+  #endif
   #ifdef imem_to_decode_REG
   static thread_context_t imem_to_decode[N_BARRELS];
   decode_inputs = imem_to_decode;
@@ -125,12 +125,18 @@ void inter_stage_connections(){
   #else
   reg_rd_inputs = decode_outputs;
   #endif
+  #if N_THREADS_PER_BARREL >= 4
+  #define reg_rd_to_exe_REG
+  #endif
   #ifdef reg_rd_to_exe_REG
   static thread_context_t reg_rd_to_exe[N_BARRELS];
   exe_inputs = reg_rd_to_exe;
   reg_rd_to_exe = reg_rd_outputs;
   #else
   exe_inputs = reg_rd_outputs;
+  #endif
+  #if N_THREADS_PER_BARREL >= 5
+  #define exe_to_dmem_REG
   #endif
   #ifdef exe_to_dmem_REG
   static thread_context_t exe_to_dmem[N_BARRELS];
