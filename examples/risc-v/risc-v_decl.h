@@ -1,3 +1,4 @@
+// TODO rename to single_cycle_risc-v_decl.h
 #include "uintN_t.h"
 #include "intN_t.h"
 
@@ -11,6 +12,7 @@
 
 // Declare a combined instruction and data memory
 // also includes memory mapped IO
+#define RISCV_MEM_0_CYCLE
 #include "mem_decl.h"
 
 // CPU top level
@@ -44,17 +46,17 @@ riscv_out_t riscv_name(
   uint32_t mem_addr;
   uint32_t mem_wr_data;
   uint1_t mem_wr_byte_ens[4];
-  uint1_t mem_rd_en;
+  uint1_t mem_rd_byte_ens[4];
   #pragma FEEDBACK mem_addr
   #pragma FEEDBACK mem_wr_data
   #pragma FEEDBACK mem_wr_byte_ens
-  #pragma FEEDBACK mem_rd_en
+  #pragma FEEDBACK mem_rd_byte_ens
   riscv_mem_out_t mem_out = riscv_mem(
     pc>>2, // Instruction word read address based on PC
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
     mem_wr_byte_ens, // Main memory write data byte enables
-    mem_rd_en // Main memory read enable
+    mem_rd_byte_ens // Main memory read enable
     // Optional memory map inputs
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
@@ -99,42 +101,27 @@ riscv_out_t riscv_name(
   mem_addr = exe.result; // addr always from execute module, not always used
   mem_wr_data = reg_file_out.rd_data2;
   mem_wr_byte_ens = decoded.mem_wr_byte_ens;
-  mem_rd_en = decoded.mem_rd;
+  mem_rd_byte_ens = decoded.mem_rd_byte_ens;
   if(decoded.mem_wr_byte_ens[0]){
     printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
   }
-  if(decoded.mem_rd){
+  if(decoded.mem_rd_byte_ens[0]){
     printf("Read Mem[0x%X] = %d\n", mem_addr, mem_out.rd_data);
   }  
 
   // Reg file write back, drive inputs (FEEDBACK)
   reg_wr_en = decoded.reg_wr;
   reg_wr_addr = decoded.dest;
-  reg_wr_data = exe.result; // Default needed for FEEDBACK
-  // Determine data to write back
-  if(decoded.mem_to_reg){
-    printf("Write RegFile: MemRd->Reg...\n");
-    reg_wr_data = mem_out.rd_data;
-  }else if(decoded.pc_plus4_to_reg){
-    printf("Write RegFile: PC+4->Reg...\n");
-    reg_wr_data = pc_plus4;
-  }else{
-    if(decoded.reg_wr)
-      printf("Write RegFile: Execute Result->Reg...\n");
-  }
-  if(decoded.reg_wr){
-    printf("Write RegFile[%d] = %d\n", decoded.dest, reg_wr_data);
-  }
+  // Determine reg data to write back (sign extend etc)
+  reg_wr_data = select_reg_wr_data(
+    decoded,
+    exe,
+    mem_out.rd_data,
+    pc_plus4
+  );
 
   // Branch/Increment PC
-  if(decoded.exe_to_pc){
-    printf("Next PC: Execute Result = 0x%X...\n", exe.result);
-    pc = exe.result;
-  }else{
-    // Default next pc
-    printf("Next PC: Default = 0x%X...\n", pc_plus4);
-    pc = pc_plus4;
-  }
+  pc = select_next_pc(decoded, exe, pc_plus4);
 
   // Debug outputs
   riscv_out_t o;

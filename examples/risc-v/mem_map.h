@@ -25,7 +25,7 @@ typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
 #define RISCV_MEM_MAP_MOD_INPUTS(mem_map_inputs_t)\
 uint32_t addr,\
 uint32_t wr_data, uint1_t wr_byte_ens[4],\
-uint1_t rd_en,\
+uint1_t rd_byte_ens[4],\
 mem_map_inputs_t inputs
 
 

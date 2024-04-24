@@ -30,8 +30,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   o.addr_is_mapped = 0; // since o is static regs
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  WORD_MM_ENTRY(o, RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  o.outputs.halt = wr_byte_ens[0] & (addr==RETURN_OUTPUT_ADDR);
+  WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
+  o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
   WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
   return o;
 }
