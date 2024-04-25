@@ -25,24 +25,52 @@
 #define CPU_CLK_MHZ 60.0  //83.33 // Prepare for adding AXI DDR
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 
-
-//TODO// use examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c
-//c shader writes zero and then increments +1 to white, then resets
-// After thats working need sync() prims or mgmt CPU to do frame frame stuff?
-// Configure AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR
+// Configure AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR to use example dual frame buffer
 #define NUM_USER_THREADS NUM_THREADS // N_THREADS_PER_BARREL*N_BARRELS string literal
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
-// TODO start off only using ram0 to confirm works then switch to DDR with only one ram anyway?
+// TODO use dual frame buffers, start off only using ram0 to confirm works then switch to DDR with only one ram anyway?
+
+
+// Hardware to sync threads and also toggle frame buffer select
+uint1_t thread_is_done_signal[N_BARRELS][N_THREADS_PER_BARREL];
+uint1_t next_thread_start_signal[N_BARRELS][N_THREADS_PER_BARREL];
+#pragma MAIN thread_sync_module
+void thread_sync_module(){
+  // Wait for all threads to signal done with expected value
+  // when all done toggle output to start next frame
+  static uint1_t expected_signal_value = 1;
+  static uint1_t threads_are_done_r; // Register to reduce data path length
+  uint1_t threads_done = 1;
+  uint32_t bid;
+  for(bid = 0; bid < N_BARRELS; bid+=1)
+  {
+    uint8_t tid;
+    for(tid = 0; tid < N_THREADS_PER_BARREL; tid+=1)
+    {
+      threads_done &= (thread_is_done_signal[bid][tid]==expected_signal_value);
+      next_thread_start_signal[bid][tid] = expected_signal_value;
+    }
+  }
+  if(threads_are_done_r){
+    expected_signal_value = ~expected_signal_value;
+    // TODO USE DUAL FRAME BUFFERS frame_buffer_read_port_sel = ~frame_buffer_read_port_sel;
+    threads_done = 0;
+  }
+  threads_are_done_r = threads_done;
+}
+
 
 // Declare memory map information
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   uint32_t thread_id;
+  uint32_t frame_signal;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
   uint32_t return_value;
   uint1_t halt; // return value valid
   uint1_t led;
+  uint32_t frame_signal;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
 RISCV_DECL_MEM_MAP_MOD_OUT_T(my_mmio_out_t)
@@ -76,9 +104,21 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   STRUCT_MM_ENTRY(o, RAM_RD_REQ_ADDR, riscv_ram_read_req_t, ram_read_req_reg)
   STRUCT_MM_ENTRY(o, RAM_RD_RESP_ADDR, riscv_ram_read_resp_t, ram_read_resp_reg)
 
+  // Mem map frame sync signal
+  if(addr==FRAME_SIGNAL_ADDR){
+    o.addr_is_mapped = 1;
+    o.rd_data = inputs.frame_signal;
+    if(wr_byte_ens[0]){
+      o.outputs.frame_signal = wr_data;
+    }
+  }
+
   // Handshake logic using signals from regs
   // Default null
   axi_ram0_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  // TODO use dual frame buffers?
+  // Safe to switch user AXI bus wiring when frame_buffer_read_port_sel toggle
+  // since know user is in threads_frame_sync() and not doing frame buffer reads and writes
   axi_ram1_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
   axi_shared_bus_t_dev_to_host_t dummy_read = axi_ram1_shared_bus_dev_to_host_wire_on_host_clk;// ?
 
@@ -372,9 +412,6 @@ void pc_thread_start_stage(){
 // Main memory  instance
 // IMEM, 1 rd port
 // DMEM, 1 RW port
-//  Data memory signals are not driven until later
-//  but are used now, requiring FEEDBACK pragma
-//  + memory mapped IO signals
 typedef struct multi_thread_mem_stage_out_t
 {
   thread_context_t imem_out;
@@ -464,6 +501,7 @@ void mem_2_stages()
     mem_out_of_range[bid] = multi_thread_mem_out.mem_out_of_range;
   }
 }
+// TODO MOVE UP TO WHERE USER MEM MAP IS DECLARED
 #ifdef riscv_mem_map_outputs_t
 #ifdef riscv_mem_map_inputs_t
 // LEDs for demo
@@ -487,6 +525,8 @@ void mm_io_connections()
     for(tid = 0; tid < N_THREADS_PER_BARREL; tid+=1)
     {
       mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
+      mem_map_inputs[bid][tid].frame_signal = next_thread_start_signal[bid][tid];
+      thread_is_done_signal[bid][tid] = mem_map_outputs[bid][tid].frame_signal;
       error |= unknown_op[bid][tid]; // Sticky
       error |= mem_out_of_range[bid][tid]; // Sticky
       error |= mem_map_outputs[bid][tid].halt; // Sticky
@@ -526,7 +566,6 @@ void decode_stages()
 }
 
 
-// TODO make stand alone reg file func and move into riscv decl to reuse
 // Multiple copies of N thread register files
 typedef struct multi_thread_reg_files_out_t{
   thread_context_t rd_outputs;

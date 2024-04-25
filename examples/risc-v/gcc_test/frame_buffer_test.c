@@ -70,6 +70,17 @@ void frame_buf_write(
   ram_write(addr, write_data);
 }
 
+// Helper to do frame sync
+void threads_frame_sync(){
+  // Signal done by driving the frame signal 
+  // with its expected value
+  int32_t expected_value = *FRAME_SIGNAL;
+  *FRAME_SIGNAL = expected_value;
+  // And wait for a new different expect value
+  while(*FRAME_SIGNAL == expected_value){}
+  return;
+}
+
 
 void main() {
   // Calculate memory bounds based on which core you are
@@ -101,6 +112,7 @@ void main() {
     }
     // Toggle LEDs to show working
     *LED = ~*LED;
+    threads_frame_sync();
   //}
 
   // Do test of modifying pixels
@@ -118,5 +130,6 @@ void main() {
     }
     // Toggle LEDs to show working
     *LED = ~*LED;
+    threads_frame_sync();
   }
 }

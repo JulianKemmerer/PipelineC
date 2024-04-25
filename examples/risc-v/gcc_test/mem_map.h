@@ -149,3 +149,8 @@ uint32_t ram_read(uint32_t addr){
   } while (!rd.valid);
   return rd.data;
 }
+
+
+// Frame sync
+#define FRAME_SIGNAL_ADDR (RAM_RD_RESP_ADDR + sizeof(riscv_ram_read_resp_t))
+static volatile int32_t* FRAME_SIGNAL = (int32_t*)FRAME_SIGNAL_ADDR;
