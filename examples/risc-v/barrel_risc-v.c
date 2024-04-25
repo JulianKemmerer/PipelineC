@@ -7,20 +7,41 @@
 
 // RISC-V components
 #include "risc-v.h"
+#include "mem_map.h"
 
 // Include test gcc compiled program
 #include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
+// Shared with software memory map info
+#include "gcc_test/mem_map.h"
+
+// LEDs for demo
+#include "leds/leds_port.c"
+
+// TODO REDO EVALUATING THREAD STAGE CONFIG NOW THAT EXE AND DECODE HAVE MORE STUFF
+// Config threads
+// Mhz               | ~40  ~55-60 ~100  ~158  ~164  (comb->  150  160  ...~fmax 400Mhz?
+// Threads(~#stages) | 1    3      4     5     6              9    16      64?
+// max ops/sec       |      ~1.6G  
+#define CPU_CLK_MHZ 60.0  //83.33 // Prepare for adding AXI DDR
+#define HOST_CLK_MHZ CPU_CLK_MHZ
+
+
+//TODO// use examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c
+//c shader writes zero and then increments +1 to white, then resets
+// After thats working need sync() prims or mgmt CPU to do frame frame stuff?
+// Configure AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR
+#define NUM_USER_THREADS NUM_THREADS // N_THREADS_PER_BARREL*N_BARRELS string literal
+#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
+// TODO start off only using ram0 to confirm works then switch to DDR with only one ram anyway?
 
 // Declare memory map information
-// Starts with shared with software memory map info
-#include "gcc_test/mem_map.h" 
-// Define inputs and outputs
+// Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
-  uint8_t core_id;
+  uint32_t thread_id;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
   uint32_t return_value;
-  uint1_t halt;
+  uint1_t halt; // return value valid
   uint1_t led;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
@@ -31,12 +52,116 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Outputs
   static riscv_mem_map_mod_out_t(my_mmio_out_t) o;
   o.addr_is_mapped = 0; // since o is static regs
+
+  // Handshake regs
+  static riscv_ram_write_req_t ram_write_req_reg;
+  riscv_ram_write_req_t ram_write_req = ram_write_req_reg;
+  static riscv_ram_write_resp_t ram_write_resp_reg;
+  riscv_ram_write_resp_t ram_write_resp = ram_write_resp_reg;
+  static riscv_ram_read_req_t ram_read_req_reg;
+  riscv_ram_read_req_t ram_read_req = ram_read_req_reg;
+  static riscv_ram_read_resp_t ram_read_resp_reg;
+  riscv_ram_read_resp_t ram_read_resp = ram_read_resp_reg;
+
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  o.outputs.return_value = inputs.core_id; // Override typical reg read behavior
-  WORD_MM_ENTRY(o, CORE_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  o.outputs.halt = wr_byte_ens[0] & (addr==CORE_ID_RETURN_OUTPUT_ADDR);
+  o.outputs.return_value = inputs.thread_id; // Override typical reg read behavior
+  WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
+  o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
   WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
+
+  // Mem map the handshake regs
+  STRUCT_MM_ENTRY(o, RAM_WR_REQ_ADDR, riscv_ram_write_req_t, ram_write_req_reg)
+  STRUCT_MM_ENTRY(o, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t, ram_write_resp_reg)
+  STRUCT_MM_ENTRY(o, RAM_RD_REQ_ADDR, riscv_ram_read_req_t, ram_read_req_reg)
+  STRUCT_MM_ENTRY(o, RAM_RD_RESP_ADDR, riscv_ram_read_resp_t, ram_read_resp_reg)
+
+  // Handshake logic using signals from regs
+  // Default null
+  axi_ram0_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  axi_ram1_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  axi_shared_bus_t_dev_to_host_t dummy_read = axi_ram1_shared_bus_dev_to_host_wire_on_host_clk;// ?
+
+
+  // Write start
+  // SW sets req valid, hardware clears when accepted
+  if(ram_write_req.valid){
+    axi_write_req_t wr_req;
+    wr_req.awaddr = ram_write_req.addr;
+    wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+    wr_req.awsize = 2; // 2^2=4 bytes per transfer
+    wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
+    axi_write_data_t wr_data_word;
+    // All 4 bytes are being transfered (uint to array)
+    uint32_t i;
+    for(i=0; i<4; i+=1)
+    {
+      wr_data_word.wdata[i] = ram_write_req.data >> (i*8);
+      wr_data_word.wstrb[i] = 1;
+    }
+    axi_shared_bus_t_write_start_logic_outputs_t write_start = axi_shared_bus_t_write_start_logic(
+      wr_req,
+      wr_data_word,
+      1, // TODO always ready?
+      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.write
+    );
+    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.write = write_start.to_dev;
+    if(write_start.done){
+      ram_write_req_reg.valid = 0;
+    }
+  }
+  // Read start
+  // SW sets req valid, hardware clears when accepted
+  if(ram_read_req.valid){
+    axi_read_req_t rd_req;
+    rd_req.araddr = ram_read_req.addr;
+    rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+    rd_req.arsize = 2; // 2^2=4 bytes per transfer
+    rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
+    axi_shared_bus_t_read_start_logic_outputs_t read_start = axi_shared_bus_t_read_start_logic(
+      rd_req,
+      1, // TODO always ready?
+      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.read.req_ready
+    );
+    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.read.req = read_start.req;
+    if(read_start.done){
+      ram_read_req_reg.valid = 0;
+    }
+  }
+
+  // Write Finish
+  // HW sets resp valid, hardware auto clears when read by software
+  // (since not using AXI write resp data, only valid flag)
+  //  TODO is it better to just have write behave like read 
+  //  and make software clear the resp valid reg?
+  if(ram_write_resp.valid){
+    if(rd_byte_ens[0] & ADDR_IS_VALID_FLAG(addr, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t)){
+      ram_write_resp_reg.valid = 0;
+    }
+  }else{
+    axi_shared_bus_t_write_finish_logic_outputs_t write_finish = axi_shared_bus_t_write_finish_logic(
+      1,
+      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.write
+    );
+    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.write.resp_ready = write_finish.resp_ready;
+    if(write_finish.done){
+      ram_write_resp_reg.valid = 1;
+    }
+  }
+  // Read finish
+  // HW sets resp valid, software clears when accepted
+  if(!ram_read_resp.valid){
+    axi_shared_bus_t_read_finish_logic_outputs_t read_finish = axi_shared_bus_t_read_finish_logic(
+      1,
+      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.read.data
+    );
+    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.read.data_ready = read_finish.data_ready;
+    if(read_finish.done){
+      ram_read_resp_reg.data = uint8_array4_le(read_finish.data.rdata);
+      ram_read_resp_reg.valid = 1;
+    }
+  }
+  
   return o;
 }
 
@@ -48,27 +173,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #define riscv_mem_map           my_mem_map_module
 #define riscv_mem_map_inputs_t  my_mmio_in_t
 #define riscv_mem_map_outputs_t my_mmio_out_t
-// Support old single core using mem_map_out_t
-#include "mem_map.h"
-#ifdef riscv_mem_map_outputs_t
 #define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
-#else
-#define riscv_mmio_mod_out_t mem_map_out_t
-#endif
+#define RISCV_MEM_1_CYCLE
 #include "mem_decl.h" // declare my_riscv_mem_out my_riscv_mem() func
 
-// Config threads
-// Mhz               | ~40  ~55-60 ~100  ~158  ~164  (comb->  150  160  ...~fmax 400Mhz?
-// Threads(~#stages) | 1    3      4     5     6              9    16      64?
-// max ops/sec       |      ~1.6G  
-#define CPU_CLK_MHZ 150.0
-#define N_THREADS_PER_BARREL 6
-#define N_BARRELS 20
-//TODO determine next best pipeline stage to enable
-//what does that fmax+resources scale ot ops per sec?
+
 // Interconnect wires between stages
 typedef struct thread_context_t{
-  uint8_t thread_id;
+  uint8_t thread_id; // TODO resolve as program_id, program_valid; Since different from thread id
   uint1_t thread_valid;
   uint32_t pc;
   uint32_t next_pc;
@@ -291,18 +403,21 @@ multi_thread_mem_stage_out_t multi_thread_mem_2_stages(
     uint32_t mem_addr;
     uint32_t mem_wr_data;
     uint1_t mem_wr_byte_ens[4];
-    uint1_t mem_rd_en;
+    uint1_t mem_rd_byte_ens[4];
     mem_addr = dmem_in.exe.result; // addr always from execute module, not always used
     mem_wr_data = dmem_in.reg_file_rd_datas.rd_data2;
     mem_wr_byte_ens = dmem_in.decoded.mem_wr_byte_ens;
-    mem_rd_en = dmem_in.decoded.mem_rd;
+    mem_rd_byte_ens = dmem_in.decoded.mem_rd_byte_ens;
     // gate enables with thread id compare and valid
     if(!(dmem_in.thread_valid & (dmem_in.thread_id==tid))){
       mem_wr_byte_ens[0] = 0;
       mem_wr_byte_ens[1] = 0;
       mem_wr_byte_ens[2] = 0;
       mem_wr_byte_ens[3] = 0;
-      mem_rd_en = 0;
+      mem_rd_byte_ens[0] = 0;
+      mem_rd_byte_ens[1] = 0;
+      mem_rd_byte_ens[2] = 0;
+      mem_rd_byte_ens[3] = 0;
     }
     if(mem_wr_byte_ens[0]){
       printf("Barrel %d Thread %d: Write Mem[0x%X] = %d\n", bid, tid, mem_addr, mem_wr_data);
@@ -312,7 +427,7 @@ multi_thread_mem_stage_out_t multi_thread_mem_2_stages(
       mem_addr, // Main memory read/write address
       mem_wr_data, // Main memory write data
       mem_wr_byte_ens, // Main memory write data byte enables
-      mem_rd_en // Main memory read enable
+      mem_rd_byte_ens // Main memory read data byte enables
       // Optional memory map inputs
       #ifdef riscv_mem_map_inputs_t
       , mem_map_in[tid]
@@ -320,7 +435,7 @@ multi_thread_mem_stage_out_t multi_thread_mem_2_stages(
     );
     instructions[tid] = mem_out.inst;
     mem_rd_datas[tid] = mem_out.rd_data;
-    if(mem_rd_en){
+    if(mem_rd_byte_ens[0]){
       printf("Barrel %d Thread %d: Read Mem[0x%X] = %d\n", bid, tid, mem_addr, mem_out.rd_data);
     }
     o.mem_out_of_range[tid] = mem_out.mem_out_of_range;
@@ -346,6 +461,7 @@ void mem_2_stages()
     imem_outputs[bid] = multi_thread_mem_out.imem_out;
     dmem_outputs[bid] = multi_thread_mem_out.dmem_out;
     mem_map_outputs[bid] = multi_thread_mem_out.mem_map_out;
+    mem_out_of_range[bid] = multi_thread_mem_out.mem_out_of_range;
   }
 }
 #ifdef riscv_mem_map_outputs_t
@@ -357,24 +473,25 @@ MAIN_MHZ(mm_io_connections, CPU_CLK_MHZ)
 void mm_io_connections()
 {
   // Output LEDs for hardware debug
+  // led0 is core0 led for some sign of life
   leds = 0;
-
-  // temp dumb AND together
-  static uint1_t led_reg;
-  leds = led_reg;
-  uint1_t led = 1;
+  leds |= ((uint4_t)mem_map_outputs[0][0].led << 0);
+  // led1,2 unused
+  // led3 is combined error flag from all cores
+  static uint1_t error;
+  leds |= ((uint4_t)error << 3);
   uint32_t bid;
   for(bid = 0; bid < N_BARRELS; bid+=1)
   {
     uint8_t tid;
     for(tid = 0; tid < N_THREADS_PER_BARREL; tid+=1)
     {
-      mem_map_inputs[bid][tid].core_id = tid;
-      led &= mem_map_outputs[bid][tid].led;
-      //leds |= (uint4_t)mem_map_outputs[tid].led << tid;
+      mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
+      error |= unknown_op[bid][tid]; // Sticky
+      error |= mem_out_of_range[bid][tid]; // Sticky
+      error |= mem_map_outputs[bid][tid].halt; // Sticky
     }
   }
-  led_reg = led;
 }
 #endif
 #endif
@@ -409,6 +526,7 @@ void decode_stages()
 }
 
 
+// TODO make stand alone reg file func and move into riscv decl to reuse
 // Multiple copies of N thread register files
 typedef struct multi_thread_reg_files_out_t{
   thread_context_t rd_outputs;
@@ -439,21 +557,13 @@ multi_thread_reg_files_out_t multi_thread_reg_files(
       // Reg file write back, drive inputs 
       reg_wr_en = wr_inputs.decoded.reg_wr;
       reg_wr_addr = wr_inputs.decoded.dest;
-      reg_wr_data = wr_inputs.exe.result;
       // Determine data to write back
-      if(wr_inputs.decoded.mem_to_reg){
-        printf("Barrel %d Thread %d: Write RegFile: MemRd->Reg...\n", bid, tid);
-        reg_wr_data = wr_inputs.mem_rd_data;
-      }else if(wr_inputs.decoded.pc_plus4_to_reg){
-        printf("Barrel %d Thread %d: Write RegFile: PC+4->Reg...\n", bid, tid);
-        reg_wr_data = wr_inputs.pc + 4;
-      }else{
-        if(reg_wr_en)
-          printf("Barrel %d Thread %d: Write RegFile: Execute Result->Reg...\n", bid, tid);
-      }
-      if(reg_wr_en){
-        printf("Barrel %d Thread %d: Write RegFile[%d] = %d\n", bid, tid, wr_inputs.decoded.dest, reg_wr_data);
-      }
+      reg_wr_data = select_reg_wr_data(
+        wr_inputs.decoded,
+        wr_inputs.exe,
+        wr_inputs.mem_rd_data,
+        wr_inputs.pc + 4
+      );
     }
     reg_file_rd_datas[tid] = reg_file(
       rd_inputs.decoded.src1, // First read port address
@@ -533,15 +643,11 @@ void branch_next_pc_stages()
     outputs[i].next_pc = 0;
     if(inputs[i].thread_valid){
       // Branch/Increment PC
-      if(inputs[i].decoded.exe_to_pc){
-        printf("Barrel %d Thread %d: Next PC: Execute Result = 0x%X...\n", i, inputs[i].thread_id, inputs[i].exe.result);
-        outputs[i].next_pc = inputs[i].exe.result;
-      }else{
-        // Default next pc
-        uint32_t pc_plus4 = inputs[i].pc + 4;
-        printf("Barrel %d Thread %d: Next PC: Default = 0x%X...\n", i, inputs[i].thread_id, pc_plus4);
-        outputs[i].next_pc = pc_plus4;
-      }
+      outputs[i].next_pc = select_next_pc(
+        inputs[i].decoded,
+        inputs[i].exe,
+        inputs[i].pc + 4
+      );
     }
   }
   // Output to next stage

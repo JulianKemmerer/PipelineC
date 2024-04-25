@@ -76,6 +76,7 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   axi_ram_port_dev_ctrl_t o;
 
   // Avoid timing loop of write shared req+data ready logic forcing simultaneous req+data  
+  // TODO ARB SHOULDNT NEED INPUT REGS
   // with input regs
   static axi_shared_bus_t_write_req_t wr_req;
   o.to_host.write.req_ready = !wr_req.valid;
@@ -145,6 +146,12 @@ axi_ram_port_dev_ctrl_t axi_ram_port_dev_ctrl_pipelined(
   o.to_host.write.resp.data.user.bresp = 0; // Unused, TODO whatever OK is
   o.to_host.write.resp.id = from_axi_ram.id;
   o.to_host.write.resp.valid = from_axi_ram.valid & from_axi_ram.wr_enable;
+
+  // If only has one port then override above behavior
+  // and force read priority (write only when not reading)
+  #if BRAM_NUM_DEV_PORTS==1
+  read_has_priority = 1;
+  #endif
 
   return o;
 }

@@ -11,14 +11,16 @@
 
 #define MEM_MAP_BASE_ADDR 0x10000000
 
-// Read: Core ID, Write: output/stop/halt peripheral
-#define NUM_CORES 8 // 14 max w/ resource optimization in vivado turned on
-#define CORE_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
-static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
-static volatile uint32_t* CORE_ID = (uint32_t*)CORE_ID_RETURN_OUTPUT_ADDR;
+// Read: Thread ID, Write: output/stop/halt peripheral
+#define N_THREADS_PER_BARREL 4
+#define N_BARRELS 2 // TODO scale once mem test passing
+#define NUM_THREADS 8
+#define THREAD_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
+static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
+static volatile uint32_t* THREAD_ID = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
 
 // LED
-#define LED_ADDR (CORE_ID_RETURN_OUTPUT_ADDR + sizeof(uint32_t))
+#define LED_ADDR (THREAD_ID_RETURN_OUTPUT_ADDR + sizeof(uint32_t))
 static volatile uint32_t* LED = (uint32_t*)LED_ADDR;
 
 // Re: memory mapped structs
@@ -131,6 +133,7 @@ ram_rd_try_t try_finish_ram_read(){
 }
 
 // One in flight, start one and finishes one
+// TODO add fewer instructions version of one in flight that doesnt check certain valid/ready
 // Mem test time = 132sec for wr, 236 sec for read, 6:08 total
 void ram_write(uint32_t addr, uint32_t data){
   while(!try_start_ram_write(addr, data)){}
