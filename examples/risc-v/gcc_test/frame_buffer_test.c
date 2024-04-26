@@ -4,15 +4,15 @@
 
 
 //////////////////////////////////////////////////////////////////////////////////
-// COPIED ROM DUAL FRAME BUFFER .c
+// COPIED FROM examples/shared_resource_bus/axi_frame_buffer/*
 typedef struct pixel_t{
  uint8_t a, b, g, r; 
 }pixel_t; // 24bpp color
 #define FRAME_WIDTH 800
 #define FRAME_HEIGHT 600
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 4 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
-#define TILE_FACTOR_LOG2 2
+#define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
+#define TILE_FACTOR_LOG2 0
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4
@@ -50,10 +50,10 @@ pixel_t frame_buf_read(
   //uint32_t addr = pos_to_addr(x, y);
   uint32_t read_data = ram_read(addr);
   pixel_t pixel;
-  pixel.a = read_data >> (3*8);
-  pixel.r = read_data >> (2*8);
-  pixel.g = read_data >> (1*8);
-  pixel.b = read_data >> (0*8);
+  pixel.a = read_data >> (0*8);
+  pixel.r = read_data >> (1*8);
+  pixel.g = read_data >> (2*8);
+  pixel.b = read_data >> (3*8);
   return pixel;
 }
 void frame_buf_write(
@@ -62,10 +62,10 @@ void frame_buf_write(
   pixel_t pixel
 ){
   uint32_t write_data = 0;
-  write_data |= ((uint32_t)pixel.a<<(3*8));
-  write_data |= ((uint32_t)pixel.r<<(2*8));
-  write_data |= ((uint32_t)pixel.g<<(1*8));
-  write_data |= ((uint32_t)pixel.b<<(0*8));
+  write_data |= ((uint32_t)pixel.a<<(0*8));
+  write_data |= ((uint32_t)pixel.r<<(1*8));
+  write_data |= ((uint32_t)pixel.g<<(2*8));
+  write_data |= ((uint32_t)pixel.b<<(3*8));
   //uint32_t addr = pos_to_addr(x, y);
   ram_write(addr, write_data);
 }

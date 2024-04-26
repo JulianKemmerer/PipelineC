@@ -1,6 +1,6 @@
 // Copy of single cycle CPU rewritten ~netlist/multi MAIN graph style
-// Each node in the graph instantiates N copies of barrel components
-// For now has no flow control
+// Each MAIN function node in the graph instantiates N copies of barrel components
+// For now has no flow control between stages, is always a rolling barrel.
 
 // Need more ports since feedback to mems?
 #pragma PART "xc7a100tcsg324-1"
@@ -9,8 +9,6 @@
 #include "risc-v.h"
 #include "mem_map.h"
 
-// Include test gcc compiled program
-#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
 // Shared with software memory map info
 #include "gcc_test/mem_map.h"
 
@@ -23,11 +21,10 @@
 // Threads(~#stages) | 1    3      4     5     6              9    16      64?
 // max ops/sec       |      ~1.6G  
 #define CPU_CLK_MHZ 60.0  //83.33 // Prepare for adding AXI DDR
+// Some defines needed for dual_frame_buffer.c
 #define HOST_CLK_MHZ CPU_CLK_MHZ
-
-// Configure AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR to use example dual frame buffer
-#define NUM_USER_THREADS NUM_THREADS // N_THREADS_PER_BARREL*N_BARRELS string literal
-#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
+#define NUM_USER_THREADS NUM_THREADS
+#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c" // AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR
 // TODO use dual frame buffers, start off only using ram0 to confirm works then switch to DDR with only one ram anyway?
 
 
@@ -115,13 +112,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Handshake logic using signals from regs
   // Default null
-  axi_ram0_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
-  // TODO use dual frame buffers?
-  // Safe to switch user AXI bus wiring when frame_buffer_read_port_sel toggle
-  // since know user is in threads_frame_sync() and not doing frame buffer reads and writes
-  axi_ram1_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
-  axi_shared_bus_t_dev_to_host_t dummy_read = axi_ram1_shared_bus_dev_to_host_wire_on_host_clk;// ?
-
+  axi_xil_mem_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
 
   // Write start
   // SW sets req valid, hardware clears when accepted
@@ -143,9 +134,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       wr_req,
       wr_data_word,
       1, // TODO always ready?
-      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.write
+      axi_xil_mem_dev_to_host_wire_on_host_clk.write
     );
-    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.write = write_start.to_dev;
+    axi_xil_mem_host_to_dev_wire_on_host_clk.write = write_start.to_dev;
     if(write_start.done){
       ram_write_req_reg.valid = 0;
     }
@@ -161,9 +152,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     axi_shared_bus_t_read_start_logic_outputs_t read_start = axi_shared_bus_t_read_start_logic(
       rd_req,
       1, // TODO always ready?
-      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.read.req_ready
+      axi_xil_mem_dev_to_host_wire_on_host_clk.read.req_ready
     );
-    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.read.req = read_start.req;
+    axi_xil_mem_host_to_dev_wire_on_host_clk.read.req = read_start.req;
     if(read_start.done){
       ram_read_req_reg.valid = 0;
     }
@@ -181,9 +172,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }else{
     axi_shared_bus_t_write_finish_logic_outputs_t write_finish = axi_shared_bus_t_write_finish_logic(
       1,
-      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.write
+      axi_xil_mem_dev_to_host_wire_on_host_clk.write
     );
-    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.write.resp_ready = write_finish.resp_ready;
+    axi_xil_mem_host_to_dev_wire_on_host_clk.write.resp_ready = write_finish.resp_ready;
     if(write_finish.done){
       ram_write_resp_reg.valid = 1;
     }
@@ -193,9 +184,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(!ram_read_resp.valid){
     axi_shared_bus_t_read_finish_logic_outputs_t read_finish = axi_shared_bus_t_read_finish_logic(
       1,
-      axi_ram0_shared_bus_dev_to_host_wire_on_host_clk.read.data
+      axi_xil_mem_dev_to_host_wire_on_host_clk.read.data
     );
-    axi_ram0_shared_bus_host_to_dev_wire_on_host_clk.read.data_ready = read_finish.data_ready;
+    axi_xil_mem_host_to_dev_wire_on_host_clk.read.data_ready = read_finish.data_ready;
     if(read_finish.done){
       ram_read_resp_reg.data = uint8_array4_le(read_finish.data.rdata);
       ram_read_resp_reg.valid = 1;
@@ -205,8 +196,47 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   return o;
 }
 
+
+// Per thread IO
+uint1_t mem_out_of_range[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
+uint1_t unknown_op[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
+my_mmio_in_t  mem_map_inputs[N_BARRELS][N_THREADS_PER_BARREL];
+my_mmio_out_t mem_map_outputs[N_BARRELS][N_THREADS_PER_BARREL];
+// LEDs for demo
+#include "leds/leds_port.c"
+MAIN_MHZ(mm_io_connections, CPU_CLK_MHZ)
+#pragma FUNC_WIRES mm_io_connections
+void mm_io_connections()
+{
+  // Output LEDs for hardware debug
+  // led0 is core0 led for some sign of life
+  leds = 0;
+  leds |= ((uint4_t)mem_map_outputs[0][0].led << 0);
+  // led1,2 unused
+  // led3 is combined error flag from all cores
+  static uint1_t error;
+  leds |= ((uint4_t)error << 3);
+  uint32_t bid;
+  for(bid = 0; bid < N_BARRELS; bid+=1)
+  {
+    uint8_t tid;
+    for(tid = 0; tid < N_THREADS_PER_BARREL; tid+=1)
+    {
+      mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
+      mem_map_inputs[bid][tid].frame_signal = next_thread_start_signal[bid][tid];
+      thread_is_done_signal[bid][tid] = mem_map_outputs[bid][tid].frame_signal;
+      error |= unknown_op[bid][tid]; // Sticky
+      error |= mem_out_of_range[bid][tid]; // Sticky
+      error |= mem_map_outputs[bid][tid].halt; // Sticky
+    }
+  }
+}
+
+
 // Declare a combined instruction and data memory
 // also includes memory mapped IO
+// Include test gcc compiled program
+#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
 #define riscv_name              my_riscv
 #define RISCV_MEM_INIT          MEM_INIT // from gcc_test
 #define RISCV_MEM_SIZE_BYTES    MEM_INIT_SIZE // from gcc_test
@@ -319,11 +349,6 @@ void inter_stage_connections(){
   pc_inputs = branch_outputs;
   #endif
 }
-// Per thread IO
-uint1_t mem_out_of_range[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
-uint1_t unknown_op[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
-riscv_mem_map_inputs_t  mem_map_inputs[N_BARRELS][N_THREADS_PER_BARREL];
-riscv_mem_map_outputs_t mem_map_outputs[N_BARRELS][N_THREADS_PER_BARREL];
 
 
 // Temp control fsm trying to start up to max threads
@@ -501,40 +526,6 @@ void mem_2_stages()
     mem_out_of_range[bid] = multi_thread_mem_out.mem_out_of_range;
   }
 }
-// TODO MOVE UP TO WHERE USER MEM MAP IS DECLARED
-#ifdef riscv_mem_map_outputs_t
-#ifdef riscv_mem_map_inputs_t
-// LEDs for demo
-#include "leds/leds_port.c"
-MAIN_MHZ(mm_io_connections, CPU_CLK_MHZ)
-#pragma FUNC_WIRES mm_io_connections
-void mm_io_connections()
-{
-  // Output LEDs for hardware debug
-  // led0 is core0 led for some sign of life
-  leds = 0;
-  leds |= ((uint4_t)mem_map_outputs[0][0].led << 0);
-  // led1,2 unused
-  // led3 is combined error flag from all cores
-  static uint1_t error;
-  leds |= ((uint4_t)error << 3);
-  uint32_t bid;
-  for(bid = 0; bid < N_BARRELS; bid+=1)
-  {
-    uint8_t tid;
-    for(tid = 0; tid < N_THREADS_PER_BARREL; tid+=1)
-    {
-      mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
-      mem_map_inputs[bid][tid].frame_signal = next_thread_start_signal[bid][tid];
-      thread_is_done_signal[bid][tid] = mem_map_outputs[bid][tid].frame_signal;
-      error |= unknown_op[bid][tid]; // Sticky
-      error |= mem_out_of_range[bid][tid]; // Sticky
-      error |= mem_map_outputs[bid][tid].halt; // Sticky
-    }
-  }
-}
-#endif
-#endif
 
 
 #pragma MAIN decode_stages

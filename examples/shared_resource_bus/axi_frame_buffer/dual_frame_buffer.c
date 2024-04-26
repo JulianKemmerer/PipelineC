@@ -1,6 +1,6 @@
 // VGA pmod stuff
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
+#define FRAME_WIDTH 800
+#define FRAME_HEIGHT 600
 #define VGA_ASYNC_FIFO_N_PIXELS 1
 #include "vga/vga_pmod_async_pixels_fifo.c" // Version that expects only x,y pixels, N at a time
 
@@ -11,12 +11,12 @@
 //#endif
 
 // Code for a shared AXI RAMs
-#define AXI_RAM_MODE_BRAM
-//#define AXI_RAM_MODE_DDR
+//#define AXI_RAM_MODE_BRAM
+#define AXI_RAM_MODE_DDR
 
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 8 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
-#define TILE_FACTOR_LOG2 3
+#define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
+#define TILE_FACTOR_LOG2 0
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4
