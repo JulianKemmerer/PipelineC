@@ -50,7 +50,7 @@ void thread_sync_module(){
   }
   if(threads_are_done_r){
     expected_signal_value = ~expected_signal_value;
-    // TODO USE DUAL FRAME BUFFERS frame_buffer_read_port_sel = ~frame_buffer_read_port_sel;
+    frame_buffer_read_port_sel = ~frame_buffer_read_port_sel;
     threads_done = 0;
   }
   threads_are_done_r = threads_done;
@@ -118,7 +118,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // SW sets req valid, hardware clears when accepted
   if(ram_write_req.valid){
     axi_write_req_t wr_req;
-    wr_req.awaddr = ram_write_req.addr;
+    wr_req.awaddr = dual_ram_to_addr(~frame_buffer_read_port_sel, ram_write_req.addr);
     wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
     wr_req.awsize = 2; // 2^2=4 bytes per transfer
     wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
@@ -145,7 +145,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // SW sets req valid, hardware clears when accepted
   if(ram_read_req.valid){
     axi_read_req_t rd_req;
-    rd_req.araddr = ram_read_req.addr;
+    rd_req.araddr = dual_ram_to_addr(frame_buffer_read_port_sel, ram_read_req.addr);
     rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
     rd_req.arsize = 2; // 2^2=4 bytes per transfer
     rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
