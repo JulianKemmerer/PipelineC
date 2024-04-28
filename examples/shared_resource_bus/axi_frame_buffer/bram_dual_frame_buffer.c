@@ -1,4 +1,4 @@
-#define BRAM_DEV_CLK_MHZ 25.0 //100.0
+#define BRAM_DEV_CLK_MHZ 60.0 //100.0
 
 #include "shared_axi_brams.c"
 
@@ -8,19 +8,19 @@ pixel_t frame_buf_read(uint16_t x, uint16_t y)
   uint32_t addr = pos_to_addr(x, y);
   axi_ram_data_t read = dual_axi_ram_read(frame_buffer_read_port_sel, addr);
   pixel_t pixel;
-  pixel.a = read.data[3];
-  pixel.r = read.data[2];
-  pixel.g = read.data[1];
-  pixel.b = read.data[0];
+  pixel.a = read.data[0];
+  pixel.r = read.data[1];
+  pixel.g = read.data[2];
+  pixel.b = read.data[3];
   return pixel;
 }
 void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 {
   axi_ram_data_t write;
-  write.data[3] = pixel.a;
-  write.data[2] = pixel.r;
-  write.data[1] = pixel.g;
-  write.data[0] = pixel.b;
+  write.data[0] = pixel.a;
+  write.data[1] = pixel.r;
+  write.data[2] = pixel.g;
+  write.data[3] = pixel.b;
   uint32_t addr = pos_to_addr(x, y);
   dual_axi_ram_write(!frame_buffer_read_port_sel, addr, write);
 }
@@ -101,10 +101,10 @@ void host_vga_reader()
 
   // Write pixel data into fifo
   pixel_t pixel;
-  pixel.a = rd_data_into_fifo.rdata[3];
-  pixel.r = rd_data_into_fifo.rdata[2];
-  pixel.g = rd_data_into_fifo.rdata[1];
-  pixel.b = rd_data_into_fifo.rdata[0];
+  pixel.a = rd_data_into_fifo.rdata[0];
+  pixel.r = rd_data_into_fifo.rdata[1];
+  pixel.g = rd_data_into_fifo.rdata[2];
+  pixel.b = rd_data_into_fifo.rdata[3];
   pixel_t pixels[1];
   pixels[0] = pixel;
   uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, rd_data_into_fifo_valid);
@@ -136,5 +136,7 @@ void host_vga_reader()
     }
   }
   
+  // TODO only change frame buf at end of frame boundary to avoid flicker?
+  // TODO use xil_cdc2_bit
   frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
 }
