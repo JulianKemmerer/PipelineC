@@ -11,10 +11,10 @@
 
 #define MEM_MAP_BASE_ADDR 0x10000000
 
-// Read: Thread ID, Write: output/stop/halt peripheral
 #define N_THREADS_PER_BARREL 4
-#define N_BARRELS 2 // TODO scale once mem test passing
+#define N_BARRELS 2
 #define NUM_THREADS 8
+// Read: Thread ID, Write: output/stop/halt peripheral
 #define THREAD_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
 static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
 static volatile uint32_t* THREAD_ID = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
@@ -82,7 +82,7 @@ static volatile riscv_ram_read_req_t* RAM_RD_REQ = (riscv_ram_read_req_t*)RAM_RD
 static volatile riscv_ram_read_resp_t* RAM_RD_RESP = (riscv_ram_read_resp_t*)RAM_RD_RESP_ADDR;
 
 // Multiple in flight versions:
-riscv_valid_flag_t try_start_ram_write(uint32_t addr, uint32_t data){
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_write(uint32_t addr, uint32_t data){
   // If the request flag is valid from a previous req
   // then done now, couldnt start
   if(RAM_WR_REQ->valid){
@@ -94,13 +94,13 @@ riscv_valid_flag_t try_start_ram_write(uint32_t addr, uint32_t data){
   RAM_WR_REQ->valid = 1;
   return 1;
 }
-riscv_valid_flag_t try_finish_ram_write(){
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(){
   // No write response data
   // Simply read and return response valid bit
   // Hardware automatically clears valid bit on read
   return RAM_WR_RESP->valid;
 }
-riscv_valid_flag_t try_start_ram_read(uint32_t addr){
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_read(uint32_t addr){
   // If the request flag is valid from a previous req
   // then done now, couldnt start
   if(RAM_RD_REQ->valid){
@@ -115,7 +115,7 @@ typedef struct ram_rd_try_t{
   uint32_t data;
   riscv_valid_flag_t valid;
 }ram_rd_try_t;
-ram_rd_try_t try_finish_ram_read(){
+static inline __attribute__((always_inline)) ram_rd_try_t try_finish_ram_read(){
   ram_rd_try_t rv;
   // Have valid read response data?
   rv.valid = RAM_RD_RESP->valid;
@@ -133,15 +133,23 @@ ram_rd_try_t try_finish_ram_read(){
 }
 
 // One in flight, start one and finishes one
-// TODO add fewer instructions version of one in flight that doesnt check certain valid/ready
-// Mem test time = 132sec for wr, 236 sec for read, 6:08 total
-void ram_write(uint32_t addr, uint32_t data){
-  while(!try_start_ram_write(addr, data)){}
+// Does not need to check before starting next xfer
+static inline __attribute__((always_inline)) void ram_write(uint32_t addr, uint32_t data){
+  // Start
+  // Dont need try_ logic to check if valid been cleared, just set
+  RAM_WR_REQ->addr = addr;
+  RAM_WR_REQ->data = data;
+  RAM_WR_REQ->valid = 1;
+  // Wait for finish
   while(!try_finish_ram_write()){}
   return;
 }
-uint32_t ram_read(uint32_t addr){
-  while(!try_start_ram_read(addr)){}
+static inline __attribute__((always_inline)) uint32_t ram_read(uint32_t addr){
+  // Start
+  // Dont need try_ logic to check if valid been cleared, just set
+  RAM_RD_REQ->addr = addr;
+  RAM_RD_REQ->valid = 1;
+  // Wait for finish
   ram_rd_try_t rd;
   do
   {

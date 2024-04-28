@@ -21,21 +21,21 @@ typedef struct pixel_t{
 #define AXI_RAM_DEPTH (((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)/AXI_BUS_BYTE_WIDTH)
 #define MEM_SIZE (AXI_RAM_DEPTH*AXI_BUS_BYTE_WIDTH) // DDR=268435456 // 2^28 bytes , 256MB DDR3 = 28b address
 // Pixel x,y pos to pixel index
-uint32_t pos_to_pixel_index(uint32_t x, uint32_t y)
+static inline __attribute__((always_inline)) uint32_t pos_to_pixel_index(uint32_t x, uint32_t y)
 {
   uint32_t x_tile_index = x >> TILE_FACTOR_LOG2;
   uint32_t y_tile_index = y >> TILE_FACTOR_LOG2;
   return (y_tile_index*NUM_X_TILES) + x_tile_index;
 }
 // Pixel index to address in RAM
-uint32_t pixel_index_to_addr(uint32_t index)
+static inline __attribute__((always_inline)) uint32_t pixel_index_to_addr(uint32_t index)
 {
   // Each pixel is a 32b (4 byte) word
   uint32_t addr = index << BYTES_PER_PIXEL_LOG2;
   return addr;
 }
 // Pixel x,y to pixel ram address
-uint32_t pos_to_addr(uint32_t x, uint32_t y)
+static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, uint32_t y)
 {
   uint32_t pixel_index = pos_to_pixel_index(x, y);
   uint32_t addr = pixel_index_to_addr(pixel_index);
@@ -87,22 +87,33 @@ void main() {
   *LED = 1;
   // x,y bounds based on which thread you are
   // Let each thread do entire horizontal X lines, split Y direction
-  uint32_t frame_count = 0;
+
+  // Write all pixels zero
+  for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
+      for(int x=0; x < FRAME_WIDTH; x++){
+          pixel_t p = {.r=0, .g=0, .b=0};
+          frame_buf_write(x, y, p);
+      }
+  }
+  *LED = ~*LED;
+  threads_frame_sync();
+
+  // Toggle as test of fast read and write
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
         for(int x=0; x < FRAME_WIDTH; x++){
-            // RGB pattern (raytracing book 1st example)
-            int R = 255 * x / FRAME_WIDTH; // x from 0 - 255
-            int G = 255 * y / FRAME_HEIGHT; // y from 0 - 255
-            int B = frame_count << 5;
+            // Read pixel
+            pixel_t p = frame_buf_read(x, y);
+            // Invert all colors 
+            p.r = ~p.r;
+            p.g = ~p.g;
+            p.b = ~p.b;
             // Write to screen
-            pixel_t p = {.r=R, .g=G, .b=B};
             frame_buf_write(x, y, p);
         }
     }
     // Toggle LEDs to show working
     *LED = ~*LED;
     threads_frame_sync();
-    frame_count += 1;
   }
 }
