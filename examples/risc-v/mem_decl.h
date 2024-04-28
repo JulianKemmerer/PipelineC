@@ -2,6 +2,7 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
+#include "arrays.h"
 
 #include "mem_map.h"
 
@@ -176,60 +177,123 @@ riscv_mem_out_t riscv_mem(
   , riscv_mem_map_inputs_t mem_map_inputs
   #endif
 ){
+  riscv_mem_out_t mem_out;
+
+  // Write or read helper flags
+  uint1_t word_wr_en = 0;
+  uint1_t word_rd_en = 0;
+  uint32_t i;
+  for(i=0;i<4;i+=1){
+    word_wr_en |= wr_byte_ens[i];
+    word_rd_en |= rd_byte_ens[i];
+  }
+
+  // Convert byte addresses to 4-byte word index
+  // do extra logic to account for how byte enables changes
+  // assume is "aligned" to fit in one memory 32b word access?
+  uint32_t mem_rw_word_index = rw_addr >> 2;
+  uint2_t byte_mux_sel = rw_addr(1,0);
+  uint1_t zeros[4] = {0,0,0,0};
+  uint1_t rd_word_byte_ens[4] = rd_byte_ens;
+  uint1_t wr_word_byte_ens[4] = wr_byte_ens;
+  uint32_t wr_word = wr_data;
+  if(byte_mux_sel==3){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 3)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 3)
+    wr_word = wr_data << (3*8);
+    // Check for dropped data in upper bytes
+    if(rd_byte_ens[3]|rd_byte_ens[2]|rd_byte_ens[1]|
+       wr_byte_ens[3]|wr_byte_ens[2]|wr_byte_ens[1])
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper 3 bytes dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }else if(byte_mux_sel==2){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 2)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 2)
+    wr_word = wr_data << (2*8);
+    // Check for dropped data in upper bytes
+    if(rd_byte_ens[3]|rd_byte_ens[2]|
+       wr_byte_ens[3]|wr_byte_ens[2])
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper 2 bytes dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }else if(byte_mux_sel==1){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 1)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 1)
+    wr_word = wr_data << (1*8);
+    // Check for dropped data in upper bytes
+    if(rd_byte_ens[3]|
+       wr_byte_ens[3])
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper byte dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }
+
   // Check for write to memory mapped IO addresses
   riscv_mmio_mod_out_t mem_map_out = riscv_mem_map(
-    rw_addr,
-    wr_data,
-    wr_byte_ens,
-    rd_byte_ens
+    // TODO replace user func addr param with index since always 32b aligned
+    mem_rw_word_index<<2, 
+    wr_word,
+    wr_word_byte_ens,
+    rd_word_byte_ens
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
     #endif
   );
-  riscv_mem_out_t mem_out;
+  
   #ifdef riscv_mem_map_outputs_t
   mem_out.mem_map_outputs = mem_map_out.outputs;
   #endif
   
   // Mem map write does not write actual RAM memory
-  uint32_t i;
   for(i=0;i<4;i+=1){
-    wr_byte_ens[i] &= !mem_map_out.addr_is_mapped;
+    wr_word_byte_ens[i] &= ~mem_map_out.addr_is_mapped;
+    word_wr_en &= ~mem_map_out.addr_is_mapped;
+    word_rd_en &= ~mem_map_out.addr_is_mapped;
   }  
 
-  // Convert byte addresses to aligned 4-byte word address
-  uint32_t mem_rw_word_index = rw_addr >> 2;
-  //uint32_t inst_addr_word_index = inst_addr >> 2;
-
   // Sanity check, stop sim if out of range access
-  if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & wr_byte_ens[0]){
+  if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & (word_wr_en | word_rd_en)){
+    printf("Error: mem_out_of_range large addr %d\n",rw_addr);
     mem_out.mem_out_of_range = 1;
   }
 
   // The single RAM instance
   riscv_mem_ram_out_t ram_out = riscv_mem_ram(mem_rw_word_index,
-                                      wr_data, wr_byte_ens, 1,
+                                      wr_word, wr_word_byte_ens, 1,
                                        inst_addr, 1);
-  mem_out.rd_data = ram_out.rd_data0;
+  uint32_t mem_rd_data = ram_out.rd_data0;
   mem_out.inst = ram_out.rd_data1;
 
+  // Determine output memory read data
   // Mem map read comes from memory map module not RAM memory
   if(mem_map_out.addr_is_mapped){
-    mem_out.rd_data = mem_map_out.rd_data;
+    mem_rd_data = mem_map_out.rd_data;
   }
-
+  // Shift read data to account for conversion to 32b word index access
+  if(byte_mux_sel==3){
+    mem_rd_data = mem_rd_data >> (8*3);
+  }else if(byte_mux_sel==2){
+    mem_rd_data = mem_rd_data >> (8*2);
+  }else if(byte_mux_sel==1){
+    mem_rd_data = mem_rd_data >> (8*1);
+  }  
   // Apply read enable byte enables to clear unused bits
-  // (sign extend done in reg wr stage)
-  uint32_t mem_rd_data = mem_out.rd_data;
+  // Likely unecessary since sign extend done in reg wr stage?
   if(rd_byte_ens[3] & rd_byte_ens[2] & rd_byte_ens[1] & rd_byte_ens[0]){
-    mem_out.rd_data = mem_rd_data; // No byte truncating
+    mem_rd_data = mem_rd_data; // No byte truncating
   }else if(rd_byte_ens[1] & rd_byte_ens[0]){
     // Lower two bytes only
-    mem_out.rd_data = uint16_uint16(0, mem_rd_data(15,0));
-  }else /*if(rd_byte_ens[0])*/ {
+    mem_rd_data = uint16_uint16(0, mem_rd_data(15,0));
+  }else {
     // Lower single bytes only (or no read)
-    mem_out.rd_data = uint24_uint8(0, mem_rd_data(7,0));
+    mem_rd_data = uint24_uint8(0, mem_rd_data(7,0));
   }
+  // Final mem rd data assignment to output
+  mem_out.rd_data = mem_rd_data;
 
   return mem_out;
 }
