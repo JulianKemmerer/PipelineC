@@ -87,13 +87,14 @@ void main() {
   *LED = 1;
   // x,y bounds based on which thread you are
   // Let each thread do entire horizontal X lines, split Y direction
+  uint32_t frame_count = 0;
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
         for(int x=0; x < FRAME_WIDTH; x++){
             // RGB pattern (raytracing book 1st example)
             int R = 255 * x / FRAME_WIDTH; // x from 0 - 255
             int G = 255 * y / FRAME_HEIGHT; // y from 0 - 255
-            int B = 64; // 0.25 * 255
+            int B = frame_count << 5;
             // Write to screen
             pixel_t p = {.r=R, .g=G, .b=B};
             frame_buf_write(x, y, p);
@@ -102,5 +103,6 @@ void main() {
     // Toggle LEDs to show working
     *LED = ~*LED;
     threads_frame_sync();
+    frame_count += 1;
   }
 }
