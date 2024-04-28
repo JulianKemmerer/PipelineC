@@ -26,8 +26,8 @@
 // Pixel x,y pos to pixel index
 uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
 {
-  uint16_t x_tile_index = x >> TILE_FACTOR_LOG2;
-  uint16_t y_tile_index = y >> TILE_FACTOR_LOG2;
+  uint32_t x_tile_index = x >> TILE_FACTOR_LOG2;
+  uint32_t y_tile_index = y >> TILE_FACTOR_LOG2;
   return (y_tile_index*NUM_X_TILES) + x_tile_index;
 }
 // Pixel index to address in RAM

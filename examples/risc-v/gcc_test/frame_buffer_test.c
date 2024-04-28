@@ -21,10 +21,10 @@ typedef struct pixel_t{
 #define AXI_RAM_DEPTH (((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)/AXI_BUS_BYTE_WIDTH)
 #define MEM_SIZE (AXI_RAM_DEPTH*AXI_BUS_BYTE_WIDTH) // DDR=268435456 // 2^28 bytes , 256MB DDR3 = 28b address
 // Pixel x,y pos to pixel index
-uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
+uint32_t pos_to_pixel_index(uint32_t x, uint32_t y)
 {
-  uint16_t x_tile_index = x >> TILE_FACTOR_LOG2;
-  uint16_t y_tile_index = y >> TILE_FACTOR_LOG2;
+  uint32_t x_tile_index = x >> TILE_FACTOR_LOG2;
+  uint32_t y_tile_index = y >> TILE_FACTOR_LOG2;
   return (y_tile_index*NUM_X_TILES) + x_tile_index;
 }
 // Pixel index to address in RAM
@@ -35,7 +35,7 @@ uint32_t pixel_index_to_addr(uint32_t index)
   return addr;
 }
 // Pixel x,y to pixel ram address
-uint32_t pos_to_addr(uint16_t x, uint16_t y)
+uint32_t pos_to_addr(uint32_t x, uint32_t y)
 {
   uint32_t pixel_index = pos_to_pixel_index(x, y);
   uint32_t addr = pixel_index_to_addr(pixel_index);
@@ -44,10 +44,10 @@ uint32_t pos_to_addr(uint16_t x, uint16_t y)
 //////////////////////////////////////////////////////////////////////////////////
 // Pack and unpack pixel type for ram_read/ram_write
 pixel_t frame_buf_read(
-  //uint16_t x, uint16_t y
-  uint32_t addr
+  uint32_t x, uint32_t y
+  //uint32_t addr
 ){
-  //uint32_t addr = pos_to_addr(x, y);
+  uint32_t addr = pos_to_addr(x, y);
   uint32_t read_data = ram_read(addr);
   pixel_t pixel;
   pixel.a = read_data >> (0*8);
@@ -57,8 +57,8 @@ pixel_t frame_buf_read(
   return pixel;
 }
 void frame_buf_write(
-  //uint16_t x, uint16_t y,
-  uint32_t addr, 
+  uint32_t x, uint32_t y,
+  //uint32_t addr, 
   pixel_t pixel
 ){
   uint32_t write_data = 0;
@@ -66,7 +66,7 @@ void frame_buf_write(
   write_data |= ((uint32_t)pixel.r<<(1*8));
   write_data |= ((uint32_t)pixel.g<<(2*8));
   write_data |= ((uint32_t)pixel.b<<(3*8));
-  //uint32_t addr = pos_to_addr(x, y);
+  uint32_t addr = pos_to_addr(x, y);
   ram_write(addr, write_data);
 }
 
@@ -83,50 +83,21 @@ void threads_frame_sync(){
 
 
 void main() {
-  // Calculate memory bounds based on which core you are
-  // Chunk size in bytes rounded to u32 4 byte units
-  uint32_t chunk_size = ((MEM_SIZE/NUM_THREADS)/sizeof(uint32_t))*sizeof(uint32_t);
-  uint32_t start_addr = *THREAD_ID * chunk_size;
-  // Adjust for if mem size divides unevenly
-  uint32_t chunks_sum = chunk_size * NUM_THREADS;
-  // Last core gets different chunk size
-  int32_t last_chunk_extra = MEM_SIZE - chunks_sum;
-  int32_t last_chunk_size = chunk_size + last_chunk_extra;
-  if(*THREAD_ID==(NUM_THREADS-1)){
-    chunk_size = last_chunk_size;
-  }
-  uint32_t end_addr = start_addr + chunk_size;
-
-  // DO NOTHING
-  //while(1){
-    *LED = 1;
-  //}
-  
-  // First set all pixels to 255 white
-  //while(1){
-    pixel_t pixel = {.r=255, .g=255, .b=255};
-    uint32_t addr;
-    for(addr = start_addr; addr < end_addr; addr+=sizeof(uint32_t))
-    {
-      frame_buf_write(addr, pixel);
-    }
-    // Toggle LEDs to show working
-    *LED = ~*LED;
-    threads_frame_sync();
-  //}
-
   // Do test of modifying pixels
+  *LED = 1;
+  // x,y bounds based on which thread you are
+  // Let each thread do entire horizontal X lines, split Y direction
   while(1){
-    for(addr = start_addr; addr < end_addr; addr+=sizeof(uint32_t))
-    {
-      // Read pixel
-      pixel_t pixel = frame_buf_read(addr);
-      // Decrement 
-      pixel.r -= 1;
-      pixel.g -= 1;
-      pixel.b -= 1;
-      // Write pixel
-      frame_buf_write(addr, pixel);
+    for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
+        for(int x=0; x < FRAME_WIDTH; x++){
+            // RGB pattern (raytracing book 1st example)
+            int R = 255 * x / FRAME_WIDTH; // x from 0 - 255
+            int G = 255 * y / FRAME_HEIGHT; // y from 0 - 255
+            int B = 64; // 0.25 * 255
+            // Write to screen
+            pixel_t p = {.r=R, .g=G, .b=B};
+            frame_buf_write(x, y, p);
+        }
     }
     // Toggle LEDs to show working
     *LED = ~*LED;
