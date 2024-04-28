@@ -15,7 +15,7 @@
 // LEDs for demo
 #include "leds/leds_port.c"
 
-// TODO REDO EVALUATING THREAD STAGE CONFIG NOW THAT EXE AND DECODE HAVE MORE STUFF
+// TODO REDO EVALUATING THREAD STAGE CONFIG NOW THAT MEM + EXE+ DECODE HAVE MORE STUFF
 // Config threads
 // Mhz               | ~40  ~55-60 ~100  ~158  ~164  (comb->  150  160  ...~fmax 400Mhz?
 // Threads(~#stages) | 1    3      4     5     6              9    16      64?
@@ -25,7 +25,6 @@
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c" // AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR
-// TODO use dual frame buffers, start off only using ram0 to confirm works then switch to DDR with only one ram anyway?
 
 
 // Hardware to sync threads and also toggle frame buffer select

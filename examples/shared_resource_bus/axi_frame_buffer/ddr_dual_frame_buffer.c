@@ -1,3 +1,4 @@
+#include "cdc.h"
 // Code for AXI xilinx memory controller shared bus resource
 
 // Use a read priority port on arbiter (ifndef then use slow greedy arb where vga port can be greedy)
@@ -105,7 +106,7 @@ void host_vga_reader()
   fifo_ready = pmod_async_fifo_write_logic(pixels, data_valid);
   axi_xil_rd_pri_port_mem_host_to_dev_wire.read.data_ready = fifo_ready;
 
-  frame_buffer_read_port_sel_reg = frame_buffer_read_port_sel;
+  frame_buffer_read_port_sel_reg = xil_cdc2_bit(frame_buffer_read_port_sel);
 }
 #else
 // Version trying to act as a greedy host among the others 
