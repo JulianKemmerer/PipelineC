@@ -94,11 +94,17 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_wr
   RAM_WR_REQ->valid = 1;
   return 1;
 }
+static inline __attribute__((always_inline)) void start_ram_write(uint32_t addr, uint32_t data){
+  while(!try_start_ram_write(addr, data)){}
+}
 static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(){
   // No write response data
   // Simply read and return response valid bit
   // Hardware automatically clears valid bit on read
   return RAM_WR_RESP->valid;
+}
+static inline __attribute__((always_inline)) void finish_ram_write(){
+  while(!try_finish_ram_write()){}
 }
 static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_read(uint32_t addr){
   // If the request flag is valid from a previous req
@@ -110,6 +116,10 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_re
   RAM_RD_REQ->addr = addr;
   RAM_RD_REQ->valid = 1;
   return 1;
+}
+static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr){
+  while(!try_start_ram_read(addr)){}
+  return;
 }
 typedef struct ram_rd_try_t{
   uint32_t data;
@@ -131,6 +141,16 @@ static inline __attribute__((always_inline)) ram_rd_try_t try_finish_ram_read(){
   // Done
   return rv;
 }
+static inline __attribute__((always_inline)) uint32_t finish_ram_read(){
+  // Wait for finish
+  ram_rd_try_t rd;
+  do
+  {
+    rd = try_finish_ram_read();
+  } while (!rd.valid);
+  return rd.data;
+}
+
 
 // One in flight, start one and finishes one
 // Does not need to check before starting next xfer
@@ -142,7 +162,6 @@ static inline __attribute__((always_inline)) void ram_write(uint32_t addr, uint3
   RAM_WR_REQ->valid = 1;
   // Wait for finish
   while(!try_finish_ram_write()){}
-  return;
 }
 static inline __attribute__((always_inline)) uint32_t ram_read(uint32_t addr){
   // Start
