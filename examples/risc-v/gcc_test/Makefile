@@ -3,10 +3,7 @@
 # export PATH=$PATH:/opt/riscv/bin
 
 all : main.c bootstrap.S
-	riscv32-unknown-elf-gcc bootstrap.S main.c -o main -march=rv32i -mabi=ilp32 -mstrict-align -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments -T link.ld
-	
-sim: all
-	riscv-vp --intercept-syscalls main
+	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -o main -march=rv32i -mabi=ilp32 -mstrict-align -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments -T link.ld
 	
 dump-elf: all
 	riscv32-unknown-elf-readelf -a main

@@ -119,36 +119,25 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_re
 }
 static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr){
   while(!try_start_ram_read(addr)){}
-  return;
 }
-typedef struct ram_rd_try_t{
-  uint32_t data;
-  riscv_valid_flag_t valid;
-}ram_rd_try_t;
-static inline __attribute__((always_inline)) ram_rd_try_t try_finish_ram_read(){
-  ram_rd_try_t rv;
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_read(uint32_t* data){
   // Have valid read response data?
-  rv.valid = RAM_RD_RESP->valid;
+  riscv_valid_flag_t rv = RAM_RD_RESP->valid;
   // If not then done now
-  if(!rv.valid){
+  if(!rv){
     return rv;
   }
   // Valid is not auto cleared by hardware
   // Save the valid data
-  rv.data = RAM_RD_RESP->data;
+  *data = RAM_RD_RESP->data;
   // Manually clear the valid buffer
   RAM_RD_RESP->valid = 0;
   // Done
   return rv;
 }
-static inline __attribute__((always_inline)) uint32_t finish_ram_read(){
+static inline __attribute__((always_inline)) void finish_ram_read(uint32_t* data){
   // Wait for finish
-  ram_rd_try_t rd;
-  do
-  {
-    rd = try_finish_ram_read();
-  } while (!rd.valid);
-  return rd.data;
+  while(!try_finish_ram_read(data)){}
 }
 
 
@@ -160,21 +149,16 @@ static inline __attribute__((always_inline)) void ram_write(uint32_t addr, uint3
   RAM_WR_REQ->addr = addr;
   RAM_WR_REQ->data = data;
   RAM_WR_REQ->valid = 1;
-  // Wait for finish
-  while(!try_finish_ram_write()){}
+  // Finish
+  finish_ram_write();
 }
-static inline __attribute__((always_inline)) uint32_t ram_read(uint32_t addr){
+static inline __attribute__((always_inline)) void ram_read(uint32_t addr, uint32_t* data){
   // Start
   // Dont need try_ logic to check if valid been cleared, just set
   RAM_RD_REQ->addr = addr;
   RAM_RD_REQ->valid = 1;
   // Wait for finish
-  ram_rd_try_t rd;
-  do
-  {
-    rd = try_finish_ram_read();
-  } while (!rd.valid);
-  return rd.data;
+  finish_ram_read(data);
 }
 
 

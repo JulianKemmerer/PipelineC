@@ -43,29 +43,31 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
 }
 //////////////////////////////////////////////////////////////////////////////////
 // Pack and unpack pixel type for ram_read/ram_write
-pixel_t frame_buf_read(
-  uint32_t x, uint32_t y
-  //uint32_t addr
+void frame_buf_read(
+  uint32_t x, uint32_t y,
+  //uint32_t addr,
+  pixel_t* pixel
 ){
   uint32_t addr = pos_to_addr(x, y);
-  uint32_t read_data = ram_read(addr);
-  pixel_t pixel;
-  pixel.a = read_data >> (0*8);
-  pixel.r = read_data >> (1*8);
-  pixel.g = read_data >> (2*8);
-  pixel.b = read_data >> (3*8);
-  return pixel;
+  uint32_t read_data;
+  ram_read(addr, &read_data);
+  //pixel_t pixel;
+  pixel->a = read_data >> (0*8);
+  pixel->r = read_data >> (1*8);
+  pixel->g = read_data >> (2*8);
+  pixel->b = read_data >> (3*8);
+  //return pixel;
 }
 void frame_buf_write(
   uint32_t x, uint32_t y,
   //uint32_t addr, 
-  pixel_t pixel
+  pixel_t* pixel
 ){
   uint32_t write_data = 0;
-  write_data |= ((uint32_t)pixel.a<<(0*8));
-  write_data |= ((uint32_t)pixel.r<<(1*8));
-  write_data |= ((uint32_t)pixel.g<<(2*8));
-  write_data |= ((uint32_t)pixel.b<<(3*8));
+  write_data |= ((uint32_t)pixel->a<<(0*8));
+  write_data |= ((uint32_t)pixel->r<<(1*8));
+  write_data |= ((uint32_t)pixel->g<<(2*8));
+  write_data |= ((uint32_t)pixel->b<<(3*8));
   uint32_t addr = pos_to_addr(x, y);
   ram_write(addr, write_data);
 }
@@ -88,28 +90,31 @@ void main() {
   // x,y bounds based on which thread you are
   // Let each thread do entire horizontal X lines, split Y direction
 
-  // Write all pixels zero
-  for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
-      for(int x=0; x < FRAME_WIDTH; x++){
-          pixel_t p = {.r=0, .g=0, .b=0};
-          frame_buf_write(x, y, p);
-      }
-  }
-  *LED = ~*LED;
-  threads_frame_sync();
+  // Write all pixels white
+  //while(1){
+    for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
+        for(int x=0; x < FRAME_WIDTH; x++){
+            pixel_t p = {.r=255, .g=255, .b=255};
+            frame_buf_write(x, y, &p);
+        }
+    }
+    *LED = ~*LED;
+    threads_frame_sync();
+  //}
 
   // Toggle as test of fast read and write
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
         for(int x=0; x < FRAME_WIDTH; x++){
             // Read pixel
-            pixel_t p = frame_buf_read(x, y);
+            pixel_t p;
+            frame_buf_read(x, y, &p);
             // Invert all colors 
             p.r = ~p.r;
             p.g = ~p.g;
             p.b = ~p.b;
             // Write to screen
-            frame_buf_write(x, y, p);
+            frame_buf_write(x, y, &p);
         }
     }
     // Toggle LEDs to show working
