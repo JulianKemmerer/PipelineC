@@ -12,11 +12,17 @@
 
 // Code for a shared AXI RAMs
 //#define AXI_RAM_MODE_BRAM
-#define AXI_RAM_MODE_DDR
+//#define AXI_RAM_MODE_DDR
 
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
-#define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
+// 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
+#ifdef AXI_RAM_MODE_BRAM
+#define TILE_FACTOR 4 
+#define TILE_FACTOR_LOG2 2
+#else
+#define TILE_FACTOR 1
 #define TILE_FACTOR_LOG2 0
+#endif
 #define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
 #define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4

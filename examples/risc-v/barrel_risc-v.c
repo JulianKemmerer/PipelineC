@@ -24,7 +24,24 @@
 // Some defines needed for dual_frame_buffer.c
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
-#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c" // AXI_RAM_MODE_BRAM or AXI_RAM_MODE_DDR
+//#define AXI_RAM_MODE_BRAM // Only one frame buf used in this config, though two exist
+#define AXI_RAM_MODE_DDR
+#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
+
+// TODO MOVE TO SHARED BUS HEADER
+#define host_clk_to_dev(shared_bus_name)\
+PPCAT(shared_bus_name,_host_to_dev_wire_on_host_clk)
+#define dev_to_host_clk(shared_bus_name)\
+PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
+
+#ifdef AXI_RAM_MODE_DDR
+#define host_to_frame_buf host_clk_to_dev(axi_xil_mem)
+#define frame_buf_to_host dev_to_host_clk(axi_xil_mem)
+#endif
+#ifdef AXI_RAM_MODE_BRAM
+#define host_to_frame_buf host_clk_to_dev(axi_ram0_shared_bus)
+#define frame_buf_to_host dev_to_host_clk(axi_ram0_shared_bus)
+#endif
 
 
 // Hardware to sync threads and also toggle frame buffer select
@@ -49,7 +66,9 @@ void thread_sync_module(){
   }
   if(threads_are_done_r){
     expected_signal_value = ~expected_signal_value;
+    #ifndef AXI_RAM_MODE_BRAM
     frame_buffer_read_port_sel = ~frame_buffer_read_port_sel;
+    #endif
     threads_done = 0;
   }
   threads_are_done_r = threads_done;
@@ -111,13 +130,22 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Handshake logic using signals from regs
   // Default null
-  axi_xil_mem_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  host_to_frame_buf = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  #ifdef AXI_RAM_MODE_BRAM
+  // Extra unused second frame buf
+  axi_ram1_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL; // UNUSED
+  axi_shared_bus_t_dev_to_host_t dummy_read = axi_ram1_shared_bus_dev_to_host_wire_on_host_clk;// ?
+  #endif
 
   // Write start
   // SW sets req valid, hardware clears when accepted
   if(ram_write_req.valid){
     axi_write_req_t wr_req;
+    #ifdef AXI_RAM_MODE_BRAM
+    wr_req.awaddr = ram_write_req.addr;
+    #else
     wr_req.awaddr = dual_ram_to_addr(~frame_buffer_read_port_sel, ram_write_req.addr);
+    #endif
     wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
     wr_req.awsize = 2; // 2^2=4 bytes per transfer
     wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
@@ -133,9 +161,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       wr_req,
       wr_data_word,
       1, // TODO always ready?
-      axi_xil_mem_dev_to_host_wire_on_host_clk.write
+      frame_buf_to_host.write
     );
-    axi_xil_mem_host_to_dev_wire_on_host_clk.write = write_start.to_dev;
+    host_to_frame_buf.write = write_start.to_dev;
     if(write_start.done){
       ram_write_req_reg.valid = 0;
     }
@@ -144,16 +172,20 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // SW sets req valid, hardware clears when accepted
   if(ram_read_req.valid){
     axi_read_req_t rd_req;
+    #ifdef AXI_RAM_MODE_BRAM
+    rd_req.araddr = ram_read_req.addr;
+    #else
     rd_req.araddr = dual_ram_to_addr(frame_buffer_read_port_sel, ram_read_req.addr);
+    #endif
     rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
     rd_req.arsize = 2; // 2^2=4 bytes per transfer
     rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
     axi_shared_bus_t_read_start_logic_outputs_t read_start = axi_shared_bus_t_read_start_logic(
       rd_req,
       1, // TODO always ready?
-      axi_xil_mem_dev_to_host_wire_on_host_clk.read.req_ready
+      frame_buf_to_host.read.req_ready
     );
-    axi_xil_mem_host_to_dev_wire_on_host_clk.read.req = read_start.req;
+    host_to_frame_buf.read.req = read_start.req;
     if(read_start.done){
       ram_read_req_reg.valid = 0;
     }
@@ -171,9 +203,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }else{
     axi_shared_bus_t_write_finish_logic_outputs_t write_finish = axi_shared_bus_t_write_finish_logic(
       1,
-      axi_xil_mem_dev_to_host_wire_on_host_clk.write
+      frame_buf_to_host.write
     );
-    axi_xil_mem_host_to_dev_wire_on_host_clk.write.resp_ready = write_finish.resp_ready;
+    host_to_frame_buf.write.resp_ready = write_finish.resp_ready;
     if(write_finish.done){
       ram_write_resp_reg.valid = 1;
     }
@@ -183,9 +215,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(!ram_read_resp.valid){
     axi_shared_bus_t_read_finish_logic_outputs_t read_finish = axi_shared_bus_t_read_finish_logic(
       1,
-      axi_xil_mem_dev_to_host_wire_on_host_clk.read.data
+      frame_buf_to_host.read.data
     );
-    axi_xil_mem_host_to_dev_wire_on_host_clk.read.data_ready = read_finish.data_ready;
+    host_to_frame_buf.read.data_ready = read_finish.data_ready;
     if(read_finish.done){
       ram_read_resp_reg.data = uint8_array4_le(read_finish.data.rdata);
       ram_read_resp_reg.valid = 1;
