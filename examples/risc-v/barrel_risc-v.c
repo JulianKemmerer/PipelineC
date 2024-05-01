@@ -20,7 +20,10 @@
 // Mhz               | ~40  ~55-60 ~100  ~158  ~164  (comb->  150  160  ...~fmax 400Mhz?
 // Threads(~#stages) | 1    3      4     5     6              9    16      64?
 // max ops/sec       |      ~1.6G  
-#define CPU_CLK_MHZ 60.0  //83.33 // Prepare for adding AXI DDR
+// NEW 
+// Threads(~#stages) | 3    4    5     ...EXE needs autopipeline ... 
+// MHz               | ~61  ~86  ~141
+#define CPU_CLK_MHZ 83.33 // Prepare for adding AXI DDR
 // Some defines needed for dual_frame_buffer.c
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
@@ -245,6 +248,9 @@ void mm_io_connections()
   leds |= ((uint4_t)mem_map_outputs[0][0].led << 0);
   // led1,2 unused
   // led3 is combined error flag from all cores
+  static uint1_t mem_out_of_range_reg[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
+  static uint1_t unknown_op_reg[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
+  static uint1_t halt_reg[N_BARRELS][N_THREADS_PER_BARREL];
   static uint1_t error;
   leds |= ((uint4_t)error << 3);
   uint32_t bid;
@@ -256,11 +262,14 @@ void mm_io_connections()
       mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
       mem_map_inputs[bid][tid].frame_signal = next_thread_start_signal[bid][tid];
       thread_is_done_signal[bid][tid] = mem_map_outputs[bid][tid].frame_signal;
-      error |= unknown_op[bid][tid]; // Sticky
-      error |= mem_out_of_range[bid][tid]; // Sticky
-      error |= mem_map_outputs[bid][tid].halt; // Sticky
+      error |= unknown_op_reg[bid][tid]; // Sticky
+      error |= mem_out_of_range_reg[bid][tid]; // Sticky
+      error |= halt_reg[bid][tid]; // Sticky
+      halt_reg[bid][tid] = mem_map_outputs[bid][tid].halt;
     }
   }
+  mem_out_of_range_reg = mem_out_of_range;
+  unknown_op_reg = unknown_op;
 }
 
 
@@ -321,9 +330,6 @@ void inter_stage_connections(){
   #else
   imem_inputs = pc_outputs;
   #endif
-  #if N_THREADS_PER_BARREL >= 6
-  #define imem_to_decode_REG
-  #endif
   #ifdef imem_to_decode_REG
   static thread_context_t imem_to_decode[N_BARRELS];
   decode_inputs = imem_to_decode;
@@ -338,7 +344,7 @@ void inter_stage_connections(){
   #else
   reg_rd_inputs = decode_outputs;
   #endif
-  #if N_THREADS_PER_BARREL >= 4
+  #if N_THREADS_PER_BARREL >= 5
   #define reg_rd_to_exe_REG
   #endif
   #ifdef reg_rd_to_exe_REG
@@ -348,7 +354,7 @@ void inter_stage_connections(){
   #else
   exe_inputs = reg_rd_outputs;
   #endif
-  #if N_THREADS_PER_BARREL >= 5
+  #if N_THREADS_PER_BARREL >= 4
   #define exe_to_dmem_REG
   #endif
   #ifdef exe_to_dmem_REG
