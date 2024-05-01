@@ -17,6 +17,7 @@ name##_registers[num_regs-1] = rhs;
 //library xpm;
 //use xpm.vcomponents.all;
 // Seems can get away with just matching component def?
+#pragma FUNC_WIRES xil_cdc2_bit
 uint1_t xil_cdc2_bit(uint1_t src_in){
   __vhdl__("\n\
   component xpm_cdc_array_single is \n\
