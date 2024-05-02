@@ -23,12 +23,18 @@
 // NEW 
 // Threads(~#stages) | 3    4    5     ...EXE needs autopipeline ... 
 // MHz               | ~61  ~86  ~141
-#define CPU_CLK_MHZ 83.33 // Prepare for adding AXI DDR
+//#define AXI_RAM_MODE_BRAM // Only one frame buf used in this config, though two exist
+#define AXI_RAM_MODE_DDR
+
+#ifdef AXI_RAM_MODE_DDR
+#define CPU_CLK_MHZ 83.33
+#endif
+#ifdef AXI_RAM_MODE_BRAM
+#define CPU_CLK_MHZ 40.0
+#endif
 // Some defines needed for dual_frame_buffer.c
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
-//#define AXI_RAM_MODE_BRAM // Only one frame buf used in this config, though two exist
-#define AXI_RAM_MODE_DDR // TODO TRY DDR IP MODE with normal ordering instead of strict?
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
 
 // TODO MOVE TO SHARED BUS HEADER
@@ -246,13 +252,16 @@ void mm_io_connections()
   // led0 is core0 led for some sign of life
   leds = 0;
   leds |= ((uint4_t)mem_map_outputs[0][0].led << 0);
-  // led1,2 unused
-  // led3 is combined error flag from all cores
+  // Error flag from all cores
   static uint1_t mem_out_of_range_reg[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
   static uint1_t unknown_op_reg[N_BARRELS][N_THREADS_PER_BARREL]; // Exception, stop sim
   static uint1_t halt_reg[N_BARRELS][N_THREADS_PER_BARREL];
-  static uint1_t error;
-  leds |= ((uint4_t)error << 3);
+  static uint1_t mem_out_of_range_led;
+  static uint1_t unknown_op_led;
+  static uint1_t halt_led;
+  leds |= ((uint4_t)mem_out_of_range_led << 3);
+  leds |= ((uint4_t)unknown_op_led << 2);
+  leds |= ((uint4_t)halt_led << 1);
   uint32_t bid;
   for(bid = 0; bid < N_BARRELS; bid+=1)
   {
@@ -262,9 +271,9 @@ void mm_io_connections()
       mem_map_inputs[bid][tid].thread_id = (bid*N_THREADS_PER_BARREL) + tid;
       mem_map_inputs[bid][tid].frame_signal = next_thread_start_signal[bid][tid];
       thread_is_done_signal[bid][tid] = mem_map_outputs[bid][tid].frame_signal;
-      error |= unknown_op_reg[bid][tid]; // Sticky
-      error |= mem_out_of_range_reg[bid][tid]; // Sticky
-      error |= halt_reg[bid][tid]; // Sticky
+      unknown_op_led |= unknown_op_reg[bid][tid]; // Sticky
+      mem_out_of_range_led |= mem_out_of_range_reg[bid][tid]; // Sticky
+      halt_led |= halt_reg[bid][tid]; // Sticky
       halt_reg[bid][tid] = mem_map_outputs[bid][tid].halt;
     }
   }
