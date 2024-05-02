@@ -90,11 +90,14 @@ void main() {
   // x,y bounds based on which thread you are
   // Let each thread do entire horizontal X lines, split Y direction
 
-  // Write all pixels white
+  // Write all pixels with test pattern
+  pixel_t p;
   //while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
         for(int x=0; x < FRAME_WIDTH; x++){
-            pixel_t p = {.r=255, .g=255, .b=255};
+            p.r = x;
+            p.g = y;
+            p.b = 64;
             frame_buf_write(x, y, &p);
         }
     }
@@ -104,10 +107,9 @@ void main() {
 
   // Toggle as test of fast read and write
   while(1){
-    for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
-        for(int x=0; x < FRAME_WIDTH; x++){
+    for(int y=0; y < FRAME_HEIGHT; y+=1){
+        for(int x=*THREAD_ID; x < FRAME_WIDTH; x+=NUM_THREADS){
             // Read pixel
-            pixel_t p;
             frame_buf_read(x, y, &p);
             // Invert all colors 
             p.r = ~p.r;
