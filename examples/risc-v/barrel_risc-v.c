@@ -28,7 +28,7 @@
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
 //#define AXI_RAM_MODE_BRAM // Only one frame buf used in this config, though two exist
-#define AXI_RAM_MODE_DDR
+#define AXI_RAM_MODE_DDR // TODO TRY DDR IP MODE with normal ordering instead of strict?
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
 
 // TODO MOVE TO SHARED BUS HEADER

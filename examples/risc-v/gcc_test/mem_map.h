@@ -11,9 +11,9 @@
 
 #define MEM_MAP_BASE_ADDR 0x10000000
 
-#define N_THREADS_PER_BARREL 4
-#define N_BARRELS 2
-#define NUM_THREADS 8
+#define N_THREADS_PER_BARREL 5
+#define N_BARRELS 1
+#define NUM_THREADS 5
 // Read: Thread ID, Write: output/stop/halt peripheral
 #define THREAD_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
 static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
