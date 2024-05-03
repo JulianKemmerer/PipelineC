@@ -181,11 +181,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BLT offset
-      int12_t blt_offset;
-      blt_offset = int12_uint1_12(blt_offset, imm12);
-      blt_offset = int12_uint6_5(blt_offset, imm10_5);
-      blt_offset = int12_uint4_1(blt_offset, imm4_1);
-      blt_offset = int12_uint1_11(blt_offset, imm11);
+      int13_t blt_offset;
+      blt_offset = int13_uint1_12(blt_offset, imm12);
+      blt_offset = int13_uint6_5(blt_offset, imm10_5);
+      blt_offset = int13_uint4_1(blt_offset, imm4_1);
+      blt_offset = int13_uint1_11(blt_offset, imm11);
       rv.signed_immediate = blt_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -200,11 +200,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BLT offset
-      int12_t bltu_offset;
-      bltu_offset = int12_uint1_12(bltu_offset, imm12);
-      bltu_offset = int12_uint6_5(bltu_offset, imm10_5);
-      bltu_offset = int12_uint4_1(bltu_offset, imm4_1);
-      bltu_offset = int12_uint1_11(bltu_offset, imm11);
+      int13_t bltu_offset;
+      bltu_offset = int13_uint1_12(bltu_offset, imm12);
+      bltu_offset = int13_uint6_5(bltu_offset, imm10_5);
+      bltu_offset = int13_uint4_1(bltu_offset, imm4_1);
+      bltu_offset = int13_uint1_11(bltu_offset, imm11);
       rv.signed_immediate = bltu_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -219,11 +219,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BGE offset
-      int12_t bge_offset;
-      bge_offset = int12_uint1_12(bge_offset, imm12);
-      bge_offset = int12_uint6_5(bge_offset, imm10_5);
-      bge_offset = int12_uint4_1(bge_offset, imm4_1);
-      bge_offset = int12_uint1_11(bge_offset, imm11);
+      int13_t bge_offset;
+      bge_offset = int13_uint1_12(bge_offset, imm12);
+      bge_offset = int13_uint6_5(bge_offset, imm10_5);
+      bge_offset = int13_uint4_1(bge_offset, imm4_1);
+      bge_offset = int13_uint1_11(bge_offset, imm11);
       rv.signed_immediate = bge_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -238,11 +238,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BGEU offset
-      int12_t bgeu_offset;
-      bgeu_offset = int12_uint1_12(bgeu_offset, imm12);
-      bgeu_offset = int12_uint6_5(bgeu_offset, imm10_5);
-      bgeu_offset = int12_uint4_1(bgeu_offset, imm4_1);
-      bgeu_offset = int12_uint1_11(bgeu_offset, imm11);
+      int13_t bgeu_offset;
+      bgeu_offset = int13_uint1_12(bgeu_offset, imm12);
+      bgeu_offset = int13_uint6_5(bgeu_offset, imm10_5);
+      bgeu_offset = int13_uint4_1(bgeu_offset, imm4_1);
+      bgeu_offset = int13_uint1_11(bgeu_offset, imm11);
       rv.signed_immediate = bgeu_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -257,11 +257,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BEQ offset
-      int12_t beq_offset;
-      beq_offset = int12_uint1_12(beq_offset, imm12);
-      beq_offset = int12_uint6_5(beq_offset, imm10_5);
-      beq_offset = int12_uint4_1(beq_offset, imm4_1);
-      beq_offset = int12_uint1_11(beq_offset, imm11);
+      int13_t beq_offset;
+      beq_offset = int13_uint1_12(beq_offset, imm12);
+      beq_offset = int13_uint6_5(beq_offset, imm10_5);
+      beq_offset = int13_uint4_1(beq_offset, imm4_1);
+      beq_offset = int13_uint1_11(beq_offset, imm11);
       rv.signed_immediate = beq_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -276,11 +276,11 @@ decoded_t decode(uint32_t inst){
       uint4_t imm4_1 = inst(11, 8);
       uint1_t imm11 = inst(7);
       // BNE offset
-      int12_t bne_offset;
-      bne_offset = int12_uint1_12(bne_offset, imm12);
-      bne_offset = int12_uint6_5(bne_offset, imm10_5);
-      bne_offset = int12_uint4_1(bne_offset, imm4_1);
-      bne_offset = int12_uint1_11(bne_offset, imm11);
+      int13_t bne_offset;
+      bne_offset = int13_uint1_12(bne_offset, imm12);
+      bne_offset = int13_uint6_5(bne_offset, imm10_5);
+      bne_offset = int13_uint4_1(bne_offset, imm4_1);
+      bne_offset = int13_uint1_11(bne_offset, imm11);
       rv.signed_immediate = bne_offset;
       // Compare two regs
       rv.print_rs1_read = 1;
@@ -594,7 +594,7 @@ execute_t execute(
       printf("ANDI: %d & %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
     }else if(decoded.funct3==FUNCT3_ORI){
       rv.result = reg1 | decoded.signed_immediate;
-      printf("ORI: %d & %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
+      printf("ORI: %d | %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
     }else if(decoded.funct3==FUNCT3_XORI){
       rv.result = reg1 ^ decoded.signed_immediate;
       printf("XORI: %d ^ %d = %d -> r%d \n", reg1, decoded.signed_immediate, rv.result, decoded.dest);
