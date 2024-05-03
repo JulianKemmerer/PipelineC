@@ -209,8 +209,7 @@ rd_pri_port_arb_t rd_pri_port_arb(
     o.to_dev.read.req.id = 0xFF; //SHARED_AXI_XIL_MEM_NUM_THREADS; /* Overides/ignores priority host ID value*/
     o.to_rd_pri_host.read.req_ready = from_dev.read.req_ready;
     // Switch to non priority port if run out priority requests
-    // and non-priority port has pending valid req
-    if(!rd_pri_from_host.read.req.valid & other_from_host.read.req.valid)
+    if(!rd_pri_from_host.read.req.valid)
     {
       read_req_sel_pri_host = 0;
     }
@@ -220,9 +219,8 @@ rd_pri_port_arb_t rd_pri_port_arb(
     // Uses req w ID from upstream other host
     o.to_dev.read.req = other_from_host.read.req;
     o.to_other_host.read.req_ready = from_dev.read.req_ready;
-    // Switch to priority port if it requests
-    // or if no more non-priority reqs
-    if(rd_pri_from_host.read.req.valid | !other_from_host.read.req.valid)
+    // Switch to priority port if it makes any requests
+    if(rd_pri_from_host.read.req.valid)
     {
       read_req_sel_pri_host = 1;
     }
