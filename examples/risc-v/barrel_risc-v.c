@@ -85,6 +85,13 @@ void thread_sync_module(){
 
 
 // Declare memory map information
+// TODO make+use macros for boilerplate handshake logic below...
+// AXI bus types for burst size
+DECL_AXI_SHARED_BUS_WRITE_START(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_write_start axi_shared_bus_write_start(RISCV_RAM_NUM_BURST_WORDS)
+DECL_AXI_SHARED_BUS_READ_FINISH(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_read_finish_t axi_shared_bus_read_finish_t(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_read_finish axi_shared_bus_read_finish(RISCV_RAM_NUM_BURST_WORDS)
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   uint32_t thread_id;
@@ -149,27 +156,17 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Write start
   // SW sets req valid, hardware clears when accepted
   if(ram_write_req.valid){
-    axi_write_req_t wr_req;
+    uint32_t waddr;
     #ifdef AXI_RAM_MODE_BRAM
-    wr_req.awaddr = ram_write_req.addr;
+    waddr = ram_write_req.addr;
     #else
-    wr_req.awaddr = dual_ram_to_addr(~frame_buffer_read_port_sel, ram_write_req.addr);
+    waddr = dual_ram_to_addr(~frame_buffer_read_port_sel, ram_write_req.addr);
     #endif
-    wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
-    wr_req.awsize = 2; // 2^2=4 bytes per transfer
-    wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
-    axi_write_data_t wr_data_word;
-    // All 4 bytes are being transfered (uint to array)
-    uint32_t i;
-    for(i=0; i<4; i+=1)
-    {
-      wr_data_word.wdata[i] = ram_write_req.data >> (i*8);
-      wr_data_word.wstrb[i] = 1;
-    }
-    axi_shared_bus_t_write_start_logic_outputs_t write_start = axi_shared_bus_t_write_start_logic(
-      wr_req,
-      wr_data_word,
-      1, // TODO always ready?
+    axi_shared_bus_write_start_t write_start = axi_shared_bus_burst_write_start(
+      1,
+      waddr,
+      ram_write_req.data,
+      ram_write_req.num_words,
       frame_buf_to_host.write
     );
     host_to_frame_buf.write = write_start.to_dev;
@@ -180,26 +177,23 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Read start
   // SW sets req valid, hardware clears when accepted
   if(ram_read_req.valid){
-    axi_read_req_t rd_req;
+    uint32_t raddr;
     #ifdef AXI_RAM_MODE_BRAM
-    rd_req.araddr = ram_read_req.addr;
+    raddr = ram_read_req.addr;
     #else
-    rd_req.araddr = dual_ram_to_addr(frame_buffer_read_port_sel, ram_read_req.addr);
+    raddr = dual_ram_to_addr(frame_buffer_read_port_sel, ram_read_req.addr);
     #endif
-    rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
-    rd_req.arsize = 2; // 2^2=4 bytes per transfer
-    rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
-    axi_shared_bus_t_read_start_logic_outputs_t read_start = axi_shared_bus_t_read_start_logic(
-      rd_req,
-      1, // TODO always ready?
+    axi_shared_bus_sized_read_start_t read_start = axi_shared_bus_sized_read_start(
+      raddr,
+      ram_read_req.num_words,
+      1,
       frame_buf_to_host.read.req_ready
     );
-    host_to_frame_buf.read.req = read_start.req;
+    host_to_frame_buf.read.req = read_start.bus_req;
     if(read_start.done){
       ram_read_req_reg.valid = 0;
     }
   }
-
   // Write Finish
   // HW sets resp valid, hardware auto clears when read by software
   // (since not using AXI write resp data, only valid flag)
@@ -208,27 +202,32 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(ram_write_resp.valid){
     if(rd_byte_ens[0] & ADDR_IS_VALID_FLAG(addr, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t)){
       ram_write_resp_reg.valid = 0;
+      ram_write_resp_reg.num_words = 0;
     }
   }else{
-    axi_shared_bus_t_write_finish_logic_outputs_t write_finish = axi_shared_bus_t_write_finish_logic(
-      1,
-      frame_buf_to_host.write
-    );
-    host_to_frame_buf.write.resp_ready = write_finish.resp_ready;
-    if(write_finish.done){
-      ram_write_resp_reg.valid = 1;
+    if(ram_write_resp.num_words > 0){
+      axi_shared_bus_sized_write_finish_t write_finish = axi_shared_bus_sized_write_finish(
+        ram_write_resp_reg.num_words,
+        1,
+        frame_buf_to_host.write
+      );
+      host_to_frame_buf.write.resp_ready = write_finish.bus_resp_ready;
+      if(write_finish.done){
+        ram_write_resp_reg.valid = 1;
+      }
     }
   }
   // Read finish
   // HW sets resp valid, software clears when accepted
-  if(!ram_read_resp.valid){
-    axi_shared_bus_t_read_finish_logic_outputs_t read_finish = axi_shared_bus_t_read_finish_logic(
+  if(!ram_read_resp.valid & (ram_read_resp.num_words > 0)){
+    axi_shared_bus_burst_read_finish_t read_finish = axi_shared_bus_burst_read_finish(
+      ram_read_resp.num_words,
       1,
       frame_buf_to_host.read.data
     );
-    host_to_frame_buf.read.data_ready = read_finish.data_ready;
+    host_to_frame_buf.read.data_ready = read_finish.bus_data_ready;
     if(read_finish.done){
-      ram_read_resp_reg.data = uint8_array4_le(read_finish.data.rdata);
+      ram_read_resp_reg.data = read_finish.words;
       ram_read_resp_reg.valid = 1;
     }
   }

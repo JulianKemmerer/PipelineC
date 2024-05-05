@@ -36,24 +36,29 @@ static volatile uint32_t* LED = (uint32_t*)LED_ADDR;
 
 // Types that PipelineC and CPU share to talk to hardware ram RAM
 #define riscv_valid_flag_t int32_t // TODO single bit packing
+#define RISCV_RAM_NUM_BURST_WORDS 8
 typedef struct riscv_ram_read_req_t
 {
   uint32_t addr;
+  uint32_t num_words;
   riscv_valid_flag_t valid;
 }riscv_ram_read_req_t;
 typedef struct riscv_ram_read_resp_t
 {
-  uint32_t data;
+  uint32_t data[RISCV_RAM_NUM_BURST_WORDS];
+  uint32_t num_words;
   riscv_valid_flag_t valid;
 }riscv_ram_read_resp_t;
 typedef struct riscv_ram_write_req_t
 {
   uint32_t addr;
-  uint32_t data;
+  uint32_t data[RISCV_RAM_NUM_BURST_WORDS];
+  uint32_t num_words;
   riscv_valid_flag_t valid;
 }riscv_ram_write_req_t;
 typedef struct riscv_ram_write_resp_t
 {
+  uint32_t num_words;
   riscv_valid_flag_t valid;
 }riscv_ram_write_resp_t;
 
@@ -81,8 +86,12 @@ static volatile riscv_ram_read_req_t* RAM_RD_REQ = (riscv_ram_read_req_t*)RAM_RD
 #define RAM_RD_RESP_ADDR (RAM_RD_REQ_ADDR + sizeof(riscv_ram_read_req_t))
 static volatile riscv_ram_read_resp_t* RAM_RD_RESP = (riscv_ram_read_resp_t*)RAM_RD_RESP_ADDR;
 
+/* TODO 
+
 // Multiple in flight versions:
-static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_write(uint32_t addr, uint32_t data){
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_write(
+  uint32_t addr, uint32_t* data, uint8_t num_words
+){
   // If the request flag is valid from a previous req
   // then done now, couldnt start
   if(RAM_WR_REQ->valid){
@@ -90,23 +99,25 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_wr
   }
   // Start
   RAM_WR_REQ->addr = addr;
+  RAM_WR_REQ->num_words = num_words;
+  // TODO skip copy is data pointer if mmio regs already
+  for(uint32_t i = 0; i < num_words; i++)
+  {
+    RAM_WR_REQ->data[i] = data[i];
+  }
   RAM_WR_REQ->data = data;
   RAM_WR_REQ->valid = 1;
   return 1;
 }
-static inline __attribute__((always_inline)) void start_ram_write(uint32_t addr, uint32_t data){
-  while(!try_start_ram_write(addr, data)){}
+static inline __attribute__((always_inline)) void start_ram_write(
+  uint32_t addr, uint32_t* data, uint8_t num_words
+){
+  while(!try_start_ram_write(addr, data, num_words)){}
 }
-static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(){
-  // No write response data
-  // Simply read and return response valid bit
-  // Hardware automatically clears valid bit on read
-  return RAM_WR_RESP->valid;
-}
-static inline __attribute__((always_inline)) void finish_ram_write(){
-  while(!try_finish_ram_write()){}
-}
-static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_read(uint32_t addr){
+
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_read(
+  uint32_t addr, uint8_t num_words
+){
   // If the request flag is valid from a previous req
   // then done now, couldnt start
   if(RAM_RD_REQ->valid){
@@ -114,14 +125,29 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_re
   }
   // Start
   RAM_RD_REQ->addr = addr;
+  RAM_RD_REQ->num_words = num_words;
   RAM_RD_REQ->valid = 1;
   return 1;
 }
-static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr){
-  while(!try_start_ram_read(addr)){}
+static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr, uint8_t num_words){
+  while(!try_start_ram_read(addr, num_words)){}
 }
-static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_read(uint32_t* data){
+*/
+
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(uint8_t num_words){
+  // No write response data
+  // Simply read and return response valid bit
+  // Hardware automatically clears valid bit + num words on read of valid=1
+  RAM_WR_RESP->num_words = num_words; // Requested num of words // TODO dont need to set on repeated tries?
+  return RAM_WR_RESP->valid;
+}
+static inline __attribute__((always_inline)) void finish_ram_write(uint8_t num_words){
+  while(!try_finish_ram_write(num_words)){}
+}
+// Caution trying for different num_words might not make sense?
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_read(uint32_t* data, uint8_t num_words){
   // Have valid read response data?
+  RAM_RD_RESP->num_words = num_words; // Requested num of words
   riscv_valid_flag_t rv = RAM_RD_RESP->valid;
   // If not then done now
   if(!rv){
@@ -129,36 +155,47 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_r
   }
   // Valid is not auto cleared by hardware
   // Save the valid data
-  *data = RAM_RD_RESP->data;
+  // TODO skip copy if data pointer is mmio regs already
+  for(uint32_t i = 0; i < num_words; i++)
+  {
+    data[i] = RAM_RD_RESP->data[i];
+  }
   // Manually clear the valid buffer
+  RAM_RD_RESP->num_words = 0;
   RAM_RD_RESP->valid = 0;
   // Done
   return rv;
 }
-static inline __attribute__((always_inline)) void finish_ram_read(uint32_t* data){
+static inline __attribute__((always_inline)) void finish_ram_read(uint32_t* data, uint8_t num_words){
   // Wait for finish
-  while(!try_finish_ram_read(data)){}
+  while(!try_finish_ram_read(data, num_words)){}
 }
-
 
 // One in flight, start one and finishes one
 // Does not need to check before starting next xfer
-static inline __attribute__((always_inline)) void ram_write(uint32_t addr, uint32_t data){
+static inline __attribute__((always_inline)) void ram_write(uint32_t addr, uint32_t* data, uint8_t num_words){
   // Start
   // Dont need try_ logic to check if valid been cleared, just set
+  // Start
   RAM_WR_REQ->addr = addr;
-  RAM_WR_REQ->data = data;
+  RAM_WR_REQ->num_words = num_words;
+  // TODO skip copy if data pointer is mmio regs already
+  for(uint32_t i = 0; i < num_words; i++)
+  {
+    RAM_WR_REQ->data[i] = data[i];
+  }
   RAM_WR_REQ->valid = 1;
   // Finish
-  finish_ram_write();
+  finish_ram_write(num_words);
 }
-static inline __attribute__((always_inline)) void ram_read(uint32_t addr, uint32_t* data){
+static inline __attribute__((always_inline)) void ram_read(uint32_t addr, uint32_t* data, uint8_t num_words){
   // Start
   // Dont need try_ logic to check if valid been cleared, just set
   RAM_RD_REQ->addr = addr;
+  RAM_RD_REQ->num_words = num_words;
   RAM_RD_REQ->valid = 1;
   // Wait for finish
-  finish_ram_read(data);
+  finish_ram_read(data, num_words);
 }
 
 
