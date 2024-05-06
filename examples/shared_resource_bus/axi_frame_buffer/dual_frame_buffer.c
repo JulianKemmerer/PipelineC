@@ -1,6 +1,6 @@
 // VGA pmod stuff
-#define FRAME_WIDTH 800
-#define FRAME_HEIGHT 600
+#define FRAME_WIDTH 640
+#define FRAME_HEIGHT 480
 #define VGA_ASYNC_FIFO_N_PIXELS 1
 #include "vga/vga_pmod_async_pixels_fifo.c" // Version that expects only x,y pixels, N at a time
 

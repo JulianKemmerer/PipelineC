@@ -20,28 +20,19 @@ void main() {
   *LED = ~*LED;
   threads_frame_sync();
 
-  // Many reads, kernels, and writes happening at once
-  pixel_t pixel_buf[RISCV_RAM_NUM_BURST_WORDS];
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
-        // Bottle neck is read
-        // Start reads of many pixels at once
-        // Start read of entire line in advance
+        // Bottle neck is read (specifically starting reads)
+        // So start read of many pixels at once...
+        // start read of entire line in advance
         uint32_t x = 0;
         frame_buf_read_start(x, y, FRAME_WIDTH);
-        // Then do loop processing burst size at a time
-        int32_t remaining_pixels = FRAME_WIDTH;
-        while(remaining_pixels > 0){
-          uint32_t num_pixels = 
-            remaining_pixels >= RISCV_RAM_NUM_BURST_WORDS ? 
-              RISCV_RAM_NUM_BURST_WORDS : remaining_pixels;
-          frame_buf_read_finish(pixel_buf, num_pixels);
-          for(int i=0; i < num_pixels; i++){
-            kernel(x+i, y, &(pixel_buf[i]), &(pixel_buf[i]));
-          }
-          frame_buf_write(x, y, num_pixels, pixel_buf);
-          remaining_pixels -= num_pixels;
-          x += num_pixels;
+        // Then process one pixel at a time
+        while(x < FRAME_WIDTH){
+          frame_buf_read_finish(&p, 1);
+          kernel(x, y, &p, &p);
+          frame_buf_write(x, y, 1, &p);
+          x += 1;
         }
     }
     // Toggle LEDs to show working

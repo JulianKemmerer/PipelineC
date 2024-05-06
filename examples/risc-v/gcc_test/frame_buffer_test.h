@@ -3,8 +3,8 @@
 typedef struct pixel_t{
  uint8_t a, b, g, r; 
 }pixel_t; // 24bpp color, does get correctly packed at 4 bytes sizeof()
-#define FRAME_WIDTH 800
-#define FRAME_HEIGHT 600
+#define FRAME_WIDTH 640
+#define FRAME_HEIGHT 480
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
 #define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
 #define TILE_FACTOR_LOG2 0
@@ -39,11 +39,10 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
 //////////////////////////////////////////////////////////////////////////////////
 
 void kernel(int x, int y, pixel_t* p_in, pixel_t* p_out){
-  // Invert all colors
-  // Kernel right now doesnt depend on x,y position
-  p_out->r = ~p_in->r;
-  p_out->g = ~p_in->g;
-  p_out->b = ~p_in->b;
+  // TODO other params like time/frame count?
+  p_out->r = p_in->r;
+  p_out->g = p_in->g;
+  p_out->b = p_in->b + 1;
 }
 
 // Helper to do frame sync
