@@ -42,7 +42,7 @@ void kernel(int x, int y, pixel_t* p_in, pixel_t* p_out){
   // TODO other params like time/frame count?
   p_out->r = p_in->r;
   p_out->g = p_in->g;
-  p_out->b = p_in->b + 1;
+  p_out->b = p_in->b + 16;
 }
 
 // Helper to do frame sync
