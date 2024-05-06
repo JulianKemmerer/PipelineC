@@ -47,18 +47,18 @@ pixel_t frame_buf_read(uint16_t x, uint16_t y)
   uint32_t data = dual_axi_ram_read(frame_buffer_read_port_sel, addr);
   pixel_t pixel;
   pixel.a = data >> (0*8);
-  pixel.r = data >> (1*8);
+  pixel.b = data >> (1*8);
   pixel.g = data >> (2*8);
-  pixel.b = data >> (3*8);
+  pixel.r = data >> (3*8);
   return pixel;
 }
 void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 {
   uint32_t data = 0;
   data |= (uint32_t)pixel.a << (0*8);
-  data |= (uint32_t)pixel.r << (1*8);
+  data |= (uint32_t)pixel.b << (1*8);
   data |= (uint32_t)pixel.g << (2*8);
-  data |= (uint32_t)pixel.b << (3*8);
+  data |= (uint32_t)pixel.r << (3*8);
   uint32_t addr = pos_to_addr(x, y);
   dual_axi_ram_write(!frame_buffer_read_port_sel, addr, data);
 }
@@ -117,9 +117,9 @@ void host_vga_reader()
   // Write pixel data into sync fifo
   pixel_t pixel;
   pixel.a = data[0];
-  pixel.r = data[1];
+  pixel.b = data[1];
   pixel.g = data[2];
-  pixel.b = data[3];
+  pixel.r = data[3];  
   uint1_t async_fifo_ready;
   #pragma FEEDBACK async_fifo_ready
   ddr_vga_fifo_t sync_fifo_out = ddr_vga_fifo(
@@ -170,9 +170,9 @@ void host_vga_reader()
   // Write pixel data into fifo
   pixel_t pixel;
   pixel.a = data[0];
-  pixel.r = data[1];
+  pixel.b = data[1];
   pixel.g = data[2];
-  pixel.b = data[3];
+  pixel.r = data[3];  
   pixel_t pixels[1];
   pixels[0] = pixel;
   uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, data_valid);
@@ -241,9 +241,9 @@ void host_vga_read_finisher()
   // Write pixel data into fifo
   pixel_t pixel;
   pixel.a = data[0];
-  pixel.r = data[1];
+  pixel.b = data[1];
   pixel.g = data[2];
-  pixel.b = data[3];
+  pixel.r = data[3]; 
   pixel_t pixels[1];
   pixels[0] = pixel;
   uint1_t fifo_ready = pmod_async_fifo_write_logic(pixels, data_valid);
