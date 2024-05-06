@@ -68,7 +68,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 
 // Have ~skid like FIFO to prevent DDR controller blocking front of line when flow control asserted
 #include "fifo.h"
-#define DDR_VGA_FIFO_DEPTH 64
+#define DDR_VGA_FIFO_DEPTH 16
 FIFO_FWFT(ddr_vga_fifo, pixel_t, DDR_VGA_FIFO_DEPTH)
 
 #ifdef AXI_XIL_MEM_RD_PRI_PORT
@@ -83,6 +83,17 @@ void host_vga_reader()
   static vga_pos_t vga_pos;
   static uint16_t reads_in_flight;
   // Read and increment pos if room in fifos (cant be greedy since will 100% hog priority port)
+  /* // Want to give room for all other threads * burst size  (sigh *2 sing axi ddr reads starrt eveyr other cycle)
+  // So little fsm to turn off on reads in that chunk size==DDR FIFO depth
+  static uint1_t reads_enabled = 1;
+  uint1_t reads_enabled_next = reads_enabled;
+  if(reads_in_flight >= (DDR_VGA_FIFO_DEPTH-2)){ // Sanity leave room for off by 1 or 2
+    // If ~full turn off
+    reads_enabled_next = 0;
+  }else if(reads_in_flight==0){
+    // If ~empty turn on
+    reads_enabled_next = 1;
+  }*/
 
   // Read from the current read frame buffer addr
   uint32_t addr = pos_to_addr(vga_pos.x, vga_pos.y);
@@ -90,7 +101,7 @@ void host_vga_reader()
   axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
   axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arsize = 2; // 2^2=4 bytes per transfer
   axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.data.user.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
-  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.valid = (reads_in_flight<(DDR_VGA_FIFO_DEPTH-1)); //?Check -1 off by one being full early ?
+  axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.valid = (reads_in_flight <= (DDR_VGA_FIFO_DEPTH-2)); //reads_enabled;
   uint1_t do_increment = axi_xil_rd_pri_port_mem_host_to_dev_wire.read.req.valid & axi_xil_rd_pri_port_mem_dev_to_host_wire.read.req_ready;
   vga_pos = vga_frame_pos_increment(vga_pos, do_increment);
   if(do_increment){
@@ -128,7 +139,9 @@ void host_vga_reader()
     reads_in_flight -= 1;
   }
 
+  // Registers
   frame_buffer_read_port_sel_reg = xil_cdc2_bit(frame_buffer_read_port_sel);
+  //reads_enabled = reads_enabled_next;
 }
 #else
 // Version trying to act as a greedy host among the others 

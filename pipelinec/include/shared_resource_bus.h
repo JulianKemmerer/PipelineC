@@ -626,7 +626,7 @@ uint1_t PPCAT(name, _host_is_selected)(uint8_t selected_host_port, uint8_t next_
 } \
 /* Pick next shared bus to arb based on what other ports have chosen*/ \
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _next_host_sel)) \
-uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS]) \
+uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev_to_selected_host[NUM_DEV_PORTS], uint1_t no_other_hosts_valid) \
 { \
   /* Jumping multiple places takes alot of logic it seems*/ \
   /* Do easy o(n^2) looking excessive muxing for now */ \
@@ -651,8 +651,9 @@ uint8_t PPCAT(name, _next_host_sel)(uint8_t selected_host_port, uint8_t next_dev
   if(!rv_valid){ \
     rv_valid = !PPCAT(name, _host_is_selected)(rv, next_dev_to_selected_host); \
   } \
+  /* Dont increment if no other hosts valid */\
   /* Use rv if valid */ \
-  if(rv_valid) \
+  if(rv_valid & ~no_other_hosts_valid) \
   { \
     selected_host_port = rv; \
   } \
@@ -954,7 +955,7 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   PPCAT(name, _dev_arb_pipelined_t) o; /*Default all zeros single cycle pulses*/ \
    \
   /* Each dev port prioritizes/selects a specific host bus for input into device*/ \
-  uint32_t i; \
+  uint32_t i, j; \
   /* See reset below {0, 1}*/ \
   static uint8_t read_dev_to_selected_host[NUM_DEV_PORTS]; \
   static uint8_t write_dev_to_selected_host[NUM_DEV_PORTS]; \
@@ -978,7 +979,25 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
   /* Default state doesnt change*/ \
   uint8_t read_next_dev_to_selected_host[NUM_DEV_PORTS] = read_dev_to_selected_host; \
   uint8_t write_next_dev_to_selected_host[NUM_DEV_PORTS] = write_dev_to_selected_host; \
- \
+  /* Compute helper arb flags ?TODO one cycle delayed? */ \
+  static uint1_t read_no_other_hosts[NUM_DEV_PORTS];\
+  static uint1_t write_no_other_hosts[NUM_DEV_PORTS];\
+  for (i = 0; i < NUM_DEV_PORTS; i+=1) \
+  {\
+    read_no_other_hosts[i] = 1;\
+    write_no_other_hosts[i] = 1;\
+    uint8_t read_selected_host = read_dev_to_selected_host[i];\
+    uint8_t write_selected_host = write_dev_to_selected_host[i]; \
+    for (j = 0; j < NUM_HOST_PORTS; j+=1) \
+    {\
+      if(read_selected_host != j){\
+        read_no_other_hosts[i] &= ~from_hosts[j].read.req.valid;\
+      }\
+      if(write_selected_host != j){\
+        write_no_other_hosts[i] &= ~from_hosts[j].write.req.valid;\
+      }\
+    }\
+  }\
   /* Loop that muxes requests/inputs into the selected host bus for each dev port*/ \
   for (i = 0; i < NUM_DEV_PORTS; i+=1) \
   { \
@@ -990,7 +1009,7 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
     o.to_hosts[read_selected_host].read.req_ready = from_devs[i].read.req_ready; \
     if(!o.to_devs[i].read.req.valid | from_devs[i].read.req_ready){ \
       read_next_dev_to_selected_host[i] \
-        = PPCAT(name, _next_host_sel)(read_selected_host, read_next_dev_to_selected_host); \
+        = PPCAT(name, _next_host_sel)(read_selected_host, read_next_dev_to_selected_host, read_no_other_hosts[i]); \
     } \
     \
     /* Write req */ \
@@ -1019,7 +1038,7 @@ PPCAT(name, _dev_arb_pipelined_t) PPCAT(name, _dev_arb_pipelined)( \
     /* Shared write req+data arb next logic: if both parts done or not started yet*/ \
     if((wr_req_done&wr_data_done) | !(wr_req_done|wr_data_done)){ \
       write_next_dev_to_selected_host[i] \
-        = PPCAT(name, _next_host_sel)(write_selected_host, write_next_dev_to_selected_host); \
+        = PPCAT(name, _next_host_sel)(write_selected_host, write_next_dev_to_selected_host, write_no_other_hosts[i]); \
       wr_req_done = 0; \
       wr_data_done = 0; \
     }\
