@@ -7,8 +7,8 @@ void main() {
   *LED = 1;
   // x,y bounds based on which thread you are
 
+  pixel_t p = {0};
   // Write all pixels with test pattern
-  pixel_t p;
   for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
       for(int x=0; x < FRAME_WIDTH; x++){
           p.r = x;
@@ -20,17 +20,26 @@ void main() {
   *LED = ~*LED;
   threads_frame_sync();
 
+  uint32_t frame_count;
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
         // Bottle neck is read (specifically starting reads)
         // So start read of many pixels at once...
         // start read of entire line in advance
         uint32_t x = 0;
+        #ifdef ENABLE_PIXEL_IN_READ
         frame_buf_read_start(x, y, FRAME_WIDTH);
+        #endif
+
+        // TODO can also in advance clear all writes as finished too
+        // and only do frame_buf_write_start instead
+      
         // Then process one pixel at a time
         while(x < FRAME_WIDTH){
+          #ifdef ENABLE_PIXEL_IN_READ
           frame_buf_read_finish(&p, 1);
-          kernel(x, y, &p, &p);
+          #endif
+          kernel(x, y, frame_count, &p, &p);
           frame_buf_write(x, y, 1, &p);
           x += 1;
         }
@@ -38,5 +47,6 @@ void main() {
     // Toggle LEDs to show working
     *LED = ~*LED;
     threads_frame_sync();
+    frame_count += 1;
   }
 }

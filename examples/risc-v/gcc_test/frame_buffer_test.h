@@ -38,11 +38,137 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
 }
 //////////////////////////////////////////////////////////////////////////////////
 
-void kernel(int x, int y, pixel_t* p_in, pixel_t* p_out){
-  // TODO other params like time/frame count?
-  p_out->r = p_in->r;
-  p_out->g = p_in->g;
-  p_out->b = p_in->b + 16;
+//#define ENABLE_PIXEL_IN_READ
+
+#define min(x,y)\
+(x) < (y) ? (x) : (y)
+
+void kernel(
+  uint32_t x, uint32_t y,
+  uint32_t frame_count,
+  pixel_t* p_in, // Only valid if ENABLE_PIXEL_IN_READ
+  pixel_t* p_out
+){
+  // Example uses 71x40 blocky resolution
+  // match to roughly 1/8th of 640x480 = 80x60
+  // TODO real full resolution demo?
+  x = x / 8;
+  y = y / 8;
+  // TODO real time from clock?
+  int t = frame_count << 6;
+  // Thanks internet!
+  // https://www.shadertoy.com/view/4ft3Wn
+  //-------------------------    
+  // animation
+  //-------------------------    
+  int tt = min(4095,512+(t&4095));
+  // vert
+  int ft = tt&1023;
+  int it = 1023-((tt>>2)&0xff00);
+  int q = 1023-ft;
+  q = (q*ft)>>10;
+  q = (q*it)>>10;
+  q = (q*it)>>10;
+  int v0 = q>>3;
+  // hori
+  q = 4095-tt;
+  q = (q*q)>>10;
+  int u0 = q>>8;
+  
+
+  int R, B;
+
+  //-------------------------    
+  // Section A (2 MUL, 3 ADD)
+  //-------------------------    
+  int u = x-36-u0;
+  int v = 18-y;
+  int z = v-v0;
+  int u2 = u*u;
+  int v2 = z*z;
+  int h = u2 + v2;
+  //-------------------------  
+  
+  if( h < 200 ) 
+  {
+      //-------------------------------------
+      // Section B, Sphere (4/7 MUL, 5/9 ADD)
+      //-------------------------------------
+      R = 420;
+      B = 520;
+
+      int t = 5200 + h*8;
+      int p = (t*u)>>7;
+      int q = (t*z)>>7;
+      
+      // bounce light
+      int w = 18 + (((p*5-q*13))>>9) - (v0>>1);
+      if( w>0 ) R += w*w;
+      
+      // sky light / ambient occlusion
+      int o = q + 900 + (v0<<4);
+      R = (R*o)>>12;
+      B = (B*o)>>12;
+
+      // sun/key light
+      if( p > -q )
+      {
+          int w = (p+q)>>3;
+          R += w;
+          B += w;
+      }
+      //-------------------------  
+}
+  else if( v<0 )
+  {
+      //-------------------------------------
+      // Section C, Ground (5/9 MUL, 6/9 ADD)
+      //-------------------------------------
+      R = 150 + 2*v;
+      B = 50;
+
+      int p = h + 8*v2;
+      int c = -v*(240+16*v0) - p;
+
+      // sky light / ambient occlusion
+      if( c>1200 )
+      {
+          int o = (25*c)>>3;
+          o = (c*(7840-o)>>9) - 8560;
+          R = (R*o)>>10;
+          B = (B*o)>>10;
+      }
+
+      // sun/key light with soft shadow
+      int w = 4*v + 50;
+      int r = u - w;
+      int d = r*r + (u+v0)*(w+24+v0) - 90;
+      if( d>0 ) R += d;
+  }
+  else
+  {
+      //------------------------------
+      // Section D, Sky (1 MUL, 2 ADD)
+      //------------------------------
+      int c = x + 4*y;
+      R = 132 + c;
+      B = 192 + c;
+      //-------------------------  
+  }
+  
+  //-------------------------
+  // Section E (3 MUL, 1 ADD)
+  //-------------------------
+  R = min(R,255);
+  B = min(B,255);
+  
+  int G = (R*11 + 5*B)>>4;
+  //-------------------------  
+
+  //return vec3(R,G,B);
+  p_out->r = R;
+  p_out->g = G;
+  p_out->b = B;
 }
 
 // Helper to do frame sync
