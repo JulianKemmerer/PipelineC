@@ -44,18 +44,20 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
 (x) < (y) ? (x) : (y)
 
 void kernel(
-  uint32_t x, uint32_t y,
+  int32_t x, int32_t y,
   uint32_t frame_count,
   pixel_t* p_in, // Only valid if ENABLE_PIXEL_IN_READ
   pixel_t* p_out
 ){
   // Example uses 71x40 blocky resolution
-  // match to roughly 1/8th of 640x480 = 80x60 // TODO zoom out to /7 or /6?
-  // TODO real full resolution demo?
-  x = x / 8;
-  y = y / 8;
+  // match to roughly 1/4th of 640x480
+  // TODO real full resolution demo? How to change all these magic numbers?
+  x = x / 4;
+  y = y / 4;
+  y -= (FRAME_HEIGHT/8); // Adjust screen to show more vertical sky to account for zoom out
   // TODO real time from clock?
   int t = frame_count << 6;
+
   // Thanks internet!
   // https://www.shadertoy.com/view/4ft3Wn
   //-------------------------    
@@ -68,11 +70,11 @@ void kernel(
   int q = 1023-ft;
   q = (q*ft)>>10;
   q = (q*it)>>10;
-  q = (q*it)>>10;
+  q = (q*it)>>9; // was 10
   int v0 = q>>3;
   // hori
   q = 4095-tt;
-  q = (q*q)>>10;
+  q = (q*q)>>9; // was 10
   int u0 = q>>8;
   
 
@@ -166,7 +168,7 @@ void kernel(
   //-------------------------  
 
   //return vec3(R,G,B);
-  // TODO write alpha channel too so maybe will be done as one 32b store?
+  p_out->a = 0;
   p_out->r = R;
   p_out->g = G;
   p_out->b = B;

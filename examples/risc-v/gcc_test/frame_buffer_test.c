@@ -41,7 +41,6 @@ void main() {
           frame_buf_read_finish(&p, 1);
           #endif
           kernel(x, y, frame_count, &p, &p);
-          //frame_buf_write(x, y, 1, &p);
           frame_buf_write_start(x, y, 1, &p);
           x += 1;
         }
