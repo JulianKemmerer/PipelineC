@@ -31,8 +31,9 @@ void main() {
         frame_buf_read_start(x, y, FRAME_WIDTH);
         #endif
 
-        // TODO can also in advance clear all writes as finished too
-        // and only do frame_buf_write_start instead
+        // Can also in advance setup all writes to finish as well
+        // (try will fail, but will have begun process with expected num pixels)
+        try_frame_buf_write_finish(FRAME_WIDTH);
       
         // Then process one pixel at a time
         while(x < FRAME_WIDTH){
@@ -40,9 +41,13 @@ void main() {
           frame_buf_read_finish(&p, 1);
           #endif
           kernel(x, y, frame_count, &p, &p);
-          frame_buf_write(x, y, 1, &p);
+          //frame_buf_write(x, y, 1, &p);
+          frame_buf_write_start(x, y, 1, &p);
           x += 1;
         }
+        
+        // Final wait to finish all writes
+        frame_buf_write_finish(FRAME_WIDTH);
     }
     // Toggle LEDs to show working
     *LED = ~*LED;

@@ -12,8 +12,8 @@
 #define MEM_MAP_BASE_ADDR 0x10000000
 
 #define N_THREADS_PER_BARREL 5
-#define N_BARRELS 1
-#define NUM_THREADS 5
+#define N_BARRELS 4
+#define NUM_THREADS 20
 // Read: Thread ID, Write: output/stop/halt peripheral
 #define THREAD_ID_RETURN_OUTPUT_ADDR (MEM_MAP_BASE_ADDR+0)
 static volatile uint32_t* RETURN_OUTPUT = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
@@ -133,14 +133,14 @@ static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr, 
 }
 
 
-static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(uint8_t num_words){
+static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(uint32_t num_words){
   // No write response data
   // Simply read and return response valid bit
   // Hardware automatically clears valid bit + num words on read of valid=1
   RAM_WR_RESP->num_words = num_words; // Requested num of words
   return RAM_WR_RESP->valid;
 }
-static inline __attribute__((always_inline)) void finish_ram_write(uint8_t num_words){
+static inline __attribute__((always_inline)) void finish_ram_write(uint32_t num_words){
   RAM_WR_RESP->num_words = num_words;
   while(!RAM_WR_RESP->valid){}
 }

@@ -50,7 +50,7 @@ void kernel(
   pixel_t* p_out
 ){
   // Example uses 71x40 blocky resolution
-  // match to roughly 1/8th of 640x480 = 80x60
+  // match to roughly 1/8th of 640x480 = 80x60 // TODO zoom out to /7 or /6?
   // TODO real full resolution demo?
   x = x / 8;
   y = y / 8;
@@ -166,6 +166,7 @@ void kernel(
   //-------------------------  
 
   //return vec3(R,G,B);
+  // TODO write alpha channel too so maybe will be done as one 32b store?
   p_out->r = R;
   p_out->g = G;
   p_out->b = B;
@@ -206,7 +207,14 @@ void frame_buf_write_start(
   uint32_t addr = pos_to_addr(x, y);
   start_ram_write(addr, (uint32_t*)pixel, num_pixels);
 }
-// Multiple in flight versions
+riscv_valid_flag_t try_frame_buf_write_finish(uint32_t num_words){
+  return try_finish_ram_write(num_words);
+}
+void frame_buf_write_finish(
+  uint32_t num_pixels
+){
+  finish_ram_write(num_pixels);
+}
 void frame_buf_read_start(
   uint32_t x, uint32_t y,
   uint32_t num_pixels
