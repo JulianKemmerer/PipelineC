@@ -340,7 +340,7 @@ axi_shared_bus_sized_write_finish_t axi_shared_bus_sized_write_finish(
  axi_shared_bus_t_write_dev_to_host_t from_dev
 ){
   // Finish N u32 writes using bus helper FSM
-  static uint32_t word_counter = (1<<31);
+  static uint32_t word_counter = ((uint32_t)1<<31);
   axi_shared_bus_sized_write_finish_t rv;
   rv.ready_for_inputs = 0;
   rv.done = 0;
@@ -387,7 +387,7 @@ axi_shared_bus_sized_read_start_t axi_shared_bus_sized_read_start(
   uint1_t bus_req_ready
 ){
   // Begin N u32 reads using bus helper FSM
-  static uint32_t word_counter = (1<<31);
+  static uint32_t word_counter = ((uint32_t)1<<31);
   static uint32_t bus_addr;
   axi_shared_bus_sized_read_start_t rv;
   rv.ready_for_inputs = 0;
