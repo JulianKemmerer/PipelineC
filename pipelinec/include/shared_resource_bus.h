@@ -493,6 +493,13 @@ PPCAT(name, _read_finish_nonblocking_t) PPCAT(name, _read_finish_nonblocking)() 
 }
 
 
+// TODO use here in header too
+#define host_clk_to_dev(shared_bus_name)\
+PPCAT(shared_bus_name,_host_to_dev_wire_on_host_clk)
+#define dev_to_host_clk(shared_bus_name)\
+PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
+
+
 #define SHARED_BUS_DECL(\
 type, \
 write_req_data_t, write_data_word_t, write_resp_data_t, \

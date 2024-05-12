@@ -40,7 +40,8 @@ void main() {
           #ifdef ENABLE_PIXEL_IN_READ
           frame_buf_read_finish(&p, 1);
           #endif
-          kernel(x, y, frame_count, &p, &p);
+          //kernel(x, y, frame_count, &p, &p);
+          kernel_hw(x, y, frame_count, &p, &p);
           frame_buf_write_start(x, y, 1, &p);
           x += 1;
         }

@@ -1,8 +1,6 @@
 // Copy of single cycle CPU rewritten ~netlist/multi MAIN graph style
 // Each MAIN function node in the graph instantiates N copies of barrel components
 // For now has no flow control between stages, is always a rolling barrel.
-
-// Need more ports since feedback to mems?
 #pragma PART "xc7a100tcsg324-1"
 
 // RISC-V components
@@ -23,26 +21,19 @@
 // NEW 
 // Threads(~#stages) | 3    4    5     ...EXE needs autopipeline ... 
 // MHz               | ~61  ~86  ~141
+
+// AXI Frame buffer RAM:
 //#define AXI_RAM_MODE_BRAM // Only one frame buf used in this config, though two exist
 #define AXI_RAM_MODE_DDR
-
 #ifdef AXI_RAM_MODE_DDR
 #define CPU_CLK_MHZ 83.33
 #endif
 #ifdef AXI_RAM_MODE_BRAM
 #define CPU_CLK_MHZ 40.0
 #endif
-// Some defines needed for dual_frame_buffer.c
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
-
-// TODO MOVE TO SHARED BUS HEADER
-#define host_clk_to_dev(shared_bus_name)\
-PPCAT(shared_bus_name,_host_to_dev_wire_on_host_clk)
-#define dev_to_host_clk(shared_bus_name)\
-PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
-
 #ifdef AXI_RAM_MODE_DDR
 #define host_to_frame_buf host_clk_to_dev(axi_xil_mem)
 #define frame_buf_to_host dev_to_host_clk(axi_xil_mem)
@@ -51,6 +42,33 @@ PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
 #define host_to_frame_buf host_clk_to_dev(axi_ram0_shared_bus)
 #define frame_buf_to_host dev_to_host_clk(axi_ram0_shared_bus)
 #endif
+DECL_AXI_SHARED_BUS_WRITE_START(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_write_start axi_shared_bus_write_start(RISCV_RAM_NUM_BURST_WORDS)
+DECL_AXI_SHARED_BUS_READ_FINISH(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_read_finish_t axi_shared_bus_read_finish_t(RISCV_RAM_NUM_BURST_WORDS)
+#define axi_shared_bus_burst_read_finish axi_shared_bus_read_finish(RISCV_RAM_NUM_BURST_WORDS)
+
+
+// Declare a shared kernel pipeline
+pixel_t kernel_func(kernel_in_t inputs)
+{
+  pixel_t p;
+  // TEST PATTERN FIRST
+  p.r = inputs.x;
+  p.g = inputs.y;
+  p.b = inputs.frame_count << 4;
+  return p;
+}
+#define SHARED_RESOURCE_BUS_PIPELINE_NAME         kernel
+#define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     pixel_t
+#define SHARED_RESOURCE_BUS_PIPELINE_FUNC         kernel_func
+#define SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE      kernel_in_t
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_THREADS NUM_THREADS
+#define SHARED_RESOURCE_BUS_PIPELINE_HOST_CLK_MHZ CPU_CLK_MHZ
+#define SHARED_RESOURCE_BUS_PIPELINE_DEV_CLK_MHZ  CPU_CLK_MHZ
+#include "shared_resource_bus_pipeline.h"
+#define host_to_kernel host_clk_to_dev(kernel)
+#define kernel_to_host dev_to_host_clk(kernel)
 
 
 // Hardware to sync threads and also toggle frame buffer select
@@ -86,12 +104,6 @@ void thread_sync_module(){
 
 // Declare memory map information
 // TODO make+use macros for boilerplate handshake logic below...
-// AXI bus types for burst size
-DECL_AXI_SHARED_BUS_WRITE_START(RISCV_RAM_NUM_BURST_WORDS)
-#define axi_shared_bus_burst_write_start axi_shared_bus_write_start(RISCV_RAM_NUM_BURST_WORDS)
-DECL_AXI_SHARED_BUS_READ_FINISH(RISCV_RAM_NUM_BURST_WORDS)
-#define axi_shared_bus_burst_read_finish_t axi_shared_bus_read_finish_t(RISCV_RAM_NUM_BURST_WORDS)
-#define axi_shared_bus_burst_read_finish axi_shared_bus_read_finish(RISCV_RAM_NUM_BURST_WORDS)
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   uint32_t thread_id;
@@ -113,6 +125,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   o.addr_is_mapped = 0; // since o is static regs
 
   // Handshake regs
+  //  Frame buffer RAM
   static riscv_ram_write_req_t ram_write_req_reg;
   riscv_ram_write_req_t ram_write_req = ram_write_req_reg;
   static riscv_ram_write_resp_t ram_write_resp_reg;
@@ -121,6 +134,15 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   riscv_ram_read_req_t ram_read_req = ram_read_req_reg;
   static riscv_ram_read_resp_t ram_read_resp_reg;
   riscv_ram_read_resp_t ram_read_resp = ram_read_resp_reg;
+  //  Kernel func
+  static kernel_in_t kernel_data_in_reg;
+  kernel_in_t kernel_data_in = kernel_data_in_reg;
+  static uint32_t kernel_data_in_valid_reg;
+  uint32_t kernel_data_in_valid = kernel_data_in_valid_reg;
+  static pixel_t kernel_data_out_reg;
+  pixel_t kernel_data_out = kernel_data_out_reg;
+  static uint32_t kernel_data_out_valid_reg;
+  uint32_t kernel_data_out_valid = kernel_data_out_valid_reg;
 
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
@@ -130,10 +152,17 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
 
   // Mem map the handshake regs
+  //  Frame buffer RAM
   STRUCT_MM_ENTRY(o, RAM_WR_REQ_ADDR, riscv_ram_write_req_t, ram_write_req_reg)
   STRUCT_MM_ENTRY(o, RAM_WR_RESP_ADDR, riscv_ram_write_resp_t, ram_write_resp_reg)
   STRUCT_MM_ENTRY(o, RAM_RD_REQ_ADDR, riscv_ram_read_req_t, ram_read_req_reg)
   STRUCT_MM_ENTRY(o, RAM_RD_RESP_ADDR, riscv_ram_read_resp_t, ram_read_resp_reg)
+  //  Kernel func
+  STRUCT_MM_ENTRY_NEW(KERNEL_DATA_IN_ADDR, kernel_in_t, kernel_data_in_reg, kernel_data_in_reg, addr, o.addr_is_mapped, o.rd_data)
+  WORD_MM_ENTRY_NEW(KERNEL_VALID_IN_ADDR, kernel_data_in_valid_reg, kernel_data_in_valid_reg, addr, o.addr_is_mapped, o.rd_data)
+  STRUCT_MM_ENTRY_NEW(KERNEL_DATA_OUT_ADDR, pixel_t, kernel_data_out_reg, kernel_data_out_reg, addr, o.addr_is_mapped, o.rd_data)
+  WORD_MM_ENTRY_NEW(KERNEL_VALID_OUT_ADDR, kernel_data_out_valid_reg, kernel_data_out_valid_reg, addr, o.addr_is_mapped, o.rd_data)
+
 
   // Mem map frame sync signal
   if(addr==FRAME_SIGNAL_ADDR){
@@ -147,6 +176,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Handshake logic using signals from regs
   // Default null
   host_to_frame_buf = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  host_to_kernel = kernel_bus_t_HOST_TO_DEV_NULL;
   #ifdef AXI_RAM_MODE_BRAM
   // Extra unused second frame buf
   axi_ram1_shared_bus_host_to_dev_wire_on_host_clk = axi_shared_bus_t_HOST_TO_DEV_NULL; // UNUSED
@@ -231,6 +261,31 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       ram_read_resp_reg.valid = 1;
     }
   }
+
+
+  // Kernel start (read req)
+  // SW sets req valid, hardware clears when accepted
+  kernel_bus_t_read_start_logic_outputs_t kernel_start = kernel_bus_t_read_start_logic(
+    kernel_data_in, kernel_data_in_valid, 
+    kernel_to_host.read.req_ready
+  );
+  host_to_kernel.read.req = kernel_start.req;
+  if(kernel_start.done){
+    kernel_data_in_valid_reg = 0;
+  }
+
+  // Kernel finish (read resp)
+  // HW sets resp valid, software clears when accepted
+  kernel_bus_t_read_finish_logic_outputs_t kernel_finish = kernel_bus_t_read_finish_logic(
+    ~kernel_data_out_valid,
+    kernel_to_host.read.data
+  );
+  host_to_kernel.read.data_ready = kernel_finish.data_ready;
+  if(kernel_finish.done){
+    kernel_data_out_reg = kernel_finish.data;
+    kernel_data_out_valid_reg = 1;
+  }
+
   
   return o;
 }

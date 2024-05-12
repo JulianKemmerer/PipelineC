@@ -1,8 +1,5 @@
 //////////////////////////////////////////////////////////////////////////////////
 // COPIED FROM examples/shared_resource_bus/axi_frame_buffer/*
-typedef struct pixel_t{
- uint8_t a, b, g, r; 
-}pixel_t; // 24bpp color, does get correctly packed at 4 bytes sizeof()
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
@@ -43,7 +40,7 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
 #define min(x,y)\
 (x) < (y) ? (x) : (y)
 
-void kernel(
+/* void kernel(
   int32_t x, int32_t y,
   uint32_t frame_count,
   pixel_t* p_in, // Only valid if ENABLE_PIXEL_IN_READ
@@ -172,7 +169,7 @@ void kernel(
   p_out->r = R;
   p_out->g = G;
   p_out->b = B;
-}
+}*/
 
 // Helper to do frame sync
 void threads_frame_sync(){

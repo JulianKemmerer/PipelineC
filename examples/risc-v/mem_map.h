@@ -240,3 +240,43 @@ if(name##_fsm_in.input_valid & name##_fsm_out.input_ready){\
   name##_out_reg.data.out0 = name##_fsm_out.return_output;\
   name##_out_reg.valid = 1;\
 }
+
+
+
+// New version of above macros thats more flexible 
+///... eventually and uses less resources for large structs
+// Assign a struct variable to the memory map
+#define STRUCT_MM_ENTRY_NEW(\
+ADDR, type_t, wr_out, rd_in, \
+addr_var, addr_is_mapped, rd_out)\
+if( (addr_var>=ADDR) & (addr_var<(ADDR+sizeof(type_t))) ){\
+  addr_is_mapped = 1;\
+  /* Convert to bytes*/\
+  type_t##_bytes_t type_t##_byte_array = type_t##_to_bytes(rd_in);\
+  uint32_t type_t##_bytes_offset = addr_var - ADDR;\
+  /* Assemble rd data bytes*/\
+  uint32_t type_t##_byte_i;\
+  uint8_t type_t##_rd_bytes[4];\
+  for(type_t##_byte_i=0;type_t##_byte_i<4;type_t##_byte_i+=1){\
+    type_t##_rd_bytes[type_t##_byte_i] = type_t##_byte_array.data[type_t##_bytes_offset+type_t##_byte_i];\
+  }\
+  rd_out = uint8_array4_le(type_t##_rd_bytes);\
+  /* Drive write bytes*/\
+  for(type_t##_byte_i=0;type_t##_byte_i<4;type_t##_byte_i+=1){\
+    if(wr_byte_ens[type_t##_byte_i]){\
+      type_t##_byte_array.data[type_t##_bytes_offset+type_t##_byte_i] = wr_data >> (type_t##_byte_i*8);\
+    }\
+  }\
+  /* Convert back to type*/\
+  wr_out = bytes_to_##type_t(type_t##_byte_array);\
+}
+// Assign a word variable to the memory map // TODO other byte alignments?
+#define WORD_MM_ENTRY_NEW(ADDR, wr_out, rd_in, addr_var, addr_is_mapped, rd_out)\
+if(addr_var==ADDR){\
+  addr_is_mapped = 1;\
+  rd_out = rd_in;\
+  if(wr_byte_ens[0]){\
+    wr_out = wr_data;\
+  }\
+}
+
