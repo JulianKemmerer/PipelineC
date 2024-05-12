@@ -50,15 +50,6 @@ DECL_AXI_SHARED_BUS_READ_FINISH(RISCV_RAM_NUM_BURST_WORDS)
 
 
 // Declare a shared kernel pipeline
-pixel_t kernel_func(kernel_in_t inputs)
-{
-  pixel_t p;
-  // TEST PATTERN FIRST
-  p.r = inputs.x;
-  p.g = inputs.y;
-  p.b = inputs.frame_count << 4;
-  return p;
-}
 #define SHARED_RESOURCE_BUS_PIPELINE_NAME         kernel
 #define SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE     pixel_t
 #define SHARED_RESOURCE_BUS_PIPELINE_FUNC         kernel_func

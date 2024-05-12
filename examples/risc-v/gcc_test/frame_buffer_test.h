@@ -1,7 +1,6 @@
-//////////////////////////////////////////////////////////////////////////////////
-// COPIED FROM examples/shared_resource_bus/axi_frame_buffer/*
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
+
+//#define ENABLE_PIXEL_IN_READ
+
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
 #define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
 #define TILE_FACTOR_LOG2 0
@@ -33,12 +32,9 @@ static inline __attribute__((always_inline)) uint32_t pos_to_addr(uint32_t x, ui
   uint32_t addr = pixel_index_to_addr(pixel_index);
   return addr;
 }
-//////////////////////////////////////////////////////////////////////////////////
 
-//#define ENABLE_PIXEL_IN_READ
-
-#define min(x,y)\
-(x) < (y) ? (x) : (y)
+/*#define min(x,y)\
+(x) < (y) ? (x) : (y)*/
 
 /* void kernel(
   int32_t x, int32_t y,
