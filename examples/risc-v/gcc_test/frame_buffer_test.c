@@ -2,7 +2,10 @@
 #include "mem_map.h"
 #include "frame_buffer_test.h"
 
+#define DO_SHADER_DATAFLOW
+
 void main() {
+  /*#warning "TEMP SIM NO FRAME BUF WRITE INIT"*/
   // Do test of modifying pixels
   *LED = 1;
   // x,y bounds based on which thread you are
@@ -20,13 +23,17 @@ void main() {
   *LED = ~*LED;
   threads_frame_sync();
 
-  uint32_t frame_count;
+  uint32_t frame_count = 0;
   while(1){
     for(int y=*THREAD_ID; y < FRAME_HEIGHT; y+=NUM_THREADS){
+        uint32_t x = 0;
+        #ifdef DO_SHADER_DATAFLOW
+        do_shader_dataflow(pos_to_addr(x,y), x, y, frame_count, FRAME_WIDTH);
+        #else
+
         // Bottle neck is read (specifically starting reads)
         // So start read of many pixels at once...
         // start read of entire line in advance
-        uint32_t x = 0;
         #ifdef ENABLE_PIXEL_IN_READ
         frame_buf_read_start(x, y, FRAME_WIDTH);
         #endif
@@ -48,6 +55,7 @@ void main() {
         
         // Final wait to finish all writes
         frame_buf_write_finish(FRAME_WIDTH);
+        #endif
     }
     // Toggle LEDs to show working
     *LED = ~*LED;

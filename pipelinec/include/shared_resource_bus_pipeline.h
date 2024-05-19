@@ -1,5 +1,6 @@
 #include "compiler.h"
 #include "uintN_t.h"
+#include "stream/stream.h"
 #include "global_func_inst.h"
 // See docs: https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 #include "shared_resource_bus.h"
@@ -118,6 +119,75 @@ SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_f
 {
   SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE outputs = PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_read_finish)();
   return outputs;
+}
+
+// Helper ~FSM to convert a shared bus pipeline host dev connection into stream wires
+typedef struct PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_to_streams_t)
+{
+  PPCAT(SHARED_RESOURCE_BUS_PIPELINE_TYPE_NAME, _read_host_to_dev_t) to_dev;
+  // Out
+  stream(SHARED_RESOURCE_BUS_PIPELINE_OUT_TYPE) out_stream;
+  uint1_t out_stream_done;
+  // In
+  uint1_t in_stream_ready;
+  uint1_t in_stream_done;
+}PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_to_streams_t);
+PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_to_streams_t) PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_to_streams)(
+  PPCAT(SHARED_RESOURCE_BUS_PIPELINE_TYPE_NAME, _read_dev_to_host_t) from_dev,
+  // In
+  stream(SHARED_RESOURCE_BUS_PIPELINE_IN_TYPE) in_stream,
+  uint32_t in_length,
+  uint1_t in_length_valid,
+  // Out
+  uint1_t out_stream_ready,
+  uint32_t out_length,
+  uint1_t out_length_valid
+){
+  //uint1_t in_length_valid = in_length > 0;
+  //uint1_t out_length_valid = out_length > 0;
+  static uint1_t in_done;
+  static uint1_t out_done;
+  PPCAT(SHARED_RESOURCE_BUS_PIPELINE_NAME,_to_streams_t) o;
+  o.in_stream_done = in_done;
+  o.out_stream_done = out_done;
+  static uint32_t in_count;
+  static uint32_t out_count;
+ 
+  if(~in_done & in_length_valid){
+    o.to_dev.req.data.user = in_stream.data;
+    o.to_dev.req.valid = in_stream.valid;
+    o.in_stream_ready = from_dev.req_ready;
+    if(in_stream.valid & o.in_stream_ready){
+      if(in_count==(in_length-1)){
+        in_done = 1;
+      }else{
+        in_count += 1;
+      }
+    }
+  }
+  if(~out_done & out_length_valid){
+    o.out_stream.data = from_dev.data.burst.data_resp.user;
+    o.out_stream.valid = from_dev.data.valid;
+    o.to_dev.data_ready = out_stream_ready;
+    if(o.out_stream.valid & out_stream_ready){
+      if(out_count==(out_length-1)){
+        out_done = 1;
+      }else{
+        out_count += 1;
+      }
+    }
+  }
+
+  if(~in_length_valid){
+    in_count = 0;
+    in_done = 0;
+  }
+  if(~out_length_valid){
+    out_count = 0;
+    out_done = 0;
+  }
+
+  return o;
 }
 
 

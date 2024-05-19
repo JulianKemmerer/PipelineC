@@ -1,6 +1,3 @@
-
-//#define ENABLE_PIXEL_IN_READ
-
 // Tile down by 2,4,8 times etc to fit into on chip ram for now
 #define TILE_FACTOR 1 // 4x to fit in 100T BRAM, x8 to not have Verilator build explode in RAM use?
 #define TILE_FACTOR_LOG2 0

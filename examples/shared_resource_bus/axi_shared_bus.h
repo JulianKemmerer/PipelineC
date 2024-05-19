@@ -263,7 +263,69 @@ rd_pri_port_arb_t rd_pri_port_arb(
 
 
 // Logic for how to start and finish a write of some words to RAM
+/* TODO dont use logic like if(ready) valid=1 in places! */
 // Start
+typedef struct axi_shared_bus_write_stream_start_t{
+  uint1_t done;
+  uint1_t ready_for_word;
+  axi_shared_bus_t_write_host_to_dev_t to_dev;
+}axi_shared_bus_write_stream_start_t;
+axi_shared_bus_write_stream_start_t axi_shared_bus_write_stream_start(
+  uint1_t ready_for_outputs,
+  uint32_t addr,
+  uint32_t num_words,
+  uint32_t word_in,
+  uint1_t word_in_valid,  
+  axi_shared_bus_t_write_dev_to_host_t from_dev
+){
+  /* Start N u32 writes using bus helper FSM */ 
+  static uint32_t word_counter = (uint32_t)1 << 31; 
+  static uint32_t bus_addr; 
+  static uint1_t done; 
+  axi_shared_bus_write_stream_start_t rv; 
+  rv.done = done; 
+  rv.ready_for_word = 0; 
+  /* Active state*/
+  if(word_counter < num_words){ 
+    /* Accept words */
+    if(word_counter==0){
+      bus_addr = addr; 
+    }
+    /* Try to start a u32 write*/
+    if(word_in_valid){
+      axi_write_t axi_write_info = axi_addr_data_to_write(bus_addr, word_in); 
+      axi_shared_bus_t_write_start_logic_outputs_t write_start =  
+        axi_shared_bus_t_write_start_logic(
+          axi_write_info.req,
+          axi_write_info.data, 
+          1, 
+          from_dev 
+        ); 
+      rv.to_dev = write_start.to_dev;
+      if(write_start.done){ 
+        /* Next word */
+        rv.ready_for_word = 1;
+        /* Last word?*/
+        if(word_counter==(num_words-1)){ 
+          done = 1; 
+        }       
+        word_counter += 1; 
+        bus_addr += sizeof(uint32_t);
+      } 
+    }
+  }else{ 
+    /* IDLE/DONE state*/
+    /* Ready for output clears done*/
+    if(ready_for_outputs){ 
+      done = 0; 
+    } 
+    /* Restart resets word counter*/
+    if(~done){ 
+      word_counter = 0; 
+    } 
+  } 
+  return rv; 
+}
 typedef struct axi_shared_bus_write_start_t{
   uint1_t done;
   uint1_t ready_for_words;
@@ -306,7 +368,7 @@ axi_shared_bus_write_start_t axi_shared_bus_write_start(NUM_WORDS)(\
       ); \
     rv.to_dev = write_start.to_dev;\
     if(write_start.done){ \
-      /* Shift to next work u32 data into buffer[0]*/\
+      /* Shift to next word u32 data into buffer[0]*/\
       ARRAY_SHIFT_DOWN(words, NUM_WORDS, 1)\
       /* Last word?*/\
       if(word_counter==(num_words-1)){ \
@@ -426,6 +488,58 @@ axi_shared_bus_sized_read_start_t axi_shared_bus_sized_read_start(
   return rv;
 }
 // Finish
+typedef struct axi_shared_bus_read_stream_finish_t{
+  uint32_t word;
+  uint1_t word_valid;
+  uint1_t done;
+  uint1_t bus_data_ready;
+}axi_shared_bus_read_stream_finish_t;
+axi_shared_bus_read_stream_finish_t axi_shared_bus_read_stream_finish(
+  uint32_t num_words,
+  uint1_t ready_for_outputs,
+  uint1_t word_output_ready,
+  axi_shared_bus_t_read_data_t bus_read_data
+){
+  /* End N u32 reads using bus helper FSM */ 
+  /* Assemble read responses into output data */ 
+  static uint32_t word_counter = (uint32_t)1 << 31;
+  static uint1_t done; 
+  axi_shared_bus_read_stream_finish_t rv; 
+  rv.done = done; 
+  rv.bus_data_ready = 0; 
+  /* Active state*/
+  if(word_counter < num_words){ 
+    /* Try to finish a u32 read*/
+    axi_shared_bus_t_read_finish_logic_outputs_t read_finish =  
+      axi_shared_bus_t_read_finish_logic( 
+        word_output_ready, 
+        bus_read_data 
+      ); 
+    rv.bus_data_ready = read_finish.data_ready; 
+    if(read_finish.done){ 
+      /* Output u32 data */
+      uint32_t rd_data = axi_read_to_data(read_finish.data); 
+      rv.word = rd_data;
+      rv.word_valid = 1;
+      /* Last word?*/
+      if(word_counter==(num_words-1)){ 
+        done = 1; 
+      }       
+      word_counter += 1; 
+    } 
+  }else{ 
+    /* IDLE/DONE state*/
+    /* Ready for output clears done*/
+    if(ready_for_outputs){ 
+      done = 0; 
+    } 
+    /* Restart resets word counter*/
+    if(~done){ 
+      word_counter = 0; 
+    } 
+  } 
+  return rv;
+}
 #define axi_shared_bus_read_finish_t(NUM_WORDS)\
 PPCAT(PPCAT(axi_shared_bus_,NUM_WORDS),words_read_finish_t)
 #define axi_shared_bus_read_finish(NUM_WORDS)\
@@ -552,3 +666,105 @@ PPCAT(type,_axi_shared_bus_read_finish_t) PPCAT(type,_axi_shared_bus_read_finish
   return rv; \
 }
 #endif
+
+
+
+typedef struct axi_shared_bus_to_stream_source_sink_t
+{
+  axi_shared_bus_t_host_to_dev_t to_dev;
+  // Outputs
+  //  WR
+  uint1_t wr_stream_ready;
+  uint1_t wr_done;
+  //  RD
+  uint32_t rd_stream_data;
+  uint1_t rd_stream_valid;
+  uint1_t rd_done;
+}axi_shared_bus_to_stream_source_sink_t;
+axi_shared_bus_to_stream_source_sink_t
+axi_shared_bus_to_stream_source_sink(
+  axi_shared_bus_t_dev_to_host_t from_dev,
+  // Inputs
+  //  WR
+  uint32_t wr_start_addr,
+  uint32_t wr_num_words,
+  uint1_t wr_req_valid,
+  uint32_t wr_stream_data,
+  uint1_t wr_stream_valid,
+  //  RD
+  uint32_t rd_start_addr,
+  uint32_t rd_num_words,
+  uint1_t rd_req_valid,
+  uint1_t rd_stream_ready
+){
+  axi_shared_bus_to_stream_source_sink_t o;
+
+  // Shared bus library FSMs are written as to auto restart, done is a pulse not stable
+  // (meant for composing with other FSMs, not CPU control)
+  // Need to manually wrap in sticky reg and use to get further execution
+
+  // Read start (no stream bus)
+  static uint1_t rd_start_done;
+  if(~rd_start_done & rd_req_valid){
+    axi_shared_bus_sized_read_start_t read_start = axi_shared_bus_sized_read_start(
+      rd_start_addr, rd_num_words, 1, from_dev.read.req_ready
+    );
+    o.to_dev.read.req = read_start.bus_req;
+    if(read_start.done){
+      rd_start_done = 1;
+    }
+  }
+  if(~rd_req_valid){
+    rd_start_done = 0;
+  }
+  // Read finish
+  static uint1_t rd_finish_done;
+  o.rd_done = rd_finish_done;
+  if(~rd_finish_done & rd_req_valid){
+    axi_shared_bus_read_stream_finish_t read_finish = axi_shared_bus_read_stream_finish(
+      rd_num_words, 1, rd_stream_ready, from_dev.read.data
+    );
+    o.to_dev.read.data_ready = read_finish.bus_data_ready;
+    o.rd_stream_data = read_finish.word;
+    o.rd_stream_valid = read_finish.word_valid;
+    if(read_finish.done){
+      rd_finish_done = 1;
+    }
+  }
+  if(~rd_req_valid){
+    rd_finish_done = 0;
+  }
+
+  // Write start
+  static uint1_t wr_start_done;
+  if(~wr_start_done & wr_req_valid){
+    axi_shared_bus_write_stream_start_t write_start = axi_shared_bus_write_stream_start(
+      1, wr_start_addr, wr_num_words, wr_stream_data, wr_stream_valid, from_dev.write
+    );
+    o.to_dev.write = write_start.to_dev;
+    o.wr_stream_ready = write_start.ready_for_word;
+    if(write_start.done){
+      wr_start_done = 1;
+    }
+  }
+  if(~wr_req_valid){
+    wr_start_done = 0;
+  }
+  // Write finish (no stream bus)
+  static uint1_t wr_finish_done;
+  o.wr_done = wr_finish_done;
+  if(~wr_finish_done & wr_req_valid){
+    axi_shared_bus_sized_write_finish_t write_finish = axi_shared_bus_sized_write_finish(
+      wr_num_words, 1, from_dev.write
+    );
+    o.to_dev.write.resp_ready = write_finish.bus_resp_ready;
+    if(write_finish.done){
+      wr_finish_done = 1;
+    }
+  }
+  if(~wr_req_valid){
+    wr_finish_done = 0;
+  }
+
+  return o;
+}

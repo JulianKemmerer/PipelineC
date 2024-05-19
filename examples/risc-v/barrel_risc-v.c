@@ -1,7 +1,11 @@
 // Copy of single cycle CPU rewritten ~netlist/multi MAIN graph style
 // Each MAIN function node in the graph instantiates N copies of barrel components
 // For now has no flow control between stages, is always a rolling barrel.
+//
+// Also mixes in custom hardware accelerator piplines and such
+// needs reorganization to reduce boilerplate and make more reusable
 #pragma PART "xc7a100tcsg324-1"
+#include "stream/stream.h"
 
 // RISC-V components
 #include "risc-v.h"
@@ -9,6 +13,9 @@
 
 // Shared with software memory map info
 #include "gcc_test/mem_map.h"
+DECL_STREAM_TYPE(kernel_in_t)
+DECL_STREAM_TYPE(pixel_t)
+DECL_STREAM_TYPE(uint32_t)
 
 // LEDs for demo
 #include "leds/leds_port.c"
@@ -29,7 +36,7 @@
 #define CPU_CLK_MHZ 83.33
 #endif
 #ifdef AXI_RAM_MODE_BRAM
-#define CPU_CLK_MHZ 40.0
+#define CPU_CLK_MHZ 25.0
 #endif
 #define HOST_CLK_MHZ CPU_CLK_MHZ
 #define NUM_USER_THREADS NUM_THREADS
@@ -61,7 +68,6 @@ DECL_AXI_SHARED_BUS_READ_FINISH(RISCV_RAM_NUM_BURST_WORDS)
 #define host_to_kernel host_clk_to_dev(kernel)
 #define kernel_to_host dev_to_host_clk(kernel)
 
-
 // Hardware to sync threads and also toggle frame buffer select
 uint1_t thread_is_done_signal[N_BARRELS][N_THREADS_PER_BARREL];
 uint1_t next_thread_start_signal[N_BARRELS][N_THREADS_PER_BARREL];
@@ -90,6 +96,106 @@ void thread_sync_module(){
     threads_done = 0;
   }
   threads_are_done_r = threads_done;
+}
+
+
+// Produce a configurable stream of x,y,frame_count values for shader kernel input
+typedef struct xy_frame_count_source_t
+{
+  int32_t x;
+  int32_t y;
+  uint32_t frame_count;
+  uint1_t valid;
+  uint1_t done;
+}xy_frame_count_source_t;
+xy_frame_count_source_t
+xy_frame_count_source(
+  int32_t start_x,
+  int32_t start_y,
+  uint32_t frame_count,
+  uint32_t num_pixels,
+  uint1_t inputs_valid,
+  uint1_t ready
+){
+  xy_frame_count_source_t o;
+  static uint1_t done;
+  static int32_t x;
+  static uint1_t valid;
+  static uint32_t count;
+  o.done = done;
+  o.x = x;
+  o.y = start_y;
+  o.frame_count = frame_count;
+  o.valid = valid;
+  if(~done & inputs_valid){
+    if(o.valid & ready){
+      if(count==(num_pixels-1)){
+        done = 1;
+        valid = 0;
+      }else{
+        count += 1;
+        x += 1;
+      }
+    }
+    if(count==0){
+      x = start_x;
+      valid = 1;
+    }
+  }
+  if(~inputs_valid){
+    count = 0;
+    done = 0;
+    valid = 0;
+  }
+  return o;
+}
+
+
+// Module to join streams of pixels and x,y,frame count
+// TOOD generic version of this?
+typedef struct kernel_input_join_t{
+  kernel_in_t kernel_in;
+  uint1_t kernel_in_valid;
+  uint1_t pixel_stream_ready;
+  uint1_t xy_frame_stream_ready;
+}kernel_input_join_t;
+kernel_input_join_t kernel_input_join(
+  uint1_t kernel_in_ready,
+  stream(pixel_t) pixel_stream,
+  int32_t x, int32_t y, uint32_t frame_count,
+  uint1_t xy_frame_valid
+){
+  // GAH need skid buffer regs for now todo fix valid+ready dependence in shared bus stuff
+  static stream(pixel_t) pixel_stream_r;
+  static int32_t x_r;
+  static int32_t y_r;
+  static uint32_t frame_count_r;
+  static uint1_t xy_frame_valid_r;
+  // Only valid data if both inputs valid
+  kernel_input_join_t o;
+  o.kernel_in_valid = pixel_stream_r.valid & xy_frame_valid_r;
+  o.kernel_in.x = x_r;
+  o.kernel_in.y = y_r;
+  o.kernel_in.frame_count = frame_count_r;
+  o.kernel_in.pixel_in = pixel_stream_r.data;
+  // Clear buffer if kernel accepts input
+  if(o.kernel_in_valid & kernel_in_ready){
+    pixel_stream_r.valid = 0;
+    xy_frame_valid_r = 0;
+  }
+  // Only ready for inputs when room in buffer
+  if(~pixel_stream_r.valid){
+    o.pixel_stream_ready = 1;
+    pixel_stream_r = pixel_stream;
+  }
+  if(~xy_frame_valid_r){
+    o.xy_frame_stream_ready = 1;
+    x_r = x;
+    y_r = y;
+    frame_count_r = frame_count;
+    xy_frame_valid_r = xy_frame_valid;
+  }
+  return o;
 }
 
 
@@ -135,6 +241,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   static uint32_t kernel_data_out_valid_reg;
   uint32_t kernel_data_out_valid = kernel_data_out_valid_reg;
 
+  // Dataflow control+status
+  static dataflow_mm_t data_flow_mm_reg;
+  dataflow_mm_t data_flow_mm = data_flow_mm_reg;  
+
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
   o.outputs.return_value = inputs.thread_id; // Override typical reg read behavior
@@ -153,7 +263,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   WORD_MM_ENTRY_NEW(KERNEL_VALID_IN_ADDR, kernel_data_in_valid_reg, kernel_data_in_valid_reg, addr, o.addr_is_mapped, o.rd_data)
   STRUCT_MM_ENTRY_NEW(KERNEL_DATA_OUT_ADDR, pixel_t, kernel_data_out_reg, kernel_data_out_reg, addr, o.addr_is_mapped, o.rd_data)
   WORD_MM_ENTRY_NEW(KERNEL_VALID_OUT_ADDR, kernel_data_out_valid_reg, kernel_data_out_valid_reg, addr, o.addr_is_mapped, o.rd_data)
-
+  
+  // Data flow control and status
+  STRUCT_MM_ENTRY_NEW(DATAFLOW_MM_ADDR, dataflow_mm_t, data_flow_mm_reg, data_flow_mm_reg, addr, o.addr_is_mapped, o.rd_data)
 
   // Mem map frame sync signal
   if(addr==FRAME_SIGNAL_ADDR){
@@ -174,6 +286,29 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   axi_shared_bus_t_dev_to_host_t dummy_read = axi_ram1_shared_bus_dev_to_host_wire_on_host_clk;// ?
   #endif
 
+  
+
+  // Mux between CPU thread bus and data flow bus
+  axi_shared_bus_t_host_to_dev_t thread_to_frame_buf;
+  axi_shared_bus_t_host_to_dev_t dataflow_to_frame_buf;
+  axi_shared_bus_t_dev_to_host_t frame_buf_to_thread;
+  axi_shared_bus_t_dev_to_host_t frame_buf_to_dataflow;
+  if(data_flow_mm.all_ports_dataflow_host){
+    frame_buf_to_dataflow = frame_buf_to_host;
+  }else{
+    frame_buf_to_thread = frame_buf_to_host;
+  }
+  kernel_bus_t_host_to_dev_t thread_to_kernel;
+  kernel_bus_t_host_to_dev_t dataflow_to_kernel;
+  kernel_bus_t_dev_to_host_t kernel_to_thread;
+  kernel_bus_t_dev_to_host_t kernel_to_dataflow;
+  if(data_flow_mm.all_ports_dataflow_host){
+    kernel_to_dataflow = kernel_to_host;
+  }else{
+    kernel_to_thread = kernel_to_host;
+  }
+
+
   // Write start
   // SW sets req valid, hardware clears when accepted
   if(ram_write_req.valid){
@@ -188,9 +323,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       waddr,
       ram_write_req.data,
       ram_write_req.num_words,
-      frame_buf_to_host.write
+      frame_buf_to_thread.write
     );
-    host_to_frame_buf.write = write_start.to_dev;
+    thread_to_frame_buf.write = write_start.to_dev;
     if(write_start.done){
       ram_write_req_reg.valid = 0;
     }
@@ -208,9 +343,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       raddr,
       ram_read_req.num_words,
       1,
-      frame_buf_to_host.read.req_ready
+      frame_buf_to_thread.read.req_ready
     );
-    host_to_frame_buf.read.req = read_start.bus_req;
+    thread_to_frame_buf.read.req = read_start.bus_req;
     if(read_start.done){
       ram_read_req_reg.valid = 0;
     }
@@ -230,9 +365,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       axi_shared_bus_sized_write_finish_t write_finish = axi_shared_bus_sized_write_finish(
         ram_write_resp_reg.num_words,
         1,
-        frame_buf_to_host.write
+        frame_buf_to_thread.write
       );
-      host_to_frame_buf.write.resp_ready = write_finish.bus_resp_ready;
+      thread_to_frame_buf.write.resp_ready = write_finish.bus_resp_ready;
       if(write_finish.done){
         ram_write_resp_reg.valid = 1;
       }
@@ -244,9 +379,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     axi_shared_bus_burst_read_finish_t read_finish = axi_shared_bus_burst_read_finish(
       ram_read_resp.num_words,
       1,
-      frame_buf_to_host.read.data
+      frame_buf_to_thread.read.data
     );
-    host_to_frame_buf.read.data_ready = read_finish.bus_data_ready;
+    thread_to_frame_buf.read.data_ready = read_finish.bus_data_ready;
     if(read_finish.done){
       ram_read_resp_reg.data = read_finish.words;
       ram_read_resp_reg.valid = 1;
@@ -258,9 +393,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // SW sets req valid, hardware clears when accepted
   kernel_bus_t_read_start_logic_outputs_t kernel_start = kernel_bus_t_read_start_logic(
     kernel_data_in, kernel_data_in_valid, 
-    kernel_to_host.read.req_ready
+    kernel_to_thread.read.req_ready
   );
-  host_to_kernel.read.req = kernel_start.req;
+  thread_to_kernel.read.req = kernel_start.req;
   if(kernel_start.done){
     kernel_data_in_valid_reg = 0;
   }
@@ -269,14 +404,115 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // HW sets resp valid, software clears when accepted
   kernel_bus_t_read_finish_logic_outputs_t kernel_finish = kernel_bus_t_read_finish_logic(
     ~kernel_data_out_valid,
-    kernel_to_host.read.data
+    kernel_to_thread.read.data
   );
-  host_to_kernel.read.data_ready = kernel_finish.data_ready;
+  thread_to_kernel.read.data_ready = kernel_finish.data_ready;
   if(kernel_finish.done){
     kernel_data_out_reg = kernel_finish.data;
     kernel_data_out_valid_reg = 1;
   }
 
+
+  // Dataflow AXI RAM read/write stream
+  uint1_t dataflow_frame_buf_rd_stream_ready;
+  #pragma FEEDBACK dataflow_frame_buf_rd_stream_ready
+  stream(uint32_t) dataflow_frame_buf_wr_stream;
+  #pragma FEEDBACK dataflow_frame_buf_wr_stream
+  axi_shared_bus_to_stream_source_sink_t axi_source_sink = axi_shared_bus_to_stream_source_sink(
+    frame_buf_to_dataflow,
+    #ifdef AXI_RAM_MODE_DDR
+    dual_ram_to_addr(~frame_buffer_read_port_sel, data_flow_mm.addr),
+    #else
+    data_flow_mm.addr,
+    #endif
+    data_flow_mm.num_pixels,
+    data_flow_mm.valid,
+    dataflow_frame_buf_wr_stream.data,
+    dataflow_frame_buf_wr_stream.valid,
+    #ifdef AXI_RAM_MODE_DDR
+    dual_ram_to_addr(frame_buffer_read_port_sel, data_flow_mm.addr),
+    #else
+    data_flow_mm.addr,
+    #endif
+    data_flow_mm.num_pixels,
+    data_flow_mm.valid,
+    dataflow_frame_buf_rd_stream_ready
+  );
+  dataflow_to_frame_buf = axi_source_sink.to_dev;
+  
+  // Dataflow x,y,frame count stream source
+  uint1_t xy_frame_count_stream_ready;
+  #pragma FEEDBACK xy_frame_count_stream_ready
+  xy_frame_count_source_t xy_frame_count = xy_frame_count_source(
+    data_flow_mm.x,
+    data_flow_mm.y,
+    data_flow_mm.frame_count,
+    data_flow_mm.num_pixels,
+    data_flow_mm.valid,
+    xy_frame_count_stream_ready
+  );
+  int32_t x_stream = xy_frame_count.x;
+  int32_t y_stream = xy_frame_count.y;
+  int32_t frame_count_stream = xy_frame_count.frame_count;
+  uint1_t xy_frame_count_stream_valid = xy_frame_count.valid;
+
+  // Dataflow kernel pipeline source and sink streams
+  stream(kernel_in_t) kernel_in_stream;
+  #pragma FEEDBACK kernel_in_stream
+  uint1_t kernel_out_stream_ready;
+  #pragma FEEDBACK kernel_out_stream_ready
+  kernel_to_streams_t kernel_streams = kernel_to_streams(
+    kernel_to_dataflow.read,
+    kernel_in_stream,
+    data_flow_mm.num_pixels,
+    data_flow_mm.valid,
+    kernel_out_stream_ready,
+    data_flow_mm.num_pixels,
+    data_flow_mm.valid
+  );
+  dataflow_to_kernel.read = kernel_streams.to_dev;
+  
+  // CUSTOM DATAFLOW AREA \/ |///////////////////////////////////////////////////////
+  // Convert u32 from ram rd to pixel
+  uint8_t rd_bytes[4];
+  UINT32_T_TO_BYTES(rd_bytes, axi_source_sink.rd_stream_data)
+  stream(pixel_t) rd_pixel_stream;
+  rd_pixel_stream.data = bytes_to_pixel_t(rd_bytes);
+  rd_pixel_stream.valid = axi_source_sink.rd_stream_valid;
+
+  // Join the stream of read pixels and x,y,frame count to form kernel inputs
+  kernel_input_join_t kernel_in_join = kernel_input_join(
+    kernel_streams.in_stream_ready,
+    rd_pixel_stream,
+    x_stream, y_stream, frame_count_stream,
+    xy_frame_count_stream_valid
+  );
+  kernel_in_stream.data = kernel_in_join.kernel_in;
+  kernel_in_stream.valid = kernel_in_join.kernel_in_valid;
+  dataflow_frame_buf_rd_stream_ready = kernel_in_join.pixel_stream_ready;
+  xy_frame_count_stream_ready = kernel_in_join.xy_frame_stream_ready;
+
+  // Convert kernel out pixel to u32 for ram wr
+  uint8_t wr_bytes[4] = pixel_t_to_bytes(kernel_streams.out_stream.data);
+  dataflow_frame_buf_wr_stream.data = bytes_to_uint32_t(wr_bytes);
+  dataflow_frame_buf_wr_stream.valid = kernel_streams.out_stream.valid;
+  kernel_out_stream_ready = axi_source_sink.wr_stream_ready;
+
+  // Done when the writes to frame buf are done
+  data_flow_mm_reg.done = axi_source_sink.wr_done;
+  // CUSTOM DATAFLOW AREA /\ |///////////////////////////////////////////////////////
+
+  // Mux between CPU thread bus and data flow bus
+  if(data_flow_mm.all_ports_dataflow_host){
+    host_to_frame_buf = dataflow_to_frame_buf;
+  }else{
+    host_to_frame_buf = thread_to_frame_buf;
+  }
+  if(data_flow_mm.all_ports_dataflow_host){
+    host_to_kernel = dataflow_to_kernel;
+  }else{
+    host_to_kernel = thread_to_kernel;
+  }
   
   return o;
 }

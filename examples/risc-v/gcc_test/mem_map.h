@@ -9,6 +9,16 @@
 #include <stdint.h>
 #endif
 
+// Re: memory mapped structs
+//__attribute__((packed)) increases code size bringing in memcpy
+// Not actually needed to pack for ~memory savings
+// when memory mapped padding regs will optimize away if unused
+// So manually add padding fields for 32b|4B alignment (otherwise need packed)
+// (if not PipelineC built in to-from bytes functions won't work)
+
+// TODO just mem map one big struct that gets changes
+//  needs more efficient code for muxing mem reads/writes to specific struct bytes
+
 #define MEM_MAP_BASE_ADDR 0x10000000
 
 #define N_THREADS_PER_BARREL 5
@@ -22,17 +32,6 @@ static volatile uint32_t* THREAD_ID = (uint32_t*)THREAD_ID_RETURN_OUTPUT_ADDR;
 // LED
 #define LED_ADDR (THREAD_ID_RETURN_OUTPUT_ADDR + sizeof(uint32_t))
 static volatile uint32_t* LED = (uint32_t*)LED_ADDR;
-
-// Re: memory mapped structs
-//__attribute__((packed)) increases code size bringing in memcpy
-// Not actually needed to pack for ~memory savings
-// when memory mapped padding regs will optimize away if unused
-// So manually add padding fields for 32b|4B alignment (otherwise need packed)
-// (if not PipelineC built in to-from bytes functions won't work)
-
-// // For now use separate input and output structs for accelerators
-// // that have special input and output valid flags
-// #include "gcc_test/gol/hw_config.h"
 
 // Types that PipelineC and CPU share to talk to hardware ram RAM
 #define riscv_valid_flag_t int32_t // TODO single bit packing
@@ -86,8 +85,6 @@ static volatile riscv_ram_read_req_t* RAM_RD_REQ = (riscv_ram_read_req_t*)RAM_RD
 #define RAM_RD_RESP_ADDR (RAM_RD_REQ_ADDR + sizeof(riscv_ram_read_req_t))
 static volatile riscv_ram_read_resp_t* RAM_RD_RESP = (riscv_ram_read_resp_t*)RAM_RD_RESP_ADDR;
 
-
-
 // Multiple in flight versions:
 static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_write(
   uint32_t addr, uint32_t* data, uint8_t num_words
@@ -131,7 +128,6 @@ static inline __attribute__((always_inline)) riscv_valid_flag_t try_start_ram_re
 static inline __attribute__((always_inline)) void start_ram_read(uint32_t addr, uint32_t num_words){
   while(!try_start_ram_read(addr, num_words)){}
 }
-
 
 static inline __attribute__((always_inline)) riscv_valid_flag_t try_finish_ram_write(uint32_t num_words){
   // No write response data
@@ -225,7 +221,7 @@ typedef struct pixel_t{
 typedef struct kernel_in_t{
   int32_t x; int32_t y;
   uint32_t frame_count;
-  //pixel_t p_in,; // Only valid if ENABLE_PIXEL_IN_READ
+  pixel_t pixel_in; // Only valid if ENABLE_PIXEL_IN_READ
 }kernel_in_t;
 // kernel_out_t is just pixel_t for now...
 #define KERNEL_DATA_IN_ADDR (FRAME_SIGNAL_ADDR + sizeof(int32_t))
@@ -248,6 +244,10 @@ pixel_t kernel_func(kernel_in_t inputs)
   int32_t x = inputs.x;
   int32_t y = inputs.y;
   int32_t frame_count = inputs.frame_count;
+  pixel = inputs.pixel_in;
+  pixel.b += 16;
+
+  /*TEMP TEST PATTERN
   // Example uses 71x40 blocky resolution
   // match to roughly 1/4th of 640x480
   // TODO real full resolution demo? How to change all these magic numbers?
@@ -370,7 +370,7 @@ pixel_t kernel_func(kernel_in_t inputs)
   pixel.a = 0;
   pixel.r = R;
   pixel.g = G;
-  pixel.b = B;
+  pixel.b = B;*/
   return pixel;
 }
 #endif
@@ -428,6 +428,8 @@ static inline __attribute__((always_inline)) void finish_kernel_pipeline(pixel_t
   // Done
 }
 
+#define ENABLE_PIXEL_IN_READ
+
 static inline __attribute__((always_inline)) void kernel_hw(
   int32_t x, int32_t y,
   uint32_t frame_count,
@@ -439,8 +441,46 @@ static inline __attribute__((always_inline)) void kernel_hw(
   KERNEL_DATA_IN->x = x;
   KERNEL_DATA_IN->y = y;
   KERNEL_DATA_IN->frame_count = frame_count;
-  //KERNEL_DATA_IN->pixel_in = *pixel_in;
+  #ifdef ENABLE_PIXEL_IN_READ
+  KERNEL_DATA_IN->pixel_in = *pixel_in;
+  #endif
   *KERNEL_VALID_IN = 1;
   // Wait for finish
   finish_kernel_pipeline(pixel_out);
+}
+
+typedef struct dataflow_mm_t
+{
+  int32_t all_ports_dataflow_host;
+  uint32_t addr;
+  int32_t x;
+  int32_t y;
+  uint32_t frame_count;
+  uint32_t num_pixels;
+  riscv_valid_flag_t valid;
+  riscv_valid_flag_t done;
+}dataflow_mm_t;
+#ifdef __PIPELINEC__
+#include "uint32_t_bytes_t.h"
+#include "dataflow_mm_t_bytes_t.h"
+#endif
+
+#define DATAFLOW_MM_ADDR (KERNEL_VALID_OUT_ADDR + sizeof(uint32_t))
+static volatile dataflow_mm_t* DATAFLOW_MM = (dataflow_mm_t*)DATAFLOW_MM_ADDR;
+
+void do_shader_dataflow(uint32_t addr, int32_t x, int32_t y, uint32_t frame_count, uint32_t num_pixels){
+  // Configure dataflow network
+  DATAFLOW_MM->addr = addr;
+  DATAFLOW_MM->x = x;
+  DATAFLOW_MM->y = y;
+  DATAFLOW_MM->frame_count = frame_count;
+  DATAFLOW_MM->num_pixels = num_pixels;
+  // Set valid to begin data flow through network
+  DATAFLOW_MM->valid = 1;
+  DATAFLOW_MM->all_ports_dataflow_host = 1;
+  // Wait for done signal
+  while(!DATAFLOW_MM->done){}
+  // Clear valid to reset
+  DATAFLOW_MM->all_ports_dataflow_host = 0;
+  DATAFLOW_MM->valid = 0;
 }
