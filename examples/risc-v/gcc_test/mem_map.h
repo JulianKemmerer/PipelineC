@@ -213,6 +213,7 @@ static volatile int32_t* FRAME_SIGNAL = (int32_t*)FRAME_SIGNAL_ADDR;
 
 
 // Kernel hardware
+#define ENABLE_PIXEL_IN_READ
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 typedef struct pixel_t{
@@ -244,10 +245,10 @@ pixel_t kernel_func(kernel_in_t inputs)
   int32_t x = inputs.x;
   int32_t y = inputs.y;
   int32_t frame_count = inputs.frame_count;
+  #ifdef ENABLE_PIXEL_IN_READ
   pixel = inputs.pixel_in;
-  pixel.b += 16;
+  #endif
 
-  /*TEMP TEST PATTERN
   // Example uses 71x40 blocky resolution
   // match to roughly 1/4th of 640x480
   // TODO real full resolution demo? How to change all these magic numbers?
@@ -255,7 +256,7 @@ pixel_t kernel_func(kernel_in_t inputs)
   y = y >> 2;
   y -= (FRAME_HEIGHT/8); // Adjust screen to show more vertical sky to account for zoom out
   // TODO real time from clock?
-  int32_t t = frame_count << 6;
+  int32_t t = frame_count << 3;
 
   // Thanks internet!
   // https://www.shadertoy.com/view/4ft3Wn
@@ -370,7 +371,7 @@ pixel_t kernel_func(kernel_in_t inputs)
   pixel.a = 0;
   pixel.r = R;
   pixel.g = G;
-  pixel.b = B;*/
+  pixel.b = B;
   return pixel;
 }
 #endif
@@ -427,8 +428,6 @@ static inline __attribute__((always_inline)) void finish_kernel_pipeline(pixel_t
   *KERNEL_VALID_OUT = 0;
   // Done
 }
-
-#define ENABLE_PIXEL_IN_READ
 
 static inline __attribute__((always_inline)) void kernel_hw(
   int32_t x, int32_t y,

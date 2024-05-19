@@ -68,7 +68,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 
 // Have ~skid like FIFO to prevent DDR controller blocking front of line when flow control asserted
 #include "fifo.h"
-#define DDR_VGA_FIFO_DEPTH 16
+#define DDR_VGA_FIFO_DEPTH 128
 FIFO_FWFT(ddr_vga_fifo, pixel_t, DDR_VGA_FIFO_DEPTH)
 
 #ifdef AXI_XIL_MEM_RD_PRI_PORT
