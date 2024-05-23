@@ -5,7 +5,12 @@ import sys
 import C_TO_LOGIC
 import SW_LIB
 import VHDL
-from pycparser import c_ast, c_parser  # bleh for now
+
+from utilities import REPO_ABS_DIR
+
+# TODO: Temporarily import from submodule, remove this hack when we create a proper pipelinec setup.py
+sys.path.append(REPO_ABS_DIR() + '/submodule/pycparser')
+from pycparser import c_ast
 
 
 # Declare variables used internally to c built in C logic
