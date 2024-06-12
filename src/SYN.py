@@ -380,7 +380,7 @@ class TimingParams:
 
         # Have the current params (slices) been fixed,
         # Default to fixed if known cant be sliced
-        self.params_are_fixed = False #not logic.CAN_BE_SLICED()
+        self.params_are_fixed = False
         # Params, private _ since cached
         self._slices = (
             []
@@ -421,19 +421,33 @@ class TimingParams:
             )
         return self.calcd_total_latency
 
-    def GET_PIPELINE_LOGIC_LATENCY(self, parser_state, TimingParamsLookupTable):
+    def GET_PIPELINE_LOGIC_ADDED_LATENCY(self, parser_state, TimingParamsLookupTable):
         total_latency = self.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
-        pipeline_latency = total_latency
+        # Remove latency added by user
+        if self.logic.func_name in parser_state.func_fixed_latency:
+            fixed_latency = parser_state.func_fixed_latency[self.logic.func_name]
+            if total_latency < fixed_latency:
+                raise Exception(f"{total_latency} latency function {self.logic.func_name} has fixed latency less? {fixed_latency}?")
+            total_latency = total_latency - fixed_latency
+        pipeline_added_latency = total_latency
         if self._has_input_regs:
-            pipeline_latency -= 1
+            if pipeline_added_latency == 0:
+                raise Exception(f"Zero latency function {self.logic.func_name} has input regs?")
+            pipeline_added_latency -= 1
         if self._has_output_regs:
-            pipeline_latency -= 1
-        return pipeline_latency
+            if pipeline_added_latency == 0:
+                raise Exception("Zero latency function {self.logic.func_name} has output regs?")
+            pipeline_added_latency -= 1
+        return pipeline_added_latency
 
     # Haha why uppercase everywhere ...
     def CALC_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
+        # Use hard coded pipelined latency
+        if self.logic.func_name in parser_state.func_fixed_latency:
+            fixed_latency = parser_state.func_fixed_latency[self.logic.func_name]
+            pipeline_latency = fixed_latency
         # C built in has multiple shared latencies based on where used
-        if len(self.logic.submodule_instances) <= 0:
+        elif len(self.logic.submodule_instances) <= 0:
             # Just pipeline slices
             pipeline_latency = len(self._slices)
         else:
@@ -578,48 +592,55 @@ class TimingParams:
 def DEL_ALL_CACHES():
     # Clear all caches after parsing is done
     global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
-    # global _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache
+    # global _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache
 
     _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
-    # _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache    = {}
-    # _GET_ZERO_CLK_PIPELINE_MAP_cache = {}
+    # _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache    = {}
+    # _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 
 
 _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
-_GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache = {}
+_GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache = {}
 
 
-def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
+def GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state):
     # Cached?
-    # print("GET_ZERO_CLK_TIMING_PARAMS_LOOKUP")
+    # print("GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP")
     cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
-    if cache_key in _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache:
-        cached_lookup = _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[cache_key]
+    if cache_key in _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache:
+        cached_lookup = _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache[cache_key]
         rv = {}
         for inst_i, params_i in cached_lookup.items():
             rv[inst_i] = params_i.DEEPCOPY()
         return rv
 
     # Create empty lookup
-    ZeroClockTimingParamsLookupTable = {}
+    ZeroAddedClocksTimingParamsLookupTable = {}
     for logic_inst_name in parser_state.LogicInstLookupTable:
         logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
         timing_params_i = TimingParams(logic_inst_name, logic_i)
-        ZeroClockTimingParamsLookupTable[logic_inst_name] = timing_params_i
+        ZeroAddedClocksTimingParamsLookupTable[logic_inst_name] = timing_params_i 
 
     # Calc cached params so they are in cache
-
-    # Set latency as known
-    for logic_inst_name in parser_state.LogicInstLookupTable:
-        timing_params_i = ZeroClockTimingParamsLookupTable[logic_inst_name]
-        # Known latency is 0 here - fake calculating it
-        timing_params_i.calcd_total_latency = 0
-
-    # Latency knonwn so following hash ext calcs dont need to calc pipeline map for latency
+    bad_fixed_latency_when_cant_slice_func_names = set()
     for logic_inst_name in parser_state.LogicInstLookupTable:
         logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
-        timing_params_i = ZeroClockTimingParamsLookupTable[logic_inst_name]
-        # timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroClockTimingParamsLookupTable)
+        timing_params_i = ZeroAddedClocksTimingParamsLookupTable[logic_inst_name]
+        total_latency = timing_params_i.GET_TOTAL_LATENCY(parser_state, ZeroAddedClocksTimingParamsLookupTable)
+        # Sanity check functions that can't be sliced arent showing up with slices/latency in them
+        pipeline_added_latency = timing_params_i.GET_PIPELINE_LOGIC_ADDED_LATENCY(parser_state, ZeroAddedClocksTimingParamsLookupTable)
+        if logic_i.func_name not in bad_fixed_latency_when_cant_slice_func_names:
+            if (pipeline_added_latency > 0) and not logic_i.BODY_CAN_BE_SLICED(parser_state):
+                print("Error: Single cycle static stateful function", logic_i.func_name, "has actual added latency of", pipeline_added_latency, "cycles.")
+                bad_fixed_latency_when_cant_slice_func_names.add(logic_i.func_name)
+        if len(bad_fixed_latency_when_cant_slice_func_names) > 0:
+            print(
+'''Modify one or more of the above functions:
+Remove fixed latency FUNC_LATENCY pragma specifying pipeline latency.
+OR
+Remove stateful static local variables to allow pipelining.''')
+            raise Exception("Resolve the above unexpected added pipeline latency errors.")
+        # Write cache
         if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache:
             timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[
                 logic_i.func_name
@@ -628,25 +649,25 @@ def GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state):
             _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[
                 logic_i.func_name
             ] = timing_params_i.GET_HASH_EXT(
-                ZeroClockTimingParamsLookupTable, parser_state
+                ZeroAddedClocksTimingParamsLookupTable, parser_state
             )
 
-    _GET_ZERO_CLK_TIMING_PARAMS_LOOKUP_cache[
+    _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache[
         cache_key
-    ] = ZeroClockTimingParamsLookupTable
-    return ZeroClockTimingParamsLookupTable
+    ] = ZeroAddedClocksTimingParamsLookupTable
+    return ZeroAddedClocksTimingParamsLookupTable
 
 
-_GET_ZERO_CLK_PIPELINE_MAP_cache = {}
+_GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 
 
-def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
+def GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     key = Logic.func_name
 
     # Try cache
     try:
-        rv = _GET_ZERO_CLK_PIPELINE_MAP_cache[key]
-        # print "_GET_ZERO_CLK_PIPELINE_MAP_cache",key
+        rv = _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache[key]
+        # print "_GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache",key
 
         # Sanity?
         if rv.logic != Logic:
@@ -671,28 +692,28 @@ def GET_ZERO_CLK_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
         print(0 / 0)
         sys.exit(-1)
 
-    # Populate table as all 0 clk
-    ZeroClockLogicInst2TimingParams = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
+    # Populate table as all 0 added clks
+    ZeroAddedClocksLogicInst2TimingParams = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
 
     # Get params for this logic
     # print "Logic.func_name",Logic.func_name
 
     # Get pipeline map
-    zero_clk_pipeline_map = GET_PIPELINE_MAP(
-        inst_name, Logic, parser_state, ZeroClockLogicInst2TimingParams
+    zero_added_clks_pipeline_map = GET_PIPELINE_MAP(
+        inst_name, Logic, parser_state, ZeroAddedClocksLogicInst2TimingParams
     )
 
     # Only cache if has delay
-    # zero_clk_pipeline_map.logic.delay is not None and  Dont need to check self, only submodules
-    if zero_clk_pipeline_map.zero_clk_max_delay is not None:
-        _GET_ZERO_CLK_PIPELINE_MAP_cache[key] = zero_clk_pipeline_map
+    # zero_added_clks_pipeline_map.logic.delay is not None and  Dont need to check self, only submodules
+    if zero_added_clks_pipeline_map.zero_clk_max_delay is not None:
+        _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache[key] = zero_added_clks_pipeline_map
     else:
         # Sanity?
         if has_delay:
             # Seems to early catch designs optimizing away
-            raise Exception(f"It looks like the function {zero_clk_pipeline_map.logic.func_name} reduces to constants/wires in an unexpected way? Missing '#pragma FUNC_WIRES {zero_clk_pipeline_map.logic.func_name}' ? ")
+            raise Exception(f"It looks like the function {zero_added_clks_pipeline_map.logic.func_name} reduces to constants/wires in an unexpected way? Missing '#pragma FUNC_WIRES {zero_added_clks_pipeline_map.logic.func_name}' ? ")
 
-    return zero_clk_pipeline_map
+    return zero_added_clks_pipeline_map
 
 
 class SubmoduleLevelInfo:
@@ -1005,38 +1026,20 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # Delay stuff was hacked into here and only works for combinatorial logic
     est_total_latency = None
-    is_zero_clk = False
-    # Cant estimate latency but can know if is zero clocks - only one way to do that
-    is_zero_clk = True
-    for local_sub_inst in logic.submodule_instances:
-        sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
-        if sub_inst not in TimingParamsLookupTable:
-            print("Missing timing params for instance:", sub_inst)
-            print("has instances:")
-            for inst_i, params_i in TimingParamsLookupTable.items():
-                print(inst_i)
-            print(0 / 0, flush=True)
-            sys.exit(-1)
-        submodule_timing_params = TimingParamsLookupTable[sub_inst]
-        submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(
-            parser_state, TimingParamsLookupTable
-        )
-        if submodule_latency > 0:
-            is_zero_clk = False
-            break
     has_delay = True
     # Only need to check submodules, not self
     for sub_inst in logic.submodule_instances:
         func_name = logic.submodule_instances[sub_inst]
         sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
         if sub_func_logic.delay is None:
+            if print_debug:
+                print("Submodule",sub_inst,"has None delay")
             has_delay = False
             break
-    is_zero_clk_has_delay = is_zero_clk and has_delay
 
     if print_debug:
         print("timing_params._slices", timing_params._slices)
-        print("is_zero_clk_has_delay", is_zero_clk_has_delay)
+        print("has_delay", has_delay)
 
     # Keep track of submodules whos inputs are fully driven
     fully_driven_submodule_inst_2_logic = {}
@@ -1356,6 +1359,11 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     stage_num = 0
     stage_info = StageInfo(stage_num)
     rv.stage_infos.append(stage_info)
+    # Above constant and global wire prop
+    # means might be done pipeline before even a single iteration
+    # of below while loop that increments stage_num, and then stage_num-1 is used for stage count
+    if PIPELINE_DONE():
+        stage_num = 1
     while not PIPELINE_DONE():
         # Print stuff and set debug if obviously wrong
         if stage_num >= 5000:
@@ -1469,7 +1477,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             RECORD_DRIVEN_BY(driving_wire, driven_wire)
 
                             # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                            if is_zero_clk_has_delay:
+                            if has_delay:
                                 delay_offset_when_driven[
                                     driven_wire
                                 ] = delay_offset_when_driven[driving_wire]
@@ -1590,7 +1598,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             print("submodule", submodule_inst, "HAS ALL INPUTS DRIVEN")
 
                         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                        if is_zero_clk_has_delay:
+                        if has_delay:
                             # Record delay offset as max of driving wires
                             # Do zero_clk_submodule_start_offset INPUT OFFSET as max of input wires
                             # Start with 0 since submodule can have no inputs and this no input port delay offset
@@ -1641,20 +1649,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                     inst_name,
                                     submodule_inst_name,
                                 )
-                            submodule_latency = (
-                                submodule_timing_params.GET_TOTAL_LATENCY(
-                                    parser_state, TimingParamsLookupTable
-                                )
-                            )
-
-                            # Sanity?
-                            if submodule_latency > 0:
-                                print(
-                                    "What non zero latency for pipeline map? FIX MEhow? Probably dont fix now since fractional delay dont/cant make sense yet?"
-                                )
-                                # HOW TO ALLOCATE delay?
-                                print(0 / 0)
-                                sys.exit(-1)
                             # End offset is start offset plus delay
                             # Ex. 0 delay in offset 0
                             # Starts and ends in offset 0
@@ -1788,11 +1782,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
                     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     # Set delay_offset_when_driven for this output wire
-                    if is_zero_clk_has_delay:
-                        # Assume zero latency fix me
-                        if submodule_latency != 0:
-                            print("non zero submodule latency? fix me")
-                            sys.exit(-1)
+                    if has_delay:
                         # Set delay offset for this wire
                         submodule_delay = parser_state.LogicInstLookupTable[
                             submodule_inst_name
@@ -1876,7 +1866,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
         # PER CLOCK
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        if is_zero_clk_has_delay:
+        if has_delay:
             # Get max delay
             if len(list(rv.zero_clk_per_delay_submodules_map.keys())) == 0:
                 if print_debug:
@@ -2042,18 +2032,18 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
         if len(logic.submodule_instances) > 0:
             # print "logic.submodule_instances",logic.submodule_instances
             # Get the zero clock pipeline map for this logic
-            zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(
+            zero_added_clks_pipeline_map = GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
                 inst_name, logic, parser_state
             )
-            total_delay = zero_clk_pipeline_map.zero_clk_max_delay
+            total_delay = zero_added_clks_pipeline_map.zero_clk_max_delay
             if total_delay is None:
                 print("No delay for module?", logic.func_name)
                 sys.exit(-1)
             epsilon = SLICE_EPSILON(total_delay)
 
             # Sanity?
-            if logic.func_name != zero_clk_pipeline_map.logic.func_name:
-                print("Zero clk inst name:", zero_clk_pipeline_map.logic.func_name)
+            if logic.func_name != zero_added_clks_pipeline_map.logic.func_name:
+                print("Zero clk inst name:", zero_added_clks_pipeline_map.logic.func_name)
                 print("Wtf using pipeline map from other func?")
                 sys.exit(-1)
 
@@ -2061,7 +2051,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
             delay_offset_float = new_slice_pos * total_delay
             delay_offset = math.floor(delay_offset_float)
             # Clamp to max?
-            max_delay = max(zero_clk_pipeline_map.zero_clk_per_delay_submodules_map.keys())
+            max_delay = max(zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map.keys())
             if delay_offset > max_delay:
                 delay_offset = max_delay
             delay_offset_decimal = delay_offset_float - delay_offset
@@ -2070,21 +2060,21 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
             # The boundary between modules is important for moving slices right up against global logic?
 
             # Get submodules at this offset
-            submodule_insts = zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+            submodule_insts = zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
                 delay_offset
             ]
             # Get submodules in previous and next delay units
             prev_submodule_insts = []
-            if delay_offset - 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
+            if delay_offset - 1 in zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map:
                 prev_submodule_insts = (
-                    zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+                    zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
                         delay_offset - 1
                     ]
                 )
             next_submodule_insts = []
-            if delay_offset + 1 in zero_clk_pipeline_map.zero_clk_per_delay_submodules_map:
+            if delay_offset + 1 in zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map:
                 next_submodule_insts = (
-                    zero_clk_pipeline_map.zero_clk_per_delay_submodules_map[
+                    zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
                         delay_offset + 1
                     ]
                 )
@@ -2105,7 +2095,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                     submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
                     containing_logic = logic
 
-                    start_offset = zero_clk_pipeline_map.zero_clk_submodule_start_offset[
+                    start_offset = zero_added_clks_pipeline_map.zero_clk_submodule_start_offset[
                         submodule_inst
                     ]
                     local_offset = delay_offset - start_offset
@@ -2898,10 +2888,10 @@ def DO_THROUGHPUT_SWEEP(
         print("Function:", main_func, "Target MHz:", mhz, flush=True)
 
     # Populate timing lookup table as all 0 clk
-    print("Setting all instances to comb. logic to start...", flush=True)
-    ZeroClockTimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
+    print("Setting all instances to be unpipelined to start...", flush=True)
+    ZeroAddedClocksTimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     multimain_timing_params = MultiMainTimingParams()
-    multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
+    multimain_timing_params.TimingParamsLookupTable = ZeroAddedClocksTimingParamsLookupTable
 
     # Write clock cross entities
     VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
@@ -2922,7 +2912,21 @@ def DO_THROUGHPUT_SWEEP(
 
     # If comb. logic only
     if comb_only:
-        print("Running synthesis on comb. logic only top level ...", flush=True)
+        print("Running synthesis on unpipelined top level ...", flush=True)
+        for main_func in parser_state.main_mhz:
+            main_func_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
+            main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
+                    parser_state,
+                    multimain_timing_params.TimingParamsLookupTable
+                )
+            if main_func_latency > 0:
+                print(
+                    main_func,
+                    ":",
+                    main_func_latency,
+                    "clocks latency total...",
+                    flush=True,
+                )
         # Comb logic only AND coarse?
         if coarse_only:
             print("Using --coarse and --comb doesnt make sense? TODO fix?")
@@ -2986,7 +2990,7 @@ def DO_THROUGHPUT_SWEEP(
             target_mhz = INF_MHZ
             if starting_guess_latency is None:
                 print(
-                    "Starting a coarse sweep incrementally from zero latency comb. logic.",
+                    "Starting a coarse sweep incrementally from zero added latency logic.",
                     flush=True,
                 )
                 starting_guess_latency = 0
@@ -3064,10 +3068,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             printed_slices_cache = (
                 set()
             )  # Print each time trying to walk tree for slicing
-            print("Starting from zero clk timing params...", flush=True)
+            print("Starting from unpipelined timing params...", flush=True)
             # Reset to empty start for this tree walk
             sweep_state.multimain_timing_params.TimingParamsLookupTable = (
-                GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
+                GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
             )
             for main_inst in parser_state.main_mhz:
                 sweep_state.inst_sweep_state[
@@ -3565,7 +3569,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     main_func,
                     ":",
                     main_func_latency,
-                    "clocks latency added...",
+                    "clocks latency total...",
                     flush=True,
                 )
 
@@ -3897,9 +3901,9 @@ def DO_COARSE_THROUGHPUT_SWEEP(
     # until mhz goals met
     while True:
         # Reset to zero clock
-        print("Building timing params up from comb. logic...", flush=True)
+        print("Building timing params starting from unpipelined logic...", flush=True)
         # TODO dont need full copy of all other inst being zero clock too
-        TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
+        TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
 
         # Do slicing
         # Set the slices in timing params and then rebuild
@@ -3944,16 +3948,6 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             # print("Can't syn when slicing through globals!")
             # return None, None, None, None
 
-        # SANITY
-        if TimingParamsLookupTable[inst_name]._slices != best_guess_slices:
-            print(
-                "Tried to slice as ",
-                best_guess_slices,
-                "but got",
-                TimingParamsLookupTable[inst_name]._slices,
-            )
-            sys.exit(-1)
-
         # Fast one time loop writing only files that have non default,>0 latency
         print("Updating output files...", flush=True)
         entities_written = set()
@@ -3987,7 +3981,16 @@ def DO_COARSE_THROUGHPUT_SWEEP(
         WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
 
         # Run syn on multi main top
-        print("Running syn w slices...", flush=True)
+        latency = TimingParamsLookupTable[inst_name].GET_TOTAL_LATENCY(
+            parser_state, TimingParamsLookupTable
+        )
+        print("Synthesizing",
+            logic.func_name,
+            ":",
+            latency,
+            "clocks total latency...",
+            flush=True,
+        )
         print(
             f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}..."
         )
@@ -4535,9 +4538,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     # print("WHY SLO?")
     # sys.exit(-1)
 
-    print("Synthesizing as combinatorial logic to get total logic delay...", flush=True)
+    print("Synthesizing before pipelining to get path delays...", flush=True)
     print("", flush=True)
-    TimingParamsLookupTable = GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(parser_state)
+    TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     multimain_timing_params = MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
 
@@ -4655,10 +4658,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             if (
                 len(logic.submodule_instances) > 0 and not logic.is_vhdl_text_module
             ):  # TODO make pipeline map return empty instead of check?
-                zero_clk_pipeline_map = GET_ZERO_CLK_PIPELINE_MAP(
+                zero_added_clks_pipeline_map = GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
                     inst_name, logic, parser_state
                 )  # use inst_logic since timing params are by inst
-                zero_clk_pipeline_map_str = str(zero_clk_pipeline_map)
+                zero_clk_pipeline_map_str = str(zero_added_clks_pipeline_map)
                 out_dir = GET_OUTPUT_DIRECTORY(logic)
                 if not os.path.exists(out_dir):
                     os.makedirs(out_dir)
@@ -4668,7 +4671,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 f.close()
 
                 # Picture too?
-                zero_clk_pipeline_map.write_png(out_dir, parser_state)
+                zero_added_clks_pipeline_map.write_png(out_dir, parser_state)
 
         # Start parallel syn for parallel_func_names
         # Parallelized
@@ -4691,17 +4694,13 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 print("Mismatching logic!?", logic.func_name)
                 sys.exit(-1)
             # Run Syn
-            total_latency = 0
-            # parsed_timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(inst_name, logic, parser_state, TimingParamsLookupTable, total_latency)
-            # sys.exit(-1)
             my_async_result = my_thread_pool.apply_async(
                 SYN_TOOL.SYN_AND_REPORT_TIMING,
                 (
                     inst_name,
                     logic,
                     parser_state,
-                    TimingParamsLookupTable,
-                    total_latency,
+                    TimingParamsLookupTable
                 ),
             )
             func_name_to_async_result[logic_func_name] = my_async_result

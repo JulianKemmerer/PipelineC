@@ -4950,14 +4950,13 @@ def WRITE_LOGIC_ENTITY(
                 if submodule_logic.is_clock_crossing:
                     continue
 
-                new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
-                rv += "-- " + new_inst_name + "\n"
-
                 # ENTITY
                 submodule_timing_params = TimingParamsLookupTable[instance_name]
                 submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(
                     parser_state, TimingParamsLookupTable
                 )
+                new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
+                rv += "-- " + new_inst_name + f" : {submodule_latency} clocks latency"  "\n"
                 submodule_needs_clk = LOGIC_NEEDS_CLOCK(
                     instance_name,
                     submodule_logic,
@@ -5071,7 +5070,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     total_latency = timing_params.GET_TOTAL_LATENCY(
         parser_state, TimingParamsLookupTable
     )
-    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_LATENCY(
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
         parser_state, TimingParamsLookupTable
     )
     needs_clk = LOGIC_NEEDS_CLOCK(
@@ -5093,7 +5092,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     rv += "attribute mark_debug : string;\n"
 
     # Declare latency for just the pipeline portion of logic, not io regs
-    rv += "constant PIPELINE_LATENCY : integer := " + str(pipeline_latency) + ";\n"
+    rv += "constant ADDED_PIPELINE_LATENCY : integer := " + str(pipeline_latency) + ";\n"
 
     # TODO built in raw vhdl still uses write pipe stuff
 
@@ -5118,7 +5117,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
             wrote_variables_t = True
         rv += """
 -- Type for this modules register pipeline
-type raw_hdl_register_pipeline_t is array(0 to PIPELINE_LATENCY) of raw_hdl_variables_t;
+type raw_hdl_register_pipeline_t is array(0 to ADDED_PIPELINE_LATENCY) of raw_hdl_variables_t;
   """
     else:
         # For each stage make reg and comb signal as needed
@@ -5452,7 +5451,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
     total_latency = timing_params.GET_TOTAL_LATENCY(
         parser_state, TimingParamsLookupTable
     )
-    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_LATENCY(
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
         parser_state, TimingParamsLookupTable
     )
     needs_clk = LOGIC_NEEDS_CLOCK(
@@ -5705,7 +5704,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
     rv += "\n"
     rv += " -- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
     rv += " -- LATENCY=0 is combinational Logic\n"
-    rv += " " + "for STAGE in 0 to PIPELINE_LATENCY loop\n"
+    rv += " " + "for STAGE in 0 to ADDED_PIPELINE_LATENCY loop\n"
 
     # Raw hdl still write pipe
     if is_raw_hdl:
@@ -5805,7 +5804,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                         + "io_registers.output_regs."
                         + WIRE_TO_VHDL_NAME(output_wire, Logic)
                         + " <= "
-                        + "write_raw_hdl_pipeline_regs(PIPELINE_LATENCY)."
+                        + "write_raw_hdl_pipeline_regs(ADDED_PIPELINE_LATENCY)."
                         + WIRE_TO_VHDL_NAME(output_wire, Logic)
                         + ";\n"
                     )
@@ -5814,7 +5813,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                         " "
                         + WIRE_TO_VHDL_NAME(output_wire, Logic)
                         + " <= "
-                        + "write_raw_hdl_pipeline_regs(PIPELINE_LATENCY)."
+                        + "write_raw_hdl_pipeline_regs(ADDED_PIPELINE_LATENCY)."
                         + WIRE_TO_VHDL_NAME(output_wire, Logic)
                         + ";\n"
                     )
@@ -5971,7 +5970,7 @@ def GET_C_ENTITY_PROCESS_STAGES_TEXT(
     inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
 ):
     timing_params = TimingParamsLookupTable[inst_name]
-    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_LATENCY(
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
         parser_state, TimingParamsLookupTable
     )
     text = "  " + " "
@@ -6998,6 +6997,8 @@ def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
 
     timing_params = TimingParamsLookupTable[inst_name]
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    if latency < 0:
+        raise Exception(f"Bad latency? {inst_name}")
     return (
         Logic.func_name
         + "_"

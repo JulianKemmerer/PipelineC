@@ -113,7 +113,7 @@ parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
 #sys.exit(0)
 
 print("================== Writing Resulting Logic to File ================================", flush=True)
-C_TO_LOGIC.WRITE_0CLK_FINAL_FILES(parser_state)
+C_TO_LOGIC.WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state)
 
 # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
 SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
