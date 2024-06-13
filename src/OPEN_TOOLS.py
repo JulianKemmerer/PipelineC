@@ -446,7 +446,7 @@ export GHDL_PREFIX="""
                 + top_entity_name
                 + """.json' &>> """
                 + log_file_name
-                + f"""
+                + """
 """
             )
         f.close()
@@ -607,7 +607,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     RESETMODE : string := "SYNC"  );
   port ("""
     if width > 9:
-        text += f"""
+        text += """
     A17 :   in  std_logic;
     A16 :   in  std_logic;
     A15 :   in  std_logic;
@@ -617,7 +617,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     A11 :   in  std_logic;
     A10 :   in  std_logic;
     A9 :   in  std_logic;"""
-    text += f"""
+    text += """
     A8 :   in  std_logic;
     A7 :   in  std_logic;
     A6 :   in  std_logic;
@@ -628,7 +628,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     A1 :   in  std_logic;
     A0 :   in  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     B17 :   in  std_logic;
     B16 :   in  std_logic;
     B15 :   in  std_logic;
@@ -638,7 +638,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     B11 :   in  std_logic;
     B10 :   in  std_logic;
     B9 :   in  std_logic;"""
-    text += f"""
+    text += """
     B8 :   in  std_logic;
     B7 :   in  std_logic;
     B6 :   in  std_logic;
@@ -649,7 +649,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     B1 :   in  std_logic;
     B0 :   in  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     C17 :   in  std_logic;
     C16 :   in  std_logic;
     C15 :   in  std_logic;
@@ -659,7 +659,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     C11 :   in  std_logic;
     C10 :   in  std_logic;
     C9 :   in  std_logic;"""
-    text += f"""
+    text += """
     C8 :   in  std_logic;
     C7 :   in  std_logic;
     C6 :   in  std_logic;
@@ -686,7 +686,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     RST1 :   in  std_logic;
     RST0 :   in  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     SRIA17 :   in  std_logic;
     SRIA16 :   in  std_logic;
     SRIA15 :   in  std_logic;
@@ -696,7 +696,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SRIA11 :   in  std_logic;
     SRIA10 :   in  std_logic;
     SRIA9 :   in  std_logic;"""
-    text += f"""
+    text += """
     SRIA8 :   in  std_logic;
     SRIA7 :   in  std_logic;
     SRIA6 :   in  std_logic;
@@ -707,7 +707,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SRIA1 :   in  std_logic;
     SRIA0 :   in  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     SRIB17 :   in  std_logic;
     SRIB16 :   in  std_logic;
     SRIB15 :   in  std_logic;
@@ -717,7 +717,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SRIB11 :   in  std_logic;
     SRIB10 :   in  std_logic;
     SRIB9 :   in  std_logic;"""
-    text += f"""
+    text += """
     SRIB8 :   in  std_logic;
     SRIB7 :   in  std_logic;
     SRIB6 :   in  std_logic;
@@ -728,7 +728,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SRIB1 :   in  std_logic;
     SRIB0 :   in  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     SROA17 :   out  std_logic;
     SROA16 :   out  std_logic;
     SROA15 :   out  std_logic;
@@ -738,7 +738,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROA11 :   out  std_logic;
     SROA10 :   out  std_logic;
     SROA9 :   out  std_logic;"""
-    text += f"""
+    text += """
     SROA8 :   out  std_logic;
     SROA7 :   out  std_logic;
     SROA6 :   out  std_logic;
@@ -749,7 +749,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROA1 :   out  std_logic;
     SROA0 :   out  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     SROB17 :   out  std_logic;
     SROB16 :   out  std_logic;
     SROB15 :   out  std_logic;
@@ -759,7 +759,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROB11 :   out  std_logic;
     SROB10 :   out  std_logic;
     SROB9 :   out  std_logic;"""
-    text += f"""
+    text += """
     SROB8 :   out  std_logic;
     SROB7 :   out  std_logic;
     SROB6 :   out  std_logic;
@@ -770,7 +770,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     SROB1 :   out  std_logic;
     SROB0 :   out  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     ROA17 :   out  std_logic;
     ROA16 :   out  std_logic;
     ROA15 :   out  std_logic;
@@ -780,7 +780,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROA11 :   out  std_logic;
     ROA10 :   out  std_logic;
     ROA9 :   out  std_logic;"""
-    text += f"""
+    text += """
     ROA8 :   out  std_logic;
     ROA7 :   out  std_logic;
     ROA6 :   out  std_logic;
@@ -791,7 +791,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROA1 :   out  std_logic;
     ROA0 :   out  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     ROB17 :   out  std_logic;
     ROB16 :   out  std_logic;
     ROB15 :   out  std_logic;
@@ -801,7 +801,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROB11 :   out  std_logic;
     ROB10 :   out  std_logic;
     ROB9 :   out  std_logic;"""
-    text += f"""  
+    text += """  
     ROB8 :   out  std_logic;
     ROB7 :   out  std_logic;
     ROB6 :   out  std_logic;
@@ -812,7 +812,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROB1 :   out  std_logic;
     ROB0 :   out  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     ROC17 :   out  std_logic;
     ROC16 :   out  std_logic;
     ROC15 :   out  std_logic;
@@ -822,7 +822,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROC11 :   out  std_logic;
     ROC10 :   out  std_logic;
     ROC9 :   out  std_logic;"""
-    text += f"""
+    text += """
     ROC8 :   out  std_logic;
     ROC7 :   out  std_logic;
     ROC6 :   out  std_logic;
@@ -833,7 +833,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     ROC1 :   out  std_logic;
     ROC0 :   out  std_logic;"""
     if width > 9:
-        text += f"""
+        text += """
     P35 :   out  std_logic;
     P34 :   out  std_logic;
     P33 :   out  std_logic;
@@ -852,7 +852,7 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     P20 :   out  std_logic;
     P19 :   out  std_logic;
     P18 :   out  std_logic;"""
-    text += (f"""
+    text += ("""
     P17 :   out  std_logic;
     P16 :   out  std_logic;
     P15 :   out  std_logic;
@@ -972,7 +972,7 @@ end component;
   )
   port map(""")
     if width > 9:
-        text += f"""
+        text += """
     A17 => a_i(17),
     A16 => a_i(16),
     A15 => a_i(15),
@@ -982,7 +982,7 @@ end component;
     A11 => a_i(11),
     A10 => a_i(10),
     A9 => a_i(9),"""
-    text += f"""
+    text += """
     A8 => a_i(8),
     A7 => a_i(7),
     A6 => a_i(6),
@@ -993,7 +993,7 @@ end component;
     A1 => a_i(1),
     A0 => a_i(0),"""
     if width > 9:
-        text += f"""
+        text += """
     B17 => b_i(17),
     B16 => b_i(16),
     B15 => b_i(15),
@@ -1003,7 +1003,7 @@ end component;
     B11 => b_i(11),
     B10 => b_i(10),
     B9 => b_i(9),"""
-    text += f"""
+    text += """
     B8 => b_i(8),
     B7 => b_i(7),
     B6 => b_i(6),
@@ -1014,7 +1014,7 @@ end component;
     B1 => b_i(1),
     B0 => b_i(0),"""
     if width > 9:
-        text += f"""
+        text += """
     C17 => '0',
     C16 => '0',
     C15 => '0',
@@ -1024,7 +1024,7 @@ end component;
     C11 => '0',
     C10 => '0',
     C9 => '0',"""
-    text += f"""
+    text += """
     C8 => '0',
     C7 => '0',
     C6 => '0',
@@ -1060,7 +1060,7 @@ end component;
     RST1 => '0',
     RST0 => '0',"""
     if width > 9:
-        text += f"""
+        text += """
     SRIA17 => '0',
     SRIA16 => '0',
     SRIA15 => '0',
@@ -1070,7 +1070,7 @@ end component;
     SRIA11 => '0',
     SRIA10 => '0',
     SRIA9 => '0',"""
-    text += f"""
+    text += """
     SRIA8 => '0',
     SRIA7 => '0',
     SRIA6 => '0',
@@ -1081,7 +1081,7 @@ end component;
     SRIA1 => '0',
     SRIA0 => '0',"""
     if width > 9:
-        text += f"""
+        text += """
     SRIB17 => '0',
     SRIB16 => '0',
     SRIB15 => '0',
@@ -1091,7 +1091,7 @@ end component;
     SRIB11 => '0',
     SRIB10 => '0',
     SRIB9 => '0',"""
-    text += f"""
+    text += """
     SRIB8 => '0',
     SRIB7 => '0',
     SRIB6 => '0',
@@ -1102,7 +1102,7 @@ end component;
     SRIB1 => '0',
     SRIB0 => '0',"""
     if width > 9:
-        text += f"""
+        text += """
     SROA17 => open,
     SROA16 => open,
     SROA15 => open,
@@ -1123,7 +1123,7 @@ end component;
     SROA1 => open,
     SROA0 => open,"""
     if width > 9:
-        text += f"""
+        text += """
     SROB17 => open,
     SROB16 => open,
     SROB15 => open,
@@ -1133,7 +1133,7 @@ end component;
     SROB11 => open,
     SROB10 => open,
     SROB9 => open,"""
-    text += f"""
+    text += """
     SROB8 => open,
     SROB7 => open,
     SROB6 => open,
@@ -1144,7 +1144,7 @@ end component;
     SROB1 => open,
     SROB0 => open,"""
     if width > 9:
-        text += f"""
+        text += """
     ROA17 => open,
     ROA16 => open,
     ROA15 => open,
@@ -1154,7 +1154,7 @@ end component;
     ROA11 => open,
     ROA10 => open,
     ROA9 => open,"""
-    text += f"""
+    text += """
     ROA8 => open,
     ROA7 => open,
     ROA6 => open,
@@ -1165,7 +1165,7 @@ end component;
     ROA1 => open,
     ROA0 => open,"""
     if width > 9:
-        text += f"""
+        text += """
     ROB17 => open,
     ROB16 => open,
     ROB15 => open,
@@ -1176,7 +1176,7 @@ end component;
     ROB10 => open,
     ROB9 => open,
     ROB8 => open,"""
-    text += f"""
+    text += """
     ROB7 => open,
     ROB6 => open,
     ROB5 => open,
@@ -1186,7 +1186,7 @@ end component;
     ROB1 => open,
     ROB0 => open,"""
     if width > 9:
-        text += f"""
+        text += """
     ROC17 => open,
     ROC16 => open,
     ROC15 => open,
@@ -1197,7 +1197,7 @@ end component;
     ROC10 => open,
     ROC9 => open,
     """
-    text += f"""
+    text += """
     ROC8 => open,
     ROC7 => open,
     ROC6 => open,
@@ -1208,7 +1208,7 @@ end component;
     ROC1 => open,
     ROC0 => open,"""
     if width > 9:
-        text += f"""
+        text += """
     P35 => p_o(35),
     P34 => p_o(34),
     P33 => p_o(33),
@@ -1227,7 +1227,7 @@ end component;
     P20 => p_o(20),
     P19 => p_o(19),
     P18 => p_o(18),"""
-    text += f"""
+    text += """
     P17 => p_o(17),
     P16 => p_o(16),
     P15 => p_o(15),

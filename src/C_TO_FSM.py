@@ -298,7 +298,7 @@ def STATE_GROUP_TO_C_CODE(
                 text += "    {\n"
                 if state_info.sub_func_name is not None:
                     if state_info.always_next_state is not None:
-                        raise Exception(f"Subroutine branching exit has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
+                        raise Exception("Subroutine branching exit has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
                     text += "      // Subroutine branch exiting to scheduled return state\n"
                     text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
                 else:
@@ -455,7 +455,7 @@ def STATE_GROUP_TO_C_CODE(
             )
             if state_info.sub_func_name is not None:
                 if state_info.always_next_state is not None:
-                    raise Exception(f"Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
+                    raise Exception("Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
                 text += "    // Subroutine returning to scheduled return state\n"
                 text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
                 text += "  }\n"

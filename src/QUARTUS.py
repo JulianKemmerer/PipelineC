@@ -109,7 +109,7 @@ begin
 """
     if needs_clk:
         text += "CLOCK => clk,\n"
-    text += f"""
+    text += """
   DATAA => std_logic_vector(a),
   DATAB => std_logic_vector(b),
   unsigned(RESULT) => return_output

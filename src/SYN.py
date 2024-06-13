@@ -537,7 +537,7 @@ class TimingParams:
             sys.exit(-1)
             slice_point = 0.0
 
-        if not (slice_point in self._slices):
+        if slice_point not in self._slices:
             self._slices.append(slice_point)
             self._slices = sorted(self._slices)
             self.INVALIDATE_CACHE()
@@ -780,7 +780,7 @@ class PipelineMap:
             return
         s = graphviz.Digraph(
             self.logic.func_name, 
-            filename=f'pipeline_map.gv',
+            filename='pipeline_map.gv',
             node_attr={'shape': 'record'},
         )
 
@@ -1450,7 +1450,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             if bad_inf_loop:
                                 print("handling driven wire", driven_wire)
 
-                            if not (driven_wire in logic.wire_driven_by):
+                            if driven_wire not in logic.wire_driven_by:
                                 # In
                                 print(
                                     "!!!!!!!!!!!! DANGLING LOGIC???????",
@@ -1690,19 +1690,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                                         print(delay_offset_when_driven)
                                         sys.exit(-1)
                                     # Submodule isnts
-                                    if not (
-                                        abs_delay
-                                        in rv.zero_clk_per_delay_submodules_map
-                                    ):
+                                    if abs_delay not in rv.zero_clk_per_delay_submodules_map:
                                         rv.zero_clk_per_delay_submodules_map[
                                             abs_delay
                                         ] = []
-                                    if not (
-                                        submodule_inst
-                                        in rv.zero_clk_per_delay_submodules_map[
+                                    if submodule_inst not in rv.zero_clk_per_delay_submodules_map[
                                             abs_delay
-                                        ]
-                                    ):
+                                        ]:
                                         rv.zero_clk_per_delay_submodules_map[
                                             abs_delay
                                         ].append(submodule_inst)
@@ -2437,7 +2431,7 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
     # Try to use cache
     cached_sweep_state = GET_MOST_RECENT_CACHED_SWEEP_STATE()
     sweep_state = None
-    if not (cached_sweep_state is None):
+    if cached_sweep_state is not None:
         print("Using cached most recent sweep state...", flush=True)
         sweep_state = cached_sweep_state
     else:
@@ -2972,7 +2966,7 @@ def DO_THROUGHPUT_SWEEP(
                 main_func = possible_mains[0]
                 print("Assuming coarse sweep is for main function:", main_func)
             elif len(possible_mains) == 0:
-                raise Exception(f"No main functions are elligible for pipelining.")
+                raise Exception("No main functions are elligible for pipelining.")
             else:
                 raise Exception(
                     f"Cannot do use a single coarse sweep with multiple pipelined main functions. Possible main functions: {possible_mains}"
@@ -4218,7 +4212,7 @@ def EXPAND_STAGES_VIA_ADJ_COUNT(
     # First check how many stages will be shrank
     stages_to_shrink = []
     for stage in range(0, len(current_slices) + 1):
-        if not (stage in missing_stages) and (
+        if stage not in missing_stages and (
             slice_per_stage[stage] - expansion > min_dist
         ):
             stages_to_shrink.append(stage)

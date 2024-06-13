@@ -3588,7 +3588,7 @@ package c_structs_pkg is
 
     # Float resizing func
     # resize_float_e_m_t(", f",{r_e},{r_m},{l_e},{l_m})"]
-    text += f"""
+    text += """
   function resize_float_e_m_t(
     x : std_logic_vector; 
     in_exponent_width : integer;
@@ -3596,7 +3596,7 @@ package c_structs_pkg is
     out_exponent_width : integer;
     out_mantissa_width : integer) return std_logic_vector; 
    """
-    pkg_body_text += f"""
+    pkg_body_text += """
   function resize_float_e_m_t(
     x : std_logic_vector; 
     in_exponent_width : integer;
@@ -3789,7 +3789,7 @@ begin
                 if (
                     (field_type not in types_written)
                     and C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type)
-                    and not (field_type in array_types)
+                    and field_type not in array_types
                 ):
                     elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
                         field_type
@@ -5863,7 +5863,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         and (SIM.SIM_TOOL != VERILATOR)
         and (SIM.SIM_TOOL != CXXRTL)
     ):
-        rv += " " + f"-- For simulation? \n"
+        rv += " " + "-- For simulation? \n"
         rv += " " + "wait;\n"
 
     rv += "end process;\n"
@@ -6184,7 +6184,7 @@ def GET_STAGE_TEXT(
                     "     "
                     + f"COMB_STAGE{stage_info.stage_num}_"
                     + write_pipe_wire_var_vhdl
-                    + f" <= VAR_"
+                    + " <= VAR_"
                     + write_pipe_wire_var_vhdl
                     + ";\n"
                 )
