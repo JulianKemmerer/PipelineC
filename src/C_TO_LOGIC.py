@@ -1012,7 +1012,7 @@ class Logic:
         # Then include wire_aliases_over_time ONLY from second logic
         for var_name in second_logic.wire_aliases_over_time:
             # And first logic does not
-            if not (var_name in self.wire_aliases_over_time):
+            if var_name not in self.wire_aliases_over_time:
                 # Merged value is just from second logic
                 second = second_logic.wire_aliases_over_time[var_name]
                 self.wire_aliases_over_time[var_name] = second[:]
@@ -1493,9 +1493,9 @@ def WIRE_IS_CONSTANT(wire):
     if (
         (CONST_PREFIX in wire)
         and not (rv)
-        and not (CONST_REF_RD_FUNC_NAME_PREFIX + "_" in wire)
-        and not (CONST_PREFIX + BIN_OP_SL_NAME + "_" in wire)
-        and not (CONST_PREFIX + BIN_OP_SR_NAME + "_" in wire)
+        and CONST_REF_RD_FUNC_NAME_PREFIX + "_" not in wire
+        and CONST_PREFIX + BIN_OP_SL_NAME + "_" not in wire
+        and CONST_PREFIX + BIN_OP_SR_NAME + "_" not in wire
     ):
         print("WHJAT!?")
         print("wire", wire)
@@ -1873,7 +1873,7 @@ def BUILD_LOGIC_AS_C_CODE(
         )
 
         # Get the other partial logic if it exists
-        if not (func_name in FuncLogicLookupTable):
+        if func_name not in FuncLogicLookupTable:
             print("I cant find func name", func_name, "in the C code so far")
             print("c_code_text")
             print(c_code_text)
@@ -2848,7 +2848,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
         new_aliases = existing_aliases
 
         # Dont double add aliases
-        if not (lhs_next_wire_assignment_alias in new_aliases):
+        if lhs_next_wire_assignment_alias not in new_aliases:
             new_aliases = new_aliases + [lhs_next_wire_assignment_alias]
         parser_state.existing_logic.wire_aliases_over_time[
             lhs_orig_var_name
@@ -2992,7 +2992,7 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(
     new_aliases = existing_aliases
 
     # Dont double add aliases
-    if not (lhs_next_wire_assignment_alias in new_aliases):
+    if lhs_next_wire_assignment_alias not in new_aliases:
         new_aliases = new_aliases + [lhs_next_wire_assignment_alias]
     parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
 
@@ -5002,9 +5002,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
         value, c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
             value_str, c_ast_node, is_negated
         )
-        if not (
-            c_type_str is None
-        ):  # and (wire_name not in parser_state.existing_logic.wire_to_c_type):
+        if c_type_str is not None:  # and (wire_name not in parser_state.existing_logic.wire_to_c_type):
             parser_state.existing_logic.wire_to_c_type[wire_name] = c_type_str
     else:
         parser_state.existing_logic.wire_to_c_type[wire_name] = known_c_type
@@ -5267,7 +5265,7 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
     if existing_logic is None:
         rv = Logic()
 
-    if not (c_ast_compound.block_items is None):
+    if c_ast_compound.block_items is not None:
         for block_item in c_ast_compound.block_items:
             # print "block_item in c_ast_compound.block_items"
             # casthelp(block_item)
@@ -6097,14 +6095,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
             for alias in true_logic.wire_aliases_over_time[orig_var]:
                 if alias in original_aliases:
                     # Is in orig, keep if not in list already
-                    if not (alias in filtered_aliases):
+                    if alias not in filtered_aliases:
                         filtered_aliases.append(alias)
 
         if orig_var in false_logic.wire_aliases_over_time:
             for alias in false_logic.wire_aliases_over_time[orig_var]:
                 if alias in original_aliases:
                     # Is in orig, keep if not in list already
-                    if not (alias in filtered_aliases):
+                    if alias not in filtered_aliases:
                         filtered_aliases.append(alias)
 
         if len(filtered_aliases) > 0:
@@ -6127,7 +6125,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     for variable in merge_var_names:
         # vars declared inside and IF cannot be used outside that if so cannot/should not have MUX inputs+outputs
         declared_in_this_if = (
-            not (variable in parser_state.existing_logic.variable_names)
+            variable not in parser_state.existing_logic.variable_names
             and (variable not in parser_state.existing_logic.state_regs)
             and (variable not in parser_state.existing_logic.read_only_global_wires)
             and (variable not in parser_state.existing_logic.write_only_global_wires)
@@ -6163,7 +6161,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
             true_false_merged.wire_to_c_type[mux_connection_wire_name] = c_type
             # Mux output just adds an alias over time to the original variable
             # So that the next read of the variable uses the mux output
-            if not (mux_connection_wire_name in aliases):
+            if mux_connection_wire_name not in aliases:
                 aliases.append(mux_connection_wire_name)
 
         # Re add if not empty list
@@ -7810,7 +7808,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(
 ):
     FuncLogicLookupTable = parser_state.FuncLogicLookupTable
     func_name = str(c_ast_func_call.name.name)
-    if not (func_name in FuncLogicLookupTable):
+    if func_name not in FuncLogicLookupTable:
         # Uhh.. lets check for some built in compiler things because
         # stacking complexity without real planning is like totally rad
         # Dude - rad indeed, lets keep it going with printf
@@ -8537,13 +8535,13 @@ def C_AST_BINARY_OP_TO_LOGIC(
             print("Know types:")
             print(parser_state.existing_logic.wire_to_c_type)
             sys.exit(-1)
-        elif not (left_type is None) and (right_type is None):
+        elif left_type is not None and (right_type is None):
             # Left type alone known
             print(func_inst_name, "Binary op with only left input type known?")
             sys.exit(-1)
             # parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
             # parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = left_type
-        elif (left_type is None) and not (right_type is None):
+        elif (left_type is None) and right_type is not None:
             # Right type alone known
             print(func_inst_name, "Binary op with only right input type known?")
             sys.exit(-1)
@@ -8593,7 +8591,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
                     ) = GET_INTEGER_MAX_SIZE_INFO([left_type, right_type])
                 else:
                     print(
-                        f"Unsupported binary operation between types (explicit casting required for now):",
+                        "Unsupported binary operation between types (explicit casting required for now):",
                         left_type,
                         c_ast_bin_op_str,
                         right_type,
@@ -8759,7 +8757,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
 def GET_C_TYPE_FROM_WIRE_NAMES(wire_names, logic, allow_fail=False):
     rv = None
     for wire_name in wire_names:
-        if not (wire_name in logic.wire_to_c_type):
+        if wire_name not in logic.wire_to_c_type:
             if allow_fail:
                 return None
             else:
@@ -8816,7 +8814,7 @@ def APPLY_CONNECT_WIRES_LOGIC(
         # Look up that type and make sure if the driven wire names have types that they match
         # INSERT CAST FUNCTION if needed
         # print c_ast_id.coord
-        if not (driving_wire in parser_state.existing_logic.wire_to_c_type):
+        if driving_wire not in parser_state.existing_logic.wire_to_c_type:
             print(
                 "Looks like wire'",
                 driving_wire,
@@ -9275,7 +9273,7 @@ def GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst, input_port_name
 
 def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
     text = ""
-    while not (start is None):
+    while start is not None:
         if wires_driven_so_far is None:
             text += start + " <= "
         else:
@@ -9902,7 +9900,7 @@ def C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast_type, nodes=None):
     if nodes is None:
         nodes = []
         if c_ast_type == c_ast.ID:
-            raise Exception(f"Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
+            raise Exception("Use C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS to find variable identifiers...")
     if type(c_ast_node) == c_ast_type:
         nodes.append(c_ast_node)
     children_tuples = c_ast_node.children()
@@ -10174,7 +10172,7 @@ def PARSE_FILE(c_filename):
         )
         for func_name in parser_state.FuncLogicLookupTable:
             func_logic = parser_state.FuncLogicLookupTable[func_name]
-            if not (func_logic.c_code_text is None):
+            if func_logic.c_code_text is not None:
                 # Fake name
                 fake_filename = func_name + ".c"
                 out_dir = SYN.GET_OUTPUT_DIRECTORY(func_logic)

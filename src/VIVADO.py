@@ -182,7 +182,7 @@ class ParsedTimingReport:
                     raise Exception("Reg: same count error")
 
                 for i in range(0, len(left_names)):
-                    if not (right_names[i] in self.reg_merged_with):
+                    if right_names[i] not in self.reg_merged_with:
                         self.reg_merged_with[right_names[i]] = []
                     self.reg_merged_with[right_names[i]].append(left_names[i])
 

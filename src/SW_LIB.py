@@ -309,7 +309,7 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
                 var_name = type_slash_var.split("_clock_crossing")[0]
                 print("")
                 print("Please remove array include:")
-                print(f'#include "<type>_array_N_t.h"')
+                print('#include "<type>_array_N_t.h"')
                 print("")
                 print(
                     "And change clock crossing variable in include statement to be like:"
@@ -1616,7 +1616,7 @@ def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
     rv = {}
     for func_name_logic_lookup in lookups:
         for func_name in func_name_logic_lookup:
-            if not (func_name in rv):
+            if func_name not in rv:
                 rv[func_name] = func_name_logic_lookup[func_name]
                 # print "func_name (func_name_logic_lookup)",func_name
                 # if len(func_name_logic_lookup[func_name].wire_drives) == 0:
@@ -4753,7 +4753,7 @@ def GET_BIN_OP_SR_C_CODE(
     ) or VHDL.WIRES_ARE_UINT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
     ):
-        if not (right_const_driving_wire is None):
+        if right_const_driving_wire is not None:
             print(
                 "SW defined constant shift right?",
                 partially_complete_logic.c_ast_node.coord,
@@ -4809,7 +4809,7 @@ def GET_BIN_OP_SL_C_CODE(
     ) or VHDL.WIRES_ARE_UINT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
     ):
-        if not (right_const_driving_wire is None):
+        if right_const_driving_wire is not None:
             print(
                 "SW defined constant shift left?",
                 partially_complete_logic.c_ast_node.coord,
@@ -5624,21 +5624,21 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         #// + > - true1 (!lsign, rsign)
         #// - > + false0 (!lsign, rsign)
         if left_has_extra_bits:
-            text += f"""        
+            text += """        
         // and or same sign left magnitude larger
         // -LEFT > -right false  (!lsign,!rsign)
         // LEFT > right true  (!lsign,!rsign)
         rv = ~lsign;
 """
         elif right_has_extra_bits: 
-            text += f"""        
+            text += """        
         // and or same sign right magnitude larger
         // -left > -RIGHT true (lsign, rsign)
         // left > RIGHT false (lsign, rsign)
         rv = rsign;
 """
         else:
-            text += f"""
+            text += """
         // Sign difference (picked sign without invert)
         rv = rsign;
 """ 
@@ -5647,21 +5647,21 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         #// + < - false0 (lsign, !rsign)
         #// - < + true1 (lsign, !rsign)
         if left_has_extra_bits:
-            text += f"""        
+            text += """        
         // and or same sign left magnitude larger
         // -LEFT < -right true (lsign, rsign)
         // LEFT < right false (lsign, rsign)
         rv = lsign;
 """
         elif right_has_extra_bits: 
-            text += f"""        
+            text += """        
         // and or same sign right magnitude larger
         // -left < -RIGHT false (!lsign, !rsign)
         // left < RIGHT true (!lsign, !rsign)
         rv = ~rsign;
 """
         else:
-            text += f"""
+            text += """
         // Sign difference (picked sign without invert)
         rv = lsign;
 """
@@ -5755,7 +5755,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     if has_extra_bits:
         text += """  if(top==0){"""
 
-    text += f"""
+    text += """
     // Subtractor based compare"""
     if op_str == ">":
         text += f"""
