@@ -10226,7 +10226,7 @@ def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
     # Integers too..
     WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     print(
-        "Writing VHDL files for all functions (as unpipelined logic)...", flush=True
+        "Writing VHDL files for all functions (before any added pipelining)...", flush=True
     )
     SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
     print(
@@ -10236,7 +10236,7 @@ def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
     VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
     print("Writing global wire definitions as parsed from C code...", flush=True)
     VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
-    print("Writing finalized prepipelined synthesis tool output files...", flush=True)
+    print("Writing output files before adding pipelining...", flush=True)
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 
 

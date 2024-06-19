@@ -631,15 +631,8 @@ def GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state):
         pipeline_added_latency = timing_params_i.GET_PIPELINE_LOGIC_ADDED_LATENCY(parser_state, ZeroAddedClocksTimingParamsLookupTable)
         if logic_i.func_name not in bad_fixed_latency_when_cant_slice_func_names:
             if (pipeline_added_latency > 0) and not logic_i.BODY_CAN_BE_SLICED(parser_state):
-                print("Error: Single cycle static stateful function", logic_i.func_name, "has actual added latency of", pipeline_added_latency, "cycles.")
+                print("Error: Zero latency static stateful function", logic_i.func_name, "actually describes a pipeline of non-zero latency/depth. (", pipeline_added_latency+1, "stages total)")
                 bad_fixed_latency_when_cant_slice_func_names.add(logic_i.func_name)
-        if len(bad_fixed_latency_when_cant_slice_func_names) > 0:
-            print(
-'''Modify one or more of the above functions:
-Remove fixed latency FUNC_LATENCY pragma specifying pipeline latency.
-OR
-Remove stateful static local variables to allow pipelining.''')
-            raise Exception("Resolve the above unexpected added pipeline latency errors.")
         # Write cache
         if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache:
             timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[
@@ -651,6 +644,13 @@ Remove stateful static local variables to allow pipelining.''')
             ] = timing_params_i.GET_HASH_EXT(
                 ZeroAddedClocksTimingParamsLookupTable, parser_state
             )
+    if len(bad_fixed_latency_when_cant_slice_func_names) > 0:
+        print(
+'''Modify one or more of the above functions:
+Remove FUNC_LATENCY pragmas specifying fixed pipeline latencies.
+OR
+Remove stateful static local variables to allow pipelining.''')
+        raise Exception("Resolve the above unexpected added pipeline latency errors.")
 
     _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache[
         cache_key
@@ -2888,7 +2888,7 @@ def DO_THROUGHPUT_SWEEP(
         print("Function:", main_func, "Target MHz:", mhz, flush=True)
 
     # Populate timing lookup table as all 0 clk
-    print("Setting all instances to be unpipelined to start...", flush=True)
+    print("Starting with no added pipelining...", flush=True)
     ZeroAddedClocksTimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     multimain_timing_params = MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = ZeroAddedClocksTimingParamsLookupTable
@@ -2905,14 +2905,14 @@ def DO_THROUGHPUT_SWEEP(
     # Can only do comb. logic with yosys json for now
     if OPEN_TOOLS.YOSYS_JSON_ONLY:
         print(
-            "Running Yosys on unpipelined top level comb. logic. TODO: Complete feedback for pipeline params..."
+            "Running Yosys on top level without added pipelining. logic. TODO: Complete feedback for pipeline params..."
         )
         comb_only = True
         SYN_TOOL = OPEN_TOOLS
 
     # If comb. logic only
     if comb_only:
-        print("Running synthesis on unpipelined top level ...", flush=True)
+        print("Running synthesis on top level without added pipelining...", flush=True)
         for main_func in parser_state.main_mhz:
             main_func_timing_params = multimain_timing_params.TimingParamsLookupTable[main_func]
             main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
@@ -3068,7 +3068,7 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             printed_slices_cache = (
                 set()
             )  # Print each time trying to walk tree for slicing
-            print("Starting from unpipelined timing params...", flush=True)
+            print("Starting from timing params without added pipelining...", flush=True)
             # Reset to empty start for this tree walk
             sweep_state.multimain_timing_params.TimingParamsLookupTable = (
                 GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
@@ -3901,7 +3901,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
     # until mhz goals met
     while True:
         # Reset to zero clock
-        print("Building timing params starting from unpipelined logic...", flush=True)
+        print("Building timing params starting without added pipelining...", flush=True)
         # TODO dont need full copy of all other inst being zero clock too
         TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
 
