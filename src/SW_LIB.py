@@ -1855,10 +1855,29 @@ def GET_MEM_NAME(logic):
         return RAM_SP_RF + "_2"
     elif logic.func_name.endswith("_" + RAM_DP_RF + "_0"):
         return RAM_DP_RF + "_0"
+    elif logic.func_name.endswith("_" + RAM_DP_RF + "_1"):
+        return RAM_DP_RF + "_1"
     elif logic.func_name.endswith("_" + RAM_DP_RF + "_2"):
         return RAM_DP_RF + "_2"
     else:
         print("GET_MEM_NAME for func", logic.func_name, "?")
+        sys.exit(-1)
+
+def MEM_NAME_TO_LATENCY(mem_name):
+    if mem_name == RAM_SP_RF + "_0":
+        return 0
+    elif mem_name ==  RAM_SP_RF + "_1":
+        return 1
+    elif mem_name ==  RAM_SP_RF + "_2":
+        return 2
+    elif mem_name ==  RAM_DP_RF + "_0":
+        return 0
+    elif mem_name ==  RAM_DP_RF + "_1":
+        return 1
+    elif mem_name ==  RAM_DP_RF + "_2":
+        return 2
+    else:
+        print("MEM_NAME_TO_LATENCY for mem_name", mem_name, "?")
         sys.exit(-1)
 
 

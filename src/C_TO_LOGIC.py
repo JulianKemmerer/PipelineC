@@ -737,6 +737,13 @@ class Logic:
             self.wire_driven_by, logic_b.wire_driven_by
         )
 
+        # Delay
+        if self.delay is not None and logic_b.delay is not None:
+            if self.delay != logic_b.delay:
+                raise Exception("Mismatch delay!")
+        elif self.delay is None:
+            self.delay = logic_b.delay
+
         # NExt user inst name?
         if self.next_user_inst_name != logic_b.next_user_inst_name:
             if self.next_user_inst_name is None:
@@ -1415,6 +1422,8 @@ class Logic:
             return False
         return True
     def BODY_CAN_BE_SLICED(self, parser_state):
+        if self.func_name in parser_state.func_fixed_latency:
+            return False
         if not self.CAN_BE_SLICED(parser_state):
             return False
         if self.uses_nonvolatile_state_regs:
@@ -9605,7 +9614,7 @@ def DEL_ALL_CACHES():
     global _C_AST_REF_TOKS_TO_C_TYPE_cache
     global _C_AST_NODE_COORD_STR_cache
     global _C_AST_FUNC_DEF_TO_LOGIC_cache
-    # global _GET_ZERO_CLK_PIPELINE_MAP_cache
+    # global _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache
 
     _other_partial_logic_cache = {}
     _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache = {}
@@ -9617,7 +9626,7 @@ def DEL_ALL_CACHES():
     _C_AST_REF_TOKS_TO_C_TYPE_cache = {}
     _C_AST_NODE_COORD_STR_cache = {}
     _C_AST_FUNC_DEF_TO_LOGIC_cache = {}
-    # _GET_ZERO_CLK_PIPELINE_MAP_cache          = {}
+    # _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache          = {}
 
 
 _EXE_ABS_DIR = None
@@ -9675,6 +9684,7 @@ class ParserState:
         self.main_clk_group = {}  # dict[main_inst_name]=clk_group_str
         self.func_mult_style = {}
         self.func_marked_wires = set()
+        self.func_fixed_latency = {}
         self.func_marked_blackbox = set()
         self.func_marked_no_add_io_regs = set()
         self.func_marked_debug = set()
@@ -9737,6 +9747,7 @@ class ParserState:
         rv.main_clk_group = dict(self.main_clk_group)
         rv.func_mult_style = dict(self.func_mult_style)
         rv.func_marked_wires = set(self.func_marked_wires)
+        rv.func_fixed_latency = dict(self.func_fixed_latency)
         rv.func_marked_blackbox = set(self.func_marked_blackbox)
         rv.func_marked_no_add_io_regs = set(self.func_marked_no_add_io_regs)
         rv.func_marked_debug = set(self.func_marked_debug)
@@ -10198,24 +10209,24 @@ def PARSE_FILE(c_filename):
         sys.exit(-1)
 
 
-def WRITE_0CLK_FINAL_FILES(parser_state):
-    print("Building map of combinatorial logic...", flush=True)
+def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
+    print("Building map of logic to be pipelined...", flush=True)
     SYN.PART_SET_TOOL(
         parser_state.part, allow_fail=True
     )  # Comb logic only might not have tool set
-    ZeroClockTimingParamsLookupTable = SYN.GET_ZERO_CLK_TIMING_PARAMS_LOOKUP(
+    ZeroAddedClocksTimingParamsLookupTable = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(
         parser_state
     )
     multimain_timing_params = SYN.MultiMainTimingParams()
-    multimain_timing_params.TimingParamsLookupTable = ZeroClockTimingParamsLookupTable
+    multimain_timing_params.TimingParamsLookupTable = ZeroAddedClocksTimingParamsLookupTable
     # Write report of floating point module use - hi Victor!
     WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     # Integers too..
     WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     print(
-        "Writing VHDL files for all functions (as combinatorial logic)...", flush=True
+        "Writing VHDL files for all functions (before any added pipelining)...", flush=True
     )
-    SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClockTimingParamsLookupTable)
+    SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
     print(
         "Writing the constant struct+enum definitions as defined from C code...",
         flush=True,
@@ -10223,7 +10234,7 @@ def WRITE_0CLK_FINAL_FILES(parser_state):
     VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
     print("Writing global wire definitions as parsed from C code...", flush=True)
     VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
-    print("Writing finalized comb. logic synthesis tool files...", flush=True)
+    print("Writing output files before adding pipelining...", flush=True)
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 
 
@@ -11567,6 +11578,13 @@ def APPEND_PRAGMA_INFO(parser_state):
             toks = pragma.string.split(" ")
             main_func = toks[1]
             parser_state.func_marked_wires.add(main_func)
+
+        # FUNC_LATENCY
+        elif name == "FUNC_LATENCY":
+            toks = pragma.string.split(" ")
+            func = toks[1]
+            latency = int(toks[2])
+            parser_state.func_fixed_latency[func] = latency
 
         # FUNC_BLACKBOX
         elif name == "FUNC_BLACKBOX":
