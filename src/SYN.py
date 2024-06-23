@@ -4985,6 +4985,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
 
     # Built in src/vhdl #TODO just auto add every file in dir
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "built_in/pipelinec_fifo_fwft.vhd" + " "
+    files_txt += SYN_OUTPUT_DIRECTORY + "/" + "built_in/pipelinec_async_fifo_fwft.vhd" + " "
 
     # C defined structs
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT + " "

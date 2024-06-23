@@ -2673,6 +2673,9 @@ end arch;
             clk_ext_strs.add(clk_ext_str_i)
         if len(clk_ext_strs) > 1:
             flow_control_is_async = True
+            # Need to know syn tool for what type of CDC to render
+            if SYN.SYN_TOOL is None:
+                SYN.PART_SET_TOOL(parser_state.part)
         write_size, read_size = parser_state.clk_cross_var_info[
             var_name
         ].write_read_sizes
@@ -2688,13 +2691,6 @@ end arch;
 
         # TODO OTHER SIZES
         if flow_control:
-            if SYN.SYN_TOOL is None:
-                SYN.PART_SET_TOOL(parser_state.part)
-            if flow_control_is_async and SYN.SYN_TOOL is not VIVADO:
-                raise Exception(
-                    "Async fifos are only implemented for Xilinx parts, TODO!", var_name
-                )
-
             if write_size != read_size:
                 raise Exception(
                     "Only equal read and write sizes for async fifos for now, TODO!",
@@ -2729,7 +2725,7 @@ end arch;
                 print("More than 1 dim for async flow control!?", var_name)
                 sys.exit(-1)
             depth = dims[0]
-            if flow_control_is_async and depth < 16:
+            if flow_control_is_async and SYN.SYN_TOOL is VIVADO and depth < 16:
                 depth = 16
                 print(
                     "WARNING:",
@@ -2749,7 +2745,7 @@ use ieee.numeric_std.all;
 use work.c_structs_pkg.all; -- User types
 """
 
-        if flow_control and flow_control_is_async:
+        if flow_control and flow_control_is_async and SYN.SYN_TOOL is VIVADO:
             text += """
 library xpm;
 use xpm.vcomponents.all;
@@ -2938,7 +2934,7 @@ use xpm.vcomponents.all;
                 + """dout_slv"""
                 + from_slv_toks[1]
                 + """;""")
-        if flow_control and flow_control_is_async:
+        if flow_control and flow_control_is_async and SYN.SYN_TOOL is VIVADO:
             text += (
                 """
 wr_power_on_reset <= '0' when rising_edge(in_clk);
@@ -3079,21 +3075,34 @@ port map (
 -- End of xpm_fifo_async_inst instantiation     
 """
             )
-
-        # Sync built in fifo
-        elif flow_control and not flow_control_is_async:
+        # Built in fifo sync or async looks similar
+        elif flow_control:
             text += """
-pipelinec_fifo_fwft_inst : entity work.pipelinec_fifo_fwft
+pipelinec_fifo_fwft_inst : entity work."""
+            if not flow_control_is_async:
+                text += "pipelinec_fifo_fwft"
+            else:
+                text += "pipelinec_async_fifo_fwft"
+            text += """
 generic map (
     DEPTH_LOG2 => """ + str(math.ceil(math.log(depth, 2))) + """,
     DATA_WIDTH => """ + C_TYPE_STR_TO_VHDL_SLV_LEN_STR(in_t, parser_state) + """
 )
 port map
 (
-    clk => in_clk,
+"""
+            if flow_control_is_async:
+                text += "    in_clk => in_clk,\n"
+            else:
+                text += "    clk => in_clk,\n"
+            text += """
     valid_in  => write_enable(0) and in_clk_en(0),
     ready_out => wr_return_output.ready(0),
     data_in   => din_slv,
+    """
+            if flow_control_is_async:
+                text += "    out_clk => out_clk,\n"
+            text += """
     valid_out => rd_return_output.valid(0),
     ready_in  => read_enable(0) and out_clk_en(0),
     data_out  => dout_slv

@@ -1,11 +1,12 @@
 // Similar to clock_crossing.c except that instead of 
 // data width integer ratioed clock crossing stream,
 // this uses same size read and write ports on an async fifo
-
+//#pragma PART "xc7a35ticsg324-1l" // Artix 7 35T (Arty)
+#pragma PART "LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "leds/led0_3_ports.c"
 
-#pragma MAIN_MHZ fast 166.66
+#pragma MAIN_MHZ fast 40.0
 #pragma MAIN_MHZ slow 25.0
 
 // Write+read 2 'datas' in/out the fifo at a time
@@ -28,8 +29,9 @@ ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, fast_to_slow, DATAS_PER_ITER, 4)
 //#include "clock_crossing/slow_to_fast.h" // Auto generated
 ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, slow_to_fast, DATAS_PER_ITER, 4)
 
-void fast(uint1_t reset)
+void fast() 
 {  
+  uint1_t reset = 0; // No reset for now
   // Drive leds with state, default lit
   static uint1_t test_failed = 0;
   uint1_t led = 1;
@@ -57,7 +59,7 @@ void fast(uint1_t reset)
   }
   fast_to_slow_write_t write = fast_to_slow_WRITE_N(wr_data, wr_en);
   // Did the write go through?
-  if(write.ready)
+  if(wr_en & write.ready)
   {
     // Next test data
     test_data += DATAS_PER_ITER;
@@ -77,7 +79,7 @@ void fast(uint1_t reset)
   {
     rd_en = 0;
   }
-  // Try to read 1 data element from the fifo
+  // Try to read N data elements from the fifo
   slow_to_fast_read_t read = slow_to_fast_READ_N(rd_en);
   // Did the read go through
   if(rd_en & read.valid)
@@ -104,8 +106,9 @@ void fast(uint1_t reset)
   }
 }
 
-void slow(uint1_t reset)
+void slow()
 {
+  uint1_t reset = 0; // No reset for now
   // Drive leds with state, default lit
   static uint1_t test_failed = 0;
   uint1_t led = 1;
@@ -133,7 +136,7 @@ void slow(uint1_t reset)
   }
   slow_to_fast_write_t write = slow_to_fast_WRITE_N(wr_data, wr_en);
   // Did the write go through?
-  if(write.ready)
+  if(wr_en & write.ready)
   {
     // Next test data
     test_data += DATAS_PER_ITER;
@@ -153,7 +156,7 @@ void slow(uint1_t reset)
   {
     rd_en = 0;
   }
-  // Try to read 1 data element from the fifo
+  // Try to read N data elements from the fifo
   fast_to_slow_read_t read = fast_to_slow_READ_N(rd_en);
   // Did the read go through
   if(rd_en & read.valid)
