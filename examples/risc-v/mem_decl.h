@@ -51,7 +51,9 @@ begin \n\
 #ifdef RISCV_IMEM_1_CYCLE
 // One cycle reads version
 #define riscv_imem_ram PPCAT(riscv_name,_imem_ram_one_cycle)
+#ifndef RISCV_IMEM_NO_AUTOPIPELINE
 PRAGMA_MESSAGE(FUNC_LATENCY riscv_imem_ram 1)
+#endif
 riscv_imem_ram_out_t riscv_imem_ram(
   uint32_t addr1,
   uint1_t valid1
@@ -154,7 +156,9 @@ begin \n\
 #ifdef RISCV_DMEM_1_CYCLE
 // One cycle reads version
 #define riscv_dmem_ram PPCAT(riscv_name,_dmem_ram_one_cycle)
+#ifndef RISCV_DMEM_NO_AUTOPIPELINE
 PRAGMA_MESSAGE(FUNC_LATENCY riscv_dmem_ram 1)
+#endif
 riscv_dmem_ram_out_t riscv_dmem_ram(
   uint32_t addr0,
   uint32_t wr_data0, uint1_t wr_byte_ens0[4],
