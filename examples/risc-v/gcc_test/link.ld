@@ -4,11 +4,49 @@ https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/basic-c/li
 OUTPUT_ARCH( "riscv" )
 ENTRY(_bootstrap)
 
-SECTIONS
+/* and Discord user dutracgi,
+https://interrupt.memfault.com/blog/how-to-write-linker-scripts-for-firmware */
+
+/* Needs to match mem_map.h (TODO how to share variables?) */
+MEMORY
 {
-  /* Place entry point at address 0*/
-  . = 0;
-  .text.init : { *(.text.init) }
+  rom      (rx) : ORIGIN = 0x00000000, LENGTH = 65536
+  ram      (rw) : ORIGIN = 0x40000000, LENGTH = 65536
 }
 
+STACK_SIZE = 0x0100;
 
+/* Section Definitions */
+SECTIONS
+{
+    .text :
+    {
+        KEEP(*(.vectors .vectors.*))
+        *(.text*)
+        *(.rodata*)
+    } > rom
+
+    /* .bss section which is used for uninitialized data */
+    .bss (NOLOAD) :
+    {
+        *(.bss*)
+        *(COMMON)
+    } > ram
+
+    .data :
+    {
+        *(.data*);
+    } > ram AT >rom
+
+    /* stack section */
+    .stack (NOLOAD):
+    {
+        . = ALIGN(4);
+        stack_begin = .; /* stack base is here */
+        . = . + STACK_SIZE;
+        . = ALIGN(4);
+        stack_end = .; /* stack top is here <- sp */
+    } > ram
+
+    _end = . ;
+}

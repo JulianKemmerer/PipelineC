@@ -1,56 +1,122 @@
-// Combined instruction and data memory, used with risc-v_decl.h
+// Instruction and data memory, used with risc-v_decl.h
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "compiler.h"
 #include "arrays.h"
-
 #include "mem_map.h"
 
-// Combined instruction and data memory initialized from gcc compile
-#define RISCV_MEM_NUM_WORDS (RISCV_MEM_SIZE_BYTES/4)
+// Instruction and data memory initialized from gcc compile
 
-// Need a RAM with one read port for instructions, one r/w port for data mem
-// Was using ram.h DECL_RAM_DP_RW_R_0 macro, 
-// but does not include byte enables needed for RISC-V SH and SB
-// So manually copied that macro def and modified vhdl here to add byte enables:
-#define riscv_mem_ram_out_t PPCAT(riscv_name,_mem_ram_out_t)
-typedef struct riscv_mem_ram_out_t
+// RAM with one read port for instructions
+// Not using "ram.h" macros since is dumb single port
+// and not using built in RAM_SF_RF_0 
+// since dont want two ways of initializing RAM (C arrays, vs VHDL init string)
+#define RISCV_IMEM_NUM_WORDS (RISCV_IMEM_SIZE_BYTES/4)
+#define riscv_imem_ram_out_t PPCAT(riscv_name,_imem_ram_out_t)
+typedef struct riscv_imem_ram_out_t
+{
+  uint32_t addr1;
+  uint32_t rd_data1;
+  uint1_t valid1;
+}riscv_imem_ram_out_t;
+#ifdef RISCV_IMEM_0_CYCLE
+// Same cycle reads version
+#define riscv_imem_ram PPCAT(riscv_name,_imem_ram_same_cycle)
+riscv_imem_ram_out_t riscv_imem_ram(
+  uint32_t addr1,
+  uint1_t valid1
+){
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(RISCV_IMEM_NUM_WORDS) "; \n\
+  type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
+  signal the_ram : ram_t := " RISCV_IMEM_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  return_output.addr1 <= addr1; \n\
+  return_output.rd_data1 <= the_ram(addr1_s); \n\
+  return_output.valid1 <= valid1; \n\
+");
+}
+#endif
+#ifdef RISCV_IMEM_1_CYCLE
+// One cycle reads version
+#define riscv_imem_ram PPCAT(riscv_name,_imem_ram_one_cycle)
+PRAGMA_MESSAGE(FUNC_LATENCY riscv_imem_ram 1)
+riscv_imem_ram_out_t riscv_imem_ram(
+  uint32_t addr1,
+  uint1_t valid1
+){
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(RISCV_IMEM_NUM_WORDS) "; \n\
+  type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
+  signal the_ram : ram_t := " RISCV_IMEM_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        return_output.addr1 <= addr1; \n\
+        return_output.rd_data1 <= the_ram(addr1_s); \n\
+        return_output.valid1 <= valid1; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+");
+}
+#endif
+
+
+// Need a RAM with one r/w port for data mem
+// Need byte enables needed for RISC-V SH and SB
+#define RISCV_DMEM_NUM_WORDS (RISCV_DMEM_SIZE_BYTES/4)
+#define riscv_dmem_ram_out_t PPCAT(riscv_name,_dmem_ram_out_t)
+typedef struct riscv_dmem_ram_out_t
 {
   uint32_t addr0;
   uint32_t wr_data0; uint1_t wr_byte_ens0[4];
   uint32_t rd_data0;
   uint1_t valid0;
-  uint32_t addr1;
-  uint32_t rd_data1;
-  uint1_t valid1;
-}riscv_mem_ram_out_t;
-#ifdef RISCV_MEM_0_CYCLE
+}riscv_dmem_ram_out_t;
+#ifdef RISCV_DMEM_0_CYCLE
 // Same cycle reads version
-#define riscv_mem_ram PPCAT(riscv_name,_mem_ram_same_cycle)
-riscv_mem_ram_out_t riscv_mem_ram(
+#define riscv_dmem_ram PPCAT(riscv_name,_dmem_ram_same_cycle)
+riscv_dmem_ram_out_t riscv_dmem_ram(
   uint32_t addr0,
   uint32_t wr_data0, uint1_t wr_byte_ens0[4],
-  uint1_t valid0,
-  uint32_t addr1,
-  uint1_t valid1
+  uint1_t valid0
 ){
   __vhdl__("\n\
-  constant SIZE : integer := " xstr(RISCV_MEM_NUM_WORDS) "; \n\
+  constant SIZE : integer := " xstr(RISCV_DMEM_NUM_WORDS) "; \n\
   type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
-  signal the_ram : ram_t := " RISCV_MEM_INIT "; \n\
+  signal the_ram : ram_t := " RISCV_DMEM_INIT "; \n\
   -- Limit zero latency comb. read addr range to SIZE \n\
   -- since invalid addresses can occur as logic propogates \n\
   -- (this includes out of int32 range u32 values) \n\
   signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
-  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
 begin \n\
   process(all) begin \n\
     addr0_s <= to_integer(addr0(30 downto 0)) \n\
-    -- synthesis translate_off \n\
-    mod SIZE \n\
-    -- synthesis translate_on \n\
-    ; \n\
-    addr1_s <= to_integer(addr1(30 downto 0)) \n\
     -- synthesis translate_off \n\
     mod SIZE \n\
     -- synthesis translate_on \n\
@@ -82,40 +148,29 @@ begin \n\
   return_output.wr_data0 <= wr_data0; \n\
   return_output.wr_byte_ens0 <= wr_byte_ens0; \n\
   return_output.valid0 <= valid0; \n\
-  return_output.addr1 <= addr1; \n\
-  return_output.rd_data1 <= the_ram(addr1_s); \n\
-  return_output.valid1 <= valid1; \n\
 ");
 }
 #endif
-#ifdef RISCV_MEM_1_CYCLE
+#ifdef RISCV_DMEM_1_CYCLE
 // One cycle reads version
-#define riscv_mem_ram PPCAT(riscv_name,_mem_ram_one_cycle)
-PRAGMA_MESSAGE(FUNC_LATENCY riscv_mem_ram 1)
-riscv_mem_ram_out_t riscv_mem_ram(
+#define riscv_dmem_ram PPCAT(riscv_name,_dmem_ram_one_cycle)
+PRAGMA_MESSAGE(FUNC_LATENCY riscv_dmem_ram 1)
+riscv_dmem_ram_out_t riscv_dmem_ram(
   uint32_t addr0,
   uint32_t wr_data0, uint1_t wr_byte_ens0[4],
-  uint1_t valid0,
-  uint32_t addr1,
-  uint1_t valid1
+  uint1_t valid0
 ){
   __vhdl__("\n\
-  constant SIZE : integer := " xstr(RISCV_MEM_NUM_WORDS) "; \n\
+  constant SIZE : integer := " xstr(RISCV_DMEM_NUM_WORDS) "; \n\
   type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
-  signal the_ram : ram_t := " RISCV_MEM_INIT "; \n\
+  signal the_ram : ram_t := " RISCV_DMEM_INIT "; \n\
   -- Limit zero latency comb. read addr range to SIZE \n\
   -- since invalid addresses can occur as logic propogates \n\
   -- (this includes out of int32 range u32 values) \n\
   signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
-  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
 begin \n\
   process(all) begin \n\
     addr0_s <= to_integer(addr0(30 downto 0)) \n\
-    -- synthesis translate_off \n\
-    mod SIZE \n\
-    -- synthesis translate_on \n\
-    ; \n\
-    addr1_s <= to_integer(addr1(30 downto 0)) \n\
     -- synthesis translate_off \n\
     mod SIZE \n\
     -- synthesis translate_on \n\
@@ -144,9 +199,6 @@ begin \n\
         return_output.wr_data0 <= wr_data0; \n\
         return_output.wr_byte_ens0 <= wr_byte_ens0; \n\
         return_output.valid0 <= valid0; \n\
-        return_output.addr1 <= addr1; \n\
-        return_output.rd_data1 <= the_ram(addr1_s); \n\
-        return_output.valid1 <= valid1; \n\
       end if; \n\
     end if; \n\
   end process; \n\
@@ -154,21 +206,18 @@ begin \n\
 }
 #endif
 
-// Split main memory riscv_mem_ram into two parts,
-// one read port for instructions, one r/w port for data mem
-#define riscv_mem_out_t PPCAT(riscv_name,_mem_out_t)
-typedef struct riscv_mem_out_t
+// Wrap data memory RAM with logic for memory map and unaligned access
+#define riscv_dmem_out_t PPCAT(riscv_name,_dmem_out_t)
+typedef struct riscv_dmem_out_t
 {
-  uint32_t inst;
   uint32_t rd_data;
   uint1_t mem_out_of_range; // Exception, stop sim
   #ifdef riscv_mem_map_outputs_t
   riscv_mem_map_outputs_t mem_map_outputs;
   #endif
-}riscv_mem_out_t;
-#define riscv_mem PPCAT(riscv_name,_mem)
-riscv_mem_out_t riscv_mem(
-  uint32_t inst_addr,
+}riscv_dmem_out_t;
+#define riscv_dmem PPCAT(riscv_name,_dmem)
+riscv_dmem_out_t riscv_dmem(
   uint32_t rw_addr,
   uint32_t wr_data,
   uint1_t wr_byte_ens[4],
@@ -177,7 +226,7 @@ riscv_mem_out_t riscv_mem(
   , riscv_mem_map_inputs_t mem_map_inputs
   #endif
 ){
-  riscv_mem_out_t mem_out;
+  riscv_dmem_out_t mem_out;
 
   // Write or read helper flags
   uint1_t word_wr_en = 0;
@@ -187,6 +236,10 @@ riscv_mem_out_t riscv_mem(
     word_wr_en |= wr_byte_ens[i];
     word_rd_en |= rd_byte_ens[i];
   }
+
+  // Account for data memory being mapped to upper physical addr range
+  // (note limits mmio range to upper 1/4 to full half fine for now...)
+  rw_addr &= ~DMEM_BASE_ADDR;
 
   // Convert byte addresses to 4-byte word index
   // do extra logic to account for how byte enables changes
@@ -243,7 +296,13 @@ riscv_mem_out_t riscv_mem(
     , mem_map_inputs
     #endif
   );
-  
+  // Override mem map module output with easy bit check
+  mem_map_out.addr_is_mapped = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+  if(mem_map_out.addr_is_mapped){
+    if(word_wr_en) printf("Memory mapped IO store addr=0x%X\n", rw_addr);
+    if(word_rd_en) printf("Memory mapped IO load addr=0x%X\n", rw_addr); 
+  }
+
   #ifdef riscv_mem_map_outputs_t
   mem_out.mem_map_outputs = mem_map_out.outputs;
   #endif
@@ -256,17 +315,15 @@ riscv_mem_out_t riscv_mem(
   }  
 
   // Sanity check, stop sim if out of range access
-  if((mem_rw_word_index >= RISCV_MEM_NUM_WORDS) & (word_wr_en | word_rd_en)){
+  if((mem_rw_word_index >= RISCV_DMEM_NUM_WORDS) & (word_wr_en | word_rd_en)){
     printf("Error: mem_out_of_range large addr %d\n",rw_addr);
     mem_out.mem_out_of_range = 1;
   }
 
   // The single RAM instance
-  riscv_mem_ram_out_t ram_out = riscv_mem_ram(mem_rw_word_index,
-                                      wr_word, wr_word_byte_ens, 1,
-                                       inst_addr, 1);
+  riscv_dmem_ram_out_t ram_out = riscv_dmem_ram(mem_rw_word_index,
+                                      wr_word, wr_word_byte_ens, 1);
   uint32_t mem_rd_data = ram_out.rd_data0;
-  mem_out.inst = ram_out.rd_data1;
 
   // Determine output memory read data
   // Mem map read comes from memory map module not RAM memory

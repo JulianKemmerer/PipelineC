@@ -1,5 +1,4 @@
-# It does not appear possible to specify
-# bootstrap assembly directly in asm("...") C code.
+# It require some work to do bootstrap for C code it seems...
 # For that reason setup that occurs 
 # before the C code entry point is done here
 
@@ -13,9 +12,3 @@
 _bootstrap:
 la sp, stack_end
 jal main
-
-# Declare a stack area of memory? 
-# (must be after entry point? or last in order?)
-stack_begin:
-.zero 256
-stack_end:

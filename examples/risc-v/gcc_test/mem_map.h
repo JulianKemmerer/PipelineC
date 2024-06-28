@@ -19,7 +19,14 @@
 // TODO just mem map one big struct that gets changes
 //  needs more efficient code for muxing mem reads/writes to specific struct bytes
 
-#define MEM_MAP_BASE_ADDR 0x10000000
+// Needs to match link.ld (TODO how to share variables?)
+#define DMEM_ADDR_BIT_CHECK 30
+#define DMEM_BASE_ADDR ((uint32_t)((uint32_t)1<<DMEM_ADDR_BIT_CHECK))
+#define DMEM_SIZE 65536 // Must be decimal constant since VHDL+C literal
+#define IMEM_SIZE 65536 // Must be decimal constant since VHDL+C literal
+// Any addresses this high up will be mmio
+#define MEM_MAP_ADDR_BIT_CHECK 31
+#define MEM_MAP_BASE_ADDR ((uint32_t)((uint32_t)1<<MEM_MAP_ADDR_BIT_CHECK))
 
 #define N_THREADS_PER_BARREL 5
 #define N_BARRELS 1
@@ -467,7 +474,7 @@ typedef struct dataflow_mm_t
 #define DATAFLOW_MM_ADDR (KERNEL_VALID_OUT_ADDR + sizeof(uint32_t))
 static volatile dataflow_mm_t* DATAFLOW_MM = (dataflow_mm_t*)DATAFLOW_MM_ADDR;
 
-void do_shader_dataflow(uint32_t addr, int32_t x, int32_t y, uint32_t frame_count, uint32_t num_pixels){
+/*void do_shader_dataflow(uint32_t addr, int32_t x, int32_t y, uint32_t frame_count, uint32_t num_pixels){
   // Configure dataflow network
   DATAFLOW_MM->addr = addr;
   DATAFLOW_MM->x = x;
@@ -482,4 +489,4 @@ void do_shader_dataflow(uint32_t addr, int32_t x, int32_t y, uint32_t frame_coun
   // Clear valid to reset
   DATAFLOW_MM->all_ports_dataflow_host = 0;
   DATAFLOW_MM->valid = 0;
-}
+}*/

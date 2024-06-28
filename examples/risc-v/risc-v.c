@@ -6,7 +6,8 @@
 #include "risc-v.h"
 
 // Include test gcc compiled program
-#include "gcc_test/mem_init.h" // MEM_INIT,MEM_INIT_SIZE
+#include "gcc_test/text_mem_init.h"
+#include "gcc_test/data_mem_init.h"
 
 // Declare memory map information
 // Starts with shared with software memory map info
@@ -38,15 +39,17 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // Declare a RISCV core type using memory info
 #define riscv_name              my_riscv
-#define RISCV_MEM_INIT          MEM_INIT // from gcc_test
-#define RISCV_MEM_SIZE_BYTES    MEM_INIT_SIZE // from gcc_test
+#define RISCV_IMEM_INIT         text_MEM_INIT // from gcc_test/
+#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE     // from gcc_test/
+#define RISCV_DMEM_INIT         data_MEM_INIT // from gcc_test/
+#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     // from gcc_test/
 #define riscv_mem_map           my_mem_map_module
 #define riscv_mem_map_inputs_t  my_mmio_in_t
 #define riscv_mem_map_outputs_t my_mmio_out_t
 #include "risc-v_decl.h"
 
 // Set clock of instances of CPU
-#define CPU_CLK_MHZ 60.0
+#define CPU_CLK_MHZ 40.0
 MAIN_MHZ(my_top, CPU_CLK_MHZ)
 
 // LEDs for demo

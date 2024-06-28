@@ -16,8 +16,12 @@ dump-comment: all
 	objdump -s --section .comment main
 
 hex: all
-	./elf2bin.py main mem_init.h
-    
+	#./elf2bin.py main mem_init.h
+	riscv32-unknown-elf-objcopy -O binary main text.bin --only-section .text
+	./bin2vhdl.py text.bin
+	riscv32-unknown-elf-objcopy -O binary main data.bin --only-section .data
+	./bin2vhdl.py data.bin
+	
 clean:
 	rm -f main
 
