@@ -32,6 +32,7 @@ GENERATED_HEADER_DIRS = [
     SINGLE_INST_HEADER,
 ]
 
+
 # Find generated logic and apply additional 'parsed' information
 def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic, parser_state):
     # Hacky detect+tag clock crossing
@@ -1524,8 +1525,9 @@ def IS_AUTO_GENERATED(logic):
     # print "?? ",logic.func_name, "is built in:", logic.is_c_built_in
 
     rv = (
-        IS_BIT_MANIP(logic) or IS_MEM(logic) or IS_BIT_MATH(logic)
-    ) and not logic.is_c_built_in  # Built in functions used in bitmanip+math generated code are not auto generated
+        (IS_BIT_MANIP(logic) or IS_MEM(logic) or IS_BIT_MATH(logic))
+        and not logic.is_c_built_in
+    )  # Built in functions used in bitmanip+math generated code are not auto generated
 
     # print "?? IS_AUTO_GENERATED",rv
 
@@ -1710,16 +1712,16 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
                             func_name = (
                                 calling_func_name + "_" + var_name + "_" + ram_type
                             )
-                            func_name_to_state_reg_info[
-                                func_name
-                            ] = local_state_reg_info_dict[var_name]
+                            func_name_to_state_reg_info[func_name] = (
+                                local_state_reg_info_dict[var_name]
+                            )
                             func_name_was_global_def[func_name] = False
                         elif var_name in parser_state.global_vars:
                             c_type = parser_state.global_vars[var_name].type_name
                             func_name = var_name + "_" + ram_type
-                            func_name_to_state_reg_info[
-                                func_name
-                            ] = parser_state.global_vars[var_name]
+                            func_name_to_state_reg_info[func_name] = (
+                                parser_state.global_vars[var_name]
+                            )
                             func_name_was_global_def[func_name] = True
                         else:
                             print("Unknown RAM prim var", var_name)
@@ -1798,12 +1800,8 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
         outfile = MEM_HEADER_FILE
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
         # Keep everything except logic stuff
-        parser_state_copy.FuncLogicLookupTable = (
-            {}
-        )  # dict[func_name]=Logic() instance with just func info
-        parser_state_copy.LogicInstLookupTable = (
-            {}
-        )  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
         )  # Temp working copy of logic ? idk it should work
@@ -1863,18 +1861,19 @@ def GET_MEM_NAME(logic):
         print("GET_MEM_NAME for func", logic.func_name, "?")
         sys.exit(-1)
 
+
 def MEM_NAME_TO_LATENCY(mem_name):
     if mem_name == RAM_SP_RF + "_0":
         return 0
-    elif mem_name ==  RAM_SP_RF + "_1":
+    elif mem_name == RAM_SP_RF + "_1":
         return 1
-    elif mem_name ==  RAM_SP_RF + "_2":
+    elif mem_name == RAM_SP_RF + "_2":
         return 2
-    elif mem_name ==  RAM_DP_RF + "_0":
+    elif mem_name == RAM_DP_RF + "_0":
         return 0
-    elif mem_name ==  RAM_DP_RF + "_1":
+    elif mem_name == RAM_DP_RF + "_1":
         return 1
-    elif mem_name ==  RAM_DP_RF + "_2":
+    elif mem_name == RAM_DP_RF + "_2":
         return 2
     else:
         print("MEM_NAME_TO_LATENCY for mem_name", mem_name, "?")
@@ -2732,12 +2731,8 @@ typedef uint8_t """
         outfile = BIT_MATH_HEADER_FILE
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY()
         # Keep everything except logic stuff
-        parser_state_copy.FuncLogicLookupTable = (
-            {}
-        )  # dict[func_name]=Logic() instance with just func info
-        parser_state_copy.LogicInstLookupTable = (
-            {}
-        )  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
         )  # Temp working copy of logic ? idk it should work
@@ -2762,9 +2757,7 @@ typedef uint8_t """
         bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
             text, parser_state
         )  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
-        parser_state_copy.FuncLogicLookupTable = (
-            bit_manip_func_name_logic_lookup  # {}
-        )
+        parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup  # {}
 
         # Try to get all built in? not just manip? Recursive is nice?
         # print("preprocessed_text",preprocessed_text)
@@ -2830,7 +2823,6 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
 
 
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
-
     # TODO: Do bit select and bit dup as "const int"?
 
     text = ""
@@ -3307,12 +3299,8 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         # Parse the c doe to logic lookup
         parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
         # Keep everything except logic stuff
-        parser_state_copy.FuncLogicLookupTable = (
-            {}
-        )  # dict[func_name]=Logic() instance with just func info
-        parser_state_copy.LogicInstLookupTable = (
-            {}
-        )  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
         parser_state_copy.existing_logic = (
             C_TO_LOGIC.Logic()
         )  # Temp working copy of logic ? idk it should work
@@ -3914,25 +3902,41 @@ def GET_ONE_HOT_EQ_C_CODE(
     text += '''
 #include "intN_t.h"
 #include "uintN_t.h"'''
-##include "'''
-#        + BIT_MATH_HEADER_FILE
-#        + """"
-#"""
-    text += '''
-uint1_t ''' + func_c_name + '''(''' + input_t + ''' left, ''' + input_t + ''' right)
+    ##include "'''
+    #        + BIT_MATH_HEADER_FILE
+    #        + """"
+    # """
+    text += (
+        """
+uint1_t """
+        + func_c_name
+        + """("""
+        + input_t
+        + """ left, """
+        + input_t
+        + """ right)
 {
     // Bitwise and
-    ''' + input_t + ''' left_and_right = left & right;
-    uint1_t bits['''+str(bit_width)+'''];
+    """
+        + input_t
+        + """ left_and_right = left & right;
+    uint1_t bits["""
+        + str(bit_width)
+        + """];
     uint32_t i;
-    for(i=0; i<'''+str(bit_width)+'''; i+=1)
+    for(i=0; i<"""
+        + str(bit_width)
+        + """; i+=1)
     {
         bits[i] = left_and_right(i); // Select ith bit
     } 
     // OR reduce with built in function
-    return uint1_array_or'''+str(bit_width)+'''(bits);
+    return uint1_array_or"""
+        + str(bit_width)
+        + """(bits);
 }
-    '''
+    """
+    )
     return text
 
 
@@ -4045,9 +4049,13 @@ def GET_VAR_REF_RD_C_CODE(
         ]
     )
     if debug:
-        print("containing_func_logic",containing_func_logic.func_name)
-        print("func",partially_complete_logic.func_name, partially_complete_logic_local_inst_name)
-        print("driven_ref_toks_list",driven_ref_toks_list)
+        print("containing_func_logic", containing_func_logic.func_name)
+        print(
+            "func",
+            partially_complete_logic.func_name,
+            partially_complete_logic_local_inst_name,
+        )
+        print("driven_ref_toks_list", driven_ref_toks_list)
     for input_wire in partially_complete_logic.inputs:
         if "var_dim_" not in input_wire:
             input_c_name = input_wire
@@ -4059,21 +4067,23 @@ def GET_VAR_REF_RD_C_CODE(
             ref_toks_i += 1
 
             # Expand to constant refs
-            parser_state.existing_logic = containing_func_logic # How did this work without this before? Lucky?
+            parser_state.existing_logic = (
+                containing_func_logic  # How did this work without this before? Lucky?
+            )
             expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(
                 driven_ref_toks, partially_complete_logic.c_ast_node, parser_state
             )
             if debug:
-                print("driven_ref_toks",driven_ref_toks)
-                print("expanded_ref_tok_list",expanded_ref_tok_list)
+                print("driven_ref_toks", driven_ref_toks)
+                print("expanded_ref_tok_list", expanded_ref_tok_list)
             for expanded_ref_toks in expanded_ref_tok_list:
                 # Make str
                 lhs = "base"
                 appended_ref_tok_str = ""
                 for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name
-                    if type(expanded_ref_tok) == int:
+                    if type(expanded_ref_tok) is int:
                         appended_ref_tok_str += "[" + str(expanded_ref_tok) + "]"
-                    elif type(expanded_ref_tok) == str:
+                    elif type(expanded_ref_tok) is str:
                         appended_ref_tok_str += "." + expanded_ref_tok
                     else:
                         print(
@@ -4087,7 +4097,10 @@ def GET_VAR_REF_RD_C_CODE(
                 # If this ref tok actually covers multiple lhs toks then need select on rhs too?
                 if len(expanded_ref_tok_list) > 1:
                     # Hacky struct type needs .data
-                    if C_TYPE_IS_ARRAY_STRUCT(partially_complete_logic.wire_to_c_type[input_wire], parser_state):
+                    if C_TYPE_IS_ARRAY_STRUCT(
+                        partially_complete_logic.wire_to_c_type[input_wire],
+                        parser_state,
+                    ):
                         text += ".data"
                     text += appended_ref_tok_str
                 text += ";\n"
@@ -4147,9 +4160,9 @@ def GET_VAR_REF_RD_C_CODE(
             if isinstance(ref_tok, c_ast.Node):
                 text += "[" + str(indices[var_dim_i]) + "]"
                 var_dim_i += 1
-            elif type(ref_tok) == int:
+            elif type(ref_tok) is int:
                 text += "[" + str(ref_tok) + "]"
-            elif type(ref_tok) == str:
+            elif type(ref_tok) is str:
                 text += "." + ref_tok
             else:
                 print("Why ref tok?", ref_tok)
@@ -4269,9 +4282,9 @@ def GET_VAR_REF_RD_C_CODE(
   return rv;
 }"""
 
-    #if debug:
-    #print("GET_VAR_REF_RD_C_CODE text")
-    #print(text)
+    # if debug:
+    # print("GET_VAR_REF_RD_C_CODE text")
+    # print(text)
     # sys.exit(-1)
 
     return text
@@ -4393,9 +4406,9 @@ def GET_VAR_REF_ASSIGN_C_CODE(
                 # Make str
                 lhs = "base"
                 for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name:
-                    if type(expanded_ref_tok) == int:
+                    if type(expanded_ref_tok) is int:
                         lhs += "[" + str(expanded_ref_tok) + "]"
-                    elif type(expanded_ref_tok) == str:
+                    elif type(expanded_ref_tok) is str:
                         lhs += "." + expanded_ref_tok
                     else:
                         print(
@@ -4447,9 +4460,9 @@ def GET_VAR_REF_ASSIGN_C_CODE(
         # RHS is full ref toks
         rhs = "base"
         for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name
-            if type(expanded_ref_tok) == int:
+            if type(expanded_ref_tok) is int:
                 rhs += "[" + str(expanded_ref_tok) + "]"
-            elif type(expanded_ref_tok) == str:
+            elif type(expanded_ref_tok) is str:
                 rhs += "." + expanded_ref_tok
             else:
                 print(
@@ -5184,37 +5197,43 @@ def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
   {
     y_mantissa_w_hidden_bit_sign_adj = y_mantissa_w_hidden_bit;
   }
-""")
+"""
+    )
     if pad > 0:
-        text += ("""
+        text += (
+            """
   // Padd both x and y on right with zeros (shift left) such that 
   // when y is shifted to the right it doesnt drop mantissa lsbs (as much)
   int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width + pad)
-        + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width)
-        + """_uint"""
-        + str(pad)
-        + """(x_mantissa_w_hidden_bit_sign_adj, 0);
+            + str(mantissa_w_hidden_bit_sign_adj_width + pad)
+            + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_uint"""
+            + str(pad)
+            + """(x_mantissa_w_hidden_bit_sign_adj, 0);
   int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width + pad)
-        + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width)
-        + """_uint"""
-        + str(pad)
-        + """(y_mantissa_w_hidden_bit_sign_adj, 0);
-""")
+            + str(mantissa_w_hidden_bit_sign_adj_width + pad)
+            + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_uint"""
+            + str(pad)
+            + """(y_mantissa_w_hidden_bit_sign_adj, 0);
+"""
+        )
     else:
-        text += ("""
+        text += (
+            """
   // No padding
   int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width)
-        + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = x_mantissa_w_hidden_bit_sign_adj;
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = x_mantissa_w_hidden_bit_sign_adj;
   int"""
-        + str(mantissa_w_hidden_bit_sign_adj_width)
-        + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = y_mantissa_w_hidden_bit_sign_adj;
-""")
-    text += ("""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = y_mantissa_w_hidden_bit_sign_adj;
+"""
+        )
+    text += (
+        """
   // Step 3: Un-normalize Y (including hidden bit) so that xexp == yexp.
   // Already swapped left/right based on exponent
   // diff will be >= 0
@@ -5569,6 +5588,7 @@ def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
         raise Exception("GET_BIN_OP_GT_GTE_C_CODE for types!", [left_t, right_t])
         sys.exit(-1)
 
+
 def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
     # implement using unsigned compare and signed logic
     # Only for the shared bit range of left/right, extra upper bits handled extra
@@ -5607,7 +5627,8 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         + """ left, """
         + right_t
         + """ right)
-{""")
+{"""
+    )
     text += f"""
     // Sign extend as needed
     uint1_t lsign = left({left_width-1},{left_width-1});
@@ -5620,7 +5641,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
     uint{sign_bits}_t extra_sign_bits = lsigned >> {max_width-sign_bits};
     uint{sign_bits}_t sign_ext_like_zero = rsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(rsign);
 """
-    else: # right_has_extra_bits AND Default both single sign bits no extra bits
+    else:  # right_has_extra_bits AND Default both single sign bits no extra bits
         text += f"""
     uint{sign_bits}_t extra_sign_bits = rsigned >> {max_width-sign_bits};
     uint{sign_bits}_t sign_ext_like_zero = lsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(lsign);
@@ -5631,17 +5652,21 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
     uint{max_width-sign_bits}_t runsigned = right;
     """
 
-    text += """
+    text += (
+        """
     uint1_t rv;
     if(extra_sign_bits==sign_ext_like_zero){
         // Do unsigned compare
-        rv = lunsigned """+op_str+""" runsigned;
+        rv = lunsigned """
+        + op_str
+        + """ runsigned;
     }else{
 """
+    )
     if op_str == ">=" or op_str == ">":
-        #// Sign difference
-        #// + > - true1 (!lsign, rsign)
-        #// - > + false0 (!lsign, rsign)
+        # // Sign difference
+        # // + > - true1 (!lsign, rsign)
+        # // - > + false0 (!lsign, rsign)
         if left_has_extra_bits:
             text += """        
         // and or same sign left magnitude larger
@@ -5649,7 +5674,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         // LEFT > right true  (!lsign,!rsign)
         rv = ~lsign;
 """
-        elif right_has_extra_bits: 
+        elif right_has_extra_bits:
             text += """        
         // and or same sign right magnitude larger
         // -left > -RIGHT true (lsign, rsign)
@@ -5660,11 +5685,11 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
             text += """
         // Sign difference (picked sign without invert)
         rv = rsign;
-""" 
+"""
     elif op_str == "<" or op_str == "<=":
-        #// Sign difference
-        #// + < - false0 (lsign, !rsign)
-        #// - < + true1 (lsign, !rsign)
+        # // Sign difference
+        # // + < - false0 (lsign, !rsign)
+        # // - < + true1 (lsign, !rsign)
         if left_has_extra_bits:
             text += """        
         // and or same sign left magnitude larger
@@ -5672,7 +5697,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         // LEFT < right false (lsign, rsign)
         rv = lsign;
 """
-        elif right_has_extra_bits: 
+        elif right_has_extra_bits:
             text += """        
         // and or same sign right magnitude larger
         // -left < -RIGHT false (!lsign, !rsign)
@@ -5684,12 +5709,12 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
         // Sign difference (picked sign without invert)
         rv = lsign;
 """
-            
+
     text += """    }
     return rv;  
 }"""
 
-    #print(text)
+    # print(text)
 
     return text
 
@@ -5711,18 +5736,18 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     if left_has_extra_bits:
         extra_bits = left_width - right_width
     if right_has_extra_bits:
-        extra_bits = right_width - left_width  
-    left_sized_out_t_width = left_width+1
-    left_sized_out_t = "int"+str(left_sized_out_t_width)+"_t"
+        extra_bits = right_width - left_width
+    left_sized_out_t_width = left_width + 1
+    left_sized_out_t = "int" + str(left_sized_out_t_width) + "_t"
     left_t_signed = left_t
     left_t_signed_width = left_width
     if not VHDL.C_TYPE_IS_INT_N(left_t):
-        left_t_signed_width = left_width+1
+        left_t_signed_width = left_width + 1
         left_t_signed = "int" + str(left_t_signed_width) + "_t"
         left_sized_out_t_width = left_t_signed_width
         left_sized_out_t = left_t_signed
-    right_sized_out_t_width = right_width+1
-    right_sized_out_t = "int"+str(right_sized_out_t_width)+"_t"
+    right_sized_out_t_width = right_width + 1
+    right_sized_out_t = "int" + str(right_sized_out_t_width) + "_t"
     right_t_signed = right_t
     right_t_signed_width = right_width
     if not VHDL.C_TYPE_IS_INT_N(right_t):
@@ -5732,9 +5757,9 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
         right_sized_out_t = right_t_signed
 
     max_width = max(left_width, right_width)
-    in_t = "int"+str(max_width+1-extra_bits)+"_t"
-    out_t_width = max_width+1-extra_bits
-    out_t = "int"+str(out_t_width)+"_t"
+    in_t = "int" + str(max_width + 1 - extra_bits) + "_t"
+    out_t_width = max_width + 1 - extra_bits
+    out_t = "int" + str(out_t_width) + "_t"
 
     text = ""
     text += (
@@ -5752,8 +5777,9 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
         + right_t
         + """ right)
 {
-""")
-    
+"""
+    )
+
     text += f"""
     // Bottom without any extra bits    
     uint{max_width-extra_bits}_t left_bot = left;
@@ -5765,7 +5791,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
 """
         if left_has_extra_bits:
             text += f"""  top = left >> {left_width-extra_bits};
-"""     
+"""
         else:
             text += f"""  top = right >> {right_width-extra_bits};
 """
@@ -5802,26 +5828,26 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
 """
 
     if left_has_extra_bits:
-        if op_str.startswith('>'):
+        if op_str.startswith(">"):
             text += """  }else{
     // Left is large, GT/E is true
     rv = 1;
   }
 """
-        if op_str.startswith('<'):
+        if op_str.startswith("<"):
             text += """  }else{
     // Left is large, LT/E is false
     rv = 0;
   }
 """
     if right_has_extra_bits:
-        if op_str.startswith('>'):
+        if op_str.startswith(">"):
             text += """  }else{
     // Right is large, GT/E is false
     rv = 0;
   }
 """
-        if op_str.startswith('<'):
+        if op_str.startswith("<"):
             text += """  }else{
     // Right is large, LT/E is true
     rv = 1;
@@ -5834,9 +5860,10 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     text += """  
 }"""
 
-    #print(text)
+    # print(text)
 
     return text
+
 
 # GT/GTE
 def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
@@ -7445,7 +7472,6 @@ P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[
 
         # End is special case
         elif p == (max_input_width - 1):
-
             # 1  +p7[7] ~p7[6] ~p7[5] ~p7[4] ~p7[3] ~p7[2] ~p7[1] ~p7[0]   0      0      0      0      0      0      0
             # Get zeros
             p_shifted_zeros_width = p

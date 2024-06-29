@@ -44,6 +44,7 @@ else:
 # Flag to skip pnr
 YOSYS_JSON_ONLY = False
 
+
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
     opts = ""
@@ -202,7 +203,6 @@ class PathReport:
         is_first_net = True
         last_net_name = None
         for line in path_report_text.split("\n"):
-
             # Path delay ns
             tok1 = "Max frequency for clock"
             if tok1 in line:
@@ -325,7 +325,6 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_text = f.read()
         f.close()
     else:
-
         # Write top level vhdl for this module/multimain
         if inst_name:
             VHDL.WRITE_LOGIC_ENTITY(
@@ -370,9 +369,9 @@ def SYN_AND_REPORT_TIMING_NEW(
         m_ghdl = ""
         if not GHDL_PLUGIN_BUILT_IN:
             m_ghdl = "-m ghdl "
-        optional_router2 = "" # Always default router for now...
-        #optional_router2 = "--router router2"
-        #if inst_name:
+        optional_router2 = ""  # Always default router for now...
+        # optional_router2 = "--router router2"
+        # if inst_name:
         #    # Dont use router two for small single instances
         #    # Only use router two for multi main top level no inst_name
         #    optional_router2 = ""
@@ -405,8 +404,10 @@ export GHDL_PREFIX="""
                 + """ -json """
                 + top_entity_name
                 + """.json; write_edif -top """
-                + top_entity_name + """  """ 
-                + top_entity_name + """.edf' &>> """
+                + top_entity_name
+                + """  """
+                + top_entity_name
+                + """.edf' &>> """
                 + log_file_name
                 + f"""
 # P&R
@@ -484,13 +485,13 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
 
     # GHDL --out=verilog produces duplicate wires
     # https://github.com/ghdl/ghdl/issues/2491
-    '''{GHDL_BIN_PATH}/ghdl synth --std=08 -frelaxed --out=verilog `cat ../vhdl_files.txt` -e {SYN.TOP_LEVEL_MODULE} > {SYN.TOP_LEVEL_MODULE}.v'''
+    """{GHDL_BIN_PATH}/ghdl synth --std=08 -frelaxed --out=verilog `cat ../vhdl_files.txt` -e {SYN.TOP_LEVEL_MODULE} > {SYN.TOP_LEVEL_MODULE}.v"""
     sh_text = f"""
 {GHDL_BIN_PATH}/ghdl -i --std=08 -frelaxed `cat ../vhdl_files.txt` && \
 {GHDL_BIN_PATH}/ghdl -m --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE} && \
 {YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
 """
-    
+
     sh_path = output_dir + "/" + "convert_to_verilog.sh"
     f = open(sh_path, "w")
     f.write(sh_text)
@@ -500,7 +501,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     bash_cmd = f"bash {sh_path}"
     # print(bash_cmd, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
-    #print(log_text)
+    # print(log_text)
     print(f"Top level Verilog file: {out_file}")
 
 
@@ -512,12 +513,12 @@ def FUNC_IS_PRIMITIVE(func_name):
 
 def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     if Logic.func_name.startswith("ECP5_MUL"):
-        mul_size_strs = Logic.func_name.replace("ECP5_MUL","").split("X")
+        mul_size_strs = Logic.func_name.replace("ECP5_MUL", "").split("X")
     else:
         raise Exception("TODO other prims!")
     # Assume equal size for now
-    if len(mul_size_strs)!=2 or mul_size_strs[0] != mul_size_strs[1]:
-        raise Exception("Bad mult size",mul_size_strs)
+    if len(mul_size_strs) != 2 or mul_size_strs[0] != mul_size_strs[1]:
+        raise Exception("Bad mult size", mul_size_strs)
     width = int(mul_size_strs[0])
     needs_clk = VHDL.LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
@@ -852,7 +853,8 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     P20 :   out  std_logic;
     P19 :   out  std_logic;
     P18 :   out  std_logic;"""
-    text += ("""
+    text += (
+        """
     P17 :   out  std_logic;
     P16 :   out  std_logic;
     P15 :   out  std_logic;
@@ -900,8 +902,9 @@ end component;
 
   begin
 
-  """)
-    
+  """
+    )
+
     if n_extra_input_regs > 0:
         text += """
     -- Delay regs
@@ -970,7 +973,8 @@ end component;
     --mult_bypass => "DISABLED",
     RESETMODE => "ASYNC"  
   )
-  port map(""")
+  port map("""
+    )
     if width > 9:
         text += """
     A17 => a_i(17),

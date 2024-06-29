@@ -569,7 +569,6 @@ class LRParser:
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                     else:
-
                         # --! TRACKING
                         if tracking:
                             sym.lineno = lexer.lineno
@@ -621,7 +620,6 @@ class LRParser:
                     return result
 
             if t is None:
-
                 # --! DEBUG
                 debug.error(
                     "Error  : %s",
@@ -904,7 +902,6 @@ class LRParser:
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                     else:
-
                         # --! TRACKING
                         if tracking:
                             sym.lineno = lexer.lineno
@@ -949,7 +946,6 @@ class LRParser:
                     return result
 
             if t is None:
-
                 # We have some kind of parsing error here.  To handle
                 # this, we are going to push the current token onto
                 # the tokenstack and replace it with an 'error' token.
@@ -1212,7 +1208,6 @@ class LRParser:
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                     else:
-
                         targ = [sym]
 
                         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1251,7 +1246,6 @@ class LRParser:
                     return result
 
             if t is None:
-
                 # We have some kind of parsing error here.  To handle
                 # this, we are going to push the current token onto
                 # the tokenstack and replace it with an 'error' token.
@@ -1568,9 +1562,7 @@ class Grammar(object):
         # entry is always reserved for the purpose of
         # building an augmented grammar
 
-        self.Prodnames = (
-            {}
-        )  # A dictionary mapping the names of nonterminals to a list of all
+        self.Prodnames = {}  # A dictionary mapping the names of nonterminals to a list of all
         # productions of that nonterminal.
 
         self.Prodmap = {}  # A dictionary that is only used to detect duplicate
@@ -1591,9 +1583,7 @@ class Grammar(object):
 
         self.Follow = {}  # A dictionary of precomputed FOLLOW(x) symbols
 
-        self.Precedence = (
-            {}
-        )  # Precedence rules for each terminal. Contains tuples of the
+        self.Precedence = {}  # Precedence rules for each terminal. Contains tuples of the
         # form ('right',level) or ('nonassoc', level) or ('left',level)
 
         self.UsedPrecedence = (
@@ -1648,7 +1638,6 @@ class Grammar(object):
     # -----------------------------------------------------------------------------
 
     def add_production(self, prodname, syms, func=None, file="", line=0):
-
         if prodname in self.Terminals:
             raise GrammarError(
                 "%s:%d: Illegal rule name %r. Already defined as a token"
@@ -1767,7 +1756,6 @@ class Grammar(object):
     # -----------------------------------------------------------------------------
 
     def find_unreachable(self):
-
         # Mark all symbols that are reachable from a symbol s
         def mark_reachable_from(s):
             if s in reachable:
@@ -1807,7 +1795,7 @@ class Grammar(object):
         # Then propagate termination until no change:
         while True:
             some_change = False
-            for (n, pl) in self.Prodnames.items():
+            for n, pl in self.Prodnames.items():
                 # Nonterminal n terminates iff any of its productions terminates.
                 for p in pl:
                     # Production p terminates iff all of its rhs symbols terminate.
@@ -1835,7 +1823,7 @@ class Grammar(object):
                 break
 
         infinite = []
-        for (s, term) in terminates.items():
+        for s, term in terminates.items():
             if not term:
                 if s not in self.Prodnames and s not in self.Terminals and s != "error":
                     # s is used-but-not-defined, and we've already warned of that,
@@ -1919,7 +1907,6 @@ class Grammar(object):
     # Afterward (e.g., when called from compute_follow()), it will be complete.
     # -------------------------------------------------------------------------
     def _first(self, beta):
-
         # We are computing First(x1,x2,x3,...,xn)
         result = []
         for x in beta:
@@ -3437,7 +3424,6 @@ def yacc(
     errorlog=None,
     picklefile=None,
 ):
-
     if tabmodule is None:
         tabmodule = tab_module
 

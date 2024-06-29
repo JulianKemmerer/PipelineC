@@ -7,8 +7,8 @@ from pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
 
-#TODO change primary data type to "CFG"=pointer to tree root and set of all nodes
-# FOR NOW CAN TRUST FIRST STATE IN LIST (last in reversed list) TO BE ENTRY/FIRST POINTER?   
+# TODO change primary data type to "CFG"=pointer to tree root and set of all nodes
+# FOR NOW CAN TRUST FIRST STATE IN LIST (last in reversed list) TO BE ENTRY/FIRST POINTER?
 # Dont need curr_state_info since will be working backwards now anyway
 
 FSM_EXT = "_FSM"
@@ -18,39 +18,55 @@ YIELD_FUNC = "__out"
 INOUT_FUNC = "__io"
 
 
-def C_AST_NODE_TO_C_CODE(c_ast_node, parser_state, state_info, indent="", generator=None, use_semicolon=True):
+def C_AST_NODE_TO_C_CODE(
+    c_ast_node, parser_state, state_info, indent="", generator=None, use_semicolon=True
+):
     if generator is None:
         generator = c_generator.CGenerator()
-    
+
     # If subroutine rename all vars
-    if (state_info is not None and state_info.sub_func_name and
-       state_info.sub_func_name in parser_state.func_to_local_variables
-       ):
-        #sub_func_logic = parser_state.FuncLogicLookupTable[state_info.sub_func_name]
+    if (
+        state_info is not None
+        and state_info.sub_func_name
+        and state_info.sub_func_name in parser_state.func_to_local_variables
+    ):
+        # sub_func_logic = parser_state.FuncLogicLookupTable[state_info.sub_func_name]
         # make copy to modify and render from? wtf idk
         c_ast_node = copy.deepcopy(c_ast_node)
-        #print("state_info.sub_func_name",state_info.sub_func_name)
-        #print(c_ast_node)
+        # print("state_info.sub_func_name",state_info.sub_func_name)
+        # print(c_ast_node)
         # Decl(name='local_var',
         # TypeDecl(declname='local_var',
         # ID(name='local_var' , ID(name='input_arg'
         nodes_to_rename = set()
-        nodes_to_rename |= set(C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.Decl))
-        nodes_to_rename |= set(C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.TypeDecl))
-        #nodes_to_rename |= set(C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.ID))
-        nodes_to_rename |= set(C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node))
-        #print("sub_func_logic.inputs",sub_func_logic.inputs)
-        #print("sub_func_logic.variable_names",sub_func_logic.variable_names)
+        nodes_to_rename |= set(
+            C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.Decl)
+        )
+        nodes_to_rename |= set(
+            C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.TypeDecl)
+        )
+        # nodes_to_rename |= set(C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_ast_node, c_ast.ID))
+        nodes_to_rename |= set(
+            C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_VARIABLE_IDS(c_ast_node)
+        )
+        # print("sub_func_logic.inputs",sub_func_logic.inputs)
+        # print("sub_func_logic.variable_names",sub_func_logic.variable_names)
         local_vars = parser_state.func_to_local_variables[state_info.sub_func_name]
-        #print("local_vars",local_vars)
+        # print("local_vars",local_vars)
         for node_to_rename in nodes_to_rename:
-            if (type(node_to_rename) == c_ast.Decl) or (type(node_to_rename) == c_ast.ID):
+            if (type(node_to_rename) == c_ast.Decl) or (
+                type(node_to_rename) == c_ast.ID
+            ):
                 if node_to_rename.name in local_vars:
-                    node_to_rename.name = state_info.sub_func_name + "_" + node_to_rename.name
-            else: # TypeDecl
+                    node_to_rename.name = (
+                        state_info.sub_func_name + "_" + node_to_rename.name
+                    )
+            else:  # TypeDecl
                 if node_to_rename.declname in local_vars:
-                    node_to_rename.declname = state_info.sub_func_name + "_" + node_to_rename.declname
-    
+                    node_to_rename.declname = (
+                        state_info.sub_func_name + "_" + node_to_rename.declname
+                    )
+
     text = generator.visit(c_ast_node)
 
     # What nodes need curlys?
@@ -92,7 +108,7 @@ def C_AST_NODE_TO_C_CODE(c_ast_node, parser_state, state_info, indent="", genera
 class FsmStateInfo:
     def __init__(self):
         self.name = None
-        self.sub_func_name = None # Name of subroutine function this state belongs to if any (i.e. non-MAIN thread)
+        self.sub_func_name = None  # Name of subroutine function this state belongs to if any (i.e. non-MAIN thread)
         self.c_ast_nodes = []  # C ast nodes
         self.always_next_state = None  # State info obj
         self.branch_nodes_tf_states = None  # (c_ast_node,true state, false state)
@@ -104,7 +120,7 @@ class FsmStateInfo:
         self.inout_func_call_node = None
         self.ends_w_fsm_func_entry = None  # C ast node of func call
         self.ends_w_fsm_func_entry_input_drivers = None
-        self.single_inst_func_name = None  # State is for this name of single inst 
+        self.single_inst_func_name = None  # State is for this name of single inst
         self.starts_w_fsm_func_return = None  # C ast node of func call
         self.starts_w_fsm_func_return_output_driven_things = None
 
@@ -174,31 +190,54 @@ class FsmStateInfo:
             return
 
 
-def GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state):
+def GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
+    state_info, fsm_logic, parser_state
+):
     text = ""
     # Use FIND_EXIT_STATES to list out and compare instead of ONE_HOT_VAR_ASSIGN
     # IS parser_state.existing_logic right?
     existing_logic = parser_state.existing_logic
-    parser_state.existing_logic = fsm_logic #?
+    parser_state.existing_logic = fsm_logic  # ?
     poss_exit_states = FIND_EXIT_STATES(state_info.sub_func_name, parser_state)
     parser_state.existing_logic = existing_logic
-    if len(poss_exit_states)==1:
+    if len(poss_exit_states) == 1:
         text += "    // ONE POSSIBLE EXIT: \n"
-        text += '''    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ''' + poss_exit_states[0].name + ", " + state_info.name + ''')\n'''
+        text += (
+            """    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
+            + poss_exit_states[0].name
+            + ", "
+            + state_info.name
+            + """)\n"""
+        )
     else:
         text += "    // POSSIBLE EXITS: \n"
         for exit_i, poss_exit_state in enumerate(poss_exit_states):
-            text += '''    if(ONE_HOT_CONST_EQ(''' + state_info.sub_func_name + "_FUNC_CALL_RETURN_FSM_STATE, " + poss_exit_state.name + '''))
+            text += (
+                """    if(ONE_HOT_CONST_EQ("""
+                + state_info.sub_func_name
+                + "_FUNC_CALL_RETURN_FSM_STATE, "
+                + poss_exit_state.name
+                + """))
     {
-      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ''' + poss_exit_state.name + ", " + state_info.name + ''')
-    }\n'''
+      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
+                + poss_exit_state.name
+                + ", "
+                + state_info.name
+                + """)
+    }\n"""
+            )
 
     return text
 
 
 def STATE_GROUP_TO_C_CODE(
-    state_group, state_group_i, fsm_logic, parser_state, generator,
-    single_inst_flow_ctrl_func_call_names, first_state_in_group = True
+    state_group,
+    state_group_i,
+    fsm_logic,
+    parser_state,
+    generator,
+    single_inst_flow_ctrl_func_call_names,
+    first_state_in_group=True,
 ):
     text = ""
     for state_info in state_group:
@@ -220,9 +259,7 @@ def STATE_GROUP_TO_C_CODE(
                 "    // "
                 + state_info.starts_w_fsm_func_return.name.name
                 + " "
-                + C_TO_LOGIC.C_AST_NODE_COORD_STR(
-                    state_info.starts_w_fsm_func_return
-                )
+                + C_TO_LOGIC.C_AST_NODE_COORD_STR(state_info.starts_w_fsm_func_return)
                 + " FUNC CALL RETURN \n"
             )
             called_func_name = state_info.starts_w_fsm_func_return.name.name
@@ -232,9 +269,7 @@ def STATE_GROUP_TO_C_CODE(
             if len(output_driven_things) > 0:
                 # Connect func output wires
                 # What func is being called?
-                called_func_logic = parser_state.FuncLogicLookupTable[
-                    called_func_name
-                ]
+                called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
                 # Do outputs
                 output_tok = "_"
                 if called_func_name in single_inst_flow_ctrl_func_call_names:
@@ -245,7 +280,12 @@ def STATE_GROUP_TO_C_CODE(
                         text += (
                             "    "
                             + C_AST_NODE_TO_C_CODE(
-                                output_driven_thing_i, parser_state, state_info, "", generator, use_semicolon=False
+                                output_driven_thing_i,
+                                parser_state,
+                                state_info,
+                                "",
+                                generator,
+                                use_semicolon=False,
                             )
                             + " = "
                             + called_func_name
@@ -276,36 +316,67 @@ def STATE_GROUP_TO_C_CODE(
                 # TODO fix needing ";"
                 # Fix print out to be tabbed out
                 # HACKY AF OMG remove static decls
-                c_code_text = C_AST_NODE_TO_C_CODE(c_ast_node, parser_state, state_info, "    ", generator)
+                c_code_text = C_AST_NODE_TO_C_CODE(
+                    c_ast_node, parser_state, state_info, "    ", generator
+                )
                 c_code_text = c_code_text.replace("static ", "// static ")
                 text += c_code_text + "\n"
 
         # Branch logic
         if state_info.branch_nodes_tf_states is not None:
             mux_node, true_state, false_state = state_info.branch_nodes_tf_states
-            cond_code = C_AST_NODE_TO_C_CODE(mux_node.cond, parser_state, state_info, "", generator, False)
+            cond_code = C_AST_NODE_TO_C_CODE(
+                mux_node.cond, parser_state, state_info, "", generator, False
+            )
             text += "    if(" + cond_code + ")\n"
             text += "    {\n"
-            text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + true_state.name + ", " + state_info.name + ")\n"
+            text += (
+                "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, "
+                + true_state.name
+                + ", "
+                + state_info.name
+                + ")\n"
+            )
             text += "    }\n"
             if false_state is not None:
                 text += "    else\n"
                 text += "    {\n"
-                text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + false_state.name + ", " + state_info.name + ")\n"
+                text += (
+                    "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, "
+                    + false_state.name
+                    + ", "
+                    + state_info.name
+                    + ")\n"
+                )
                 text += "    }\n"
             else:  # No next state, just return/exit/start over?
                 text += "    else\n"
                 text += "    {\n"
                 if state_info.sub_func_name is not None:
                     if state_info.always_next_state is not None:
-                        raise Exception("Subroutine branching exit has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
-                    text += "      // Subroutine branch exiting to scheduled return state\n"
-                    text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
+                        raise Exception(
+                            "Subroutine branching exit has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?"
+                        )
+                    text += (
+                        "      // Subroutine branch exiting to scheduled return state\n"
+                    )
+                    text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
+                        state_info, fsm_logic, parser_state
+                    )
                 else:
                     # Main/single inst exit end execution
                     text += "      // No next state, return and start over?\n"
-                    text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
-                    text += "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name +")\n"
+                    text += (
+                        "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, "
+                        + state_info.name
+                        + ")\n"
+                    )
+                    text += (
+                        "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES"
+                        + "_"
+                        + fsm_logic.func_name
+                        + ")\n"
+                    )
                 text += "    }\n"
             text += "  }\n"
             continue
@@ -317,7 +388,9 @@ def STATE_GROUP_TO_C_CODE(
             entry_state, exit_state = fsm_logic.func_call_node_to_entry_exit_states[
                 func_call_node
             ]
-            func_call_state = entry_state.always_next_state #fsm_logic.func_call_name_to_state[called_func_name]
+            func_call_state = (
+                entry_state.always_next_state
+            )  # fsm_logic.func_call_name_to_state[called_func_name]
             text += (
                 "    // "
                 + func_call_node.name.name
@@ -342,7 +415,9 @@ def STATE_GROUP_TO_C_CODE(
                         + input_tok
                         + input_port
                         + " = "
-                        + C_AST_NODE_TO_C_CODE(input_driver_i, parser_state, state_info, "", generator)
+                        + C_AST_NODE_TO_C_CODE(
+                            input_driver_i, parser_state, state_info, "", generator
+                        )
                         + "\n"
                     )
                 else:
@@ -356,32 +431,69 @@ def STATE_GROUP_TO_C_CODE(
                         + ";\n"
                     )
             # text += "\n"
-            #text += "    // SUBROUTINE STATE NEXT\n"
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + func_call_state.name + ", " + state_info.name + ")\n"
+            # text += "    // SUBROUTINE STATE NEXT\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, "
+                + func_call_state.name
+                + ", "
+                + state_info.name
+                + ")\n"
+            )
             # Set state to return to after func call
-            #text += "    // Followed by return state\n"
+            # text += "    // Followed by return state\n"
             text += "    // Return state saved for func return\n"
             if called_func_name in single_inst_flow_ctrl_func_call_names:
-                text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + exit_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+                text += (
+                    "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, "
+                    + exit_state.name
+                    + ", NUM_STATES"
+                    + "_"
+                    + fsm_logic.func_name
+                    + ")\n"
+                )
             else:
                 # Instead of ONE_HOT_CONST_ASSIGN over all one hot bits
                 # Just loop and check over possible states
                 # IS parser_state.existing_logic right?
                 existing_logic = parser_state.existing_logic
-                parser_state.existing_logic = fsm_logic #?
+                parser_state.existing_logic = fsm_logic  # ?
                 poss_exit_states = FIND_EXIT_STATES(called_func_name, parser_state)
                 parser_state.existing_logic = existing_logic
-                if len(poss_exit_states)==1:
+                if len(poss_exit_states) == 1:
                     text += "    // ONE POSSIBLE EXIT, just set the bit: \n"
-                    text += "    " + called_func_name + '''_FUNC_CALL_RETURN_FSM_STATE['''+poss_exit_states[0].name+'''] = 1;\n'''
+                    text += (
+                        "    "
+                        + called_func_name
+                        + """_FUNC_CALL_RETURN_FSM_STATE["""
+                        + poss_exit_states[0].name
+                        + """] = 1;\n"""
+                    )
                 else:
-                    text += "    // Returning to " + exit_state.name + " state, clearing other possible exits: \n"
+                    text += (
+                        "    // Returning to "
+                        + exit_state.name
+                        + " state, clearing other possible exits: \n"
+                    )
                     for exit_i, poss_exit_state in enumerate(poss_exit_states):
-                        text +='''    if('''+poss_exit_state.name+'''=='''+exit_state.name+'''){
-      ''' + called_func_name + '''_FUNC_CALL_RETURN_FSM_STATE['''+poss_exit_state.name+'''] = 1;
+                        text += (
+                            """    if("""
+                            + poss_exit_state.name
+                            + """=="""
+                            + exit_state.name
+                            + """){
+      """
+                            + called_func_name
+                            + """_FUNC_CALL_RETURN_FSM_STATE["""
+                            + poss_exit_state.name
+                            + """] = 1;
     }else{
-      ''' + called_func_name + '''_FUNC_CALL_RETURN_FSM_STATE['''+poss_exit_state.name+'''] = 0;
-    }\n'''            
+      """
+                            + called_func_name
+                            + """_FUNC_CALL_RETURN_FSM_STATE["""
+                            + poss_exit_state.name
+                            + """] = 0;
+    }\n"""
+                        )
             if state_info.ends_w_clk and not state_info.clk_end_is_user:
                 text += "    // FUNC ENTRY FORCED CLK DELAY IMPLIED\n"
             text += "  }\n"
@@ -430,7 +542,10 @@ def STATE_GROUP_TO_C_CODE(
                 + """_o.output_valid)
     {
       // Go to signaled return state
-      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+                + "_"
+                + fsm_logic.func_name
+                + """)
     }\n"""
             )
             text += "  }\n"
@@ -445,28 +560,45 @@ def STATE_GROUP_TO_C_CODE(
                     output_maybe_func_and_tok = state_info.sub_func_name + "_"
                 else:
                     # Regular inline subroutine return
-                    output_maybe_func_and_tok = state_info.sub_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME
+                    output_maybe_func_and_tok = (
+                        state_info.sub_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME
+                    )
             text += (
                 "    "
                 + output_maybe_func_and_tok
                 + " = "
-                + C_AST_NODE_TO_C_CODE(state_info.return_node.expr, parser_state, state_info, "", generator)
+                + C_AST_NODE_TO_C_CODE(
+                    state_info.return_node.expr, parser_state, state_info, "", generator
+                )
                 + "\n"
             )
             if state_info.sub_func_name is not None:
                 if state_info.always_next_state is not None:
-                    raise Exception("Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?")
+                    raise Exception(
+                        "Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?"
+                    )
                 text += "    // Subroutine returning to scheduled return state\n"
-                text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
+                text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
+                    state_info, fsm_logic, parser_state
+                )
                 text += "  }\n"
                 continue
             else:
                 # Main/single inst return end execution
                 text += "    // Return, end execution by maybe going back to entry\n"
-                text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
-                text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+                text += (
+                    "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, "
+                    + state_info.name
+                    + ")\n"
+                )
+                text += (
+                    "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES"
+                    + "_"
+                    + fsm_logic.func_name
+                    + ")\n"
+                )
                 text += "  }\n"
-                continue                        
+                continue
 
         # Delay clk?
         if state_info.ends_w_clk:
@@ -474,34 +606,70 @@ def STATE_GROUP_TO_C_CODE(
             if state_info.clk_end_is_user:
                 text += "    // __clk(); // Go to next state in next clock cycle \n"
             else:
-                text += "    // FORCED CLK DELAY - Go to next state in next clock cycle \n"
+                text += (
+                    "    // FORCED CLK DELAY - Go to next state in next clock cycle \n"
+                )
             text += "    // MUST OCCUR IN LAST STAGE GROUP WITH RETURN HANDSHAKE \n"
             if state_info.always_next_state is None:
                 if state_info.sub_func_name is not None:
                     text += "      // Subroutine delay clk exiting to scheduled return state\n"
-                    text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
+                    text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
+                        state_info, fsm_logic, parser_state
+                    )
                 else:
                     # Main/single inst exit end execution
                     text += "      // No next state, return and start over?\n"
-                    text += "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
-                    text += "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+                    text += (
+                        "      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, "
+                        + state_info.name
+                        + ")\n"
+                    )
+                    text += (
+                        "      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES"
+                        + "_"
+                        + fsm_logic.func_name
+                        + ")\n"
+                    )
             else:
-                text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + state_info.always_next_state.name + ", " + state_info.name + ")\n"
+                text += (
+                    "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, "
+                    + state_info.always_next_state.name
+                    + ", "
+                    + state_info.name
+                    + ")\n"
+                )
             text += "  }\n"
             continue
 
         # Input func
         if state_info.input_func_call_node is not None:
             text += "    // Get new inputs, continue execution\n"
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_REG, " + state_info.name + ")\n"
-            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_REG, "
+                + state_info.name
+                + ")\n"
+            )
+            text += (
+                "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, "
+                + state_info.always_next_state.name
+                + ", NUM_STATES"
+                + "_"
+                + fsm_logic.func_name
+                + ")\n"
+            )
             text += "  }\n"
             continue
 
         # Yield func
         if state_info.yield_func_call_node is not None:
             text += "    // Yield output data, continue execution\n"
-            yield_arg_code = C_AST_NODE_TO_C_CODE(state_info.yield_func_call_node.args.exprs[0], parser_state, state_info, "", generator)
+            yield_arg_code = C_AST_NODE_TO_C_CODE(
+                state_info.yield_func_call_node.args.exprs[0],
+                parser_state,
+                state_info,
+                "",
+                generator,
+            )
             text += (
                 "    "
                 + C_TO_LOGIC.RETURN_WIRE_NAME
@@ -510,15 +678,34 @@ def STATE_GROUP_TO_C_CODE(
                 + yield_arg_code
                 + "\n"
             )
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
-            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, "
+                + state_info.name
+                + ")\n"
+            )
+            text += (
+                "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, "
+                + state_info.always_next_state.name
+                + ", NUM_STATES"
+                + "_"
+                + fsm_logic.func_name
+                + ")\n"
+            )
             text += "  }\n"
             continue
 
         # Inout func
         if state_info.inout_func_call_node is not None:
-            text += "    // In+out accept input and yield output data, continue execution\n"
-            inout_arg_code = C_AST_NODE_TO_C_CODE(state_info.inout_func_call_node.args.exprs[0], parser_state, state_info, "", generator)
+            text += (
+                "    // In+out accept input and yield output data, continue execution\n"
+            )
+            inout_arg_code = C_AST_NODE_TO_C_CODE(
+                state_info.inout_func_call_node.args.exprs[0],
+                parser_state,
+                state_info,
+                "",
+                generator,
+            )
             text += (
                 "    "
                 + C_TO_LOGIC.RETURN_WIRE_NAME
@@ -527,15 +714,32 @@ def STATE_GROUP_TO_C_CODE(
                 + inout_arg_code
                 + "\n"
             )
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_RETURN_OUT, " + state_info.name + ")\n"
-            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, " + state_info.always_next_state.name + ", NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_RETURN_OUT, "
+                + state_info.name
+                + ")\n"
+            )
+            text += (
+                "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, "
+                + state_info.always_next_state.name
+                + ", NUM_STATES"
+                + "_"
+                + fsm_logic.func_name
+                + ")\n"
+            )
             text += "  }\n"
             continue
 
         # Default next
         if state_info.always_next_state is not None:
             text += "    // DEFAULT NEXT\n"
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, " + state_info.always_next_state.name + ", " + state_info.name + ")\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, "
+                + state_info.always_next_state.name
+                + ", "
+                + state_info.name
+                + ")\n"
+            )
             text += "  }\n"
             continue
 
@@ -543,12 +747,23 @@ def STATE_GROUP_TO_C_CODE(
         # From a subroutine or main?
         if state_info.sub_func_name is not None:
             text += "    // Assumed subroutine returning to scheduled return state\n"
-            text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(state_info, fsm_logic, parser_state)
+            text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
+                state_info, fsm_logic, parser_state
+            )
             text += "  }\n"
         else:
             text += "    // ASSUMED EMPTY DELAY STATE FOR RETURN\n"
-            text += "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, " + state_info.name + ")\n"
-            text += "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+            text += (
+                "    ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, RETURN_REG, "
+                + state_info.name
+                + ")\n"
+            )
+            text += (
+                "    ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, ENTRY_REG, NUM_STATES"
+                + "_"
+                + fsm_logic.func_name
+                + ")\n"
+            )
             text += "  }\n"
 
     return text
@@ -604,29 +819,48 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
     one_hot_index += 1
     # Extra IO in single stage
     if uses_io_func:
-        one_hot_states_text += "uint32_t ENTRY_RETURN_IN" + " = " + str(one_hot_index) + ";\n"
+        one_hot_states_text += (
+            "uint32_t ENTRY_RETURN_IN" + " = " + str(one_hot_index) + ";\n"
+        )
         one_hot_index += 1
-        one_hot_states_text += "uint32_t ENTRY_RETURN_OUT" + " = " + str(one_hot_index) + ";\n"
+        one_hot_states_text += (
+            "uint32_t ENTRY_RETURN_OUT" + " = " + str(one_hot_index) + ";\n"
+        )
         one_hot_index += 1
     # User states
     for state_group in fsm_logic.state_groups:
         for state_info in state_group:
-            one_hot_states_text += "uint32_t " + state_info.name + " = " +str(one_hot_index) + ";\n"
+            one_hot_states_text += (
+                "uint32_t " + state_info.name + " = " + str(one_hot_index) + ";\n"
+            )
             if state_info.name == fsm_logic.first_user_state.name:
-                text += "#define FIRST_STATE" + "_" + fsm_logic.func_name + " " + str(one_hot_index) + "\n"
+                text += (
+                    "#define FIRST_STATE"
+                    + "_"
+                    + fsm_logic.func_name
+                    + " "
+                    + str(one_hot_index)
+                    + "\n"
+                )
             one_hot_index += 1
     # Return
     one_hot_states_text += "uint32_t RETURN_REG" + " = " + str(one_hot_index) + ";\n"
     one_hot_index += 1
     num_states = one_hot_index
-    text += "#define NUM_STATES" + "_" + fsm_logic.func_name + " " + str(num_states) + "\n"
+    text += (
+        "#define NUM_STATES" + "_" + fsm_logic.func_name + " " + str(num_states) + "\n"
+    )
 
     # Input Struct
-    text += """
-typedef struct """ + fsm_logic.func_name + """_INPUT_t
+    text += (
+        """
+typedef struct """
+        + fsm_logic.func_name
+        + """_INPUT_t
 {
   uint1_t input_valid;
 """
+    )
     for input_port in fsm_logic.inputs:
         c_type = fsm_logic.wire_to_c_type[input_port]
         if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
@@ -673,14 +907,22 @@ typedef struct """
         + fsm_logic.func_name
         + """_INPUT_t fsm_i)
 {
-""")
+"""
+    )
     text += one_hot_states_text
-    text += ("""
+    text += (
+        """
   // State reg holding current state, starting at entry=[0]
-  ONE_HOT_REG_DECL(FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", 0)
+  ONE_HOT_REG_DECL(FSM_STATE, NUM_STATES"""
+        + "_"
+        + fsm_logic.func_name
+        + """, 0)
   // State reg holding state to return to after certain func calls
   // Starting set to 'invalid'=entry=[0]
-  ONE_HOT_REG_DECL(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name +""", 0)
+  ONE_HOT_REG_DECL(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+        + "_"
+        + fsm_logic.func_name
+        + """, 0)
   // Input regs
 """
     )
@@ -724,14 +966,14 @@ typedef struct """
     )
     local_decls |= set(main_local_decls)
     # Subroutine local decls
-    #sub_func_to_local_decls = {}
+    # sub_func_to_local_decls = {}
     sub_func_local_decl_to_func = {}
     for flow_ctrl_func_call_name in flow_ctrl_func_call_names:
         sub_func_logic = parser_state.FuncLogicLookupTable[flow_ctrl_func_call_name]
         sub_func_local_decls = C_TO_LOGIC.C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(
             sub_func_logic.c_ast_node.body, c_ast.Decl
         )
-        #sub_func_to_local_decls[flow_ctrl_func_call_name] = sub_func_local_decls
+        # sub_func_to_local_decls[flow_ctrl_func_call_name] = sub_func_local_decls
         for sub_func_local_decl in sub_func_local_decls:
             sub_func_local_decl_to_func[sub_func_local_decl] = flow_ctrl_func_call_name
         local_decls |= set(sub_func_local_decls)
@@ -757,7 +999,13 @@ typedef struct """
         # Include init if static
         is_static = "static" in local_decl.storage
         if is_static and local_decl.init is not None:
-            text += " = " + C_AST_NODE_TO_C_CODE(local_decl.init, parser_state, None, "", generator) + "\n"
+            text += (
+                " = "
+                + C_AST_NODE_TO_C_CODE(
+                    local_decl.init, parser_state, None, "", generator
+                )
+                + "\n"
+            )
         else:
             text += ";\n"
         # Hacky ahhhhhh???
@@ -767,39 +1015,77 @@ typedef struct """
         #  local_decl.type = None
         #  local_decl.name = None
         #  local_decl.init = None
-    
 
     text += (
         """  // Output wires
   """
         + fsm_logic.func_name
         + """_OUTPUT_t fsm_o = {0};
-""")
+"""
+    )
 
     if len(flow_ctrl_func_call_names) > 0:
         text += "  // Per thread instance subroutines \n"
         # Write wires for each func
         for flow_ctrl_func_name in flow_ctrl_func_call_names:
-            flow_ctrl_func_logic = parser_state.FuncLogicLookupTable[flow_ctrl_func_name]
+            flow_ctrl_func_logic = parser_state.FuncLogicLookupTable[
+                flow_ctrl_func_name
+            ]
             text += "  // " + flow_ctrl_func_name + "\n"
             # Inputs
             for sub_input_port in flow_ctrl_func_logic.inputs:
-                sub_input_port_c_type = flow_ctrl_func_logic.wire_to_c_type[sub_input_port]
+                sub_input_port_c_type = flow_ctrl_func_logic.wire_to_c_type[
+                    sub_input_port
+                ]
                 # Text for array or not and init
                 if C_TO_LOGIC.C_TYPE_IS_ARRAY(sub_input_port_c_type):
-                    elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(sub_input_port_c_type)
-                    text += "  " + "static " + elem_t + " " + flow_ctrl_func_name + "_" + sub_input_port
+                    elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        sub_input_port_c_type
+                    )
+                    text += (
+                        "  "
+                        + "static "
+                        + elem_t
+                        + " "
+                        + flow_ctrl_func_name
+                        + "_"
+                        + sub_input_port
+                    )
                     for dim in dims:
                         text += "[" + str(dim) + "]"
                 else:
-                    text += "  static " + sub_input_port_c_type + " " + flow_ctrl_func_name + "_" + sub_input_port 
+                    text += (
+                        "  static "
+                        + sub_input_port_c_type
+                        + " "
+                        + flow_ctrl_func_name
+                        + "_"
+                        + sub_input_port
+                    )
                 text += ";\n"
             # Return val
             if C_TO_LOGIC.RETURN_WIRE_NAME in flow_ctrl_func_logic.wire_to_c_type:
-                sub_out_port_c_type = flow_ctrl_func_logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-                text += "  static " + sub_out_port_c_type+ " " + flow_ctrl_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME + ";\n"
+                sub_out_port_c_type = flow_ctrl_func_logic.wire_to_c_type[
+                    C_TO_LOGIC.RETURN_WIRE_NAME
+                ]
+                text += (
+                    "  static "
+                    + sub_out_port_c_type
+                    + " "
+                    + flow_ctrl_func_name
+                    + "_"
+                    + C_TO_LOGIC.RETURN_WIRE_NAME
+                    + ";\n"
+                )
             # Return state
-            text += "  ONE_HOT_REG_DECL_ZERO_INIT(" + flow_ctrl_func_name + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES" + "_" + fsm_logic.func_name + ")\n"
+            text += (
+                "  ONE_HOT_REG_DECL_ZERO_INIT("
+                + flow_ctrl_func_name
+                + "_FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"
+                + "_"
+                + fsm_logic.func_name
+                + ")\n"
+            )
 
     if len(single_inst_flow_ctrl_func_call_names) > 0:
         # Dont need for outputs since known calling fsm is ready for single inst output valid
@@ -842,25 +1128,38 @@ typedef struct """
     # Go to first user state after getting inputs
     if uses_io_func:
         # Extra logic to detect 'return to arbitrary user location from entry'
-        text += """      // Go to signaled return-from-entry state if valid
+        text += (
+            """      // Go to signaled return-from-entry state if valid
         if(ONE_HOT_CONST_EQ(FUNC_CALL_RETURN_FSM_STATE,ENTRY_REG))
         {
             // Invalid, default to first user state
             if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)){
-                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)
+                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
+            + fsm_logic.first_user_state.name
+            + """, ENTRY_REG)
             }else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)){
-                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_RETURN_IN)
+                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
+            + fsm_logic.first_user_state.name
+            + """, ENTRY_RETURN_IN)
             }
         }
         else
         {
             // Make indicated user transition from entry
-            ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
+            ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+            + "_"
+            + fsm_logic.func_name
+            + """)
         }"""
+        )
     else:
         # Normal case
-        text += """      // Default to first user state
-      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """+fsm_logic.first_user_state.name+""", ENTRY_REG)"""  
+        text += (
+            """      // Default to first user state
+      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
+            + fsm_logic.first_user_state.name
+            + """, ENTRY_REG)"""
+        )
 
     text += """
     }
@@ -871,10 +1170,21 @@ typedef struct """
     # List out all user states in parallel branch groups
     # Except for last state group of clk delay
     last_group = fsm_logic.state_groups[-1]
-    last_group_is_clk_delay = list(last_group)[0].ends_w_clk # hack check if has clk states in group
+    last_group_is_clk_delay = list(last_group)[
+        0
+    ].ends_w_clk  # hack check if has clk states in group
     for state_group_i, state_group in enumerate(fsm_logic.state_groups):
-        if not last_group_is_clk_delay or (state_group_i < len(fsm_logic.state_groups)-1):
-            text += STATE_GROUP_TO_C_CODE(state_group, state_group_i, fsm_logic, parser_state, generator, single_inst_flow_ctrl_func_call_names)
+        if not last_group_is_clk_delay or (
+            state_group_i < len(fsm_logic.state_groups) - 1
+        ):
+            text += STATE_GROUP_TO_C_CODE(
+                state_group,
+                state_group_i,
+                fsm_logic,
+                parser_state,
+                generator,
+                single_inst_flow_ctrl_func_call_names,
+            )
 
     text += """
   // Pass through to RETURN_REG in same clk cycle
@@ -895,12 +1205,17 @@ typedef struct """
             + FSM_EXT
             + """;"""
         )
-    text += """
+    text += (
+        """
     if(fsm_i.output_ready)
     {
       // Go to signaled return state
-      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES""" + "_" + fsm_logic.func_name + """)
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+        + "_"
+        + fsm_logic.func_name
+        + """)
 """
+    )
     if uses_io_func:
         text += """      // Go to second part of io state\n"""
         text += """      if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT))
@@ -915,8 +1230,15 @@ typedef struct """
     if last_group_is_clk_delay:
         text += """  // Clock delay last group of states
 """
-        text += STATE_GROUP_TO_C_CODE(last_group, len(fsm_logic.state_groups)-1,
-            fsm_logic, parser_state, generator, single_inst_flow_ctrl_func_call_names, first_state_in_group=False)
+        text += STATE_GROUP_TO_C_CODE(
+            last_group,
+            len(fsm_logic.state_groups) - 1,
+            fsm_logic,
+            parser_state,
+            generator,
+            single_inst_flow_ctrl_func_call_names,
+            first_state_in_group=False,
+        )
 
     text += """
   return fsm_o;
@@ -930,7 +1252,8 @@ typedef struct """
 
 def BUILD_STATE_NAME(c_ast_node, parser_state, post_text=""):
     return (
-        parser_state.existing_logic.fsm_subroutine_scope[-1] + "_"
+        parser_state.existing_logic.fsm_subroutine_scope[-1]
+        + "_"
         + "L"
         + str(c_ast_node.coord.line)
         + "_C"
@@ -941,6 +1264,7 @@ def BUILD_STATE_NAME(c_ast_node, parser_state, post_text=""):
         + str(type(c_ast_node).__name__)
         + post_text
     )
+
 
 def C_AST_NODE_TO_STATES_LIST(
     c_ast_node, parser_state, curr_state_info=None, next_state_info=None
@@ -959,7 +1283,7 @@ def C_AST_NODE_TO_STATES_LIST(
     reversed_states_list = []
     for chunk in reversed(chunks):
         # List of c_ast nodes
-        if type(chunk) == list:
+        if type(chunk) is list:
             # Update next state pointer
             if len(reversed_states_list) > 0:
                 next_state_info = reversed_states_list[-1]
@@ -972,7 +1296,7 @@ def C_AST_NODE_TO_STATES_LIST(
             state_info.c_ast_nodes += chunk
             state_info.always_next_state = next_state_info
             reversed_states_list.append(state_info)
-            # print("c ast",type(chunk[0]).__name__,chunk[0].coord)   
+            # print("c ast",type(chunk[0]).__name__,chunk[0].coord)
         else:
             # Or single c ast node of ctrl flow
             # Flow control node to elborate to more states
@@ -982,16 +1306,16 @@ def C_AST_NODE_TO_STATES_LIST(
             # Create more states working backwards
             ctrl_flow_states = C_AST_CTRL_FLOW_NODE_TO_STATES(
                 chunk,
-                None, #new_curr_state_info,
+                None,  # new_curr_state_info,
                 next_state_info,
                 parser_state,
             )
             # ctrl_flow_states should be unordered except for pointer to first
             # but list [0] , [-1] reversed works for now
             reversed_states_list += reversed(ctrl_flow_states)
-            
+
     states_list = list(reversed(reversed_states_list))
-    '''print("==== states_list")
+    """print("==== states_list")
     for i,state_info in enumerate(states_list):
         if type(state_info) is FsmStateInfo:
             print("comb state:")
@@ -1001,7 +1325,7 @@ def C_AST_NODE_TO_STATES_LIST(
             print("ctrl flow:",type(state_info).__name__, state_info.coord)
             print("")
             print(0/0)
-    print("==== \n")'''
+    print("==== \n")"""
 
     # Sanity check no states with same name
     name_to_state = {}
@@ -1010,9 +1334,9 @@ def C_AST_NODE_TO_STATES_LIST(
             for state_i in states_list:
                 state_i.print()
                 print("=====", flush=True)
-            #name_to_state[state.name].print()
-            #print("=====", flush=True)
-            #state.print()
+            # name_to_state[state.name].print()
+            # print("=====", flush=True)
+            # state.print()
             raise Exception(f"Duplicate named states! {state.name}")
         name_to_state[state.name] = state
 
@@ -1027,20 +1351,30 @@ def C_AST_NODE_TO_STATES_LIST(
 def FIND_EXIT_STATES(sub_func_name, parser_state, visited_states=set()):
     debug = False
     if debug:
-        print(f"{parser_state.existing_logic.func_name} Trying exit states from sub {sub_func_name}...")
+        print(
+            f"{parser_state.existing_logic.func_name} Trying exit states from sub {sub_func_name}..."
+        )
     exit_states = []
     all_possible_exit_states = []
-    for func_call_node in parser_state.existing_logic.func_call_node_to_entry_exit_states.keys():
+    for (
+        func_call_node
+    ) in parser_state.existing_logic.func_call_node_to_entry_exit_states.keys():
         if func_call_node.name.name == sub_func_name:
-            #if sub_func_name=="get_uart_input":
-            #   print(f"{sub_func_name} {func_call_node.coord} 
-            entry_state, exit_state = parser_state.existing_logic.func_call_node_to_entry_exit_states[func_call_node]
+            # if sub_func_name=="get_uart_input":
+            #   print(f"{sub_func_name} {func_call_node.coord}
+            entry_state, exit_state = (
+                parser_state.existing_logic.func_call_node_to_entry_exit_states[
+                    func_call_node
+                ]
+            )
             all_possible_exit_states.append(exit_state)
             if entry_state in visited_states:
                 exit_states.append(exit_state)
     # Fall back to all possible if unknown?
-    if len(all_possible_exit_states)==0:
-        raise Exception("No possible exit states for inline sub func exit/return!?", sub_func_name)
+    if len(all_possible_exit_states) == 0:
+        raise Exception(
+            "No possible exit states for inline sub func exit/return!?", sub_func_name
+        )
     if debug:
         print("Poss exit states:")
         for all_possible_exit_state in all_possible_exit_states:
@@ -1050,8 +1384,8 @@ def FIND_EXIT_STATES(sub_func_name, parser_state, visited_states=set()):
         for visited_state in visited_states:
             visited_state.print()
             print("===")
-    if len(exit_states)==0:
-        #if debug:
+    if len(exit_states) == 0:
+        # if debug:
         #   raise Exception("No found exit states for inline sub func exit/return!?", sub_func_name, len(all_possible_exit_states))
         exit_states = all_possible_exit_states
     return exit_states
@@ -1065,7 +1399,7 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     # print()
     # visited_states is primarily to resolve loops for user instead of requiring __clk()?
     if start_state in visited_states:
-        return [[]] #[[start_state]]
+        return [[]]  # [[start_state]]
     visited_states.append(start_state)
 
     debug = False
@@ -1088,49 +1422,55 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
         return [[start_state]]
     # Single inst func is entry is pseudo dead end
     # (Not single inst isnt guarenteed to be dead end)
-    elif (start_state.ends_w_fsm_func_entry is not None and start_state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included):
+    elif (
+        start_state.ends_w_fsm_func_entry is not None
+        and start_state.ends_w_fsm_func_entry.name.name
+        in parser_state.func_single_inst_header_included
+    ):
         return [[start_state]]
 
     poss_next_states = []
     # Branching?
     if start_state.branch_nodes_tf_states is not None:
         (c_ast_node, true_state, false_state) = start_state.branch_nodes_tf_states
-        #if true_state != start_state:  # No loops?
+        # if true_state != start_state:  # No loops?
         poss_next_states.append(true_state)
-        if false_state is not None: # and false_state != start_state:  # No loops?
+        if false_state is not None:  # and false_state != start_state:  # No loops?
             # print(" poss_next_state.name false",false_state.name)
             poss_next_states.append(false_state)
-        #elif (
+        # elif (
         #    false_state is None
         #    and start_state.always_next_state is not None
         #    and start_state.always_next_state != start_state
-        #):  # No loops?
+        # ):  # No loops?
         #    poss_next_states.add(
         #        start_state.always_next_state
         #    )  # Default next if no false branch
-        else: # false_state is None
+        else:  # false_state is None
             # Submodule return?
             if start_state.sub_func_name is not None:
-                exit_states = FIND_EXIT_STATES(start_state.sub_func_name, parser_state, visited_states)
-                poss_next_states += exit_states  
+                exit_states = FIND_EXIT_STATES(
+                    start_state.sub_func_name, parser_state, visited_states
+                )
+                poss_next_states += exit_states
 
     # Normal single next state
-    elif (
-        start_state.always_next_state is not None
-    ):  
+    elif start_state.always_next_state is not None:
         # No loops?:and start_state.always_next_state != start_state
         # print(" poss_next_state.name always",start_state.always_next_state.name)
         poss_next_states.append(start_state.always_next_state)
 
-    # Multiple returns from single inst fsms 
+    # Multiple returns from single inst fsms
     # are captured by post fsm groups starting at func exit/return
     # Nothing needs to be done here
 
     # However, multiple returns from inlined subroutines need to handled
-    else: # No branching or always next states, looks like exit/return/done
-        # Submodule return? 
+    else:  # No branching or always next states, looks like exit/return/done
+        # Submodule return?
         if start_state.sub_func_name is not None:
-            exit_states = FIND_EXIT_STATES(start_state.sub_func_name, parser_state, visited_states)
+            exit_states = FIND_EXIT_STATES(
+                start_state.sub_func_name, parser_state, visited_states
+            )
             poss_next_states += exit_states
 
     # Make a return state list for each state
@@ -1239,7 +1579,7 @@ def C_AST_CTRL_FLOW_ASSIGNMENT_TO_STATES(
         raise Exception(
             f"TODO unsupported control flow in assignment LHS: {c_ast_node.lvalue.coord}"
         )
-    if type(c_ast_node.rvalue) != c_ast.FuncCall:
+    if type(c_ast_node.rvalue) is not c_ast.FuncCall:
         raise Exception(
             f"TODO unsupported control flow in assignment RHS: {c_ast_node.rvalue.coord}"
         )
@@ -1261,7 +1601,9 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
     input_drivers = []
     called_func_name = c_ast_node.name.name
     if called_func_name not in parser_state.FuncLogicLookupTable:
-        raise Exception(f"No function defintion parsed for: {called_func_name} ? Bad #include order? {c_ast_node.coord}")
+        raise Exception(
+            f"No function defintion parsed for: {called_func_name} ? Bad #include order? {c_ast_node.coord}"
+        )
     called_func_logic = parser_state.FuncLogicLookupTable[called_func_name]
     for i in range(0, len(called_func_logic.inputs)):
         input_c_ast_node = c_ast_node.args.exprs[i]
@@ -1275,16 +1617,16 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
 
     states = []
 
-    # Func entry new state 
+    # Func entry new state
     entry_state_info = FsmStateInfo()
-    #entry_state_info.always_next_state = done later below
+    # entry_state_info.always_next_state = done later below
     entry_state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_ENTRY"
     # Set current state to have func entry
     entry_state_info.ends_w_fsm_func_entry = c_ast_node
     entry_state_info.ends_w_fsm_func_entry_input_drivers = input_drivers
     states.append(entry_state_info)
 
-    # Func exit new state 
+    # Func exit new state
     exit_state_info = FsmStateInfo()
     exit_state_info.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_EXIT"
     exit_state_info.always_next_state = next_state_info
@@ -1301,19 +1643,23 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
     # since is being built backwards from later states first in func def body parsing...
 
     # Single instance or regular func call?
-    if called_func_name in  parser_state.func_single_inst_header_included:
+    if called_func_name in parser_state.func_single_inst_header_included:
         # Single inst func call state
         # Does a state for it already exist?
         if called_func_name not in parser_state.existing_logic.func_call_name_to_state:
             fsm_state_info = FsmStateInfo()
             fsm_state_info.name = called_func_name + "_SINGLE_INST_FSM"
             fsm_state_info.single_inst_func_name = called_func_name
-            parser_state.existing_logic.func_call_name_to_state[called_func_name] = fsm_state_info
-            fsm_state_info.always_next_state = None # No hard coded state, is based on FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
+            parser_state.existing_logic.func_call_name_to_state[called_func_name] = (
+                fsm_state_info
+            )
+            fsm_state_info.always_next_state = None  # No hard coded state, is based on FSM_STATE = FUNC_CALL_RETURN_FSM_STATE;
             # Order kinda matters?
             states.append(fsm_state_info)
         else:
-            fsm_state_info = parser_state.existing_logic.func_call_name_to_state[called_func_name]
+            fsm_state_info = parser_state.existing_logic.func_call_name_to_state[
+                called_func_name
+            ]
         entry_state_info.always_next_state = fsm_state_info
     else:
         # Regular subroutine inlining
@@ -1328,7 +1674,9 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
             # None next state info since not all calls to this ~inlined func exit back to the same calling locaiton
             # Needs to use the function's FUNC_CALL_RETURN_STATE to get to location specific exist states
             parser_state.existing_logic.fsm_subroutine_scope.append(called_func_name)
-            sub_states = C_AST_NODE_TO_STATES_LIST(sub_c_ast_func_def_body, parser_state, None, None)
+            sub_states = C_AST_NODE_TO_STATES_LIST(
+                sub_c_ast_func_def_body, parser_state, None, None
+            )
             parser_state.existing_logic.fsm_subroutine_scope.pop()
             # Apply to each subroutine state a recording of what func it came from
             for sub_state in sub_states:
@@ -1336,12 +1684,14 @@ def C_AST_CTRL_FLOW_FUNC_CALL_TO_STATES(
                     sub_state.sub_func_name = called_func_name
             states += sub_states
             # Order kinda matters?
-            parser_state.existing_logic.func_call_name_to_state[
-                called_func_name
-            ] = sub_states[0]
+            parser_state.existing_logic.func_call_name_to_state[called_func_name] = (
+                sub_states[0]
+            )
             entry_state_info.always_next_state = sub_states[0]
         else:
-            sub_state0 = parser_state.existing_logic.func_call_name_to_state[called_func_name]
+            sub_state0 = parser_state.existing_logic.func_call_name_to_state[
+                called_func_name
+            ]
             entry_state_info.always_next_state = sub_state0
 
     # Order kinda matters for now?
@@ -1355,7 +1705,7 @@ def C_AST_CTRL_FLOW_CLK_FUNC_CALL_TO_STATES(
 ):
     states = []
 
-    # Make a new state for this clock delay 
+    # Make a new state for this clock delay
     # This state can be merged into others later
     state_info = FsmStateInfo()
     # next_state_info.always_next_state = curr_state_info
@@ -1487,7 +1837,7 @@ def C_AST_CTRL_FLOW_IF_TO_STATES(
     # Add mux sel calculation, and jumping to true or false states
     # to current state after comb logic
     cond_state.name = BUILD_STATE_NAME(c_ast_if, parser_state) + "_COND"
-    cond_state.always_next_state = None # branching
+    cond_state.always_next_state = None  # branching
     cond_state.branch_nodes_tf_states = (c_ast_if, first_true_state, first_false_state)
 
     return states
@@ -1518,7 +1868,7 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(
     init_state.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_FOR_INIT"
     init_state.c_ast_nodes.append(c_ast_node.init)
     init_state.always_next_state = cond_state
-    
+
     # Next/increment state
     next_inc_state.name = BUILD_STATE_NAME(c_ast_node, parser_state) + "_FOR_NEXT"
     next_inc_state.c_ast_nodes.append(c_ast_node.next)
@@ -1538,8 +1888,8 @@ def C_AST_CTRL_FLOW_FOR_TO_STATES(
         c_ast_node,
         first_body_state,
         next_state_info,
-    )    
-    
+    )
+
     # Order kinda matters?
     states.append(init_state)
     states.append(cond_state)
@@ -1577,13 +1927,14 @@ def C_AST_CTRL_FLOW_WHILE_TO_STATES(
         c_ast_while,
         first_body_state,
         next_state_info,
-    )    
-    
+    )
+
     # Order kinda matters?
     states.append(cond_state)
     states += body_states
 
     return states
+
 
 # Idential to while loop except for body-cond states ordering in return?
 def C_AST_CTRL_FLOW_DOWHILE_TO_STATES(
@@ -1614,8 +1965,8 @@ def C_AST_CTRL_FLOW_DOWHILE_TO_STATES(
         c_ast_dowhile,
         first_body_state,
         next_state_info,
-    )    
-    
+    )
+
     # Order kinda matters?
     # DO WHILE HAS BODY FIRST?
     states += body_states
@@ -1626,7 +1977,9 @@ def C_AST_CTRL_FLOW_DOWHILE_TO_STATES(
 
 def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     # Start off with as parsed single file ordered list of states
-    parser_state.existing_logic.fsm_subroutine_scope.append(parser_state.existing_logic.func_name)
+    parser_state.existing_logic.fsm_subroutine_scope.append(
+        parser_state.existing_logic.func_name
+    )
     states_list = C_AST_NODE_TO_STATES_LIST(c_ast_func_def_body, parser_state)
     parser_state.existing_logic.fsm_subroutine_scope.pop()
     parser_state.existing_logic.first_user_state = states_list[0]
@@ -1637,13 +1990,13 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
             states_ends_w_clk.add(state)
 
     # DEBUG ONE GROUP PER STATE AS PARSED
-    #for state in states_list:
+    # for state in states_list:
     #    parser_state.existing_logic.state_groups.append(set([state]))
-    #return parser_state.existing_logic
+    # return parser_state.existing_logic
 
-    #DEBUG try basic group from start?
-    #parser_state.existing_logic.state_groups = GET_GROUPED_STATE_TRANSITIONS([states_list[0]], parser_state)
-    #return parser_state.existing_logic
+    # DEBUG try basic group from start?
+    # parser_state.existing_logic.state_groups = GET_GROUPED_STATE_TRANSITIONS([states_list[0]], parser_state)
+    # return parser_state.existing_logic
 
     debug = False
 
@@ -1655,8 +2008,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
         print("=====", flush=True)
         print("=====", flush=True)
         print("=====", flush=True)
-    
-    
+
     # TODO https://github.com/JulianKemmerer/PipelineC/issues/163
     # collect predecessor states set for all states
     #     Similar to trans list / maybe can use, watch out for sub return to multiple possible exits
@@ -1667,7 +2019,11 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     # Single inst sub return -> onwward groups "post" fsm middle
     fsm_return_states_list = []
     for state in states_list:
-        if state.starts_w_fsm_func_return and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included:
+        if (
+            state.starts_w_fsm_func_return
+            and state.starts_w_fsm_func_return.name.name
+            in parser_state.func_single_inst_header_included
+        ):
             fsm_return_states_list.append(state)
     # Exclude pre fsm + fsm stuff (entry+fsm state)
     excluded_subentry_and_subfsm_states = True
@@ -1702,7 +2058,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
 
     # "Pre" subroutine groups
     # Func entry -> onward
-    # sub routine entry -> onward not captured above yet.. 
+    # sub routine entry -> onward not captured above yet..
     #   weird but needed for now since entry could be excluded in post fsm group above
     #   also not single inst because reused inline fsm func entry is pseudo start?
     # single inst sub routine return -> onward not captured above yet
@@ -1712,23 +2068,33 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
     start_states = [states_list_no_fsms[0]]
     for state in states_list_no_fsms:
         # Pseduo new starts from func entry could be jump back to renter func next clock
-        if state.ends_w_fsm_func_entry and state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included:
+        if (
+            state.ends_w_fsm_func_entry
+            and state.ends_w_fsm_func_entry.name.name
+            in parser_state.func_single_inst_header_included
+        ):
             start_states.append(state)
         # Pseduo new starts from single inst func returns
-        if state.starts_w_fsm_func_return and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included:
+        if (
+            state.starts_w_fsm_func_return
+            and state.starts_w_fsm_func_return.name.name
+            in parser_state.func_single_inst_header_included
+        ):
             start_states.append(state)
         # State after user delay clk
-        if (state.ends_w_clk or
-            state.input_func_call_node is not None or
-            state.yield_func_call_node is not None or
-            state.inout_func_call_node is not None):
+        if (
+            state.ends_w_clk
+            or state.input_func_call_node is not None
+            or state.yield_func_call_node is not None
+            or state.inout_func_call_node is not None
+        ):
             if state.always_next_state is not None:
                 # Normal always next state after clock
                 start_states.append(state.always_next_state)
             else:
                 # Not branching or always next states, looks like exit/return/done
                 # Similar to transition following as in get trans list func
-                # Submodule return? 
+                # Submodule return?
                 if state.sub_func_name is not None:
                     exit_states = FIND_EXIT_STATES(state.sub_func_name, parser_state)
                     start_states += exit_states
@@ -1737,12 +2103,16 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
         elif state.branch_nodes_tf_states is not None:
             c_ast_node, true_state, false_state = state.branch_nodes_tf_states
             if (
-                state.ends_w_clk or 
-                (state.starts_w_fsm_func_return ) # and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included
+                state.ends_w_clk
+                or (
+                    state.starts_w_fsm_func_return
+                )  # and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included
             ):
-                raise Exception("TODO: merged branching and clk states as place to start trans list?")
-                #start_states.append(true_state)
-                #start_states.append(false_state)
+                raise Exception(
+                    "TODO: merged branching and clk states as place to start trans list?"
+                )
+                # start_states.append(true_state)
+                # start_states.append(false_state)
     # Get state groups from starting states and
     # Exclude post fsm stuff (return)
     excluded_subfsm_states_and_subreturn = True
@@ -1814,7 +2184,7 @@ def C_AST_FSM_FUNDEF_BODY_TO_LOGIC(c_ast_func_def_body, parser_state):
             print("====")
             s.print()
         raise Exception("Missing states!")
-   
+
     return parser_state.existing_logic
 
 
@@ -1825,8 +2195,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
     excluded_single_inst_subentry_and_subfsm_states=False,
     excluded_states=set(),
 ):
-
-    debug = False #parser_state.existing_logic.func_name == "pixels_kernel_seq_range"
+    debug = False  # parser_state.existing_logic.func_name == "pixels_kernel_seq_range"
 
     # Get state lists of all cases so far
     all_state_trans_lists = []
@@ -1855,7 +2224,10 @@ def GET_GROUPED_STATE_TRANSITIONS(
     # How to add a transition list to a state groups
     def append_trans_list(trans_list, state_groups, state_to_group_index):
         if debug:
-            print("Appending transition list: current len(state_groups)",len(state_groups))
+            print(
+                "Appending transition list: current len(state_groups)",
+                len(state_groups),
+            )
             text = "    "
             for state in trans_list:
                 text += state.name + " -> "
@@ -1863,7 +2235,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
 
         # Init starting group pointer
         curr_group_index = 0
-        if len(state_groups)==0:
+        if len(state_groups) == 0:
             state_groups.append(set())
         if trans_list[0] in state_to_group_index:
             curr_group_index = state_to_group_index[trans_list[0]]
@@ -1871,16 +2243,18 @@ def GET_GROUPED_STATE_TRANSITIONS(
             # Skip some states
             # State groups do not include single inst fsm funcs upon request?
             if excluded_single_inst_subfsm_states_and_subreturn:
-                if (
-                    state.single_inst_func_name is not None
-                    or (state.starts_w_fsm_func_return is not None and state.starts_w_fsm_func_return.name.name in parser_state.func_single_inst_header_included)
+                if state.single_inst_func_name is not None or (
+                    state.starts_w_fsm_func_return is not None
+                    and state.starts_w_fsm_func_return.name.name
+                    in parser_state.func_single_inst_header_included
                 ):
                     continue
             if excluded_single_inst_subentry_and_subfsm_states:
                 if (
-                    (state.ends_w_fsm_func_entry is not None and state.ends_w_fsm_func_entry.name.name in parser_state.func_single_inst_header_included)
-                    or state.single_inst_func_name is not None
-                ):
+                    state.ends_w_fsm_func_entry is not None
+                    and state.ends_w_fsm_func_entry.name.name
+                    in parser_state.func_single_inst_header_included
+                ) or state.single_inst_func_name is not None:
                     continue
             # also manual exclusion wohao
             if state in excluded_states:
@@ -1892,7 +2266,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
                 if state_group_index >= curr_group_index:
                     # Is in front/later than current, move up for next
                     curr_group_index = state_group_index + 1
-                else: #if state_group_index < curr_group_index:
+                else:  # if state_group_index < curr_group_index:
                     # Is behind current pos? odd...
                     # Cant use state_group_index
                     # Dont do anything and next time
@@ -1908,8 +2282,8 @@ def GET_GROUPED_STATE_TRANSITIONS(
             # Add new state groups as needed
             if curr_group_index >= len(state_groups):
                 state_groups.append(set())
-    
-    # Start with longest trans lists and build groups 
+
+    # Start with longest trans lists and build groups
     state_groups = []
     state_to_group_index = dict()
     trans_list_lens = list_len_to_trans_lists.keys()
@@ -1918,7 +2292,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
         for trans_list in trans_lists:
             append_trans_list(trans_list, state_groups, state_to_group_index)
 
-    '''
+    """
     # Use transition lists to group states
     # print("Transition lists:")
     state_to_latest_index = {}
@@ -1969,7 +2343,7 @@ def GET_GROUPED_STATE_TRANSITIONS(
         if state_groups[index] is None:
             state_groups[index] = set()
         state_groups[index].add(state)
-    '''
+    """
 
     non_none_state_groups = []
     for state_group in state_groups:
