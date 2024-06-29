@@ -276,7 +276,7 @@ def GET_RAM_RF_ARCH_DECL_TEXT(
             unrolled_init_vhdl_str = VHDL.C_TYPE_STR_TO_VHDL_NULL_STR(
                 unrolled_c_type, parser_state
             )
-        elif type(reg_info.init) == str:
+        elif type(reg_info.init) is str:
             # Raw VHDL init string?
             init_file = reg_info.init
             # Ugh need to todo some kind of relative file path support
@@ -418,7 +418,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     process(clk) is
     begin
       if rising_edge(clk) then
-        if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
+        if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then
           if we(0) = '1' then
             """
                 + var_name
@@ -439,7 +441,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
     process(clk) is
     begin
       if rising_edge(clk) then
-        if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
+        if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then
           if we(0) = '1' then
             """
                 + var_name
@@ -463,7 +467,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       process(clk) is
       begin
         if rising_edge(clk) then
-          if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then            
+          if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then            
             -- Read first
             return_output_r <= """
                 + var_name
@@ -487,7 +493,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
         process(clk)
         begin
           if rising_edge(clk) then
-            if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
+            if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then
               -- Write port
               if we(0) = '1' then
                 """
@@ -515,7 +523,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
       process(clk) is
       begin
         if rising_edge(clk) then
-          if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
+          if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then
             -- Register inputs
             addr_r <= addr;
             wd_r <= wd;
@@ -544,7 +554,9 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
         process(clk)
         begin
           if rising_edge(clk) then
-            if """+C_TO_LOGIC.CLOCK_ENABLE_NAME+"""(0)='1' then
+            if """
+                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + """(0)='1' then
               -- Register inputs
               addr_w_r <= addr_w;
               addr_r_r <= addr_r;
@@ -826,9 +838,9 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             # Build vhdl str doing the reference assignment to base
             vhdl_ref_str = ""
             for ref_tok in expanded_ref_toks[1:]:  # Dont need base var name
-                if type(ref_tok) == int:
+                if type(ref_tok) is int:
                     vhdl_ref_str += "(" + str(ref_tok) + ")"
-                elif type(ref_tok) == str:
+                elif type(ref_tok) is str:
                     vhdl_ref_str += "." + ref_tok
                 else:
                     print("Only constant references here!", c_ast_ref.coord)
@@ -855,9 +867,9 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # THIS IS A CONSTANT REF READ SO NO VAR TOKS
 
     for ref_tok in ref_toks[1:]:  # Skip base var name
-        if type(ref_tok) == int:
+        if type(ref_tok) is int:
             vhdl_ref_str += "(" + str(ref_tok) + ")"
-        elif type(ref_tok) == str:
+        elif type(ref_tok) is str:
             vhdl_ref_str += "." + ref_tok
         else:
             print(
@@ -1824,6 +1836,7 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
         print("Only u/int binary op minus raw vhdl for now!", logic.wire_to_c_type)
         sys.exit(-1)
 
+
 def SLICES_TO_SIZE_LIST(slices):
     removed_percent = 0.0
     adj_percents = []
@@ -1836,6 +1849,7 @@ def SLICES_TO_SIZE_LIST(slices):
     remaining_percent = 1.0 - removed_percent
     adj_percents.append(remaining_percent)
     return adj_percents
+
 
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
     bits_per_stage_dict = {}
@@ -3604,7 +3618,6 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
 def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     logic, parser_state, timing_params
 ):
-
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     # Cond input is [0] and bool, look at true and false ones only
     tf_inputs = logic.inputs[1:]

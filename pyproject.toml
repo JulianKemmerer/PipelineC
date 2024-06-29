@@ -10,14 +10,9 @@ readme = "README.md"
 python = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
-black = ">=22.12.0"
-pytest = ">=7.2.1"
-hypothesis = ">=6.65.2"
-py-spy = ">=0.3.14"
-ruff = ">=0.0.237"
-refurb = ">=1.10.0"
-pytest-cov = "^4.0.0"
-cosmic-ray = "^8.3.5"
+ruff = "^0.5.0"
+pre-commit = "^3.7.1"
+
 
 [build-system]
 requires = ["poetry-core"]

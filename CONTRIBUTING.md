@@ -44,15 +44,13 @@ But nothing was ever good enough for anyone (including myself) it seems. And now
 
 See the [How does the compiler work?](https://github.com/JulianKemmerer/PipelineC/wiki/How-does-the-compiler-work%3F) page.
 
-# Tests
+# Pre-Commit
 
-We use hypothesis (property testing) mutmut (mutation testing) and pytest (general unit tests).
-Please add tests when you submit a PR.
-To ensure that your PR doesn't break anything, use the command `poetry run pytest`
+We use ruff for formatting and linting (currently most lint rules are disabled, we are enabling them incrementally as the codebase is cleaned up). To ensure this is done, we use a pre-commit hook.
 
-# Formatting/Style Guide
+You can install Poetry (for dev dependency management) via https://python-poetry.org/docs/#installation. Once you have poetry installed, you can run 'poetry install' to get the dev dependencies installed. From there, you must run 'poetry run pre-commit install' once before making a commit. This will ensure that the pre-commit hook gets run when you make any commit. If the lint fails, follow the guidance given by Ruff (you can look up the name of the error, such as E721, online, if necessary to understand) to fix the lint error.
 
-We use black for formatting. Before you submit a PR do `poetry run black src`
+Cheers!
 
 # Future Goals
 

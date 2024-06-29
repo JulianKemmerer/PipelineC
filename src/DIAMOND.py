@@ -91,7 +91,6 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_text = f.read()
         f.close()
     else:
-
         # Write top level vhdl for this module/multimain
         if inst_name:
             VHDL.WRITE_LOGIC_ENTITY(
@@ -221,7 +220,7 @@ class ParsedTimingReport:
                 # WTF is system clock that shows up with zero delay?
                 # Skip it?
                 if path_report.path_delay_ns == 0.0:
-                    continue 
+                    continue
                 # Only save the worst delay per path group
                 do_add = False
                 if path_report.path_group in self.path_reports:
@@ -317,7 +316,7 @@ class PathReport:
                 toks = list(filter(None, line.split(" ")))
                 tok = toks[6].strip()
                 self.path_group = tok
-                #print("path_group",self.path_group)
+                # print("path_group",self.path_group)
             tok1 = "The end   point is clocked by"
             if tok1 in line:
                 toks = list(filter(None, line.split(" ")))
@@ -351,7 +350,7 @@ class PathReport:
             prev_line = line
 
         self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-        #print("path_delay_ns",self.path_delay_ns)
+        # print("path_delay_ns",self.path_delay_ns)
 
     def init_lse(self, path_report_text):
         # print("path_report_text",path_report_text)
@@ -366,7 +365,6 @@ class PathReport:
 
         prev_line = None
         for line in path_report_text.split("\n"):
-
             # DELAY
             tok1 = "Delay:"
             if tok1 in line:
@@ -453,5 +451,8 @@ class PathReport:
 def FUNC_IS_PRIMITIVE(func_name):
     return OPEN_TOOLS.FUNC_IS_PRIMITIVE(func_name)
 
+
 def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    return OPEN_TOOLS.GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable)
+    return OPEN_TOOLS.GET_PRIMITIVE_MODULE_TEXT(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )

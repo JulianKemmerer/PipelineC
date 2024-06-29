@@ -40,6 +40,7 @@ tokens = (
 
 literals = "+-*/%|&~^<>=!?()[]{}.,;:\\'\""
 
+
 # Whitespace
 def t_CPP_WS(t):
     r"\s+"
@@ -55,6 +56,7 @@ t_CPP_ID = r"[A-Za-z_][\w_]*"
 
 # Floating literal
 t_CPP_FLOAT = r"((\d+)(\.\d+)(e(\+|-)?(\d+))? | (\d+)e(\+|-)?(\d+))([lL]|[fF])?"
+
 
 # String literal
 def t_CPP_STRING(t):
@@ -216,7 +218,6 @@ class Preprocessor(object):
     # ----------------------------------------------------------------------
 
     def lexprobe(self):
-
         # Determine the token type for identifiers
         self.lexer.input("identifier")
         tok = self.lexer.token()
@@ -562,8 +563,7 @@ class Preprocessor(object):
                                         args.append([])
                                     else:
                                         args[len(m.arglist) - 1] = tokens[
-                                            j
-                                            + positions[len(m.arglist) - 1] : j
+                                            j + positions[len(m.arglist) - 1] : j
                                             + tokcount
                                             - 1
                                         ]
@@ -653,7 +653,6 @@ class Preprocessor(object):
     # Parse an input string/
     # ----------------------------------------------------------------------
     def parsegen(self, input, source=None):
-
         # Replace trigraph sequences
         t = trigraph(input)
         lines = self.group_lines(t)
@@ -743,9 +742,7 @@ class Preprocessor(object):
                         ]:  # We only pay attention if outer "if" allows this
                             if enable:  # If already true, we flip enable False
                                 enable = False
-                            elif (
-                                not iftrigger
-                            ):  # If False, but not triggered yet, we'll check expression
+                            elif not iftrigger:  # If False, but not triggered yet, we'll check expression
                                 result = self.evalexpr(args)
                                 if result:
                                     enable = True

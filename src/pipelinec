@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*- 
+# -*- coding: utf-8 -*-
 
 import argparse
 import os
@@ -10,7 +10,8 @@ sys.dont_write_bytecode = True
 import C_TO_LOGIC
 import OPEN_TOOLS
 import SIM
-#import CLANG_TO_LOGIC
+
+# import CLANG_TO_LOGIC
 import SYN
 
 # Defaults
@@ -19,45 +20,146 @@ default_top_module = "top"
 
 # Parse args
 parser = argparse.ArgumentParser(description="PipelineC:")
-parser.add_argument("c_file", type=str, default=default_c_file, nargs="?",
-                    help=f"C file containing main functions. Default is {default_c_file}.")
-parser.add_argument("--top", help=f"Set the name of the top-level module generated. Default is {default_top_module}.", type=str, default=default_top_module)                    
-parser.add_argument("--out_dir", type=str, default=None,
-                    help=f"Output directory. Default is a new directory inside the current directory.")
-parser.add_argument("--verilog", help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.", action="store_true")               
-parser.add_argument("--comb", help="Combinatorial logic results only. No autopipelining.", action="store_true")
-parser.add_argument("--no_synth", help="Like --comb, except do not run synthesis. Just output final combinatorial logic HDL.", action="store_true")
-parser.add_argument("--mult", type=str, default=C_TO_LOGIC.MULT_STYLE_INFERRED,
-                      help=f"infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.")
-parser.add_argument("--sim", help="Start simulation using final (maybe autopipelined) versions of functions.", action="store_true")
-parser.add_argument("--sim_comb", help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.", action="store_true")
-parser.add_argument("--run", type=int, default=10, help="Argument for simulator run command. Default = '10' clock cycles.")
-parser.add_argument("--cocotb", help="Use cocotb to drive simulation. Specify simulator with additional flags.", action="store_true")
-parser.add_argument("--makefile", type=str, default=None,help=f"Specify an existing Makefile. Ex. For tools like --cocotb.")
-parser.add_argument("--ghdl", help="Setup simulation files for use with GHDL.", action="store_true")
-parser.add_argument("--edaplay", help="Setup simulation files for use on edaplayground.com.", action="store_true")
-parser.add_argument("--modelsim", help="Setup simulation files for use with Modelsim.", action="store_true")
-parser.add_argument("--cxxrtl", help="Setup simulation files for use with GHDL+Yosys+CXXRTL.", action="store_true")
-parser.add_argument("--verilator", help="Setup simulation files for use with GHDL+Yosys+Verilator.", action="store_true")
-parser.add_argument("--main_cpp", type=str, default=None,help=f"Specify an existing main C++ file for simulators such as CXXRTL and Verilator.")
-parser.add_argument("--hier_mult", type=float, default=0.0,
-                      help="Hierarchy sweep multiplier minimum starting value ~= 'what modules to focus pipelining efforts on to get to desired fmax'. 0.0 = starts with largest/slowest modules (default). 0.5 = modules half as fast fmax. 2.0 = modules twice as fast as fmax, etc.")
-parser.add_argument("--coarse",
-                      help="Do only a single coarse grain autopipelining sweep (as opposed to default of hierarchical several multi-level coarse sweeps).",
-                      action="store_true")
-parser.add_argument("--start", type=int, default=None, help="When doing a --coarse sweep, start from START cycles latency.")
-parser.add_argument("--stop", type=int, default=None, help="When doing a --coarse sweep, stop at STOP cycles latency.")
-parser.add_argument("--sweep", help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.", action="store_true")   
-parser.add_argument("--yosys_json", help="Just output the json from yosys.", action="store_true")
-parser.add_argument("--xo_axis", help="Write a .tcl script to package output VHDL as a Vitis IP .xo file with an AXIS interface.", action="store_true")
+parser.add_argument(
+    "c_file",
+    type=str,
+    default=default_c_file,
+    nargs="?",
+    help=f"C file containing main functions. Default is {default_c_file}.",
+)
+parser.add_argument(
+    "--top",
+    help=f"Set the name of the top-level module generated. Default is {default_top_module}.",
+    type=str,
+    default=default_top_module,
+)
+parser.add_argument(
+    "--out_dir",
+    type=str,
+    default=None,
+    help="Output directory. Default is a new directory inside the current directory.",
+)
+parser.add_argument(
+    "--verilog",
+    help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.",
+    action="store_true",
+)
+parser.add_argument(
+    "--comb",
+    help="Combinatorial logic results only. No autopipelining.",
+    action="store_true",
+)
+parser.add_argument(
+    "--no_synth",
+    help="Like --comb, except do not run synthesis. Just output final combinatorial logic HDL.",
+    action="store_true",
+)
+parser.add_argument(
+    "--mult",
+    type=str,
+    default=C_TO_LOGIC.MULT_STYLE_INFERRED,
+    help="infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.",
+)
+parser.add_argument(
+    "--sim",
+    help="Start simulation using final (maybe autopipelined) versions of functions.",
+    action="store_true",
+)
+parser.add_argument(
+    "--sim_comb",
+    help="Start simulation using just comb. logic versions of functions. Equivalent to --sim --comb.",
+    action="store_true",
+)
+parser.add_argument(
+    "--run",
+    type=int,
+    default=10,
+    help="Argument for simulator run command. Default = '10' clock cycles.",
+)
+parser.add_argument(
+    "--cocotb",
+    help="Use cocotb to drive simulation. Specify simulator with additional flags.",
+    action="store_true",
+)
+parser.add_argument(
+    "--makefile",
+    type=str,
+    default=None,
+    help="Specify an existing Makefile. Ex. For tools like --cocotb.",
+)
+parser.add_argument(
+    "--ghdl", help="Setup simulation files for use with GHDL.", action="store_true"
+)
+parser.add_argument(
+    "--edaplay",
+    help="Setup simulation files for use on edaplayground.com.",
+    action="store_true",
+)
+parser.add_argument(
+    "--modelsim",
+    help="Setup simulation files for use with Modelsim.",
+    action="store_true",
+)
+parser.add_argument(
+    "--cxxrtl",
+    help="Setup simulation files for use with GHDL+Yosys+CXXRTL.",
+    action="store_true",
+)
+parser.add_argument(
+    "--verilator",
+    help="Setup simulation files for use with GHDL+Yosys+Verilator.",
+    action="store_true",
+)
+parser.add_argument(
+    "--main_cpp",
+    type=str,
+    default=None,
+    help="Specify an existing main C++ file for simulators such as CXXRTL and Verilator.",
+)
+parser.add_argument(
+    "--hier_mult",
+    type=float,
+    default=0.0,
+    help="Hierarchy sweep multiplier minimum starting value ~= 'what modules to focus pipelining efforts on to get to desired fmax'. 0.0 = starts with largest/slowest modules (default). 0.5 = modules half as fast fmax. 2.0 = modules twice as fast as fmax, etc.",
+)
+parser.add_argument(
+    "--coarse",
+    help="Do only a single coarse grain autopipelining sweep (as opposed to default of hierarchical several multi-level coarse sweeps).",
+    action="store_true",
+)
+parser.add_argument(
+    "--start",
+    type=int,
+    default=None,
+    help="When doing a --coarse sweep, start from START cycles latency.",
+)
+parser.add_argument(
+    "--stop",
+    type=int,
+    default=None,
+    help="When doing a --coarse sweep, stop at STOP cycles latency.",
+)
+parser.add_argument(
+    "--sweep",
+    help="When doing a --coarse sweep, sweep clock by clock upwards increasing latency.",
+    action="store_true",
+)
+parser.add_argument(
+    "--yosys_json", help="Just output the json from yosys.", action="store_true"
+)
+parser.add_argument(
+    "--xo_axis",
+    help="Write a .tcl script to package output VHDL as a Vitis IP .xo file with an AXIS interface.",
+    action="store_true",
+)
 args = parser.parse_args()
 
 # Combine certain args
 if args.sim and args.comb:
-  args.sim_comb = True
+    args.sim_comb = True
 if args.sim_comb:
-  args.sim = True
-  args.comb = True
+    args.sim = True
+    args.comb = True
 
 # Resolve C file arg
 c_file = os.path.abspath(args.c_file)
@@ -74,11 +176,13 @@ SYN.HIER_SWEEP_MULT_MIN = args.hier_mult
 #   Use what user provided
 #   Or create a new dir for each run by default
 if args.out_dir is not None:
-  SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
 else:
-  # Or create a unique dir for this run in current dir
-  c_filename = os.path.basename(c_file)
-  SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath("./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid()))
+    # Or create a unique dir for this run in current dir
+    c_filename = os.path.basename(c_file)
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(
+        "./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid())
+    )
 # Multiplier style
 C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
@@ -91,52 +195,70 @@ SYN.WRITE_AXIS_XO_FILE = args.xo_axis
 
 # Ugh some python versions dont obey the coding comment at top of file?
 try:
-  print("""
+    print(
+        """
 ██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
 ██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
 ██████╔╝██║██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
 ██╔═══╝ ██║██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
 ██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
 ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
-""", flush=True)
+""",
+        flush=True,
+    )
 except UnicodeEncodeError as e:
-  print("Old python versions do not obey utf-8 file encoding...")
-  print(e)
+    print("Old python versions do not obey utf-8 file encoding...")
+    print(e)
 
 print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
-print("================== Parsing C Code to Logical Hierarchy ================================", flush=True)
+print(
+    "================== Parsing C Code to Logical Hierarchy ================================",
+    flush=True,
+)
 # Do parsing
-print("Parsing:",c_file, flush=True)
+print("Parsing:", c_file, flush=True)
 parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-#CLANG_TO_LOGIC.PARSE_FILE(c_file)
-#print("TEMP END")
-#sys.exit(0)
+# CLANG_TO_LOGIC.PARSE_FILE(c_file)
+# print("TEMP END")
+# sys.exit(0)
 
-print("================== Writing Resulting Logic to File ================================", flush=True)
+print(
+    "================== Writing Resulting Logic to File ================================",
+    flush=True,
+)
 C_TO_LOGIC.WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state)
 
 # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
 SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
-  
-if not args.no_synth:
-  if not args.comb and not args.yosys_json:
-    print("================== Adding Timing Information from Synthesis Tool ================================", flush=True)
-    parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
 
-  print("================== Beginning Throughput Sweep ================================", flush=True)
-  multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
-    parser_state, 
-    coarse_only=args.coarse, 
-    starting_guess_latency=args.start, 
-    do_incremental_guesses=not(args.sweep), 
-    comb_only=args.comb,
-    stop_at_latency=args.stop
-  )
-  print("================== Writing Results of Throughput Sweep ================================", flush=True)
-  SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-  
-  # Start simulation on final VHDL
-  SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
+if not args.no_synth:
+    if not args.comb and not args.yosys_json:
+        print(
+            "================== Adding Timing Information from Synthesis Tool ================================",
+            flush=True,
+        )
+        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+
+    print(
+        "================== Beginning Throughput Sweep ================================",
+        flush=True,
+    )
+    multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
+        parser_state,
+        coarse_only=args.coarse,
+        starting_guess_latency=args.start,
+        do_incremental_guesses=not (args.sweep),
+        comb_only=args.comb,
+        stop_at_latency=args.stop,
+    )
+    print(
+        "================== Writing Results of Throughput Sweep ================================",
+        flush=True,
+    )
+    SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+
+    # Start simulation on final VHDL
+    SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
 
 print("Done.", flush=True)
 
