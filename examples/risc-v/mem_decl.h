@@ -328,6 +328,20 @@ riscv_dmem_out_t riscv_dmem(
   riscv_dmem_ram_out_t ram_out = riscv_dmem_ram(mem_rw_word_index,
                                       wr_word, wr_word_byte_ens, 1);
   uint32_t mem_rd_data = ram_out.rd_data0;
+  #ifdef RISCV_DMEM_1_CYCLE
+  // Manually delay signals to align with 1 cycle read data delay of dmem
+  #ifdef RISCV_DMEM_NO_AUTOPIPELINE
+  static riscv_mmio_mod_out_t mem_map_out_reg;
+  static uint2_t byte_mux_sel_reg;
+  static uint1_t rd_byte_ens_reg[4];
+  riscv_mmio_mod_out_t mem_map_out_next = mem_map_out;
+  uint2_t byte_mux_sel_next = byte_mux_sel;
+  uint1_t rd_byte_ens_next[4] = rd_byte_ens;
+  mem_map_out = mem_map_out_reg;
+  byte_mux_sel = byte_mux_sel_reg;
+  rd_byte_ens = rd_byte_ens_reg;
+  #endif
+  #endif
 
   // Determine output memory read data
   // Mem map read comes from memory map module not RAM memory
@@ -355,6 +369,15 @@ riscv_dmem_out_t riscv_dmem(
   }
   // Final mem rd data assignment to output
   mem_out.rd_data = mem_rd_data;
+
+  // Manual pipeline regs next signal
+  #ifdef RISCV_DMEM_1_CYCLE
+  #ifdef RISCV_DMEM_NO_AUTOPIPELINE
+  mem_map_out_reg = mem_map_out_next;
+  byte_mux_sel_reg = byte_mux_sel_next;
+  rd_byte_ens_reg = rd_byte_ens_next;
+  #endif
+  #endif
 
   return mem_out;
 }
