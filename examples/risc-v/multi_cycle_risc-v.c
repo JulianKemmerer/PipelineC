@@ -1,4 +1,4 @@
-#pragma PART "xc7a35ticsg324-1l"
+#pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C" //xc7a35ticsg324-1l"
 #include "uintN_t.h"
 #include "intN_t.h"
 
@@ -17,8 +17,8 @@ typedef struct my_mmio_in_t{
   uint1_t button;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
-  uint32_t return_value;
-  uint1_t halt;
+  //uint32_t return_value;
+  //uint1_t halt;
   uint1_t led;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
@@ -27,13 +27,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   RISCV_MEM_MAP_MOD_INPUTS(my_mmio_in_t)
 ){
   // Outputs
-  static riscv_mem_map_mod_out_t(my_mmio_out_t) o;
+  static riscv_mem_map_mod_out_t(my_mmio_out_t) o_reg;
+  riscv_mem_map_mod_out_t(my_mmio_out_t) o = o_reg;
   o.addr_is_mapped = 0; // since o is static regs
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
-  WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
+  //WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
+  //o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
+  WORD_MM_ENTRY_NEW(LED_ADDR, o_reg.outputs.led, o_reg.outputs.led, addr, o.addr_is_mapped, o.rd_data)
   return o;
 }
 
@@ -59,8 +60,8 @@ MAIN_MHZ(my_top, CPU_CLK_MHZ)
 #include "debug_port.h"
 DEBUG_OUTPUT_DECL(uint1_t, unknown_op) // Unknown instruction
 DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
-DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
-DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
+//DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
+//DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 
 void my_top()
 {
@@ -71,8 +72,8 @@ void my_top()
   // Sim debug
   unknown_op = out.unknown_op;
   mem_out_of_range = out.mem_out_of_range;
-  halt = out.mem_map_outputs.halt;
-  main_return = out.mem_map_outputs.return_value;
+  //halt = out.mem_map_outputs.halt;
+  //main_return = out.mem_map_outputs.return_value;
 
   // Output LEDs for hardware debug
   leds = 0;

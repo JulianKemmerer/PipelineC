@@ -45,8 +45,8 @@ riscv_out_t riscv_name(
 
   // Instead of a counter for which stage is active
   // one hot bit is easier to work with (especially come time for pipelining)
-  static uint1_t stage_valid[N_CYCLES] = {[0]=1}; // Starts in stage_valid[0]
-  uint1_t next_stage_valid[N_CYCLES]; // Update static reg at end of func
+  static uint1_t state[N_CYCLES] = {[0]=1}; // Starts in state[0]
+  uint1_t next_state[N_CYCLES] = state; // Update static reg at end of func
   
   // CPU registers (outside of reg file)
   static uint32_t pc = 0;
@@ -54,36 +54,49 @@ riscv_out_t riscv_name(
   //  Wires/non-static local variables from original single cycle design
   //  are likely to be shared/stored from cycle to cycle now
   //  so just declare all (non-FEEDBACK) local variables static registers too
-  static uint32_t pc_plus4;
-  static riscv_imem_ram_out_t imem_out;
-  static decoded_t decoded;
-  static reg_file_out_t reg_file_out;
-  static execute_t exe;
-  static uint1_t mem_wr_byte_ens[4];
-  static uint1_t mem_rd_byte_ens[4];
-  static uint32_t mem_addr;
-  static uint32_t mem_wr_data;
-  static riscv_dmem_out_t dmem_out;
+  static uint32_t pc_plus4_reg;
+  static riscv_imem_ram_out_t imem_out_reg;
+  static decoded_t decoded_reg;
+  static reg_file_out_t reg_file_out_reg;
+  static execute_t exe_reg;
+  static uint1_t mem_wr_byte_ens_reg[4];
+  static uint1_t mem_rd_byte_ens_reg[4];
+  static uint32_t mem_addr_reg;
+  static uint32_t mem_wr_data_reg;
+  static riscv_dmem_out_t dmem_out_reg;
+  // But still have non-static wires version of registers too
+  // to help avoid/resolve unintentional passing of data between stages
+  // in the same cycle (like single cycle cpu did)
+  uint32_t pc_plus4 = pc_plus4_reg;
+  riscv_imem_ram_out_t imem_out = imem_out_reg;
+  decoded_t decoded = decoded_reg;
+  reg_file_out_t reg_file_out = reg_file_out_reg;
+  execute_t exe = exe_reg;
+  uint1_t mem_wr_byte_ens[4] = mem_wr_byte_ens_reg;
+  uint1_t mem_rd_byte_ens[4] = mem_rd_byte_ens_reg;
+  uint32_t mem_addr = mem_addr_reg;
+  uint32_t mem_wr_data = mem_wr_data_reg;
+  riscv_dmem_out_t dmem_out = dmem_out_reg;
   
   // Cycle 0: PC
-  if(stage_valid[0]){
+  if(state[0]){
     printf("PC in Cycle/Stage 0\n");
     // Program counter is input to IMEM
     pc_plus4 = pc + 4;
     printf("PC = 0x%X\n", pc);
     // Next state/cycle (potentially redundant)
-    next_stage_valid = stage_valid;
-    ARRAY_1ROT_UP(uint1_t, next_stage_valid, N_CYCLES)
+    next_state = state;
+    ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
   // Boundary shared between cycle0 and cycle1
-  if(stage_valid[0]|stage_valid[1]){
+  if(state[0]|state[1]){
     // Instruction memory
     imem_out = riscv_imem_ram(pc>>2, 1);
   }
 
   // Cycle1: Decode
-  if(stage_valid[1]){
+  if(state[1]){
     printf("Decode in Cycle/Stage 1\n");
     // Decode the instruction to control signals
     printf("Instruction: 0x%X\n", imem_out.rd_data1);
@@ -96,8 +109,8 @@ riscv_out_t riscv_name(
     }
     o.unknown_op = decoded.unknown_op; // debug
     // Next state/cycle (potentially redundant)
-    next_stage_valid = stage_valid;
-    ARRAY_1ROT_UP(uint1_t, next_stage_valid, N_CYCLES)
+    next_state = state;
+    ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
   // Cycle1+2: Register file reads and writes
@@ -111,7 +124,7 @@ riscv_out_t riscv_name(
   #pragma FEEDBACK reg_wr_addr
   #pragma FEEDBACK reg_wr_data
   #pragma FEEDBACK reg_wr_en 
-  if(stage_valid[1]|stage_valid[2]){
+  if(state[1]|state[2]){
     reg_file_out = reg_file(
       decoded.src1, // First read port address
       decoded.src2, // Second read port address
@@ -120,21 +133,21 @@ riscv_out_t riscv_name(
       reg_wr_en // Write enable
     );
     // Next state/cycle (potentially redundant)
-    next_stage_valid = stage_valid;
-    ARRAY_1ROT_UP(uint1_t, next_stage_valid, N_CYCLES)
+    next_state = state;
+    ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
   
   // Cycle1: Execute
-  if(stage_valid[1]){
+  if(state[1]){
     printf("Execute in Cycle/Stage 1\n");
     exe = execute(
-      pc, pc_plus4, 
+      pc, pc_plus4_reg, 
       decoded, 
       reg_file_out.rd_data1, reg_file_out.rd_data2
     );
     // Next state/cycle (potentially redundant)
-    next_stage_valid = stage_valid;
-    ARRAY_1ROT_UP(uint1_t, next_stage_valid, N_CYCLES)
+    next_state = state;
+    ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
   // Boundary shared between cycle1 and cycle2
@@ -142,9 +155,9 @@ riscv_out_t riscv_name(
   // Default no writes or reads
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)
-  uint32_t mem_addr = exe.result; // addr always from execute module, not always used
-  uint32_t mem_wr_data = reg_file_out.rd_data2;
-  if(stage_valid[1]){
+  mem_addr = exe.result; // addr always from execute module, not always used
+  mem_wr_data = reg_file_out.rd_data2;
+  if(state[1]){
     // Only write or read en during first cycle of two cycle read
     mem_wr_byte_ens = decoded.mem_wr_byte_ens;
     mem_rd_byte_ens = decoded.mem_rd_byte_ens;
@@ -170,10 +183,10 @@ riscv_out_t riscv_name(
   o.mem_map_outputs = dmem_out.mem_map_outputs;
   #endif
   // Data memory outputs in stage2
-  if(stage_valid[2]){
+  if(state[2]){
     // Read output available from dmem_out in second cycle of two cycle read
-    if(decoded.mem_rd_byte_ens[0]){
-      printf("Read Mem[0x%X] = %d\n", mem_addr, dmem_out.rd_data);
+    if(decoded_reg.mem_rd_byte_ens[0]){
+      printf("Read Mem[0x%X] = %d\n", mem_addr_reg, dmem_out.rd_data);
     }
   }
 
@@ -182,27 +195,37 @@ riscv_out_t riscv_name(
   reg_wr_en = 0; // default no writes 
   reg_wr_addr = 0;
   reg_wr_data = 0;
-  if(stage_valid[2]){
+  if(state[2]){
     printf("Write Back + Next PC in Cycle/Stage 2\n");
     // Reg file write back, drive inputs (FEEDBACK)
-    reg_wr_en = decoded.reg_wr;
-    reg_wr_addr = decoded.dest;
+    reg_wr_en = decoded_reg.reg_wr;
+    reg_wr_addr = decoded_reg.dest;
     // Determine reg data to write back (sign extend etc)
     reg_wr_data = select_reg_wr_data(
-      decoded,
-      exe,
+      decoded_reg,
+      exe_reg,
       dmem_out.rd_data,
-      pc_plus4
+      pc_plus4_reg
     );
     // Branch/Increment PC
-    pc = select_next_pc(decoded, exe, pc_plus4);
+    pc = select_next_pc(decoded_reg, exe_reg, pc_plus4_reg);
     // Next state/cycle (potentially redundant)
-    next_stage_valid = stage_valid;
-    ARRAY_1ROT_UP(uint1_t, next_stage_valid, N_CYCLES)
+    next_state = state;
+    ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
   // Reg update
-  stage_valid = next_stage_valid;
+  state = next_state;
+  pc_plus4_reg = pc_plus4;
+  imem_out_reg = imem_out;
+  decoded_reg = decoded;
+  reg_file_out_reg = reg_file_out;
+  exe_reg = exe;
+  mem_wr_byte_ens_reg = mem_wr_byte_ens;
+  mem_rd_byte_ens_reg = mem_rd_byte_ens;
+  mem_addr_reg = mem_addr;
+  mem_wr_data_reg = mem_wr_data;
+  dmem_out_reg = dmem_out;
   
   return o;
 }
