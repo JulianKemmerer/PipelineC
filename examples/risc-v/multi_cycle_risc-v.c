@@ -1,18 +1,15 @@
-#pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C" //xc7a35ticsg324-1l"
+#pragma PART "LFE5U-85F-6BG381C" //LFE5U-85F-6BG381C" //xc7a35ticsg324-1l"
 #include "uintN_t.h"
 #include "intN_t.h"
 
-// RISC-V components
-#include "risc-v.h"
-
 // Include test gcc compiled program
+#include "gcc_test/mem_map.h" 
 #include "gcc_test/text_mem_init.h"
 #include "gcc_test/data_mem_init.h"
 
-// Declare memory map information
-// Starts with shared with software memory map info
-#include "gcc_test/mem_map.h" 
-// Define inputs and outputs
+// Helpers macros for building mmio modules
+#include "mem_map.h" 
+// Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   uint1_t button;
 }my_mmio_in_t;

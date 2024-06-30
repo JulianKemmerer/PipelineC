@@ -2,13 +2,9 @@
 #include "uintN_t.h"
 #include "intN_t.h"
 
-// Support old single core using mem_map_out_t
-#include "mem_map.h"
-#ifdef riscv_mem_map_outputs_t
-#define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
-#else
-#define riscv_mmio_mod_out_t mem_map_out_t
-#endif
+// RISC-V components
+#define RISCV_REGFILE_1_CYCLE
+#include "risc-v.h"
 
 // Declare instruction and data memory
 // also includes memory mapped IO
@@ -17,10 +13,10 @@
 // Multi cycle is not a pipeline
 #define RISCV_IMEM_NO_AUTOPIPELINE
 #define RISCV_DMEM_NO_AUTOPIPELINE
-#define N_CYCLES 3
 #include "mem_decl.h"
 
 // CPU top level
+#define N_CYCLES 4 // 3 pipeline reg delays: imem, regfile, dmem = 4 cycles
 #define riscv_out_t PPCAT(riscv_name,_out_t)
 typedef struct riscv_out_t{
   // Debug IO
@@ -90,6 +86,8 @@ riscv_out_t riscv_name(
   }
 
   // Boundary shared between cycle0 and cycle1
+  //  TODO IMEM is stateless shouldnt need if(state) logic
+  //  can do like DMEM and be always in use
   if(state[0]|state[1]){
     // Instruction memory
     imem_out = riscv_imem_ram(pc>>2, 1);
@@ -113,9 +111,10 @@ riscv_out_t riscv_name(
     ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
-  // Cycle1+2: Register file reads and writes
-  //  Reads are done during cycle1
-  //  Write back is next clock, cycle2
+  // Cycle1+2+3: Register file reads and writes
+  //  Reads start during cycle1
+  //  Read finish during cycle2
+  //  Write back is next clock, cycle3
   //  Register file write signals are not driven until later in code
   //  but are used now, requiring FEEDBACK pragma
   uint5_t reg_wr_addr;
@@ -124,7 +123,9 @@ riscv_out_t riscv_name(
   #pragma FEEDBACK reg_wr_addr
   #pragma FEEDBACK reg_wr_data
   #pragma FEEDBACK reg_wr_en 
-  if(state[1]|state[2]){
+  // TODO make this like DMEM, doesnt need if(state) specific
+  //  doesnt need to do next_state transition either
+  if(state[1]|state[2]|state[3]){
     reg_file_out = reg_file(
       decoded.src1, // First read port address
       decoded.src2, // Second read port address
@@ -137,12 +138,12 @@ riscv_out_t riscv_name(
     ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
   
-  // Cycle1: Execute
-  if(state[1]){
-    printf("Execute in Cycle/Stage 1\n");
+  // Cycle2: Execute
+  if(state[2]){
+    printf("Execute in Cycle/Stage 2\n");
     exe = execute(
       pc, pc_plus4_reg, 
-      decoded, 
+      decoded_reg, 
       reg_file_out.rd_data1, reg_file_out.rd_data2
     );
     // Next state/cycle (potentially redundant)
@@ -150,18 +151,18 @@ riscv_out_t riscv_name(
     ARRAY_1ROT_UP(uint1_t, next_state, N_CYCLES)
   }
 
-  // Boundary shared between cycle1 and cycle2
+  // Boundary shared between cycle2 and cycle3
   // Data Memory inputs in stage1
   // Default no writes or reads
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)
   mem_addr = exe.result; // addr always from execute module, not always used
   mem_wr_data = reg_file_out.rd_data2;
-  if(state[1]){
+  if(state[2]){
     // Only write or read en during first cycle of two cycle read
-    mem_wr_byte_ens = decoded.mem_wr_byte_ens;
-    mem_rd_byte_ens = decoded.mem_rd_byte_ens;
-    if(decoded.mem_wr_byte_ens[0]){
+    mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
+    mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
+    if(decoded_reg.mem_wr_byte_ens[0]){
       printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
     }
   }
@@ -182,21 +183,21 @@ riscv_out_t riscv_name(
   #ifdef riscv_mem_map_outputs_t
   o.mem_map_outputs = dmem_out.mem_map_outputs;
   #endif
-  // Data memory outputs in stage2
-  if(state[2]){
+  // Data memory outputs in stage3
+  if(state[3]){
     // Read output available from dmem_out in second cycle of two cycle read
     if(decoded_reg.mem_rd_byte_ens[0]){
       printf("Read Mem[0x%X] = %d\n", mem_addr_reg, dmem_out.rd_data);
     }
   }
 
-  // Cycle 2: Write Back + Next PC
+  // Cycle 3: Write Back + Next PC
   // default values needed for feedback signals
   reg_wr_en = 0; // default no writes 
   reg_wr_addr = 0;
   reg_wr_data = 0;
-  if(state[2]){
-    printf("Write Back + Next PC in Cycle/Stage 2\n");
+  if(state[3]){
+    printf("Write Back + Next PC in Cycle/Stage 3\n");
     // Reg file write back, drive inputs (FEEDBACK)
     reg_wr_en = decoded_reg.reg_wr;
     reg_wr_addr = decoded_reg.dest;

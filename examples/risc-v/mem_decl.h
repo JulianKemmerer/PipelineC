@@ -5,6 +5,11 @@
 #include "arrays.h"
 #include "mem_map.h"
 
+// Helper macro to rename wrapped user type
+#ifndef riscv_mmio_mod_out_t
+#define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
+#endif
+
 // Instruction and data memory initialized from gcc compile
 
 // RAM with one read port for instructions

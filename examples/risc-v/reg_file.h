@@ -10,6 +10,15 @@
 // Need a RAM with two read ports and one write port
 // Declare register file RAM
 // Triple port, two read ports, one write
+#ifdef RISCV_REGFILE_1_CYCLE
+// 1 cycle latency like bram
+DECL_RAM_TP_R_R_W_1(
+  uint32_t,
+  reg_file_ram,
+  NUM_REGS,
+  RAM_INIT_INT_ZEROS
+)
+#else
 // Zero latency
 DECL_RAM_TP_R_R_W_0(
   uint32_t,
@@ -17,6 +26,7 @@ DECL_RAM_TP_R_R_W_0(
   NUM_REGS,
   RAM_INIT_INT_ZEROS
 )
+#endif
 
 // Split the_reg_file into three parts, 2 read ports, 1 write
 typedef struct reg_file_out_t
