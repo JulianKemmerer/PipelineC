@@ -5,8 +5,9 @@ import OPEN_TOOLS
 import SYN
 import VHDL
 
-TECH_IN_NM=45
-FF_OVERHEAD=0
+TECH_IN_NM = 45
+FF_OVERHEAD = 0
+
 
 def IS_INSTALLED():
     try:
@@ -38,7 +39,6 @@ class PathReport:
         self.end_reg_name = None
 
         for line in path_report_text.split("\n"):
-
             # Path delay ns
             tok1 = "Fmax (MHz):"
             if tok1 in line:
@@ -131,7 +131,6 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_text = f.read()
         f.close()
     else:
-
         # Write top level vhdl for this module/multimain
         if inst_name:
             VHDL.WRITE_LOGIC_ENTITY(

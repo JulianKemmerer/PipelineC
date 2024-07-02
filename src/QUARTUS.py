@@ -15,6 +15,7 @@ if ENV_TOOL_PATH:
 else:
     QUARTUS_PATH = "/media/1TB/Programs/Linux/intelFPGA_lite/20.1/quartus/bin"
 
+
 # Need to know family in addition to part number?
 # Dumb
 # SAINT MOTEL - "Daydream/Wetdream/Nightmare"
@@ -165,7 +166,6 @@ class PathReport:
         prev_line = None
         in_netlist_resources = False
         for line in path_report_text.split("\n"):
-
             # SLACK
             tok1 = "Setup slack is"
             if tok1 in line:
@@ -328,7 +328,6 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_text = f.read()
         f.close()
     else:
-
         # Write top level vhdl for this module/multimain
         if inst_name:
             VHDL.WRITE_LOGIC_ENTITY(
@@ -495,7 +494,11 @@ set_global_assignment -name SDC_FILE """
 
     # IEEE proposed since quartus lite doesnt include vhdl 2008
     ieee_pro_dir = SYN.SYN_OUTPUT_DIRECTORY + "/ieee_proposed"
-    pro_files = ["ieee_proposed.fixed_float_types.vhdl", "ieee_proposed.fixed_pkg.vhdl", "ieee_proposed.float_pkg.vhdl"]
+    pro_files = [
+        "ieee_proposed.fixed_float_types.vhdl",
+        "ieee_proposed.fixed_pkg.vhdl",
+        "ieee_proposed.float_pkg.vhdl",
+    ]
     # Point at copy of files in output
     for f in pro_files:
         text += f"set_global_assignment -library ieee_proposed -name VHDL_FILE {ieee_pro_dir}/{f}\n"

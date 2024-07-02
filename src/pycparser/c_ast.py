@@ -114,7 +114,7 @@ class Node(object):
             buf.write(" (at %s)" % self.coord)
         buf.write("\n")
 
-        for (child_name, child) in self.children():
+        for child_name, child in self.children():
             child.show(
                 buf,
                 offset=offset + 2,

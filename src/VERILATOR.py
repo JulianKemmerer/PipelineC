@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {{
             flush=True,
         )
     else:
-        raise Exception("verilator executable not found!") 
+        raise Exception("verilator executable not found!")
 
     # Write a shell script to execute
     sh_text = f"""

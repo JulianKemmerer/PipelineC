@@ -42,7 +42,6 @@ DO_PNR = None  # None|"all"|"top"
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
-
         # Split into timing report and not
         split_marker = "Max Delay Paths\n--------------------------------------------------------------------------------------"
         split_marker_toks = syn_output.split(split_marker)
@@ -656,7 +655,10 @@ def WRITE_AXIS_XO(parser_state):
         parser_state, None, True
     )
     if len(clock_name_to_mhz) != 1:
-        print("Wrong number of clocks in design, can't write .xo packaging .tcl!", clock_name_to_mhz.keys())
+        print(
+            "Wrong number of clocks in design, can't write .xo packaging .tcl!",
+            clock_name_to_mhz.keys(),
+        )
         return
     clk_name = list(clock_name_to_mhz.keys())[0]
 
@@ -669,22 +671,24 @@ def WRITE_AXIS_XO(parser_state):
     out_datas = set()
     out_valids = set()
     in_readys = set()
+
     def sort_io_port(port_name, dir):
         if "data" in port_name:
-            if dir=="in":
+            if dir == "in":
                 in_datas.add(port_name)
             else:
                 out_datas.add(port_name)
         if "valid" in port_name:
-            if dir=="in":
+            if dir == "in":
                 in_valids.add(port_name)
             else:
                 out_valids.add(port_name)
         if "ready" in port_name:
-            if dir=="in":
+            if dir == "in":
                 in_readys.add(port_name)
             else:
                 out_readys.add(port_name)
+
     for main_func in parser_state.main_mhz:
         main_func_logic = parser_state.LogicInstLookupTable[main_func]
         # Inputs
@@ -726,47 +730,73 @@ def WRITE_AXIS_XO(parser_state):
     if not axis_names_correct:
         print("Can't write AXIS .xo packaging .tcl!")
         return
-    
+
     # Thanks Bartus!
     text = ""
-    text += '''
+    text += (
+        """
 set script_path [ file dirname [ file normalize [ info script ] ] ]
 set script_path $script_path/..
-set PIPELINEC_PROJ_DIR ''' + SYN.SYN_OUTPUT_DIRECTORY + '''
+set PIPELINEC_PROJ_DIR """
+        + SYN.SYN_OUTPUT_DIRECTORY
+        + """
 
-''' + f'''
-create_project {project_name} $script_path/{project_name} -part {parser_state.part} -force ''' + '''
+"""
+        + f"""
+create_project {project_name} $script_path/{project_name} -part {parser_state.part} -force """
+        + """
 source ${PIPELINEC_PROJ_DIR}/read_vhdl.tcl
-set_property file_type VHDL [get_files  ${PIPELINEC_PROJ_DIR}/'''+SYN.TOP_LEVEL_MODULE+'/'+SYN.TOP_LEVEL_MODULE+'''.vhd]
+set_property file_type VHDL [get_files  ${PIPELINEC_PROJ_DIR}/"""
+        + SYN.TOP_LEVEL_MODULE
+        + "/"
+        + SYN.TOP_LEVEL_MODULE
+        + """.vhd]
 
-update_compile_order -fileset sources_1 ''' + f'''
+update_compile_order -fileset sources_1 """
+        + f"""
 create_bd_design "{ip_name}"
 create_bd_cell -type module -reference {SYN.TOP_LEVEL_MODULE} {SYN.TOP_LEVEL_MODULE}_0
 make_bd_pins_external  [get_bd_cells {SYN.TOP_LEVEL_MODULE}_0]
 make_bd_intf_pins_external  [get_bd_cells {SYN.TOP_LEVEL_MODULE}_0]
 save_bd_design
-validate_bd_design''' + f'''
+validate_bd_design"""
+        + f"""
 
 make_wrapper -files [get_files $script_path/{project_name}/{project_name}.srcs/sources_1/bd/{ip_name}/{ip_name}.bd] -top
 add_files -norecurse $script_path/{project_name}/{project_name}.gen/sources_1/bd/{ip_name}/hdl/{ip_name}_wrapper.v
 set_property top {ip_name}_wrapper [current_fileset]
 update_compile_order -fileset sources_1
 
-ipx::package_project -root_dir $script_path/ip_repo -vendor user.org -library user -taxonomy /UserIP -module {ip_name} -import_files + ''' + '''
+ipx::package_project -root_dir $script_path/ip_repo -vendor user.org -library user -taxonomy /UserIP -module {ip_name} -import_files + """
+        + """
 update_compile_order -fileset sources_1
-set_property ipi_drc {ignore_freq_hz false} [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
-set_property sdx_kernel true [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
-set_property sdx_kernel_type rtl [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
-set_property vitis_drc {ctrl_protocol ap_ctrl_none} [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]
-set_property ipi_drc {ignore_freq_hz true} [ipx::find_open_core user.org:user:''' + ip_name + ''':1.0]''' + '''
+set_property ipi_drc {ignore_freq_hz false} [ipx::find_open_core user.org:user:"""
+        + ip_name
+        + """:1.0]
+set_property sdx_kernel true [ipx::find_open_core user.org:user:"""
+        + ip_name
+        + """:1.0]
+set_property sdx_kernel_type rtl [ipx::find_open_core user.org:user:"""
+        + ip_name
+        + """:1.0]
+set_property vitis_drc {ctrl_protocol ap_ctrl_none} [ipx::find_open_core user.org:user:"""
+        + ip_name
+        + """:1.0]
+set_property ipi_drc {ignore_freq_hz true} [ipx::find_open_core user.org:user:"""
+        + ip_name
+        + """:1.0]"""
+        + """
 
 #source sources/utils.tcl
-proc map_clock {axi_clk} {''' + f'''
+proc map_clock {axi_clk} {"""
+        + f"""
     ipx::infer_bus_interface $axi_clk xilinx.com:signal:clock_rtl:1.0 [ipx::find_open_core user.org:user:{ip_name}:1.0]
     ipx::add_bus_parameter FREQ_TOLERANCE_HZ [ipx::get_bus_interfaces $axi_clk -of_objects [ipx::current_core]]
     set_property value -1 [ipx::get_bus_parameters FREQ_TOLERANCE_HZ -of_objects [ipx::get_bus_interfaces $axi_clk -of_objects [ipx::current_core]]]
-''' + '''}
-proc map_axi_stream {data valid ready axi_clock port_name axi_type} {''' + f'''
+"""
+        + """}
+proc map_axi_stream {data valid ready axi_clock port_name axi_type} {"""
+        + f"""
     ipx::add_bus_interface $port_name [ipx::find_open_core user.org:user:{ip_name}:1.0]
     set_property abstraction_type_vlnv xilinx.com:interface:axis_rtl:1.0 [ipx::get_bus_interfaces $port_name -of_objects [ipx::find_open_core user.org:user:{ip_name}:1.0]]
     set_property interface_mode $axi_type [ipx::get_bus_interfaces $port_name -of_objects [ipx::find_open_core user.org:user:{ip_name}:1.0]]
@@ -777,8 +807,10 @@ proc map_axi_stream {data valid ready axi_clock port_name axi_type} {''' + f'''
     set_property physical_name $valid [ipx::get_port_maps TVALID -of_objects [ipx::get_bus_interfaces $port_name -of_objects [ipx::find_open_core user.org:user:{ip_name}:1.0]]]
     ipx::add_port_map TREADY [ipx::get_bus_interfaces $port_name -of_objects [ipx::find_open_core user.org:user:{ip_name}:1.0]]
     set_property physical_name $ready [ipx::get_port_maps TREADY -of_objects [ipx::get_bus_interfaces $port_name -of_objects [ipx::find_open_core user.org:user:{ip_name}:1.0]]]
-    ipx::associate_bus_interfaces -busif $port_name -clock $axi_clock [ipx::find_open_core user.org:user:{ip_name}:1.0]''' + '''
-}''' + f'''
+    ipx::associate_bus_interfaces -busif $port_name -clock $axi_clock [ipx::find_open_core user.org:user:{ip_name}:1.0]"""
+        + """
+}"""
+        + f"""
 
 map_clock {clk_name}_0
 map_axi_stream {axis_data_in_name}_0 {axis_valid_in_name}_0 {axis_ready_out_name}_0 {clk_name}_0 input_stream slave
@@ -793,7 +825,8 @@ package_xo  -xo_path $script_path/xo/{ip_name}.xo -kernel_name {ip_name} -ip_dir
 update_ip_catalog
 ipx::check_integrity -quiet -kernel -xrt [ipx::find_open_core user.org:user:{ip_name}:1.0]
 ipx::archive_core $script_path/ip_repo/user.org_user_{ip_name}_1.0.zip [ipx::find_open_core user.org:user:{ip_name}:1.0]    
-    '''
+    """
+    )
 
     out_filename = "package_axis_xo.tcl"
     out_filepath = SYN.SYN_OUTPUT_DIRECTORY + "/" + out_filename
