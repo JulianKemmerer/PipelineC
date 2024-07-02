@@ -1758,7 +1758,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
                                 dim = dims[i]
                                 addr_t = (
                                     "uint"
-                                    + str(int(math.ceil(math.log(dim, 2))))
+                                    + str(int(math.ceil(math.log(dim, 2)))+1) #round up by 1
                                     + "_t"
                                 )
                                 text += addr_t + " addr" + str(i) + ", "
@@ -1768,7 +1768,7 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
                                     dim = dims[i]
                                     addr_t = (
                                         "uint"
-                                        + str(int(math.ceil(math.log(dim, 2))))
+                                        + str(int(math.ceil(math.log(dim, 2)))+1) #round up by 1
                                         + "_t"
                                     )
                                     text += (
