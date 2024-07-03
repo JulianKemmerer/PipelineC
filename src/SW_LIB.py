@@ -4888,19 +4888,19 @@ def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
         sys.exit(-1)
 
 
-def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir):
+def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir, parser_state):
     left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
-    # if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
-    # return GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir)
-    # el
-    if C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+    if VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
+        return GET_BIN_OP_MOD_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
+    elif VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+        return GET_BIN_OP_MOD_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
+    elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
     else:
-        print("GET_BIN_OP_MOD_C_CODE Only mod between float for now!")
-        sys.exit(-1)
+        raise Exception(f"Modulo between unknown types {left_t} % {right_t}?")
 
 
 def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
@@ -8290,7 +8290,128 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
     return text
 
 
-# TODO do something better than absolute value uint division and sign correction
+# TODO something better than copying DIV code?
+def GET_BIN_OP_MOD_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "uint" + str(max_input_width)
+    resized_t = resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "uint" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b % """
+        + str(right_width)
+        + """b mod
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize
+  """
+        + resized_t
+        + """ left_resized;
+  left_resized = left;
+  """
+        + resized_t
+        + """ right_resized;
+  right_resized = right;
+  
+  // Output
+  """
+        + resized_t
+        + """ output;
+  output = 0;
+  // Remainder
+  """
+        + resized_t
+        + """ remainder;
+  remainder = 0;
+  uint1_t new_remainder0; 
+  
+
+  /*
+  UNROLL THIS
+  remainder := 0
+  -- Where n is number of bits in left           
+  for i := n - 1 .. 0 do     
+    -- Left-shift remainder by 1 bit     
+    remainder := remainder << 1
+    -- Set the least-significant bit of remainder
+    -- equal to bit i of the numerator
+    remainder(0) := left(i)       
+    if remainder >= right then
+      remainder := remainder - right
+      output(i) := 1
+    end
+  end 
+  */
+  """
+    )
+
+    for i in range(max_input_width - 1, -1, -1):
+        text += (
+            """
+  // Bit """
+            + str(i)
+            + """
+  new_remainder0 = """
+            + resized_prefix
+            + """_"""
+            + str(i)
+            + """_"""
+            + str(i)
+            + """(left);
+  remainder = """
+            + resized_prefix
+            + """_uint1(remainder, new_remainder0);       
+  if(remainder >= right)
+  {
+    remainder = remainder - right;
+    // Set output(i)=1
+    output = """
+            + output_prefix
+            + """_uint1_"""
+            + str(i)
+            + """(output, 1);
+  }"""
+        )
+
+    text += """
+  return remainder;
+}"""
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+# TODO do something better than absolute value uint division and sign correction?
 def GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
     left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
     right_t = partially_complete_logic.wire_to_c_type[
@@ -8367,6 +8488,103 @@ def GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
   """
         + unsigned_resized_t
         + """ unsigned_result = left_resized / right_resized;
+
+  // Adjust sign
+  """
+        + output_t
+        + """ output = unsigned_result;
+  if(l_signed ^ r_signed)
+  {
+    output = -unsigned_result;
+  }
+
+  return output;
+}"""
+    )
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+# TODO is the sign fixing here right for signed modulo?
+def GET_BIN_OP_MOD_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "int" + str(max_input_width)
+    unsigned_resized_prefix = "u" + resized_prefix  # "uint" + str(max_input_width-1)
+    resized_t = resized_prefix + "_t"
+    unsigned_resized_t = unsigned_resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "int" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b % """
+        + str(right_width)
+        + """b mod
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  
+  // Record sign bits
+  uint1_t l_signed = """
+        + resized_prefix
+        + "_"
+        + str(left_width - 1)
+        + """_"""
+        + str(left_width - 1)
+        + """(left);
+  uint1_t r_signed = """
+        + resized_prefix
+        + "_"
+        + str(right_width - 1)
+        + """_"""
+        + str(right_width - 1)
+        + """(right);
+
+  // Resize to unsigned values of same width 
+  """
+        + unsigned_resized_t
+        + """ left_resized = """
+        + resized_prefix
+        + """_abs(left);
+  """
+        + unsigned_resized_t
+        + """ right_resized = """
+        + resized_prefix
+        + """_abs(right);
+
+  // Do mod on uints
+  """
+        + unsigned_resized_t
+        + """ unsigned_result = left_resized % right_resized;
 
   // Adjust sign
   """

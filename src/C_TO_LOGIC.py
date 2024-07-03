@@ -1764,7 +1764,7 @@ def BUILD_LOGIC_AS_C_CODE(
             BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME
         ):
             c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(
-                partially_complete_logic, out_dir
+                partially_complete_logic, out_dir, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
             BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME
