@@ -688,46 +688,46 @@ def GET_PRIMITIVE_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     RST0 :   in  std_logic;"""
     if width > 9:
         text += """
-    SRIA17 :   in  std_logic;
-    SRIA16 :   in  std_logic;
-    SRIA15 :   in  std_logic;
-    SRIA14 :   in  std_logic;
-    SRIA13 :   in  std_logic;
-    SRIA12 :   in  std_logic;
-    SRIA11 :   in  std_logic;
-    SRIA10 :   in  std_logic;
-    SRIA9 :   in  std_logic;"""
+    --SRIA17 :   in  std_logic;
+    --SRIA16 :   in  std_logic;
+    --SRIA15 :   in  std_logic;
+    --SRIA14 :   in  std_logic;
+    --SRIA13 :   in  std_logic;
+    --SRIA12 :   in  std_logic;
+    --SRIA11 :   in  std_logic;
+    --SRIA10 :   in  std_logic;
+    --SRIA9 :   in  std_logic;"""
     text += """
-    SRIA8 :   in  std_logic;
-    SRIA7 :   in  std_logic;
-    SRIA6 :   in  std_logic;
-    SRIA5 :   in  std_logic;
-    SRIA4 :   in  std_logic;
-    SRIA3 :   in  std_logic;
-    SRIA2 :   in  std_logic;
-    SRIA1 :   in  std_logic;
-    SRIA0 :   in  std_logic;"""
+    --SRIA8 :   in  std_logic;
+    --SRIA7 :   in  std_logic;
+    --SRIA6 :   in  std_logic;
+    --SRIA5 :   in  std_logic;
+    --SRIA4 :   in  std_logic;
+    --SRIA3 :   in  std_logic;
+    --SRIA2 :   in  std_logic;
+    --SRIA1 :   in  std_logic;
+    --SRIA0 :   in  std_logic;"""
     if width > 9:
         text += """
-    SRIB17 :   in  std_logic;
-    SRIB16 :   in  std_logic;
-    SRIB15 :   in  std_logic;
-    SRIB14 :   in  std_logic;
-    SRIB13 :   in  std_logic;
-    SRIB12 :   in  std_logic;
-    SRIB11 :   in  std_logic;
-    SRIB10 :   in  std_logic;
-    SRIB9 :   in  std_logic;"""
+    --SRIB17 :   in  std_logic;
+    --SRIB16 :   in  std_logic;
+    --SRIB15 :   in  std_logic;
+    --SRIB14 :   in  std_logic;
+    --SRIB13 :   in  std_logic;
+    --SRIB12 :   in  std_logic;
+    --SRIB11 :   in  std_logic;
+    --SRIB10 :   in  std_logic;
+    --SRIB9 :   in  std_logic;"""
     text += """
-    SRIB8 :   in  std_logic;
-    SRIB7 :   in  std_logic;
-    SRIB6 :   in  std_logic;
-    SRIB5 :   in  std_logic;
-    SRIB4 :   in  std_logic;
-    SRIB3 :   in  std_logic;
-    SRIB2 :   in  std_logic;
-    SRIB1 :   in  std_logic;
-    SRIB0 :   in  std_logic;"""
+    --SRIB8 :   in  std_logic;
+    --SRIB7 :   in  std_logic;
+    --SRIB6 :   in  std_logic;
+    --SRIB5 :   in  std_logic;
+    --SRIB4 :   in  std_logic;
+    --SRIB3 :   in  std_logic;
+    --SRIB2 :   in  std_logic;
+    --SRIB1 :   in  std_logic;
+    --SRIB0 :   in  std_logic;"""
     if width > 9:
         text += """
     SROA17 :   out  std_logic;
@@ -1065,46 +1065,46 @@ end component;
     RST0 => '0',"""
     if width > 9:
         text += """
-    SRIA17 => '0',
-    SRIA16 => '0',
-    SRIA15 => '0',
-    SRIA14 => '0',
-    SRIA13 => '0',
-    SRIA12 => '0',
-    SRIA11 => '0',
-    SRIA10 => '0',
-    SRIA9 => '0',"""
+    --SRIA17 => '0',
+    --SRIA16 => '0',
+    --SRIA15 => '0',
+    --SRIA14 => '0',
+    --SRIA13 => '0',
+    --SRIA12 => '0',
+    --SRIA11 => '0',
+    --SRIA10 => '0',
+    --SRIA9 => '0',"""
     text += """
-    SRIA8 => '0',
-    SRIA7 => '0',
-    SRIA6 => '0',
-    SRIA5 => '0',
-    SRIA4 => '0',
-    SRIA3 => '0',
-    SRIA2 => '0',
-    SRIA1 => '0',
-    SRIA0 => '0',"""
+    --SRIA8 => '0',
+    --SRIA7 => '0',
+    --SRIA6 => '0',
+    --SRIA5 => '0',
+    --SRIA4 => '0',
+    --SRIA3 => '0',
+    --SRIA2 => '0',
+    --SRIA1 => '0',
+    --SRIA0 => '0',"""
     if width > 9:
         text += """
-    SRIB17 => '0',
-    SRIB16 => '0',
-    SRIB15 => '0',
-    SRIB14 => '0',
-    SRIB13 => '0',
-    SRIB12 => '0',
-    SRIB11 => '0',
-    SRIB10 => '0',
-    SRIB9 => '0',"""
+    --SRIB17 => '0',
+    --SRIB16 => '0',
+    --SRIB15 => '0',
+    --SRIB14 => '0',
+    --SRIB13 => '0',
+    --SRIB12 => '0',
+    --SRIB11 => '0',
+    --SRIB10 => '0',
+    --SRIB9 => '0',"""
     text += """
-    SRIB8 => '0',
-    SRIB7 => '0',
-    SRIB6 => '0',
-    SRIB5 => '0',
-    SRIB4 => '0',
-    SRIB3 => '0',
-    SRIB2 => '0',
-    SRIB1 => '0',
-    SRIB0 => '0',"""
+    --SRIB8 => '0',
+    --SRIB7 => '0',
+    --SRIB6 => '0',
+    --SRIB5 => '0',
+    --SRIB4 => '0',
+    --SRIB3 => '0',
+    --SRIB2 => '0',
+    --SRIB1 => '0',
+    --SRIB0 => '0',"""
     if width > 9:
         text += """
     SROA17 => open,
