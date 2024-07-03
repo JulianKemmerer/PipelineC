@@ -1079,7 +1079,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         or logic.is_vhdl_func
         or logic.is_vhdl_expr
         or logic.is_vhdl_text_module
-        or logic.func_name in parser_state.func_marked_blackbox
+        or logic.func_name in parser_state.func_marked_blackbox or
+        C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state)
     ):
         return rv
 
@@ -2877,7 +2878,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
 
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     if latency > 0:
-        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state):
+        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state) or C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
             # Raw vhdl estimate func of N bits input -> M bits output as using
             # (N+M)/2 bits per pipeline stage
             avg_regs = int((input_ffs + output_ffs) / 2)
@@ -2971,6 +2972,9 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
         # Specific inst
         TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
         logic = parser_state.LogicInstLookupTable[inst_name]
+        # Prim pipelines dont have reg estimates
+        if C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
+            return
         output_dir = GET_OUTPUT_DIRECTORY(logic)
         timing_params = TimingParamsLookupTable[inst_name]
         hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)

@@ -1401,8 +1401,9 @@ class Logic:
         if SW_LIB.IS_MEM(self):
             # TODO support IO regs on built in RAM prim funcs
             return False
-        if FUNC_IS_PRIMITIVE(self.func_name, parser_state):
-            return False
+        # Yes actually want user prim funcs to pipeline, is their purpose
+        #   if FUNC_IS_PRIMITIVE(self.func_name, parser_state):
+        #       return False
         if self.func_name in parser_state.func_marked_blackbox:
             return False
         return True

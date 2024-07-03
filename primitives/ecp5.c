@@ -8,7 +8,6 @@ uint36_t ECP5_MUL18X18(uint18_t a, uint18_t b)
 {
   return a * b;
 }
-// TODO OPEN_TOOLS.py hooks...but NOT SUPPORTED BY YOSYS YET?
 uint18_t ECP5_MUL9X9(uint9_t a, uint9_t b)
 {
   return a * b;
@@ -509,7 +508,7 @@ port map ( \n\
 ");
 }
 
-#pragma MAIN alu_test
+//#pragma MAIN alu_test
 uint24_t alu_test(
   uint1_t a_sign, uint18_t a,
   uint1_t b_sign, uint18_t b
