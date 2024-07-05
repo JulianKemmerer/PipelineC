@@ -2,7 +2,7 @@
 //  as two new GLOBAL_PIPELINE_INST via helper macros
 //  execute FSM is is eveything-but-mul-div / mul start + finish, div start+finish
 
-#pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
+#pragma PART "LFE5U-85F-6BG381C" //xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "intN_t.h"
 
@@ -90,7 +90,7 @@ riscv_out_t fsm_riscv(
 
   // CPU multi cycle state reg
   static cpu_state_t state = FETCH_START;
-  uint1_t next_state = state; // Update static reg at end of func
+  cpu_state_t next_state = state; // Update static reg at end of func
   
   // CPU registers (outside of reg file)
   static uint32_t pc = 0;
