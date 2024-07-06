@@ -1,8 +1,7 @@
-// add dutra mult ops and div ops
-//  as two new GLOBAL_PIPELINE_INST via helper macros
-//  execute FSM is is eveything-but-mul-div / mul start + finish, div start+finish
+// RISCV CPU, FSM that takes multiple cycles
+// uses autopipelines for some stages
 
-#pragma PART "LFE5U-85F-6BG381C" //xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
+#pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "intN_t.h"
 
@@ -59,13 +58,21 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #define RISCV_DMEM_NO_AUTOPIPELINE
 #include "mem_decl.h"
 
+// Declare a globally visible auto pipeline out of exe logic
+#include "global_func_inst.h"
+GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_m_ext_pipeline, execute_t, execute_rv32_m_ext, execute_rv32_m_ext_in_t) 
+
 typedef enum cpu_state_t{
   // Use PC as addr into IMEM
   FETCH_START, 
   // Get instruction from IMEM, decode it, supply regfile read addresses
   FETCH_END_DECODE_REG_RD_START,
-  // Use read data from regfile for execute, output of execute into DMEM
-  REG_RD_END_EXECUTE_MEM_START,
+  // Use read data from regfile for rv32i execute, output of rv32i execute into DMEM
+  REG_RD_END_EXE_RV32I_MEM_START,
+  // Use read data from regfile for rv32_m_ext execute start
+  REG_RD_END_M_EXE_START,
+  // Wait for output data from rv32_m_ext execute, data into dmem
+  M_EXE_END_MEM_START,
   // Use DMEM read data for doing write back, update to next pc
   MEM_END_WRITE_BACK_NEXT_PC
 }cpu_state_t;
@@ -122,9 +129,9 @@ riscv_out_t fsm_riscv(
   uint32_t mem_wr_data = mem_wr_data_reg;
   riscv_dmem_out_t dmem_out = dmem_out_reg;
   
-  // Cycle 0: PC
+  // PC fetch
   if((state==FETCH_START)){
-    printf("PC in Cycle/Stage 0\n");
+    printf("PC FETCH_START\n");
     // Program counter is input to IMEM
     pc_plus4 = pc + 4;
     printf("PC = 0x%X\n", pc);
@@ -135,26 +142,23 @@ riscv_out_t fsm_riscv(
   // Instruction memory
   imem_out = riscv_imem_ram(pc>>2, 1);
 
-  // Cycle1: Decode
+  // Decode
   if((state==FETCH_END_DECODE_REG_RD_START)){
-    printf("Decode in Cycle/Stage 1\n");
+    printf("Decode:\n");
     // Decode the instruction to control signals
     printf("Instruction: 0x%X\n", imem_out.rd_data1);
     decoded = decode(imem_out.rd_data1);
-    if(decoded.print_rs1_read){
-      printf("Read RegFile[%d] = %d\n", decoded.src1, reg_file_out.rd_data1);
-    }
-    if(decoded.print_rs2_read){
-      printf("Read RegFile[%d] = %d\n", decoded.src2, reg_file_out.rd_data2);
-    }
     o.unknown_op = decoded.unknown_op; // debug
-    next_state = REG_RD_END_EXECUTE_MEM_START;
+    if(decoded.is_rv32_m_ext){
+      // Multi cycle exe version for rv32mi
+      next_state = REG_RD_END_M_EXE_START;
+    }else{
+      // Regular rv32i
+      next_state = REG_RD_END_EXE_RV32I_MEM_START;
+    }
   }
 
-  // Cycle1+2+3: Register file reads and writes
-  //  Reads start during cycle1
-  //  Read finish during cycle2
-  //  Write back is next clock, cycle3
+  // Register file reads and writes
   //  Register file write signals are not driven until later in code
   //  but are used now, requiring FEEDBACK pragma
   uint5_t reg_wr_addr;
@@ -169,11 +173,31 @@ riscv_out_t fsm_riscv(
     reg_wr_addr, // Write port address
     reg_wr_data, // Write port data
     reg_wr_en // Write enable
-  );  
+  );
+  if((state==REG_RD_END_EXE_RV32I_MEM_START)|(state==REG_RD_END_M_EXE_START)){
+    if(decoded_reg.print_rs1_read){
+      printf("Read RegFile[%d] = %d\n", decoded_reg.src1, reg_file_out.rd_data1);
+    }
+    if(decoded_reg.print_rs2_read){
+      printf("Read RegFile[%d] = %d\n", decoded_reg.src2, reg_file_out.rd_data2);
+    }
+  }
   
-  // Cycle2: Execute
-  if((state==REG_RD_END_EXECUTE_MEM_START)){
-    printf("Execute in Cycle/Stage 2\n");
+  // RV32 M MUL+DIV execute start
+  execute_rv32_m_ext_pipeline_in_valid = 0; // Default no data into pipeline
+  if(state==REG_RD_END_M_EXE_START){
+    printf("RV32 M Execute Start:\n");
+    // Put valid data input into pipeline
+    execute_rv32_m_ext_pipeline_in.decoded = decoded_reg;
+    execute_rv32_m_ext_pipeline_in.reg1 = reg_file_out.rd_data1;
+    execute_rv32_m_ext_pipeline_in.reg2 = reg_file_out.rd_data2;
+    execute_rv32_m_ext_pipeline_in_valid = 1;
+    // And start waiting for a valid output
+    next_state = M_EXE_END_MEM_START;
+  }
+  // RV32I Execute
+  if((state==REG_RD_END_EXE_RV32I_MEM_START)){
+    printf("RV32I Execute:\n");
     exe = execute(
       pc, pc_plus4_reg, 
       decoded_reg, 
@@ -181,21 +205,47 @@ riscv_out_t fsm_riscv(
     );
     next_state = MEM_END_WRITE_BACK_NEXT_PC;
   }
+  // RV32 M MUL+DIV execute finish
+  if(state==M_EXE_END_MEM_START){
+    // Wait for valid output from pipeline
+    printf("Waiting for RV32 M Execute to end...\n");
+    if(execute_rv32_m_ext_pipeline_out_valid){
+      printf("RV32 M Execute End:\n");
+      // Then move on to next state
+      // (mem inputs wired below)
+      next_state = MEM_END_WRITE_BACK_NEXT_PC;
+    }
+  }
 
-  // Boundary shared between cycle2 and cycle3
-  // Data Memory inputs in stage1
+  // Boundary shared between exe and dmem
+  // Drive dmem inputs:
   // Default no writes or reads
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)
-  mem_addr = exe.result; // addr always from execute module, not always used
-  mem_wr_data = reg_file_out.rd_data2;
-  if((state==REG_RD_END_EXECUTE_MEM_START)){
+  mem_addr = 0;
+  mem_wr_data = 0;
+  if((state==M_EXE_END_MEM_START)){
+    // Exe result address from pipeline
+    mem_addr = execute_rv32_m_ext_pipeline_out.result;
+    // data from regfile out reg held from prev cycles
+    mem_wr_data = reg_file_out_reg.rd_data2;
+    // Wait to start write or read en during first cycle of two cycle read
+    // Which is cycle when execute result comes out of pipeline
+    if(execute_rv32_m_ext_pipeline_out_valid){
+      mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
+      mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
+    }
+  }
+  if((state==REG_RD_END_EXE_RV32I_MEM_START)){
+    // addr and data from same cycle rv32i execute module and regfile out
+    mem_addr = exe.result; 
+    mem_wr_data = reg_file_out.rd_data2;
     // Only write or read en during first cycle of two cycle read
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
     mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
-    if(decoded_reg.mem_wr_byte_ens[0]){
-      printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
-    }
+  }
+  if(mem_wr_byte_ens[0]){
+    printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
   }
   // DMEM always "in use" regardless of stage
   // since memory map IO need to be connected always
@@ -222,13 +272,13 @@ riscv_out_t fsm_riscv(
     }
   }
 
-  // Cycle 3: Write Back + Next PC
+  // Write Back + Next PC
   // default values needed for feedback signals
   reg_wr_en = 0; // default no writes 
   reg_wr_addr = 0;
   reg_wr_data = 0;
   if((state==MEM_END_WRITE_BACK_NEXT_PC)){
-    printf("Write Back + Next PC in Cycle/Stage 3\n");
+    printf("Write Back + Next PC:\n");
     // Reg file write back, drive inputs (FEEDBACK)
     reg_wr_en = decoded_reg.reg_wr;
     reg_wr_addr = decoded_reg.dest;

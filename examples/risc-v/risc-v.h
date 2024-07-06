@@ -12,7 +12,7 @@
 // Helpers for building memory maps
 #include "mem_map.h"
 
-// OPCODES and such
+// OPCODES and such (RV32I)
 #define OP_AUIPC  0b0010111
 #define OP_BRANCH 0b1100011
 #define OP_IMM    0b0010011
@@ -58,6 +58,17 @@
 // TODO
 // Fences, exceptions, csr
 
+// M Extension (Reusing the funct3 bits)
+#define FUNCT7_MUL_DIV_REM 0b0000001
+#define FUNCT3_MUL   FUNCT3_ADD_SUB
+#define FUNCT3_MULH   FUNCT3_SLL
+#define FUNCT3_MULHSU   FUNCT3_SLT
+#define FUNCT3_MULHU   FUNCT3_SLTU
+#define FUNCT3_DIV   FUNCT3_XOR
+#define FUNCT3_DIVU   FUNCT3_SRL_SRA
+#define FUNCT3_REM   FUNCT3_OR
+#define FUNCT3_REMU   FUNCT3_AND
+
 // Sorta decode+control
 // Debug signal for simulation
 //DEBUG_OUTPUT_DECL(uint1_t, unknown_op) // Unknown instruction
@@ -77,6 +88,8 @@ typedef struct decoded_t{
   uint1_t pc_plus4_to_reg;
   uint1_t exe_to_pc;
   int32_t signed_immediate;
+  // Flags to help separate into autopipelines
+  uint1_t is_rv32_m_ext; // just one other pipeline for MUL+DIV stuff for now
   // Printf controls
   uint1_t print_rs1_read;
   uint1_t print_rs2_read;
@@ -105,47 +118,133 @@ decoded_t decode(uint32_t inst){
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
         printf("SUB: r%d - r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
-      }else{
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // MUL
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("MUL: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
         printf("Unsupported FUNCT3_ADD_SUB instruction: 0x%X\n", inst);
         rv.unknown_op = 1;
       }
     }else if(rv.funct3==FUNCT3_SLT){
-      // SLT
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("SLT: r%d < r%d ? 1 : 0  -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // SLT
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("SLT: r%d < r%d ? 1 : 0  -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // MULHSU
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("MULHSU: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_SLT instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }else if(rv.funct3==FUNCT3_SLTU){
-      // SLTU
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("SLTU: (uint32_t)r%d < (uint32_t)r%d ? 1 : 0  -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // SLTU
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("SLTU: (uint32_t)r%d < (uint32_t)r%d ? 1 : 0  -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // MULHU
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("MULHU: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_SLTU instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }else if(rv.funct3==FUNCT3_AND){
-      // AND
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("AND: r%d & r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // AND
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("AND: r%d & r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // REMU
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("REMU: r%d mod r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_AND instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }else if(rv.funct3==FUNCT3_OR){
-      // OR
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("OR: r%d | r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // OR
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("OR: r%d | r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // REM
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("REM: r%d mod r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_OR instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }else if(rv.funct3==FUNCT3_XOR){
-      // XOR
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("XOR: r%d ^ r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // XOR
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("XOR: r%d ^ r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // DIV
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("DIV: r%d / r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_XOR instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }
     else if(rv.funct3==FUNCT3_SLL){
-      // SLL
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.print_rs2_read = 1;
-      printf("SLL: r%d << r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      if(rv.funct7 == 0){ // default alu instruction
+        // SLL
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        printf("SLL: r%d << r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // MULH
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("MULH: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
+        printf("Unsupported FUNCT3_SLL instruction: 0x%X\n", inst);
+        rv.unknown_op = 1;
+      }
     }else if(rv.funct3==FUNCT3_SRL_SRA){
       if(rv.funct7==FUNCT7_SRL){
         // SRL
@@ -159,7 +258,15 @@ decoded_t decode(uint32_t inst){
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
         printf("SRA: (int32_t)r%d >> r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
-      }else{
+      }else if(rv.funct7 == FUNCT7_MUL_DIV_REM){
+        // DIVU
+        rv.reg_wr = 1;
+        rv.print_rs1_read = 1;
+        rv.print_rs2_read = 1;
+        rv.is_rv32_m_ext = 1;
+        printf("DIVU: r%d / r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
+      }
+      else{
         printf("Unsupported FUNCT3_SRL_SRA instruction: 0x%X\n", inst);
         rv.unknown_op = 1;
       }
@@ -487,6 +594,71 @@ decoded_t decode(uint32_t inst){
 }
 
 // Exceute/ALU
+
+// MUL+DIV version for 'M'
+typedef struct execute_rv32_m_ext_in_t{
+  decoded_t decoded;
+  uint32_t reg1;
+  uint32_t reg2;
+}execute_rv32_m_ext_in_t;
+typedef struct execute_t
+{
+  uint32_t result;
+}execute_t;
+execute_t execute_rv32_m_ext(
+  execute_rv32_m_ext_in_t i
+){
+  decoded_t decoded = i.decoded;
+  uint32_t reg1 = i.reg1;
+  uint32_t reg2 = i.reg2;
+  execute_t rv;
+  if(decoded.opcode==OP_OP){
+    if(decoded.funct3==FUNCT3_ADD_SUB){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int32_t)reg1 * (int32_t)reg2;
+        printf("MUL: (int32_t)%d * (int32_t)%d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_SLT){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int64_t)((int32_t)reg1 * (uint32_t)reg2) >> 32;
+        printf("MULHSU: (int64_t)((int32_t)%d * (uint32_t)%d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_SLTU){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (uint64_t)(reg1 * reg2) >> 32;
+        printf("MULHU: (uint64_t)(%d * %d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_AND){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = reg1 % reg2;
+        printf("REMU: %d / %d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_OR){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int32_t)reg1 % (int32_t)reg2;
+        printf("REM: (int32_t)%d / (int32_t)%d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_XOR){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int32_t)reg1 / (int32_t)reg2;
+        printf("DIV: (int32_t)%d / (int32_t)%d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_SLL){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int64_t)((int32_t)reg1 * (int32_t)reg2) >> 32;
+        printf("MULH: (int64_t)((int32_t)%d * (int32_t)%d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }else if(decoded.funct3==FUNCT3_SRL_SRA){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = reg1 / reg2;
+        printf("DIVU: %d / %d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }
+  }
+  return rv;
+}
+
+// Original RV32I execute stage
 typedef struct execute_t
 {
   uint32_t result;
