@@ -87,7 +87,6 @@ typedef struct riscv_out_t{
   uint1_t mem_out_of_range;
   riscv_mem_map_outputs_t mem_map_outputs;
 }riscv_out_t;
-#pragma MAIN_MHZ fsm_riscv 60.0
 riscv_out_t fsm_riscv(
   riscv_mem_map_inputs_t mem_map_inputs
 )
@@ -225,6 +224,8 @@ riscv_out_t fsm_riscv(
   mem_addr = 0;
   mem_wr_data = 0;
   if((state==M_EXE_END_MEM_START)){
+    // TODO do M ext instructions ever set mem_wr/rd_byte_ens?
+    // is below not needed? just wait for pipeline results 
     // Exe result address from pipeline
     mem_addr = execute_rv32_m_ext_pipeline_out.result;
     // data from regfile out reg held from prev cycles
@@ -308,5 +309,34 @@ riscv_out_t fsm_riscv(
   dmem_out_reg = dmem_out;
   
   return o;
+}
+
+// LEDs for demo
+#include "leds/leds_port.c"
+
+#pragma MAIN_MHZ my_top 60.0
+void my_top()
+{
+  // Instance of core
+  my_mmio_in_t in; // Disconnected for now
+  riscv_out_t out = fsm_riscv(in);
+
+  // Sim debug
+  //unknown_op = out.unknown_op;
+  //mem_out_of_range = out.mem_out_of_range;
+  //halt = out.mem_map_outputs.halt;
+  //main_return = out.mem_map_outputs.return_value;
+
+  // Output LEDs for hardware debug
+  static uint1_t mem_out_of_range;
+  static uint1_t unknown_op;
+  leds = 0;
+  leds |= (uint4_t)out.mem_map_outputs.led << 0;
+  leds |= (uint4_t)mem_out_of_range << 1;
+  leds |= (uint4_t)unknown_op << 2;
+
+  // Sticky on so human can see single cycle pulse
+  mem_out_of_range |= out.mem_out_of_range;
+  unknown_op |= out.unknown_op;
 }
 
