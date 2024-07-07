@@ -823,6 +823,24 @@ execute_t execute(
   }
   return rv;
 }
+// RV32I for pipelining via helper macro expecting 1 input and 1 output
+typedef struct execute_rv32i_in_t{
+  uint32_t pc;
+  uint32_t pc_plus4;
+  decoded_t decoded;
+  uint32_t reg1;
+  uint32_t reg2;
+}execute_rv32i_in_t;
+execute_t execute_rv32i(
+  execute_rv32i_in_t i
+){
+  uint32_t pc = i.pc;
+  uint32_t pc_plus4 = i.pc_plus4;
+  decoded_t decoded = i.decoded;
+  uint32_t reg1 = i.reg1;
+  uint32_t reg2 = i.reg2;
+  return execute(pc, pc_plus4, decoded, reg1, reg2);
+}
 
 // Determine register file data to write back
 uint32_t select_reg_wr_data(
