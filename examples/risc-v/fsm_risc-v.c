@@ -210,6 +210,7 @@ riscv_out_t fsm_riscv(
     printf("Waiting for RV32 M Execute to end...\n");
     if(execute_rv32_m_ext_pipeline_out_valid){
       printf("RV32 M Execute End:\n");
+      exe = execute_rv32_m_ext_pipeline_out;
       // Then move on to next state
       // (mem inputs wired below)
       next_state = MEM_END_WRITE_BACK_NEXT_PC;
@@ -221,13 +222,11 @@ riscv_out_t fsm_riscv(
   // Default no writes or reads
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)
-  mem_addr = 0;
+  mem_addr = exe.result; // Driven somewhere in same cycle above^
   mem_wr_data = 0;
   if((state==M_EXE_END_MEM_START)){
     // TODO do M ext instructions ever set mem_wr/rd_byte_ens?
-    // is below not needed? just wait for pipeline results 
-    // Exe result address from pipeline
-    mem_addr = execute_rv32_m_ext_pipeline_out.result;
+    // is below not needed? just wait for pipeline results and move to next state?
     // data from regfile out reg held from prev cycles
     mem_wr_data = reg_file_out_reg.rd_data2;
     // Wait to start write or read en during first cycle of two cycle read
@@ -239,7 +238,6 @@ riscv_out_t fsm_riscv(
   }
   if((state==REG_RD_END_EXE_RV32I_MEM_START)){
     // addr and data from same cycle rv32i execute module and regfile out
-    mem_addr = exe.result; 
     mem_wr_data = reg_file_out.rd_data2;
     // Only write or read en during first cycle of two cycle read
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
