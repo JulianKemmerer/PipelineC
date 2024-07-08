@@ -39,6 +39,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 }
 
 // RISC-V components
+// For now hard coded flags to enable different extensions
+//#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
 #include "risc-v.h"
 
@@ -63,7 +65,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 // TODO consider removing extra 2 cycles of latency from auto pipeline having IO regs around it added?
 #include "global_func_inst.h"
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
+#ifdef RV32_M
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_m_ext_pipeline, execute_t, execute_rv32_m_ext, execute_rv32_m_ext_in_t) 
+#endif
 
 typedef enum cpu_state_t{
   // Use PC as addr into IMEM
@@ -75,7 +79,9 @@ typedef enum cpu_state_t{
   // Wait for output data from execute, data into dmem
   EXE_END_MEM_START,
   // Use DMEM read data for doing write back, update to next pc
-  MEM_END_WRITE_BACK_NEXT_PC
+  MEM_END_WRITE_BACK_NEXT_PC,
+  // Debug error state to halt execution
+  WTF,
 }cpu_state_t;
 
 // CPU top level
@@ -88,6 +94,7 @@ typedef struct riscv_out_t{
   uint1_t mem_out_of_range;
   riscv_mem_map_outputs_t mem_map_outputs;
 }riscv_out_t;
+//#pragma FUNC_MARK_DEBUG fsm_riscv
 riscv_out_t fsm_riscv(
   riscv_mem_map_inputs_t mem_map_inputs
 )
@@ -180,17 +187,12 @@ riscv_out_t fsm_riscv(
   // Execute start
   // Default no data into pipelines
   execute_rv32i_pipeline_in_valid = 0;
+  #ifdef RV32_M
   execute_rv32_m_ext_pipeline_in_valid = 0; 
+  #endif
   if(state==REG_RD_END_EXE_START){
     // Which EXE pipeline to put input into?
-    if(decoded_reg.is_rv32_m_ext){
-      // M
-      printf("RV32 M Execute Start:\n");
-      execute_rv32_m_ext_pipeline_in.decoded = decoded_reg;
-      execute_rv32_m_ext_pipeline_in.reg1 = reg_file_out.rd_data1;
-      execute_rv32_m_ext_pipeline_in.reg2 = reg_file_out.rd_data2;
-      execute_rv32_m_ext_pipeline_in_valid = 1;  
-    }else{
+    if(decoded_reg.is_rv32i){
       // RV32I
       printf("RV32I Execute Start:\n");
       execute_rv32i_pipeline_in.pc = pc;
@@ -200,6 +202,16 @@ riscv_out_t fsm_riscv(
       execute_rv32i_pipeline_in.reg2 = reg_file_out.rd_data2;
       execute_rv32i_pipeline_in_valid = 1;
     }
+    #ifdef RV32_M
+    else if(decoded_reg.is_rv32_m_ext){
+      // M
+      printf("RV32 M Execute Start:\n");
+      execute_rv32_m_ext_pipeline_in.decoded = decoded_reg;
+      execute_rv32_m_ext_pipeline_in.reg1 = reg_file_out.rd_data1;
+      execute_rv32_m_ext_pipeline_in.reg2 = reg_file_out.rd_data2;
+      execute_rv32_m_ext_pipeline_in_valid = 1;  
+    }
+    #endif
     // And start waiting for a valid output
     next_state = EXE_END_MEM_START;
   }
@@ -208,15 +220,7 @@ riscv_out_t fsm_riscv(
     // Which EXE pipeline to wait for valid output from?
     // Then move on to next state
     // (mem inputs wired below)
-    if(decoded_reg.is_rv32_m_ext){
-      // M
-      printf("Waiting for RV32 M Execute to end...\n");
-      if(execute_rv32_m_ext_pipeline_out_valid){
-        printf("RV32 M Execute End:\n");
-        exe = execute_rv32_m_ext_pipeline_out;
-        next_state = MEM_END_WRITE_BACK_NEXT_PC;
-      }
-    }else{
+    if(decoded_reg.is_rv32i){
       // RV32I
       printf("Waiting for RV32I Execute to end...\n");
       if(execute_rv32i_pipeline_out_valid){
@@ -225,6 +229,17 @@ riscv_out_t fsm_riscv(
         next_state = MEM_END_WRITE_BACK_NEXT_PC;
       }
     }
+    #ifdef RV32_M
+    else if(decoded_reg.is_rv32_m_ext){
+      // M
+      printf("Waiting for RV32 M Execute to end...\n");
+      if(execute_rv32_m_ext_pipeline_out_valid){
+        printf("RV32 M Execute End:\n");
+        exe = execute_rv32_m_ext_pipeline_out;
+        next_state = MEM_END_WRITE_BACK_NEXT_PC;
+      }
+    }
+    #endif
   }
 
   // Boundary shared between exe and dmem
@@ -239,7 +254,15 @@ riscv_out_t fsm_riscv(
     // EXE outputs can go into dmem
     // Wait to start write or read en during first cycle of two cycle read
     // Which is cycle when execute result comes out of pipeline
-    if(decoded_reg.is_rv32_m_ext){
+    if(decoded_reg.is_rv32i){
+      // RV32I
+      if(execute_rv32i_pipeline_out_valid){
+        mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
+        mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
+      }
+    }
+    #ifdef RV32_M
+    else if(decoded_reg.is_rv32_m_ext){
       // M
       // TODO do M ext instructions ever set decoded.mem_wr/rd_byte_ens?
       // is below not needed? just wait for pipeline results and move to next state?
@@ -247,13 +270,8 @@ riscv_out_t fsm_riscv(
         mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
         mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
       }
-    }else{
-      // RV32I
-      if(execute_rv32i_pipeline_out_valid){
-        mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
-        mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
-      }
     }
+    #endif
   }
   if(mem_wr_byte_ens[0]){
     printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
@@ -316,6 +334,12 @@ riscv_out_t fsm_riscv(
   mem_wr_data_reg = mem_wr_data;
   dmem_out_reg = dmem_out;
   
+
+  // Debug override if ever signal errors, halt
+  if(o.mem_out_of_range | o.unknown_op){
+    state = WTF;
+  }
+
   return o;
 }
 
@@ -329,7 +353,7 @@ DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
 //DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
 //DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 
-#pragma MAIN_MHZ my_top 100.0
+#pragma MAIN_MHZ my_top 200.0
 void my_top()
 {
   // Instance of core
