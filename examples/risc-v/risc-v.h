@@ -81,7 +81,8 @@ typedef struct decoded_t{
   // Flags to help separate into autopipelines
   uint1_t is_rv32i;
   #ifdef RV32_M
-  uint1_t is_rv32_m_ext; // just one other pipeline for MUL+DIV stuff for now
+  uint1_t is_rv32_mul;
+  uint1_t is_rv32_div; // or REM
   #endif
   // Printf controls
   uint1_t print_rs1_read;
@@ -120,7 +121,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_mul = 1;
         printf("MUL: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -143,7 +144,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_mul = 1;
         printf("MULHSU: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -166,7 +167,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_mul = 1;
         printf("MULHU: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -189,7 +190,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_div = 1;
         printf("REMU: r%d mod r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -212,7 +213,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_div = 1;
         printf("REM: r%d mod r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -235,7 +236,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_div = 1;
         printf("DIV: r%d / r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -259,7 +260,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_mul = 1;
         printf("MULH: r%d * r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -289,7 +290,7 @@ decoded_t decode(uint32_t inst){
         rv.reg_wr = 1;
         rv.print_rs1_read = 1;
         rv.print_rs2_read = 1;
-        rv.is_rv32_m_ext = 1;
+        rv.is_rv32_div = 1;
         printf("DIVU: r%d / r%d -> r%d \n", rv.src1, rv.src2, rv.dest);
       }
       #endif
@@ -648,19 +649,19 @@ decoded_t decode(uint32_t inst){
 }
 
 // Exceute/ALU
+typedef struct execute_t
+{
+  uint32_t result;
+}execute_t;
 
 #ifdef RV32_M
-// MUL+DIV version for 'M'
 typedef struct execute_rv32_m_ext_in_t{
   decoded_t decoded;
   uint32_t reg1;
   uint32_t reg2;
 }execute_rv32_m_ext_in_t;
-typedef struct execute_t
-{
-  uint32_t result;
-}execute_t;
-execute_t execute_rv32_m_ext(
+// Multiply part of 'M'
+execute_t execute_rv32_mul(
   execute_rv32_m_ext_in_t i
 ){
   decoded_t decoded = i.decoded;
@@ -683,7 +684,25 @@ execute_t execute_rv32_m_ext(
         rv.result = (uint64_t)(reg1 * reg2) >> 32;
         printf("MULHU: (uint64_t)(%d * %d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
       }
-    }else if(decoded.funct3==FUNCT3_AND_REMU){
+    }else if(decoded.funct3==FUNCT3_SLL_MULH){
+      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
+        rv.result = (int64_t)((int32_t)reg1 * (int32_t)reg2) >> 32;
+        printf("MULH: (int64_t)((int32_t)%d * (int32_t)%d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
+      }
+    }
+  }
+  return rv;
+}
+// Divison and remainder part of 'M'
+execute_t execute_rv32_div(
+  execute_rv32_m_ext_in_t i
+){
+  decoded_t decoded = i.decoded;
+  uint32_t reg1 = i.reg1;
+  uint32_t reg2 = i.reg2;
+  execute_t rv;
+  if(decoded.opcode==OP_OP){
+    if(decoded.funct3==FUNCT3_AND_REMU){
       if(decoded.funct7==FUNCT7_MUL_DIV_REM){
         rv.result = reg1 % reg2;
         printf("REMU: %d / %d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
@@ -697,11 +716,6 @@ execute_t execute_rv32_m_ext(
       if(decoded.funct7==FUNCT7_MUL_DIV_REM){
         rv.result = (int32_t)reg1 / (int32_t)reg2;
         printf("DIV: (int32_t)%d / (int32_t)%d = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
-      }
-    }else if(decoded.funct3==FUNCT3_SLL_MULH){
-      if(decoded.funct7==FUNCT7_MUL_DIV_REM){
-        rv.result = (int64_t)((int32_t)reg1 * (int32_t)reg2) >> 32;
-        printf("MULH: (int64_t)((int32_t)%d * (int32_t)%d) >> 32 = %d -> r%d \n", reg1, reg2, rv.result, decoded.dest);
       }
     }else if(decoded.funct3==FUNCT3_SRL_SRA_DIVU){
       if(decoded.funct7==FUNCT7_MUL_DIV_REM){
