@@ -220,6 +220,7 @@ begin \n\
 typedef struct riscv_dmem_out_t
 {
   uint32_t rd_data;
+  uint1_t valid; // read_data valid, aka done
   uint1_t mem_out_of_range; // Exception, stop sim
   #ifdef riscv_mem_map_outputs_t
   riscv_mem_map_outputs_t mem_map_outputs;
@@ -230,7 +231,8 @@ riscv_dmem_out_t riscv_dmem(
   uint32_t rw_addr,
   uint32_t wr_data,
   uint1_t wr_byte_ens[4],
-  uint1_t rd_byte_ens[4]
+  uint1_t rd_byte_ens[4],
+  uint1_t valid // aka start
   #ifdef riscv_mem_map_inputs_t
   , riscv_mem_map_inputs_t mem_map_inputs
   #endif
@@ -300,7 +302,8 @@ riscv_dmem_out_t riscv_dmem(
     mem_rw_word_index<<2, 
     wr_word,
     wr_word_byte_ens,
-    rd_word_byte_ens
+    rd_word_byte_ens,
+    valid
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
     #endif
@@ -331,8 +334,9 @@ riscv_dmem_out_t riscv_dmem(
 
   // The single RAM instance
   riscv_dmem_ram_out_t ram_out = riscv_dmem_ram(mem_rw_word_index,
-                                      wr_word, wr_word_byte_ens, 1);
+                                      wr_word, wr_word_byte_ens, valid);
   uint32_t mem_rd_data = ram_out.rd_data0;
+  mem_out.valid = ram_out.valid0;
   #ifdef RISCV_DMEM_1_CYCLE
   // Manually delay signals to align with 1 cycle read data delay of dmem
   #ifdef RISCV_DMEM_NO_AUTOPIPELINE
@@ -352,6 +356,7 @@ riscv_dmem_out_t riscv_dmem(
   // Mem map read comes from memory map module not RAM memory
   if(mem_map_out.addr_is_mapped){
     mem_rd_data = mem_map_out.rd_data;
+    mem_out.valid = mem_map_out.valid;
   }
   // Shift read data to account for conversion to 32b word index access
   if(byte_mux_sel==3){

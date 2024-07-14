@@ -30,6 +30,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   static riscv_mem_map_mod_out_t(my_mmio_out_t) o_reg;
   riscv_mem_map_mod_out_t(my_mmio_out_t) o = o_reg;
   o.addr_is_mapped = 0; // since o is static regs
+  o.valid = valid; // As written user MMIO completes in same cycle it starts
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
   //WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
@@ -131,6 +132,7 @@ riscv_out_t fsm_riscv(
   static uint1_t mem_rd_byte_ens_reg[4];
   static uint32_t mem_addr_reg;
   static uint32_t mem_wr_data_reg;
+  static uint1_t mem_valid_in_reg;
   static riscv_dmem_out_t dmem_out_reg;
   // But still have non-static wires version of registers too
   // to help avoid/resolve unintentional passing of data between stages
@@ -144,6 +146,7 @@ riscv_out_t fsm_riscv(
   uint1_t mem_rd_byte_ens[4] = mem_rd_byte_ens_reg;
   uint32_t mem_addr = mem_addr_reg;
   uint32_t mem_wr_data = mem_wr_data_reg;
+  uint1_t mem_valid_in = mem_valid_in_reg;
   riscv_dmem_out_t dmem_out = dmem_out_reg;
   
   // PC fetch
@@ -270,14 +273,16 @@ riscv_out_t fsm_riscv(
   // Boundary shared between exe and dmem
   // Drive dmem inputs:
   // Default no writes or reads
+  mem_valid_in = 0;
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)  
   mem_addr = exe.result; // Driven somewhere in EXE_END above^
   mem_wr_data = reg_file_out_reg.rd_data2; // data from regfile out reg held from prev cycles
   if(state==MEM_START){
-    printf("MEM Start:\n");
+    printf("Starting MEM...\n");
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
     mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
+    mem_valid_in = 1;
     next_state = MEM_END;
     if(mem_wr_byte_ens[0]){
       printf("Write Mem[0x%X] = %d started\n", mem_addr, mem_wr_data);
@@ -286,7 +291,6 @@ riscv_out_t fsm_riscv(
       printf("Read Mem[0x%X] started\n", mem_addr);
     }
   }
-  
   // DMEM always "in use" regardless of stage
   // since memory map IO need to be connected always
   dmem_out = riscv_dmem(
@@ -294,6 +298,7 @@ riscv_out_t fsm_riscv(
     mem_wr_data, // Main memory write data
     mem_wr_byte_ens, // Main memory write data byte enables
     mem_rd_byte_ens, // Main memory read enable
+    mem_valid_in, // Valid pulse corresponding dmem inputs above
     // Memory map inputs
     mem_map_inputs
   );
@@ -302,15 +307,17 @@ riscv_out_t fsm_riscv(
   o.mem_map_outputs = dmem_out.mem_map_outputs;
   // Data memory outputs
   if(state==MEM_END){
-    printf("MEM End:\n");
-    // Read output available from dmem_out in second cycle of two cycle read
-    if(decoded_reg.mem_rd_byte_ens[0]){
-      printf("Read Mem[0x%X] = %d finished\n", mem_addr_reg, dmem_out.rd_data);
+    printf("Waiting for MEM to finish...\n");
+    if(dmem_out.valid){
+      // Read output available from dmem_out
+      if(decoded_reg.mem_rd_byte_ens[0]){
+        printf("Read Mem[0x%X] = %d finished\n", mem_addr_reg, dmem_out.rd_data);
+      }
+      if(decoded_reg.mem_wr_byte_ens[0]){
+        printf("Write Mem[0x%X] finished\n", mem_addr_reg);
+      }
+      state = WRITE_BACK_NEXT_PC; next_state = state; // SAME CYCLE STATE TRANSITION
     }
-    if(decoded_reg.mem_wr_byte_ens[0]){
-      printf("Write Mem[0x%X] finished\n", mem_addr_reg);
-    }
-    state = WRITE_BACK_NEXT_PC; next_state = state; // SAME CYCLE STATE TRANSITION
   }
 
   // Write Back + Next PC
@@ -356,6 +363,7 @@ riscv_out_t fsm_riscv(
   mem_rd_byte_ens_reg = mem_rd_byte_ens;
   mem_addr_reg = mem_addr;
   mem_wr_data_reg = mem_wr_data;
+  mem_valid_in_reg = mem_valid_in;
   dmem_out_reg = dmem_out;
 
   return o;
