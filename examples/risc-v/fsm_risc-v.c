@@ -63,8 +63,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "mem_decl.h"
 
 // Declare globally visible auto pipelines out of exe logic
-// TODO consider removing extra 2 cycles of latency from auto pipeline having IO regs around it added?
 #include "global_func_inst.h"
+// TODO consider removing extra 2 cycles of latency from auto pipeline having IO regs around it added?
+//    Needs same cycle exe start->end transition
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
 #ifdef RV32_M
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_mul_pipeline, execute_t, execute_rv32_mul, execute_rv32_m_ext_in_t)
@@ -238,6 +239,11 @@ riscv_out_t fsm_riscv(
   }
   // Execute finish
   if(state==EXE_END){
+    // What is next state? Can skip dmem maybe to write back directly?
+    cpu_state_t exe_next_state = WRITE_BACK_NEXT_PC;
+    if(decoded_reg.reg_to_mem | decoded_reg.mem_to_reg){
+      exe_next_state = MEM_START; // cant skip dmem
+    }
     // Which EXE pipeline to wait for valid output from?
     // Then move on to next state
     if(decoded_reg.is_rv32i){
@@ -246,7 +252,7 @@ riscv_out_t fsm_riscv(
       if(execute_rv32i_pipeline_out_valid){
         printf("RV32I Execute End:\n");
         exe = execute_rv32i_pipeline_out;
-        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
+        state = exe_next_state; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }
     #ifdef RV32_M
@@ -256,7 +262,7 @@ riscv_out_t fsm_riscv(
       if(execute_rv32_mul_pipeline_out_valid){
         printf("RV32 MUL Execute End:\n");
         exe = execute_rv32_mul_pipeline_out;
-        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
+        state = exe_next_state; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }else if(decoded_reg.is_rv32_div){
       // DIV|REM
@@ -264,7 +270,7 @@ riscv_out_t fsm_riscv(
       if(execute_rv32_div_pipeline_out_valid){
         printf("RV32 DIV|REM Execute End:\n");
         exe = execute_rv32_div_pipeline_out;
-        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
+        state = exe_next_state; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }
     #endif
@@ -333,12 +339,16 @@ riscv_out_t fsm_riscv(
     // Determine reg data to write back (sign extend etc)
     reg_wr_data = select_reg_wr_data(
       decoded_reg,
-      exe_reg,
+      exe, // Not _reg since might be shortcut from same cycle here from EXE_END
       dmem_out.rd_data,
       pc_plus4_reg
     );
     // Branch/Increment PC
-    pc = select_next_pc(decoded_reg, exe_reg, pc_plus4_reg);
+    pc = select_next_pc(
+     decoded_reg,
+     exe, // Not _reg since might be shortcut from same cycle here from EXE_END
+     pc_plus4_reg
+    );
     next_state = FETCH_START;
   }
 

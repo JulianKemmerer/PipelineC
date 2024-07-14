@@ -74,7 +74,8 @@ typedef struct decoded_t{
   uint1_t mem_wr_byte_ens[4];
   uint1_t mem_rd_byte_ens[4];
   uint1_t mem_rd_sign_ext;
-  uint1_t mem_to_reg;
+  uint1_t mem_to_reg; // aka loads
+  uint1_t reg_to_mem; // aka stores
   uint1_t pc_plus4_to_reg;
   uint1_t exe_to_pc;
   int32_t signed_immediate;
@@ -98,6 +99,9 @@ decoded_t decode(uint32_t inst){
   rv.funct7 = inst(31, 25);
   rv.src1 = inst(19, 15);
   rv.src2 = inst(24, 20);
+  uint1_t W_BYTE_ENS[4] = {1,1,1,1};
+  uint1_t H_BYTE_ENS[4] = {1,1,0,0};
+  uint1_t B_BYTE_ENS[4] = {1,0,0,0};
   if(rv.opcode==OP_OP){
     if(rv.funct3==FUNCT3_ADD_SUB_MUL){
       if(rv.funct7==FUNCT7_ADD){
@@ -545,56 +549,37 @@ decoded_t decode(uint32_t inst){
     rv.is_rv32i = 1;
     printf("JALR: PC=(%d + r%d), PC+4 -> r%d \n", rv.signed_immediate, rv.src1, rv.dest);
   }else if(rv.opcode==OP_LOAD){
+    rv.mem_to_reg = 1;
+    rv.reg_wr = 1;
+    rv.print_rs1_read = 1;
+    rv.is_rv32i = 1;
     // Store offset
     int12_t lw_offset = inst(31, 20);
     int32_t sign_extended_offset = lw_offset;
     rv.signed_immediate = sign_extended_offset;
-    uint1_t W_BYTE_ENS[4] = {1,1,1,1};
-    uint1_t H_BYTE_ENS[4] = {1,1,0,0};
-    uint1_t B_BYTE_ENS[4] = {1,0,0,0};
     if(rv.funct3==FUNCT3_LW_SW){
       // LW
       rv.mem_rd_byte_ens = W_BYTE_ENS;
-      rv.mem_to_reg = 1;
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.is_rv32i = 1;
       printf("LW: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_LH_SH){
       // LH
       rv.mem_rd_byte_ens = H_BYTE_ENS;
-      rv.mem_to_reg = 1;
       rv.mem_rd_sign_ext = 1;
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.is_rv32i = 1;
       printf("LH: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_LHU){
       // LHU
       rv.mem_rd_byte_ens = H_BYTE_ENS;
-      rv.mem_to_reg = 1;
       rv.mem_rd_sign_ext = 0;
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.is_rv32i = 1;
       printf("LHU: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_LB_SB){
       // LB
       rv.mem_rd_byte_ens = B_BYTE_ENS;
-      rv.mem_to_reg = 1;
       rv.mem_rd_sign_ext = 1;
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.is_rv32i = 1;
       printf("LB: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else if(rv.funct3==FUNCT3_LBU){
       // LBU
       rv.mem_rd_byte_ens = B_BYTE_ENS;
-      rv.mem_to_reg = 1;
       rv.mem_rd_sign_ext = 0;
-      rv.reg_wr = 1;
-      rv.print_rs1_read = 1;
-      rv.is_rv32i = 1;
       printf("LBU: addr = r%d + %d, mem[addr] -> r%d \n", rv.src1, rv.signed_immediate, rv.dest);
     }else{
       printf("Unsupported OP_LOAD instruction: 0x%X\n", inst);
@@ -608,8 +593,10 @@ decoded_t decode(uint32_t inst){
     rv.is_rv32i = 1;
     printf("LUI: %d -> r%d \n", rv.signed_immediate, rv.dest);
   }else if(rv.opcode==OP_STORE){
+    rv.reg_to_mem = 1;
     rv.print_rs1_read = 1;
     rv.print_rs2_read = 1;
+    rv.is_rv32i = 1;
     uint7_t imm11_5 = inst(31, 25);
     uint5_t imm4_0 = inst(11, 7);
     // Store offset
@@ -620,22 +607,15 @@ decoded_t decode(uint32_t inst){
     rv.signed_immediate = sign_extended_offset;
     if(rv.funct3==FUNCT3_LW_SW){
       // SW
-      rv.mem_wr_byte_ens[0] = 1;
-      rv.mem_wr_byte_ens[1] = 1;
-      rv.mem_wr_byte_ens[2] = 1;
-      rv.mem_wr_byte_ens[3] = 1;
-      rv.is_rv32i = 1;
+      rv.mem_wr_byte_ens = W_BYTE_ENS;
       printf("SW: addr = r%d + %d, mem[addr] <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
     }else if(rv.funct3==FUNCT3_LH_SH){
       // SH
-      rv.mem_wr_byte_ens[0] = 1;
-      rv.mem_wr_byte_ens[1] = 1;
-      rv.is_rv32i = 1;
+      rv.mem_wr_byte_ens = H_BYTE_ENS;
       printf("SH: addr = r%d + %d, mem[addr](15 downto 0) <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
     }else if(rv.funct3==FUNCT3_LB_SB){
       // SB
-      rv.mem_wr_byte_ens[0] = 1;
-      rv.is_rv32i = 1;
+      rv.mem_wr_byte_ens = B_BYTE_ENS;
       printf("SB: addr = r%d + %d, mem[addr](7 downto 0) <- r%d \n", rv.src1, rv.signed_immediate, rv.src2);
     }else {
       printf("Unsupported OP_STORE instruction: 0x%X\n", inst);
@@ -922,7 +902,7 @@ uint32_t select_reg_wr_data(
   uint32_t reg_wr_data = exe.result;
   if(decoded.mem_to_reg){
     printf("Write RegFile: MemRd->Reg...\n");
-    reg_wr_data = mem_rd_data;
+    reg_wr_data = mem_rd_data; // default reg_to_mem
     if(decoded.mem_rd_sign_ext){
       int32_t i32_value;
       if(
