@@ -70,6 +70,9 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_mul_pipeline, execute_t, execute_rv
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_div_pipeline, execute_t, execute_rv32_div, execute_rv32_m_ext_in_t)
 #endif
 
+// Not all states take an entire cycle,
+// i.e. EXE_END to MEM_START is same cycle
+//      MEM_END to WRITE_BACK_NEXT_PC is same cycle
 typedef enum cpu_state_t{
   // Use PC as addr into IMEM
   FETCH_START, 
@@ -77,10 +80,16 @@ typedef enum cpu_state_t{
   FETCH_END_DECODE_REG_RD_START,
   // Use read data from regfile for execute start
   REG_RD_END_EXE_START,
-  // Wait for output data from execute, data into dmem
-  EXE_END_MEM_START,
-  // Use DMEM read data for doing write back, update to next pc
-  MEM_END_WRITE_BACK_NEXT_PC,
+  // Wait for output data from execute,
+  EXE_END,
+  //     \/ SAME CYCLE \/
+  // Data into dmem starting mem transaction
+  MEM_START,
+  // Wait for DMEM mem transfer to finish
+  MEM_END,
+  //     \/ SAME CYCLE \/
+  // Write back, update to next pc
+  WRITE_BACK_NEXT_PC,
   // Debug error state to halt execution
   WTF
 }cpu_state_t;
@@ -222,20 +231,19 @@ riscv_out_t fsm_riscv(
     }
     #endif
     // And start waiting for a valid output
-    next_state = EXE_END_MEM_START;
+    next_state = EXE_END;
   }
   // Execute finish
-  if(state==EXE_END_MEM_START){
+  if(state==EXE_END){
     // Which EXE pipeline to wait for valid output from?
     // Then move on to next state
-    // (mem inputs wired below)
     if(decoded_reg.is_rv32i){
       // RV32I
       printf("Waiting for RV32I Execute to end...\n");
       if(execute_rv32i_pipeline_out_valid){
         printf("RV32I Execute End:\n");
         exe = execute_rv32i_pipeline_out;
-        next_state = MEM_END_WRITE_BACK_NEXT_PC;
+        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }
     #ifdef RV32_M
@@ -245,7 +253,7 @@ riscv_out_t fsm_riscv(
       if(execute_rv32_mul_pipeline_out_valid){
         printf("RV32 MUL Execute End:\n");
         exe = execute_rv32_mul_pipeline_out;
-        next_state = MEM_END_WRITE_BACK_NEXT_PC;
+        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }else if(decoded_reg.is_rv32_div){
       // DIV|REM
@@ -253,7 +261,7 @@ riscv_out_t fsm_riscv(
       if(execute_rv32_div_pipeline_out_valid){
         printf("RV32 DIV|REM Execute End:\n");
         exe = execute_rv32_div_pipeline_out;
-        next_state = MEM_END_WRITE_BACK_NEXT_PC;
+        state = MEM_START; next_state = state; // SAME CYCLE STATE TRANSITION
       }
     }
     #endif
@@ -266,23 +274,19 @@ riscv_out_t fsm_riscv(
   ARRAY_SET(mem_rd_byte_ens, 0, 4)  
   mem_addr = exe.result; // Driven somewhere in EXE_END above^
   mem_wr_data = reg_file_out_reg.rd_data2; // data from regfile out reg held from prev cycles
-  if(state==EXE_END_MEM_START){
-    // Which EXE pipeline to wait for valid output from?
-    // EXE outputs can go into dmem
-    // Wait to start write or read en during first cycle of two cycle read
-    // Which is cycle when execute result comes out of pipeline
-    if(decoded_reg.is_rv32i){
-      // RV32I
-      if(execute_rv32i_pipeline_out_valid){
-        mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
-        mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
-      }
+  if(state==MEM_START){
+    printf("MEM Start:\n");
+    mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
+    mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
+    next_state = MEM_END;
+    if(mem_wr_byte_ens[0]){
+      printf("Write Mem[0x%X] = %d started\n", mem_addr, mem_wr_data);
     }
-    // M extension is_rv32_mul is_rv32_div instructions do not do DMEM reads or writes
+    if(mem_rd_byte_ens[0]){
+      printf("Read Mem[0x%X] started\n", mem_addr);
+    }
   }
-  if(mem_wr_byte_ens[0]){
-    printf("Write Mem[0x%X] = %d\n", mem_addr, mem_wr_data);
-  }
+  
   // DMEM always "in use" regardless of stage
   // since memory map IO need to be connected always
   dmem_out = riscv_dmem(
@@ -297,11 +301,16 @@ riscv_out_t fsm_riscv(
   // Outputs from memory map
   o.mem_map_outputs = dmem_out.mem_map_outputs;
   // Data memory outputs
-  if(state==MEM_END_WRITE_BACK_NEXT_PC){
+  if(state==MEM_END){
+    printf("MEM End:\n");
     // Read output available from dmem_out in second cycle of two cycle read
     if(decoded_reg.mem_rd_byte_ens[0]){
-      printf("Read Mem[0x%X] = %d\n", mem_addr_reg, dmem_out.rd_data);
+      printf("Read Mem[0x%X] = %d finished\n", mem_addr_reg, dmem_out.rd_data);
     }
+    if(decoded_reg.mem_wr_byte_ens[0]){
+      printf("Write Mem[0x%X] finished\n", mem_addr_reg);
+    }
+    state = WRITE_BACK_NEXT_PC; next_state = state; // SAME CYCLE STATE TRANSITION
   }
 
   // Write Back + Next PC
@@ -309,7 +318,7 @@ riscv_out_t fsm_riscv(
   reg_wr_en = 0; // default no writes 
   reg_wr_addr = 0;
   reg_wr_data = 0;
-  if(state==MEM_END_WRITE_BACK_NEXT_PC){
+  if(state==WRITE_BACK_NEXT_PC){
     printf("Write Back + Next PC:\n");
     // Reg file write back, drive inputs (FEEDBACK)
     reg_wr_en = decoded_reg.reg_wr;
@@ -358,6 +367,7 @@ riscv_out_t fsm_riscv(
 #pragma MAIN_MHZ my_top 6.25
 void my_top(uint1_t reset) // TODO drive or dont use reset during sim
 {
+  //uint1_t reset = 0;
   // Instance of core
   my_mmio_in_t in; // Disconnected for now
   riscv_out_t out = fsm_riscv(reset, in);
