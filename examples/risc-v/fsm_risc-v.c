@@ -64,10 +64,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // Declare globally visible auto pipelines out of exe logic
 #include "global_func_inst.h"
-// TODO consider removing extra 2 cycles of latency from auto pipeline having IO regs around it added?
-//    Needs same cycle exe start->end transition
-GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
+//  Global function has no built in delay, can 'return' in same cycle
+GLOBAL_FUNC_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
 #ifdef RV32_M
+//  Global pipeline has built in minimum 2 cycle delay for input and output regs
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_mul_pipeline, execute_t, execute_rv32_mul, execute_rv32_m_ext_in_t)
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_div_pipeline, execute_t, execute_rv32_div, execute_rv32_m_ext_in_t)
 #endif
@@ -216,6 +216,9 @@ riscv_out_t fsm_riscv(
       execute_rv32i_pipeline_in.reg1 = reg_file_out.rd_data1;
       execute_rv32i_pipeline_in.reg2 = reg_file_out.rd_data2;
       execute_rv32i_pipeline_in_valid = 1;
+      // RV32I might not need pipelining, so allow same cycle execution
+      // (same cycle as if in-line execute() called here)
+      state = EXE_END; next_state = state; // SAME CYCLE STATE TRANSITION
     }
     #ifdef RV32_M
     else if(decoded_reg.is_rv32_mul){
@@ -224,7 +227,9 @@ riscv_out_t fsm_riscv(
       execute_rv32_mul_pipeline_in.decoded = decoded_reg;
       execute_rv32_mul_pipeline_in.reg1 = reg_file_out.rd_data1;
       execute_rv32_mul_pipeline_in.reg2 = reg_file_out.rd_data2;
-      execute_rv32_mul_pipeline_in_valid = 1;  
+      execute_rv32_mul_pipeline_in_valid = 1;
+      // Start waiting for a valid output (next cycle)
+      next_state = EXE_END;  
     }else if(decoded_reg.is_rv32_div){
       // DIV+REM
       printf("RV32 DIV|REM Execute Start:\n");
@@ -232,10 +237,10 @@ riscv_out_t fsm_riscv(
       execute_rv32_div_pipeline_in.reg1 = reg_file_out.rd_data1;
       execute_rv32_div_pipeline_in.reg2 = reg_file_out.rd_data2;
       execute_rv32_div_pipeline_in_valid = 1;
+      // Start waiting for a valid output (next cycle)
+      next_state = EXE_END;
     }
     #endif
-    // And start waiting for a valid output
-    next_state = EXE_END;
   }
   // Execute finish
   if(state==EXE_END){
@@ -283,7 +288,7 @@ riscv_out_t fsm_riscv(
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)  
   mem_addr = exe.result; // Driven somewhere in EXE_END above^
-  mem_wr_data = reg_file_out_reg.rd_data2; // data from regfile out reg held from prev cycles
+  mem_wr_data = reg_file_out.rd_data2; // direct from regfile since could be same cycle rv32i exe
   if(state==MEM_START){
     printf("Starting MEM...\n");
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;

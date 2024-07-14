@@ -13,6 +13,49 @@ void inst_name() \
   inst_name##_out = func_name(inst_name##_in); \
 }
 
+
+// NO IO regs version with id and valid
+#define GLOBAL_FUNC_INST_W_VALID_ID(inst_name, out_type, func_name, in_type) \
+typedef struct PPCAT(inst_name,_in_t){ \
+  in_type data; \
+  uint8_t id; \
+  uint1_t valid; \
+}PPCAT(inst_name,_in_t); \
+typedef struct PPCAT(inst_name,_out_t){ \
+  out_type data; \
+  uint8_t id; \
+  uint1_t valid; \
+}PPCAT(inst_name,_out_t); \
+/* Wrapper neeed to ensure globals behave as expected */\
+PPCAT(inst_name,_out_t) PPCAT(inst_name,_wrapper)(in_type data, uint8_t id, uint1_t valid) \
+{ \
+  PPCAT(inst_name,_out_t) rv;\
+  rv.data = func_name(data);\
+  rv.id = id;\
+  rv.valid = valid;\
+  return rv;\
+}\
+/* Global wires connected to instance */ \
+in_type inst_name##_in; \
+uint8_t inst_name##_in_id; \
+uint1_t inst_name##_in_valid; \
+out_type inst_name##_out; \
+uint8_t inst_name##_out_id; \
+uint1_t inst_name##_out_valid; \
+MAIN(inst_name) \
+void inst_name() \
+{ \
+  PPCAT(inst_name,_out_t) wrapper_out = PPCAT(inst_name,_wrapper)(\
+    inst_name##_in,\
+    inst_name##_in_id,\
+    inst_name##_in_valid\
+  ); \
+  inst_name##_out = wrapper_out.data; \
+  inst_name##_out_id = wrapper_out.id; \
+  inst_name##_out_valid = wrapper_out.valid;\
+}
+
+
 // Pipeline version includes IO regs for now...
 #define GLOBAL_PIPELINE_INST(inst_name, out_type, func_name, in_type) \
 in_type PPCAT(inst_name,_in_reg_func)(in_type i) \
@@ -40,6 +83,12 @@ void inst_name() \
   out_type o = func_name(i); \
   inst_name##_out = PPCAT(inst_name,_out_reg_func)(o); \
 }
+
+
+// TODO GLOBAL_VALID_READY_PIPELINE_INST(inst_name, out_type, func_name, in_type, MAX_IN_FLIGHT)
+// For now use GLOBAL_PIPELINE_INST and just glue on another MAIN with FIFO+max in flight limit connection logic
+// need to rename inst name for uniquie wires etc
+// USE stream(type) for user facing wires
 
 
 // Pipeline version with id and valid
