@@ -227,6 +227,8 @@ typedef struct riscv_dmem_out_t
   #endif
 }riscv_dmem_out_t;
 #define riscv_dmem PPCAT(riscv_name,_dmem)
+
+#ifndef RISCV_DMEM_NO_AUTOPIPELINE
 riscv_dmem_out_t riscv_dmem(
   uint32_t rw_addr,
   uint32_t wr_data,
@@ -337,20 +339,6 @@ riscv_dmem_out_t riscv_dmem(
                                       wr_word, wr_word_byte_ens, valid);
   uint32_t mem_rd_data = ram_out.rd_data0;
   mem_out.valid = ram_out.valid0;
-  #ifdef RISCV_DMEM_1_CYCLE
-  // Manually delay signals to align with 1 cycle read data delay of dmem
-  #ifdef RISCV_DMEM_NO_AUTOPIPELINE
-  static riscv_mmio_mod_out_t mem_map_out_reg;
-  static uint2_t byte_mux_sel_reg;
-  static uint1_t rd_byte_ens_reg[4];
-  riscv_mmio_mod_out_t mem_map_out_next = mem_map_out;
-  uint2_t byte_mux_sel_next = byte_mux_sel;
-  uint1_t rd_byte_ens_next[4] = rd_byte_ens;
-  mem_map_out = mem_map_out_reg;
-  byte_mux_sel = byte_mux_sel_reg;
-  rd_byte_ens = rd_byte_ens_reg;
-  #endif
-  #endif
 
   // Determine output memory read data
   // Mem map read comes from memory map module not RAM memory
@@ -379,15 +367,195 @@ riscv_dmem_out_t riscv_dmem(
   }
   // Final mem rd data assignment to output
   mem_out.rd_data = mem_rd_data;
+  return mem_out;
+}
+#endif // /\ Pipelineable DMEM /\
 
-  // Manual pipeline regs next signal
-  #ifdef RISCV_DMEM_1_CYCLE
-  #ifdef RISCV_DMEM_NO_AUTOPIPELINE
-  mem_map_out_reg = mem_map_out_next;
-  byte_mux_sel_reg = byte_mux_sel_next;
-  rd_byte_ens_reg = rd_byte_ens_next;
+
+// Copy of above dmem module 
+// modified to no longer be a pipeline
+// in support FSM style memory access that takes variable amount of time
+#ifdef RISCV_DMEM_NO_AUTOPIPELINE
+#ifdef RISCV_DMEM_1_CYCLE
+riscv_dmem_out_t riscv_dmem(
+  uint32_t rw_addr,
+  uint32_t wr_data,
+  uint1_t wr_byte_ens[4],
+  uint1_t rd_byte_ens[4],
+  uint1_t valid // aka start
+  #ifdef riscv_mem_map_inputs_t
+  , riscv_mem_map_inputs_t mem_map_inputs
   #endif
+){
+  riscv_dmem_out_t mem_out;
+
+  // Two states like CPU
+  static uint1_t is_START_state = 1; // Otherwise is END
+
+  // Inputs registered during the valid cycle (see end of func)
+  // need to hold onto value for duration of mem operation
+  static uint32_t rw_addr_reg;
+  static uint32_t wr_data_reg;
+  static uint1_t wr_byte_ens_reg[4];
+  static uint1_t rd_byte_ens_reg[4];
+  if(~valid){
+    rw_addr = rw_addr_reg;
+    wr_data = wr_data_reg;
+    wr_byte_ens = wr_byte_ens_reg;
+    rd_byte_ens = rd_byte_ens_reg;
+  }
+
+  // Decode mem hardware type
+  uint1_t is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
+  uint1_t is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+  // Account for data memory being mapped to upper physical addr range
+  if(is_dmem){
+    rw_addr &= ~DMEM_BASE_ADDR;
+  }
+  // Convert byte addresses to 4-byte word index
+  uint32_t mem_rw_word_index = rw_addr >> 2;
+  uint2_t byte_mux_sel = rw_addr(1,0);
+
+  // Write or read helper flags
+  uint1_t word_wr_en = 0;
+  uint1_t word_rd_en = 0;
+  uint32_t i;
+  for(i=0;i<4;i+=1){
+    word_wr_en |= wr_byte_ens[i];
+    word_rd_en |= rd_byte_ens[i];
+  }
+
+  // Extra logic to account for how byte enables changes
+  // assume is "aligned" to fit in one memory 32b word access?
+  uint1_t zeros[4] = {0,0,0,0};
+  uint1_t rd_word_byte_ens[4] = rd_byte_ens;
+  uint1_t wr_word_byte_ens[4] = wr_byte_ens;
+  uint32_t wr_word = wr_data;
+  if(byte_mux_sel==3){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 3)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 3)
+    wr_word = wr_data << (3*8);
+    // Check for dropped data in upper bytes
+    if(valid&(rd_byte_ens[3]|rd_byte_ens[2]|rd_byte_ens[1]|
+      wr_byte_ens[3]|wr_byte_ens[2]|wr_byte_ens[1]))
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper 3 bytes dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }else if(byte_mux_sel==2){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 2)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 2)
+    wr_word = wr_data << (2*8);
+    // Check for dropped data in upper bytes
+    if(valid&(rd_byte_ens[3]|rd_byte_ens[2]|
+      wr_byte_ens[3]|wr_byte_ens[2]))
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper 2 bytes dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }else if(byte_mux_sel==1){
+    ARRAY_SHIFT_INTO_BOTTOM(rd_word_byte_ens, 4, zeros, 1)
+    ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 1)
+    wr_word = wr_data << (1*8);
+    // Check for dropped data in upper bytes
+    if(valid&(rd_byte_ens[3]|
+      wr_byte_ens[3]))
+    {
+      printf("Error: mem_out_of_range unaligned access! addr=%d upper byte dropped\n",rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
+  }
+
+  // Start state signalling into memories
+  if(is_START_state){
+    // Wait for valid input
+    if(valid){
+      // Sanity check, stop sim if out of range access
+      if(is_dmem){
+        if((mem_rw_word_index >= RISCV_DMEM_NUM_WORDS) & (word_wr_en | word_rd_en)){
+          printf("Error: mem_out_of_range large addr %d\n",rw_addr);
+          mem_out.mem_out_of_range = 1;
+        }
+      }
+      if(is_mmio){
+        if(word_wr_en) printf("Memory mapped IO store addr=0x%X started\n", rw_addr);
+        if(word_rd_en) printf("Memory mapped IO load addr=0x%X started\n", rw_addr); 
+      }
+      // Wait for mem op to end 
+      is_START_state = 0;
+    }
+  }
+  
+  // Locally instatiated memory modules
+  //  Primary dmem RAM instance
+  riscv_dmem_ram_out_t ram_out = riscv_dmem_ram(mem_rw_word_index,
+                                      wr_word, wr_word_byte_ens, valid & is_dmem);
+  //  Memory mapped IO
+  riscv_mmio_mod_out_t mem_map_out = riscv_mem_map(
+    mem_rw_word_index<<2, 
+    wr_word,
+    wr_word_byte_ens,
+    rd_word_byte_ens,
+    valid & is_mmio
+    #ifdef riscv_mem_map_inputs_t
+    , mem_map_inputs
+    #endif
+  );
+  #ifdef riscv_mem_map_outputs_t
+  mem_out.mem_map_outputs = mem_map_out.outputs;
   #endif
+
+  // End state signalling handling outputs from memory
+  // Drive mem out valid and rd_data
+  uint32_t mem_rd_data = 0;
+  mem_out.valid = 0;
+  if(~is_START_state){
+    // Wait for valid output from selected memory hardware
+    if(is_dmem){
+      mem_rd_data = ram_out.rd_data0;
+      mem_out.valid = ram_out.valid0;
+    }
+    if(is_mmio){
+      mem_rd_data = mem_map_out.rd_data;
+      mem_out.valid = mem_map_out.valid;
+    }
+    // Back to start once output happened
+    if(mem_out.valid){
+      is_START_state = 1;
+    }
+  }
+  
+  // Shift read data to account for conversion to 32b word index access
+  if(byte_mux_sel==3){
+    mem_rd_data = mem_rd_data >> (8*3);
+  }else if(byte_mux_sel==2){
+    mem_rd_data = mem_rd_data >> (8*2);
+  }else if(byte_mux_sel==1){
+    mem_rd_data = mem_rd_data >> (8*1);
+  }  
+  // Apply read enable byte enables to clear unused bits
+  // Likely unecessary since sign extend done in reg wr stage?
+  if(rd_byte_ens[3] & rd_byte_ens[2] & rd_byte_ens[1] & rd_byte_ens[0]){
+    mem_rd_data = mem_rd_data; // No byte truncating
+  }else if(rd_byte_ens[1] & rd_byte_ens[0]){
+    // Lower two bytes only
+    mem_rd_data = uint16_uint16(0, mem_rd_data(15,0));
+  }else {
+    // Lower single bytes only (or no read)
+    mem_rd_data = uint24_uint8(0, mem_rd_data(7,0));
+  }
+  // Final mem rd data assignment to output
+  mem_out.rd_data = mem_rd_data;
+
+  // Input registers
+  if(valid){
+    rw_addr_reg = rw_addr;
+    wr_data_reg = wr_data;
+    wr_byte_ens_reg = wr_byte_ens;
+    rd_byte_ens_reg = rd_byte_ens;
+  }
 
   return mem_out;
 }
+#endif
+#endif

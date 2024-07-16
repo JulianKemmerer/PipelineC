@@ -14,28 +14,57 @@
 #include "mem_map.h" 
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
-  uint1_t button;
+  uint1_t button; // unused for now
+  // TODO mm_status_regs_t status;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
-  //uint32_t return_value;
-  //uint1_t halt;
-  uint1_t led;
+  mm_ctrl_regs_t ctrl;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
 RISCV_DECL_MEM_MAP_MOD_OUT_T(my_mmio_out_t)
 riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
+  // All inputs are valid from the first valid=1 'start' cycle until end of operation
+  // (dont need extra input regs here in user code)
   RISCV_MEM_MAP_MOD_INPUTS(my_mmio_in_t)
 ){
-  // Outputs
-  static riscv_mem_map_mod_out_t(my_mmio_out_t) o_reg;
-  riscv_mem_map_mod_out_t(my_mmio_out_t) o = o_reg;
-  o.addr_is_mapped = 0; // since o is static regs
-  o.valid = valid; // As written user MMIO completes in same cycle it starts
-  // Memory muxing/select logic
-  // Uses helper comparing word address and driving a variable
-  //WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  //o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
-  WORD_MM_ENTRY_NEW(LED_ADDR, o_reg.outputs.led, o_reg.outputs.led, addr, o.addr_is_mapped, o.rd_data)
+  riscv_mem_map_mod_out_t(my_mmio_out_t) o;
+  
+  // Two states like CPU
+  static uint1_t is_START_state = 1; // Otherwise is END
+  // START, END: same cycle for regs, 1 cycle delay for BRAM, variable wait for AXI RAMs etc
+  uint1_t mmio_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
+
+  // MM Control registers
+  static mm_ctrl_regs_t ctrl;
+  o.outputs.ctrl = ctrl;
+
+  // Start MMIO operation
+  if(is_START_state){
+    // Starting regs operation
+    if(mmio_type_is_regs){
+      // Wait for valid input start signal 
+      if(valid){
+        // Done in same cycle, goto end state
+        is_START_state = 0;
+      }
+    }
+  }
+
+  // Memory muxing/select logic for control and status registers
+  if(mmio_type_is_regs & valid){
+    STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
+  }
+
+  // End MMIO operation
+  if(~is_START_state){
+    // Ending regs operation
+    if(mmio_type_is_regs){
+      // Done in same cycle, get ready to start next cycle
+      o.valid = 1;
+      is_START_state = 1;
+    }
+  }
+
   return o;
 }
 
@@ -87,6 +116,7 @@ typedef enum cpu_state_t{
   //     \/ SAME CYCLE \/
   // Data into dmem starting mem transaction
   MEM_START,
+  //     \/ SAME CYCLE \/
   // Wait for DMEM mem transfer to finish
   MEM_END,
   //     \/ SAME CYCLE \/
@@ -287,14 +317,17 @@ riscv_out_t fsm_riscv(
   mem_valid_in = 0;
   ARRAY_SET(mem_wr_byte_ens, 0, 4)
   ARRAY_SET(mem_rd_byte_ens, 0, 4)  
-  mem_addr = exe.result; // Driven somewhere in EXE_END above^
-  mem_wr_data = reg_file_out.rd_data2; // direct from regfile since could be same cycle rv32i exe
+  mem_addr = 0;
+  mem_wr_data = 0;
   if(state==MEM_START){
     printf("Starting MEM...\n");
+    mem_addr = exe.result; // Driven somewhere in EXE_END above^
+    mem_wr_data = reg_file_out.rd_data2; // direct from regfile since could be same cycle rv32i exe
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
     mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
     mem_valid_in = 1;
-    next_state = MEM_END;
+    // MMIO regs can read in same cycle, if bad for fmax can make 1 cycle delay like bram...
+    state = MEM_END; next_state = state; // SAME CYCLE STATE TRANSITION
     if(mem_wr_byte_ens[0]){
       printf("Write Mem[0x%X] = %d started\n", mem_addr, mem_wr_data);
     }
@@ -405,7 +438,7 @@ void my_top(uint1_t reset) // TODO drive or dont use reset during sim
   static uint1_t mem_out_of_range_reg;
   static uint1_t unknown_op_reg;
   leds = 0;
-  leds |= (uint4_t)out.mem_map_outputs.led << 0;
+  leds |= (uint4_t)out.mem_map_outputs.ctrl.led << 0;
   leds |= (uint4_t)mem_out_of_range_reg << 1;
   leds |= (uint4_t)unknown_op_reg << 2;
 
