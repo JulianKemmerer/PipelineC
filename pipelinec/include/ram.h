@@ -247,6 +247,69 @@ begin \n\
 "); \
 }
 
+// Single port with byte enables like for CPU
+#define DECL_4BYTE_RAM_SP_RF_1(\
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct ram_name##_out_t \
+{ \
+  uint32_t addr0; \
+  uint32_t wr_data0; uint1_t wr_byte_ens0[4]; \
+  uint32_t rd_data0; \
+  uint1_t valid0; \
+}ram_name##_out_t; \
+ram_name##_out_t ram_name( \
+  uint32_t addr0,\
+  uint32_t wr_data0, uint1_t wr_byte_ens0[4],\
+  uint1_t valid0\
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of unsigned(31 downto 0); \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr0_s <= to_integer(addr0(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if valid0(0)='1' then \n\
+          if wr_byte_ens0(0)(0)='1'then \n\
+            the_ram(addr0_s)(7 downto 0) <= wr_data0(7 downto 0); \n\
+          end if;  \n\
+          if wr_byte_ens0(1)(0)='1'then \n\
+            the_ram(addr0_s)(15 downto 8) <= wr_data0(15 downto 8); \n\
+          end if;  \n\
+          if wr_byte_ens0(2)(0)='1'then \n\
+            the_ram(addr0_s)(23 downto 16) <= wr_data0(23 downto 16); \n\
+          end if;  \n\
+          if wr_byte_ens0(3)(0)='1'then \n\
+            the_ram(addr0_s)(31 downto 24) <= wr_data0(31 downto 24); \n\
+          end if;  \n\
+        end if; \n\
+        return_output.addr0 <= addr0; \n\
+        return_output.rd_data0 <= the_ram(addr0_s); \n\
+        return_output.wr_data0 <= wr_data0; \n\
+        return_output.wr_byte_ens0 <= wr_byte_ens0; \n\
+        return_output.valid0 <= valid0; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+");\
+}
+
 // Dual port, one read+write, one read only, 1 clock latency
 #define DECL_RAM_DP_RW_R_1( \
   elem_t, \
