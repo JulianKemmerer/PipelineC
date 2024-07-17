@@ -10,6 +10,16 @@
 #include "gcc_test/text_mem_init.h"
 #include "gcc_test/data_mem_init.h"
 
+// BRAM modules as needed by user memory mappings
+#ifdef MMIO_BRAM0
+#include "ram.h" 
+DECL_4BYTE_RAM_SP_RF_1(
+  bram0_ram,
+  (MMIO_BRAM0_SIZE/4),
+  MMIO_BRAM0_INIT
+)
+#endif
+
 // Helpers macros for building mmio modules
 #include "mem_map.h" 
 // Define MMIO inputs and outputs
@@ -31,36 +41,78 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   
   // Two states like CPU
   static uint1_t is_START_state = 1; // Otherwise is END
-  // START, END: same cycle for regs, 1 cycle delay for BRAM, variable wait for AXI RAMs etc
-  uint1_t mmio_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
+
+  // What kind of memory mapped storage?
+  // START, END: 
+  //  same cycle for regs, 1 cycle delay for BRAM, variable wait for AXI RAMs etc
+  //  REGISTERS
+  uint1_t mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
+  uint1_t mm_regs_enabled; // Default no reg op
+  //  BRAMS
+  #ifdef MMIO_BRAM0
+  uint1_t mmio_type_is_bram0 = (addr>=MMIO_BRAM0_ADDR) & (addr<(MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE));
+  uint32_t bram0_word_addr = (addr - MMIO_BRAM0_ADDR)>>2; // Account for offset in memory and 32b word addressing
+  uint32_t bram0_wr_data = wr_data;
+  uint1_t bram0_wr_byte_ens0[4] = wr_byte_ens;
+  uint1_t bram0_valid_in; // Default no bram op
+  #endif
 
   // MM Control registers
   static mm_ctrl_regs_t ctrl;
   o.outputs.ctrl = ctrl;
 
-  // Start MMIO operation
+  // Start MM operation
   if(is_START_state){
-    // Starting regs operation
-    if(mmio_type_is_regs){
-      // Wait for valid input start signal 
-      if(valid){
-        // Done in same cycle, goto end state
-        is_START_state = 0;
+    // Wait for valid input start signal 
+    if(valid){
+      // Starting regs operation
+      if(mm_type_is_regs){
+        // Value pulse to do reg op this cycle
+        mm_regs_enabled = 1;
+        o.addr_is_mapped = 1;
       }
+      // Starting BRAM operation
+      #ifdef MMIO_BRAM0
+      if(mmio_type_is_bram0){
+        // Valid pulse into BRAM
+        bram0_valid_in = 1;
+        o.addr_is_mapped = 1;
+      }
+      #endif
+      // Goto end state
+      is_START_state = 0;
     }
   }
 
   // Memory muxing/select logic for control and status registers
-  if(mmio_type_is_regs & valid){
+  if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
   }
+  // BRAM0 instance
+  #ifdef MMIO_BRAM0
+  bram0_ram_out_t bram0_ram_out = bram0_ram(
+    bram0_word_addr, bram0_wr_data, bram0_wr_byte_ens0, bram0_valid_in
+  );
+  #endif
 
   // End MMIO operation
   if(~is_START_state){
+    o.addr_is_mapped = 1;
     // Ending regs operation
-    if(mmio_type_is_regs){
+    if(mm_type_is_regs){
       // Done in same cycle, get ready to start next cycle
       o.valid = 1;
+      // rd_data and addr_is_mapped handled in STRUCT_MM helper macro
+    }
+    // End bram operation
+    #ifdef MMIO_BRAM0
+    if(mmio_type_is_bram0){
+      o.valid = bram0_ram_out.valid0;
+      o.rd_data = bram0_ram_out.rd_data0;
+    }
+    #endif
+    // Start over when done
+    if(o.valid){
       is_START_state = 1;
     }
   }
