@@ -19,7 +19,8 @@ typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
 {\
   uint1_t addr_is_mapped;\
   uint32_t rd_data;\
-  uint1_t valid;/*rd_data valid, aka done*/\
+  uint1_t valid;/*done, aka rd_data valid*/\
+  uint1_t ready_for_inputs;\
   mem_map_outputs_t outputs;\
 }riscv_mem_map_mod_out_t(mem_map_outputs_t);
 
@@ -28,6 +29,7 @@ uint32_t addr,\
 uint32_t wr_data, uint1_t wr_byte_ens[4],\
 uint1_t rd_byte_ens[4],\
 uint1_t valid,/*aka start*/\
+uint1_t ready_for_outputs,\
 mem_map_inputs_t inputs
 
 

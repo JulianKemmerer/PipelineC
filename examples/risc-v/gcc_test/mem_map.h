@@ -46,8 +46,15 @@ static volatile uint32_t* LED = (uint32_t*)(MM_CTRL_REGS_ADDR + offsetof(mm_ctrl
 #define MMIO_BRAM0_SIZE 1024
 #define MMIO_BRAM0_ADDR MM_CTRL_REGS_END_ADDR
 #define MMIO_BRAM0_INIT "(others => (others => '0'))"
-// copy dmem essentially for smaller ram
-// then do little mem test as part of delay in blinking led
 static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_BRAM0_END_ADDR (MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE)
+#endif
+
+// AXI buses (type of shared resource bus)
+#define MMIO_AXI0
+#ifdef MMIO_AXI0
+#define MMIO_AXI0_ADDR MMIO_BRAM0_END_ADDR
+#define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
+static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
+#define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
 #endif

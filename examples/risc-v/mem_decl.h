@@ -179,7 +179,8 @@ DECL_4BYTE_RAM_SP_RF_1(
 typedef struct riscv_dmem_out_t
 {
   uint32_t rd_data;
-  uint1_t valid; // read_data valid, aka done
+  uint1_t valid; // done aka rd_data valid
+  uint1_t ready_for_inputs;
   uint1_t mem_out_of_range; // Exception, stop sim
   #ifdef riscv_mem_map_outputs_t
   riscv_mem_map_outputs_t mem_map_outputs;
@@ -341,7 +342,8 @@ riscv_dmem_out_t riscv_dmem(
   uint32_t wr_data,
   uint1_t wr_byte_ens[4],
   uint1_t rd_byte_ens[4],
-  uint1_t valid // aka start
+  uint1_t valid_in, // aka start
+  uint1_t ready_for_outputs
   #ifdef riscv_mem_map_inputs_t
   , riscv_mem_map_inputs_t mem_map_inputs
   #endif
@@ -351,22 +353,23 @@ riscv_dmem_out_t riscv_dmem(
   // Two states like CPU
   static uint1_t is_START_state = 1; // Otherwise is END
 
-  // Inputs registered during the valid cycle (see end of func)
-  // need to hold onto value for duration of mem operation
-  static uint32_t rw_addr_reg;
-  static uint32_t wr_data_reg;
-  static uint1_t wr_byte_ens_reg[4];
-  static uint1_t rd_byte_ens_reg[4];
-  if(~valid){
-    rw_addr = rw_addr_reg;
-    wr_data = wr_data_reg;
-    wr_byte_ens = wr_byte_ens_reg;
+  // Registers to hold things supplied during start state
+  // but needed later during end state
+  // To adjust output of whatever memory
+  static uint1_t rd_byte_ens_reg[4]; 
+  // Decode mem hardware type
+  static uint1_t is_dmem;
+  static uint1_t is_mmio;
+  if(valid_in){
+    rd_byte_ens_reg = rd_byte_ens;
+    is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
+    is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+  }
+  // Overide input signal with valid gated input reg contents
+  if(~valid_in){
     rd_byte_ens = rd_byte_ens_reg;
   }
-
-  // Decode mem hardware type
-  uint1_t is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
-  uint1_t is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+   
   // Account for data memory being mapped to upper physical addr range
   if(is_dmem){
     rw_addr &= ~DMEM_BASE_ADDR;
@@ -395,7 +398,7 @@ riscv_dmem_out_t riscv_dmem(
     ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 3)
     wr_word = wr_data << (3*8);
     // Check for dropped data in upper bytes
-    if(valid&(rd_byte_ens[3]|rd_byte_ens[2]|rd_byte_ens[1]|
+    if(valid_in&(rd_byte_ens[3]|rd_byte_ens[2]|rd_byte_ens[1]|
       wr_byte_ens[3]|wr_byte_ens[2]|wr_byte_ens[1]))
     {
       printf("Error: mem_out_of_range unaligned access! addr=%d upper 3 bytes dropped\n",rw_addr);
@@ -406,7 +409,7 @@ riscv_dmem_out_t riscv_dmem(
     ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 2)
     wr_word = wr_data << (2*8);
     // Check for dropped data in upper bytes
-    if(valid&(rd_byte_ens[3]|rd_byte_ens[2]|
+    if(valid_in&(rd_byte_ens[3]|rd_byte_ens[2]|
       wr_byte_ens[3]|wr_byte_ens[2]))
     {
       printf("Error: mem_out_of_range unaligned access! addr=%d upper 2 bytes dropped\n",rw_addr);
@@ -417,7 +420,7 @@ riscv_dmem_out_t riscv_dmem(
     ARRAY_SHIFT_INTO_BOTTOM(wr_word_byte_ens, 4, zeros, 1)
     wr_word = wr_data << (1*8);
     // Check for dropped data in upper bytes
-    if(valid&(rd_byte_ens[3]|
+    if(valid_in&(rd_byte_ens[3]|
       wr_byte_ens[3]))
     {
       printf("Error: mem_out_of_range unaligned access! addr=%d upper byte dropped\n",rw_addr);
@@ -426,36 +429,41 @@ riscv_dmem_out_t riscv_dmem(
   }
 
   // Start state signalling into memories
+  uint1_t dmem_valid_in;
+  uint1_t mmio_valid_in;
   if(is_START_state){
     // Wait for valid input
-    if(valid){
-      // Sanity check, stop sim if out of range access
+    if(valid_in){
       if(is_dmem){
+        dmem_valid_in = 1;
+        // Sanity check, stop sim if out of range access for dmem
         if((mem_rw_word_index >= RISCV_DMEM_NUM_WORDS) & (word_wr_en | word_rd_en)){
           printf("Error: mem_out_of_range large addr %d\n",rw_addr);
           mem_out.mem_out_of_range = 1;
         }
       }
       if(is_mmio){
+        mmio_valid_in = 1;
         if(word_wr_en) printf("Memory mapped IO store addr=0x%X started\n", rw_addr);
         if(word_rd_en) printf("Memory mapped IO load addr=0x%X started\n", rw_addr); 
       }
-      // Wait for mem op to end 
-      is_START_state = 0;
     }
+    // Note: state transition out of START
+    // depends on ready output from memory handled below
   }
   
   // Locally instatiated memory modules
   //  Primary dmem RAM instance
   riscv_dmem_ram_out_t ram_out = riscv_dmem_ram(mem_rw_word_index,
-                                      wr_word, wr_word_byte_ens, valid & is_dmem);
+                                      wr_word, wr_word_byte_ens, dmem_valid_in);
   //  Memory mapped IO
   riscv_mmio_mod_out_t mem_map_out = riscv_mem_map(
     mem_rw_word_index<<2, 
     wr_word,
     wr_word_byte_ens,
     rd_word_byte_ens,
-    valid & is_mmio
+    mmio_valid_in,
+    ready_for_outputs & is_mmio // MMIO ready for outputs when this module is
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
     #endif
@@ -463,6 +471,28 @@ riscv_dmem_out_t riscv_dmem(
   #ifdef riscv_mem_map_outputs_t
   mem_out.mem_map_outputs = mem_map_out.outputs;
   #endif
+
+  // Start state transitions to end if selected memory accepted valid input as ready
+  if(is_START_state){
+    // Wait for valid input
+    if(valid_in){
+      if(is_dmem){
+        // DMEM is always ready bram
+        // (ready is output ready, mostly can assume)
+        mem_out.ready_for_inputs = ready_for_outputs;
+        // just go to next state
+        is_START_state = 0;
+      }
+      if(is_mmio){
+        // Need to wait for MMIO to be ready for starting input
+        // before moving to next state waiting to end and get output
+        mem_out.ready_for_inputs = mem_map_out.ready_for_inputs;
+      }
+      if(mem_out.ready_for_inputs){
+        is_START_state = 0;
+      }
+    }
+  }
 
   // End state signalling handling outputs from memory
   // Drive mem out valid and rd_data
@@ -479,7 +509,7 @@ riscv_dmem_out_t riscv_dmem(
       mem_out.valid = mem_map_out.valid;
     }
     // Back to start once output happened
-    if(mem_out.valid){
+    if(mem_out.valid & ready_for_outputs){
       is_START_state = 1;
     }
   }
@@ -505,14 +535,6 @@ riscv_dmem_out_t riscv_dmem(
   }
   // Final mem rd data assignment to output
   mem_out.rd_data = mem_rd_data;
-
-  // Input registers
-  if(valid){
-    rw_addr_reg = rw_addr;
-    wr_data_reg = wr_data;
-    wr_byte_ens_reg = wr_byte_ens;
-    rd_byte_ens_reg = rd_byte_ens;
-  }
 
   return mem_out;
 }

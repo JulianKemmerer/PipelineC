@@ -20,6 +20,15 @@ DECL_4BYTE_RAM_SP_RF_1(
 )
 #endif
 
+// AXI buses as needed by user memory mappings
+#ifdef MMIO_AXI0
+// Include code for Xilinx DDR AXI shared resource bus example
+// Declares AXI shared resource bus wires
+//   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
+#define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ 6.25
+#include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
+#endif
+
 // Helpers macros for building mmio modules
 #include "mem_map.h" 
 // Define MMIO inputs and outputs
@@ -31,31 +40,45 @@ typedef struct my_mmio_out_t{
   mm_ctrl_regs_t ctrl;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
+// See typedefs for valid and ready handshake used on input and output
 RISCV_DECL_MEM_MAP_MOD_OUT_T(my_mmio_out_t)
 riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
-  // All inputs are valid from the first valid=1 'start' cycle until end of operation
-  // (dont need extra input regs here in user code)
   RISCV_MEM_MAP_MOD_INPUTS(my_mmio_in_t)
 ){
   riscv_mem_map_mod_out_t(my_mmio_out_t) o;
   
   // Two states like CPU
   static uint1_t is_START_state = 1; // Otherwise is END
-
-  // What kind of memory mapped storage?
   // START, END: 
   //  same cycle for regs, 1 cycle delay for BRAM, variable wait for AXI RAMs etc
+
+  // What kind of memory mapped storage?
+  // 'is type' is register, set in START and held until end (based on addr only valid during input)
+  // Signals and default values for storage types
   //  REGISTERS
-  uint1_t mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
+  static uint1_t mm_type_is_regs; 
   uint1_t mm_regs_enabled; // Default no reg op
   //  BRAMS
   #ifdef MMIO_BRAM0
-  uint1_t mmio_type_is_bram0 = (addr>=MMIO_BRAM0_ADDR) & (addr<(MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE));
+  static uint1_t mmio_type_is_bram0;
   uint32_t bram0_word_addr = (addr - MMIO_BRAM0_ADDR)>>2; // Account for offset in memory and 32b word addressing
-  uint32_t bram0_wr_data = wr_data;
-  uint1_t bram0_wr_byte_ens0[4] = wr_byte_ens;
   uint1_t bram0_valid_in; // Default no bram op
   #endif
+  //  AXI RAMs
+  #ifdef MMIO_AXI0
+  static uint1_t mmio_type_is_axi0;
+  uint32_t axi0_addr = addr - MMIO_AXI0_ADDR; // Account for offset in memory
+  host_clk_to_dev(axi_xil_mem) = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
+  #endif
+
+  // Write or read helper flags
+  uint1_t word_wr_en = 0;
+  uint1_t word_rd_en = 0;
+  uint32_t i;
+  for(i=0;i<4;i+=1){
+    word_wr_en |= wr_byte_ens[i];
+    word_rd_en |= rd_byte_ens[i];
+  }
 
   // MM Control registers
   static mm_ctrl_regs_t ctrl;
@@ -65,22 +88,89 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(is_START_state){
     // Wait for valid input start signal 
     if(valid){
-      // Starting regs operation
+      // Starting regs operation?
+      mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
       if(mm_type_is_regs){
-        // Value pulse to do reg op this cycle
-        mm_regs_enabled = 1;
+        // Regs always ready now, i.e. if output was ready
+        o.ready_for_inputs = ready_for_outputs;
         o.addr_is_mapped = 1;
+        // Valid pulse to do reg op this cycle when ready
+        mm_regs_enabled = o.ready_for_inputs;
       }
-      // Starting BRAM operation
+      // Starting BRAM operation?
       #ifdef MMIO_BRAM0
+      mmio_type_is_bram0 = (addr>=MMIO_BRAM0_ADDR) & (addr<(MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE));
       if(mmio_type_is_bram0){
-        // Valid pulse into BRAM
-        bram0_valid_in = 1;
+        // BRAM always ready now, i.e. if output was ready
+        // (assumed will be ready one cycle later too for bram output)
+        o.ready_for_inputs = ready_for_outputs;
         o.addr_is_mapped = 1;
+        // Valid pulse into BRAM when ready
+        bram0_valid_in = o.ready_for_inputs;
       }
       #endif
-      // Goto end state
-      is_START_state = 0;
+      // AXI0 start/request signaling (direct global wiring for now)
+      #ifdef MMIO_AXI0
+      // Use helper axi shared resource bus fsm funcs to do the AXI stuff and signal when done
+      mmio_type_is_axi0 = (addr>=MMIO_AXI0_ADDR) & (addr<(MMIO_AXI0_ADDR+MMIO_AXI0_SIZE));
+      if(mmio_type_is_axi0){
+        // Start a write
+        if(word_wr_en){
+          // AXIS write addr + data setup
+          axi_write_req_t axi_wr_req;
+          axi_wr_req.awaddr = axi0_addr;
+          axi_wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+          axi_wr_req.awsize = 2; // 2^2=4 bytes per transfer
+          axi_wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
+          axi_write_data_t axi_wr_data;
+          //  Which of 4 bytes are being written?
+          uint32_t i;
+          for(i=0; i<4; i+=1)
+          {
+            axi_wr_data.wdata[i] = wr_data >> (i*8);
+            axi_wr_data.wstrb[i] = wr_byte_ens[i];
+          }
+          // Invoke helper FSM
+          axi_shared_bus_t_write_start_logic_outputs_t write_start =  
+            axi_shared_bus_t_write_start_logic(
+              axi_wr_req,
+              axi_wr_data, 
+              1,
+              dev_to_host_clk(axi_xil_mem).write
+            ); 
+          host_clk_to_dev(axi_xil_mem).write = write_start.to_dev;
+          // Finally ready and done with inputs when start finished
+          if(write_start.done){ 
+            o.ready_for_inputs = 1;
+          }
+        }
+        // Start a read
+        if(word_rd_en){
+          // AXIS read setup
+          axi_read_req_t axi_rd_req;
+          axi_rd_req.araddr = axi0_addr;
+          axi_rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+          axi_rd_req.arsize = 2; // 2^2=4 bytes per transfer
+          axi_rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
+          // Invoke helper FSM
+          axi_shared_bus_t_read_start_logic_outputs_t read_start =  
+            axi_shared_bus_t_read_start_logic(
+              axi_rd_req,
+              1,
+              dev_to_host_clk(axi_xil_mem).read.req_ready
+            ); 
+          host_clk_to_dev(axi_xil_mem).read.req = read_start.req;
+          // Finally ready and done with inputs when start finished
+          if(read_start.done){ 
+            o.ready_for_inputs = 1;
+          }
+        }
+      }
+      #endif
+      // Goto end state once ready for input
+      if(o.ready_for_inputs){
+        is_START_state = 0;
+      }
     }
   }
 
@@ -91,15 +181,17 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // BRAM0 instance
   #ifdef MMIO_BRAM0
   bram0_ram_out_t bram0_ram_out = bram0_ram(
-    bram0_word_addr, bram0_wr_data, bram0_wr_byte_ens0, bram0_valid_in
+    bram0_word_addr, wr_data, wr_byte_ens, bram0_valid_in
   );
   #endif
+
 
   // End MMIO operation
   if(~is_START_state){
     o.addr_is_mapped = 1;
     // Ending regs operation
     if(mm_type_is_regs){
+      // No ready to connect since is same cycle op, known ready from earlier
       // Done in same cycle, get ready to start next cycle
       o.valid = 1;
       // rd_data and addr_is_mapped handled in STRUCT_MM helper macro
@@ -107,12 +199,27 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     // End bram operation
     #ifdef MMIO_BRAM0
     if(mmio_type_is_bram0){
+      // No ready to connect since is assumed ready if ready last cycle
       o.valid = bram0_ram_out.valid0;
       o.rd_data = bram0_ram_out.rd_data0;
     }
     #endif
+    // End AXI0 operation
+    #ifdef MMIO_AXI0
+    if(mmio_type_is_axi0){
+      // Signal ready for both read and write responses
+      // (only one in use)
+      host_clk_to_dev(axi_xil_mem).read.data_ready = ready_for_outputs;
+      host_clk_to_dev(axi_xil_mem).write.resp_ready = ready_for_outputs;
+      // Either write or read resp is valid done signal
+      o.valid = dev_to_host_clk(axi_xil_mem).read.data.valid | 
+                dev_to_host_clk(axi_xil_mem).write.resp.valid;
+      // Read data is 4 bytes into u32
+      o.rd_data = axi_read_to_data(dev_to_host_clk(axi_xil_mem).read.data.burst.data_resp.user);
+    }
+    #endif
     // Start over when done
-    if(o.valid){
+    if(o.valid & ready_for_outputs){
       is_START_state = 1;
     }
   }
@@ -378,14 +485,13 @@ riscv_out_t fsm_riscv(
     mem_wr_byte_ens = decoded_reg.mem_wr_byte_ens;
     mem_rd_byte_ens = decoded_reg.mem_rd_byte_ens;
     mem_valid_in = 1;
-    // MMIO regs can read in same cycle, if bad for fmax can make 1 cycle delay like bram...
-    state = MEM_END; next_state = state; // SAME CYCLE STATE TRANSITION
     if(mem_wr_byte_ens[0]){
       printf("Write Mem[0x%X] = %d started\n", mem_addr, mem_wr_data);
     }
     if(mem_rd_byte_ens[0]){
       printf("Read Mem[0x%X] started\n", mem_addr);
     }
+    // Transition out of MEM_START state handled after dmem below, needs output ready signal
   }
   // DMEM always "in use" regardless of stage
   // since memory map IO need to be connected always
@@ -394,23 +500,31 @@ riscv_out_t fsm_riscv(
     mem_wr_data, // Main memory write data
     mem_wr_byte_ens, // Main memory write data byte enables
     mem_rd_byte_ens, // Main memory read enable
-    mem_valid_in, // Valid pulse corresponding dmem inputs above
+    mem_valid_in,// Valid pulse corresponding dmem inputs above
+    1, // Always ready for output valid
     // Memory map inputs
     mem_map_inputs
   );
   o.mem_out_of_range = dmem_out.mem_out_of_range; // debug
   // Outputs from memory map
   o.mem_map_outputs = dmem_out.mem_map_outputs;
+  // Transition out of MEM_START depends on ready output from memory
+  if(state==MEM_START){
+    if(dmem_out.ready_for_inputs){
+      // MMIO regs can read in same cycle, if bad for fmax can make 1 cycle delay like bram...
+      state = MEM_END; next_state = state; // SAME CYCLE STATE TRANSITION
+    }
+  }
   // Data memory outputs
   if(state==MEM_END){
     printf("Waiting for MEM to finish...\n");
     if(dmem_out.valid){
       // Read output available from dmem_out
       if(decoded_reg.mem_rd_byte_ens[0]){
-        printf("Read Mem[0x%X] = %d finished\n", mem_addr_reg, dmem_out.rd_data);
+        printf("Read Mem[0x%X] = %d finished\n", mem_addr, dmem_out.rd_data);
       }
       if(decoded_reg.mem_wr_byte_ens[0]){
-        printf("Write Mem[0x%X] finished\n", mem_addr_reg);
+        printf("Write Mem[0x%X] finished\n", mem_addr);
       }
       state = WRITE_BACK_NEXT_PC; next_state = state; // SAME CYCLE STATE TRANSITION
     }
@@ -471,11 +585,17 @@ riscv_out_t fsm_riscv(
 
 // LEDs for demo
 #include "leds/leds_port.c"
+// CDC for reset
+#include "cdc.h"
 
 #pragma MAIN_MHZ my_top 6.25
-void my_top(uint1_t reset) // TODO drive or dont use reset during sim
+void my_top(uint1_t areset) 
 {
+  // TODO drive or dont use reset during sim
+  // Sync reset
+  uint1_t reset = xil_cdc2_bit(areset);
   //uint1_t reset = 0;
+
   // Instance of core
   my_mmio_in_t in; // Disconnected for now
   riscv_out_t out = fsm_riscv(reset, in);
