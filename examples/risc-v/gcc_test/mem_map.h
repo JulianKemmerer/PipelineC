@@ -57,4 +57,32 @@ static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
 static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
+// Frame buffer in AXI0 DDR (at addr=0)
+typedef struct pixel_t{
+ uint8_t a, b, g, r; 
+}pixel_t; // 24bpp color, matching hardware byte order
+static volatile pixel_t* FB0 = (pixel_t*)MMIO_AXI0_ADDR;
+#define FRAME_WIDTH 640
+#define FRAME_HEIGHT 480
+#define TILE_FACTOR 1
+#define TILE_FACTOR_LOG2 0
+#define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
+#define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
+#define BYTES_PER_PIXEL 4
+#define BYTES_PER_PIXEL_LOG2 2
+// Pixel x,y pos to pixel index in array
+uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
+{
+  uint32_t x_tile_index = x >> TILE_FACTOR_LOG2;
+  uint32_t y_tile_index = y >> TILE_FACTOR_LOG2;
+  return (y_tile_index*NUM_X_TILES) + x_tile_index;
+}
+pixel_t frame_buf_read(uint16_t x, uint16_t y)
+{
+  return FB0[pos_to_pixel_index(x,y)];
+}
+void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
+{
+  FB0[pos_to_pixel_index(x,y)] = pixel;
+}
 #endif

@@ -22,11 +22,13 @@ DECL_4BYTE_RAM_SP_RF_1(
 
 // AXI buses as needed by user memory mappings
 #ifdef MMIO_AXI0
-// Include code for Xilinx DDR AXI shared resource bus example
+// Include code for Xilinx DDR AXI shared resource bus as frame buffer example
 // Declares AXI shared resource bus wires
 //   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
-#define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ 6.25
-#include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
+#define HOST_CLK_MHZ XIL_MEM_MHZ // CPU host side running at ddr controller clock
+#define NUM_USER_THREADS 1 // How many ports on the arbitration mux (TODO one more for I2S eventually)
+#define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
+#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
 #endif
 
 // Helpers macros for building mmio modules
@@ -588,8 +590,12 @@ riscv_out_t fsm_riscv(
 // CDC for reset
 #include "cdc.h"
 
+#ifdef MMIO_AXI0
+MAIN_MHZ(my_top, XIL_MEM_MHZ)
+#else
 #pragma MAIN_MHZ my_top 6.25
-void my_top(uint1_t areset) 
+#endif
+void my_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim
   // Sync reset
