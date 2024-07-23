@@ -1557,8 +1557,8 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
     rv += (
         " "
         + " "
-        + "if rising_edge(clk) and "
-        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + "if rising_edge(clk) then\n"
+        + "   if " + C_TO_LOGIC.CLOCK_ENABLE_NAME
         + "(0)='1' then"
         + "\n"
     )
@@ -1589,6 +1589,7 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
             + "\n"
         )
 
+    rv += " " + " " + " end if;" + "\n"
     rv += " " + " " + "end if;" + "\n"
     rv += " " + "end process;" + "\n"
 
