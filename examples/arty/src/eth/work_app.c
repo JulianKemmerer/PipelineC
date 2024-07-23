@@ -1,11 +1,13 @@
+#pragma PART "xc7a35ticsg324-1l"
+
 // AXIS is how to stream data
-#include "axis.h"
+#include "axi/axis.h"
 
 // Include board media access controller (8b AXIS)
 #include "xil_temac.c"
 
 // Include logic for parsing ethernet frames from 32b AXIS
-#include "eth_32.c"
+#include "net/eth_32.c"
 
 // Include the mac address info we want the fpga to have
 #include "fpga_mac.h"
@@ -23,14 +25,14 @@
 
 // FIFO to hold ethernet header during work()
 eth_header_t headers_fifo[2];
-#include "headers_fifo_clock_crossing.h"
+#include "clock_crossing/headers_fifo.h"
 
 // A module to convert axis32 to input type
 axis_to_type(axis_to_input, 32, work_inputs_t) // macro
 
 // FIFO to hold inputs buffered from the AXIS stream
 work_inputs_t inputs_fifo[16];
-#include "inputs_fifo_clock_crossing.h"
+#include "clock_crossing/inputs_fifo.h"
 
 // Receive logic
 #pragma MAIN_GROUP rx_main xil_temac_rx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
@@ -111,7 +113,7 @@ type_to_axis(output_to_axis,work_outputs_t,32) // macro
 
 // FIFO to hold work outputs as they are streamed out over AXIS
 work_outputs_t outputs_fifo[16];
-#include "outputs_fifo_clock_crossing.h"
+#include "clock_crossing/outputs_fifo.h"
 
 // Transmit logic
 #pragma MAIN_GROUP tx_main xil_temac_tx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
