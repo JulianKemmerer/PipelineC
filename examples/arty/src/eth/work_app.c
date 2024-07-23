@@ -1,4 +1,5 @@
 #pragma PART "xc7a35ticsg324-1l"
+#include "clock_crossing.h"
 
 // AXIS is how to stream data
 #include "axi/axis.h"
@@ -24,23 +25,20 @@
 #include "work_outputs_t_bytes_t.h"
 
 // FIFO to hold ethernet header during work()
-eth_header_t headers_fifo[2];
-#include "clock_crossing/headers_fifo.h"
+ASYNC_CLK_CROSSING(eth_header_t, headers_fifo, 2)
 
 // A module to convert axis32 to input type
 axis_to_type(axis_to_input, 32, work_inputs_t) // macro
 
 // FIFO to hold inputs buffered from the AXIS stream
-work_inputs_t inputs_fifo[16];
-#include "clock_crossing/inputs_fifo.h"
+ASYNC_CLK_CROSSING(work_inputs_t, inputs_fifo, 16)
 
 // Receive logic
 #pragma MAIN_GROUP rx_main xil_temac_rx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void rx_main()
 {
   // Read wire from RX MAC
-  xil_temac_to_rx_t from_mac;
-  WIRE_READ(xil_temac_to_rx_t, from_mac, xil_temac_to_rx) // from_mac = xil_temac_to_rx
+  xil_temac_to_rx_t from_mac = xil_temac_to_rx;
   // The stream of data from the RX MAC
   axis8_t mac_axis_rx = from_mac.rx_axis_mac;
   
@@ -105,23 +103,21 @@ void rx_main()
   to_mac.rx_configuration_vector = 0;
   to_mac.rx_configuration_vector |= (1<<1); // RX enable
   to_mac.rx_configuration_vector |= (1<<12); // 100Mb/s 
-  WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac) // xil_rx_to_temac = to_mac
+  xil_rx_to_temac = to_mac;
 }
 
 // Module to convert the output type to axis32 
 type_to_axis(output_to_axis,work_outputs_t,32) // macro
 
 // FIFO to hold work outputs as they are streamed out over AXIS
-work_outputs_t outputs_fifo[16];
-#include "clock_crossing/outputs_fifo.h"
+ASYNC_CLK_CROSSING(work_outputs_t, outputs_fifo, 16)
 
 // Transmit logic
 #pragma MAIN_GROUP tx_main xil_temac_tx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void tx_main()
 {
   // Read wires from TX MAC
-  xil_temac_to_tx_t from_mac;
-  WIRE_READ(xil_temac_to_tx_t, from_mac, xil_temac_to_tx) // from_mac = xil_temac_to_tx
+  xil_temac_to_tx_t from_mac = xil_temac_to_tx;
   uint1_t mac_ready = from_mac.tx_axis_mac_ready;
   
   // TODO stats+reset+enable
@@ -188,7 +184,7 @@ void tx_main()
   to_mac.tx_configuration_vector = 0;
   to_mac.tx_configuration_vector |= (1<<1); // TX enable
   to_mac.tx_configuration_vector |= (1<<12); // 100Mb/s
-  WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac) // xil_tx_to_temac = to_mac
+  xil_tx_to_temac = to_mac;
 }
 
 

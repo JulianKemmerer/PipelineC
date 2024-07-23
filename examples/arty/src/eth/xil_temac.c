@@ -77,29 +77,24 @@ typedef struct xil_temac_to_tx_t
   uint1_t speedis10100;
 }xil_temac_to_tx_t;
 
-// Internal globally visible 'ports' / 'wires' (a subset of clock domain crossing)
+// Internal globally visible 'ports' / 'wires'
 // RX
 // Input
 xil_rx_to_temac_t xil_rx_to_temac;
-#include "clock_crossing/xil_rx_to_temac.h"
 // Output
 xil_temac_to_rx_t xil_temac_to_rx;
-#include "clock_crossing/xil_temac_to_rx.h"
 // TX
 // Input
 xil_tx_to_temac_t xil_tx_to_temac;
-#include "clock_crossing/xil_tx_to_temac.h"
 // Output
 xil_temac_to_tx_t xil_temac_to_tx;
-#include "clock_crossing/xil_temac_to_tx.h"
 
 // RX
 MAIN_MHZ_GROUP(xil_temac_rx_module, XIL_TEMAC_RX_MHZ, xil_temac_rx) // Set clock freq and group
 xil_rx_to_temac_t xil_temac_rx_module(xil_temac_to_rx_t temac_to_rx)
 {
-  xil_rx_to_temac_t rx_to_temac;
-  WIRE_READ(xil_rx_to_temac_t, rx_to_temac, xil_rx_to_temac)
-  WIRE_WRITE(xil_temac_to_rx_t, xil_temac_to_rx, temac_to_rx)
+  xil_rx_to_temac_t rx_to_temac = xil_rx_to_temac;
+  xil_temac_to_rx = temac_to_rx;
   return rx_to_temac;
 }
 
@@ -108,9 +103,8 @@ xil_rx_to_temac_t xil_temac_rx_module(xil_temac_to_rx_t temac_to_rx)
 MAIN_MHZ_GROUP(xil_temac_tx_module, XIL_TEMAC_TX_MHZ, xil_temac_tx) // Set clock freq and group
 xil_tx_to_temac_t xil_temac_tx_module(xil_temac_to_tx_t temac_to_tx)
 {
-  xil_tx_to_temac_t tx_to_temac;
-  WIRE_READ(xil_tx_to_temac_t, tx_to_temac, xil_tx_to_temac)
-  WIRE_WRITE(xil_temac_to_tx_t, xil_temac_to_tx, temac_to_tx)
+  xil_tx_to_temac_t tx_to_temac = xil_tx_to_temac;
+  xil_temac_to_tx = temac_to_tx;
   return tx_to_temac;
 }
 
