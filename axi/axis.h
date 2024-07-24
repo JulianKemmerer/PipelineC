@@ -214,7 +214,7 @@ axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
       s_axis_tlast => axis_in.last(0),  \n\
       m_axis_tvalid => return_output.axis_out.valid(0),  \n\
       m_axis_tready => axis_out_ready(0),  \n\
-      unsigned(m_axis_tdata) => return_output.axis_out.data,  \n\
+      unsigned(m_axis_tdata) => return_output.axis_out.data(0),  \n\
       --unsigned(m_axis_tkeep) => return_output.axis_out.keep,  \n\
       m_axis_tlast => return_output.axis_out.last(0)  \n\
     );  \n\
