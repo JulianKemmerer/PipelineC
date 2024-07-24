@@ -1,9 +1,12 @@
 #include "compiler.h"
 #include "intN_t.h"
 #include "uintN_t.h"
+#include "clock_crossing.h"
+
+#pragma PART "xc7a35ticsg324-1l"
 
 // LEDs for signaling overflow
-#include "../leds/leds.c"
+#include "leds/leds_port.c"
 
 // AXIS is how to stream data
 #include "axi/axis.h"
@@ -33,15 +36,13 @@
 #include "pixels_update_t_bytes_t.h"
 
 // FIFO to hold ethernet header so can be used for reply address (TODO: dont need)
-eth_header_t headers_fifo[2];
-#include "clock_crossing/headers_fifo.h"
+ASYNC_CLK_CROSSING(eth_header_t, headers_fifo, 2)
 
 // Declare function to convert axis32 to input type
 axis_to_type(axis_to_input, 32, pixels_update_t)
 
 // FIFO to hold inputs buffered from the TEMAC AXIS stream
-pixels_update_t inputs_fifo[16];
-#include "clock_crossing/inputs_fifo.h"
+ASYNC_CLK_CROSSING(pixels_update_t, inputs_fifo, 16)
 
 // Receive logic
 // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
@@ -49,15 +50,14 @@ pixels_update_t inputs_fifo[16];
 void rx_main()
 {
   // Read wire from RX MAC
-  xil_temac_to_rx_t from_mac;
-  WIRE_READ(xil_temac_to_rx_t, from_mac, xil_temac_to_rx) // from_mac = xil_temac_to_rx
+  xil_temac_to_rx_t from_mac = xil_temac_to_rx;
   // The stream of data from the RX MAC
   axis8_t mac_axis_rx = from_mac.rx_axis_mac;
   
   // TODO stats+reset+enable
   // Light LED on RX overflow
   static uint1_t overflow;
-  WIRE_WRITE(uint4_t, leds, overflow)
+  leds = overflow;
 
   // Convert axis8 to axis32
   // Signal always ready, overflow occurs in eth_32_rx 
@@ -119,52 +119,41 @@ void rx_main()
   to_mac.rx_configuration_vector = 0;
   to_mac.rx_configuration_vector |= ((uint32_t)1<<1); // RX enable
   to_mac.rx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s 
-  WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac) // xil_rx_to_temac = to_mac
+  xil_rx_to_temac = to_mac;
 }
 
 // A shared single instance main function for the dual port N-pixel wide memory
 // With global wires and helper functions for individual ports
 // Read port
 uint16_t pixel_mem_raddr;
-#include "clock_crossing/pixel_mem_raddr.h"
 n_pixels_t pixel_mem_rdata;
-#include "clock_crossing/pixel_mem_rdata.h"
 // Write port
 uint16_t pixel_mem_waddr;
-#include "clock_crossing/pixel_mem_waddr.h"
 n_pixels_t pixel_mem_wdata;
-#include "clock_crossing/pixel_mem_wdata.h"
 uint1_t pixel_mem_we;
-#include "clock_crossing/pixel_mem_we.h"
 MAIN_MHZ(shared_pixel_mem, NN_CLOCK_MHZ)
 void shared_pixel_mem()
 {
     static n_pixels_t pixel[(MNIST_IMAGE_SIZE/N_PIXELS_PER_ITER)];
     // Read port
-    uint16_t raddr;
-    n_pixels_t rdata;
     // Write port
-    uint16_t waddr;
-    n_pixels_t wdata;
-    uint1_t we;
-    WIRE_READ(uint16_t, raddr, pixel_mem_raddr)
-    WIRE_READ(uint16_t, waddr, pixel_mem_waddr)
-    WIRE_READ(n_pixels_t, wdata, pixel_mem_wdata)
-    WIRE_READ(uint1_t, we, pixel_mem_we)
-    n_pixels_t rdata = pixel_RAM_DP_RF_0(raddr, waddr, wdata, we); // ROM lookup, built in function template
-    WIRE_WRITE(n_pixels_t, pixel_mem_rdata, rdata)
+    uint16_t raddr = pixel_mem_raddr;
+    uint16_t waddr = pixel_mem_waddr;
+    n_pixels_t wdata = pixel_mem_wdata;
+    uint1_t we = pixel_mem_we;
+    n_pixels_t rdata = pixel_RAM_DP_RF_0(raddr, waddr, wdata, we); // RAM lookup, built in function template
+    pixel_mem_rdata = rdata;
 }
 void pixel_mem_write(uint16_t addr, n_pixels_t data, uint1_t enable)
 {
-    WIRE_WRITE(uint16_t, pixel_mem_waddr, addr)
-    WIRE_WRITE(n_pixels_t, pixel_mem_wdata, data)
-    WIRE_WRITE(uint1_t, pixel_mem_we, enable)
+    pixel_mem_waddr = addr;
+    pixel_mem_wdata = data;
+    pixel_mem_we = enable;
 }
 n_pixels_t pixel_mem_read(uint16_t addr)
 {
-    WIRE_WRITE(uint16_t, pixel_mem_raddr, addr)
-    n_pixels_t rdata;
-    WIRE_READ(n_pixels_t, rdata, pixel_mem_rdata)
+    pixel_mem_raddr = addr;
+    n_pixels_t rdata = pixel_mem_rdata;
     return rdata;
 }
 
@@ -217,16 +206,14 @@ void pixel_writer_FSM_wrapper()
 type_to_axis(output_to_axis, pred_resp_t, 32) // macro
 
 // Outputs fifo of prediction responses
-pred_resp_t outputs_fifo[16];
-#include "clock_crossing/outputs_fifo.h"
+ASYNC_CLK_CROSSING(pred_resp_t, outputs_fifo, 16)
 
 // Transmit logic
 #pragma MAIN_GROUP tx_main xil_temac_tx // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
 void tx_main()
 {
   // Read wires from TX MAC
-  xil_temac_to_tx_t from_mac;
-  WIRE_READ(xil_temac_to_tx_t, from_mac, xil_temac_to_tx) // from_mac = xil_temac_to_tx
+  xil_temac_to_tx_t from_mac = xil_temac_to_tx;
   uint1_t mac_ready = from_mac.tx_axis_mac_ready;
   
   // TODO stats+reset+enable
@@ -293,7 +280,7 @@ void tx_main()
   to_mac.tx_configuration_vector = 0;
   to_mac.tx_configuration_vector |= ((uint32_t)1<<1); // TX enable
   to_mac.tx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
-  WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac) // xil_tx_to_temac = to_mac
+  xil_tx_to_temac = to_mac;
 }
 
 // Neural network specific code
