@@ -1161,7 +1161,7 @@ begin
             rw_clk_names.add(rw_clk_name)
             if len(rw_clk_names) > 1 and var_name not in parser_state.async_wires:
                 raise Exception(
-                    f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names}"
+                    f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names} {rw_func_insts}"
                 )
 
         # Assemble driver write wire text

@@ -10785,6 +10785,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
                         or parser_state.main_mhz[rw_main] is None
                     ) and (
                         rw_main not in parser_state.main_clk_group
+                        or parser_state.main_clk_group[rw_main] is None
                         or parser_state.main_clk_group[rw_main] == valid_group
                     ):
                         print(
