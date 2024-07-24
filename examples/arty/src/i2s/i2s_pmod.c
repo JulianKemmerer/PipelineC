@@ -2,7 +2,8 @@
 #include "wire.h"
 #include "uintN_t.h"
 
-#include "../pmod/pmod.c"
+// TODO #define config for other pmod connectors
+#include "../pmod/pmod_ja.c"
 #include "i2s.c"
 
 // Logic to expose PMOD as I2S
@@ -21,16 +22,16 @@ rx_sclk  ja[6]
 rx_data  ja[7]
 */
 
-i2s_to_app_t pmod_to_i2s(pmod_to_app_t pmod)
+i2s_to_app_t pmod_to_i2s(pmod_ja_to_app_t pmod)
 {
   i2s_to_app_t i2s;
   i2s.rx_data = pmod.ja7;
   return i2s;
 }
 
-app_to_pmod_t i2s_to_pmod(app_to_i2s_t i2s)
+app_to_pmod_ja_t i2s_to_pmod(app_to_i2s_t i2s)
 {
-  app_to_pmod_t pmod;
+  app_to_pmod_ja_t pmod;
   pmod.ja1 = i2s.tx_lrck;
   pmod.ja2 = i2s.tx_sclk;
   pmod.ja3 = i2s.tx_data;
@@ -43,15 +44,15 @@ app_to_pmod_t i2s_to_pmod(app_to_i2s_t i2s)
 i2s_to_app_t read_i2s_pmod()
 {
   // Read the incoming pmod signals
-  pmod_to_app_t from_pmod;
-  WIRE_READ(pmod_to_app_t, from_pmod, pmod_to_app)
+  pmod_ja_to_app_t from_pmod;
+  WIRE_READ(pmod_ja_to_app_t, from_pmod, pmod_ja_to_app)
   // Convert to i2s
   return pmod_to_i2s(from_pmod);
 }
 void write_i2s_pmod(app_to_i2s_t to_i2s)
 {
   // Convert i2s signals to pmod
-  app_to_pmod_t to_pmod = i2s_to_pmod(to_i2s);
+  app_to_pmod_ja_t to_pmod = i2s_to_pmod(to_i2s);
   // Write outgoing signals to pmod
-  WIRE_WRITE(app_to_pmod_t, app_to_pmod, to_pmod)
+  WIRE_WRITE(app_to_pmod_ja_t, app_to_pmod_ja, to_pmod)
 }

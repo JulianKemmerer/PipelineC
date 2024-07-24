@@ -1,3 +1,5 @@
+#pragma PART "xc7a35ticsg324-1l"
+
 #include "wire.h"
 #include "uintN_t.h"
 
