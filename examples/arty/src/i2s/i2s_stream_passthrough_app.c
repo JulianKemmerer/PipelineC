@@ -1,13 +1,12 @@
+#pragma PART "xc7a35ticsg324-1l"
 #include "wire.h"
 #include "uintN_t.h"
 #include "arrays.h"
-#include "../leds/leds.c"
-// Include I2S from PMOD
+#include "leds/leds_port.c"
+// Include I2S from PMOD connector JA
 #include "i2s_pmod.c"
 
 // Do small buffered loopback
-// Do I2S->AXIS loopback
-// Do basic I2S->AXIS-> higher clock for fancier DSP
 
 /*
 https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual
@@ -97,7 +96,7 @@ i2s_samples_s i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t
     {
       // Data is MSB first, put data into bottom/lsb such that
       // after N bits the first bit is in correct positon at MSB
-      ARRAY_SHIFT_BIT_INTO_BOTTOM(curr_sample_bits, SAMPLE_BITWIDTH, data)
+      ARRAY_1SHIFT_INTO_BOTTOM(curr_sample_bits, SAMPLE_BITWIDTH, data)
       
       // Was this the last bit?
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
@@ -318,7 +317,7 @@ void app(uint1_t reset_n)
   to_i2s.tx_data = tx.data;
   
   // Detect overflow if had receive data incoming but transmit wasnt ready
-  WIRE_WRITE(uint4_t, leds, uint1_4(overflow)) // Light up LEDs 0-3 if overflow
+  leds = uint1_4(overflow); // Light up LEDs 0-3 if overflow
   if(rx_samples.valid & !tx.samples_ready)
   {
     overflow = 1;
