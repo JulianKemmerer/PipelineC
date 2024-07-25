@@ -1,10 +1,12 @@
+#pragma PART "xc7a35ticsg324-1l"
+
 #include "wire.h"
 #include "uintN_t.h"
 #include "arrays.h"
 #include "compiler.h"
 
 // LEDs for debug
-#include "../leds/leds.c"
+#include "leds/leds_port.c"
 
 // Include I2S 'media access controller' (PMOD+de/serializer logic)
 #include "i2s_mac.c"
@@ -36,7 +38,7 @@ void app(uint1_t reset_n)
   }
   
   // Detect overflow 
-  WIRE_WRITE(uint4_t, leds, uint1_4(overflow)) // Light up LEDs 0-3 if overflow
+  leds = uint1_4(overflow);// Light up LEDs 0-3 if overflow
   if(mac.rx.overflow)
   {
     overflow = 1;
