@@ -24,7 +24,9 @@ void app(uint1_t reset_n)
   uint1_t rx_samples_ready = !tx_samples.valid;
   
   // Send and receive sample streams
-  i2s_mac_t mac = i2s_mac(reset_n, rx_samples_ready, tx_samples);
+  i2s_to_app_t from_i2s = read_i2s_pmod();
+  i2s_mac_t mac = i2s_mac(reset_n, rx_samples_ready, tx_samples, from_i2s);
+  write_i2s_pmod(mac.to_i2s);
   
   // TX being ready for samples clears buffer
   if(mac.tx.samples_ready)

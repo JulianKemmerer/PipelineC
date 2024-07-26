@@ -3,7 +3,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "arrays.h"
-#include "lib/fixed/q0_23.h"
+#include "fixed/q0_23.h"
 
 // Logic to send and receive I2S samples via a streaming interface
 
@@ -110,7 +110,7 @@ i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samp
     {
       // Data is MSB first, put data into bottom/lsb such that
       // after N bits the first bit is in correct positon at MSB
-      ARRAY_SHIFT_BIT_INTO_BOTTOM(curr_sample_bits, SAMPLE_BITWIDTH, data)
+      ARRAY_1SHIFT_INTO_BOTTOM(curr_sample_bits, SAMPLE_BITWIDTH, data)
       
       // Was this the last bit?
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
@@ -306,9 +306,14 @@ typedef struct i2s_mac_t
 {
   i2s_rx_t rx;
   i2s_tx_t tx;
+  app_to_i2s_t to_i2s;
 }i2s_mac_t;
-i2s_mac_t i2s_mac(uint1_t reset_n, uint1_t rx_samples_ready, i2s_samples_s tx_samples)
-{
+i2s_mac_t i2s_mac(
+  uint1_t reset_n, 
+  uint1_t rx_samples_ready, 
+  i2s_samples_s tx_samples,
+  i2s_to_app_t from_i2s
+){
   // Registers to produce clocking common to RX and TX
   static uint3_t sclk_counter;
   static uint1_t sclk;
@@ -318,17 +323,11 @@ i2s_mac_t i2s_mac(uint1_t reset_n, uint1_t rx_samples_ready, i2s_samples_s tx_sa
   // Output signals
   i2s_mac_t rv;
   
-  // Read the incoming I2S signals
-  i2s_to_app_t from_i2s = read_i2s_pmod();
-  
-  // Outgoing I2S signals
-  app_to_i2s_t to_i2s;
-  
   // Outputs clks from registers
-  to_i2s.tx_sclk = sclk;
-  to_i2s.rx_sclk = sclk;
-  to_i2s.tx_lrck = lr;
-  to_i2s.rx_lrck = lr;
+  rv.to_i2s.tx_sclk = sclk;
+  rv.to_i2s.rx_sclk = sclk;
+  rv.to_i2s.tx_lrck = lr;
+  rv.to_i2s.rx_lrck = lr;
   
   // SCLK toggling at half period count on MCLK rising edge
   uint1_t sclk_half_toggle = sclk_counter==((SCLK_PERIOD_MCLKS/2)-1);
@@ -341,7 +340,7 @@ i2s_mac_t i2s_mac(uint1_t reset_n, uint1_t rx_samples_ready, i2s_samples_s tx_sa
   
   // Transmit I2S samples
   i2s_tx_t tx = i2s_tx(tx_samples, lr, sclk_falling_edge, reset_n);
-  to_i2s.tx_data = tx.data;
+  rv.to_i2s.tx_data = tx.data;
   rv.tx = tx;
 
   // Drive I2S clocking derived from current MCLK domain
@@ -383,12 +382,11 @@ i2s_mac_t i2s_mac(uint1_t reset_n, uint1_t rx_samples_ready, i2s_samples_s tx_sa
     lr = 0;
   }
   
-  // Drive the outgoing I2S signals
-  write_i2s_pmod(to_i2s);
-  
   return rv;
 }
 
+//#define I2S_MAC_PORTS
+#ifdef I2S_MAC_PORTS
 // Instantiate the I2S MAC with globally visible + separate RX and TX wires
 
 // RX
@@ -417,15 +415,6 @@ typedef struct app_to_i2s_mac_tx_t
 // Globally visible ports/wires
 i2s_mac_tx_to_app_t i2s_mac_tx_to_app;
 app_to_i2s_mac_tx_t app_to_i2s_mac_tx;
-// These should be in a macro/autogen somehow TODO \/
-#include "i2s_mac_rx_to_app_t_array_N_t.h"
-#include "i2s_mac_rx_to_app_clock_crossing.h"
-#include "app_to_i2s_mac_rx_t_array_N_t.h"
-#include "app_to_i2s_mac_rx_clock_crossing.h"
-#include "i2s_mac_tx_to_app_t_array_N_t.h"
-#include "i2s_mac_tx_to_app_clock_crossing.h"
-#include "app_to_i2s_mac_tx_t_array_N_t.h"
-#include "app_to_i2s_mac_tx_clock_crossing.h"
 
 // Main func to instantiate i2s_mac connected to global wire ports 
 MAIN_MHZ(i2s_mac_ports, I2S_MCLK_MHZ)
@@ -433,13 +422,11 @@ void i2s_mac_ports()
 {
   // Signals
   i2s_mac_rx_to_app_t rx_to_app;
-  app_to_i2s_mac_rx_t app_to_rx;
   i2s_mac_tx_to_app_t tx_to_app;
-  app_to_i2s_mac_tx_t app_to_tx;
   
   // Read global signals from app
-  WIRE_READ(app_to_i2s_mac_rx_t, app_to_rx, app_to_i2s_mac_rx)
-  WIRE_READ(app_to_i2s_mac_tx_t, app_to_tx, app_to_i2s_mac_tx)
+  app_to_i2s_mac_rx_t app_to_rx = app_to_i2s_mac_rx;
+  app_to_i2s_mac_tx_t app_to_tx = app_to_i2s_mac_tx;
   
   // Send and receive sample streams using I2S MAC
   uint1_t reset_n = app_to_tx.reset_n & app_to_rx.reset_n; // Can split reset later
@@ -449,6 +436,7 @@ void i2s_mac_ports()
   rx_to_app.samples = mac.rx.samples;
   rx_to_app.overflow = mac.rx.overflow;
   tx_to_app.samples_ready = mac.tx.samples_ready;
-  WIRE_WRITE(i2s_mac_rx_to_app_t, i2s_mac_rx_to_app, rx_to_app)
-  WIRE_WRITE(i2s_mac_tx_to_app_t, i2s_mac_tx_to_app, tx_to_app)
+  i2s_mac_rx_to_app = rx_to_app;
+  i2s_mac_tx_to_app = tx_to_app;
 }
+#endif
