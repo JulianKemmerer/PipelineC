@@ -3,6 +3,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "arrays.h"
+#include "stream/stream.h"
 #include "fixed/q0_23.h"
 
 // Logic to send and receive I2S samples via a streaming interface
@@ -39,12 +40,7 @@ typedef struct i2s_samples_t
   sample_t l_data;
   sample_t r_data;
 }i2s_samples_t;
-// _s 'stream' of the above data w/ valid flag
-typedef struct i2s_samples_s
-{
-  i2s_samples_t samples;
-  uint1_t valid;
-}i2s_samples_s;
+DECL_STREAM_TYPE(i2s_samples_t)
 
 // Both RX and TX are dealing with the I2S protocol
 typedef enum i2s_state_t
@@ -57,7 +53,7 @@ typedef enum i2s_state_t
 // Logic to receive I2S stereo samples
 typedef struct i2s_rx_t
 {
-  i2s_samples_s samples;
+  stream(i2s_samples_t) samples;
   uint1_t overflow;
 }i2s_rx_t;
 i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samples_ready, uint1_t reset_n)
@@ -67,7 +63,7 @@ i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samp
   static uint1_t last_lr;
   static uint1_t curr_sample_bits[SAMPLE_BITWIDTH];
   static uint5_t curr_sample_bit_count;
-  static i2s_samples_s output_reg;
+  static stream(i2s_samples_t) output_reg;
   static uint1_t l_sample_valid;
   static uint1_t r_sample_valid;
   
@@ -126,14 +122,14 @@ i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samp
         // Last LR since last bit LR switched at falling edge for next channel potentially
         if(last_lr==LEFT) 
         {
-          output_reg.samples.l_data = curr_sample;
+          output_reg.data.l_data = curr_sample;
           l_sample_valid = 1;
           // Right sample next
           state = LR_WAIT;
         }
         else
         {
-          output_reg.samples.r_data = curr_sample;
+          output_reg.data.r_data = curr_sample;
           r_sample_valid = 1;
           // Left sample next
           state = RL_WAIT;
@@ -178,14 +174,14 @@ typedef struct i2s_tx_t
   uint1_t samples_ready;
   uint1_t data;
 }i2s_tx_t;
-i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, uint1_t reset_n)
+i2s_tx_t i2s_tx(stream(i2s_samples_t) samples, uint1_t lr, uint1_t sclk_falling_edge, uint1_t reset_n)
 {
   // Registers
   static i2s_state_t state;
   static uint1_t last_lr;
   static uint1_t curr_sample_bits[SAMPLE_BITWIDTH];
   static uint5_t curr_sample_bit_count;
-  static i2s_samples_s input_reg;
+  static stream(i2s_samples_t) input_reg;
   static uint1_t l_sample_done;
   static uint1_t r_sample_done;
   static uint1_t output_data_reg;
@@ -212,7 +208,7 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
           // Next SCLK falling edge starts sample bits
           state = SAMPLE;
           // Make sure output reg has left data
-          UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.l_data.qmn)
+          UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.data.l_data.qmn)
           // Data is MSB first, output bit from top of array
           output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
         }
@@ -229,7 +225,7 @@ i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, ui
         // Next SCLK falling edge starts sample bits
         state = SAMPLE;
         // Make sure output reg has right data
-        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.samples.r_data.qmn)
+        UINT_TO_BIT_ARRAY(curr_sample_bits, SAMPLE_BITWIDTH, input_reg.data.r_data.qmn)
         // Data is MSB first, output bit from top of array
         output_data_reg = curr_sample_bits[SAMPLE_BITWIDTH-1];
       }
@@ -311,7 +307,7 @@ typedef struct i2s_mac_t
 i2s_mac_t i2s_mac(
   uint1_t reset_n, 
   uint1_t rx_samples_ready, 
-  i2s_samples_s tx_samples,
+  stream(i2s_samples_t) tx_samples,
   i2s_to_app_t from_i2s
 ){
   // Registers to produce clocking common to RX and TX
@@ -392,7 +388,7 @@ i2s_mac_t i2s_mac(
 // RX
 typedef struct i2s_mac_rx_to_app_t
 {
-  i2s_samples_s samples;
+  stream(i2s_samples_t) samples;
   uint1_t overflow; 
 }i2s_mac_rx_to_app_t;
 typedef struct app_to_i2s_mac_rx_t
@@ -409,7 +405,7 @@ typedef struct i2s_mac_tx_to_app_t
 }i2s_mac_tx_to_app_t;
 typedef struct app_to_i2s_mac_tx_t
 {
-  i2s_samples_s samples;
+  stream(i2s_samples_t) samples;
   uint1_t reset_n;
 }app_to_i2s_mac_tx_t;
 // Globally visible ports/wires
