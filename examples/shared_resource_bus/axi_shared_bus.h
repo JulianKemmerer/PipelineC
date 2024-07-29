@@ -1,14 +1,16 @@
 #pragma once
 #include "uintN_t.h"
+#include "stream/stream.h"
 
 // Use AXI bus ports from the Xilinx Memory controller example
 #include "axi/axi.h"
+// TODO combine/merged parts of #include "axi/axi.h" in this
+// use axi32 types, here could select bit widths?
 //#define axi_addr_t uint32_t
 //#define axi_id_t uint16_t
 #define AXI_BUS_BYTE_WIDTH 4 // 32b
 #define AXI_BUS_BYTE_WIDTH_LOG2 2
 
-// TODO combine/merged parts of #include "axi/axi.h" in this
 typedef struct axi_write_req_t
 {
   // Address
@@ -433,6 +435,50 @@ axi_shared_bus_sized_write_finish_t axi_shared_bus_sized_write_finish(
   }
   return rv;
 }
+typedef struct axi_shared_bus_write_stream_t
+{
+  axi_shared_bus_t_write_host_to_dev_t to_dev;
+  // Outputs
+  //  WR
+  uint1_t wr_stream_ready;
+  uint1_t wr_done;
+}axi_shared_bus_write_stream_t;
+axi_shared_bus_write_stream_t
+axi_shared_bus_write_stream(
+  axi_shared_bus_t_write_dev_to_host_t from_dev,
+  // Inputs
+  //  WR
+  uint32_t wr_start_addr,
+  uint32_t wr_num_words,
+  uint32_t wr_stream_data,
+  uint1_t wr_stream_valid
+){
+  axi_shared_bus_write_stream_t o;
+  // Write start
+  static uint1_t wr_start_done;
+  if(~wr_start_done){
+    axi_shared_bus_write_stream_start_t write_start = axi_shared_bus_write_stream_start(
+      1, wr_start_addr, wr_num_words, wr_stream_data, wr_stream_valid, from_dev
+    );
+    o.to_dev = write_start.to_dev;
+    o.wr_stream_ready = write_start.ready_for_word;
+    if(write_start.done){
+      wr_start_done = 1;
+    }
+  }
+  // Write finish (no stream bus)
+  axi_shared_bus_sized_write_finish_t write_finish = axi_shared_bus_sized_write_finish(
+    wr_num_words, 1, from_dev
+  );
+  o.to_dev.resp_ready = write_finish.bus_resp_ready;
+  if(write_finish.done){
+    o.wr_done = 1;
+  }
+  if(o.wr_done){
+    wr_start_done = 0;
+  }
+  return o;
+}
 
 
 // Logic for how to start and finish a read of some words from RAM
@@ -539,6 +585,51 @@ axi_shared_bus_read_stream_finish_t axi_shared_bus_read_stream_finish(
     } 
   } 
   return rv;
+}
+typedef struct axi_shared_bus_read_stream_t
+{
+  axi_shared_bus_t_read_host_to_dev_t to_dev;
+  // Outputs
+  //  RD
+  uint32_t rd_stream_data;
+  uint1_t rd_stream_valid;
+  uint1_t rd_done;
+}axi_shared_bus_read_stream_t;
+axi_shared_bus_read_stream_t
+axi_shared_bus_read_stream(
+  axi_shared_bus_t_read_dev_to_host_t from_dev,
+  // Inputs
+  //  RD
+  uint32_t rd_start_addr,
+  uint32_t rd_num_words,
+  uint1_t rd_stream_ready
+){
+  axi_shared_bus_read_stream_t o;
+  // Read start (no stream bus)
+  static uint1_t rd_start_done;
+  if(~rd_start_done){
+    axi_shared_bus_sized_read_start_t read_start = axi_shared_bus_sized_read_start(
+      rd_start_addr, rd_num_words, 1, from_dev.req_ready
+    );
+    o.to_dev.req = read_start.bus_req;
+    if(read_start.done){
+      rd_start_done = 1;
+    }
+  }
+  // Read finish
+  axi_shared_bus_read_stream_finish_t read_finish = axi_shared_bus_read_stream_finish(
+    rd_num_words, 1, rd_stream_ready, from_dev.data
+  );
+  o.to_dev.data_ready = read_finish.bus_data_ready;
+  o.rd_stream_data = read_finish.word;
+  o.rd_stream_valid = read_finish.word_valid;
+  if(read_finish.done){
+    o.rd_done = 1;
+  }
+  if(o.rd_done){
+    rd_start_done = 0;
+  }
+  return o;
 }
 #define axi_shared_bus_read_finish_t(NUM_WORDS)\
 PPCAT(PPCAT(axi_shared_bus_,NUM_WORDS),words_read_finish_t)
@@ -668,7 +759,7 @@ PPCAT(type,_axi_shared_bus_read_finish_t) PPCAT(type,_axi_shared_bus_read_finish
 #endif
 
 
-
+// TODO use maybe use new pieces axi_shared_bus_write_stream and axi_shared_bus_read_stream?
 typedef struct axi_shared_bus_to_stream_source_sink_t
 {
   axi_shared_bus_t_host_to_dev_t to_dev;
@@ -768,3 +859,140 @@ axi_shared_bus_to_stream_source_sink(
 
   return o;
 }
+
+
+typedef struct axi_descriptor_t
+{
+  uint32_t addr;
+  uint32_t num_words;
+}axi_descriptor_t;
+DECL_STREAM_TYPE(axi_descriptor_t)
+typedef enum u32_to_from_axi_state_t{
+  DESCRIPTOR_IN, // What address to write/read incoming/outgoing stream words to/from?
+  DO_TRANSFER, // Do the AXI writes/reads of stream words
+  DESCRIPTOR_OUT // Output what memory space was just used
+}u32_to_from_axi_state_t;
+
+// Data mover like module for stream input to AXI writes
+// Outputs are mainly stream of descriptors written to
+typedef struct axi_stream_to_writes_t{
+  stream(axi_descriptor_t) descriptors_out_stream;
+  axi_shared_bus_t_write_host_to_dev_t to_dev; // AXI signals to device
+  uint1_t ready_for_descriptors_in;
+  uint1_t ready_for_data_stream;
+}axi_stream_to_writes_t;
+axi_stream_to_writes_t u32_stream_to_axi_writes(
+  // Inputs are mainly stream of descriptors to write and stream of data
+  stream(axi_descriptor_t) descriptors_in_stream,
+  stream(uint32_t) data_stream,
+  uint1_t ready_for_descriptors_out,
+  axi_shared_bus_t_write_dev_to_host_t from_dev // AXI signals from device
+){
+  // State registers
+  static u32_to_from_axi_state_t state;
+  static axi_descriptor_t descriptor;
+  
+  // Output 'o' default zeros
+  axi_stream_to_writes_t o;
+  
+  // FSM:
+  if(state==DESCRIPTOR_IN){
+    // Ready for next desciptor now
+    o.ready_for_descriptors_in = 1;
+    // Wait for valid descriptor
+    if(descriptors_in_stream.valid){
+      // Save copy of valid descriptor data
+      descriptor = descriptors_in_stream.data;
+      // And begin transfer next
+      state = DO_TRANSFER;
+    } 
+  }else if(state==DO_TRANSFER){
+    // Use helper fsm to write stream until its done
+    axi_shared_bus_write_stream_t bus_xfer = axi_shared_bus_write_stream(
+      from_dev,
+      descriptor.addr,
+      descriptor.num_words,
+      data_stream.data,
+      data_stream.valid
+    );
+    o.to_dev = bus_xfer.to_dev;
+    o.ready_for_data_stream = bus_xfer.wr_stream_ready;
+    if(bus_xfer.wr_done){
+      state = DESCRIPTOR_OUT;
+    }
+  }else/*if(state==DESCRIPTOR_OUT)*/{
+    // Have valid descriptor to output
+    o.descriptors_out_stream.data = descriptor;
+    o.descriptors_out_stream.valid = 1;
+    // Wait for it to be ready to be accepted
+    if(ready_for_descriptors_out){
+      // Start over
+      state = DESCRIPTOR_IN;
+    }
+  }
+
+  return o;
+}
+
+
+// Data mover like module for AXI reads to stream output
+// Outputs are mainly stream of descriptors read from and stream of data
+typedef struct axi_reads_to_u32_stream_t{
+  stream(axi_descriptor_t) descriptors_out_stream;
+  stream(uint32_t) data_stream;
+  axi_shared_bus_t_read_host_to_dev_t to_dev; // AXI signals to device
+  uint1_t ready_for_descriptors_in;
+}axi_reads_to_u32_stream_t;
+axi_reads_to_u32_stream_t axi_reads_to_u32_stream(
+  // Inputs are mainly stream of descriptors to read from
+  stream(axi_descriptor_t) descriptors_in_stream,
+  uint1_t ready_for_descriptors_out,
+  uint1_t ready_for_data_stream,
+  axi_shared_bus_t_read_dev_to_host_t from_dev // AXI signals from device
+){
+  // State registers
+  static u32_to_from_axi_state_t state;
+  static axi_descriptor_t descriptor;
+  
+  // Output 'o' default zeros
+  axi_reads_to_u32_stream_t o;
+  
+  // FSM:
+  if(state==DESCRIPTOR_IN){
+    // Ready for next desciptor now
+    o.ready_for_descriptors_in = 1;
+    // Wait for valid descriptor
+    if(descriptors_in_stream.valid){
+      // Save copy of valid descriptor data
+      descriptor = descriptors_in_stream.data;
+      // And begin transfer next
+      state = DO_TRANSFER;
+    } 
+  }else if(state==DO_TRANSFER){
+    // Use helper fsm to read stream until its done
+    axi_shared_bus_read_stream_t bus_xfer = axi_shared_bus_read_stream(
+      from_dev,
+      descriptor.addr,
+      descriptor.num_words,
+      ready_for_data_stream
+    );
+    o.to_dev = bus_xfer.to_dev;
+    o.data_stream.data = bus_xfer.rd_stream_data;
+    o.data_stream.valid = bus_xfer.rd_stream_valid;
+    if(bus_xfer.rd_done){
+      state = DESCRIPTOR_OUT;
+    }
+  }else/*if(state==DESCRIPTOR_OUT)*/{
+    // Have valid descriptor to output
+    o.descriptors_out_stream.data = descriptor;
+    o.descriptors_out_stream.valid = 1;
+    // Wait for it to be ready to be accepted
+    if(ready_for_descriptors_out){
+      // Start over
+      state = DESCRIPTOR_IN;
+    }
+  }
+
+  return o;
+}
+
