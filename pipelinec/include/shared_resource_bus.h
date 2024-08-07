@@ -164,12 +164,15 @@ typedef struct PPCAT(name, _buffer_t) \
   PPCAT(name, _write_data_t) write_data; \
   PPCAT(name, _write_resp_t) write_resp; \
 }PPCAT(name, _buffer_t); \
- \
+\
+/* TODO dont use logic like if(ready) valid=1 in places! */\
+\
 /* Write has two channels to begin request: address and data */ \
 /* Helper func to write one PPCAT(name, _write_data_word_t) requires that inputs are valid/held constant*/ \
 /* until data phase done (ready_for_inputs asserted)*/ \
 typedef struct PPCAT(name, _write_start_logic_outputs_t) \
 { \
+  /*TODO write start doesnt need entire write host to dev w/ resp ready, just req+data*/\
   PPCAT(name, _write_host_to_dev_t) to_dev; \
   uint1_t done; \
   uint1_t ready_for_inputs; \
@@ -492,119 +495,11 @@ PPCAT(name, _read_finish_nonblocking_t) PPCAT(name, _read_finish_nonblocking)() 
   return rv; \
 }
 
-
-// TODO use here in header too
-#define host_clk_to_dev(shared_bus_name)\
-PPCAT(shared_bus_name,_host_to_dev_wire_on_host_clk)
-#define dev_to_host_clk(shared_bus_name)\
-PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
-
-
-#define SHARED_BUS_DECL(\
+// Arbitration related helper funcs
+#define SHARED_BUS_ARB_DECL(\
 type, \
-write_req_data_t, write_data_word_t, write_resp_data_t, \
-read_req_data_t, read_data_resp_word_t, \
 name, NUM_HOST_PORTS, NUM_DEV_PORTS \
-) \
-/* Global wires*/ \
-PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wire_on_host_clk); \
-PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wire_on_host_clk); \
-/* Wires are used by N thread instances trying to do reads and writes at same time*/ \
-/* Resolve multiple drivers with INST_ARRAY arrays of wires*/ \
-PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_host_clk)[NUM_HOST_PORTS]; \
-PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _host_to_dev_wire_on_host_clk) PPCAT(name, _host_to_dev_wires_on_host_clk)) \
-PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_host_clk)[NUM_HOST_PORTS]; \
-PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _dev_to_host_wire_on_host_clk) PPCAT(name, _dev_to_host_wires_on_host_clk)) \
-/* Only need/want INST_ARRAY on host clock since multiple threads*/ \
-/* Dev side needs just plain array use to wire to ports and such*/ \
-PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_dev_clk)[NUM_HOST_PORTS]; \
-PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_dev_clk)[NUM_HOST_PORTS]; \
- \
-/* FSM style funcs to do reads and writes*/ \
-SHARED_BUS_READ_START_FINISH_DECL(\
-type, \
-read_req_data_t, read_data_resp_word_t, \
-name, \
-PPCAT(name, _host_to_dev_wire_on_host_clk).read.req, \
-PPCAT(name, _dev_to_host_wire_on_host_clk).read.req_ready, \
-PPCAT(name, _dev_to_host_wire_on_host_clk).read.data, \
-PPCAT(name, _host_to_dev_wire_on_host_clk).read.data_ready \
-) \
-read_data_resp_word_t PPCAT(name, _read)(read_req_data_t req) \
-{ \
-  read_data_resp_word_t rv; \
-  uint1_t done = 0; \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
-  do \
-  { \
-    PPCAT(type, _read_logic_outputs_t) read_logic_outputs \
-      = PPCAT(type, _read_logic)(req, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).read); \
-    PPCAT(name, _host_to_dev_wire_on_host_clk).read = read_logic_outputs.to_dev; \
-    done = read_logic_outputs.done; \
-    rv = read_logic_outputs.data; \
-    __clk(); \
-  } \
-  while(!done); \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
-  return rv; \
-} \
-\
-void PPCAT(name, _write_start)(write_req_data_t req, write_data_word_t data) \
-{ \
-  uint1_t done = 0; \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  do \
-  { \
-    PPCAT(type, _write_start_logic_outputs_t) write_logic_outputs \
-      = PPCAT(type, _write_start_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
-    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
-    done = write_logic_outputs.done; \
-    __clk(); \
-  } \
-  while(!done); \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  return rv; \
-} \
-write_resp_data_t PPCAT(name, _write_finish)() \
-{ \
-  write_resp_data_t rv; \
-  uint1_t done = 0; \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  do \
-  { \
-    PPCAT(type, _write_finish_logic_outputs_t) write_logic_outputs \
-      = PPCAT(type, _write_finish_logic)(1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
-    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
-    done = write_logic_outputs.done; \
-    rv = write_logic_outputs.resp; \
-    __clk(); \
-  } \
-  while(!done); \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  return rv; \
-} \
-write_resp_data_t PPCAT(name, _write)(write_req_data_t req, write_data_word_t data) \
-{ \
-  write_resp_data_t rv; \
-  uint1_t done = 0; \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  do \
-  { \
-    PPCAT(type, _write_logic_outputs_t) write_logic_outputs \
-      = PPCAT(type, _write_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
-    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
-    done = write_logic_outputs.done; \
-    rv = write_logic_outputs.resp; \
-    __clk(); \
-  } \
-  while(!done); \
-  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
-  return rv; \
-} \
- \
-/* ^TODO: condsider making a combined single read_write func that uses combined read_write_logic?*/ \
-/* ^ TODO maybe implement full read/write using start and finish?*/ \
- \
+)\
 /* Increment with wrap around*/ \
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name, _host_port_inc)) \
 uint8_t PPCAT(name, _host_port_inc)(uint8_t selected_host_port) \
@@ -1303,6 +1198,132 @@ PPCAT(name, _dev_arb_pipelined_greedy_t) PPCAT(name, _dev_arb_pipelined_greedy)(
  \
   return o; \
 }
+
+
+// TODO use here in header too
+// Helper macro to get to global wire for shared bus
+// Single "the host clock domain" version
+#define host_clk_to_dev(shared_bus_name)\
+PPCAT(shared_bus_name,_host_to_dev_wire_on_host_clk)
+#define dev_to_host_clk(shared_bus_name)\
+PPCAT(shared_bus_name,_dev_to_host_wire_on_host_clk)
+// Multi host clock domain version specifying the host name
+#define host_to_dev(shared_bus_name, host_domain)\
+host_clk_to_dev(PPCAT(PPCAT(shared_bus_name,_),host_domain))
+#define dev_to_host(shared_bus_name, host_domain)\
+dev_to_host_clk(PPCAT(PPCAT(shared_bus_name,_),host_domain))
+#define multi_host_to_dev_clk(shared_bus_name, host_domain)\
+PPCAT(PPCAT(PPCAT(shared_bus_name,_),host_domain),_host_to_dev_wires_on_dev_clk)
+#define dev_clk_to_multi_host(shared_bus_name, host_domain)\
+PPCAT(PPCAT(PPCAT(shared_bus_name,_),host_domain),_dev_to_host_wires_on_dev_clk)
+
+#define SHARED_BUS_DECL(\
+type, \
+write_req_data_t, write_data_word_t, write_resp_data_t, \
+read_req_data_t, read_data_resp_word_t, \
+name, NUM_HOST_PORTS, NUM_DEV_PORTS \
+) \
+/* Global wires*/ \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wire_on_host_clk); \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wire_on_host_clk); \
+/* Wires are used by N thread instances trying to do reads and writes at same time*/ \
+/* Resolve multiple drivers with INST_ARRAY arrays of wires*/ \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_host_clk)[NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _host_to_dev_wire_on_host_clk) PPCAT(name, _host_to_dev_wires_on_host_clk)) \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_host_clk)[NUM_HOST_PORTS]; \
+PRAGMA_MESSAGE(INST_ARRAY PPCAT(name, _dev_to_host_wire_on_host_clk) PPCAT(name, _dev_to_host_wires_on_host_clk)) \
+/* Only need/want INST_ARRAY on host clock since multiple threads*/ \
+/* Dev side needs just plain array use to wire to ports and such*/ \
+PPCAT(type, _host_to_dev_t) PPCAT(name, _host_to_dev_wires_on_dev_clk)[NUM_HOST_PORTS]; \
+PPCAT(type, _dev_to_host_t) PPCAT(name, _dev_to_host_wires_on_dev_clk)[NUM_HOST_PORTS]; \
+ \
+/* FSM style funcs to do reads and writes*/ \
+SHARED_BUS_READ_START_FINISH_DECL(\
+type, \
+read_req_data_t, read_data_resp_word_t, \
+name, \
+PPCAT(name, _host_to_dev_wire_on_host_clk).read.req, \
+PPCAT(name, _dev_to_host_wire_on_host_clk).read.req_ready, \
+PPCAT(name, _dev_to_host_wire_on_host_clk).read.data, \
+PPCAT(name, _host_to_dev_wire_on_host_clk).read.data_ready \
+) \
+read_data_resp_word_t PPCAT(name, _read)(read_req_data_t req) \
+{ \
+  read_data_resp_word_t rv; \
+  uint1_t done = 0; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
+  do \
+  { \
+    PPCAT(type, _read_logic_outputs_t) read_logic_outputs \
+      = PPCAT(type, _read_logic)(req, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).read); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).read = read_logic_outputs.to_dev; \
+    done = read_logic_outputs.done; \
+    rv = read_logic_outputs.data; \
+    __clk(); \
+  } \
+  while(!done); \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).read = PPCAT(type, _READ_HOST_TO_DEV_NULL); \
+  return rv; \
+} \
+\
+void PPCAT(name, _write_start)(write_req_data_t req, write_data_word_t data) \
+{ \
+  uint1_t done = 0; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  do \
+  { \
+    PPCAT(type, _write_start_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_start_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
+    done = write_logic_outputs.done; \
+    __clk(); \
+  } \
+  while(!done); \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  return rv; \
+} \
+write_resp_data_t PPCAT(name, _write_finish)() \
+{ \
+  write_resp_data_t rv; \
+  uint1_t done = 0; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  do \
+  { \
+    PPCAT(type, _write_finish_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_finish_logic)(1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
+    done = write_logic_outputs.done; \
+    rv = write_logic_outputs.resp; \
+    __clk(); \
+  } \
+  while(!done); \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  return rv; \
+} \
+write_resp_data_t PPCAT(name, _write)(write_req_data_t req, write_data_word_t data) \
+{ \
+  write_resp_data_t rv; \
+  uint1_t done = 0; \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  do \
+  { \
+    PPCAT(type, _write_logic_outputs_t) write_logic_outputs \
+      = PPCAT(type, _write_logic)(req, data, 1, PPCAT(name, _dev_to_host_wire_on_host_clk).write); \
+    PPCAT(name, _host_to_dev_wire_on_host_clk).write = write_logic_outputs.to_dev; \
+    done = write_logic_outputs.done; \
+    rv = write_logic_outputs.resp; \
+    __clk(); \
+  } \
+  while(!done); \
+  PPCAT(name, _host_to_dev_wire_on_host_clk).write = PPCAT(type, _WRITE_HOST_TO_DEV_NULL); \
+  return rv; \
+} \
+ \
+/* ^TODO: condsider making a combined single read_write func that uses combined read_write_logic?*/ \
+/* ^ TODO maybe implement full read/write using start and finish?*/ \
+/* Default arb generated funcs: */ \
+SHARED_BUS_ARB_DECL(type, name, NUM_HOST_PORTS, NUM_DEV_PORTS)
+
 
 // Instantiate the arb module with to-from wires for user
 // DONT USE, OLD NEEDS FIXING
