@@ -5,13 +5,10 @@
 #include "stream/serializer.h"
 #include "stream/deserializer.h"
 
-DECL_STREAM_TYPE(uint32_t)
-DECL_STREAM_TYPE(i2s_samples_t)
-
 // Type for the unpacked, aligned, easy to debug samples data as layed out in memory
 typedef struct i2s_sample_in_mem_t{
-  uint32_t l;
-  uint32_t r;
+  int32_t l;
+  int32_t r;
 }i2s_sample_in_mem_t;
 #include "i2s_sample_in_mem_t_bytes_t.h" // Auto gen func casting i2s_sample_in_mem_t to-from byte array
 i2s_sample_in_mem_t i2s_samples_in_mem(i2s_samples_t samples){

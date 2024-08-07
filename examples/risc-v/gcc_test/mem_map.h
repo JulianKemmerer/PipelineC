@@ -90,11 +90,11 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 }
 #define FB0_END_ADDR (FB0_ADDR + FB_SIZE)
 // I2S samples also in AXI0 DDR
-typedef struct i2s_sample_in_mem_t{
-  uint32_t l;
-  uint32_t r;
-}i2s_sample_in_mem_t;
 #define I2S_BUFFS_ADDR FB0_END_ADDR
+typedef struct i2s_sample_in_mem_t{
+  int32_t l;
+  int32_t r;
+}i2s_sample_in_mem_t;
 static volatile i2s_sample_in_mem_t* I2S0_RX = (i2s_sample_in_mem_t*)I2S_BUFFS_ADDR;
 // Often dont care if writes are finished before returning frame_buf_write returning
 // turn off waiting for writes to finish and create a RAW hazzard

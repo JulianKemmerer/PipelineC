@@ -254,7 +254,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // RISC-V components
 // For now hard coded flags to enable different extensions
-//#define RV32_M
+#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
 #include "risc-v.h"
 
@@ -613,7 +613,7 @@ riscv_out_t fsm_riscv(
 // CDC for reset
 #include "cdc.h"
 
-MAIN_MHZ(cpu_top, PIXEL_CLK_MHZ) // I2S_MCLK_MHZ// XIL_MEM_MHZ //6.25
+MAIN_MHZ(cpu_top, 6.25) // 6.25 testing with div ops but dont wait for pipelining
 void cpu_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim

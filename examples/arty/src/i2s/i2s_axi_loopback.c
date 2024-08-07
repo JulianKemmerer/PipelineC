@@ -25,8 +25,8 @@
 //#include "examples/shared_resource_bus/axi_shared_bus.h"
 #include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
 
-FIFO_FWFT(desc_to_write_fifo, axi_descriptor_t, 16)
-FIFO_FWFT(desc_to_read_fifo, axi_descriptor_t, 16)
+// Declare a fifo to instantiate for holding descriptors
+FIFO_FWFT(desc_fifo, axi_descriptor_t, 16)
 
 // AXI loopback
 MAIN_MHZ(i2s_loopback_app, I2S_MCLK_MHZ)
@@ -76,7 +76,7 @@ void i2s_loopback_app(uint1_t reset_n)
   stream(axi_descriptor_t) wr_desc_fifo_out_stream;
   uint1_t wr_desc_fifo_out_stream_ready;
   #pragma FEEDBACK wr_desc_fifo_out_stream_ready
-  desc_to_write_fifo_t desc_to_write_fifo_out = desc_to_write_fifo(
+  desc_fifo_t desc_to_write_fifo_out = desc_fifo(
     wr_desc_fifo_out_stream_ready,
     wr_desc_fifo_in_stream.data,
     wr_desc_fifo_in_stream.valid
@@ -111,7 +111,7 @@ void i2s_loopback_app(uint1_t reset_n)
   stream(axi_descriptor_t) rd_descp_fifo_out_stream;
   uint1_t rd_descp_fifo_out_stream_ready;
   #pragma FEEDBACK rd_descp_fifo_out_stream_ready
-  desc_to_read_fifo_t desc_to_read_fifo_out = desc_to_read_fifo(
+  desc_fifo_t desc_to_read_fifo_out = desc_fifo(
     rd_descp_fifo_out_stream_ready,
     rx_descriptors_out.data,
     rx_descriptors_out.valid
