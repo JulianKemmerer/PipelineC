@@ -15,19 +15,22 @@
 // Logic for converting the samples stream to-from MAC to-from 32b chunks
 #include "i2s_32b.h"
 
+// Where to put samples for demo?
+#ifndef I2S_LOOPBACK_DEMO_SAMPLES_ADDR
+#define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
+#endif
+
 // Library wrapping AXI bus
 // https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 //#include "examples/shared_resource_bus/axi_shared_bus.h"
-// example Xilinx AXI DDR interface, defines axi_xil_mem shared resource bus wire
-#define SHARED_AXI_XIL_MEM_HOST_CLK_MHZ I2S_MCLK_MHZ // Host side of bus is on i2s clock
 #include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
 
 FIFO_FWFT(desc_to_write_fifo, axi_descriptor_t, 16)
 FIFO_FWFT(desc_to_read_fifo, axi_descriptor_t, 16)
 
 // AXI loopback
-MAIN_MHZ(app, I2S_MCLK_MHZ)
-void app(uint1_t reset_n)
+MAIN_MHZ(i2s_loopback_app, I2S_MCLK_MHZ)
+void i2s_loopback_app(uint1_t reset_n)
 {
   // Debug reg to light up leds if overflow occurs
   static uint1_t overflow;
@@ -93,12 +96,12 @@ void app(uint1_t reset_n)
     wr_desc_fifo_out_stream, // Input stream of descriptors to write
     rx_u32_stream, // Input data stream to write (from I2S MAC)
     rx_descriptors_out_ready, // Ready for output stream of descriptors written
-    dev_to_host_clk(axi_xil_mem).write // Inputs for write side of AXI bus
+    dev_to_host(axi_xil_mem, i2s).write // Inputs for write side of AXI bus
   );
   wr_desc_fifo_out_stream_ready = to_axi_wr.ready_for_descriptors_in; // FEEDBACK
   rx_u32_stream_ready = to_axi_wr.ready_for_data_stream; // FEEDBACK
   rx_descriptors_out = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
-  host_clk_to_dev(axi_xil_mem).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
+  host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
   
   // Xilinx AXI DDR would be here in top to bottom data flow
 
@@ -132,12 +135,12 @@ void app(uint1_t reset_n)
     rd_descp_fifo_out_stream, // Input stream of descriptors to read
     tx_descriptors_out_ready, // Ready for output stream of descriptors read
     tx_u32_stream_ready, // Ready for output stream of u32 data
-    dev_to_host_clk(axi_xil_mem).read // Inputs for read side of AXI bus
+    dev_to_host(axi_xil_mem, i2s).read // Inputs for read side of AXI bus
   );
   rd_descp_fifo_out_stream_ready = from_axi_rd.ready_for_descriptors_in; // FEEDBACK
   tx_descriptors_out = from_axi_rd.descriptors_out_stream; // Output stream of read descriptors
   tx_u32_stream = from_axi_rd.data_stream; // Output data stream from reads (to I2S MAC)
-  host_clk_to_dev(axi_xil_mem).read = from_axi_rd.to_dev; // Outputs for read side of AXI bus
+  host_to_dev(axi_xil_mem, i2s).read = from_axi_rd.to_dev; // Outputs for read side of AXI bus
 
   // Feedback descriptors loopback
   wr_desc_fifo_in_stream = tx_descriptors_out; // FEEDBACK
@@ -150,7 +153,7 @@ void app(uint1_t reset_n)
   mac_tx_samples = tx_from_u32.out_stream; // FEEDBACK
 
   // FSM to insert some descriptors at power on
-  static uint32_t init_desc_addr = 0;
+  static uint32_t init_desc_addr = I2S_LOOPBACK_DEMO_SAMPLES_ADDR;
   uint32_t init_desc_n_samples = 256;
   uint32_t init_desc_size = init_desc_n_samples * sizeof(i2s_sample_in_mem_t);
   static uint32_t num_init_desc = 4;
@@ -165,12 +168,12 @@ void app(uint1_t reset_n)
     }
   }
   
-  // Detect overflow 
+  /* // Detect overflow 
   leds = uint1_4(overflow); // Light up LEDs 0-3 if overflow
   if(mac.rx.overflow)
   {
     overflow = 1;
-  }
+  }*/
   
   // Reset registers
   if(!reset_n)

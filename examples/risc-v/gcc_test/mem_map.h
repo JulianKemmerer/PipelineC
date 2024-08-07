@@ -50,6 +50,7 @@ static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_BRAM0_END_ADDR (MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE)
 #endif
 
+// TODO ORGANIZE THIS BETTER
 // AXI buses (type of shared resource bus)
 #define MMIO_AXI0
 #ifdef MMIO_AXI0
@@ -57,11 +58,12 @@ static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
 static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
-// Frame buffer in AXI0 DDR (at addr=0)
+// Frame buffer in AXI0 DDR
 typedef struct pixel_t{
  uint8_t a, b, g, r; 
 }pixel_t; // 24bpp color, matching hardware byte order
-static volatile pixel_t* FB0 = (pixel_t*)MMIO_AXI0_ADDR;
+#define FB0_ADDR MMIO_AXI0_ADDR
+static volatile pixel_t* FB0 = (pixel_t*)FB0_ADDR;
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 #define TILE_FACTOR 1
@@ -70,6 +72,7 @@ static volatile pixel_t* FB0 = (pixel_t*)MMIO_AXI0_ADDR;
 #define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
 #define BYTES_PER_PIXEL 4
 #define BYTES_PER_PIXEL_LOG2 2
+#define FB_SIZE ((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)
 // Pixel x,y pos to pixel index in array
 uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
 {
@@ -85,4 +88,16 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 {
   FB0[pos_to_pixel_index(x,y)] = pixel;
 }
+#define FB0_END_ADDR (FB0_ADDR + FB_SIZE)
+// I2S samples also in AXI0 DDR
+typedef struct i2s_sample_in_mem_t{
+  uint32_t l;
+  uint32_t r;
+}i2s_sample_in_mem_t;
+#define I2S_BUFFS_ADDR FB0_END_ADDR
+static volatile i2s_sample_in_mem_t* I2S0_RX = (i2s_sample_in_mem_t*)I2S_BUFFS_ADDR;
+// Often dont care if writes are finished before returning frame_buf_write returning
+// turn off waiting for writes to finish and create a RAW hazzard
+// Do not read after write (not reliable to read back data after write has supposedly 'finished')
+//#define MMIO_AXI0_RAW_HAZZARD
 #endif

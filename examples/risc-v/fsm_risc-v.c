@@ -4,6 +4,8 @@
 #pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "intN_t.h"
+#include "stream/stream.h"
+DECL_STREAM_TYPE(uint32_t)
 
 // Include test gcc compiled program
 #include "gcc_test/mem_map.h" 
@@ -25,11 +27,16 @@ DECL_4BYTE_RAM_SP_RF_1(
 // Include code for Xilinx DDR AXI shared resource bus as frame buffer example
 // Declares AXI shared resource bus wires
 //   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
-#define HOST_CLK_MHZ XIL_MEM_MHZ // CPU host side running at ddr controller clock
-#define NUM_USER_THREADS 1 // How many ports on the arbitration mux (TODO one more for I2S eventually)
 #define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
 #include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
 #endif
+
+// I2S RX + TX code hard coded in loop back
+// TODO how to have hosts with multiple clock domains?
+//    make adapter module just async fifos to-from- new domain and actual existing host domain?
+// Configure to use memory mapped addr offset in CPU's AXI0 region
+#define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
+#include "examples/arty/src/i2s/i2s_axi_loopback.c"
 
 // Helpers macros for building mmio modules
 #include "mem_map.h" 
@@ -55,6 +62,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   //  same cycle for regs, 1 cycle delay for BRAM, variable wait for AXI RAMs etc
 
   // What kind of memory mapped storage?
+  static uint1_t word_wr_en;
+  static uint1_t word_rd_en;
   // 'is type' is register, set in START and held until end (based on addr only valid during input)
   // Signals and default values for storage types
   //  REGISTERS
@@ -70,17 +79,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   #ifdef MMIO_AXI0
   static uint1_t mmio_type_is_axi0;
   uint32_t axi0_addr = addr - MMIO_AXI0_ADDR; // Account for offset in memory
-  host_clk_to_dev(axi_xil_mem) = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
+  host_to_dev(axi_xil_mem, cpu) = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
   #endif
-
-  // Write or read helper flags
-  uint1_t word_wr_en = 0;
-  uint1_t word_rd_en = 0;
-  uint32_t i;
-  for(i=0;i<4;i+=1){
-    word_wr_en |= wr_byte_ens[i];
-    word_rd_en |= rd_byte_ens[i];
-  }
 
   // MM Control registers
   static mm_ctrl_regs_t ctrl;
@@ -90,6 +90,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(is_START_state){
     // Wait for valid input start signal 
     if(valid){
+      // Write or read helper flags
+      word_wr_en = 0;
+      word_rd_en = 0;
+      uint32_t i;
+      for(i=0;i<4;i+=1){
+        word_wr_en |= wr_byte_ens[i];
+        word_rd_en |= rd_byte_ens[i];
+      }
       // Starting regs operation?
       mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
       if(mm_type_is_regs){
@@ -138,9 +146,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
               axi_wr_req,
               axi_wr_data, 
               1,
-              dev_to_host_clk(axi_xil_mem).write
+              dev_to_host(axi_xil_mem, cpu).write
             ); 
-          host_clk_to_dev(axi_xil_mem).write = write_start.to_dev;
+          host_to_dev(axi_xil_mem, cpu).write = write_start.to_dev;
           // Finally ready and done with inputs when start finished
           if(write_start.done){ 
             o.ready_for_inputs = 1;
@@ -159,9 +167,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
             axi_shared_bus_t_read_start_logic(
               axi_rd_req,
               1,
-              dev_to_host_clk(axi_xil_mem).read.req_ready
+              dev_to_host(axi_xil_mem, cpu).read.req_ready
             ); 
-          host_clk_to_dev(axi_xil_mem).read.req = read_start.req;
+          host_to_dev(axi_xil_mem, cpu).read.req = read_start.req;
           // Finally ready and done with inputs when start finished
           if(read_start.done){ 
             o.ready_for_inputs = 1;
@@ -208,16 +216,31 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     #endif
     // End AXI0 operation
     #ifdef MMIO_AXI0
+    #ifdef MMIO_AXI0_RAW_HAZZARD
+    // Hazzard doesnt wait for writes to finish. Ignores/drains responses
+    host_clk_to_dev(axi_xil_mem).write.resp_ready = 1;
+    #endif
     if(mmio_type_is_axi0){
+      #ifdef MMIO_AXI0_RAW_HAZZARD
+      if(word_wr_en){
+        // Hazzard dont wait for writes to finish (see ready=1 always above)
+        o.valid = 1;
+      }else{
+        // Regular read wait for valid response
+        host_clk_to_dev(axi_xil_mem).read.data_ready = ready_for_outputs;
+        o.valid = dev_to_host_clk(axi_xil_mem).read.data.valid;
+      }
+      #else // Normal wait for mem to properly finish both reads or writes
       // Signal ready for both read and write responses
       // (only one in use)
-      host_clk_to_dev(axi_xil_mem).read.data_ready = ready_for_outputs;
-      host_clk_to_dev(axi_xil_mem).write.resp_ready = ready_for_outputs;
+      host_to_dev(axi_xil_mem, cpu).read.data_ready = ready_for_outputs;
+      host_to_dev(axi_xil_mem, cpu).write.resp_ready = ready_for_outputs;
       // Either write or read resp is valid done signal
-      o.valid = dev_to_host_clk(axi_xil_mem).read.data.valid | 
-                dev_to_host_clk(axi_xil_mem).write.resp.valid;
+      o.valid = dev_to_host(axi_xil_mem, cpu).read.data.valid | 
+                dev_to_host(axi_xil_mem, cpu).write.resp.valid;
+      #endif
       // Read data is 4 bytes into u32
-      o.rd_data = axi_read_to_data(dev_to_host_clk(axi_xil_mem).read.data.burst.data_resp.user);
+      o.rd_data = axi_read_to_data(dev_to_host(axi_xil_mem, cpu).read.data.burst.data_resp.user);
     }
     #endif
     // Start over when done
@@ -231,7 +254,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // RISC-V components
 // For now hard coded flags to enable different extensions
-#define RV32_M
+//#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
 #include "risc-v.h"
 
@@ -590,12 +613,8 @@ riscv_out_t fsm_riscv(
 // CDC for reset
 #include "cdc.h"
 
-#ifdef MMIO_AXI0
-MAIN_MHZ(my_top, XIL_MEM_MHZ)
-#else
-#pragma MAIN_MHZ my_top 6.25
-#endif
-void my_top(uint1_t areset)
+MAIN_MHZ(cpu_top, PIXEL_CLK_MHZ) // I2S_MCLK_MHZ// XIL_MEM_MHZ //6.25
+void cpu_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim
   // Sync reset
