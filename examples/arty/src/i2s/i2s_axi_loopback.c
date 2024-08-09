@@ -19,6 +19,12 @@
 #ifndef I2S_LOOPBACK_DEMO_SAMPLES_ADDR
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
 #endif
+#ifndef I2S_LOOPBACK_DEMO_N_SAMPLES
+#define I2S_LOOPBACK_DEMO_N_SAMPLES 256
+#endif
+#ifndef I2S_LOOPBACK_DEMO_N_DESC
+#define I2S_LOOPBACK_DEMO_N_DESC 4
+#endif
 
 // Library wrapping AXI bus
 // https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
@@ -27,6 +33,16 @@
 
 // Declare a fifo to instantiate for holding descriptors
 FIFO_FWFT(desc_fifo, axi_descriptor_t, 16)
+
+// Expose external port wires for reading RX samples
+// as they go through loopback in DDR mem
+//#define I2S_RX_MONITOR_PORT
+#ifdef I2S_RX_MONITOR_PORT
+stream(axi_descriptor_t) i2s_rx_descriptors_out_monitor;
+uint1_t i2s_rx_descriptors_out_monitor_ready;
+//  with extra signal to indicate if missed samples
+uint1_t i2s_rx_descriptors_out_monitor_overflow;
+#endif
 
 // AXI loopback
 MAIN_MHZ(i2s_loopback_app, I2S_MCLK_MHZ)
@@ -103,6 +119,27 @@ void i2s_loopback_app(uint1_t reset_n)
   rx_descriptors_out = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
   host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
   
+  #ifdef I2S_RX_MONITOR_PORT
+  // Global wire to monitor the RX samples
+  i2s_rx_descriptors_out_monitor = rx_descriptors_out;
+  // Overflow logged if was not ready for a sample
+  static uint1_t rx_descriptors_out_monitor_was_ready;
+  if(i2s_rx_descriptors_out_monitor.valid & i2s_rx_descriptors_out_monitor_ready){
+    rx_descriptors_out_monitor_was_ready = 1;
+  }
+  // by the time the samples were ready to transmit
+  // TODO: need to remove downstream FIFO so overflow detect works right
+  // otherwise rx_descriptors_out.valid is always a single cycle pulse (fifo always ready)
+  if(rx_descriptors_out.valid & rx_descriptors_out_ready){
+    if(rx_descriptors_out_monitor_was_ready){
+      i2s_rx_descriptors_out_monitor_overflow = 0;
+    }else{
+      i2s_rx_descriptors_out_monitor_overflow = 1;
+    }
+    rx_descriptors_out_monitor_was_ready = 0;
+  }
+  #endif
+
   // Xilinx AXI DDR would be here in top to bottom data flow
 
   // FIFO holding description of memory locations to read TX samples from
@@ -154,9 +191,9 @@ void i2s_loopback_app(uint1_t reset_n)
 
   // FSM to insert some descriptors at power on
   static uint32_t init_desc_addr = I2S_LOOPBACK_DEMO_SAMPLES_ADDR;
-  uint32_t init_desc_n_samples = 256;
+  uint32_t init_desc_n_samples = I2S_LOOPBACK_DEMO_N_SAMPLES;
   uint32_t init_desc_size = init_desc_n_samples * sizeof(i2s_sample_in_mem_t);
-  static uint32_t num_init_desc = 4;
+  static uint32_t num_init_desc = I2S_LOOPBACK_DEMO_N_DESC;
   if(num_init_desc > 0){
     // FEEDBACK
     wr_desc_fifo_in_stream.data.addr = init_desc_addr;

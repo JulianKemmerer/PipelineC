@@ -36,14 +36,15 @@ DECL_4BYTE_RAM_SP_RF_1(
 //    make adapter module just async fifos to-from- new domain and actual existing host domain?
 // Configure to use memory mapped addr offset in CPU's AXI0 region
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
+#define I2S_LOOPBACK_DEMO_N_SAMPLES 256
+#define I2S_LOOPBACK_DEMO_N_DESC 4
 #include "examples/arty/src/i2s/i2s_axi_loopback.c"
 
 // Helpers macros for building mmio modules
 #include "mem_map.h" 
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
-  uint1_t button; // unused for now
-  // TODO mm_status_regs_t status;
+  mm_status_regs_t status;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
   mm_ctrl_regs_t ctrl;
@@ -75,16 +76,20 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   uint32_t bram0_word_addr = (addr - MMIO_BRAM0_ADDR)>>2; // Account for offset in memory and 32b word addressing
   uint1_t bram0_valid_in; // Default no bram op
   #endif
-  //  AXI RAMs
+  //  AXI RAMs // TODO MACROs to easily map multiple AXI buses? shared resource buses in general?
   #ifdef MMIO_AXI0
   static uint1_t mmio_type_is_axi0;
   uint32_t axi0_addr = addr - MMIO_AXI0_ADDR; // Account for offset in memory
   host_to_dev(axi_xil_mem, cpu) = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
   #endif
 
-  // MM Control registers
+  // MM Control+status registers
   static mm_ctrl_regs_t ctrl;
-  o.outputs.ctrl = ctrl;
+  o.outputs.ctrl = ctrl; // output reg
+  static mm_status_regs_t status;
+  // MM Handshake regs start off looking like regular ctrl+status MM regs
+  static mm_handshake_data_t handshake_data;
+  static mm_handshake_valid_t handshake_valid;
 
   // Start MM operation
   if(is_START_state){
@@ -99,7 +104,12 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
         word_rd_en |= rd_byte_ens[i];
       }
       // Starting regs operation?
-      mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t)));
+      mm_type_is_regs = (
+        ( (addr>=MM_CTRL_REGS_ADDR)   & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t))) ) |
+        ( (addr>=MM_STATUS_REGS_ADDR) & (addr<(MM_STATUS_REGS_ADDR+sizeof(mm_status_regs_t))) ) |
+        ( (addr>=MM_HANDSHAKE_DATA_ADDR) & (addr<(MM_HANDSHAKE_DATA_ADDR+sizeof(mm_handshake_data_t))) ) |
+        ( (addr>=MM_HANDSHAKE_VALID_ADDR) & (addr<(MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))) )
+      );
       if(mm_type_is_regs){
         // Regs always ready now, i.e. if output was ready
         o.ready_for_inputs = ready_for_outputs;
@@ -184,10 +194,26 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
 
+  // Handshake valid signals are sometimes auto set/cleared
+  mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
+
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
+    STRUCT_MM_ENTRY_NEW(MM_STATUS_REGS_ADDR, mm_status_regs_t, status, status, addr, o.addr_is_mapped, o.rd_data)
+    STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_DATA_ADDR, mm_handshake_data_t, handshake_data, handshake_data, addr, o.addr_is_mapped, o.rd_data)
+    STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_VALID_ADDR, mm_handshake_valid_t, handshake_valid, handshake_valid, addr, o.addr_is_mapped, o.rd_data)
   }
+
+  #ifdef I2S_RX_MONITOR_PORT
+  // Handshake data for cpu read written when ready got valid data
+  i2s_rx_descriptors_out_monitor_ready = ~handshake_valid_reg_value.i2s_rx_out_desc;
+  if(i2s_rx_descriptors_out_monitor_ready & i2s_rx_descriptors_out_monitor.valid){
+    handshake_data.i2s_rx_out_desc = i2s_rx_descriptors_out_monitor.data;
+    handshake_valid.i2s_rx_out_desc = 1;
+  }
+  #endif
+
   // BRAM0 instance
   #ifdef MMIO_BRAM0
   bram0_ram_out_t bram0_ram_out = bram0_ram(
@@ -248,6 +274,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       is_START_state = 1;
     }
   }
+
+  // Input regs
+  status = inputs.status;
 
   return o;
 }
@@ -622,7 +651,11 @@ void cpu_top(uint1_t areset)
   //uint1_t reset = 0;
 
   // Instance of core
-  my_mmio_in_t in; // Disconnected for now
+  my_mmio_in_t in;
+  in.status.button = 0; // TODO
+  #ifdef I2S_RX_MONITOR_PORT
+  in.status.i2s_rx_out_desc_overflow = i2s_rx_descriptors_out_monitor_overflow;
+  #endif
   riscv_out_t out = fsm_riscv(reset, in);
 
   // Sim debug
