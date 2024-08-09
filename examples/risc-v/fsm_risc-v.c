@@ -32,12 +32,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 #endif
 
 // I2S RX + TX code hard coded in loop back
-// TODO how to have hosts with multiple clock domains?
-//    make adapter module just async fifos to-from- new domain and actual existing host domain?
-// Configure to use memory mapped addr offset in CPU's AXI0 region
-#define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 64 // TODO want 1024+ for FFT?
-#define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
+// Configured to use memory mapped addr offset in CPU's AXI0 region
 #include "examples/arty/src/i2s/i2s_axi_loopback.c"
 
 // Helpers macros for building mmio modules

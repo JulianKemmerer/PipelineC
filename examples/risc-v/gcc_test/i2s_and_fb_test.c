@@ -17,7 +17,7 @@ int get_max_abs(i2s_sample_in_mem_t* samples, int n_samples){
 }
 
 void main() {
-  int count = 0;
+  //int count = 0;
   // Set entire screen black
   pixel_t p = {0};
   for (size_t i = 0; i < FRAME_WIDTH; i++)
@@ -28,7 +28,7 @@ void main() {
     }
   }
   while(1){
-    *LED = count;
+    *LED = mm_status_regs->i2s_rx_out_desc_overflow;
     
     // Read i2s samples
     i2s_sample_in_mem_t* samples;
@@ -39,10 +39,12 @@ void main() {
     int max_abs = get_max_abs(samples, n_samples);
 
     // Color small area of screen (to be fast)
-    int x_start = FRAME_WIDTH/2;
-    int x_end = x_start + 2;
-    int y_start = FRAME_HEIGHT/2;
-    int y_end = y_start + 2;
+    int x_size = 4;
+    int x_start = (FRAME_WIDTH/2)-(x_size/2);
+    int x_end = x_start + x_size;
+    int y_size = 4;
+    int y_start = (FRAME_HEIGHT/2)-(y_size/2);
+    int y_end = y_start + y_size;
     // with brightness representing the i2s i24 volume value scaled to rgb 255
     int color_val = (255 * max_abs) / (1<<23); // TODO overflow? fix scaling...
     pixel_t p = {.r=color_val,.g=color_val,.b=color_val};
@@ -54,6 +56,6 @@ void main() {
       }
     }
    
-    count += 1;
+    //count += 1;
   }
 }
