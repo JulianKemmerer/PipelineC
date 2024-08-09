@@ -20,10 +20,10 @@
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
 #endif
 #ifndef I2S_LOOPBACK_DEMO_N_SAMPLES
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 256
+#define I2S_LOOPBACK_DEMO_N_SAMPLES 64 // TODO want 1024+ for FFT?
 #endif
 #ifndef I2S_LOOPBACK_DEMO_N_DESC
-#define I2S_LOOPBACK_DEMO_N_DESC 4
+#define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
 #endif
 
 // Library wrapping AXI bus
@@ -32,16 +32,16 @@
 #include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c"
 
 // Declare a fifo to instantiate for holding descriptors
-FIFO_FWFT(desc_fifo, axi_descriptor_t, 16)
+FIFO_FWFT(desc_fifo, axi_descriptor_t, I2S_LOOPBACK_DEMO_N_DESC)
 
-// Expose external port wires for reading RX samples
+// Expose external port FIFO wires for reading RX sample descriptors
 // as they go through loopback in DDR mem
-//#define I2S_RX_MONITOR_PORT
+#define I2S_RX_MONITOR_PORT
 #ifdef I2S_RX_MONITOR_PORT
-stream(axi_descriptor_t) i2s_rx_descriptors_out_monitor;
-uint1_t i2s_rx_descriptors_out_monitor_ready;
+ASYNC_CLK_CROSSING(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
 //  with extra signal to indicate if missed samples
 uint1_t i2s_rx_descriptors_out_monitor_overflow;
+#pragma ASYNC_WIRE i2s_rx_descriptors_out_monitor_overflow // Disable timing checks
 #endif
 
 // AXI loopback
@@ -120,23 +120,18 @@ void i2s_loopback_app(uint1_t reset_n)
   host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
   
   #ifdef I2S_RX_MONITOR_PORT
-  // Global wire to monitor the RX samples
-  i2s_rx_descriptors_out_monitor = rx_descriptors_out;
-  // Overflow logged if was not ready for a sample
-  static uint1_t rx_descriptors_out_monitor_was_ready;
-  if(i2s_rx_descriptors_out_monitor.valid & i2s_rx_descriptors_out_monitor_ready){
-    rx_descriptors_out_monitor_was_ready = 1;
-  }
-  // by the time the samples were ready to transmit
-  // TODO: need to remove downstream FIFO so overflow detect works right
-  // otherwise rx_descriptors_out.valid is always a single cycle pulse (fifo always ready)
-  if(rx_descriptors_out.valid & rx_descriptors_out_ready){
-    if(rx_descriptors_out_monitor_was_ready){
-      i2s_rx_descriptors_out_monitor_overflow = 0;
-    }else{
+  // Monitor port for another application to use RX samples too
+  axi_descriptor_t montor_fifo_wr_data[1];
+  montor_fifo_wr_data[0] = rx_descriptors_out.data;
+  uint1_t monitor_fifo_wr_en = rx_descriptors_out.valid & rx_descriptors_out_ready;
+  i2s_rx_descriptors_monitor_fifo_write_t monitor_fifo_wr =
+    i2s_rx_descriptors_monitor_fifo_WRITE_1(montor_fifo_wr_data, monitor_fifo_wr_en);
+  if(monitor_fifo_wr_en){
+    if(~monitor_fifo_wr.ready){
       i2s_rx_descriptors_out_monitor_overflow = 1;
+    }else{
+      i2s_rx_descriptors_out_monitor_overflow = 0;
     }
-    rx_descriptors_out_monitor_was_ready = 0;
   }
   #endif
 

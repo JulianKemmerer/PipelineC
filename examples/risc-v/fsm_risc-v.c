@@ -36,8 +36,8 @@ DECL_4BYTE_RAM_SP_RF_1(
 //    make adapter module just async fifos to-from- new domain and actual existing host domain?
 // Configure to use memory mapped addr offset in CPU's AXI0 region
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 256
-#define I2S_LOOPBACK_DEMO_N_DESC 4
+#define I2S_LOOPBACK_DEMO_N_SAMPLES 64 // TODO want 1024+ for FFT?
+#define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
 #include "examples/arty/src/i2s/i2s_axi_loopback.c"
 
 // Helpers macros for building mmio modules
@@ -207,9 +207,11 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   #ifdef I2S_RX_MONITOR_PORT
   // Handshake data for cpu read written when ready got valid data
-  i2s_rx_descriptors_out_monitor_ready = ~handshake_valid_reg_value.i2s_rx_out_desc;
-  if(i2s_rx_descriptors_out_monitor_ready & i2s_rx_descriptors_out_monitor.valid){
-    handshake_data.i2s_rx_out_desc = i2s_rx_descriptors_out_monitor.data;
+  uint1_t i2s_rx_out_desc_rd_en = ~handshake_valid_reg_value.i2s_rx_out_desc;
+  i2s_rx_descriptors_monitor_fifo_read_t i2s_rx_out_desc_fifo =
+     i2s_rx_descriptors_monitor_fifo_READ_1(i2s_rx_out_desc_rd_en);
+  if(i2s_rx_out_desc_rd_en & i2s_rx_out_desc_fifo.valid){
+    handshake_data.i2s_rx_out_desc = i2s_rx_out_desc_fifo.data[0];
     handshake_valid.i2s_rx_out_desc = 1;
   }
   #endif
@@ -654,7 +656,7 @@ void cpu_top(uint1_t areset)
   my_mmio_in_t in;
   in.status.button = 0; // TODO
   #ifdef I2S_RX_MONITOR_PORT
-  in.status.i2s_rx_out_desc_overflow = i2s_rx_descriptors_out_monitor_overflow;
+  in.status.i2s_rx_out_desc_overflow = xil_cdc2_bit(i2s_rx_descriptors_out_monitor_overflow); // CDC since async
   #endif
   riscv_out_t out = fsm_riscv(reset, in);
 

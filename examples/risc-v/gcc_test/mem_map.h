@@ -71,7 +71,7 @@ typedef struct mm_handshake_valid_t{
 #include "mm_handshake_valid_t_bytes_t.h"
 #endif
 #define MM_HANDSHAKE_DATA_ADDR MM_STATUS_REGS_END_ADDR
-static volatile mm_handshake_data_t* mm_handhsake_data = (mm_handshake_data_t*)MM_HANDSHAKE_DATA_ADDR;
+static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)MM_HANDSHAKE_DATA_ADDR;
 #define MM_HANDSHAKE_DATA_END_ADDR (MM_HANDSHAKE_DATA_ADDR+sizeof(mm_handshake_data_t))
 #define MM_HANDSHAKE_VALID_ADDR MM_HANDSHAKE_DATA_END_ADDR
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
@@ -82,7 +82,7 @@ void i2s_rx_out_desc_READ(axi_descriptor_t* desc_out){
   // Wait for valid data to show up
   while(!mm_handshake_valid->i2s_rx_out_desc){}
   // Copy the data to output
-  *desc_out = mm_handhsake_data->i2s_rx_out_desc;
+  *desc_out = mm_handshake_data->i2s_rx_out_desc;
   // Signal done with data
   mm_handshake_valid->i2s_rx_out_desc = 0;
 }

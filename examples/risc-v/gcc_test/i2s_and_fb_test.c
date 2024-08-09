@@ -1,11 +1,20 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include "mem_map.h"
 
 int get_max_abs(i2s_sample_in_mem_t* samples, int n_samples){
-  //TODO max left and right?
-  //and then max across all samples
+  int max = 0;
+  for(size_t i = 0; i < n_samples; i++)
+  {
+    if(abs(samples[i].l) > max){
+      max = abs(samples[i].l);
+    }
+    if(abs(samples[i].r) > max){
+      max = abs(samples[i].r);
+    }
+  }
+  return max;
 }
-
 
 void main() {
   int count = 0;
@@ -30,14 +39,16 @@ void main() {
     int max_abs = get_max_abs(samples, n_samples);
 
     // Color small area of screen (to be fast)
-    // TODO not full frame etc
-    // TODO determine square position and size
-    // one pixel to start?
-    // with color representing the volume value scaled to rgb 255
-    // p = ... TODO math with max_abs;
-    for (size_t i = 0; i < FRAME_WIDTH; i++)
+    int x_start = FRAME_WIDTH/2;
+    int x_end = x_start + 2;
+    int y_start = FRAME_HEIGHT/2;
+    int y_end = y_start + 2;
+    // with brightness representing the i2s i24 volume value scaled to rgb 255
+    int color_val = (255 * max_abs) / (1<<23); // TODO overflow? fix scaling...
+    pixel_t p = {.r=color_val,.g=color_val,.b=color_val};
+    for (size_t i = x_start; i < x_end; i++)
     {
-      for (size_t j = 0; j < FRAME_HEIGHT; j++)
+      for (size_t j = y_start; j < y_end; j++)
       {
         frame_buf_write(i, j, p);
       }
