@@ -6,6 +6,8 @@
 #include <stdlib.h>
 
 /* Base Types */
+
+/* Q1.15 Fixed point */
 typedef struct ci16_t
 {
     int16_t real, imag;
@@ -34,13 +36,14 @@ static inline ci16_t sub_ci16(ci16_t a, ci16_t b){
     return rv;
 }
 
+/* Q16.16 Fixed point */
 typedef struct ci32_t
 {
     int32_t real, imag;
 }ci32_t;
 
 static inline int32_t mul32(int32_t a, int32_t b){
-    int32_t rv = ((int64_t)a * (int64_t)b) >> 31;
+    int32_t rv = ((int64_t)a * (int64_t)b) >> 16;
     return rv;
 }
 
@@ -62,7 +65,7 @@ static inline ci32_t sub_ci32(ci32_t a, ci32_t b){
 }
 
 static inline ci32_t mul_ci16_ci32(ci16_t a, ci32_t b){
-    ci32_t a_e = {.real = a.real<<16, .imag=a.imag<<16};
+    ci32_t a_e = {.real = (int32_t)a.real << 1, .imag=(int32_t)a.imag << 1};
     return mul_ci32(a_e,b);
 }
 
@@ -112,8 +115,8 @@ static inline int32_t icos_S4(int32_t x)
 /// @return    exp value (CI16)
 static inline ci16_t exp_taylor(int32_t x){
     ci16_t rv;
-    rv.real = isin_S4(x);
-    rv.imag = icos_S4(x);
+    rv.real = icos_S4(x);  // cos first
+    rv.imag = isin_S4(x);  // then, sin... fixed bug
     return rv;
 }
 
@@ -144,7 +147,7 @@ static inline uint32_t rev(uint32_t v, const uint32_t N){
     return (v >> sr);
 }
 
-/* Based on https://www.geeksforgeeks.org/iterative-fast-fourier-transformation-polynomial-multiplication/ */
+/* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
 /* Compute Iterative Complex-FFT with N < 2^16 bins */
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
 void compute_fft_cc(ci16_t* input, ci32_t* output, uint32_t N){
@@ -152,8 +155,8 @@ void compute_fft_cc(ci16_t* input, ci32_t* output, uint32_t N){
     for (uint32_t i = 0; i < N; i++)
     {
         uint32_t ri = rev(i,N);
-        output[i].real = input[ri].real;
-        output[i].imag = input[ri].imag;
+        output[ri].real = input[i].real;
+        output[ri].imag = input[i].imag;
     }
 
     /* do this sequentially ? */
@@ -162,25 +165,27 @@ void compute_fft_cc(ci16_t* input, ci32_t* output, uint32_t N){
     {
         int32_t m = 1 << s;
         int32_t m_1_2 = m >> 1;
-        ci16_t omega = {INT16_MAX, 0};
-        ci16_t omega_m = exp_taylor(INT16_MIN >> (s+1));
+        ci16_t omega_m = exp_taylor((1<<15) / m); // div here, sadly... can be precomputed LUT perhaps
 
+        // Fixed the order here... wrong results before...
         // principle root of nth complex
         // root of unity. ?
         /* do this in parallel ? */
-        for (uint32_t j = 0; j < m_1_2; j++)
+        for (uint32_t k = 0; k < N; k+=m)
         {
-            for (uint32_t k = j; k < N; k+=m)
+            ci16_t omega = {INT16_MAX, 0}; // 1 + 0i
+            for (uint32_t j = 0; j < m_1_2; j++)
             {
                 // t = twiddle factor
-                ci32_t t = mul_ci16_ci32(omega, output[k + m_1_2]);
-                ci32_t u = output[k];
-                // calculating y[k]
-                output[k] = add_ci32(u, t);
-                // calculating y[k+n/2]
-                output[k + m_1_2] = sub_ci32(u, t);
+                ci32_t t = mul_ci16_ci32(omega, output[k + j + m_1_2]);
+                ci32_t u = output[k + j];
+                // calculating y[k + j]
+                output[k + j] = add_ci32(u, t);
+                // calculating y[k+j+n/2]
+                output[k + j + m_1_2] = sub_ci32(u, t);
+                // updating omega, basically rotating the phase I guess
+                omega = mul_ci16(omega, omega_m);
             }
-            omega = mul_ci16(omega, omega_m);
         }
     }  
 }
@@ -218,11 +223,11 @@ void color_screen(int width, int height, float* output_pwr, uint32_t N){
     // print results 
     for (uint32_t i = 0; i < NFFT; i++)
     {
-        uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1);
-        float re = (float)input[j].real / (float)INT16_MAX;
+        uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
+        float re = (float)output[j].real / (float)INT16_MAX; // small typo fix
         float im = (float)output[j].imag / (float)INT16_MAX;
         float pwr2 = (re*re) + (im*im);
         float pwr = pwr2 > 0 ? sqrtf(pwr2) : 0;
-        printf("%d, %f\n",i-(NFFT>>1),pwr);
+        printf("%d, %f\n",i-(NFFT>>1),pwr); // i-(NFFT>>1) yields -NFFT/2, NFFT/2
     } 
 }*/
