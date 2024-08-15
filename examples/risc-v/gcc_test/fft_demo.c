@@ -25,15 +25,14 @@ int main(){
     // apply fft
     compute_fft_cc(input, output, NFFT);
 
-    // print fft results 
+    // print results 
     for (uint32_t i = 0; i < NFFT; i++)
     {
-        uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1);
-        float re = (float)output[j].real / (float)INT16_MAX;
+        uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
+        float re = (float)output[j].real / (float)INT16_MAX; // small typo fix
         float im = (float)output[j].imag / (float)INT16_MAX;
         float pwr2 = (re*re) + (im*im);
         float pwr = pwr2 > 0 ? sqrtf(pwr2) : 0;
-        output_pwr[i] = pwr;
         int fi = i-(NFFT>>1);
         printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, pwr);
     }
