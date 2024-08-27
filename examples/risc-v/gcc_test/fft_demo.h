@@ -6,8 +6,8 @@
 #include <stdlib.h>
 
 // Select fft data type
-#define FFT_TYPE_IS_FIXED
-//#define FFT_TYPE_IS_FLOAT
+//#define FFT_TYPE_IS_FIXED
+#define FFT_TYPE_IS_FLOAT
 #ifdef FFT_TYPE_IS_FLOAT
 typedef struct complex_t
 {
