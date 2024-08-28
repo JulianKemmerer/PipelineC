@@ -6,8 +6,8 @@
 #include <stdlib.h>
 
 // Select fft data type
-//#define FFT_TYPE_IS_FIXED
-#define FFT_TYPE_IS_FLOAT
+#define FFT_TYPE_IS_FIXED
+//#define FFT_TYPE_IS_FLOAT
 #ifdef FFT_TYPE_IS_FLOAT
 typedef struct complex_t
 {
@@ -140,11 +140,16 @@ static inline int32_t icos_S4(int32_t x)
 /// @return    exp value (CI16)
 static inline ci16_t exp_complex(int32_t x){
     ci16_t rv;
-    rv.real = icos_S4(x);  // cos first
-    rv.imag = isin_S4(x);  // then, sin... fixed bug
+    // Find fixed point solution... (CORDIC ?)
+    // rv.real = icos_S4(x);  // cos first
+    // rv.imag = isin_S4(x);  // then, sin... fixed bug
+
+    // Floating point for now...
+    rv.real = (int)(32767.0f *  cosf(2.0f*M_PI*(float)x/32767.0f));
+    rv.imag = (int)(32767.0f *  sinf(2.0f*M_PI*(float)x/32767.0f));
     return rv;
 }
-#define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX?
+#define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX+1? -INT16_MIN?
 #endif
 
 static inline fft_out_t add_complex(fft_out_t a, fft_out_t b){
@@ -195,8 +200,8 @@ void compute_fft_cc(
     for (uint32_t i = 0; i < N; i++)
     {
         uint32_t ri = rev(i,N);
-        output[ri].real = input[i].real;
-        output[ri].imag = input[i].imag;
+        output[i].real = input[ri].real; // Fix here, swap order
+        output[i].imag = input[ri].imag; // Fix here, swap order
     }
 
     /* do this sequentially ? */
@@ -205,7 +210,8 @@ void compute_fft_cc(
     {
         int32_t m = 1 << s;
         int32_t m_1_2 = m >> 1;
-        fft_in_t omega_m = exp_complex(EXP_COMPLEX_CONST_ONE / m); // div here, sadly... can be precomputed LUT perhaps
+        // Fix here, neg. sign
+        fft_in_t omega_m = exp_complex(-EXP_COMPLEX_CONST_ONE / m); // div here, sadly... can be precomputed LUT perhaps
 
         // Fixed the order here... wrong results before...
         // principle root of nth complex
