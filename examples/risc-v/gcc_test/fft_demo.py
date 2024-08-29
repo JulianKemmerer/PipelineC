@@ -26,18 +26,19 @@ def plot_signal(s, fs, fc, title="", use_psd=False):
     plt.plot(t_s, s, 'k', label='s')
   plt.legend(loc="upper left")
   plt.xlim(t_s[0], t_s[-1])
-  plt.xlabel('Time (s)')
+  plt.xlabel(f'Time (s) | Fs={fs} (Hz)')
   plt.ylabel('Amplitude')
 
   # Frequency Domain Plot
   # Take the fourier transform of the signal and perform FFT Shift
   S_unshifted = np.fft.fft(s, N)
-  #S = np.fft.fftshift(S_unshifted / N)s
+  S = np.fft.fftshift(S_unshifted)
+  f_hz = (fc + (np.arange(0, fs, fs/N) - (fs/2) + (fs/N)))
   plt.figure()
-  plt.title(title + f": {N} point FFT")
-  plt.plot(range(0,N), S_unshifted.real, 'k', label='I')
-  plt.plot(range(0,N), S_unshifted.imag, 'r', label='Q')
-  plt.xlabel('Frequency Bins')
+  plt.title(title + f": {N} point FFT (shifted)")
+  plt.plot(f_hz, S.real, 'k', label='I')
+  plt.plot(f_hz, S.imag, 'r', label='Q')
+  plt.xlabel('Frequency (Hz)')
   plt.ylabel('FFT output (max=NFFT)')
   plt.legend(loc="upper left")
   '''
@@ -61,6 +62,7 @@ def plot_signal(s, fs, fc, title="", use_psd=False):
   #plt.show()
 
 # Parse the C code output from std in
+fs = None
 vga_data = []
 vga_x_max = 0
 vga_y_max = 0
@@ -72,8 +74,11 @@ output_j = []
 output_p = []
 for line in sys.stdin:
   toks = line.split(",")
+  # Sample rate
+  if "fs," in line:
+    fs = float(toks[1])
   # Input signal
-  if "i,xi,xj" in line:
+  elif "i,xi,xj" in line:
     input_i.append(float(toks[4]))
     input_j.append(float(toks[5]))
     #print("i,xi,xj",line)
@@ -102,17 +107,21 @@ input_j = np.array(input_j)
 s = (input_i + 1j*input_j)
 N=len(s)
 freq = 0.0 # center/LO freq
-fs = 64.0 # ?
 plot_signal(s, fs, freq, "Input Signal")
 
 
 # Plot fft output from C code
+output_i = np.array(output_i)
+output_j = np.array(output_j)
+output_s = (output_i + 1j*output_j)
+output_shifted = np.fft.fftshift(output_s)
+f_hz = (freq + (np.arange(0, fs, fs/N) - (fs/2) + (fs/N)))
 plt.figure()
-plt.title("C code FFT output")
-plt.plot(range(0,N), output_i, 'k', label='I')
-plt.plot(range(0,N), output_j, 'r', label='Q')
+plt.title("C code FFT output (shifted)")
+plt.plot(f_hz, output_shifted.real, 'k', label='I')
+plt.plot(f_hz, output_shifted.imag, 'r', label='Q')
 plt.legend(loc="upper left")
-plt.xlabel('Frequency bins')
+plt.xlabel('Frequency (Hz)')
 plt.ylabel('FFT output (max=NFFT)')
 '''
 plt.figure()

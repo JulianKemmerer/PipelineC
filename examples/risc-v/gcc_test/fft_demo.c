@@ -1,5 +1,11 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #include "fft_demo.h"
+
+#define NFFT (1<<6) // 64
+// Set sample rate for working out units
+#define SAMPLE_RATE_INT_HZ 128 // Fs in integer Hz
+#define TONE_RATE_INT_HZ 4 // integer Hz
+
 int main(){
 
     // Create arrays 
@@ -8,15 +14,16 @@ int main(){
     float* output_pwr = (float*)malloc(NFFT * sizeof(float));
 
     // Gen Test signal
+    printf("fs,%d\n", SAMPLE_RATE_INT_HZ);
     #ifdef FFT_TYPE_IS_FIXED
-    uint32_t Fs =  (INT16_MAX+1) / NFFT; // NFFT/1.0 Hz?
+    uint32_t sec_per_sample =  (INT16_MAX+1) / SAMPLE_RATE_INT_HZ; // 1/fs seconds
     #endif
     #ifdef FFT_TYPE_IS_FLOAT
-    float Fs = (1.0 / NFFT); // 1/NFFT Hz ?
+    float sec_per_sample = 1.0 / SAMPLE_RATE_INT_HZ; // 1/fs seconds
     #endif
     for (uint32_t i = 0; i < NFFT; i++)
     {
-        input[i] = exp_complex(4*i*Fs); // 4 Hz tone
+        input[i] = exp_complex(TONE_RATE_INT_HZ*(i*sec_per_sample));
     }
 
     // print input as float 
