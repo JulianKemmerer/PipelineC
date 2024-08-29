@@ -6,8 +6,8 @@
 #include <stdlib.h>
 
 // Select fft data type
-#define FFT_TYPE_IS_FIXED
-//#define FFT_TYPE_IS_FLOAT
+#define FFT_TYPE_IS_FLOAT
+//#define FFT_TYPE_IS_FIXED
 #ifdef FFT_TYPE_IS_FLOAT
 typedef struct complex_t
 {
@@ -16,10 +16,11 @@ typedef struct complex_t
 #define fft_in_t complex_t
 #define fft_out_t complex_t
 #define ONE_PLUS_0I_INIT {1.0, 0.0} // 1 + 0i
+// Complex exponential e ^ (2 * pi * i * x)
 static inline complex_t exp_complex(float x){
     complex_t rv;
-    rv.real = cos(x);
-    rv.imag = sin(x);
+    rv.real = cos(2.0f*M_PI*x);
+    rv.imag = sin(2.0f*M_PI*x);
     return rv;
 }
 #define EXP_COMPLEX_CONST_ONE 1.0

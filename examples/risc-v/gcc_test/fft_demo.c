@@ -12,7 +12,7 @@ int main(){
     uint32_t Fs =  (INT16_MAX+1) / NFFT; // NFFT/1.0 Hz?
     #endif
     #ifdef FFT_TYPE_IS_FLOAT
-    float Fs = (1.0 / NFFT) * 2.0 * 3.14; // 2pi/NFFT Hz ?
+    float Fs = (1.0 / NFFT); // 1/NFFT Hz ?
     #endif
     for (uint32_t i = 0; i < NFFT; i++)
     {
