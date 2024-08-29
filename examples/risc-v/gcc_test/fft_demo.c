@@ -1,10 +1,10 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #include "fft_demo.h"
 
-#define NFFT (1<<6) // 64
+#define NFFT (1<<7) // 128
 // Set sample rate for working out units
-#define SAMPLE_RATE_INT_HZ 128 // Fs in integer Hz
-#define TONE_RATE_INT_HZ 4 // integer Hz
+#define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
+#define TONE_RATE_INT_HZ 10000 // integer Hz
 
 int main(){
 
@@ -45,6 +45,7 @@ int main(){
     // print results 
     for (uint32_t i = 0; i < NFFT; i++)
     {
+        // Shift is handled in fft_demo.py, not here
         //uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
         //int fj = i-(NFFT>>1);
         //float re_j = (float)output[j].real / (float)INT16_MAX;
