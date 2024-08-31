@@ -5,6 +5,25 @@
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
 #define TONE_RATE_INT_HZ 10000 // integer Hz
+//#define TONE_IS_COMPLEX
+
+// For demo writing frame buffer is putting pixel in std out for fft_demo.py to plot
+void frame_buf_write(uint16_t x, uint16_t y, uint8_t color)
+{
+    printf("x,y,c,%d,%d,%d\n", x, y, color);
+}
+
+void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
+  // TODO use output power to draw on screen
+  // For now all white...
+  for (int i = 0; i < width; i++)
+  {
+    for (int j = 0; j < height; j++)
+    {
+      frame_buf_write(i, j, 255);
+    }
+  }
+}
 
 int main(){
 
@@ -24,6 +43,9 @@ int main(){
     for (uint32_t i = 0; i < NFFT; i++)
     {
         input[i] = exp_complex(TONE_RATE_INT_HZ*(i*sec_per_sample));
+        #ifndef TONE_IS_COMPLEX
+        input[i].imag = 0;
+        #endif
     }
 
     // print input as float 
@@ -64,5 +86,6 @@ int main(){
     }
 
     // Print screen coloring results (640x480 ratio image)
-    color_screen(NFFT, (NFFT*480)/640, output_pwr, NFFT);
+    // Only use positive freq power in first half of array
+    color_screen(64, 48, output_pwr, NFFT/2);
 }

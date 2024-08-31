@@ -237,13 +237,3 @@ void compute_fft_cc(
     }  
 }
 
-void color_screen(int width, int height, float* output_pwr, uint32_t n_samples){
-  for (int i = 0; i < width; i++)
-  {
-    for (int j = 0; j < height; j++)
-    {
-      // TODO use output power to draw on screen
-      printf("x,y,c,%d,%d,%d\n", i, j, 0);
-    }
-  }
-}
