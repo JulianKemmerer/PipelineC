@@ -129,17 +129,21 @@ pos_f_hz = f_hz[int(len(f_hz)/2)-1:]
 pos_f_power = output_p[0:int(len(f_hz)/2)+1]
 plt.plot(pos_f_hz, pos_f_power, 'k')
 plt.xlabel('Frequency (Hz)')
-plt.ylabel('Power (Max=nfft*sqrt(2)/2)(*2 for complex tone input)')
+plt.ylabel('Power (Max=nfft/2)(*2 for complex tone input?)')
 
 # Fake screen to prototype drawing
 im = Image.new('1', (vga_x_max+1,vga_y_max+1)) # create the Image
 for (x,y,c) in vga_data:
-  # TODO use c value
   if c==255:
     im.putpixel((x,y), ImageColor.getcolor('white', '1'))
   else:
     im.putpixel((x,y), ImageColor.getcolor('black', '1'))
 im.save('fft_demo.png') # or any image format
+import matplotlib.image as mpimg
+plt.figure()
+plt.title(f"VGA PIXELS")
+img = mpimg.imread('fft_demo.png')
+plt.imshow(img)
 
 
 plt.show()

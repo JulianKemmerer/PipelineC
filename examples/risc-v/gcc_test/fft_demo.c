@@ -4,7 +4,7 @@
 #define NFFT (1<<7) // 128
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
-#define TONE_RATE_INT_HZ 10000 // integer Hz
+#define TONE_RATE_INT_HZ 12345 // integer Hz
 //#define TONE_IS_COMPLEX
 
 // For demo writing frame buffer is putting pixel in std out for fft_demo.py to plot
@@ -13,15 +13,36 @@ void frame_buf_write(uint16_t x, uint16_t y, uint8_t color)
     printf("x,y,c,%d,%d,%d\n", x, y, color);
 }
 
-void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
-  // TODO use output power to draw on screen
-  // For now all white...
-  for (int i = 0; i < width; i++)
-  {
-    for (int j = 0; j < height; j++)
+// Some helper drawing code from Dutra :) (has text console stuff too!?)
+void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
+    for (int32_t i = start_x; i < end_x; i++)
     {
-      frame_buf_write(i, j, 255);
+        for (int32_t j = start_y; j < end_y; j++)
+        {
+            frame_buf_write(i,j,color);
+        }
     }
+}
+
+void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
+  // How wide is each bin in pixels
+  int bin_width = width / n_bins;
+  // Max FFT value depends on if input is complex tone or not?
+  // (Max=nfft/2)(*2 for complex tone input?)
+  float max_pwr = NFFT*0.5;
+  for (size_t b = 0; b < n_bins; b++)
+  {
+    // Calculate bounds for this bin
+    // (recall 0,0 is top left)
+    int x_start = b * bin_width;
+    int x_end = (b+1) * bin_width;
+    int y_end = height;
+    int bin_height = (pwr_bins[b]/max_pwr) * height;
+    int y_start = y_end - bin_height; //-1; //?
+    // Clear bin by drawing full height black first
+    drawRect(x_start, 0, x_end, height, 0);
+    // Then white with proper y bounds
+    drawRect(x_start, y_start, x_end, y_end, 255);
   }
 }
 
@@ -83,6 +104,7 @@ int main(){
         float pwr2 = (re*re) + (im*im);
         float pwr = pwr2 > 0 ? sqrtf(pwr2) : 0;
         printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, pwr);
+        output_pwr[i] = pwr;
     }
 
     // Print screen coloring results (640x480 ratio image)
