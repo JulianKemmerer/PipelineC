@@ -140,8 +140,9 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 // I2S samples also in AXI0 DDR
 #define I2S_BUFFS_ADDR FB0_END_ADDR
 // Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
+#define NFFT (1<<6) // 64, for FFT demo
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 64 // TODO want 1024+ for FFT?
+#define I2S_LOOPBACK_DEMO_N_SAMPLES NFFT // Match FFT size
 #define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
 // TODO I2S_BUFFS_END_ADDR using size info above
 typedef struct i2s_sample_in_mem_t{ // TODO FIX DONT HAVE TWO COPIES OF THIS DEF
