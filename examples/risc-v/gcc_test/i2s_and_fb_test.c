@@ -3,15 +3,7 @@
 #include "mem_map.h"
 
 // FFT algorithm demo code
-//#include "fft_demo.h"
-// HACK TEMP NO FFT since even fixed point as is uses float
-typedef struct complex_t
-{
-    int real, imag;
-}complex_t;
-#define fft_in_t complex_t
-#define fft_out_t complex_t
-#define FFT_TYPE_IS_FIXED
+#include "fft_demo.h"
 
 // Some helper drawing code 
 // Rect from Dutra :) (has text console stuff too!?)
@@ -25,7 +17,7 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
         }
     }
 }
-/*
+
 // Spectrum is rect bins
 void draw_spectrum(int width, int height, float* pwr_bins, uint32_t n_bins){
   // How wide is each bin in pixels
@@ -48,11 +40,9 @@ void draw_spectrum(int width, int height, float* pwr_bins, uint32_t n_bins){
     drawRect(x_start, y_start, x_end, y_end, 255);
   }
 }
-*/
 
 void main() {
   //int count = 0;
-  *LED = 15;
   // Clear screen to one color
   drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, 255);
   while(1){
@@ -82,14 +72,13 @@ void main() {
     *LED = (1<<1);
 
     // Compute FFT
-    //fft_out_t fft_output[NFFT];
-    //compute_fft_cc(fft_input_samples, fft_output, NFFT);
-    fft_out_t* fft_output = &fft_input_samples[0];
-    /*
+    fft_out_t fft_output[NFFT] = {0};
+    compute_fft_cc(fft_input_samples, fft_output, NFFT);
+    
     *LED = (1<<2);
 
     // Compute power
-    float fft_output_pwr[NFFT];
+    float fft_output_pwr[NFFT] = {0};
     for (uint32_t i = 0; i < NFFT; i++)
     {
         #ifdef FFT_TYPE_IS_FIXED
@@ -107,11 +96,10 @@ void main() {
     }
 
     *LED = (1<<3);
-    */
+    
     // Print screen coloring results
     // Only use positive freq power in first half of array
-    //draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr, NFFT/2);
-    drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, (fft_output[0].real * 255) / INT16_MAX); // Make screen depending on output somehow
+    draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr, NFFT/2);
    
     //count += 1;
   }
