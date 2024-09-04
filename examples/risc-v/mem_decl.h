@@ -211,8 +211,18 @@ riscv_dmem_out_t riscv_dmem(
   }
 
   // Account for data memory being mapped to upper physical addr range
+  uint1_t is_dmem;
+  uint1_t is_mmio;
+  is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
+  is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+  if(~is_dmem & ~is_mmio){
+    printf("Error: memory address=%d is not for dmem or mmio?\n", rw_addr);
+    mem_out.mem_out_of_range = 1;
+  }
+  if(is_dmem){
+    rw_addr &= ~DMEM_BASE_ADDR;
+  }
   // (note limits mmio range to upper 1/4 to full half fine for now...)
-  rw_addr &= ~DMEM_BASE_ADDR;
 
   // Convert byte addresses to 4-byte word index
   // do extra logic to account for how byte enables changes
@@ -270,11 +280,14 @@ riscv_dmem_out_t riscv_dmem(
     , mem_map_inputs
     #endif
   );
-  // Override mem map module output with easy bit check
-  mem_map_out.addr_is_mapped = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
-  if(mem_map_out.addr_is_mapped){
-    if(word_wr_en) printf("Memory mapped IO store addr=0x%X\n", rw_addr);
-    if(word_rd_en) printf("Memory mapped IO load addr=0x%X\n", rw_addr); 
+  if(is_mmio){
+    if(mem_map_out.addr_is_mapped){
+      if(word_wr_en) printf("Memory mapped IO store addr=0x%X\n", rw_addr);
+      if(word_rd_en) printf("Memory mapped IO load addr=0x%X\n", rw_addr); 
+    }else{
+      printf("Error: MMIO access to unmapped address=%d?\n", rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
   }
 
   #ifdef riscv_mem_map_outputs_t
@@ -364,6 +377,10 @@ riscv_dmem_out_t riscv_dmem(
     rd_byte_ens_reg = rd_byte_ens;
     is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
     is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+    if(~is_dmem & ~is_mmio){
+      printf("Error: memory address=%d is not for dmem or mmio?\n", rw_addr);
+      mem_out.mem_out_of_range = 1;
+    }
   }
   // Overide input signal with valid gated input reg contents
   if(~valid_in){
@@ -487,6 +504,10 @@ riscv_dmem_out_t riscv_dmem(
         // Need to wait for MMIO to be ready for starting input
         // before moving to next state waiting to end and get output
         mem_out.ready_for_inputs = mem_map_out.ready_for_inputs;
+        if(~mem_map_out.addr_is_mapped){
+          printf("Error: MMIO access to unmapped address=%d?\n", rw_addr);
+          mem_out.mem_out_of_range = 1;
+        }
       }
       if(mem_out.ready_for_inputs){
         is_START_state = 0;
