@@ -345,6 +345,7 @@ typedef struct riscv_out_t{
   uint32_t pc;
   uint1_t unknown_op;
   uint1_t mem_out_of_range;
+  uint1_t pc_out_of_range;
   riscv_mem_map_outputs_t mem_map_outputs;
 }riscv_out_t;
 riscv_out_t fsm_riscv(
@@ -403,6 +404,9 @@ riscv_out_t fsm_riscv(
   // Boundary shared between fetch and decode
   // Instruction memory
   imem_out = riscv_imem_ram(pc>>2, 1);
+  if((pc>>2) >= RISCV_IMEM_NUM_WORDS){
+    o.pc_out_of_range = 1;
+  }
 
   // Decode
   if(state==FETCH_END_DECODE_REG_RD_START){
@@ -609,7 +613,7 @@ riscv_out_t fsm_riscv(
   }
 
   // Debug override if ever signal errors, halt
-  if(o.mem_out_of_range | o.unknown_op){
+  if(o.pc_out_of_range | o.mem_out_of_range | o.unknown_op){
     next_state = WTF;
   }
   // Hold in starting state during reset
@@ -663,19 +667,23 @@ void cpu_top(uint1_t areset)
   //main_return = out.mem_map_outputs.return_value;
 
   // Output LEDs for hardware debug
-  static uint1_t mem_out_of_range_reg;
+  static uint1_t pc_out_of_range_reg;
   static uint1_t unknown_op_reg;
+  static uint1_t mem_out_of_range_reg;
   leds = 0;
   leds |= (uint4_t)out.mem_map_outputs.ctrl.led << 0;
-  leds |= (uint4_t)mem_out_of_range_reg << 2;
-  leds |= (uint4_t)unknown_op_reg << 3;
+  leds |= (uint4_t)pc_out_of_range_reg << 1;
+  leds |= (uint4_t)unknown_op_reg << 2;
+  leds |= (uint4_t)mem_out_of_range_reg << 3;
 
   // Sticky on so human can see single cycle pulse
-  mem_out_of_range_reg |= out.mem_out_of_range;
+  pc_out_of_range_reg |= out.pc_out_of_range;
   unknown_op_reg |= out.unknown_op;
+  mem_out_of_range_reg |= out.mem_out_of_range;
   if(reset){
-    mem_out_of_range_reg = 0;
+    pc_out_of_range_reg = 0;
     unknown_op_reg = 0;
+    mem_out_of_range_reg = 0;
   }
 }
 
