@@ -14,7 +14,7 @@ MEMORY
   ram      (rw) : ORIGIN = 0x40000000, LENGTH = 65536
 }
 
-STACK_SIZE = 0x1000;
+STACK_SIZE = 4096;
 
 /* Section Definitions */
 SECTIONS
@@ -23,7 +23,6 @@ SECTIONS
     {
         KEEP(*(.vectors .vectors.*))
         *(.text*)
-        *(.rodata*)
     } > rom
 
     /* .bss section which is used for uninitialized data */
@@ -35,7 +34,10 @@ SECTIONS
 
     .data :
     {
-        *(.data*);
+        *(.data*)
+        *(.sdata*)
+        *(.rodata*)
+        *(.srodata*)
     } > ram AT >rom
 
     /* stack section */

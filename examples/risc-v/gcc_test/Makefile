@@ -2,8 +2,9 @@
 # https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/basic-c/Makefile
 # export PATH=$PATH:/opt/riscv/bin
 
-all : main.c bootstrap.S # -lm # ,-z stack-size=0x0100 # Default stack size is 4096 bytes=0x1000?
-	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c  -o main -march=rv32im -mabi=ilp32 -mstrict-align -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments -T link.ld
+all : main.c bootstrap.S
+	# Stack size needs to match linker script? use larger than warning of half stack size?
+	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32im -mabi=ilp32 -mstrict-align -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments,-z stack-size=4096 -Wlarger-than=2048 -T link.ld
 	
 dump-elf: all
 	riscv32-unknown-elf-readelf -a main
@@ -16,7 +17,6 @@ dump-comment: all
 	objdump -s --section .comment main
 
 hex: all
-	#./elf2bin.py main mem_init.h
 	riscv32-unknown-elf-objcopy -O binary main text.bin --only-section .text
 	./bin2vhdl.py text.bin
 	riscv32-unknown-elf-objcopy -O binary main data.bin --only-section .data
