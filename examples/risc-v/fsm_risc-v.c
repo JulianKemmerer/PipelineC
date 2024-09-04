@@ -130,6 +130,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       mmio_type_is_axi0 = (addr>=MMIO_AXI0_ADDR) & (addr<(MMIO_AXI0_ADDR+MMIO_AXI0_SIZE));
       if(mmio_type_is_axi0){
         // Start a write
+        o.addr_is_mapped = 1;
         if(word_wr_en){
           // AXIS write addr + data setup
           axi_write_req_t axi_wr_req;
@@ -666,8 +667,8 @@ void cpu_top(uint1_t areset)
   static uint1_t unknown_op_reg;
   leds = 0;
   leds |= (uint4_t)out.mem_map_outputs.ctrl.led << 0;
-  leds |= (uint4_t)mem_out_of_range_reg << 1;
-  leds |= (uint4_t)unknown_op_reg << 2;
+  leds |= (uint4_t)mem_out_of_range_reg << 2;
+  leds |= (uint4_t)unknown_op_reg << 3;
 
   // Sticky on so human can see single cycle pulse
   mem_out_of_range_reg |= out.mem_out_of_range;
