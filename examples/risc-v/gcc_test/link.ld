@@ -14,7 +14,7 @@ MEMORY
   ram      (rw) : ORIGIN = 0x40000000, LENGTH = 65536
 }
 
-STACK_SIZE = 8192;
+STACK_SIZE = 32768;
 
 /* Section Definitions */
 SECTIONS
