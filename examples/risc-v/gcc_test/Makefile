@@ -3,8 +3,8 @@
 # export PATH=$PATH:/opt/riscv/bin
 
 all : main.c bootstrap.S
-	# Stack size needs to match linker script? use larger than warning of 1/4 stack size?
-	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32im -mabi=ilp32 -mstrict-align -nostartfiles -Wl,--no-relax,--no-warn-rwx-segments,-z stack-size=32768 -Wlarger-than=8196 -T link.ld
+	# Stack size needs to match linker script? default of 4096? use larger than warning of 1/4 stack size? -Wl,-z stack-size=32768 -Wlarger-than=8196 
+	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32im -mabi=ilp32 -mstrict-align -nostartfiles -T link.ld
 	
 dump-elf: all
 	riscv32-unknown-elf-readelf -a main

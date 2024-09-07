@@ -14,7 +14,7 @@ MEMORY
   ram      (rw) : ORIGIN = 0x40000000, LENGTH = 65536
 }
 
-STACK_SIZE = 32768;
+STACK_SIZE = 32768; /*Default is 4096 for gcc? whats a good size?*/
 
 /* Section Definitions */
 SECTIONS
