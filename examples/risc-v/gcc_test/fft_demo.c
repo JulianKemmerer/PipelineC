@@ -1,7 +1,7 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #include "fft_demo.h"
 
-#define NFFT (1<<7) // 128
+#define NFFT (1<<6) // 128
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
 #define TONE_RATE_INT_HZ 12345 // integer Hz
@@ -43,6 +43,47 @@ void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
     drawRect(x_start, 0, x_end, height, 0);
     // Then white with proper y bounds
     drawRect(x_start, y_start, x_end, y_end, 255);
+  }
+}
+
+#define N_BINS (NFFT/2)
+void draw_spectrum_fast(int width, int height, float* pwr_bins){
+  // Remember the power value from last time to make updates easier
+  static int last_height[N_BINS] = {0};
+  // How wide is each bin in pixels
+  int bin_width = width / N_BINS;
+  // Max FFT value depends on if input is complex tone or not?
+  // (Max=nfft/2)(*2 for complex tone input?)
+  float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers?
+  for (size_t b = 0; b < N_BINS; b++)
+  {
+    int x_start = b * bin_width;
+    int x_end = (b+1) * bin_width;
+    int bin_height = (pwr_bins[b]/max_pwr) * height;
+    if(bin_height > height) bin_height = height;
+    uint8_t color = 0;
+    int y_start = 0;
+    int y_end = 0;
+    // Calculate bounds for this bin
+    // (recall 0,0 is top left)
+    // Increase rect height or shorten?
+    if(bin_height > last_height[b]){
+      // Increase height, draw white
+      y_start = height - bin_height;
+      y_end = height - last_height[b];
+      color = 255;
+    }else{
+      // Decrease height, draw black
+      y_start = height - last_height[b];
+      y_end =  height - bin_height;
+      color = 0;
+    }
+
+    // Rect with proper y bounds
+    drawRect(x_start, y_start, x_end, y_end, color);
+
+    // Store power for next time
+    last_height[b] = bin_height;
   }
 }
 
@@ -109,5 +150,8 @@ int main(){
 
     // Print screen coloring results (640x480 ratio image)
     // Only use positive freq power in first half of array
-    color_screen(64, 48, output_pwr, NFFT/2);
+   
+    //color_screen(64, 48, output_pwr, NFFT/2);
+    drawRect(0, 0, 64, 48, 0); // Clear first
+    draw_spectrum_fast(64, 48, output_pwr);
 }

@@ -10,11 +10,11 @@ https://interrupt.memfault.com/blog/how-to-write-linker-scripts-for-firmware */
 /* Needs to match mem_map.h (TODO how to share variables?) */
 MEMORY
 {
-  rom      (rx) : ORIGIN = 0x00000000, LENGTH = 65536
-  ram      (rw) : ORIGIN = 0x40000000, LENGTH = 65536
+  rom      (rx) : ORIGIN = 0x00000000, LENGTH = 32768
+  ram      (rw) : ORIGIN = 0x40000000, LENGTH = 262144
 }
 
-STACK_SIZE = 32768; /*Default is 4096 for gcc? whats a good size?*/
+STACK_SIZE = 131072; /*Default is 4096 for gcc? whats a good size?*/
 
 /* Section Definitions */
 SECTIONS
@@ -26,11 +26,12 @@ SECTIONS
     } > rom
 
     /* .bss section which is used for uninitialized data */
-    .bss (NOLOAD) :
+    /* Could this be in wrong place somehow? */
+    /*.bss (NOLOAD) :
     {
         *(.bss*)
         *(COMMON)
-    } > ram
+    } > ram*/
 
     .data :
     {
@@ -38,6 +39,8 @@ SECTIONS
         *(.sdata*)
         *(.rodata*)
         *(.srodata*)
+        *(.bss*) /* .bss section which is used for uninitialized data */
+        *(COMMON)
     } > ram AT >rom
 
     /* stack section */

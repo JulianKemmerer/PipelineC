@@ -14,8 +14,8 @@
 // Needs to match link.ld (TODO how to share variables?)
 #define DMEM_ADDR_BIT_CHECK 30
 #define DMEM_BASE_ADDR ((uint32_t)((uint32_t)1<<DMEM_ADDR_BIT_CHECK))
-#define DMEM_SIZE 65536 // Must be decimal constant since VHDL+C literal
-#define IMEM_SIZE 65536 // Must be decimal constant since VHDL+C literal
+#define DMEM_SIZE 262144 // Must be decimal constant since VHDL+C literal
+#define IMEM_SIZE 32768 // Must be decimal constant since VHDL+C literal
 // Any addresses this high up will be mmio
 #define MEM_MAP_ADDR_BIT_CHECK 31
 #define MEM_MAP_BASE_ADDR ((uint32_t)((uint32_t)1<<MEM_MAP_ADDR_BIT_CHECK))
@@ -140,7 +140,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 // I2S samples also in AXI0 DDR
 #define I2S_BUFFS_ADDR FB0_END_ADDR
 // Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
-#define NFFT (1<<10) // 1024 for FFT demo
+#define NFFT (1<<5) // 32 for small FFT demo?
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
 #define I2S_LOOPBACK_DEMO_N_SAMPLES NFFT // Match FFT size
 #define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16

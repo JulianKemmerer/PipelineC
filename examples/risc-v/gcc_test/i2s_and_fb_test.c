@@ -17,7 +17,7 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
         }
     }
 }
-
+/*
 // Spectrum is rect bins
 void draw_spectrum(int width, int height, float* pwr_bins, uint32_t n_bins){
   // How wide is each bin in pixels
@@ -40,8 +40,8 @@ void draw_spectrum(int width, int height, float* pwr_bins, uint32_t n_bins){
     drawRect(x_start, y_start, x_end, y_end, 255);
   }
 }
+*/
 #define N_BINS (NFFT/2)
-/*
 void draw_spectrum_fast(int width, int height, float* pwr_bins){
   // Remember the power value from last time to make updates easier
   static int last_height[N_BINS] = {0};
@@ -49,12 +49,13 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
   int bin_width = width / N_BINS;
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers
+  float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers?
   for (size_t b = 0; b < N_BINS; b++)
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
     int bin_height = (pwr_bins[b]/max_pwr) * height;
+    if(bin_height > height) bin_height = height;
     uint8_t color = 0;
     int y_start = 0;
     int y_end = 0;
@@ -80,7 +81,6 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
     last_height[b] = bin_height;
   }
 }
-*/
 
 void main() {
   //int count = 0;
@@ -140,7 +140,7 @@ void main() {
     
     // Print screen coloring results
     // Only use positive freq power in first half of array
-    draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr, N_BINS);
+    draw_spectrum_fast(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
    
     //count += 1;
   }
