@@ -17,45 +17,26 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
         }
     }
 }
-/*
+
 // Spectrum is rect bins
-void draw_spectrum(int width, int height, float* pwr_bins, uint32_t n_bins){
-  // How wide is each bin in pixels
-  int bin_width = width / n_bins;
-  // Max FFT value depends on if input is complex tone or not?
-  // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT*0.5;
-  for (size_t b = 0; b < n_bins; b++)
-  {
-    // Calculate bounds for this bin
-    // (recall 0,0 is top left)
-    int x_start = b * bin_width;
-    int x_end = (b+1) * bin_width;
-    int y_end = height;
-    int bin_height = (pwr_bins[b]/max_pwr) * height;
-    int y_start = y_end - bin_height; //-1; //?
-    // Clear bin by drawing full height black first
-    drawRect(x_start, 0, x_end, height, 0);
-    // Then white with proper y bounds
-    drawRect(x_start, y_start, x_end, y_end, 255);
-  }
-}
-*/
 #define N_BINS (NFFT/2)
-void draw_spectrum_fast(int width, int height, float* pwr_bins){
-  // Remember the power value from last time to make updates easier
+void draw_spectrum(int width, int height, float* pwr_bins){
+  // Remember the power value from last time to make updates faster
   static int last_height[N_BINS] = {0};
   // How wide is each bin in pixels
   int bin_width = width / N_BINS;
+  #if N_BINS > FRAME_WIDTH
+  #error "Fix int math for bin width"
+  #endif
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT/256; // div by more than 2 since rarely near max audio to speakers? idk?
+  static float max_pwr = 1.0; // adjusts to fit max seen over time
   for (size_t b = 0; b < N_BINS; b++)
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
+    if(pwr_bins[b] > max_pwr) max_pwr = pwr_bins[b];
     int bin_height = (pwr_bins[b]/max_pwr) * height;
-    if(bin_height > height) bin_height = height;
     uint8_t color = 0;
     int y_start = 0;
     int y_end = 0;
@@ -79,6 +60,41 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
 
     // Store power for next time
     last_height[b] = bin_height;
+  }
+}
+// Waveform is n pixel wide rects to form line
+void draw_waveform(int width, int height, int line_width, fft_in_t* input_samples){
+  // line_width used in y height direction
+  // How wide is each point forming line
+  int point_width = width / NFFT;
+  if(point_width <= 0) point_width = 1;
+  int half_height = height / 2;
+  int y_mid = half_height;
+  // Remember the amplitude value from last time to make updates faster
+  static int last_y_value[NFFT] = {0};
+  for (size_t i = 0; i < NFFT; i++)
+  {
+    // Calc x position, gone too far?
+    int x_start = i * point_width;
+    int x_end = (i+1) * point_width;
+    if(x_end>FRAME_WIDTH) break;
+    // Calc line current y pos
+    #ifdef FFT_TYPE_IS_FLOAT
+    int ampl = (int)(half_height * input_samples[i].real);
+    #endif
+    #ifdef FFT_TYPE_IS_FIXED
+    int ampl = (half_height * input_samples[i].real)/INT16_MAX;
+    #endif
+    ampl = ampl * 2; // Scale x2 since rarely near max vol (TODO auto adjust ampl scale?)
+    int y_val = y_mid - ampl; // y inverted 0,0 top left
+    if(y_val < 0) y_val = 0;
+    if(y_val > height) y_val = height;
+    // Erase old line portion to black
+    drawRect(x_start, last_y_value[i], x_end, last_y_value[i]+line_width, 0);
+    // Calc new line position and draw white
+    drawRect(x_start, y_val, x_end, y_val+line_width, 255);
+    // Save y value for next time
+    last_y_value[i] = y_val;
   }
 }
 
@@ -138,10 +154,11 @@ void main() {
 
     *LED = (1<<3);
     
-    // Print screen coloring results
+    // Screen coloring result
     // Only use positive freq power in first half of array
-    draw_spectrum_fast(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
-   
+    draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
+    // Time domain waveform across top half of display
+    draw_waveform(FRAME_WIDTH, FRAME_HEIGHT/2, 2, fft_input_samples);
     //count += 1;
   }
 }
