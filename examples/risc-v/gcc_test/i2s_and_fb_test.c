@@ -49,7 +49,7 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
   int bin_width = width / N_BINS;
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers?
+  float max_pwr = NFFT/256; // div by more than 2 since rarely near max audio to speakers? idk?
   for (size_t b = 0; b < N_BINS; b++)
   {
     int x_start = b * bin_width;

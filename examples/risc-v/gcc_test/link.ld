@@ -10,7 +10,7 @@ https://interrupt.memfault.com/blog/how-to-write-linker-scripts-for-firmware */
 /* Needs to match mem_map.h (TODO how to share variables?) */
 MEMORY
 {
-  rom      (rx) : ORIGIN = 0x00000000, LENGTH = 32768
+  rom      (rx) : ORIGIN = 0x00000000, LENGTH = 65536
   ram      (rw) : ORIGIN = 0x40000000, LENGTH = 262144
 }
 
