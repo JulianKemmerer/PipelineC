@@ -13,6 +13,7 @@ from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from timeit import default_timer as timer
 
+import CC_TOOLS
 import C_TO_LOGIC
 import DEVICE_MODELS
 import DIAMOND
@@ -178,6 +179,13 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                     print("Gowin:", GOWIN.GOWIN_PATH, flush=True)
                 else:
                     raise Exception("Gowin install not found!")
+            elif part_str.upper().startswith("CCGM"):
+                SYN_TOOL = CC_TOOLS
+                # TODO dont base on cc-toolchain directory?
+                if os.path.exists(CC_TOOLS.CC_TOOLS_PATH):
+                    print("CologneChip Tools:", CC_TOOLS.CC_TOOLS_PATH, flush=True)
+                else:
+                    raise Exception("CologneChip toolchain install not found!")
             else:
                 if not allow_fail:
                     print(
@@ -196,13 +204,13 @@ def TOOL_DOES_PNR():
     elif SYN_TOOL is GOWIN:
         return GOWIN.DO_PNR == "all"
     # Uses PNR
-    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY):
+    elif (SYN_TOOL is QUARTUS) or (SYN_TOOL is OPEN_TOOLS) or (SYN_TOOL is EFINITY) or (SYN_TOOL is CC_TOOLS):
         return True
     # Uses synthesis estimates
     elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
         return False
     else:
-        raise Exception("Need syn tool!")
+        raise Exception("Need to know if tool flow does PnR!")
 
 
 def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
@@ -225,13 +233,14 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
         ext = ".sdc"
     elif SYN_TOOL is PYRTL:
         ext = ".sdc"
+    elif SYN_TOOL is CC_TOOLS:
+        ext = ".ccf" # Only for temp clock pins, no timing contraints?
     else:
         if not allow_no_syn_tool:
             # Sufjan Stevens - Video Game
             raise Exception(
                 f"Add constraints file ext for syn tool {SYN_TOOL.__name__}"
             )
-            # sys.exit(-1)
         ext = ""
 
     clock_name_to_mhz = {}
@@ -278,6 +287,8 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                 )
                 clock_mhz = INF_MHZ
             f.write('ctx.addClock("' + clock_name + '", ' + str(clock_mhz) + ")\n")
+    elif SYN_TOOL is CC_TOOLS:
+        f.write('#TODO')
     else:
         # Collect all user generated clocks, no groups for now
         all_user_clks = set()
