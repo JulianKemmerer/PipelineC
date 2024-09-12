@@ -15,7 +15,7 @@ if ENV_TOOL_PATH:
     CC_TOOLS_PR_PATH = ENV_TOOL_PATH
     CC_TOOLS_PATH = os.path.abspath(os.path.dirname(CC_TOOLS_PR_PATH) + "../../")
 else:
-    CC_TOOLS_PATH = "/media/1TB/Programs/Linux/cc-toolchain-linux_01.09.2024"
+    CC_TOOLS_PATH = "/media/1TB/Programs/Linux/cc-toolchain-linux_testing_12.09.24"
 
 
 class ParsedTimingReport:
@@ -150,7 +150,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     temp_local_out_dir = CC_TOOLS_PATH + "/workspace/pipelinec_temp_"+top_entity_name
     shutil.rmtree(temp_local_out_dir, ignore_errors=True)
     os.makedirs(temp_local_out_dir)
-    os.makedirs(f"{output_directory}/net")
+    os.makedirs(f"{output_directory}/net", exist_ok=True)
     sh_text = ""
     sh_text += f"""
 #!/bin/bash
