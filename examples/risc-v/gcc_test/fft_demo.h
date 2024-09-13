@@ -6,8 +6,8 @@
 #include <stdlib.h>
 
 // Select fft data type
-#define FFT_TYPE_IS_FLOAT
-//#define FFT_TYPE_IS_FIXED
+//#define FFT_TYPE_IS_FLOAT
+#define FFT_TYPE_IS_FIXED
 #ifdef FFT_TYPE_IS_FLOAT
 typedef struct complex_t
 {
@@ -15,9 +15,6 @@ typedef struct complex_t
 }complex_t;
 #define fft_in_t complex_t
 #define fft_out_t complex_t
-fft_out_t fft_in_to_out(fft_in_t x){
-    return x;
-}
 #define ONE_PLUS_0I_INIT {1.0, 0.0} // 1 + 0i
 // Complex exponential e ^ (2 * pi * i * x)
 static inline complex_t exp_complex(float x){
@@ -51,38 +48,19 @@ typedef struct ci16_t
 }ci16_t;
 #define ONE_PLUS_0I_INIT {INT16_MAX, 0} // 1 + 0i
 
-/*
-#define i16check(STR, x){\
-    if(x>INT16_MAX){\
-        printf(STR" OVERFLOW int16! %d\n",x);\
-        exit(-1);\
-    }\
-    if(x<INT16_MIN){\
-        printf(STR" UNDERFLOW int16! %d\n",x);\
-        exit(-1);\
-    }\
-}
-
-static inline int32_t mul16(int16_t a, int16_t b){
-    int32_t rvi32 = ((int32_t)a * (int32_t)b) >> 15;
-    i16check("mul16",rvi32);
-    int32_t rv = rvi32;
+static inline int16_t mul16(int16_t a, int16_t b){
+    int16_t rv = ((int16_t)a * (int16_t)b) >> 15;
     return rv;
 }
 
 static inline ci16_t mul_in(ci16_t a, ci16_t b){
     ci16_t rv;
-    int32_t real_i32 = mul16(a.real, b.real) - mul16(a.imag, b.imag);
-    int32_t imag_i32 = mul16(a.real, b.imag) + mul16(a.imag, b.real);
-    i16check("real mul_in",real_i32);
-    i16check("imag mul_in", imag_i32);
-    rv.real = real_i32;
-    rv.imag = imag_i32;
+    rv.real = mul16(a.real, b.real) - mul16(a.imag, b.imag);
+    rv.imag = mul16(a.real, b.imag) + mul16(a.imag, b.real);
     return rv;
 }
-*/
 
-/*static inline ci16_t add_ci16(ci16_t a, ci16_t b){
+static inline ci16_t add_ci16(ci16_t a, ci16_t b){
     ci16_t rv = {a.real + b.real, a.imag + b.imag};
     return rv;
 }
@@ -90,7 +68,7 @@ static inline ci16_t mul_in(ci16_t a, ci16_t b){
 static inline ci16_t sub_ci16(ci16_t a, ci16_t b){
     ci16_t rv = {a.real - b.real, a.imag - b.imag};
     return rv;
-}*/
+}
 
 /* Q16.16 Fixed point */
 typedef struct ci32_t
@@ -99,10 +77,6 @@ typedef struct ci32_t
 }ci32_t;
 #define fft_in_t ci16_t
 #define fft_out_t ci32_t
-fft_out_t fft_in_to_out(fft_in_t a){
-    ci32_t a_e = {.real = (int32_t)a.real << 1, .imag=(int32_t)a.imag << 1};
-    return a_e;
-}
 
 static inline int32_t mul32(int32_t a, int32_t b){
     int32_t rv = ((int64_t)a * (int64_t)b) >> 16;
@@ -116,10 +90,10 @@ static inline ci32_t mul_out(ci32_t a, ci32_t b){
     return rv;
 }
 
-/*static inline ci32_t mul_in_out(ci16_t a, ci32_t b){
-    ci32_t a_e = fft_in_to_out(a);
-    return mul_out(a_e, b);
-}*/
+static inline ci32_t mul_in_out(ci16_t a, ci32_t b){
+    ci32_t a_e = {.real = (int32_t)a.real << 1, .imag=(int32_t)a.imag << 1};
+    return mul_out(a_e,b);
+}
 
 /* code from https://www.coranac.com/2009/07/sines/ */
 /// A sine approximation via a fourth-order cosine approx.
@@ -167,15 +141,17 @@ static inline int32_t icos_S4(int32_t x)
 /// @return    exp value (CI16)
 static inline ci16_t exp_complex(int32_t x){
     ci16_t rv;
-    // fixed point solution
-    rv.real = icos_S4(x);  // cos first
-    rv.imag = isin_S4(x);  // then, sin
-    // Floating point sanity check...
-    //rv.real = (int)(INT16_MAX *  cos(2.0f*M_PI*((float)x/(float)INT16_MAX)));  
-    //rv.imag = (int)(INT16_MAX *  sin(2.0f*M_PI*((float)x/(float)INT16_MAX)));
+    // Find fixed point solution... (CORDIC ?)
+    // rv.real = icos_S4(x);  // cos first
+    // rv.imag = isin_S4(x);  // then, sin... fixed bug
+
+    // Floating point for now...
+    rv.real = (int)(32767.0f *  cosf(2.0f*M_PI*(float)x/32767.0f));
+    rv.imag = (int)(32767.0f *  sinf(2.0f*M_PI*(float)x/32767.0f));
     return rv;
 }
-#define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX+1? -INT16_MIN?
+#define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX?
+// No... INT16_MAX = 32767, we need 32768, maybe -INT16_MIN (32768) ?
 #endif
 
 static inline fft_out_t add_complex(fft_out_t a, fft_out_t b){
@@ -237,8 +213,7 @@ void compute_fft_cc(
         int32_t m = 1 << s;
         int32_t m_1_2 = m >> 1;
         // Fix here, neg. sign
-        fft_in_t omega_m_in_t = exp_complex(-EXP_COMPLEX_CONST_ONE / m); // div here, sadly... can be precomputed LUT perhaps
-        fft_out_t omega_m = fft_in_to_out(omega_m_in_t);
+        fft_in_t omega_m = exp_complex(-EXP_COMPLEX_CONST_ONE / m); // div here, sadly... can be precomputed LUT perhaps
 
         // Fixed the order here... wrong results before...
         // principle root of nth complex
@@ -246,20 +221,19 @@ void compute_fft_cc(
         /* do this in parallel ? */
         for (uint32_t k = 0; k < N; k+=m)
         {
-            fft_out_t omega = ONE_PLUS_0I_INIT; 
+            fft_in_t omega = ONE_PLUS_0I_INIT; 
             for (uint32_t j = 0; j < m_1_2; j++)
             {
                 // t = twiddle factor
-                fft_out_t t = mul_out(omega, output[k + j + m_1_2]);
+                fft_out_t t = mul_in_out(omega, output[k + j + m_1_2]);
                 fft_out_t u = output[k + j];
                 // calculating y[k + j]
                 output[k + j] = add_complex(u, t);
                 // calculating y[k+j+n/2]
                 output[k + j + m_1_2] = sub_complex(u, t);
                 // updating omega, basically rotating the phase I guess
-                omega = mul_out(omega, omega_m);
+                omega = mul_in(omega, omega_m);
             }
         }
     }  
 }
-
