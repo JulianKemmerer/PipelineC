@@ -146,8 +146,8 @@ static inline ci16_t exp_complex(int32_t x){
     // rv.imag = isin_S4(x);  // then, sin... fixed bug
 
     // Floating point for now...
-    rv.real = (int)(32767.0f *  cosf(2.0f*M_PI*(float)x/32767.0f));
-    rv.imag = (int)(32767.0f *  sinf(2.0f*M_PI*(float)x/32767.0f));
+    rv.real = (int)(INT16_MAX *  cos(2.0f*M_PI*((float)x/(float)INT16_MAX)));
+    rv.imag = (int)(INT16_MAX *  sin(2.0f*M_PI*((float)x/(float)INT16_MAX)));
     return rv;
 }
 #define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX+1? -INT16_MIN?
