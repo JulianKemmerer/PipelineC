@@ -1,7 +1,7 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #include "fft_demo.h"
 
-#define NFFT (1<<6) // 64
+#define NFFT (1<<7)
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
 #define TONE_RATE_INT_HZ 12345 // integer Hz
@@ -24,7 +24,7 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
     }
 }
 
-void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
+/*void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
   // How wide is each bin in pixels
   int bin_width = width / n_bins;
   // Max FFT value depends on if input is complex tone or not?
@@ -44,7 +44,7 @@ void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
     // Then white with proper y bounds
     drawRect(x_start, y_start, x_end, y_end, 255);
   }
-}
+}*/
 
 #define N_BINS (NFFT/2)
 void draw_spectrum_fast(int width, int height, float* pwr_bins){
@@ -52,6 +52,10 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
   static int last_height[N_BINS] = {0};
   // How wide is each bin in pixels
   int bin_width = width / N_BINS;
+  if(N_BINS > width){
+    printf("Fix bin_width int math!\n");
+    exit(-1);
+  }
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
   float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers?
@@ -116,8 +120,9 @@ int main(){
     for (uint32_t i = 0; i < NFFT; i++)
     {
       #ifdef FFT_TYPE_IS_FIXED
-      float xi = (float)input[i].real / (float)INT16_MAX;
-      float xj = (float)input[i].imag / (float)INT16_MAX;
+      complex_t output_f = ci16_to_complex(input[i]);
+      float xi = output_f.real;
+      float xj = output_f.imag;
       printf("i,xi,xj,%d,%f,%f\n", i, xi, xj);
       #endif
       #ifdef FFT_TYPE_IS_FLOAT
@@ -125,29 +130,24 @@ int main(){
       #endif
     }
 
-    // apply fft
+    // apply fft (shift is handled in fft_demo.py, not here)
     compute_fft_cc(input, output, NFFT);
+    // compute power in each fft bin
+    compute_power(output, output_pwr, NFFT);
 
-    // print results 
+    // print fft and power output result 
     for (uint32_t i = 0; i < NFFT; i++)
     {
-        // Shift is handled in fft_demo.py, not here
-        //uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
-        //int fj = i-(NFFT>>1);
-        //float re_j = (float)output[j].real / (float)INT16_MAX;
-        //float im_j = (float)output[j].imag / (float)INT16_MAX;
-        #ifdef FFT_TYPE_IS_FIXED
-        float re = (float)output[i].real / (float)INT16_MAX;
-        float im = (float)output[i].imag / (float)INT16_MAX;
-        #endif
-        #ifdef FFT_TYPE_IS_FLOAT
-        float re = output[i].real;
-        float im = output[i].imag;
-        #endif
-        float pwr2 = (re*re) + (im*im);
-        float pwr = pwr2 > 0 ? sqrtf(pwr2) : 0;
-        printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, pwr);
-        output_pwr[i] = pwr;
+      #ifdef FFT_TYPE_IS_FIXED
+      complex_t output_f = ci32_to_complex(output[i]);
+      float re = output_f.real;
+      float im = output_f.imag;
+      #endif
+      #ifdef FFT_TYPE_IS_FLOAT
+      float re = output[i].real;
+      float im = output[i].imag;
+      #endif
+      printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, output_pwr[i]);
     }
 
     // Print screen coloring results (640x480 ratio image)

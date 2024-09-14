@@ -5,14 +5,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Select fft data type
-//#define FFT_TYPE_IS_FLOAT
-#define FFT_TYPE_IS_FIXED
-#ifdef FFT_TYPE_IS_FLOAT
 typedef struct complex_t
 {
     float real, imag;
 }complex_t;
+
+// Select fft data type
+//#define FFT_TYPE_IS_FLOAT
+#define FFT_TYPE_IS_FIXED
+
+#ifdef FFT_TYPE_IS_FLOAT
 #define fft_in_t complex_t
 #define fft_out_t complex_t
 #define ONE_PLUS_0I_INIT {1.0, 0.0} // 1 + 0i
@@ -77,6 +79,19 @@ typedef struct ci32_t
 }ci32_t;
 #define fft_in_t ci16_t
 #define fft_out_t ci32_t
+
+complex_t ci16_to_complex(ci16_t c){
+    complex_t rv;
+    rv.real = (float)c.real / (float)INT16_MAX;
+    rv.imag = (float)c.imag / (float)INT16_MAX;
+    return rv;
+}
+complex_t ci32_to_complex(ci32_t c){
+    complex_t rv;
+    rv.real = (float)c.real / (float)INT16_MAX;
+    rv.imag = (float)c.imag / (float)INT16_MAX;
+    return rv;
+}
 
 static inline int32_t mul32(int32_t a, int32_t b){
     int32_t rv = ((int64_t)a * (int64_t)b) >> 16;
@@ -146,6 +161,7 @@ static inline ci16_t exp_complex(int32_t x){
     // rv.imag = isin_S4(x);  // then, sin... fixed bug
 
     // Floating point for now...
+    #warning "exp function computation is still floating point!"
     rv.real = (int)(32767.0f *  cosf(2.0f*M_PI*(float)x/32767.0f));
     rv.imag = (int)(32767.0f *  sinf(2.0f*M_PI*(float)x/32767.0f));
     return rv;
@@ -236,4 +252,30 @@ void compute_fft_cc(
             }
         }
     }  
+}
+
+// TODO make fixed point multiply,add,sqrt version
+#ifdef FFT_TYPE_IS_FIXED
+#warning "Power computation is still floating point!"
+#endif
+void compute_power(fft_out_t* output, float* output_pwr, int N)
+{
+    for (uint32_t i = 0; i < N; i++)
+    {
+        // Shift is handled in fft_demo.py, not here
+        //uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
+        //int fj = i-(NFFT>>1);
+        #ifdef FFT_TYPE_IS_FIXED
+        complex_t output_f = ci32_to_complex(output[i]);
+        float re = output_f.real;
+        float im = output_f.imag;
+        #endif
+        #ifdef FFT_TYPE_IS_FLOAT
+        float re = output[i].real;
+        float im = output[i].imag;
+        #endif
+        float pwr2 = (re*re) + (im*im);
+        float pwr = sqrtf(pwr2);
+        output_pwr[i] = pwr;
+    }
 }

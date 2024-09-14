@@ -116,6 +116,7 @@ void main() {
     fft_in_t fft_input_samples[NFFT] = {0};
     for (size_t i = 0; i < NFFT; i++)
     {
+      // I2S samples are 24b fixed point
       #ifdef FFT_TYPE_IS_FLOAT
       fft_input_samples[i].real = (float)samples[i].l/(float)(1<<24);
       fft_input_samples[i].imag = 0;
@@ -136,21 +137,7 @@ void main() {
 
     // Compute power
     float fft_output_pwr[NFFT] = {0};
-    for (uint32_t i = 0; i < NFFT; i++)
-    {
-        #ifdef FFT_TYPE_IS_FIXED
-        float re = (float)fft_output[i].real / (float)INT16_MAX;
-        float im = (float)fft_output[i].imag / (float)INT16_MAX;
-        #endif
-        #ifdef FFT_TYPE_IS_FLOAT
-        float re = fft_output[i].real;
-        float im = fft_output[i].imag;
-        #endif
-        float pwr2 = (re*re) + (im*im);
-        float pwr = sqrtf(pwr2);
-        //printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, pwr);
-        fft_output_pwr[i] = pwr;
-    }
+    compute_power(fft_output, fft_output_pwr, NFFT);
 
     *LED = (1<<3);
     
