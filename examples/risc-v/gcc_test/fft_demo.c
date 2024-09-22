@@ -1,7 +1,7 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #include "fft_demo.h"
 
-#define NFFT (1<<7)
+#define NFFT (1<<10)
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
 #define TONE_RATE_INT_HZ 12345 // integer Hz
@@ -133,7 +133,7 @@ int main(){
     // apply fft (shift is handled in fft_demo.py, not here)
     compute_fft_cc(input, output, NFFT);
     // compute power in each fft bin
-    compute_power(output, output_pwr, NFFT);
+    compute_fake_power(output, output_pwr, NFFT);
 
     // print fft and power output result 
     for (uint32_t i = 0; i < NFFT; i++)
@@ -154,6 +154,6 @@ int main(){
     // Only use positive freq power in first half of array
    
     //color_screen(64, 48, output_pwr, NFFT/2);
-    drawRect(0, 0, 64, 48, 0); // Clear first
-    draw_spectrum_fast(64, 48, output_pwr);
+    drawRect(0, 0, 640, 480, 0); // Clear first
+    draw_spectrum_fast(640, 480, output_pwr);
 }

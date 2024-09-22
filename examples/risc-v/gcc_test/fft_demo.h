@@ -268,9 +268,9 @@ void compute_fft_cc(
 
 // TODO make fixed point multiply,add,sqrt version
 #ifdef FFT_TYPE_IS_FIXED
-#warning "Power computation is still floating point!"
+#warning "Power(faked) computation is still floating point!"
 #endif
-void compute_power(fft_out_t* output, float* output_pwr, int N)
+void compute_fake_power(fft_out_t* output, float* output_pwr, int N)
 {
     for (uint32_t i = 0; i < N; i++)
     {
@@ -286,8 +286,10 @@ void compute_power(fft_out_t* output, float* output_pwr, int N)
         float re = output[i].real;
         float im = output[i].imag;
         #endif
-        float pwr2 = (re*re) + (im*im);
-        float pwr = sqrtf(pwr2);
-        output_pwr[i] = pwr;
+        //float pwr2 = (re*re) + (im*im);
+        //float pwr = sqrtf(pwr2);
+        //output_pwr[i] = pwr2;
+        // Dont need real power for visualization, fake it
+        output_pwr[i] = fabs(re) + fabs(im);
     }
 }

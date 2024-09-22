@@ -137,7 +137,7 @@ void main() {
 
     // Compute power
     float fft_output_pwr[NFFT] = {0};
-    compute_power(fft_output, fft_output_pwr, NFFT);
+    compute_fake_power(fft_output, fft_output_pwr, NFFT);
 
     *LED = (1<<3);
     
