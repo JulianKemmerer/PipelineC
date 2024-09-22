@@ -41,6 +41,7 @@ static inline complex_t mul_out(complex_t a, complex_t b){
 #endif
 
 #ifdef FFT_TYPE_IS_FIXED
+
 /* Base Types */
 
 /* Q1.15 Fixed point */
@@ -114,7 +115,7 @@ static inline ci32_t mul_in_out(ci16_t a, ci32_t b){
 /// A sine approximation via a fourth-order cosine approx.
 /// @param x   angle (with 2^15 units/circle)
 /// @return     Sine value (I16)
-static inline int32_t isin_S4(int32_t x)
+/*static inline int32_t isin_S4(int32_t x)
 {
     int c, y;
     static const int B=(2.0 - M_PI/4.0)*INT16_MAX, C=(1.0 - M_PI/4.0)*INT16_MAX;
@@ -129,13 +130,13 @@ static inline int32_t isin_S4(int32_t x)
     y= B - (x*C>>15);     // B - x^2*C
     y= INT16_MAX-(x*y>>15); // A - x^2*(B-x^2*C)
     return c>=0 ? y : -y;
-}
+}*/
 
 /* code from https://www.coranac.com/2009/07/sines/ */
 /// A cosine approximation via a fourth-order cosine approx.
 /// @param x   angle (with 2^15 units/circle)
 /// @return     Cosine value (I16)
-static inline int32_t icos_S4(int32_t x)
+/*static inline int32_t icos_S4(int32_t x)
 {
     int c, y;
     static const int B=(2.0 - M_PI/4.0)*INT16_MAX, C=(1.0 - M_PI/4.0)*INT16_MAX;
@@ -149,21 +150,32 @@ static inline int32_t icos_S4(int32_t x)
     y= B - (x*C>>15);     // B - x^2*C
     y= INT16_MAX-(x*y>>15); // A - x^2*(B-x^2*C)
     return c>=0 ? y : -y;
-}
+}*/
+
+#include "../..//cordic.h"
 
 /// Complex exponential e ^ (2 * pi * i * x)
 /// @param x   angle (with 2^15 units/circle)
 /// @return    exp value (CI16)
 static inline ci16_t exp_complex(int32_t x){
     ci16_t rv;
-    // Find fixed point solution... (CORDIC ?)
+    // Old fixed point solution doesnt work, not accurate enough?
     // rv.real = icos_S4(x);  // cos first
     // rv.imag = isin_S4(x);  // then, sin... fixed bug
-
-    // Floating point for now...
-    #warning "exp function computation is still floating point!"
-    rv.real = (int)(32767.0f *  cosf(2.0f*M_PI*(float)x/32767.0f));
-    rv.imag = (int)(32767.0f *  sinf(2.0f*M_PI*(float)x/32767.0f));
+    #warning "exp function computation still does some float math!"
+    #warning "to avoid exp func float math, convert i16 fixed point to i32 fixed point used for cordic"
+    float theta = 2.0f*M_PI*(float)x/32767.0f;
+    // Floating point
+    //float c = cosf(theta);
+    //float s = sinf(theta);
+    //rv.real = (int)(32767.0f * c);
+    //rv.imag = (int)(32767.0f * s);
+    // New fixed point
+    cordic_float_t cordic = cordic_float_mod_fixed32_n32(theta);
+    //printf("theta, c, cordic.c, s, cordic.s, %f, %f, %f, %f, %f\n",
+    //        theta, c, cordic.c, s, cordic.s);
+    rv.real = (int)(32767.0f * cordic.c);
+    rv.imag = (int)(32767.0f * cordic.s);
     return rv;
 }
 #define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX?
