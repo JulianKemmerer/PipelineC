@@ -1,5 +1,9 @@
+#ifdef __PIPELINEC__
 #include "uintN_t.h"
 #include "intN_t.h"
+#else
+#define uint1_t uint
+#endif
 
 // http://www.dcs.gla.ac.uk/~jhw/cordic/     **Slightly modified
 //Cordic in 32 bit signed fixed point math
@@ -36,9 +40,9 @@ cordic_fixed32_t cordic_fixed32_n32(int32_t theta)//, int32_t *s, int32_t *c, in
   int32_t z = theta;
   for (k=0; k<CORDIC_N_ITER; k=k+1)
   {
-    d = z>>31;
+    //d = z>>31;
     //get sign. for other architectures, you might want to use the more portable version
-    //d = z>=0 ? 0 : -1;
+    d = z>=0 ? 0 : -1;
     tx = x - (((y>>k) ^ d) - d);
     ty = y + (((x>>k) ^ d) - d);
     tz = z - ((cordic_ctab[k] ^ d) - d);
@@ -83,7 +87,7 @@ void tb()
   printf("sin(%f)=%f, cos(%f)=%f\n", rads, result.s, rads, result.c);
 }*/
 
-/*
+
 // Cordic float -inf - inf
 // TODO: Move modulo and adjustment for fixed point stuff into fixed point math
 //	via modulo 2PI then adjsut into range -pi/2 -- pi/2
@@ -92,11 +96,25 @@ void tb()
 #define CORDIC_PI 3.14159265359
 #define CORDIC_PI_DIV_2 1.57079632679
 #define CORDIC_3PI_DIV2 4.71238898038
+
+float modulo(float n, float d){
+	#ifdef __PIPELINEC__
+	return n % d;
+	#else
+	float div = n / d;
+	int div_int = (int)floor(fabs(div));
+	float total = d * div_int;
+	float remainder = n - total;
+	return remainder;
+	#endif
+}
+
+
 cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 {
 	// Only need to know value mod 2pi
 	float theta_neg2pi_2pi;
-	theta_neg2pi_2pi = theta % CORDIC_PI_X_2;
+	theta_neg2pi_2pi = modulo(theta, CORDIC_PI_X_2);
 	
 	// I'm near certain this could be optimized
 	// An add/sub and/or a else-if case could be removed being crafty with radians
@@ -114,10 +132,11 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 	// Adjust to -pi/2 -- pi/2 for fixed point
 	float fixed_range_theta;
 	fixed_range_theta = theta_0_2pi;
-	// Might need to negate x/cosine
+	// Might need to negate x/cosine or y/since
 	uint1_t neg_x;
 	neg_x = 0;
-	
+	uint1_t neg_y;
+	neg_y = 0;
 	// QI
 	if( (theta_0_2pi >= 0.0) & (theta_0_2pi <= CORDIC_PI_DIV_2) )
 	{
@@ -127,18 +146,20 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 	// Q2
 	else if( (theta_0_2pi >= CORDIC_PI_DIV_2) & (theta_0_2pi <= CORDIC_PI) )
 	{
-		// Minus pi/2 to flip into QI, negate x
-		fixed_range_theta = theta_0_2pi - CORDIC_PI_DIV_2;
+		// Subtract pi to flip into Q4
+		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		// Flip sign of x and y
 		neg_x = 1;
+		neg_y = 1;
 	}
 	// Q3
 	else if( (theta_0_2pi >= CORDIC_PI) & (theta_0_2pi <= CORDIC_3PI_DIV2) )
 	{
-		// Add pi/2 to flip into Q4, negate x
-		// But then is too far positive so subtract 2pi for negative equivalent
-		// pi/2 - 2pi = - 3pi/2
-		fixed_range_theta = theta_0_2pi - CORDIC_3PI_DIV2;
+		// Subtract pi to flip into Q4
+		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		// Flip sign of x and y
 		neg_x = 1;
+		neg_y = 1;
 	}
 	// Q4
 	else
@@ -159,10 +180,14 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 	{
 		adjusted_result.c = adjusted_result.c * -1.0;
 	}
+	if(neg_y)
+	{
+		adjusted_result.s = adjusted_result.s * -1.0;
+	}
 	
 	return adjusted_result;	
 }
-
+/*
 // Cosine implemented with 32bit fixed point
 // TODO: Verify this works (and all of cordic implementation)
 float cos(float theta)
