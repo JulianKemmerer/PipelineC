@@ -15,6 +15,7 @@ typedef struct complex_t
 #define FFT_TYPE_IS_FIXED
 
 #ifdef FFT_TYPE_IS_FLOAT
+#define fft_data_t float
 #define fft_in_t complex_t
 #define fft_out_t complex_t
 #define ONE_PLUS_0I_INIT {1.0, 0.0} // 1 + 0i
@@ -78,6 +79,7 @@ typedef struct ci32_t
 {
     int32_t real, imag;
 }ci32_t;
+#define fft_data_t int32_t
 #define fft_in_t ci16_t
 #define fft_out_t ci32_t
 
@@ -152,7 +154,7 @@ static inline ci32_t mul_in_out(ci16_t a, ci32_t b){
     return c>=0 ? y : -y;
 }*/
 
-#include "../..//cordic.h"
+#include "../../cordic.h"
 
 /// Complex exponential e ^ (2 * pi * i * x)
 /// @param x   angle (with 2^15 units/circle)
@@ -266,30 +268,21 @@ void compute_fft_cc(
     }  
 }
 
-// TODO make fixed point multiply,add,sqrt version
-#ifdef FFT_TYPE_IS_FIXED
-#warning "Power(faked) computation is still floating point!"
-#endif
-void compute_fake_power(fft_out_t* output, float* output_pwr, int N)
+// Dont need real power for visualization, fake it
+//float pwr2 = (re*re) + (im*im);
+//float pwr = sqrtf(pwr2);
+//output_pwr[i] = pwr2;
+void compute_fake_power(fft_out_t* output, fft_data_t* output_pwr, int N)
 {
     for (uint32_t i = 0; i < N; i++)
     {
-        // Shift is handled in fft_demo.py, not here
-        //uint32_t j = i < (NFFT>>1) ? (NFFT>>1)+i : i-(NFFT>>1); // FFT SHIFT
-        //int fj = i-(NFFT>>1);
-        #ifdef FFT_TYPE_IS_FIXED
-        complex_t output_f = ci32_to_complex(output[i]);
-        float re = output_f.real;
-        float im = output_f.imag;
-        #endif
+        fft_data_t re = output[i].real;
+        fft_data_t im = output[i].imag;
         #ifdef FFT_TYPE_IS_FLOAT
-        float re = output[i].real;
-        float im = output[i].imag;
-        #endif
-        //float pwr2 = (re*re) + (im*im);
-        //float pwr = sqrtf(pwr2);
-        //output_pwr[i] = pwr2;
-        // Dont need real power for visualization, fake it
         output_pwr[i] = fabs(re) + fabs(im);
+        #endif
+        #ifdef FFT_TYPE_IS_FIXED
+        output_pwr[i] = abs(re) + abs(im);
+        #endif
     }
 }

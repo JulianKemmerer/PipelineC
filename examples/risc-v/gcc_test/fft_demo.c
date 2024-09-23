@@ -47,7 +47,7 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
 }*/
 
 #define N_BINS (NFFT/2)
-void draw_spectrum_fast(int width, int height, float* pwr_bins){
+void draw_spectrum_fast(int width, int height, fft_data_t* pwr_bins){
   // Remember the power value from last time to make updates easier
   static int last_height[N_BINS] = {0};
   // How wide is each bin in pixels
@@ -58,12 +58,17 @@ void draw_spectrum_fast(int width, int height, float* pwr_bins){
   }
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT/4; // /4 since rarely near max audio to speakers?
+  // Auto size to max like live hardware demo does
+  fft_data_t max_pwr = 1;
+  for (size_t b = 0; b < N_BINS; b++)
+  {
+    if(pwr_bins[b]>max_pwr) max_pwr = pwr_bins[b];
+  }
   for (size_t b = 0; b < N_BINS; b++)
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
-    int bin_height = (pwr_bins[b]/max_pwr) * height;
+    int bin_height = ((uint64_t)pwr_bins[b] * (uint64_t)height)/max_pwr;
     if(bin_height > height) bin_height = height;
     uint8_t color = 0;
     int y_start = 0;
@@ -96,17 +101,17 @@ int main(){
     // Create arrays 
     fft_in_t* input = (fft_in_t*)malloc(NFFT * sizeof(fft_in_t));
     fft_out_t* output = (fft_out_t*)malloc(NFFT * sizeof(fft_out_t));
-    float* output_pwr = (float*)malloc(NFFT * sizeof(float));
+    fft_data_t* output_pwr = (fft_data_t*)malloc(NFFT * sizeof(fft_data_t));
 
     // Gen Test signal
     printf("fs,%d\n", SAMPLE_RATE_INT_HZ);
     // Rate constant in the form that works well for float and fixed point:
     //  1/fs seconds per sample, multiplied by tone rate in hz
     #ifdef FFT_TYPE_IS_FIXED
-    uint32_t sec_per_sample_times_rate = (TONE_RATE_INT_HZ*(INT16_MAX+1)) / SAMPLE_RATE_INT_HZ; 
+    fft_data_t sec_per_sample_times_rate = (TONE_RATE_INT_HZ*(INT16_MAX+1)) / SAMPLE_RATE_INT_HZ; 
     #endif
     #ifdef FFT_TYPE_IS_FLOAT
-    float sec_per_sample_times_rate = (float)TONE_RATE_INT_HZ / (float)SAMPLE_RATE_INT_HZ;
+    fft_data_t sec_per_sample_times_rate = (float)TONE_RATE_INT_HZ / (float)SAMPLE_RATE_INT_HZ;
     #endif
     for (uint32_t i = 0; i < NFFT; i++)
     {
@@ -142,12 +147,13 @@ int main(){
       complex_t output_f = ci32_to_complex(output[i]);
       float re = output_f.real;
       float im = output_f.imag;
+      printf("i,re,im,p,%d,%f,%f,%d\n", i, re, im, output_pwr[i]);
       #endif
       #ifdef FFT_TYPE_IS_FLOAT
       float re = output[i].real;
       float im = output[i].imag;
-      #endif
       printf("i,re,im,p,%d,%f,%f,%f\n", i, re, im, output_pwr[i]);
+      #endif
     }
 
     // Print screen coloring results (640x480 ratio image)

@@ -20,7 +20,7 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
 
 // Spectrum is rect bins
 #define N_BINS (NFFT/2)
-void draw_spectrum(int width, int height, float* pwr_bins){
+void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   // Remember the power value from last time to make updates faster
   static int last_height[N_BINS] = {0};
   // How wide is each bin in pixels
@@ -30,13 +30,13 @@ void draw_spectrum(int width, int height, float* pwr_bins){
   #endif
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
-  static float max_pwr = 1.0; // adjusts to fit max seen over time
+  static fft_data_t max_pwr = 1; // adjusts to fit max seen over time
   for (size_t b = 0; b < N_BINS; b++)
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
     if(pwr_bins[b] > max_pwr) max_pwr = pwr_bins[b];
-    int bin_height = (pwr_bins[b]/max_pwr) * height;
+    int bin_height = ((uint64_t)pwr_bins[b] * (uint64_t)height)/max_pwr;
     uint8_t color = 0;
     int y_start = 0;
     int y_end = 0;
@@ -136,7 +136,7 @@ void main() {
     *LED = (1<<2);
 
     // Compute power
-    float fft_output_pwr[NFFT] = {0};
+    fft_data_t fft_output_pwr[NFFT] = {0};
     compute_fake_power(fft_output, fft_output_pwr, NFFT);
 
     *LED = (1<<3);
