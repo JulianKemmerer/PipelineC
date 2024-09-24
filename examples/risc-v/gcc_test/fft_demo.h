@@ -44,8 +44,9 @@ static inline complex_t mul_out(complex_t a, complex_t b){
 #ifdef FFT_TYPE_IS_FIXED
 
 /* Base Types */
+#warning "Clarify fixed point formats and units for function args!"
 
-/* Q1.15 Fixed point */
+/* Q0.15 Fixed point, 1 sign bit, 0 integer bits, 15 fraction bits = int16 */
 typedef struct ci16_t
 {
     int16_t real, imag;
@@ -74,7 +75,7 @@ static inline ci16_t sub_ci16(ci16_t a, ci16_t b){
     return rv;
 }
 
-/* Q16.16 Fixed point */
+/* Q15.16 Fixed point, 1 sign bit, 15 integer bits, 16 fraction bits = int32 */
 typedef struct ci32_t
 {
     int32_t real, imag;
@@ -157,27 +158,41 @@ static inline ci32_t mul_in_out(ci16_t a, ci32_t b){
 #include "../../cordic.h"
 
 /// Complex exponential e ^ (2 * pi * i * x)
-/// @param x   angle (with 2^15 units/circle)
-/// @return    exp value (CI16)
+/// @param x   angle Qx.15
+/// @return    exp value (CI16, Q0.15) 
 static inline ci16_t exp_complex(int32_t x){
     ci16_t rv;
     // Old fixed point solution doesnt work, not accurate enough?
     // rv.real = icos_S4(x);  // cos first
     // rv.imag = isin_S4(x);  // then, sin... fixed bug
-    #warning "exp function computation still does some float math!"
-    #warning "to avoid exp func float math, convert i16 fixed point to i32 fixed point used for cordic"
-    float theta = 2.0f*M_PI*(float)x/32767.0f;
+    //float theta = 2.0f*M_PI*((float)x/32768.0f);
+    //int64_t theta_int = (int)(32768.0f * theta);
     // Floating point
     //float c = cosf(theta);
     //float s = sinf(theta);
-    //rv.real = (int)(32767.0f * c);
-    //rv.imag = (int)(32767.0f * s);
+    //int32_t c_fixed = (int)(32767.0f * c);
+    //int32_t s_fixed = (int)(32767.0f * s);
     // New fixed point
-    cordic_float_t cordic = cordic_float_mod_fixed32_n32(theta);
-    //printf("theta, c, cordic.c, s, cordic.s, %f, %f, %f, %f, %f\n",
-    //        theta, c, cordic.c, s, cordic.s);
-    rv.real = (int)(32767.0f * cordic.c);
-    rv.imag = (int)(32767.0f * cordic.s);
+    int64_t x_scaled = (int64_t)x << (30-15); // Scale 15b fraction to 30b fraction
+    int64_t theta_fixed = cordic_mul_2pi(x_scaled);
+    cordic_fixed32_t cordic = cordic_mod_fixed32_n32(theta_fixed);
+    ci16_t cordic_scaled;
+    cordic_scaled.real = cordic.c >> (30-15);
+    cordic_scaled.imag = cordic.s >> (30-15);
+    // HACKS WTF life is too short to deal with this number format shit
+    if(cordic_scaled.real > 0){
+        cordic_scaled.real -= 1;
+    }else if(cordic_scaled.real < 0){
+        cordic_scaled.real += 1;
+    }
+    if(cordic_scaled.imag > 0){
+        cordic_scaled.imag -= 1;
+    }else if(cordic_scaled.imag < 0){
+        cordic_scaled.imag += 1;
+    }
+    //printf("x, theta, theta_fixed, c, cordic_scaled.re, s, cordic_scaled.im, %d, %f, %f, %d, %d, %d, %d\n",
+    //        x, theta, cordic_int_to_float(theta_fixed), c_fixed, cordic_scaled.real, s_fixed, cordic_scaled.imag);
+    rv = cordic_scaled;
     return rv;
 }
 #define EXP_COMPLEX_CONST_ONE (1<<15) // Use INT16_MAX?

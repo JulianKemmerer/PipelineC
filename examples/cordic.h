@@ -10,14 +10,22 @@
 //Function is valid for arguments in range -pi/2 -- pi/2
 //for values pi/2--pi: value = half_pi-(theta-half_pi) and similarly for values -pi---pi/2
 //
-// 1.0 = 1073741824
+// 1.0 = 1073741824 (30 fraction bits, ones place bit, sign bit) = int32
 // 1/k = 0.6072529350088812561694
 // pi = 3.1415926535897932384626
 //Constants
 #define CORDIC_1K 0x26DD3B6A
-#define CORDIC_MUL 1073741824.000000
+#define CORDIC_MUL 1073741824
 #define CORDIC_NTAB 32
 #define CORDIC_N_ITER 32
+
+float cordic_int_to_float(int64_t x){
+	return (float)x / (float)CORDIC_MUL;
+}
+
+int64_t cordic_float_to_int(float f){
+	return f*CORDIC_MUL;
+}
 
 // Cordic limited to int32 fixed point -pi/2 -- pi/2
 typedef struct cordic_fixed32_t
@@ -56,6 +64,90 @@ cordic_fixed32_t cordic_fixed32_n32(int32_t theta)//, int32_t *s, int32_t *c, in
 }
 
 
+#define CORDIC_FLOAT_AS_FIXED(flt) ((int64_t)(flt*CORDIC_MUL))
+#define CORDIC_PI_X_2 CORDIC_FLOAT_AS_FIXED(6.28318530718)
+#define CORDIC_PI CORDIC_FLOAT_AS_FIXED(3.14159265359)
+#define CORDIC_PI_DIV_2 CORDIC_FLOAT_AS_FIXED(1.57079632679)
+#define CORDIC_PI_X3_DIV2 CORDIC_FLOAT_AS_FIXED(4.71238898038)
+
+static inline int64_t cordic_mul_2pi(int64_t a)//, int64_t b)
+{
+	//return (a*CORDIC_PI_X_2)>>30;
+	//(a*b) is too large for i64
+	return (a>>15) * (CORDIC_PI_X_2>>15);  
+	// TODO not accurate enough losing 15 bits on each arg before mutliply?
+}
+
+int64_t cordic_fixed_modulo(int64_t n_fixed32, int64_t d_fixed32){
+	return n_fixed32 % d_fixed32;
+}
+
+cordic_fixed32_t cordic_mod_fixed32_n32(int64_t theta)
+{
+	// Only need to know value mod 2pi
+	int64_t theta_neg2pi_2pi = theta % CORDIC_PI_X_2;
+	//printf("theta %f mod 2pi %f\n", cordic_int_to_float(theta), cordic_int_to_float(theta_neg2pi_2pi));
+	
+	// Convert negative angles to pos equivalent
+	int64_t theta_0_2pi = theta_neg2pi_2pi;
+	if(theta_neg2pi_2pi < 0){
+		theta_0_2pi = theta_neg2pi_2pi + CORDIC_PI_X_2;
+	}
+	
+	// Adjust to -pi/2 -- pi/2 for fixed point
+	int32_t fixed_range_theta = theta_0_2pi;
+	// Might need to negate x/cosine or y/since
+	uint1_t neg_x = 0;
+	uint1_t neg_y = 0;
+	// QI
+	if( (theta_0_2pi >= 0) & (theta_0_2pi <= CORDIC_PI_DIV_2) )
+	{
+		// Oh yay, use as is
+		fixed_range_theta = theta_0_2pi;
+	}	// Q2
+	else if( (theta_0_2pi >= CORDIC_PI_DIV_2) & (theta_0_2pi <= CORDIC_PI) )
+	{
+		// Subtract pi to flip into Q4
+		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		// Flip sign of x and y
+		neg_x = 1;
+		neg_y = 1;
+	}
+	// Q3
+	else if( (theta_0_2pi >= CORDIC_PI) & (theta_0_2pi <= CORDIC_PI_X3_DIV2) )
+	{
+		// Subtract pi to flip into Q4
+		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		// Flip sign of x and y
+		neg_x = 1;
+		neg_y = 1;
+	}
+	// Q4
+	else
+	{
+		// Too far positive
+		// Just use negative equivalent that is <= -pi/2
+		fixed_range_theta = theta_0_2pi - CORDIC_PI_X_2;
+	}
+	
+	// Do operation in the fixed range
+	cordic_fixed32_t cordic_result = cordic_fixed32_n32(fixed_range_theta);
+	
+	// Adjust result as needed
+	cordic_fixed32_t adjusted_result = cordic_result;
+	if(neg_x)
+	{
+		adjusted_result.c = -adjusted_result.c;
+	}
+	if(neg_y)
+	{
+		adjusted_result.s = -adjusted_result.s;
+	}
+	
+	return adjusted_result;	
+}
+
+
 // Cordic limited to float -pi/2 -- pi/2 per fixed point cordic implementation
 typedef struct cordic_float_t
 {
@@ -88,16 +180,13 @@ void tb()
 }*/
 
 
-// Cordic float -inf - inf
-// TODO: Move modulo and adjustment for fixed point stuff into fixed point math
-//	via modulo 2PI then adjsut into range -pi/2 -- pi/2
-//  	per fixed point cordic implementation
-#define CORDIC_PI_X_2 6.28318530718
-#define CORDIC_PI 3.14159265359
-#define CORDIC_PI_DIV_2 1.57079632679
-#define CORDIC_3PI_DIV2 4.71238898038
 
-float modulo(float n, float d){
+#define PI_X_2 6.28318530718
+#define PI 3.14159265359
+#define PI_DIV_2 1.57079632679
+#define PI_X3_DIV2 4.71238898038
+
+float float_modulo(float n, float d){
 	#ifdef __PIPELINEC__
 	return n % d;
 	#else
@@ -109,25 +198,11 @@ float modulo(float n, float d){
 	#endif
 }
 
-
 cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 {
 	// Only need to know value mod 2pi
-	float theta_neg2pi_2pi;
-	theta_neg2pi_2pi = modulo(theta, CORDIC_PI_X_2);
-	
-	// I'm near certain this could be optimized
-	// An add/sub and/or a else-if case could be removed being crafty with radians
-	
-	// Convert -2pi -> 2pi range into 0->2pi
-	// Only need to check quadrants in terms of their positive values
 	float theta_0_2pi;
-	theta_0_2pi = theta_neg2pi_2pi;
-	if(theta < 0.0)
-	{
-		// theta_neg2pi_2pi known negative  -2pi -> 0
-		theta_0_2pi = CORDIC_PI_X_2  + theta_neg2pi_2pi;
-	}
+	theta_0_2pi = float_modulo(theta, PI_X_2);
 	
 	// Adjust to -pi/2 -- pi/2 for fixed point
 	float fixed_range_theta;
@@ -138,25 +213,25 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 	uint1_t neg_y;
 	neg_y = 0;
 	// QI
-	if( (theta_0_2pi >= 0.0) & (theta_0_2pi <= CORDIC_PI_DIV_2) )
+	if( (theta_0_2pi >= 0.0) & (theta_0_2pi <= PI_DIV_2) )
 	{
 		// Oh yay, use as is
 		fixed_range_theta = theta_0_2pi;
 	}
 	// Q2
-	else if( (theta_0_2pi >= CORDIC_PI_DIV_2) & (theta_0_2pi <= CORDIC_PI) )
+	else if( (theta_0_2pi >= PI_DIV_2) & (theta_0_2pi <= PI) )
 	{
 		// Subtract pi to flip into Q4
-		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		fixed_range_theta = theta_0_2pi - PI;
 		// Flip sign of x and y
 		neg_x = 1;
 		neg_y = 1;
 	}
 	// Q3
-	else if( (theta_0_2pi >= CORDIC_PI) & (theta_0_2pi <= CORDIC_3PI_DIV2) )
+	else if( (theta_0_2pi >= PI) & (theta_0_2pi <= PI_X3_DIV2) )
 	{
 		// Subtract pi to flip into Q4
-		fixed_range_theta = theta_0_2pi - CORDIC_PI;
+		fixed_range_theta = theta_0_2pi - PI;
 		// Flip sign of x and y
 		neg_x = 1;
 		neg_y = 1;
@@ -166,7 +241,7 @@ cordic_float_t cordic_float_mod_fixed32_n32(float theta)
 	{
 		// Too far positive
 		// Just use negative equivalent that is <= -pi/2
-		fixed_range_theta = theta_0_2pi - CORDIC_PI_X_2;
+		fixed_range_theta = theta_0_2pi - PI_X_2;
 	}
 	
 	// Do operation in the fixed range
