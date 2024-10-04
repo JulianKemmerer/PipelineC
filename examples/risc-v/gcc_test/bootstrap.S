@@ -10,5 +10,5 @@
 # Upon startup set the stack pointer to point at the end of the stack
 # And then start user main()
 _bootstrap:
-la sp, stack_end
+la sp, __stacktop
 jal main

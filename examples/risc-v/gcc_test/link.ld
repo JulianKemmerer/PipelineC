@@ -7,51 +7,50 @@ ENTRY(_bootstrap)
 /* and Discord user dutracgi,
 https://interrupt.memfault.com/blog/how-to-write-linker-scripts-for-firmware */
 
+/* If see address errors/lockups: */
+/*  check for missing sections not included in .data(ram) or .text(rom)*/
+/*  try increasing the ram length, 16k didnt work */
+
 /* Needs to match mem_map.h (TODO how to share variables?) */
 MEMORY
 {
   rom      (rx) : ORIGIN = 0x00000000, LENGTH = 65536
-  ram      (rw) : ORIGIN = 0x40000000, LENGTH = 262144
+  ram      (rw) : ORIGIN = 0x40000000, LENGTH = 32768
 }
-
-STACK_SIZE = 131072; /*Default is 4096 for gcc? whats a good size?*/
 
 /* Section Definitions */
 SECTIONS
 {
+    /* Top of ram for stack pointer (uninitialized/NOLOAD?)*/
+    __stacktop = ORIGIN(ram) + LENGTH(ram);
+
     .text :
     {
         KEEP(*(.vectors .vectors.*))
         *(.text*)
     } > rom
 
-    /* .bss section which is used for uninitialized data */
-    /* Could this be in wrong place somehow? */
-    /*.bss (NOLOAD) :
-    {
-        *(.bss*)
-        *(COMMON)
-    } > ram*/
-
     .data :
     {
         *(.data*)
-        *(.sdata*)
-        *(.rodata*)
+        *(.sdata*) /* 's' small data */
+        *(.rodata*) /* 'ro' read only data */
         *(.srodata*)
         *(.bss*) /* .bss section which is used for uninitialized data */
+        *(.sbss*)
+        *(.eh_frame*) /* exception handling, likely for float point */
         *(COMMON)
     } > ram AT >rom
 
-    /* stack section */
+    /* stack section 
     .stack (NOLOAD):
     {
         . = ALIGN(4);
-        stack_begin = .; /* stack base is here */
+        stack_begin = .;
         . = . + STACK_SIZE;
         . = ALIGN(4);
-        stack_end = .; /* stack top is here <- sp */
-    } > ram
+        stack_end = .;
+    } > ram*/
 
     _end = . ;
 }

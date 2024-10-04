@@ -14,7 +14,7 @@
 // Needs to match link.ld (TODO how to share variables?)
 #define DMEM_ADDR_BIT_CHECK 30
 #define DMEM_BASE_ADDR ((uint32_t)((uint32_t)1<<DMEM_ADDR_BIT_CHECK))
-#define DMEM_SIZE 262144 // Must be decimal constant since VHDL+C literal
+#define DMEM_SIZE 32768 // Must be decimal constant since VHDL+C literal
 #define IMEM_SIZE 65536 // Must be decimal constant since VHDL+C literal
 // Any addresses this high up will be mmio
 #define MEM_MAP_ADDR_BIT_CHECK 31
