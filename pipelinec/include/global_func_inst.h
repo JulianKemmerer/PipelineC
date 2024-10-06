@@ -98,6 +98,7 @@ typedef struct PPCAT(inst_name,_in_reg_t){ \
   uint8_t id; \
   uint1_t valid; \
 }PPCAT(inst_name,_in_reg_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_in_reg_func))\
 PPCAT(inst_name,_in_reg_t) PPCAT(inst_name,_in_reg_func)(in_type data, uint8_t id, uint1_t valid) \
 { \
   static PPCAT(inst_name,_in_reg_t) the_reg; \
@@ -112,6 +113,7 @@ typedef struct PPCAT(inst_name,_out_reg_t){ \
   uint8_t id; \
   uint1_t valid; \
 }PPCAT(inst_name,_out_reg_t); \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_out_reg_func))\
 PPCAT(inst_name,_out_reg_t) PPCAT(inst_name,_out_reg_func)(out_type data, uint8_t id, uint1_t valid) \
 { \
   static PPCAT(inst_name,_out_reg_t) the_reg; \

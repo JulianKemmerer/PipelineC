@@ -39,6 +39,7 @@ app_to_pmod_jc_t app_to_pmod_jc;
 
 // Top level module connecting to globally visible ports
 #pragma MAIN pmod_jc // No associated clock domain yet
+#pragma FUNC_WIRES pmod_jc
 app_to_pmod_jc_t pmod_jc(/*pmod_jc_to_app_t inputs*/)
 {
   app_to_pmod_jc_t outputs;

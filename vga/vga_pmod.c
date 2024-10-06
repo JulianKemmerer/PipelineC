@@ -42,6 +42,7 @@ app_to_vga_t app_to_vga;
 
 // Top level module connecting to globally visible ports
 #pragma MAIN vga // No associated clock domain yet
+#pragma FUNC_WIRES vga
 void vga()
 {
   app_to_vga_t vga;
