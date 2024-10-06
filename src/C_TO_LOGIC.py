@@ -5071,10 +5071,8 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
     elif type(c_ast_decl.type) is c_ast.PtrDecl:
         c_ast_typedecl = c_ast_decl.type.type  # one type node lower down
         wire_name = c_ast_decl.name
-        c_type = c_ast_typedecl.type.names[0]
-        print(
-            f"Ignoring pointer declaration: {c_type} {wire_name} {c_ast_decl.type.coord}"
-        )
+        print(f"Ignoring pointer declaration: {wire_name} {c_ast_decl.type.coord}")
+        # c_type = c_ast_typedecl.type.names[0]
         c_type = None
     else:
         raise Exception(
