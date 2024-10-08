@@ -1,7 +1,7 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
+#define NFFT (1<<10)
 #include "fft_demo.h"
 
-#define NFFT (1<<10)
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
 #define TONE_RATE_INT_HZ 12345 // integer Hz
@@ -97,8 +97,12 @@ void draw_spectrum_fast(int width, int height, fft_data_t* pwr_bins){
 }
 
 int main(){
+    #ifdef FFT_USE_OMEGA_LUT
+    // One time init omega lookup
+    init_omega_lookup();
+    #endif
 
-    // Create arrays 
+    // Create arrays for signals
     fft_in_t* input = (fft_in_t*)malloc(NFFT * sizeof(fft_in_t));
     fft_out_t* output = (fft_out_t*)malloc(NFFT * sizeof(fft_out_t));
     fft_data_t* output_pwr = (fft_data_t*)malloc(NFFT * sizeof(fft_data_t));
@@ -125,9 +129,9 @@ int main(){
     for (uint32_t i = 0; i < NFFT; i++)
     {
       #ifdef FFT_TYPE_IS_FIXED
-      complex_t output_f = ci16_to_complex(input[i]);
-      float xi = output_f.real;
-      float xj = output_f.imag;
+      complex_t input_f = ci16_to_complex(input[i]);
+      float xi = input_f.real;
+      float xj = input_f.imag;
       printf("i,xi,xj,%d,%f,%f\n", i, xi, xj);
       #endif
       #ifdef FFT_TYPE_IS_FLOAT

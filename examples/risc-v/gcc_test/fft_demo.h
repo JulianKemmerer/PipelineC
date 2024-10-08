@@ -13,6 +13,8 @@ typedef struct complex_t
 // Select fft data type
 //#define FFT_TYPE_IS_FLOAT
 #define FFT_TYPE_IS_FIXED
+// Use a lookup table for complex exponential values?
+#define FFT_USE_OMEGA_LUT // Doesnt work in hardware yet? Get bad looking spectrum!
 
 #ifdef FFT_TYPE_IS_FLOAT
 #define fft_data_t float
@@ -44,7 +46,6 @@ static inline complex_t mul_out(complex_t a, complex_t b){
 #ifdef FFT_TYPE_IS_FIXED
 
 /* Base Types */
-#warning "Clarify fixed point formats and units for function args!"
 
 /* Q0.15 Fixed point, 1 sign bit, 0 integer bits, 15 fraction bits = int16 */
 typedef struct ci16_t
@@ -236,6 +237,37 @@ static inline uint32_t rev(uint32_t v, const uint32_t N){
     return (v >> sr);
 }
 
+#ifdef FFT_USE_OMEGA_LUT
+// Lookup table for omega values instead of recalculating during each FFT iteration
+fft_in_t OMEGA_LUT[NFFT]={0}; // Init by software for now
+void init_omega_lookup(){
+    int N = NFFT;
+    int index = 0;
+    for (uint32_t s = 1; s < (int)ceil(log2(N) + 1.0); s++)
+    {
+        //printf("s = %d\n", s);
+        int32_t m = 1 << s;
+        int32_t m_1_2 = m >> 1;
+        fft_in_t omega_m = exp_complex(-EXP_COMPLEX_CONST_ONE / m);
+        fft_in_t omega = ONE_PLUS_0I_INIT; 
+        for (uint32_t j = 0; j < m_1_2; j++)
+        {
+            //printf("INIT s = %d, j = %d ~= omega lut index[%d]\n", s, j, index);
+            OMEGA_LUT[index] = omega;
+            index++;
+            omega = mul_in(omega, omega_m);
+        }
+    }  
+}
+fft_in_t omega_lookup(int s, int j){
+    // sum of 2^x from 0 to N = 2^(n+1)-1
+    int num_j_elems_so_far = (1<<(s-1)) - 1;
+    int index = num_j_elems_so_far + j;
+    //printf("LOOKUP s = %d, j = %d ~= omega lut index[%d]\n", s, j, index);
+    return OMEGA_LUT[index];
+}
+#endif
+
 /* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
 /* Compute Iterative Complex-FFT with N < 2^16 bins */
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
@@ -251,33 +283,41 @@ void compute_fft_cc(
         output[i].imag = input[ri].imag; // Fix here, swap order
     }
 
-    /* do this sequentially ? */
+    /* do this sequentially */
     // S butterfly levels
     for (uint32_t s = 1; s < (int)ceil(log2(N) + 1.0); s++)
     {
         int32_t m = 1 << s;
         int32_t m_1_2 = m >> 1;
-        // Fix here, neg. sign
+        #ifndef FFT_USE_OMEGA_LUT
         fft_in_t omega_m = exp_complex(-EXP_COMPLEX_CONST_ONE / m); // div here, sadly... can be precomputed LUT perhaps
-
-        // Fixed the order here... wrong results before...
+        #endif
+        
         // principle root of nth complex
-        // root of unity. ?
-        /* do this in parallel ? */
+        /* do this in parallel */
         for (uint32_t k = 0; k < N; k+=m)
-        {
+        {   
+            #ifndef FFT_USE_OMEGA_LUT
             fft_in_t omega = ONE_PLUS_0I_INIT; 
+            #endif
             for (uint32_t j = 0; j < m_1_2; j++)
             {
+                #ifdef FFT_USE_OMEGA_LUT
+                fft_in_t omega = omega_lookup(s, j);
+                #endif
                 // t = twiddle factor
-                fft_out_t t = mul_in_out(omega, output[k + j + m_1_2]);
-                fft_out_t u = output[k + j];
+                uint t_index = k + j + m_1_2;
+                uint u_index = k + j;
+                fft_out_t t = mul_in_out(omega, output[t_index]);
+                fft_out_t u = output[u_index];
                 // calculating y[k + j]
-                output[k + j] = add_complex(u, t);
+                output[u_index] = add_complex(u, t);
                 // calculating y[k+j+n/2]
-                output[k + j + m_1_2] = sub_complex(u, t);
-                // updating omega, basically rotating the phase I guess
+                output[t_index] = sub_complex(u, t);
+                #ifndef FFT_USE_OMEGA_LUT
+                // updating omega, rotating the phase
                 omega = mul_in(omega, omega_m);
+                #endif
             }
         }
     }  

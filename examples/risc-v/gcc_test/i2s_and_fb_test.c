@@ -102,6 +102,10 @@ void main() {
   //int count = 0;
   // Clear screen to black
   drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, 0);
+  #ifdef FFT_USE_OMEGA_LUT
+  // Init lookup table for FFT
+  init_omega_lookup();
+  #endif
   while(1){
     *LED = 0; //mm_status_regs->i2s_rx_out_desc_overflow;
     
