@@ -239,7 +239,8 @@ static inline uint32_t rev(uint32_t v, const uint32_t N){
 
 #ifdef FFT_USE_OMEGA_LUT
 // Lookup table for omega values instead of recalculating during each FFT iteration
-fft_in_t OMEGA_LUT[NFFT]={0}; // Init by software for now
+// volatile needed for some reason?
+volatile fft_in_t OMEGA_LUT[NFFT]={0}; // Init by software for now
 void init_omega_lookup(){
     int N = NFFT;
     int index = 0;
