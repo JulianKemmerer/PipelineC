@@ -29,10 +29,12 @@
 // Registers
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
+  uint32_t fft_cycles; // Cycles per fft iter
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b
-  uint32_t i2s_rx_out_desc_overflow; // Single bit
+  uint32_t cpu_clock;
+  //uint32_t i2s_rx_out_desc_overflow; // Single bit
 }mm_status_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__

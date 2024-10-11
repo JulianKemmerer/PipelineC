@@ -315,6 +315,7 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_div_pipeline, execute_t, execute_rv
 // Not all states take an entire cycle,
 // i.e. EXE_END to MEM_START is same cycle
 //      MEM_END to WRITE_BACK_NEXT_PC is same cycle
+// TODO switch to one_hot.h helper lib for state
 typedef enum cpu_state_t{
   // Use PC as addr into IMEM
   FETCH_START, 
@@ -417,6 +418,9 @@ riscv_out_t fsm_riscv(
     o.unknown_op = decoded.unknown_op; // debug
     next_state = REG_RD_END_EXE_START;
   }
+
+  // TODO dont gate data signals (have default assignment)
+  // only the enable/valid signal needs gating (ex, reg_wr_en vs reg_wr_data/addr)
 
   // Register file reads and writes
   //  Register file write signals are not driven until later in code
@@ -644,7 +648,10 @@ riscv_out_t fsm_riscv(
 // CDC for reset
 #include "cdc.h"
 
-MAIN_MHZ(cpu_top, 6.25) // 6.25 testing with div ops but dont wait for pipelining
+// FFT speed measure connected to debug chipscope reg
+DEBUG_REG_DECL(uint32_t, fft_cycles)
+
+MAIN_MHZ(cpu_top, 62.5)
 void cpu_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim
@@ -652,11 +659,15 @@ void cpu_top(uint1_t areset)
   uint1_t reset = xil_cdc2_bit(areset);
   //uint1_t reset = 0;
 
+  // Clock counter for debug
+  static uint32_t cpu_clock;
+
   // Instance of core
   my_mmio_in_t in;
   in.status.button = 0; // TODO
+  in.status.cpu_clock = cpu_clock;
   #ifdef I2S_RX_MONITOR_PORT
-  in.status.i2s_rx_out_desc_overflow = xil_cdc2_bit(i2s_rx_descriptors_out_monitor_overflow); // CDC since async
+  //in.status.i2s_rx_out_desc_overflow = xil_cdc2_bit(i2s_rx_descriptors_out_monitor_overflow); // CDC since async
   #endif
   riscv_out_t out = fsm_riscv(reset, in);
 
@@ -665,6 +676,9 @@ void cpu_top(uint1_t areset)
   //mem_out_of_range = out.mem_out_of_range;
   //halt = out.mem_map_outputs.halt;
   //main_return = out.mem_map_outputs.return_value;
+
+  // Output FFT speed measure
+  fft_cycles = out.mem_map_outputs.ctrl.fft_cycles;
 
   // Output LEDs for hardware debug
   static uint1_t pc_out_of_range_reg;
@@ -685,5 +699,6 @@ void cpu_top(uint1_t areset)
     unknown_op_reg = 0;
     mem_out_of_range_reg = 0;
   }
+  cpu_clock += 1;
 }
 

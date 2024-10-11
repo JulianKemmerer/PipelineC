@@ -135,7 +135,10 @@ void main() {
 
     // Compute FFT
     fft_out_t fft_output[NFFT] = {0};
-    compute_fft_cc(fft_input_samples, fft_output, NFFT);
+    uint32_t start_time = mm_status_regs->cpu_clock;
+    compute_fft_cc(fft_input_samples, fft_output);
+    uint32_t end_time = mm_status_regs->cpu_clock;
+    mm_ctrl_regs->fft_cycles = end_time - start_time;
     
     *LED = (1<<2);
 

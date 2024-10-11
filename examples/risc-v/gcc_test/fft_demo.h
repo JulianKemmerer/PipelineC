@@ -272,10 +272,8 @@ fft_in_t omega_lookup(int s, int j){
 /* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
 /* Compute Iterative Complex-FFT with N < 2^16 bins */
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
-void compute_fft_cc(
-    fft_in_t* input, fft_out_t* output,
-    uint32_t N
-){
+void compute_fft_cc(fft_in_t* input, fft_out_t* output){
+    uint32_t N = NFFT;
     /* Bit-Reverse copy */
     for (uint32_t i = 0; i < N; i++)
     {
