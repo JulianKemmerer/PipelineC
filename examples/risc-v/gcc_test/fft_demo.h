@@ -1,9 +1,18 @@
 // Dutra FFT Demo
 
+#ifndef __PIPELINEC__
 #include <stdint.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#else
+#include "uintN_t.h"
+#include "intN_t.h"
+#endif
+
+#ifndef NFFT
+#define NFFT 1024
+#endif
 
 typedef struct complex_t
 {
@@ -305,8 +314,8 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
                 fft_in_t omega = omega_lookup(s, j);
                 #endif
                 // t = twiddle factor
-                uint t_index = k + j + m_1_2;
-                uint u_index = k + j;
+                uint32_t t_index = k + j + m_1_2;
+                uint32_t u_index = k + j;
                 fft_out_t t = mul_in_out(omega, output[t_index]);
                 fft_out_t u = output[u_index];
                 // calculating y[k + j]
