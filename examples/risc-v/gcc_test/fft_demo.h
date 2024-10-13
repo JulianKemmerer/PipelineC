@@ -1,4 +1,5 @@
 // Dutra FFT Demo
+#pragma once
 
 #ifndef __PIPELINEC__
 #include <stdint.h>
@@ -278,6 +279,53 @@ fft_in_t omega_lookup(int s, int j){
 }
 #endif
 
+// Hardware PipelineC compilable pipeline for the inner loop math of fft algorithm
+/* // t = twiddle factor
+fft_out_t t = mul_in_out(omega, output[t_index]);
+fft_out_t u = output[u_index];
+// calculating y[k + j]
+output[u_index] = add_complex(u, t);
+// calculating y[k+j+n/2]
+output[t_index] = sub_complex(u, t);*/
+typedef struct fft_2pt_in_t
+{
+  fft_out_t t;
+  fft_out_t u;
+  fft_in_t omega;
+}fft_2pt_in_t;
+typedef struct fft_2pt_out_t
+{
+  fft_out_t t;
+  fft_out_t u;
+}fft_2pt_out_t;
+fft_2pt_out_t fft_2pt_comb_logic(
+  fft_2pt_in_t i
+){
+  fft_2pt_out_t o;
+  // t = twiddle factor
+  fft_out_t t = mul_in_out(i.omega, i.t);
+  fft_out_t u = i.u;
+  // calculating y[k + j]
+  o.u = add_complex(u, t);
+  // calculating y[k+j+n/2]
+  o.t = sub_complex(u, t);
+  return o;
+}
+#ifdef FFT_USE_HARDWARE
+fft_2pt_out_t fft_2pt_hardware(fft_2pt_in_t i){
+    // Write input registers contents
+    mm_ctrl_regs->fft_2pt_in.t = i.t;
+    mm_ctrl_regs->fft_2pt_in.u = i.u;
+    mm_ctrl_regs->fft_2pt_in.omega = i.omega;
+    //(takes just 1 CPU clock cycle, output ready immediately)
+    // Return output register contents
+    fft_2pt_out_t o;
+    o.t = mm_status_regs->fft_2pt_out->t;
+    o.u = mm_status_regs->fft_2pt_out->u;
+    return o;
+}
+#endif
+
 /* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
 /* Compute Iterative Complex-FFT with N < 2^16 bins */
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
@@ -313,15 +361,21 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
                 #ifdef FFT_USE_OMEGA_LUT
                 fft_in_t omega = omega_lookup(s, j);
                 #endif
-                // t = twiddle factor
                 uint32_t t_index = k + j + m_1_2;
                 uint32_t u_index = k + j;
-                fft_out_t t = mul_in_out(omega, output[t_index]);
-                fft_out_t u = output[u_index];
-                // calculating y[k + j]
-                output[u_index] = add_complex(u, t);
-                // calculating y[k+j+n/2]
-                output[t_index] = sub_complex(u, t);
+                fft_2pt_in_t fft_in;
+                fft_in.t = output[t_index];
+                fft_in.u = output[u_index];
+                fft_in.omega = omega;
+                #ifdef FFT_USE_HARDWARE
+                // Invoke hardware
+                fft_2pt_out_t fft_out = fft_2pt_hardware(fft_in);
+                #else
+                // Run comb logic on CPU instead of using hardware
+                fft_2pt_out_t fft_out = fft_2pt_comb_logic(fft_in);
+                #endif
+                output[t_index] = fft_out.t;
+                output[u_index] = fft_out.u;
                 #ifndef FFT_USE_OMEGA_LUT
                 // updating omega, rotating the phase
                 omega = mul_in(omega, omega_m);
