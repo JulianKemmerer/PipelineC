@@ -10,6 +10,9 @@
 #include <stddef.h>
 #endif
 
+// Peripherals like FFT hardware, TODO move VGA and I2S into includes like this?
+#include "fft.h"
+
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
 #define DMEM_ADDR_BIT_CHECK 30
@@ -29,12 +32,14 @@
 // Registers
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
-  uint32_t fft_cycles; // Cycles per fft iter
+  uint32_t fft_cycles; // Cycles per fft iter debug counter
+  fft_2pt_in_t fft_2pt_in;
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
   //uint32_t i2s_rx_out_desc_overflow; // Single bit
+  fft_2pt_out_t fft_2pt_out;
 }mm_status_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -142,7 +147,9 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
 // I2S samples also in AXI0 DDR
 #define I2S_BUFFS_ADDR FB0_END_ADDR
 // Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
-#define NFFT (1<<10) // 1024 for small FFT demo
+#ifndef NFFT
+#define NFFT (1<<10)
+#endif
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
 #define I2S_LOOPBACK_DEMO_N_SAMPLES NFFT // Match FFT size
 #define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16

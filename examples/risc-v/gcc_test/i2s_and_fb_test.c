@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdlib.h>
-#include "mem_map.h"
 
 // FFT algorithm demo code
-#include "fft_demo.h"
+#define FFT_USE_HARDWARE
+#include "fft.h"
+#include "mem_map.h"
+#include "fft.c"
 
 // Some helper drawing code 
 // Rect from Dutra :) (has text console stuff too!?)

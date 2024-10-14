@@ -1,6 +1,7 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
 #define NFFT (1<<10)
-#include "fft_demo.h"
+#include "fft.h"
+#include "fft.c"
 
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz
@@ -23,28 +24,6 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
         }
     }
 }
-
-/*void color_screen(int width, int height, float* pwr_bins, uint32_t n_bins){
-  // How wide is each bin in pixels
-  int bin_width = width / n_bins;
-  // Max FFT value depends on if input is complex tone or not?
-  // (Max=nfft/2)(*2 for complex tone input?)
-  float max_pwr = NFFT*0.5;
-  for (size_t b = 0; b < n_bins; b++)
-  {
-    // Calculate bounds for this bin
-    // (recall 0,0 is top left)
-    int x_start = b * bin_width;
-    int x_end = (b+1) * bin_width;
-    int y_end = height;
-    int bin_height = (pwr_bins[b]/max_pwr) * height;
-    int y_start = y_end - bin_height; //-1; //?
-    // Clear bin by drawing full height black first
-    drawRect(x_start, 0, x_end, height, 0);
-    // Then white with proper y bounds
-    drawRect(x_start, y_start, x_end, y_end, 255);
-  }
-}*/
 
 #define N_BINS (NFFT/2)
 void draw_spectrum_fast(int width, int height, fft_data_t* pwr_bins){

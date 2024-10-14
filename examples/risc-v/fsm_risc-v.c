@@ -8,9 +8,13 @@
 DECL_STREAM_TYPE(uint32_t)
 
 // Include test gcc compiled program
+#define FFT_USE_HARDWARE
 #include "gcc_test/mem_map.h" 
 #include "gcc_test/text_mem_init.h"
 #include "gcc_test/data_mem_init.h"
+
+// FFT C code to be instantiated in hardware
+#include "gcc_test/fft.c"
 
 // BRAM modules as needed by user memory mappings
 #ifdef MMIO_BRAM0
@@ -192,6 +196,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Handshake valid signals are sometimes auto set/cleared
   mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
+
+  // 2 point FFT comb logic blob between MMIO regs
+  inputs.status.fft_2pt_out = fft_2pt_comb_logic(ctrl.fft_2pt_in);
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
