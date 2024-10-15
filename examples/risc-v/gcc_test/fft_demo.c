@@ -79,6 +79,7 @@ int main(){
     #ifdef FFT_USE_OMEGA_LUT
     // One time init omega lookup
     init_omega_lookup();
+    //print_omega_lookup();
     #endif
 
     // Create arrays for signals

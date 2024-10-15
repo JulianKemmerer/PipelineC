@@ -33,7 +33,7 @@
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
   uint32_t fft_cycles; // Cycles per fft iter debug counter
-  fft_2pt_in_t fft_2pt_in;
+  fft_2pt_w_omega_lut_in_t fft_2pt_in;
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b

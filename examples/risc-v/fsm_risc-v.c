@@ -198,7 +198,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
 
   // 2 point FFT comb logic blob between MMIO regs
-  inputs.status.fft_2pt_out = fft_2pt_comb_logic(ctrl.fft_2pt_in);
+  inputs.status.fft_2pt_out = fft_2pt_w_omega_lut(ctrl.fft_2pt_in);
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
@@ -658,7 +658,7 @@ riscv_out_t fsm_riscv(
 // FFT speed measure connected to debug chipscope reg
 DEBUG_REG_DECL(uint32_t, fft_cycles)
 
-MAIN_MHZ(cpu_top, 62.5)
+MAIN_MHZ(cpu_top, 40.0)
 void cpu_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim

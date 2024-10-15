@@ -1,7 +1,7 @@
 #include "fft.h"
 
 #ifdef FFT_USE_HARDWARE
-static inline fft_2pt_out_t fft_2pt_hardware(fft_2pt_in_t i){
+static inline fft_2pt_out_t fft_2pt_hardware(fft_2pt_w_omega_lut_in_t i){
   // Write input registers contents
   mm_ctrl_regs->fft_2pt_in = i;
   //(takes just 1 CPU clock cycle, output ready immediately)
@@ -29,41 +29,28 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     {
         int32_t m = 1 << s;
         int32_t m_1_2 = m >> 1;
-        #ifndef FFT_USE_OMEGA_LUT
-        fft_in_t omega_m = exp_complex(-EXP_COMPLEX_CONST_ONE / m); // div here, sadly
-        #endif
-        
         // principle root of nth complex
         /* do this in parallel */
         for (uint32_t k = 0; k < N; k+=m)
         {   
-            #ifndef FFT_USE_OMEGA_LUT
-            fft_in_t omega = ONE_PLUS_0I_INIT; 
-            #endif
             for (uint32_t j = 0; j < m_1_2; j++)
             {
-                #ifdef FFT_USE_OMEGA_LUT
-                fft_in_t omega = omega_lookup(s, j);
-                #endif
                 uint32_t t_index = k + j + m_1_2;
                 uint32_t u_index = k + j;
-                fft_2pt_in_t fft_in;
+                fft_2pt_w_omega_lut_in_t fft_in;
                 fft_in.t = output[t_index];
                 fft_in.u = output[u_index];
-                fft_in.omega = omega;
+                fft_in.s = s;
+                fft_in.j = j;
                 #ifdef FFT_USE_HARDWARE
                 // Invoke hardware
                 fft_2pt_out_t fft_out = fft_2pt_hardware(fft_in);
                 #else
                 // Run comb logic on CPU instead of using hardware
-                fft_2pt_out_t fft_out = fft_2pt_comb_logic(fft_in);
+                fft_2pt_out_t fft_out = fft_2pt_w_omega_lut(fft_in);
                 #endif
                 output[t_index] = fft_out.t;
                 output[u_index] = fft_out.u;
-                #ifndef FFT_USE_OMEGA_LUT
-                // updating omega, rotating the phase
-                omega = mul_in(omega, omega_m);
-                #endif
             }
         }
     }  
