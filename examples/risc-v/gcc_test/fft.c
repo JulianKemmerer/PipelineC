@@ -4,7 +4,7 @@
 static inline fft_2pt_out_t fft_2pt_hardware(fft_2pt_w_omega_lut_in_t i){
   // Write input registers contents
   mm_ctrl_regs->fft_2pt_in = i;
-  //(takes just 1 CPU clock cycle, output ready immediately)
+  //(takes just 1 or 2 CPU clock cycle, output ready immediately)
   // Return output register contents
   return mm_status_regs->fft_2pt_out;
 }
@@ -14,6 +14,7 @@ mm_ctrl_regs->fft_2pt_in.t = T;\
 mm_ctrl_regs->fft_2pt_in.u = U;\
 mm_ctrl_regs->fft_2pt_in.s = S;\
 mm_ctrl_regs->fft_2pt_in.j = J;\
+/*(takes just 1 or 2 CPU clock cycle, output ready immediately)*/\
 T = mm_status_regs->fft_2pt_out.t;\
 U = mm_status_regs->fft_2pt_out.u
 #endif
@@ -41,10 +42,12 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
         /* do this in parallel */
         for (uint32_t k = 0; k < N; k+=m)
         {   
+            uint32_t t_base_index = k + m_1_2;
+            uint32_t u_base_index = k;
             for (uint32_t j = 0; j < m_1_2; j++)
             {
-                uint32_t t_index = k + j + m_1_2;
-                uint32_t u_index = k + j;
+                uint32_t t_index = t_base_index + j;
+                uint32_t u_index = u_base_index + j;
                 #ifdef FFT_USE_HARDWARE
                 // Invoke hardware
                 fft_2pt_hardware_macro(output[t_index], output[u_index], s, j);

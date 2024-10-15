@@ -658,7 +658,7 @@ riscv_out_t fsm_riscv(
 // FFT speed measure connected to debug chipscope reg
 DEBUG_REG_DECL(uint32_t, fft_cycles)
 
-MAIN_MHZ(cpu_top, 40.0)
+MAIN_MHZ(cpu_top, 62.5)
 void cpu_top(uint1_t areset)
 {
   // TODO drive or dont use reset during sim

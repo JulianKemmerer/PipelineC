@@ -270,14 +270,14 @@ void init_omega_lookup(){
         }
     }  
 }
-uint32_t omega_s_j_to_index(uint32_t s, uint32_t j){
+uint16_t omega_s_j_to_index(uint16_t s, uint16_t j){
     // sum of 2^x from 0 to N = 2^(n+1)-1
-    uint32_t num_j_elems_so_far = ((uint32_t)1<<(s-1)) - 1;
-    uint32_t index = num_j_elems_so_far + j;
+    uint16_t num_j_elems_so_far = ((uint16_t)1<<(s-1)) - 1;
+    uint16_t index = num_j_elems_so_far + j;
     return index;
 }
-fft_in_t omega_lookup(int s, int j){
-    int index = omega_s_j_to_index(s, j);
+fft_in_t omega_lookup(uint16_t s, uint16_t j){
+    uint16_t index = omega_s_j_to_index(s, j);
     //printf("LOOKUP s = %d, j = %d ~= omega lut index[%d]\n", s, j, index);
     return OMEGA_LUT[index];
 }
@@ -1320,7 +1320,7 @@ fft_in_t omega_lut_rom(uint16_t i){
     {.real=0, .imag=0}
     };
     fft_in_t NULL_WR_DATA;
-    return the_rom_RAM_SP_RF_0(i, NULL_WR_DATA, 0);
+    return the_rom_RAM_SP_RF_1(i, NULL_WR_DATA, 0);
 }
 #endif
 #else
@@ -1368,14 +1368,14 @@ typedef struct fft_2pt_w_omega_lut_in_t
 {
   fft_out_t t;
   fft_out_t u;
-  uint32_t s;
-  uint32_t j;
+  uint16_t s;
+  uint16_t j;
 }fft_2pt_w_omega_lut_in_t;
 fft_2pt_out_t fft_2pt_w_omega_lut(
   fft_2pt_w_omega_lut_in_t i
 ){
     // Compute omega index
-    uint32_t index = omega_s_j_to_index(i.s, i.j);
+    uint16_t index = omega_s_j_to_index(i.s, i.j);
 
     // Omega lookup
     fft_in_t omega = omega_lut_rom(index);
