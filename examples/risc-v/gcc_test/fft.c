@@ -8,6 +8,14 @@ static inline fft_2pt_out_t fft_2pt_hardware(fft_2pt_w_omega_lut_in_t i){
   // Return output register contents
   return mm_status_regs->fft_2pt_out;
 }
+// Macro version of above that does less loads and stores
+#define fft_2pt_hardware_macro(T, U, S, J)\
+mm_ctrl_regs->fft_2pt_in.t = T;\
+mm_ctrl_regs->fft_2pt_in.u = U;\
+mm_ctrl_regs->fft_2pt_in.s = S;\
+mm_ctrl_regs->fft_2pt_in.j = J;\
+T = mm_status_regs->fft_2pt_out.t;\
+U = mm_status_regs->fft_2pt_out.u
 #endif
 
 /* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
@@ -37,20 +45,20 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
             {
                 uint32_t t_index = k + j + m_1_2;
                 uint32_t u_index = k + j;
+                #ifdef FFT_USE_HARDWARE
+                // Invoke hardware
+                fft_2pt_hardware_macro(output[t_index], output[u_index], s, j);
+                #else
+                // Run comb logic on CPU instead of using hardware
                 fft_2pt_w_omega_lut_in_t fft_in;
                 fft_in.t = output[t_index];
                 fft_in.u = output[u_index];
                 fft_in.s = s;
                 fft_in.j = j;
-                #ifdef FFT_USE_HARDWARE
-                // Invoke hardware
-                fft_2pt_out_t fft_out = fft_2pt_hardware(fft_in);
-                #else
-                // Run comb logic on CPU instead of using hardware
                 fft_2pt_out_t fft_out = fft_2pt_w_omega_lut(fft_in);
-                #endif
                 output[t_index] = fft_out.t;
                 output[u_index] = fft_out.u;
+                #endif
             }
         }
     }  
