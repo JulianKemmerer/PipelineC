@@ -1388,3 +1388,45 @@ fft_2pt_out_t fft_2pt_w_omega_lut(
     fft_2pt_out_t fft_2pt_out = fft_2pt_comb_logic(fft_2pt_in);
     return fft_2pt_out;
 }
+
+typedef struct fft_iters_t{
+    uint32_t s;
+    uint32_t k;
+    uint32_t j;
+}fft_iters_t;
+#define CEIL_LOG2_NFFT_PLUS_1 ((uint32_t)ceil(log2(NFFT) + 1))
+uint1_t s_last(fft_iters_t skj){
+    return (skj.s == (CEIL_LOG2_NFFT_PLUS_1-1));
+}
+uint1_t k_last(fft_iters_t skj){
+    uint32_t m = (uint32_t)1 << skj.s;
+    return (skj.k == (NFFT-m));
+}
+uint1_t j_last(fft_iters_t skj){
+    uint32_t m = (uint32_t)1 << skj.s;
+    uint32_t m_1_2 = m >> 1;
+    return (skj.j == (m_1_2-1));
+}
+#define FFT_ITERS_INIT {.s=1, .k=0, .j=0}
+fft_iters_t next_iters(fft_iters_t skj){
+    if(j_last(skj)){
+        skj.j = 0;
+        if(k_last(skj)){
+            skj.k = 0;
+            if(s_last(skj)){
+                skj.s = 1;
+            }else{
+                skj.s += 1;
+            }
+        }else{
+            uint32_t m = (uint32_t)1 << skj.s;
+            skj.k += m;
+        }
+    }else{
+        skj.j += 1;
+    }
+    return skj;
+}
+uint1_t last_iter(fft_iters_t skj){ 
+    return s_last(skj) && k_last(skj) && j_last(skj);
+}
