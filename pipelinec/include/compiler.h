@@ -83,6 +83,13 @@ PRAGMA_MESSAGE(MAIN_MHZ main_func mhz group)
 #define BUILT_IN_RAM_FUNC_LATENCY(call_location_func_name, ram_name, latency) \
 PRAGMA_MESSAGE(FUNC_LATENCY PPCAT(PPCAT(call_location_func_name,_),ram_name) latency)
 
+#define FEEDBACK(wire)\
+PRAGMA_MESSAGE(FEEDBACK wire)
+
+#define DECL_FEEDBACK_WIRE(type_t, name)\
+type_t name;\
+PRAGMA_MESSAGE(FEEDBACK name)
+
 // Work around for user top level IO:
 // https://github.com/JulianKemmerer/PipelineC/issues/123
 // https://github.com/JulianKemmerer/PipelineC/issues/130

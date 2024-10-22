@@ -1,4 +1,5 @@
 #pragma once
+#include "compiler.h"
 #include "xstr.h" // xstr func for putting quotes around macro things
 
 // This file includes preprocessor helper hacks to help with/work around
@@ -451,6 +452,203 @@ begin \n\
   end process; \n\
 "); \
 }
+
+// Dual port, one write, one read only, 1 clock latency
+#define DECL_RAM_DP_W_R_1( \
+  elem_t, \
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct PPCAT(ram_name,_outputs_t) \
+{ \
+  uint32_t addr0; elem_t wr_data0;\
+  uint1_t valid0; \
+  uint32_t addr1; \
+  elem_t rd_data1; \
+  uint1_t valid1; \
+}PPCAT(ram_name,_outputs_t); \
+PPCAT(ram_name,_outputs_t) ram_name( \
+  uint32_t addr0, elem_t wr_data0,\
+  uint1_t valid0, \
+  uint1_t rd_en0, \
+  uint32_t addr1, \
+  uint1_t valid1, \
+  uint1_t rd_en1 \
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr0_s <= to_integer(addr0(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if valid0(0)='1' then \n\
+          the_ram(addr0_s) <= wr_data0; \n\
+        end if; \n\
+        if rd_en0(0) = '1' then \n\
+          return_output.addr0 <= addr0; \n\
+          return_output.wr_data0 <= wr_data0; \n\
+          return_output.valid0 <= valid0; \n\
+        end if; \n\
+        if rd_en1(0) = '1' then \n\
+          return_output.addr1 <= addr1; \n\
+          return_output.rd_data1 <= the_ram(addr1_s); \n\
+          return_output.valid1 <= valid1; \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+"); \
+}
+
+// Dual port, one write, one read only, 1 clock latency
+// Stream DVR interface
+#define DECL_STREAM_RAM_DP_W_R_1( \
+  elem_t, \
+  ram_name, \
+  SIZE, \
+  VHDL_INIT \
+) \
+typedef struct PPCAT(ram_name,_out_t) \
+{ \
+  uint32_t addr0; elem_t wr_data0;\
+  uint1_t valid0; \
+  uint1_t ready0; \
+  uint32_t addr1; \
+  elem_t rd_data1; \
+  uint1_t valid1; \
+  uint1_t ready1; \
+}PPCAT(ram_name,_out_t); \
+PPCAT(ram_name,_out_t) ram_name( \
+  uint32_t addr0, elem_t wr_data0,\
+  uint1_t valid0, \
+  uint1_t ready0, \
+  uint32_t addr1, \
+  uint1_t valid1, \
+  uint1_t ready1 \
+){ \
+  __vhdl__("\n\
+  constant SIZE : integer := " xstr(SIZE) "; \n\
+  type ram_t is array(0 to SIZE-1) of " xstr(elem_t) "; \n\
+  signal the_ram : ram_t := " VHDL_INIT "; \n\
+  -- Limit zero latency comb. read addr range to SIZE \n\
+  -- since invalid addresses can occur as logic propogates \n\
+  -- (this includes out of int32 range u32 values) \n\
+  signal addr0_s : integer range 0 to SIZE-1 := 0; \n\
+  signal addr1_s : integer range 0 to SIZE-1 := 0; \n\
+begin \n\
+  process(all) begin \n\
+    addr0_s <= to_integer(addr0(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+    addr1_s <= to_integer(addr1(30 downto 0)) \n\
+    -- synthesis translate_off \n\
+    mod SIZE \n\
+    -- synthesis translate_on \n\
+    ; \n\
+  end process; \n\
+  return_output.ready0(0) <= ready0(0) or not return_output.valid0(0); \n\
+  return_output.ready1(0) <= ready1(0) or not return_output.valid1(0); \n\
+  process(clk) is \n\
+  begin \n\
+    if rising_edge(clk) then \n\
+      if CLOCK_ENABLE(0)='1' then \n\
+        if return_output.ready0(0) = '1' then \n\
+          if valid0(0)='1' then \n\
+            the_ram(addr0_s) <= wr_data0; \n\
+          end if; \n\
+          return_output.addr0 <= addr0; \n\
+          return_output.wr_data0 <= wr_data0; \n\
+          return_output.valid0 <= valid0; \n\
+        end if; \n\
+        if return_output.ready1(0) = '1' then \n\
+          return_output.addr1 <= addr1; \n\
+          return_output.rd_data1 <= the_ram(addr1_s); \n\
+          return_output.valid1 <= valid1; \n\
+        end if; \n\
+      end if; \n\
+    end if; \n\
+  end process; \n\
+"); \
+}
+#define RAM_DP_W_R_1_STREAM(data_t, RAM_FUNC, NAME)\
+/* The ram instance, wrapped with a valid,ready interface*/\
+/* Inputs marked as FEEDBACK*/\
+/* because its not until later that they are given values*/\
+/* Read requests*/\
+DECL_FEEDBACK_WIRE(uint32_t, PPCAT(NAME,_rd_addr_in))\
+DECL_FEEDBACK_WIRE(uint1_t, PPCAT(NAME,_rd_in_valid))\
+uint1_t PPCAT(NAME,_rd_in_ready);\
+/* Read responses (data,addr)*/\
+uint32_t PPCAT(NAME,_rd_addr_out);\
+data_t PPCAT(NAME,_rd_data_out);\
+uint1_t PPCAT(NAME,_rd_out_valid);\
+DECL_FEEDBACK_WIRE(uint1_t, PPCAT(NAME,_rd_out_ready))\
+/* Write requests*/\
+DECL_FEEDBACK_WIRE(uint32_t, PPCAT(NAME,_wr_addr_in))\
+DECL_FEEDBACK_WIRE(data_t, PPCAT(NAME,_wr_data_in))\
+DECL_FEEDBACK_WIRE(uint1_t, PPCAT(NAME,_wr_in_valid))\
+uint1_t PPCAT(NAME,_wr_in_ready);\
+/* Write responses (data is (data,addr) written)*/\
+uint32_t PPCAT(NAME,_wr_addr_out);\
+data_t PPCAT(NAME,_wr_data_out);\
+uint1_t PPCAT(NAME,_wr_out_valid);\
+DECL_FEEDBACK_WIRE(uint1_t, PPCAT(NAME,_wr_out_ready))\
+/* THE RAM with DVR interface*/\
+PPCAT(RAM_FUNC,_out_t) PPCAT(NAME,_out) = RAM_FUNC(\
+  PPCAT(NAME,_wr_addr_in),\
+  PPCAT(NAME,_wr_data_in),\
+  PPCAT(NAME,_wr_in_valid),\
+  PPCAT(NAME,_wr_out_ready),\
+  PPCAT(NAME,_rd_addr_in),\
+  PPCAT(NAME,_rd_in_valid),\
+  PPCAT(NAME,_rd_out_ready)\
+);\
+/* RAM connect outputs*/\
+PPCAT(NAME,_wr_addr_out) = PPCAT(NAME,_out.addr0);\
+PPCAT(NAME,_wr_data_out) = PPCAT(NAME,_out.wr_data0);\
+PPCAT(NAME,_wr_out_valid) = PPCAT(NAME,_out.valid0);\
+PPCAT(NAME,_wr_in_ready) = PPCAT(NAME,_out.ready0);\
+PPCAT(NAME,_rd_addr_out) = PPCAT(NAME,_out.addr1);\
+PPCAT(NAME,_rd_data_out) = PPCAT(NAME,_out.rd_data1);\
+PPCAT(NAME,_rd_out_valid) = PPCAT(NAME,_out.valid1);\
+PPCAT(NAME,_rd_in_ready) = PPCAT(NAME,_out.ready1);\
+/* Default zero assignments for all feedback wires*/\
+/* (see github issue)*/\
+/* Read requests*/\
+PPCAT(NAME,_rd_addr_in) = 0;\
+PPCAT(NAME,_rd_in_valid) = 0;\
+/* Read responses*/\
+PPCAT(NAME,_rd_out_ready) = 0;\
+/* Write requests*/\
+PPCAT(NAME,_wr_addr_in) = 0;\
+/* CANT USE compound null PPCAT(NAME,_wr_data_in = {0};*/\
+PPCAT(NAME,_wr_in_valid) = 0;\
+/* Write responses */\
+PPCAT(NAME,_wr_out_ready) = 0;
+
 
 // Dual port, two read+write ports, 1 clock latency
 // Does not have read enable separate from clock enable
