@@ -3103,13 +3103,14 @@ def DO_THROUGHPUT_SWEEP(
         )
         for reported_clock_group, path_report in timing_report.path_reports.items():
             passfail = ""
+            mhz = 1000.0 / path_report.path_delay_ns
             if reported_clock_group in clk_to_mhz:
                 target_mhz = clk_to_mhz[reported_clock_group]
-                mhz = 1000.0 / path_report.path_delay_ns
-                if mhz >= target_mhz:
-                    passfail = "PASS "
-                else:
-                    passfail = "FAIL "
+                if target_mhz is not None:
+                    if mhz >= target_mhz:
+                        passfail = "PASS "
+                    else:
+                        passfail = "FAIL "
             print(
                 f"{passfail}Clock {reported_clock_group} FMAX: {mhz:.3f} MHz ({path_report.path_delay_ns:.3f} ns)",
                 flush=True,
