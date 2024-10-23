@@ -1,7 +1,6 @@
 #include "fft.h"
 #include "stream/stream.h"
 
-
 // TODO I2S #include
 DECL_STREAM_TYPE(i2s_samples_t)
 
@@ -28,19 +27,162 @@ typedef struct fft_ram_2x_read_resp_t{
   // u data
   fft_out_t u;
 }fft_ram_2x_read_resp_t;
-
-typedef enum fft_fsm_state_t{
-  LOAD_INPUTS,
-  BUTTERFLY_ITERS,
-  UNLOAD_OUTPUTS
-}fft_fsm_state_t;
-
 DECL_STREAM_TYPE(fft_ram_2x_write_req_t)
 DECL_STREAM_TYPE(fft_ram_2x_read_req_t)
 DECL_STREAM_TYPE(fft_ram_2x_read_resp_t)
 DECL_STREAM_TYPE(fft_2pt_w_omega_lut_in_t)
 DECL_STREAM_TYPE(fft_out_t)
 
+// Declare the fifos linking across clock domains
+// (req/resp could also be done as a shared resource bus,
+//  see https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus)
+#include "global_fifo.h"
+GLOBAL_STREAM_FIFO(i2s_samples_t, samples_fifo, 16)
+GLOBAL_STREAM_FIFO(fft_ram_2x_read_req_t, rd_req_fifo, 16)
+GLOBAL_STREAM_FIFO(fft_ram_2x_read_resp_t, rd_resp_fifo, 16)
+GLOBAL_STREAM_FIFO(fft_ram_2x_write_req_t, wr_req_fifo, 16)
+GLOBAL_STREAM_FIFO(fft_out_t, output_fifo, 16)
+
+// Type of RAM for storing FFT output
+#include "ram.h"
+// Dual write,read ports 1 clock latency (block)RAM
+DECL_STREAM_RAM_DP_W_R_1(
+  fft_out_t, fft_ram, NFFT, VHDL_INT_INIT_ZEROS
+)
+
+// Instance of RAM for FFT
+// Connected to global variable fifo streams 
+// with little bit of 2:1 un/packing in between
+// (this could also be done as de/serializers
+//  see https://github.com/JulianKemmerer/PipelineC/tree/master/stream)
+#pragma MAIN_MHZ fft_ram_main FFT_CLK_2X_MHZ
+void fft_ram_main(){
+  // Declare instance of fft_ram called 'ram'
+  // declares local variables 'ram_...' w/ valid+ready stream interface
+  RAM_DP_W_R_1_STREAM(fft_out_t, fft_ram, ram)
+  #warning "Feedback wire need defaults? See github issue..."
+
+  // FSM logic doing 2:1 un/packing de/serializing
+  // to-from RAM writes/reads reqs/resps
+
+  // Write Port (addr+data requests)
+  // toggle between t and u
+  static uint1_t wr_is_t = 1;
+  // Always ready sink, write responses out of ram unused/dropped
+  ram_wr_out_ready = 1; 
+  // Default not pulling requests from fifo
+  wr_req_fifo_out_ready = 0;
+  // What is port doing this cycle?
+  if(wr_is_t){
+    // Data
+    ram_wr_data_in = wr_req_fifo_out.data.t;
+    ram_wr_addr_in = wr_req_fifo_out.data.t_index;
+    // Valid
+    ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.t_write_en;
+    // Ready (xfer happening?valid&ready?)
+    if(wr_req_fifo_out.valid & ram_wr_in_ready){
+      // Next state
+      wr_is_t = 0;
+      // not asserting ready for request yet
+      // since not done with req yet, u next
+    }
+  }else{ // wr is u
+    // Data
+    ram_wr_data_in = wr_req_fifo_out.data.u;
+    ram_wr_addr_in = wr_req_fifo_out.data.u_index;
+    // Valid
+    ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.u_write_en;
+    // Ready (xfer happening?valid&ready?)
+    if(wr_req_fifo_out.valid & ram_wr_in_ready){
+      // Next state (next req)
+      wr_is_t = 1;
+      // Assert ready for request
+      // since now done with both t and u
+      wr_req_fifo_out_ready = 1;
+    }
+  }
+
+  // Read Port Requests (addr)
+  // toggle between t and u
+  static uint1_t rd_req_is_t = 1;
+  // Default not pulling requests from fifo
+  rd_req_fifo_out_ready = 0;
+  if(rd_req_is_t){
+    // Data
+    ram_rd_addr_in = rd_req_fifo_out.data.t_index;
+    // Valid
+    ram_rd_in_valid = rd_req_fifo_out.valid;
+    // Ready (xfer happening?valid&ready?)
+    if(ram_rd_in_valid & ram_rd_in_ready){
+      // Next state
+      rd_req_is_t = 0;
+      // not asserting ready for request yet
+      // since not done with req yet, u next
+    }
+  }else{ // rd req is u
+    // Data
+    ram_rd_addr_in = rd_req_fifo_out.data.u_index;
+    // Valid
+    ram_rd_in_valid = rd_req_fifo_out.valid;
+    // Ready (xfer happening?valid&ready?)
+    if(ram_rd_in_valid & ram_rd_in_ready){
+      // Next state (next req)
+      rd_req_is_t = 1;
+      // Assert ready for request
+      // since now done with both t and u
+      rd_req_fifo_out_ready = 1;
+    }
+  }
+
+  // Read Port Responses (data)
+  static uint1_t rd_resp_is_t = 1;
+  // Default not putting responses into resp fifo
+  rd_resp_fifo_in.valid = 0;
+  if(rd_resp_is_t){
+    // Data 
+    // (fifo input is global variable
+    //  that can store partial 't' data as register)
+    rd_resp_fifo_in.data.t = ram_rd_data_out;
+    // Valid
+    // not asserting valid response into fifo yet
+    // since not done forming resp yet, u next
+    rd_resp_fifo_in.valid = 0;
+    // Ready 
+    ram_rd_out_ready = 1; // Always ready for t data
+    // Transfering data this cycle (valid&ready)?
+    if(ram_rd_out_valid & ram_rd_out_ready){
+      // Next state
+      rd_resp_is_t = 0;
+    }
+  }else{ // rd resp is u
+    // Data
+    // (t from fifo input reg last state still set
+    // u straight from ram into resp fifo this cycle)
+    rd_resp_fifo_in.data.u = ram_rd_data_out;
+    // Valid
+    rd_resp_fifo_in.valid = ram_rd_out_valid;
+    // Ready 
+    ram_rd_out_ready = rd_resp_fifo_in_ready;
+    // Transfering data this cycle (valid&ready)?
+    if(ram_rd_out_valid & ram_rd_out_ready){
+      // Next state (next resp)
+      rd_resp_is_t = 1;
+    }
+  }
+}
+
+// TODO GLOBAL_VALID_READY_PIPELINE_INST from 
+#include "global_func_inst.h"
+
+// Did need to write fft_2pt_fsm as standalone funcition
+// could have put code directly into MAIN func
+// as opposed to making an instance of the fft_2pt_fsm module
+// FSM States for main 1clk fsm
+typedef enum fft_fsm_state_t{
+  LOAD_INPUTS,
+  BUTTERFLY_ITERS,
+  UNLOAD_OUTPUTS
+}fft_fsm_state_t;
 // Outputs
 typedef struct fft_2pt_fsm_out_t
 {
@@ -276,3 +418,5 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   return o;
 }
 
+// TODO instantite fft_2pt_fsm
+// and connect to FIFOs and pipeline
