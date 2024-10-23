@@ -1,5 +1,8 @@
 #include "fft.h"
 #include "stream/stream.h"
+#include "global_fifo.h"
+#include "ram.h"
+#include "global_func_inst.h"
 
 // TODO I2S #include
 DECL_STREAM_TYPE(i2s_samples_t)
@@ -36,7 +39,6 @@ DECL_STREAM_TYPE(fft_out_t)
 // Declare the fifos linking across clock domains
 // (req/resp could also be done as a shared resource bus,
 //  see https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus)
-#include "global_fifo.h"
 GLOBAL_STREAM_FIFO(i2s_samples_t, samples_fifo, 16)
 GLOBAL_STREAM_FIFO(fft_ram_2x_read_req_t, rd_req_fifo, 16)
 GLOBAL_STREAM_FIFO(fft_ram_2x_read_resp_t, rd_resp_fifo, 16)
@@ -44,7 +46,6 @@ GLOBAL_STREAM_FIFO(fft_ram_2x_write_req_t, wr_req_fifo, 16)
 GLOBAL_STREAM_FIFO(fft_out_t, output_fifo, 16)
 
 // Type of RAM for storing FFT output
-#include "ram.h"
 // Dual write,read ports 1 clock latency (block)RAM
 DECL_STREAM_RAM_DP_W_R_1(
   fft_out_t, fft_ram, NFFT, VHDL_INT_INIT_ZEROS
@@ -171,11 +172,11 @@ void fft_ram_main(){
   }
 }
 
-// TODO GLOBAL_VALID_READY_PIPELINE_INST from 
-#include "global_func_inst.h"
+// Global instance of Butterfly pipeline with valid ready handshake
+GLOBAL_VALID_READY_PIPELINE_INST(fft_2pt_pipeline, fft_2pt_out_t, fft_2pt_w_omega_lut, fft_2pt_w_omega_lut_in_t, 16)
 
-// Did need to write fft_2pt_fsm as standalone funcition
-// could have put code directly into MAIN func
+// Didnt need to write fft_2pt_fsm as standalone function
+// could have put code directly in-line into MAIN func
 // as opposed to making an instance of the fft_2pt_fsm module
 // FSM States for main 1clk fsm
 typedef enum fft_fsm_state_t{
