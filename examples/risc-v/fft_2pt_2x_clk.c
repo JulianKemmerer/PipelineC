@@ -1,11 +1,8 @@
-#include "fft.h"
 #include "stream/stream.h"
 #include "global_fifo.h"
 #include "ram.h"
 #include "global_func_inst.h"
-
-// TODO I2S #include
-DECL_STREAM_TYPE(i2s_samples_t)
+#include "fft.h"
 
 // Types for the FIFO elements to be transfered
 typedef struct fft_ram_2x_write_req_t{
@@ -172,7 +169,7 @@ void fft_ram_main(){
   }
 }
 
-// Global instance of Butterfly pipeline with valid ready handshake
+// Global instance of butterfly pipeline with valid ready handshake
 GLOBAL_VALID_READY_PIPELINE_INST(fft_2pt_pipeline, fft_2pt_out_t, fft_2pt_w_omega_lut, fft_2pt_w_omega_lut_in_t, 16)
 
 // Didnt need to write fft_2pt_fsm as standalone function
@@ -419,5 +416,40 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   return o;
 }
 
-// TODO instantite fft_2pt_fsm
-// and connect to FIFOs and pipeline
+// Instannce of fft_2pt_fsm connected to FIFOs and butterfly pipeline
+#pragma MAIN_MHZ fft_fsm_main FFT_CLK_MHZ
+void fft_fsm_main(){
+  // The FSM instance
+  fft_2pt_fsm_out_t fsm_out = fft_2pt_fsm(
+    // Inputs
+    // Stream of input samples from I2S out of FIFO
+    samples_fifo_out,
+    // Stream of read response data from RAM out of FIFO
+    rd_resp_fifo_out,
+    // Stream of data from butterfly pipeline
+    fft_2pt_pipeline_out,
+    // Ready for write req to RAM into FIFO
+    wr_req_fifo_in_ready,
+    // Ready for read addr to RAM into FIFO
+    rd_req_fifo_in_ready,
+    // Ready for data into pipeline
+    fft_2pt_pipeline_in_ready,
+    // Ready for result out to CPU into FIFO
+    output_fifo_in_ready
+  );
+  // Outputs
+  // Ready for input samples stream from FIFO
+  samples_fifo_in_ready = fsm_out.ready_for_samples_in;
+  // Ready for read resp from RAM out of FIFO
+  rd_resp_fifo_out_ready = fsm_out.ready_for_rd_datas_from_ram;
+  // Ready for data out from pipeline
+  fft_2pt_pipeline_out_ready = fsm_out.ready_for_data_from_pipeline;
+  // Stream of writes to RAM into FIFO
+  wr_req_fifo_in = fsm_out.wr_reqs_to_ram;
+  // Stream of read request addresses to RAM into FIFO
+  rd_req_fifo_in = fsm_out.rd_addrs_to_ram;
+  // Stream of data to butterfly pipeline
+  fft_2pt_pipeline_in = fsm_out.data_to_pipeline;
+  // Stream of output FFT result to CPU into FIFO
+  output_fifo_in = fsm_out.result_out;
+}
