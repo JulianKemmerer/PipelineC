@@ -81,6 +81,8 @@ void fft_ram_main(){
     ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.t_write_en;
     // Ready (xfer happening?valid&ready?)
     if(wr_req_fifo_out.valid & ram_wr_in_ready){
+      printf("RAM: t-side write enabled? %d (req addr = %d, data = %d)\n",
+        wr_req_fifo_out.data.t_write_en, ram_wr_addr_in, ram_wr_data_in.real);
       // Next state
       wr_is_t = 0;
       // not asserting ready for request yet
@@ -94,11 +96,18 @@ void fft_ram_main(){
     ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.u_write_en;
     // Ready (xfer happening?valid&ready?)
     if(wr_req_fifo_out.valid & ram_wr_in_ready){
+      printf("RAM: u-side write enabled? %d (req addr = %d, data = %d)\n",
+        wr_req_fifo_out.data.u_write_en, ram_wr_addr_in, ram_wr_data_in.real);
       // Next state (next req)
       wr_is_t = 1;
       // Assert ready for request
       // since now done with both t and u
       wr_req_fifo_out_ready = 1;
+      printf("RAM: Dequeue write req\n"
+             "t enabled %d, t addr = %d, t data = %d,\n"
+             "u enabled %d, u addr = %d, u data = %d\n",
+      wr_req_fifo_out.data.t_write_en, wr_req_fifo_out.data.t_index, wr_req_fifo_out.data.t.real,
+      wr_req_fifo_out.data.u_write_en, wr_req_fifo_out.data.u_index, wr_req_fifo_out.data.u.real);
     }
   }
 
@@ -239,8 +248,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     fft_data_t data_in = samples_in.data.l_data.qmn >> (24-16);
     #endif
     // Array index is bit reversed, using 'j' as sample counter here
-    uint32_t j = wr_req_iters.j;
-    uint32_t array_index = j(0, 31); // reverse of [31:0]
+    uint32_t array_index = rev(wr_req_iters.j);
     // Connect input samples stream
     // to the stream of writes going to RAM
     // only using one 't' part of two possible write addrs+datas
@@ -254,6 +262,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     o.ready_for_samples_in = ready_for_wr_reqs_to_ram;
     // Transfering data this cycle (valid&ready)?
     if(samples_in.valid & o.ready_for_samples_in){
+      printf("FSM: Enqueue sample write req addr = %d, data = %d (ram t port)\n", array_index, data_in);
       // Last sample into ram?
       if(wr_req_iters.j==(NFFT-1)){
         // Done loading samples, next state

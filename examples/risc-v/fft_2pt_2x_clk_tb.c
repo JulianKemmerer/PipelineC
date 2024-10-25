@@ -6,13 +6,13 @@
 
 #pragma MAIN tb_i2s_input
 void tb_i2s_input(){
-  // Drive counters as i2s samples
+  // Drive counters as i2s samples w fixed point adjust
   static uint32_t counter;
-  samples_fifo_in.data.l_data.qmn = counter;
-  samples_fifo_in.data.r_data.qmn = counter;
+  samples_fifo_in.data.l_data.qmn = counter << (24-16);
+  samples_fifo_in.data.r_data.qmn = counter << (24-16);
   samples_fifo_in.valid = 1;
   if(samples_fifo_in_ready){
-    printf("Inputing sample %d\n", counter);
+    printf("Testbench: Inputing sample %d\n", counter);
     counter += 1;
   }
 }
@@ -23,7 +23,7 @@ void tb_cpu_output(){
   output_fifo_out_ready = 1;
   if(output_fifo_out.valid){
     printf(
-      "Output value real %d imag %d\n", 
+      "Testbench: Output value real %d imag %d\n", 
       output_fifo_out.data.real, 
       output_fifo_out.data.imag
     );

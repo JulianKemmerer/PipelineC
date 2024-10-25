@@ -232,8 +232,14 @@ static inline unsigned int popcnt_(unsigned int v){
 
 
 /* Code from https://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith32Bits*/
-static inline uint32_t rev(uint32_t v, const uint32_t N){
-    uint32_t sr = 32 - popcnt_(N-1);
+#if NFFT==1024
+#define LOG2_NFFT 10
+#endif
+static inline uint32_t rev(uint32_t v){
+    uint32_t sr = 32 - LOG2_NFFT;
+    #ifdef __PIPELINEC__
+    v = v(0, 31); // rev of [31:0]
+    #else
     // swap odd and even bits
     v = ((v >> 1) & 0x55555555) | ((v & 0x55555555) << 1);
     // swap consecutive pairs
@@ -244,6 +250,7 @@ static inline uint32_t rev(uint32_t v, const uint32_t N){
     v = ((v >> 8) & 0x00FF00FF) | ((v & 0x00FF00FF) << 8);
     // swap 2-byte long pairs
     v = ( v >> 16             ) | ( v               << 16);
+    #endif
     return (v >> sr);
 }
 
@@ -1397,7 +1404,7 @@ typedef struct fft_iters_t{
     uint32_t j;
 }fft_iters_t;
 #if NFFT==1024
-#define CEIL_LOG2_NFFT_PLUS_1 11
+#define CEIL_LOG2_NFFT_PLUS_1 (LOG2_NFFT+1)
 #endif
 uint1_t s_last(fft_iters_t skj){
     return (skj.s == (CEIL_LOG2_NFFT_PLUS_1-1));

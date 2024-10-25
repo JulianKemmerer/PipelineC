@@ -27,7 +27,7 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     /* Bit-Reverse copy */
     for (uint32_t i = 0; i < N; i++)
     {
-        uint32_t ri = rev(i,N);
+        uint32_t ri = rev(i);
         output[i].real = input[ri].real; // Fix here, swap order
         output[i].imag = input[ri].imag; // Fix here, swap order
     }
