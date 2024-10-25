@@ -38,15 +38,15 @@ stream(data_t) PPCAT(name,_out);\
 uint1_t PPCAT(name,_out_ready);\
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_wr_stream_in))\
 MAIN(PPCAT(name,_wr_stream_in)) \
-void PCAT(name,_wr_stream_in){\
+void PPCAT(name,_wr_stream_in)(){\
   data_t din[1] = { PPCAT(name,_in).data };\
-  PPCAT(PPCAT(name,_FIFO),_write_t) wr = PPCAT(name,_FIFO)_WRITE_1(din, PPCAT(name,_in).valid);\
+  PPCAT(PPCAT(name,_FIFO),_write_t) wr = PPCAT(name,_FIFO_WRITE_1)(din, PPCAT(name,_in).valid);\
   PPCAT(name,_in_ready) = wr.ready;\
 }\
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_rd_stream_out))\
 MAIN(PPCAT(name,_rd_stream_out)) \
-void PCAT(name,_rd_stream_out){\
-  PPCAT(PPCAT(name,_FIFO)_read_t) rd = PPCAT(name,_FIFO)_READ_1(PPCAT(name,_out_ready));\
+void PPCAT(name,_rd_stream_out)(){\
+  PPCAT(name,_FIFO_read_t) rd = PPCAT(name,_FIFO_READ_1)(PPCAT(name,_out_ready));\
   PPCAT(name,_out).data = rd.data[0];\
   PPCAT(name,_out).valid = rd.valid;\
 }

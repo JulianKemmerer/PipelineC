@@ -119,19 +119,19 @@ PPCAT(inst_name,_out_reg_t) PPCAT(inst_name,_out_reg_func)(out_type data, uint8_
   return rv; \
 } \
 /* Global wires connected to instance */ \
-in_type inst_name##_in; \
-uint8_t inst_name##_in_id; \
-uint1_t inst_name##_in_valid; \
-out_type inst_name##_out; \
-uint8_t inst_name##_out_id; \
-uint1_t inst_name##_out_valid; \
+in_type PPCAT(inst_name,_in); \
+uint8_t PPCAT(inst_name,_in_id); \
+uint1_t PPCAT(inst_name,_in_valid); \
+out_type PPCAT(inst_name,_out); \
+uint8_t PPCAT(inst_name,_out_id); \
+uint1_t PPCAT(inst_name,_out_valid); \
 MAIN(inst_name) \
 void inst_name() \
 { \
   PPCAT(inst_name,_in_reg_t) i = PPCAT(inst_name,_in_reg_func)( \
-    inst_name##_in, \
-    inst_name##_in_id, \
-    inst_name##_in_valid \
+    PPCAT(inst_name,_in), \
+    PPCAT(inst_name,_in_id), \
+    PPCAT(inst_name,_in_valid) \
   ); \
   out_type d = func_name(i.data); \
   PPCAT(inst_name,_out_reg_t) o = PPCAT(inst_name,_out_reg_func)( \
@@ -139,9 +139,9 @@ void inst_name() \
     i.id,  \
     i.valid \
   ); \
-  inst_name##_out = o.data; \
-  inst_name##_out_id = o.id; \
-  inst_name##_out_valid = o.valid; \
+  PPCAT(inst_name,_out) = o.data; \
+  PPCAT(inst_name,_out_id) = o.id; \
+  PPCAT(inst_name,_out_valid) = o.valid; \
 }
 
 
@@ -151,39 +151,37 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(PPCAT(inst_name,_no_handshake), out_type, func_n
 /*Define FIFO to use for handshake PPCAT(inst_name,_FIFO)*/\
 FIFO_FWFT(PPCAT(inst_name,_FIFO), out_type, MAX_IN_FLIGHT)\
 /*Global wires for user*/\
-in_type PPCAT(inst_name,_in); \
-uint1_t PPCAT(inst_name,_in_valid); \
+stream(in_type) PPCAT(inst_name,_in); \
 uint1_t PPCAT(inst_name,_in_ready); \
-out_type PPCAT(inst_name,_out); \
-uint1_t PPCAT(inst_name,_out_valid); \
+stream(out_type) PPCAT(inst_name,_out); \
 uint1_t PPCAT(inst_name,_out_ready); \
 /* main PPCAT(inst_name,_handshake) to wire up the handshake*/\
 PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_handshake))\
 MAIN(PPCAT(inst_name,_handshake))\
-void PPCAT(inst_name,_handshake){\
+void PPCAT(inst_name,_handshake)(){\
   /* Keep count of how many words in FIFO*/\
   static uint16_t fifo_count;\
   /* Signal ready for input if room in fifo*/\
   PPCAT(inst_name,_in_ready) = (fifo_count < MAX_IN_FLIGHT);\
   /* Logic for input side of pipeline without handshake*/\
   /* Gate valid with ready signal*/\
-  PPCAT(inst_name,_no_handshake_in_valid) = PPCAT(inst_name,_in_valid) & PPCAT(inst_name,_in_ready);\
-  PPCAT(inst_name,_no_handshake_in_data) = PPCAT(inst_name,_in);\
+  PPCAT(inst_name,_no_handshake_in_valid) = PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready);\
+  PPCAT(inst_name,_no_handshake_in) = PPCAT(inst_name,_in.data);\
   /* Free flow of data out of pipeline into fifo*/\
   uint1_t fifo_wr_en = PPCAT(inst_name,_no_handshake_out_valid);\
-  uint32_t fifo_wr_data = PPCAT(inst_name,_no_handshake_out_data);\
+  out_type fifo_wr_data = PPCAT(inst_name,_no_handshake_out);\
   /* Dont need to check for not full/overflow since count used for ready*/\
   /* Read side of FIFO connected to top level outputs*/\
   uint1_t fifo_rd_en = PPCAT(inst_name,_out_ready);\
   /* The FIFO instance connected to outputs*/\
   PPCAT(inst_name,_FIFO_t) fifo_o = PPCAT(inst_name,_FIFO)(fifo_rd_en, fifo_wr_data, fifo_wr_en);\
-  PPCAT(inst_name,_out_valid) = fifo_o.data_out_valid;\
-  PPCAT(inst_name,_out) = fifo_o.data_out;\
+  PPCAT(inst_name,_out.valid) = fifo_o.data_out_valid;\
+  PPCAT(inst_name,_out.data) = fifo_o.data_out;\
   /* Count input writes and output reads from fifo*/\
-  if(PPCAT(inst_name,_in_valid) & PPCAT(inst_name,_data_in_ready)){\
+  if(PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready)){\
       fifo_count += 1;\
   }\
-  if(PPCAT(inst_name,_data_out_valid) & PPCAT(inst_name,_out_ready)){\
+  if(PPCAT(inst_name,_out.valid) & PPCAT(inst_name,_out_ready)){\
       fifo_count -= 1;\
   }\
 }

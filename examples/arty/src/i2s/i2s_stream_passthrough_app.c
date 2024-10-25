@@ -2,6 +2,7 @@
 #include "wire.h"
 #include "uintN_t.h"
 #include "arrays.h"
+#include "stream/stream.h"
 #include "leds/leds_port.c"
 // Include I2S from PMOD connector JA
 #include "i2s_pmod.c"
@@ -28,21 +29,16 @@ https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual
 #define LEFT 0
 #define RIGHT 1
 #define SAMPLE_BITWIDTH 24
-#define sample_t uint24_t
-#define bits_to_sample uint1_array24_le
+#define i2s_data_t uint24_t
+#define bits_to_i2s_data uint1_array24_le
 
 // I2S stereo sample types
 typedef struct i2s_samples_t
 {
-  sample_t l_data;
-  sample_t r_data;
+  i2s_data_t l_data;
+  i2s_data_t r_data;
 }i2s_samples_t;
-// _s 'stream' of the above data
-typedef struct i2s_samples_s
-{
-  i2s_samples_t samples;
-  uint1_t valid;
-}i2s_samples_s;
+DECL_STREAM_TYPE(i2s_samples_t)
 
 // Both RX and TX are dealing with the I2S protocol
 typedef enum i2s_state_t
@@ -53,19 +49,19 @@ typedef enum i2s_state_t
 }i2s_state_t;
 
 // Logic to receive I2S stereo samples
-i2s_samples_s i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t reset_n)
+stream(i2s_samples_t) i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t reset_n)
 {
   // Registers
   static i2s_state_t state;
   static uint1_t last_lr;
   static uint1_t curr_sample_bits[SAMPLE_BITWIDTH];
   static uint5_t curr_sample_bit_count;
-  static i2s_samples_s output_reg;
+  static stream(i2s_samples_t) output_reg;
   static uint1_t l_sample_valid;
   static uint1_t r_sample_valid;
   
   // Defaults
-  i2s_samples_s rv = output_reg; // Output reg directly drives return value
+  stream(i2s_samples_t) rv = output_reg; // Output reg directly drives return value
   output_reg.valid = 0; // No outgoing samples
   
   // FSM Logic:
@@ -102,7 +98,7 @@ i2s_samples_s i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
       {
         curr_sample_bit_count = 0; // Reset count
-        sample_t curr_sample = bits_to_sample(curr_sample_bits);
+        i2s_data_t curr_sample = bits_to_i2s_data(curr_sample_bits);
         // Were these bits L or R data?
         // Last LR since last bit LR switched at falling edge for next channel potentially
         if(last_lr==LEFT) 
@@ -159,14 +155,14 @@ typedef struct i2s_tx_t
   uint1_t samples_ready;
   uint1_t data;
 }i2s_tx_t;
-i2s_tx_t i2s_tx(i2s_samples_s samples, uint1_t lr, uint1_t sclk_falling_edge, uint1_t reset_n)
+i2s_tx_t i2s_tx(stream(i2s_samples_t) samples, uint1_t lr, uint1_t sclk_falling_edge, uint1_t reset_n)
 {
   // Registers
   static i2s_state_t state;
   static uint1_t last_lr;
   static uint1_t curr_sample_bits[SAMPLE_BITWIDTH];
   static uint5_t curr_sample_bit_count;
-  static i2s_samples_s input_reg;
+  static stream(i2s_samples_t) input_reg;
   static uint1_t l_sample_done;
   static uint1_t r_sample_done;
   static uint1_t output_data_reg;
@@ -310,7 +306,7 @@ void app(uint1_t reset_n)
   uint1_t sclk_falling_edge = sclk_half_toggle & (sclk==1);
   
   // Receive I2S samples
-  i2s_samples_s rx_samples = i2s_rx(from_i2s.rx_data, lr, sclk_rising_edge, reset_n);
+  stream(i2s_samples_t) rx_samples = i2s_rx(from_i2s.rx_data, lr, sclk_rising_edge, reset_n);
   
   // Transmit I2S samples
   i2s_tx_t tx = i2s_tx(rx_samples, lr, sclk_falling_edge, reset_n);

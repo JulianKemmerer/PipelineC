@@ -2,7 +2,8 @@
 #include "global_fifo.h"
 #include "ram.h"
 #include "global_func_inst.h"
-#include "fft.h"
+#include "examples/arty/src/i2s/i2s_samples.h"
+#include "gcc_test/fft.h"
 
 // Types for the FIFO elements to be transfered
 typedef struct fft_ram_2x_write_req_t{
@@ -31,6 +32,7 @@ DECL_STREAM_TYPE(fft_ram_2x_write_req_t)
 DECL_STREAM_TYPE(fft_ram_2x_read_req_t)
 DECL_STREAM_TYPE(fft_ram_2x_read_resp_t)
 DECL_STREAM_TYPE(fft_2pt_w_omega_lut_in_t)
+DECL_STREAM_TYPE(fft_2pt_out_t)
 DECL_STREAM_TYPE(fft_out_t)
 
 // Declare the fifos linking across clock domains
@@ -45,7 +47,7 @@ GLOBAL_STREAM_FIFO(fft_out_t, output_fifo, 16)
 // Type of RAM for storing FFT output
 // Dual write,read ports 1 clock latency (block)RAM
 DECL_STREAM_RAM_DP_W_R_1(
-  fft_out_t, fft_ram, NFFT, VHDL_INT_INIT_ZEROS
+  fft_out_t, fft_ram, NFFT, "(others => (others => (others => '0')))"
 )
 
 // Instance of RAM for FFT
@@ -53,7 +55,7 @@ DECL_STREAM_RAM_DP_W_R_1(
 // with little bit of 2:1 un/packing in between
 // (this could also be done as de/serializers
 //  see https://github.com/JulianKemmerer/PipelineC/tree/master/stream)
-#pragma MAIN_MHZ fft_ram_main FFT_CLK_2X_MHZ
+MAIN_MHZ(fft_ram_main, FFT_CLK_2X_MHZ)
 void fft_ram_main(){
   // Declare instance of fft_ram called 'ram'
   // declares local variables 'ram_...' w/ valid+ready stream interface
@@ -233,9 +235,12 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     // Load input samples from I2S
     // data needs fixed point massaging
     // and only using the left channel as real inputs to FFT
-    fft_data_t data_in = samples_in.data.l >> (24-16); // TODO ifdef float then error
+    #ifdef FFT_TYPE_IS_FIXED
+    fft_data_t data_in = samples_in.data.l_data.qmn >> (24-16);
+    #endif
     // Array index is bit reversed, using 'j' as sample counter here
-    uint32_t array_index = wr_req_iters.j(0, 31); // reverse of [31:0]
+    uint32_t j = wr_req_iters.j;
+    uint32_t array_index = j(0, 31); // reverse of [31:0]
     // Connect input samples stream
     // to the stream of writes going to RAM
     // only using one 't' part of two possible write addrs+datas
@@ -417,7 +422,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
 }
 
 // Instannce of fft_2pt_fsm connected to FIFOs and butterfly pipeline
-#pragma MAIN_MHZ fft_fsm_main FFT_CLK_MHZ
+MAIN_MHZ(fft_fsm_main, FFT_CLK_MHZ)
 void fft_fsm_main(){
   // The FSM instance
   fft_2pt_fsm_out_t fsm_out = fft_2pt_fsm(
@@ -438,8 +443,8 @@ void fft_fsm_main(){
     output_fifo_in_ready
   );
   // Outputs
-  // Ready for input samples stream from FIFO
-  samples_fifo_in_ready = fsm_out.ready_for_samples_in;
+  // Ready for input samples stream out of FIFO
+  samples_fifo_out_ready = fsm_out.ready_for_samples_in;
   // Ready for read resp from RAM out of FIFO
   rd_resp_fifo_out_ready = fsm_out.ready_for_rd_datas_from_ram;
   // Ready for data out from pipeline

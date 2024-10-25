@@ -30,17 +30,8 @@ https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual
 #define LR_PERIOD_SCLKS 64
 #define LEFT 0
 #define RIGHT 1
-#define SAMPLE_BITWIDTH 24
-#define sample_t q0_23_t
-#define bits_to_sample uint1_array24_le
 
-// I2S stereo sample types
-typedef struct i2s_samples_t
-{
-  sample_t l_data;
-  sample_t r_data;
-}i2s_samples_t;
-DECL_STREAM_TYPE(i2s_samples_t)
+#include "i2s_samples.h"
 
 // Both RX and TX are dealing with the I2S protocol
 typedef enum i2s_state_t
@@ -112,8 +103,8 @@ i2s_rx_t i2s_rx(uint1_t data, uint1_t lr, uint1_t sclk_rising_edge, uint1_t samp
       if(curr_sample_bit_count==(SAMPLE_BITWIDTH-1))
       {
         // Form the current full sample
-        sample_t curr_sample;
-        curr_sample.qmn = bits_to_sample(curr_sample_bits);
+        i2s_data_t curr_sample;
+        curr_sample.qmn = bits_to_i2s_data(curr_sample_bits);
         curr_sample_bit_count = 0; // Reset count
         // Overflow if there is sample still in the output buffer 
         rv.overflow = output_reg.valid;        

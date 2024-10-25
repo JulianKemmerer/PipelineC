@@ -292,6 +292,7 @@ fft_in_t omega_lookup(uint16_t s, uint16_t j){
 #ifdef __PIPELINEC__
 // PipelineC hardware hard coded ROM, see print function above
 #if NFFT==1024
+#pragma FUNC_LATENCY omega_lut_rom 1
 fft_in_t omega_lut_rom(uint16_t i){
     static fft_in_t the_rom[1024] = {
     {.real=32767, .imag=0},
@@ -1320,6 +1321,7 @@ fft_in_t omega_lut_rom(uint16_t i){
     {.real=0, .imag=0}
     };
     fft_in_t NULL_WR_DATA;
+    // _1 cycle of latency
     return the_rom_RAM_SP_RF_1(i, NULL_WR_DATA, 0);
 }
 #endif
@@ -1394,7 +1396,9 @@ typedef struct fft_iters_t{
     uint32_t k;
     uint32_t j;
 }fft_iters_t;
-#define CEIL_LOG2_NFFT_PLUS_1 ((uint32_t)ceil(log2(NFFT) + 1))
+#if NFFT==1024
+#define CEIL_LOG2_NFFT_PLUS_1 11
+#endif
 uint1_t s_last(fft_iters_t skj){
     return (skj.s == (CEIL_LOG2_NFFT_PLUS_1-1));
 }
@@ -1407,7 +1411,7 @@ uint1_t j_last(fft_iters_t skj){
     uint32_t m_1_2 = m >> 1;
     return (skj.j == (m_1_2-1));
 }
-#define FFT_ITERS_INIT {.s=1, .k=0, .j=0}
+fft_iters_t FFT_ITERS_INIT = {.s=1, .k=0, .j=0};
 fft_iters_t next_iters(fft_iters_t skj){
     if(j_last(skj)){
         skj.j = 0;

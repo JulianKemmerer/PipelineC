@@ -8,8 +8,8 @@
 void tb_i2s_input(){
   // Drive counters as i2s samples
   static uint32_t counter;
-  samples_fifo_in.data.l = counter;
-  samples_fifo_in.data.r = counter;
+  samples_fifo_in.data.l_data.qmn = counter;
+  samples_fifo_in.data.r_data.qmn = counter;
   samples_fifo_in.valid = 1;
   if(samples_fifo_in_ready){
     printf("Inputing sample %d\n", counter);
@@ -23,7 +23,7 @@ void tb_cpu_output(){
   output_fifo_out_ready = 1;
   if(output_fifo_out.valid){
     printf(
-      "Output value real %d imag\n", 
+      "Output value real %d imag %d\n", 
       output_fifo_out.data.real, 
       output_fifo_out.data.imag
     );
