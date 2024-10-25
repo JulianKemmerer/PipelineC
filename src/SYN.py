@@ -1267,6 +1267,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 # Set upstream vars for this output wire to be
                 # everything that occurs across inputs
                 input_upstream_vars = set()
+                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                    input_wire = (
+                        sub_inst_reached
+                        + C_TO_LOGIC.SUBMODULE_MARKER
+                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                    )
+                    if input_wire in network_wire_to_upstream_vars:
+                        input_upstream_vars |= network_wire_to_upstream_vars[input_wire]
                 for input_port in sub_logic.inputs:
                     input_wire = (
                         sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
@@ -1302,6 +1310,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     if input_wire not in network_wire_to_upstream_vars.keys():
                         all_inputs_in_network = False
                         break
+                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                    input_wire = (
+                        sub_inst_reached
+                        + C_TO_LOGIC.SUBMODULE_MARKER
+                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                    )
+                    if input_wire not in network_wire_to_upstream_vars.keys():
+                        all_inputs_in_network = False
                 if all_inputs_in_network:
                     all_in_network_sub_insts_reached.add(sub_inst_reached)
         # Update and return where ended up
