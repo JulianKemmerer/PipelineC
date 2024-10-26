@@ -644,7 +644,8 @@ PPCAT(NAME,_rd_in_valid) = 0;\
 PPCAT(NAME,_rd_out_ready) = 0;\
 /* Write requests*/\
 PPCAT(NAME,_wr_addr_in) = 0;\
-/* CANT USE compound null PPCAT(NAME,_wr_data_in = {0};*/\
+data_t PPCAT(NAME,_NULL_wr_data_in) = {0};\
+PPCAT(NAME,_wr_data_in) = PPCAT(NAME,_NULL_wr_data_in);\
 PPCAT(NAME,_wr_in_valid) = 0;\
 /* Write responses */\
 PPCAT(NAME,_wr_out_ready) = 0;

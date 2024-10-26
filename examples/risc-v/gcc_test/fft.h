@@ -1418,7 +1418,8 @@ uint1_t j_last(fft_iters_t skj){
     uint32_t m_1_2 = m >> 1;
     return (skj.j == (m_1_2-1));
 }
-fft_iters_t FFT_ITERS_INIT = {.s=1, .k=0, .j=0};
+#define FFT_ITERS_NULL_INIT {.s=1, .k=0, .j=0}
+fft_iters_t FFT_ITERS_NULL = FFT_ITERS_NULL_INIT;
 fft_iters_t next_iters(fft_iters_t skj){
     if(j_last(skj)){
         skj.j = 0;

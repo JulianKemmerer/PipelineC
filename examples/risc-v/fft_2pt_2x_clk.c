@@ -60,7 +60,6 @@ void fft_ram_main(){
   // Declare instance of fft_ram called 'ram'
   // declares local variables 'ram_...' w/ valid+ready stream interface
   RAM_DP_W_R_1_STREAM(fft_out_t, fft_ram, ram)
-  #warning "Feedback wire need defaults? See github issue..."
 
   // FSM logic doing 2:1 un/packing de/serializing
   // to-from RAM writes/reads reqs/resps
@@ -81,8 +80,6 @@ void fft_ram_main(){
     ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.t_write_en;
     // Ready (xfer happening?valid&ready?)
     if(wr_req_fifo_out.valid & ram_wr_in_ready){
-      printf("RAM: t-side write enabled? %d (req addr = %d, data = %d)\n",
-        wr_req_fifo_out.data.t_write_en, ram_wr_addr_in, ram_wr_data_in.real);
       // Next state
       wr_is_t = 0;
       // not asserting ready for request yet
@@ -96,19 +93,21 @@ void fft_ram_main(){
     ram_wr_in_valid = wr_req_fifo_out.valid & wr_req_fifo_out.data.u_write_en;
     // Ready (xfer happening?valid&ready?)
     if(wr_req_fifo_out.valid & ram_wr_in_ready){
-      printf("RAM: u-side write enabled? %d (req addr = %d, data = %d)\n",
-        wr_req_fifo_out.data.u_write_en, ram_wr_addr_in, ram_wr_data_in.real);
       // Next state (next req)
       wr_is_t = 1;
       // Assert ready for request
       // since now done with both t and u
       wr_req_fifo_out_ready = 1;
-      printf("RAM: Dequeue write req\n"
+      printf("RAM: Dequeue 2x write req\n"
              "t enabled %d, t addr = %d, t data = %d,\n"
              "u enabled %d, u addr = %d, u data = %d\n",
       wr_req_fifo_out.data.t_write_en, wr_req_fifo_out.data.t_index, wr_req_fifo_out.data.t.real,
       wr_req_fifo_out.data.u_write_en, wr_req_fifo_out.data.u_index, wr_req_fifo_out.data.u.real);
     }
+  }
+  if(ram_wr_in_valid & ram_wr_in_ready){
+    printf("RAM: write request t-side?=%d enabled? %d (req addr = %d, data = %d)\n",
+      wr_is_t, ram_wr_in_valid, ram_wr_addr_in, ram_wr_data_in.real);
   }
 
   // Read Port Requests (addr)
@@ -140,7 +139,13 @@ void fft_ram_main(){
       // Assert ready for request
       // since now done with both t and u
       rd_req_fifo_out_ready = 1;
+      printf("RAM: Dequeue 2x read req\n"
+        "t addr = %d u addr = %d\n",
+        wr_req_fifo_out.data.t_index, wr_req_fifo_out.data.u_index);
     }
+  }
+  if(ram_rd_in_valid & ram_rd_in_ready){
+    printf("RAM: rd req t-side?=%d addr %d\n", rd_req_is_t, ram_rd_addr_in);
   }
 
   // Read Port Responses (data)
@@ -176,7 +181,15 @@ void fft_ram_main(){
     if(ram_rd_out_valid & ram_rd_out_ready){
       // Next state (next resp)
       rd_resp_is_t = 1;
+      printf("RAM: Enqueue 2x read resp\n"
+        "t data = %d,\n"
+        "u data = %d\n",
+        rd_resp_fifo_in.data.t.real, rd_resp_fifo_in.data.u.real);
     }
+  }
+  if(ram_rd_out_valid & ram_rd_out_ready){
+    printf("RAM: read response t-side?=%d data = %d\n",
+      rd_resp_is_t, ram_rd_data_out.real);
   }
 }
 
@@ -230,9 +243,9 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   // State registers
   static fft_fsm_state_t state;
   //  FFT s,j,k iterators for various streams
-  static fft_iters_t rd_req_iters;
-  static fft_iters_t pipeline_req_iters;
-  static fft_iters_t wr_req_iters; 
+  static fft_iters_t rd_req_iters = FFT_ITERS_NULL_INIT;
+  static fft_iters_t pipeline_req_iters = FFT_ITERS_NULL_INIT;
+  static fft_iters_t wr_req_iters = FFT_ITERS_NULL_INIT;
   //  Some helper flags to do 's' loops sequentially
   static uint1_t waiting_on_s_iter_to_finish;
   static uint1_t rd_reqs_done;
@@ -267,7 +280,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       if(wr_req_iters.j==(NFFT-1)){
         // Done loading samples, next state
         state = BUTTERFLY_ITERS;
-        wr_req_iters = FFT_ITERS_INIT;
+        wr_req_iters = FFT_ITERS_NULL;
       }else{
         // More input samples coming
         wr_req_iters.j += 1;
@@ -292,7 +305,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     // 1)
     // Begins by making valid requests to read data from RAM
     // i.e. lookup output[t_index], output[u_index]
-    uint32_t m = 1 << rd_req_iters.s;
+    uint32_t m = (uint32_t)1 << rd_req_iters.s;
     uint32_t m_1_2 = m >> 1;
     uint32_t t_index = rd_req_iters.k + rd_req_iters.j + m_1_2;
     uint32_t u_index = rd_req_iters.k + rd_req_iters.j;
@@ -306,18 +319,20 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       o.rd_addrs_to_ram.valid = 1;
       // Ready, transfering data this cycle (valid&ready)?
       if(ready_for_rd_addrs_to_ram){
+        printf("FSM: Enqueue 2x read req t_index = %d, u_index = %d\n", t_index, u_index);
         // Transfer going through, next
         // Ending an s iteraiton?
         uint1_t s_incrementing = k_last(rd_req_iters) & j_last(rd_req_iters);
         if(s_incrementing){
           // Pause, wait for current s iter to finish
+          printf("Waiting on s iteration to finish write back...\n");
           waiting_on_s_iter_to_finish = 1;
         }
         // Last req to ram?
         if(last_iter(rd_req_iters)){
           // Done requests
           rd_reqs_done = 1;
-          rd_req_iters = FFT_ITERS_INIT;
+          rd_req_iters = FFT_ITERS_NULL;
         }else{
           // More reqs to make
           rd_req_iters = next_iters(rd_req_iters);
@@ -338,18 +353,20 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     o.ready_for_rd_datas_from_ram = ready_for_data_to_pipeline;
     // Transfering data this cycle (valid&ready)?
     if(o.data_to_pipeline.valid & ready_for_data_to_pipeline){
+      printf("FSM: Dequeued 2x read response as butterfly pipeline input: j = %d, s = %d\n",
+        pipeline_req_iters.j, pipeline_req_iters.s);
       // Transfer going through, count next
       pipeline_req_iters = next_iters(pipeline_req_iters);
       // Last req to pipeline?
       if(last_iter(pipeline_req_iters)){
         // resets counters
-        pipeline_req_iters = FFT_ITERS_INIT;
+        pipeline_req_iters = FFT_ITERS_NULL;
       }
     }
     // 3) 
     // Pipeline outputs are connected to RAM writes
     // i.e. write back output[t_index], output[u_index] to RAM
-    uint32_t m = 1 << wr_req_iters.s;
+    uint32_t m = (uint32_t)1 << wr_req_iters.s;
     uint32_t m_1_2 = m >> 1;
     uint32_t t_index = wr_req_iters.k + wr_req_iters.j + m_1_2;
     uint32_t u_index = wr_req_iters.k + wr_req_iters.j;
@@ -367,17 +384,23 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     o.ready_for_data_from_pipeline = ready_for_wr_reqs_to_ram;
     // Transfering data this cycle (valid&ready)?
     if(o.wr_reqs_to_ram.valid & ready_for_wr_reqs_to_ram){
+      printf("FSM: Enqueued pipeline output 2x write request\n"
+        "t_index = %d t data %d,\n"
+        "u_index = %d u data %d\n", 
+        t_index, data_from_pipeline.data.t.real,
+        u_index, data_from_pipeline.data.u.real);
       // Transfer going through, next
       // Ending an s iteraiton?
       uint1_t s_incrementing = k_last(wr_req_iters) & j_last(wr_req_iters);
       if(s_incrementing){
         // Finished s iteration write back now
+        printf("S iteration finished write back!\n");
         waiting_on_s_iter_to_finish = 0;
       }
       // Last req to ram?
       if(last_iter(wr_req_iters)){
         // Done write back, finishes FFT, unload result
-        wr_req_iters = FFT_ITERS_INIT;
+        wr_req_iters = FFT_ITERS_NULL;
         state = UNLOAD_OUTPUTS;
       }else{
         // More write reqs to make
@@ -418,7 +441,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         if(rd_req_iters.k==(NFFT-1)){
           // Done offloading output, restart FFT
           state = LOAD_INPUTS;
-          rd_req_iters = FFT_ITERS_INIT;
+          rd_req_iters = FFT_ITERS_NULL;
           rd_reqs_done = 0;
         }else{
           // Still waiting for more outputs
