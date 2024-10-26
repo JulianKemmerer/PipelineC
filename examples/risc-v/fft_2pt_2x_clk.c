@@ -107,7 +107,7 @@ void fft_ram_main(){
   }
   if(ram_wr_in_valid & ram_wr_in_ready){
     printf("RAM: write request t-side?=%d enabled? %d (req addr = %d, data = %d)\n",
-      wr_is_t, ram_wr_in_valid, ram_wr_addr_in, ram_wr_data_in.real);
+      ~wr_is_t, ram_wr_in_valid, ram_wr_addr_in, ram_wr_data_in.real);
   }
 
   // Read Port Requests (addr)
@@ -145,7 +145,7 @@ void fft_ram_main(){
     }
   }
   if(ram_rd_in_valid & ram_rd_in_ready){
-    printf("RAM: rd req t-side?=%d addr %d\n", rd_req_is_t, ram_rd_addr_in);
+    printf("RAM: rd req t-side?=%d addr %d\n", ~rd_req_is_t, ram_rd_addr_in);
   }
 
   // Read Port Responses (data)
@@ -189,7 +189,7 @@ void fft_ram_main(){
   }
   if(ram_rd_out_valid & ram_rd_out_ready){
     printf("RAM: read response t-side?=%d data = %d\n",
-      rd_resp_is_t, ram_rd_data_out.real);
+      ~rd_resp_is_t, ram_rd_data_out.real);
   }
 }
 
