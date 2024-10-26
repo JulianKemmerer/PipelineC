@@ -275,7 +275,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     o.ready_for_samples_in = ready_for_wr_reqs_to_ram;
     // Transfering data this cycle (valid&ready)?
     if(samples_in.valid & o.ready_for_samples_in){
-      printf("FSM: Enqueue sample write req addr = %d, data = %d (ram t port)\n", array_index, data_in);
+      printf("FSM: Enqueue I2S sample write req addr = %d, data = %d (ram t port)\n", array_index, data_in);
       // Last sample into ram?
       if(wr_req_iters.j==(NFFT-1)){
         // Done loading samples, next state
@@ -325,7 +325,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         uint1_t s_incrementing = k_last(rd_req_iters) & j_last(rd_req_iters);
         if(s_incrementing){
           // Pause, wait for current s iter to finish
-          printf("Waiting on s iteration to finish write back...\n");
+          printf("FSM: Waiting on s=%d iteration to finish write back...\n", rd_req_iters.s);
           waiting_on_s_iter_to_finish = 1;
         }
         // Last req to ram?
@@ -398,7 +398,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       uint1_t s_incrementing = k_last(wr_req_iters) & j_last(wr_req_iters);
       if(s_incrementing){
         // Finished s iteration write back now
-        printf("S iteration finished write back!\n");
+        printf("FSM: s=%d iteration finished write back!\n", wr_req_iters.s);
         waiting_on_s_iter_to_finish = 0;
       }
       // Last req to ram?
@@ -414,6 +414,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   }
   else // UNLOAD_OUTPUTS
   {
+    printf("Unload outputs!\n");
     // Start/request reads of data from RAM to output to CPU
     // (using 'j' counter for this)
     if(rd_req_iters.j < NFFT){
@@ -424,6 +425,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       o.rd_addrs_to_ram.valid = 1;
       // Ready
       if(ready_for_rd_addrs_to_ram){
+        printf("FSM: Enqueue output read req addr = %d (ram t port)\n", rd_req_iters.j);
         // Transfer going through, next
         rd_req_iters.j += 1;
         // move to next state handled below with read responses        
@@ -441,9 +443,12 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       o.ready_for_rd_datas_from_ram = ready_for_result_out;
       // Transfering data this cycle (valid&ready)?
       if(o.result_out.valid & ready_for_result_out){
+        printf("FSM: Dequeue CPU FFT output read response into fifo addr = %d data = %d (ram t port)\n",
+          rd_req_iters.k, o.result_out.data.real);
         // Last data to CPU?
         if(rd_req_iters.k==(NFFT-1)){
           // Done offloading output, restart FFT
+          printf("FSM: Restarting...\n");
           state = LOAD_INPUTS;
           rd_req_iters = FFT_ITERS_NULL;
           rd_reqs_done = 0;
