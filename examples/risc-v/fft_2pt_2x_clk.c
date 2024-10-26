@@ -141,7 +141,7 @@ void fft_ram_main(){
       rd_req_fifo_out_ready = 1;
       printf("RAM: Dequeue 2x read req\n"
         "t addr = %d u addr = %d\n",
-        wr_req_fifo_out.data.t_index, wr_req_fifo_out.data.u_index);
+        rd_req_fifo_out.data.t_index, rd_req_fifo_out.data.u_index);
     }
   }
   if(ram_rd_in_valid & ram_rd_in_ready){
