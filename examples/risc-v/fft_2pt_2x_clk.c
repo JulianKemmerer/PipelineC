@@ -354,9 +354,9 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     // Transfering data this cycle (valid&ready)?
     if(o.data_to_pipeline.valid & ready_for_data_to_pipeline){
       printf("FSM: Dequeued 2x read response as butterfly pipeline input:\n"
-        "j = %d, s = %d\n"
+        "s = %d, k = %d, j = %d,\n"
         "t data = %d, u data = %d\n",
-        pipeline_req_iters.j, pipeline_req_iters.s,
+        pipeline_req_iters.s, pipeline_req_iters.k, pipeline_req_iters.j,
         o.data_to_pipeline.data.t.real, o.data_to_pipeline.data.u.real
       );
       // Transfer going through, count next
