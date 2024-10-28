@@ -4979,7 +4979,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     for main_inst in main_to_min_mhz:
         min_mhz = main_to_min_mhz[main_inst]
         mhz = parser_state.main_mhz[main_inst]
-        if mhz > min_mhz:
+        if mhz is not None and mhz > min_mhz:
             min_mhz_func_name = main_to_min_mhz_func_name[main_inst]
             print(
                 f"Design likely limited to ~{min_mhz:.3f} MHz due to function: {min_mhz_func_name}"
