@@ -575,15 +575,19 @@ begin \n\
   begin \n\
     if rising_edge(clk) then \n\
       if CLOCK_ENABLE(0)='1' then \n\
-        if return_output.ready0(0) = '1' then \n\
-          if valid0(0)='1' then \n\
-            the_ram(addr0_s) <= wr_data0; \n\
-          end if; \n\
+        if ready0(0)='1' then \n\
+          return_output.valid0(0) <= '0'; \n\
+        end if; \n\
+        if valid0(0)='1' and return_output.ready0(0)='1' then \n\
+          the_ram(addr0_s) <= wr_data0; \n\
           return_output.addr0 <= addr0; \n\
           return_output.wr_data0 <= wr_data0; \n\
           return_output.valid0 <= valid0; \n\
         end if; \n\
-        if return_output.ready1(0) = '1' then \n\
+        if ready1(0)='1' then \n\
+          return_output.valid1(0) <= '0'; \n\
+        end if; \n\
+        if valid1(0)='1' and return_output.ready1(0)='1' then \n\
           return_output.addr1 <= addr1; \n\
           return_output.rd_data1 <= the_ram(addr1_s); \n\
           return_output.valid1 <= valid1; \n\
