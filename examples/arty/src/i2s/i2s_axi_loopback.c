@@ -1,4 +1,3 @@
-#pragma PART "xc7a35ticsg324-1l"
 #include "uintN_t.h"
 #include "wire.h"
 #include "uintN_t.h"
@@ -36,12 +35,18 @@ FIFO_FWFT(desc_fifo, axi_descriptor_t, I2S_LOOPBACK_DEMO_N_DESC)
 
 // Expose external port FIFO wires for reading RX sample descriptors
 // as they go through loopback in DDR mem
-#define I2S_RX_MONITOR_PORT
 #ifdef I2S_RX_MONITOR_PORT
-ASYNC_CLK_CROSSING(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
+// TODO make i2s_rx_descriptors_monitor_fifo a stream fifo w macros for mem map too
+GLOBAL_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
 //  with extra signal to indicate if missed samples
 uint1_t i2s_rx_descriptors_out_monitor_overflow;
 #pragma ASYNC_WIRE i2s_rx_descriptors_out_monitor_overflow // Disable timing checks
+#endif
+
+// Also expose direct stream wires of samples from I2S RX
+// for ex. right into FFT hardware
+#ifdef I2S_RX_STREAM_MONITOR_PORT
+stream(i2s_samples_t) i2s_rx_samples_monitor_stream;
 #endif
 
 // AXI loopback
@@ -68,7 +73,13 @@ void i2s_loopback_app(uint1_t reset_n)
   );
   mac_rx_samples = mac.rx.samples;
   mac_tx_samples_ready = mac.tx.samples_ready;
-  write_i2s_pmod(mac.to_i2s);  
+  write_i2s_pmod(mac.to_i2s);
+
+  // External stream port for samples
+  #ifdef I2S_RX_STREAM_MONITOR_PORT
+  i2s_rx_samples_monitor_stream.data = mac_rx_samples.data;
+  i2s_rx_samples_monitor_stream.valid = mac_rx_samples.valid & mac_rx_samples_ready;
+  #endif 
 
   // Received samples to u32 stream
   //  u32 Data+Valid,Ready handshake

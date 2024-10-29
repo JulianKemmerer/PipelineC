@@ -299,7 +299,9 @@ fft_in_t omega_lookup(uint16_t s, uint16_t j){
 #ifdef __PIPELINEC__
 // PipelineC hardware hard coded ROM, see print function above
 #if NFFT==1024
+#ifndef FFT_USE_COMB_LOGIC_HARDWARE
 #pragma FUNC_LATENCY omega_lut_rom 1
+#endif
 fft_in_t omega_lut_rom(uint16_t i){
     static fft_in_t the_rom[1024] = {
     {.real=32767, .imag=0},

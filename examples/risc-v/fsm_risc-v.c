@@ -1,14 +1,14 @@
 // RISCV CPU, FSM that takes multiple cycles
 // uses autopipelines for some stages
 
-#pragma PART "xc7a35ticsg324-1l" //LFE5U-85F-6BG381C"
+#pragma PART "xc7a100tcsg324-1" //LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "stream/stream.h"
 DECL_STREAM_TYPE(uint32_t)
 
 // Include test gcc compiled program
-#define FFT_USE_HARDWARE
+#define FFT_USE_COMB_LOGIC_HARDWARE //FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
 #include "gcc_test/mem_map.h" 
 #include "gcc_test/text_mem_init.h"
 #include "gcc_test/data_mem_init.h"
@@ -37,7 +37,27 @@ DECL_4BYTE_RAM_SP_RF_1(
 
 // I2S RX + TX code hard coded in loop back
 // Configured to use memory mapped addr offset in CPU's AXI0 region
+// also include extra port for samples right into FFT hardware
+#define I2S_RX_MONITOR_PORT
+#ifdef FFT_USE_FULL_HARDWARE
+#define I2S_RX_STREAM_MONITOR_PORT
+#endif
 #include "examples/arty/src/i2s/i2s_axi_loopback.c"
+
+// Hardware for doing the full FFT
+#ifdef FFT_USE_FULL_HARDWARE
+#define FFT_CLK_MHZ 50.0
+#define FFT_CLK_2X_MHZ 100.0
+#include "fft_2pt_2x_clk.c"
+// FFT output connected into CPU in memory map below
+// Connect I2S samples stream into samples fifo for FFT here
+// (little bit of glue in the I2S clock domain)
+#pragma MAIN i2s_to_fft_connect
+#pragma FUNC_WIRES i2s_to_fft_connect
+void i2s_to_fft_connect(){
+  samples_fifo_in = i2s_rx_samples_monitor_stream;
+}
+#endif
 
 // Helpers macros for building mmio modules
 #include "mem_map.h" 
@@ -136,7 +156,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
         // Start a write
         o.addr_is_mapped = 1;
         if(word_wr_en){
-          // AXIS write addr + data setup
+          // AXI write addr + data setup
           axi_write_req_t axi_wr_req;
           axi_wr_req.awaddr = axi0_addr;
           axi_wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
@@ -166,7 +186,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
         }
         // Start a read
         if(word_rd_en){
-          // AXIS read setup
+          // AXI read setup
           axi_read_req_t axi_rd_req;
           axi_rd_req.araddr = axi0_addr;
           axi_rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
@@ -198,7 +218,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
 
   // 2 point FFT comb logic blob between MMIO regs
+  #ifdef FFT_USE_COMB_LOGIC_HARDWARE
   inputs.status.fft_2pt_out = fft_2pt_w_omega_lut(ctrl.fft_2pt_in);
+  #endif
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
@@ -209,6 +231,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }
 
   #ifdef I2S_RX_MONITOR_PORT
+  // TODO HANDSHAKE MACRO
   // Handshake data for cpu read written when ready got valid data
   uint1_t i2s_rx_out_desc_rd_en = ~handshake_valid_reg_value.i2s_rx_out_desc;
   i2s_rx_descriptors_monitor_fifo_read_t i2s_rx_out_desc_fifo =
@@ -216,6 +239,17 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   if(i2s_rx_out_desc_rd_en & i2s_rx_out_desc_fifo.valid){
     handshake_data.i2s_rx_out_desc = i2s_rx_out_desc_fifo.data[0];
     handshake_valid.i2s_rx_out_desc = 1;
+  }
+  #endif
+
+  // Read out result from hardware FFT output FIFO
+  #ifdef FFT_USE_FULL_HARDWARE
+  // Connect the outputs from FFT results FIFO into memory map
+  // Start with ~copy of above then make macros for both
+  output_fifo_out_ready = ~handshake_valid_reg_value.fft_out;
+  if(output_fifo_out_ready & output_fifo_out.valid){
+    handshake_data.fft_out = output_fifo_out.data;
+    handshake_valid.fft_out = 1;
   }
   #endif
 

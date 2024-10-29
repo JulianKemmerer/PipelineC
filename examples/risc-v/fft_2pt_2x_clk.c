@@ -5,7 +5,9 @@
 #include "examples/arty/src/i2s/i2s_samples.h"
 #include "gcc_test/fft.h"
 
-// Types for the FIFO elements to be transfered
+// Compute FFT using 2pt butterfly unit and memory at 2x clock rate
+
+// Types for the FIFO elements to be transfered between clock domains
 typedef struct fft_ram_2x_write_req_t{
   // t addr and data
   uint16_t t_index;
@@ -45,7 +47,7 @@ GLOBAL_STREAM_FIFO(fft_ram_2x_write_req_t, wr_req_fifo, 16)
 GLOBAL_STREAM_FIFO(fft_out_t, output_fifo, 16)
 
 // Type of RAM for storing FFT output
-// Dual write,read ports 1 clock latency (block)RAM
+// Dual ports: write only + read only, 1 clock latency (block)RAM
 DECL_STREAM_RAM_DP_W_R_1(
   fft_out_t, fft_ram, NFFT, "(others => (others => (others => '0')))"
 )
@@ -414,7 +416,6 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   }
   else // UNLOAD_OUTPUTS
   {
-    printf("Unload outputs!\n");
     // Start/request reads of data from RAM to output to CPU
     // (using 'j' counter for this)
     if(rd_req_iters.j < NFFT){

@@ -1,6 +1,6 @@
 #include "fft.h"
 
-#ifdef FFT_USE_HARDWARE
+#ifdef FFT_USE_COMB_LOGIC_HARDWARE
 static inline fft_2pt_out_t fft_2pt_hardware(fft_2pt_w_omega_lut_in_t i){
   // Write input registers contents
   mm_ctrl_regs->fft_2pt_in = i;
@@ -24,6 +24,13 @@ U = mm_status_regs->fft_2pt_out.u
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
 void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     uint32_t N = NFFT;
+    #ifdef FFT_USE_FULL_HARDWARE
+    // FFT done in hw, just copy results to output
+    for (uint32_t i = 0; i < N; i++)
+    {
+        fft_out_READ(&(output[i]));
+    }
+    #else // Some work done by CPU
     /* Bit-Reverse copy */
     for (uint32_t i = 0; i < N; i++)
     {
@@ -48,8 +55,8 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
             {
                 uint32_t t_index = t_base_index + j;
                 uint32_t u_index = u_base_index + j;
-                #ifdef FFT_USE_HARDWARE
-                // Invoke hardware
+                #ifdef FFT_USE_COMB_LOGIC_HARDWARE
+                // Invoke hardware comb logic 2pt butterfly
                 fft_2pt_hardware_macro(output[t_index], output[u_index], s, j);
                 #else
                 // Run comb logic on CPU instead of using hardware
@@ -65,6 +72,7 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
             }
         }
     }  
+    #endif
 }
 
 // Dont need real power for visualization, fake it

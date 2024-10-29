@@ -33,13 +33,17 @@
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
   uint32_t fft_cycles; // Cycles per fft iter debug counter
+  #ifdef FFT_USE_COMB_LOGIC_HARDWARE
   fft_2pt_w_omega_lut_in_t fft_2pt_in;
+  #endif
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
   //uint32_t i2s_rx_out_desc_overflow; // Single bit
+  #ifdef FFT_USE_COMB_LOGIC_HARDWARE
   fft_2pt_out_t fft_2pt_out;
+  #endif
 }mm_status_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -68,9 +72,15 @@ typedef struct axi_descriptor_t
 // MM Handshake registers
 typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_out_desc;
+  #ifdef FFT_USE_FULL_HARDWARE
+  fft_out_t fft_out;
+  #endif
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
   uint32_t i2s_rx_out_desc;
+  #ifdef FFT_USE_FULL_HARDWARE
+  uint32_t fft_out;
+  #endif
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -93,6 +103,16 @@ void i2s_rx_out_desc_READ(axi_descriptor_t* desc_out){
   // Signal done with data
   mm_handshake_valid->i2s_rx_out_desc = 0;
 }
+#ifdef FFT_USE_FULL_HARDWARE
+void fft_out_READ(fft_out_t* out){
+  // Wait for valid data to show up
+  while(!mm_handshake_valid->fft_out){}
+  // Copy the data to output
+  *out = mm_handshake_data->fft_out;
+  // Signal done with data
+  mm_handshake_valid->fft_out = 0;
+}
+#endif
 
 // Block RAMs
 #define MMIO_BRAM0

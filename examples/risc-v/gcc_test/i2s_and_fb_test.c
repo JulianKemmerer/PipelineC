@@ -2,7 +2,7 @@
 #include <stdlib.h>
 
 // FFT algorithm demo code
-#define FFT_USE_HARDWARE
+#define FFT_USE_COMB_LOGIC_HARDWARE //FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
 #include "fft.h"
 #include "mem_map.h"
 #include "fft.c"
@@ -112,14 +112,17 @@ void main() {
     *LED = 0; //mm_status_regs->i2s_rx_out_desc_overflow;
     
     // Read i2s samples (in DDR3 off chip)
+    #ifndef FFT_USE_FULL_HARDWARE
     i2s_sample_in_mem_t* samples = NULL;
     int n_samples = 0;
     i2s_read(&samples, &n_samples);
+    #endif
 
     *LED = (1<<0);
 
     // Copy samples into buffer and convert to input type as needed (in BRAM)
     fft_in_t fft_input_samples[NFFT] = {0};
+    #ifndef FFT_USE_FULL_HARDWARE
     for (size_t i = 0; i < NFFT; i++)
     {
       // I2S samples are 24b fixed point
@@ -132,6 +135,7 @@ void main() {
       fft_input_samples[i].imag = 0;
       #endif
     }
+    #endif
 
     *LED = (1<<1);
 
@@ -153,8 +157,10 @@ void main() {
     // Screen coloring result
     // Only use positive freq power in first half of array
     draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
+    #ifndef FFT_USE_FULL_HARDWARE
     // Time domain waveform across top half of display
     draw_waveform(FRAME_WIDTH, FRAME_HEIGHT/2, 2, fft_input_samples);
+    #endif
     //count += 1;
   }
 }
