@@ -198,6 +198,9 @@ void fft_ram_main(){
 // Global instance of butterfly pipeline with valid ready handshake
 GLOBAL_VALID_READY_PIPELINE_INST(fft_2pt_pipeline, fft_2pt_out_t, fft_2pt_w_omega_lut, fft_2pt_w_omega_lut_in_t, 16)
 
+// FFT speed measure connected to debug chipscope reg
+DEBUG_REG_DECL(uint32_t, butterfly_cycles)
+
 // Didnt need to write fft_2pt_fsm as standalone function
 // could have put code directly in-line into MAIN func
 // as opposed to making an instance of the fft_2pt_fsm module
@@ -251,6 +254,9 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
   //  Some helper flags to do 's' loops sequentially
   static uint1_t waiting_on_s_iter_to_finish;
   static uint1_t rd_reqs_done;
+  // Debug counters for speed measure
+  static uint32_t clock_counter;
+  static uint32_t start_time;
   // Outputs (default all zeros)
   fft_2pt_fsm_out_t o; 
   // FSM logic
@@ -283,6 +289,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         // Done loading samples, next state
         state = BUTTERFLY_ITERS;
         wr_req_iters = FFT_ITERS_NULL;
+        start_time = clock_counter;
       }else{
         // More input samples coming
         wr_req_iters.j += 1;
@@ -409,6 +416,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         // Done write back, finishes FFT, unload result
         wr_req_iters = FFT_ITERS_NULL;
         state = UNLOAD_OUTPUTS;
+        butterfly_cycles = clock_counter - start_time;
       }else{
         // More write reqs to make
         wr_req_iters = next_iters(wr_req_iters);
@@ -461,6 +469,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
       }
     }
   }
+  clock_counter += 1;
   return o;
 }
 

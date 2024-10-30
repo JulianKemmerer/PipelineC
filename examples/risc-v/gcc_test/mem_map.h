@@ -32,7 +32,7 @@
 // Registers
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
-  uint32_t fft_cycles; // Cycles per fft iter debug counter
+  uint32_t compute_fft_cycles; // Cycles per fft iter debug counter
   #ifdef FFT_USE_COMB_LOGIC_HARDWARE
   fft_2pt_w_omega_lut_in_t fft_2pt_in;
   #endif
