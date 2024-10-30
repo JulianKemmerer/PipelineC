@@ -362,11 +362,12 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         o.data_to_pipeline.data.t.real, o.data_to_pipeline.data.u.real
       );
       // Transfer going through, count next
-      pipeline_req_iters = next_iters(pipeline_req_iters);
       // Last req to pipeline?
       if(last_iter(pipeline_req_iters)){
         // resets counters
         pipeline_req_iters = FFT_ITERS_NULL;
+      }else{
+        pipeline_req_iters = next_iters(pipeline_req_iters);
       }
     }
     // 3) 
