@@ -154,11 +154,17 @@ void fft_ram_main(){
   static uint1_t rd_resp_is_t = 1;
   // Default not putting responses into resp fifo
   rd_resp_fifo_in.valid = 0;
+  // Explict extra regs and default wiring 
+  // to help meet timing into resp fifo
+  static fft_out_t t_resp_data_reg;
+  rd_resp_fifo_in.data.t = t_resp_data_reg;
+  rd_resp_fifo_in.data.u = ram_rd_data_out;
   if(rd_resp_is_t){
     // Data 
     // (fifo input is global variable
     //  that can store partial 't' data as register)
-    rd_resp_fifo_in.data.t = ram_rd_data_out;
+    // rd_resp_fifo_in.data.t = ram_rd_data_out;
+    t_resp_data_reg = ram_rd_data_out; 
     // Valid
     // not asserting valid response into fifo yet
     // since not done forming resp yet, u next
@@ -174,7 +180,7 @@ void fft_ram_main(){
     // Data
     // (t from fifo input reg last state still set
     // u straight from ram into resp fifo this cycle)
-    rd_resp_fifo_in.data.u = ram_rd_data_out;
+    // SEE DEFAULT ABOVE
     // Valid
     rd_resp_fifo_in.valid = ram_rd_out_valid;
     // Ready 

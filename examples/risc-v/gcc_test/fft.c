@@ -42,13 +42,13 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     // FFT iterations using hardware matching iterator structs
     fft_iters_t iters = FFT_ITERS_NULL_INIT;
     while(1){
-        uint32_t s = iters.s;
-        uint32_t k = iters.k;
-        uint32_t j = iters.j;
-        uint32_t m = (uint32_t)1 << s;
-        uint32_t m_1_2 = m >> 1;
-        uint32_t t_index = k + j + m_1_2;
-        uint32_t u_index = k + j;
+        uint16_t s = iters.s;
+        uint16_t k = iters.k;
+        uint16_t j = iters.j;
+        uint16_t m = (uint32_t)1 << s;
+        uint16_t m_1_2 = m >> 1;
+        uint16_t t_index = k + j + m_1_2;
+        uint16_t u_index = k + j;
         #ifdef FFT_USE_COMB_LOGIC_HARDWARE
         // Invoke hardware comb logic 2pt butterfly
         fft_2pt_comb_hardware_macro(output[t_index], output[u_index], s, j);
