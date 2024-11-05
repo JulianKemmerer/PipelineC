@@ -109,7 +109,13 @@ complex_t ci32_to_complex(ci32_t c){
 }
 
 static inline int32_t mul32(int32_t a, int32_t b){
+    #ifdef __PIPELINEC__
+    // Work around Vivado synth bug
+    // that badly trims/optimizes sign bit due to extra casts?
+    int32_t rv = (a * b) >> 16;
+    #else
     int32_t rv = ((int64_t)a * (int64_t)b) >> 16;
+    #endif
     return rv;
 }
 

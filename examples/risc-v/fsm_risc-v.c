@@ -46,8 +46,8 @@ DECL_4BYTE_RAM_SP_RF_1(
 
 // Hardware for doing the full FFT
 #ifdef FFT_USE_FULL_HARDWARE
-#define FFT_CLK_MHZ 50.0
-#define FFT_CLK_2X_MHZ 100.0
+#define FFT_CLK_MHZ 100.0
+#define FFT_CLK_2X_MHZ 200.0
 #include "fft_2pt_2x_clk.c"
 // FFT output connected into CPU in memory map below
 // Connect I2S samples stream into samples fifo for FFT here
