@@ -21,7 +21,9 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
 }
 
 // Spectrum is rect bins
-#define N_BINS (NFFT/2)
+// Real freq part of spectrum is NFFT/2
+// most of the time audio isnt in upper half, so /4 for looks
+#define N_BINS (NFFT/4)
 void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   // Remember the power value from last time to make updates faster
   static int last_height[N_BINS] = {0};
@@ -39,6 +41,9 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
     int x_end = (b+1) * bin_width;
     if(pwr_bins[b] > max_pwr) max_pwr = pwr_bins[b];
     int bin_height = ((uint64_t)pwr_bins[b] * (uint64_t)height)/max_pwr;
+    bin_height = bin_height << 1; // extra height for looks
+    if(bin_height < 0) bin_height = 0;
+    if(bin_height > height) bin_height = height;
     uint8_t color = 0;
     int y_start = 0;
     int y_end = 0;
@@ -56,10 +61,8 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
       y_end =  height - bin_height;
       color = 0;
     }
-
     // Rect with proper y bounds
     drawRect(x_start, y_start, x_end, y_end, color);
-
     // Store power for next time
     last_height[b] = bin_height;
   }
@@ -74,6 +77,8 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
   int y_mid = half_height;
   // Remember the amplitude value from last time to make updates faster
   static int last_y_value[NFFT] = {0};
+  // Remember max ampl for auto scale (fixed point only)
+  static int max_abs_sample = 1;
   for (size_t i = 0; i < NFFT; i++)
   {
     // Calc x position, gone too far?
@@ -85,9 +90,13 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
     int ampl = (int)(half_height * input_samples[i].real);
     #endif
     #ifdef FFT_TYPE_IS_FIXED
-    int ampl = (half_height * input_samples[i].real)/INT16_MAX;
+    int sample_abs = abs(input_samples[i].real);
+    if(sample_abs > max_abs_sample){
+      max_abs_sample = sample_abs;
+    }
+    int ampl = (half_height * input_samples[i].real)/max_abs_sample;
     #endif
-    ampl = ampl * 2; // Scale x2 since rarely near max vol (TODO auto adjust ampl scale?)
+    ampl = ampl * 2; // Scale x2 since rarely near max vol?
     int y_val = y_mid - ampl; // y inverted 0,0 top left
     if(y_val < 0) y_val = 0;
     if(y_val > height) y_val = height;
@@ -151,10 +160,9 @@ void main() {
     *LED = (1<<3);
     
     // Screen coloring result
-    // Only use positive freq power in first half of array
     draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
-    // Time domain waveform across top half of display
-    draw_waveform(FRAME_WIDTH, FRAME_HEIGHT/2, 2, fft_input_samples);
+    // Time domain waveform across top two thirds of display
+    draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 2, fft_input_samples);
     //count += 1;
   }
 }
