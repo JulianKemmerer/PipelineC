@@ -1861,9 +1861,10 @@ def BUILD_LOGIC_AS_C_CODE(
         # Merge into existing
         for sw_func_name in sw_func_name_2_logic:
             # print "sw_func_name",sw_func_name
-            parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
-                sw_func_name
-            ]
+            if sw_func_name not in parser_state.FuncLogicLookupTable:
+                parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
+                    sw_func_name
+                ]
 
         FuncLogicLookupTable = GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
             c_code_text, fake_filename, parser_state, parse_body=True
@@ -6787,6 +6788,20 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             in_val = float(in_val_str)
             out_val = math.sqrt(in_val)
             const_val_str = str(out_val)
+        elif func_base_name == "ceil" and base_name_is_name:
+            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                const_input_wires[0], parser_state.existing_logic, parser_state
+            )
+            in_val = float(in_val_str)
+            out_val = math.ceil(in_val)
+            const_val_str = str(out_val)
+        elif func_base_name == "log2" and base_name_is_name:
+            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+                const_input_wires[0], parser_state.existing_logic, parser_state
+            )
+            in_val = float(in_val_str)
+            out_val = math.log2(in_val)
+            const_val_str = str(out_val)
         elif func_base_name == "cos" and base_name_is_name:
             in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
@@ -7476,6 +7491,10 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
             f.c_type = "int32_t"
             f.base = 10
             f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
+        elif format_specifier == "%u":
+            f.c_type = "uint32_t"  # VHDL cant do full u32 range printed as int?32
+            f.base = 10
+            f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
         elif format_specifier == "%X":  # hstring is UPPER CASE
             f.c_type = "uint32_t"
             f.base = 16
@@ -7541,6 +7560,9 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
     base_name_is_name = True  # Dont need type into if coord str is enough?
     input_drivers = format_args
     input_driver_types = arg_c_types
+    input_drivers = format_args
+    if len(input_drivers) != len(input_driver_types):
+        raise Exception(f"printf args mismatch at {c_ast_func_call.coord}")
     input_port_names = ["arg" + str(i) for i in range(0, len(format_args))]
     output_driven_wire_names = driven_wire_names  # Probably none?
     # Printf is first built in with clock enable?
@@ -9270,9 +9292,9 @@ def MOVE_UNREAD_GLOBAL_STATE_REGS_TO_WIRES(prepend_text, parser_state, c_ast_nod
         # Try to find a wire driven by the state reg state
         state_reg_drives_things = state_reg in parser_state.existing_logic.wire_drives
         if not state_reg_drives_things:
-            print(
-                f"Global variable {state_reg} is written to like a wire (not stateful register) inside function {parser_state.existing_logic.func_name} ..."
-            )
+            # print(
+            #    f"Global variable {state_reg} is written to like a wire (not stateful register) inside function {parser_state.existing_logic.func_name} ..."
+            # )
             # Remove from local state regs
             parser_state.existing_logic.state_regs.pop(state_reg)
             # Add to list of globals as wires
@@ -10120,9 +10142,10 @@ def PARSE_FILE(c_filename):
         )
         # Merge into existing
         for sw_func_name in sw_func_name_2_logic:
-            parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
-                sw_func_name
-            ]
+            if sw_func_name not in parser_state.FuncLogicLookupTable:
+                parser_state.FuncLogicLookupTable[sw_func_name] = sw_func_name_2_logic[
+                    sw_func_name
+                ]
 
         # Parse the function definitions for code structure
         print("Elaborating function dataflow...", flush=True)
@@ -10172,7 +10195,7 @@ def PARSE_FILE(c_filename):
 
         # Elaborate the logic down to raw vhdl modules
         print(
-            "Elaborating main function hierarchies down to raw HDL logic...", flush=True
+            "Elaborating user function hierarchies down to raw HDL logic...", flush=True
         )
         for main_func in list(parser_state.main_mhz.keys()):
             adjusted_containing_logic_inst_name = ""
@@ -10232,7 +10255,7 @@ def PARSE_FILE(c_filename):
 
 
 def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
-    print("Building map of logic to be pipelined...", flush=True)
+    # print("Building map of logic to be pipelined...", flush=True)
     SYN.PART_SET_TOOL(
         parser_state.part, allow_fail=True
     )  # Comb logic only might not have tool set

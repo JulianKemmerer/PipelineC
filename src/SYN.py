@@ -1772,23 +1772,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             submodule_delay = parser_state.LogicInstLookupTable[
                                 submodule_inst_name
                             ].delay
-                            if submodule_delay is None:
-                                print(
-                                    "ERROR 0: Please mention encountering this at:\n",
-                                    "https://github.com/JulianKemmerer/PipelineC/issues/187\n",
-                                    "WTF MISSING INST DELAY FOR",
-                                    inst_name,
-                                    submodule_inst_name,
-                                )
-                                submodule_delay = parser_state.FuncLogicLookupTable[
-                                    submodule_logic.func_name
-                                ].delay
-                            if submodule_delay is None:
-                                raise Exception(
-                                    "What cant do this without delay!?",
-                                    inst_name,
-                                    submodule_inst_name,
-                                )
                             # End offset is start offset plus delay
                             # Ex. 0 delay in offset 0
                             # Starts and ends in offset 0
@@ -1927,17 +1910,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                         submodule_delay = parser_state.LogicInstLookupTable[
                             submodule_inst_name
                         ].delay
-                        if submodule_delay is None:
-                            print(
-                                "ERROR 1: Please mention encountering this at:\n",
-                                "https://github.com/JulianKemmerer/PipelineC/issues/187\n",
-                                "WTF MISSING INST DELAY FOR",
-                                inst_name,
-                                submodule_inst_name,
-                            )
-                            submodule_delay = parser_state.FuncLogicLookupTable[
-                                submodule_logic.func_name
-                            ].delay
                         abs_delay_offset = rv.zero_clk_submodule_end_offset[
                             submodule_inst
                         ]
@@ -3813,22 +3785,10 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                 )
             if len(main_insts) <= 0:
                 print(
-                    "No main functions in timing report for path group:",
+                    "Path group:",
                     reported_clock_group,
+                    "is likely only limited by built in FIFO implementations...",
                 )
-                # print(path_report.start_reg_name)
-                # print(path_report.end_reg_name)
-                # print(path_report.netlist_resources)
-                for main_inst in parser_state.main_mhz:
-                    main_logic = parser_state.LogicInstLookupTable[main_inst]
-                    main_vhdl_entity_name = VHDL.GET_ENTITY_NAME(
-                        main_inst,
-                        main_logic,
-                        sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                        parser_state,
-                    )
-                    print(main_vhdl_entity_name)
-                sys.exit(-1)
             # Check timing, make adjustments and print info for each main in the timing report
             for main_inst in main_insts:
                 # Met timing?
