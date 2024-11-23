@@ -383,8 +383,10 @@ def SYN_AND_REPORT_TIMING_NEW(
             # Which exe?
             if parser_state.part.lower().startswith("ice"):
                 exe_ext = "ice40"
+                nowidelut = ""
             else:
                 exe_ext = "ecp5"
+                nowidelut = "-nowidelut"
             f.write(
                 """
 #!/usr/bin/env bash
@@ -398,7 +400,7 @@ export GHDL_PREFIX="""
                 + top_entity_name
                 + """; synth_"""
                 + exe_ext
-                + """ -abc9 -nowidelut """
+                + f""" -abc9 {nowidelut}"""
                 + """ -top """
                 + top_entity_name
                 + """ -json """
