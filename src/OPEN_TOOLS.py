@@ -13,8 +13,12 @@ GHDL_EXE = "ghdl"
 
 # Hard coded/default exe paths for simplest oss-cad-suite based install
 # https://github.com/YosysHQ/oss-cad-suite-build/releases/
-# Download, extract, set path here
-OSS_CAD_SUITE_PATH = "/media/1TB/Programs/Linux/oss-cad-suite"
+# Download, extract, set env var or path here
+OSS_CAD_SUITE_ENV_PATH = os.environ.get("OSS_CAD_SUITE")
+if OSS_CAD_SUITE_ENV_PATH:
+    OSS_CAD_SUITE_PATH = OSS_CAD_SUITE_ENV_PATH
+else:
+    OSS_CAD_SUITE_PATH = "/media/1TB/Programs/Linux/oss-cad-suite"
 YOSYS_BIN_PATH = None
 GHDL_BIN_PATH = None
 NEXTPNR_BIN_PATH = None
