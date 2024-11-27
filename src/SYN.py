@@ -141,7 +141,8 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 if os.path.exists(VIVADO.VIVADO_PATH):
                     print("Vivado:", VIVADO.VIVADO_PATH, flush=True)
                 else:
-                    raise Exception("Vivado install not found!")
+                    if not allow_fail:
+                        raise Exception("Vivado install not found!")
             elif (
                 part_str.lower().startswith("ep")
                 or part_str.lower().startswith("10c")
@@ -151,7 +152,8 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 if os.path.exists(QUARTUS.QUARTUS_PATH):
                     print("Quartus:", QUARTUS.QUARTUS_PATH, flush=True)
                 else:
-                    raise Exception("Quartus install not found!")
+                    if not allow_fail:
+                        raise Exception("Quartus install not found!")
             elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith(
                 "ice"
             ):
@@ -166,26 +168,30 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                     if os.path.exists(DIAMOND.DIAMOND_PATH):
                         print("Diamond:", DIAMOND.DIAMOND_PATH, flush=True)
                     else:
-                        raise Exception("Diamond install not found!")
+                        if not allow_fail:
+                            raise Exception("Diamond install not found!")
             elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
                 SYN_TOOL = EFINITY
                 if os.path.exists(EFINITY.EFINITY_PATH):
                     print("Efinity:", EFINITY.EFINITY_PATH, flush=True)
                 else:
-                    raise Exception("Efinity install not found!")
+                    if not allow_fail:
+                        raise Exception("Efinity install not found!")
             elif part_str.upper().startswith("GW"):
                 SYN_TOOL = GOWIN
                 if os.path.exists(GOWIN.GOWIN_PATH):
                     print("Gowin:", GOWIN.GOWIN_PATH, flush=True)
                 else:
-                    raise Exception("Gowin install not found!")
+                    if not allow_fail:
+                        raise Exception("Gowin install not found!")
             elif part_str.upper().startswith("CCGM"):
                 SYN_TOOL = CC_TOOLS
                 # TODO dont base on cc-toolchain directory?
                 if os.path.exists(CC_TOOLS.CC_TOOLS_PATH):
                     print("CologneChip Tools:", CC_TOOLS.CC_TOOLS_PATH, flush=True)
                 else:
-                    raise Exception("CologneChip toolchain install not found!")
+                    if not allow_fail:
+                        raise Exception("CologneChip toolchain install not found!")
             else:
                 if not allow_fail:
                     print(
