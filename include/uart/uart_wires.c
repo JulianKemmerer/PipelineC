@@ -3,6 +3,8 @@
 
 // Separate wires and MAINs so can be different clock domains
 
+// TODO CDC bit on inputs included?
+
 #ifdef UART_TX_OUT_WIRE
 GLOBAL_OUT_REG_WIRE_CONNECT(uint1_t, UART_TX_OUT_WIRE, uart_tx)
 #else

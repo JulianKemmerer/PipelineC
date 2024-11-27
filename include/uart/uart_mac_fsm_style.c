@@ -78,8 +78,9 @@ uint8_t receive_byte()
 }
 //#include "receive_byte_SINGLE_INST.h" // Wanted?
 
-/*
+
 // Do byte level loopback test
+// sudo screen /dev/ttyUSB1 115200
 void main()
 {
   while(1)
@@ -99,4 +100,3 @@ void main_wrapper()
   i.output_ready = 1;
   main_OUTPUT_t o = main_FSM(i);
 }
-*/

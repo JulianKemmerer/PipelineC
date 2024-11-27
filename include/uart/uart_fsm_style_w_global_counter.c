@@ -1,16 +1,38 @@
 #include "arrays.h"
 // UART top level IO
-#include "uart_w_out_reg.c"
+#include "uart_ports_w_out_reg.c"
 // Fixed size UART message buffers of N bytes
 #include "uart_msg.h"
 
-// Helper func to wait n clock cycles
-void wait_clks(uint16_t clks)
+// Make a constantly ticking clock that runs on the same clock as the UART
+MAIN_MHZ(uart_clk_func, UART_CLK_MHZ)
+// And wires for reading it from anywhere
+uint32_t uart_clk_counter;
+#include "clock_crossing/uart_clk_counter.h"
+void uart_clk_func()
 {
-  while(clks > 0)
+  static int32_t counter;
+  WIRE_WRITE(int32_t, uart_clk_counter, counter)
+  counter += 1;
+}
+int32_t get_uart_ticks()
+{
+  int32_t rv;
+  WIRE_READ(int32_t, rv, uart_clk_counter)
+  __clk();
+  return rv;
+}
+
+// Helper func to wait n clock cycles, using uart timer
+void wait_clks(int32_t clks)
+{
+  // Wait until: clock_counter() - t0 - CONSTANT >= 0  
+  int32_t t0 = get_uart_ticks();
+  int32_t excess = -1;
+  while(excess < 0)
   {
-    clks -= 1;
-    __clk();
+    int32_t t1 = get_uart_ticks();
+    excess = t1 - t0 - clks;
   }
 }
 //#include "wait_clks_SINGLE_INST.h" // Wanted?
