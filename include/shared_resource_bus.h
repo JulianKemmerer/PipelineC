@@ -1201,6 +1201,7 @@ PPCAT(name, _dev_arb_pipelined_greedy_t) PPCAT(name, _dev_arb_pipelined_greedy)(
 
 
 // TODO use here in header too
+// TODO consider adding _wire into macro name since looks like func for converting something?
 // Helper macro to get to global wire for shared bus
 // Single "the host clock domain" version
 #define host_clk_to_dev(shared_bus_name)\

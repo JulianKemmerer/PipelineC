@@ -3,6 +3,8 @@
 
 // Separate wires and MAINs so can be different clock domains
 
+// TODO define active low high resolved LED_ON LED_OFF consts
+
 #ifdef LED_R_WIRE
 GLOBAL_OUT_REG_WIRE_CONNECT(uint1_t, LED_R_WIRE, led_r)
 #else

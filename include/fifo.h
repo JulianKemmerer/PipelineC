@@ -79,6 +79,7 @@ name##_t name(uint1_t rd, type data_in, uint1_t wr)\
 
 // FWFT style using RAM prim
 // Has latency issues: https://github.com/JulianKemmerer/PipelineC/issues/142
+// TODO rewrite based on pipelinec_fifo_fwft VHDL
 #define FIFO_FWFT_EXTRA_STOP_LATENCY 2 
 #define FIFO_FWFT_MIN_LEVEL 6 // 2 cycle latency buffer + 2 cycles latency through ram + 2 cycles to extra to restart per issue
 #define FIFO_FWFT_MIN_PROG_FULL (FIFO_FWFT_MIN_LEVEL + FIFO_FWFT_EXTRA_STOP_LATENCY)

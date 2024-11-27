@@ -130,6 +130,32 @@ type_t name() \
   the_reg = name; \
   return rv; \
 }
+#define GLOBAL_OUT_WIRE_CONNECT(type_t, wire, name)\
+type_t name; \
+PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+void PPCAT(name,_connect)(){ \
+  wire = name; \
+}
+#define GLOBAL_OUT_REG_WIRE_CONNECT(type_t, wire, name)\
+type_t name; \
+PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+void PPCAT(name,_connect)(){ \
+  static type_t the_reg; \
+  wire = the_reg; \
+  the_reg = name; \
+}
+#define GLOBAL_IN_REG_WIRE_CONNECT(type_t, name, wire)\
+type_t name; \
+PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+void PPCAT(name,_connect)(){ \
+  static type_t the_reg; \
+  name = the_reg; \
+  the_reg = wire; \
+}
+
 
 // Split a main funciton instance into N globally available function calls
 // Maybe code gen some day?

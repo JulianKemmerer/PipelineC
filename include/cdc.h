@@ -58,3 +58,5 @@ uint1_t xil_cdc2_bit(uint1_t src_in){
   );\n\
   ");
 }
+
+// TODO ADD CDC handshake , implement using pipelinec async fifos for data and ready bit xfer

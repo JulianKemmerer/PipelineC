@@ -102,6 +102,7 @@ multi_fir_decim_t multi_fir_decim_name(multi_fir_decim_data_stream_t in_stream[M
   multi_fir_decim_round_robin_samples_t round_robin = round_robin_samples(in_stream);
 
   // Select the FIR window of data to use based on the current round robin state
+  // TODO make into shift instead of mux random select?
   fir_samples_window_t sample_window = round_robin.sample_window[round_robin.stream_sel];
   //uint1_t decim_count_elapsed = round_robin.decim_count_ellapsed[round_robin.stream_sel];
 
