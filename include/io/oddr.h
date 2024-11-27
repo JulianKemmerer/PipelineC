@@ -1,5 +1,6 @@
 #include "uintN_t.h"
 
+#pragma FUNC_WIRES oddr_same_edge // Dont care about delay through ODDR
 uint1_t oddr_same_edge(uint1_t d1, uint1_t d2)
 {
   __vhdl__(" \n\
