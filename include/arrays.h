@@ -64,11 +64,20 @@ type_t ARRAY_1ROT_UP_##type_t##_temp = array[SIZE-1]; \
 /* Do shift and insert */ \
 ARRAY_1SHIFT_INTO_BOTTOM(array, SIZE, ARRAY_1ROT_UP_##type_t##_temp)
 
+// TODO rename the uint to array funcs with some kind of endianess indicator?
+
 #define UINT_TO_BIT_ARRAY(bit_array,BIT_WIDTH,uint_val)\
 uint32_t UINT_TO_ARRAY_i; \
 for(UINT_TO_ARRAY_i=0;UINT_TO_ARRAY_i<BIT_WIDTH;UINT_TO_ARRAY_i+=1) \
 { \
   bit_array[UINT_TO_ARRAY_i] = uint_val >> UINT_TO_ARRAY_i; \
+}
+
+#define UINT_TO_BYTE_ARRAY(byte_array,BYTE_WIDTH,uint_val)\
+uint32_t UINT_TO_BYTE_ARRAY_i; \
+for(UINT_TO_BYTE_ARRAY_i=0;UINT_TO_BYTE_ARRAY_i<BYTE_WIDTH;UINT_TO_BYTE_ARRAY_i+=1) \
+{ \
+  byte_array[UINT_TO_BYTE_ARRAY_i] = uint_val >> (UINT_TO_BYTE_ARRAY_i*4); \
 }
 
 // Use arrays for delays/shift regs
