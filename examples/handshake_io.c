@@ -109,10 +109,10 @@ DECL_INPUT(uint1_t, m_axis_tready)
 void top(){
   // Handshake style code with helper macros etc
   // Requires instantiating the modules to be used first at start of func
-  // my_inst0: my_axis_32_t my_func(my_axis_32_t)
-  DECL_HANDSHAKE_INST(my_inst0, my_axis_32_t, my_func, my_axis_32_t)
-  // my_inst1: my_axis_32_t my_func(my_axis_32_t)
-  DECL_HANDSHAKE_INST(my_inst1, my_axis_32_t, my_func, my_axis_32_t)
+  // func0: my_axis_32_t my_func(my_axis_32_t)
+  DECL_HANDSHAKE_INST(func0, my_axis_32_t, my_func, my_axis_32_t)
+  // func1: my_axis_32_t my_func(my_axis_32_t)
+  DECL_HANDSHAKE_INST(func1, my_axis_32_t, my_func, my_axis_32_t)
 
   // Connect flattened top level input ports to local stream variables
   stream(my_axis_32_t) input_axis;
@@ -122,17 +122,17 @@ void top(){
   input_axis.valid = s_axis_tvalid;
 
   // Input stream into first instance
-  // my_inst0 input handshake = input_axis, s_axis_tready
-  HANDSHAKE_FROM_STREAM(my_inst0, input_axis, s_axis_tready) 
+  // func0 input handshake = input_axis, s_axis_tready
+  HANDSHAKE_FROM_STREAM(func0, input_axis, s_axis_tready) 
 
   // Output of first instance into second
-  // my_inst1 input handshake = my_inst0 output handshake
-  HANDSHAKE_CONNECT(my_inst1, my_inst0)
+  // func1 input handshake = func0 output handshake
+  HANDSHAKE_CONNECT(func1, func0)
 
   // Output stream from second instance
   stream(my_axis_32_t) output_axis;
-  // output_axis, m_axis_tready = my_inst1 output handshake
-  STREAM_FROM_HANDSHAKE(output_axis, m_axis_tready, my_inst1)
+  // output_axis, m_axis_tready = func1 output handshake
+  STREAM_FROM_HANDSHAKE(output_axis, m_axis_tready, func1)
   
   // Connect flattened top level output ports from local stream type variables
   m_axis_tdata = uint8_array4_le(output_axis.data.data); // Array to uint
