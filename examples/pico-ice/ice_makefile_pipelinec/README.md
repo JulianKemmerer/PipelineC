@@ -48,8 +48,6 @@ Critically this variable is used to:
   * `--freq $(PLL_CLK_MHZ)` argument
 
 ## TODO
-* Get basic vga working on pico-ice
-  * VGA Info: https://github.com/XarkLabs/upduino-video
 * RECREATE UART ON ARTY w usb uart dongle
   * Messages + work compute?
     * needs software refresh too

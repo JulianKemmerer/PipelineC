@@ -9,7 +9,7 @@ uint8_t vga_b_8b_to_4b;
 
 #define VGA_R_WIRE vga_r_8b_to_4b
 #define VGA_G_WIRE vga_g_8b_to_4b
-#define VGA_B_WIRE vga_g_8b_to_4b
+#define VGA_B_WIRE vga_b_8b_to_4b
 #include "vga/vga_wires.c"
 
 #pragma MAIN vga_4b_connect
