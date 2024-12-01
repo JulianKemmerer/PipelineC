@@ -1,0 +1,23 @@
+set_io -nowarn clk_12p0         35 # 12MHz clock in default RP firmware
+
+# RGB LED
+set_io -nowarn ICE_39           39 # LED_G active-low
+set_io -nowarn ICE_40           40 # LED_B active-low
+set_io -nowarn ICE_41           41 # LED_R active-low
+
+# UART in default RP firmware
+set_io -nowarn ICE_25           25
+set_io -nowarn ICE_27           27
+
+# PMOD1 connector for LED demo
+set_io -nowarn ICE_28 28
+set_io -nowarn ICE_31 31
+set_io -nowarn ICE_32 32
+set_io -nowarn ICE_34 34
+set_io -nowarn ICE_36 36
+set_io -nowarn ICE_38 38
+set_io -nowarn ICE_42 42
+set_io -nowarn ICE_43 43
+
+
+
