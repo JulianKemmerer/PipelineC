@@ -1558,7 +1558,8 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
         " "
         + " "
         + "if rising_edge(clk) then\n"
-        + "   if " + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + "   if "
+        + C_TO_LOGIC.CLOCK_ENABLE_NAME
         + "(0)='1' then"
         + "\n"
     )
@@ -4570,7 +4571,8 @@ def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
         ]
         for f in pro_files:
             shutil.copy(
-                f"{C_TO_LOGIC.REPO_ABS_DIR()}/ieee/{f}", ieee_pro_dir + "/" + f"{f}"
+                f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl/ieee/{f}",
+                ieee_pro_dir + "/" + f"{f}",
             )
         # And write vhdl using those proposed files
         text += """library ieee_proposed;
