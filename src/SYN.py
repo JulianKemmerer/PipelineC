@@ -164,12 +164,14 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 elif "ice40" not in part_str.lower():
                     SYN_TOOL = OPEN_TOOLS
                 else:
-                    SYN_TOOL = DIAMOND
                     if os.path.exists(DIAMOND.DIAMOND_PATH):
+                        SYN_TOOL = DIAMOND
                         print("Diamond:", DIAMOND.DIAMOND_PATH, flush=True)
                     else:
                         if not allow_fail:
                             raise Exception("Diamond install not found!")
+                        # But also fall back to open tools for ice40 if no Diamond
+                        SYN_TOOL = OPEN_TOOLS
             elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
                 SYN_TOOL = EFINITY
                 if os.path.exists(EFINITY.EFINITY_PATH):
