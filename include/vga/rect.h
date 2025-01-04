@@ -8,8 +8,8 @@ typedef struct rect_t
 inline uint1_t rect_contains(rect_t rect, vga_pos_t pos)
 {
   uint1_t rv = 0;
-  if(((pos.x >= rect.pos.x) and (pos.x < (rect.pos.x + rect.dim.x))) and
-     ((pos.y >= rect.pos.y) and (pos.y < (rect.pos.y + rect.dim.y))))
+  if(((pos.x >= rect.pos.x) && (pos.x < (rect.pos.x + rect.dim.x))) &&
+     ((pos.y >= rect.pos.y) && (pos.y < (rect.pos.y + rect.dim.y))))
   {
     rv = 1;
   }
