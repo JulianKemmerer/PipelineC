@@ -25,9 +25,6 @@ user_input_t uart_rx_to_buttons(){
     counter = 0;
   }
 
-  //// Default UART loopback connect
-  //uart_tx_mac_word_in = uart_rx_mac_word_out;
-  //uart_rx_mac_out_ready = uart_tx_mac_in_ready;
   // Always ready to receive a char
   uart_rx_mac_out_ready = 1;
 
