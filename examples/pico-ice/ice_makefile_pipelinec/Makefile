@@ -5,7 +5,7 @@ ICEPLL = $(OSS_CAD_SUITE)/bin/icepll
 DFU_UTIL = $(OSS_CAD_SUITE)/bin/dfu-util
 BIN2UF2 = bin2uf2
 PIPELINEC = $(PIPELINEC_REPO)/src/pipelinec
-PIPELINEC_TOP_FILE = top.c
+PIPELINEC_TOP_FILE ?= top.c
 
 # Only one PLL producing one clock in design for now...
 PLL_CLK_MHZ = 25.0
