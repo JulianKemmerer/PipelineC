@@ -20,10 +20,14 @@ A very complete `Makefile` example is provided for the UPduino v3 by Xark:
 
 Linux only for now.
 
+For more information check out [dev board setup info](https://github.com/JulianKemmerer/PipelineC/wiki/Dev-Board-Setup).
+
 Clone the PipelineC repo:
 `git clone https://github.com/JulianKemmerer/PipelineC.git`
 
 Set `PIPELINEC_REPO` environment variable expected by make flow.
+
+Ex. `make clean all PIPELINEC_REPO=/path/to/PipelineC OSS_CAD_SUITE=/path/to/oss-cad-suite && make prog`
 
 ## Top Level IO
 For now top level IO configuration needs to match across three files:
@@ -48,17 +52,13 @@ Critically this variable is used to:
   * `--freq $(PLL_CLK_MHZ)` argument
 
 ## TODO
-* RECREATE UART ON ARTY w usb uart dongle
-  * Messages + work compute?
+* Refresh Arty projects to match pico-ice:
+  * VGA test pattern
+  * USB UART external dongle 
+* UART Messages + work compute example?
     * needs software refresh too
-  * Some basic control of graphics on screen?
-* Document UART+VGA walk through both boards on wiki
-  * as skeleton for intro talk?
-* Ethernet refreshed?, mostly for Wireguard work...
-* Autopipelining mostly not working?
+    * everyone wants basic accelerator demo!
+* Autopipelining needs to fake say is ECP5 with fake target fmax and hope meets timing?
   * only works for small pipelines fit into IO pins?
   * pipeline work for uart demo? or VGA graphics compute pipeline?
-
-
-
 
