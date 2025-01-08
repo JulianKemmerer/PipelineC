@@ -5691,8 +5691,8 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         # Some tools assume wait is needed if empty sens list
         # Use all in sens list if nothing else
         # GHDL->Yosys needs?
-        if (SIM.SIM_TOOL == VERILATOR) or (SIM.SIM_TOOL == CXXRTL):
-            rv += "(all)\n"
+        # if (SIM.SIM_TOOL == VERILATOR) or (SIM.SIM_TOOL == CXXRTL):
+        rv += "(all)\n"
 
     rv += "is \n"
 
@@ -5984,14 +5984,14 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
 
     # Add wait statement if nothing in sensitivity list for simulation?
     # GHDL->Yosys doesnt like?
-    if (
+    """if (
         process_sens_list == ""
         and (SIM.SIM_TOOL != VERILATOR)
         and (SIM.SIM_TOOL != CXXRTL)
     ):
         rv += " " + "-- For simulation? \n"
         rv += " " + "wait;\n"
-
+    """
     rv += "end process;\n"
 
     # Register IO regs, only delaying signals clock enable - not responding to them
