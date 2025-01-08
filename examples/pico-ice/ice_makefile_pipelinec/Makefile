@@ -5,6 +5,7 @@ ICEPLL = $(OSS_CAD_SUITE)/bin/icepll
 DFU_UTIL = $(OSS_CAD_SUITE)/bin/dfu-util
 BIN2UF2 = bin2uf2
 PIPELINEC = $(PIPELINEC_REPO)/src/pipelinec
+PIPELINEC_TOP_FILE = top.c
 
 # Only one PLL producing one clock in design for now...
 PLL_CLK_MHZ = 25.0
@@ -39,6 +40,6 @@ gateware.bin: top.sv
 # So instead echo a .h file right before running tool...
 pipelinec:
 	echo "#define PLL_CLK_MHZ $(PLL_CLK_MHZ)\n" > pll_clk_mhz.h
-	$(PIPELINEC) top.c --top pipelinec_top --out_dir pipelinec_output --comb --no_synth > pipelinec.log
+	$(PIPELINEC) $(PIPELINEC_TOP_FILE) --top pipelinec_top --out_dir pipelinec_output --comb --no_synth > pipelinec.log
 
 .SUFFIXES: .v .sv .asc .bin .uf2
