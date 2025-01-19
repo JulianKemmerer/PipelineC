@@ -9729,6 +9729,7 @@ class ParserState:
         self.inst_array_dict = dict()
         self.async_wires = set()
         self.clk_mhz = {}
+        self.clk_group = {}  # dict[user_clk_wire]=clk_group_str
 
         # Clock crossing info
         self.clk_cross_var_info = {}  # var name -> clk cross var info
@@ -9792,6 +9793,7 @@ class ParserState:
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
         rv.clk_mhz = dict(self.clk_mhz)
+        rv.clk_group = dict(self.clk_group)
 
         rv.clk_cross_var_info = dict(self.clk_cross_var_info)
         rv.arb_handshake_infos = set(self.arb_handshake_infos)
@@ -11702,6 +11704,15 @@ def APPEND_PRAGMA_INFO(parser_state):
             clk = toks[1]
             mhz = float(toks[2])
             parser_state.clk_mhz[clk] = mhz
+
+        # CLK_MHZ_GROUP
+        elif name == "CLK_MHZ_GROUP":
+            toks = pragma.string.split(" ")
+            clk = toks[1]
+            mhz = float(toks[2])
+            group = toks[3]
+            parser_state.clk_mhz[clk] = mhz
+            parser_state.clk_group[clk] = group
 
         # FEEDBACK
         elif name == "FEEDBACK":

@@ -68,6 +68,9 @@ FLOOR((float)(N)/(float)(D))
 #define CLK_MHZ(clock, mhz)\
 PRAGMA_MESSAGE(CLK_MHZ clock mhz)
 
+#define CLK_MHZ_GROUP(clock, mhz, group)\
+PRAGMA_MESSAGE(CLK_MHZ_GROUP clock mhz group)
+
 #define MAIN(main_func)\
 PRAGMA_MESSAGE(MAIN main_func)
 

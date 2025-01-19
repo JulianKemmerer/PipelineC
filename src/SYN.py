@@ -282,6 +282,17 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
     return clock_name_to_mhz, out_filepath
 
 
+def GET_ALL_USER_CLOCKS(parser_state):
+    all_user_clks = set()
+    for clk_wire, mhz in parser_state.clk_mhz.items():
+        clk_group = None
+        if clk_wire in parser_state.clk_group:
+            clk_group = parser_state.clk_group[clk_wire]
+        clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(mhz, clk_group)
+        all_user_clks.add(clk_name)
+    return all_user_clks
+
+
 # return path
 def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     # Use specified mhz is multimain top
@@ -303,11 +314,8 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
     elif SYN_TOOL is CC_TOOLS:
         f.write("#TODO")
     else:
-        # Collect all user generated clocks, no groups for now
-        all_user_clks = set()
-        for clk_mhz in parser_state.clk_mhz.values():
-            clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-            all_user_clks.add(clk_name)
+        # Collect all user generated clocks
+        all_user_clks = GET_ALL_USER_CLOCKS(parser_state)
 
         # Standard sdc like constraints
         for clock_name in clock_name_to_mhz:

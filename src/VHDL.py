@@ -230,13 +230,11 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
         + entity_name
         + """ is
 port(
+-- All clocks
 """
     )
-    # All user generated clocks, no groups for now
-    all_user_clks = set()
-    for clk_mhz in parser_state.clk_mhz.values():
-        clk_name = "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-        all_user_clks.add(clk_name)
+    # All user generated clocks
+    all_user_clks = SYN.GET_ALL_USER_CLOCKS(parser_state)
 
     # All the clocks
     all_clks = set()
@@ -464,7 +462,10 @@ begin
         text += "-- User defined clocks\n"
         for clk_var_name, clk_mhz in parser_state.clk_mhz.items():
             # Get info on this var
-            clk_name = "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+            clk_group = None
+            if clk_var_name in parser_state.clk_group:
+                clk_group = parser_state.clk_group[clk_var_name]
+            clk_name = "clk_" + CLK_MHZ_GROUP_TEXT(clk_mhz, clk_group)
             if clk_var_name in parser_state.clk_cross_var_info:
                 raise Exception(
                     f"User defined clock wire {clk_var_name} should not be marked as clock crossing! Use simple global wires instead."
