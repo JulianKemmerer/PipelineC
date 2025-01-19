@@ -1,10 +1,12 @@
 // See Arty-A7-35|100-Master.xdc files
 #pragma PART "xc7a35ticsg324-1l" // Artix 7 35T (Arty)
 
+/* TODO TEST CHIPKIT HEADER AS UART PINS
 // Configure IO direction for each pin used
 // UART on ChipKit header pins
 #define CK_29_IN
 #define CK_30_OUT
+*/
 
 // PMODs for VGA demo
 // PMOD JB
@@ -27,12 +29,15 @@
 // UNUSED FOR VGA PMOD #define JC_7_OUT
 #include "board/arty.h"
 
+/* TODO TEST CHIPKIT HEADER AS UART PINS
+   (personal Arty has broken built in USB UART)
 // Configure UART module
 #define UART_TX_OUT_WIRE ck_30
 #define UART_RX_IN_WIRE ck_29
 #define UART_CLK_MHZ 25.0
 #define UART_BAUD 115200
 #include "uart/uart_mac.c"
+*/
 
 // Configure VGA module to use PMOD JB and PMOD JC
 // rgb is 8b internally, 4b on pmod

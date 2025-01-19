@@ -1,3 +1,5 @@
+#pragma PART "xc7a35ticsg324-1l" 
+
 // Include board media access controller (8b AXIS)
 #include "xil_temac.c"
 
@@ -14,12 +16,11 @@ eth_header_t loopback_headers_fifo[2]; // another one to hold the headers
 #include "clock_crossing/loopback_headers_fifo.h"
 
 // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
-#pragma MAIN_GROUP rx_main xil_temac_rx 
+MAIN_MHZ_GROUP(rx_main, XIL_TEMAC_RX_MHZ, xil_temac_rx) 
 void rx_main()
 {
   // Read wire from RX MAC
-  xil_temac_to_rx_t from_mac;
-  WIRE_READ(xil_temac_to_rx_t, from_mac, xil_temac_to_rx)
+  xil_temac_to_rx_t from_mac = xil_temac_to_rx;
   // The stream of data from the RX MAC
   axis8_t mac_axis_rx = from_mac.rx_axis_mac;
   
@@ -75,16 +76,15 @@ void rx_main()
   to_mac.rx_configuration_vector = 0;
   to_mac.rx_configuration_vector |= ((uint32_t)1<<1); // RX enable
   to_mac.rx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
-  WIRE_WRITE(xil_rx_to_temac_t, xil_rx_to_temac, to_mac)  
+  xil_rx_to_temac = to_mac;
 }
 
 // Same clock group as Xilinx TEMAC, infers clock from group + clock crossings
-#pragma MAIN_GROUP tx_main xil_temac_tx 
+MAIN_MHZ_GROUP(tx_main, XIL_TEMAC_TX_MHZ, xil_temac_tx)
 void tx_main()
 {
   // Read wires from TX MAC
-  xil_temac_to_tx_t from_mac;
-  WIRE_READ(xil_temac_to_tx_t, from_mac, xil_temac_to_tx)
+  xil_temac_to_tx_t from_mac = xil_temac_to_tx;
   uint1_t mac_ready = from_mac.tx_axis_mac_ready;
   
   // TODO stats+reset+enable
@@ -139,5 +139,5 @@ void tx_main()
   to_mac.tx_configuration_vector = 0;
   to_mac.tx_configuration_vector |= ((uint32_t)1<<1); // TX enable
   to_mac.tx_configuration_vector |= ((uint32_t)1<<12); // 100Mb/s
-  WIRE_WRITE(xil_tx_to_temac_t, xil_tx_to_temac, to_mac)
+  xil_tx_to_temac = to_mac;
 }

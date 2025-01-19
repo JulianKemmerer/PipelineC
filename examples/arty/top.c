@@ -7,12 +7,13 @@
 #pragma MAIN_MHZ blinky_main 25.0
 void blinky_main(){
   static count_t counter;
-  led_r = 1;
-  led_g = 1;
+  led_r = 0;
+  led_g = 0;
   led_b = counter >> N;
   counter += 1;
 }
 
+/* TODO TEST UART 
 MAIN_MHZ(uart_main, UART_CLK_MHZ)
 void uart_main(){
   // Default loopback connect
@@ -29,7 +30,7 @@ void uart_main(){
     out_char = in_char + case_diff;
   }
   uart_tx_mac_word_in.data = out_char;
-}
+}*/
 
 // VGA pmod part of demo
 #include "vga/test_pattern.h"
