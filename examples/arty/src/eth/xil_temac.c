@@ -21,8 +21,7 @@
 #include "uintN_t.h"
 #include "axi/axis.h"
 
-// Flattened board level top IO
-
+// Flattened simple types board level top IO
 DECL_INPUT(uint1_t, eth_rx_clk)
 DECL_INPUT(uint4_t, eth_rxd)
 DECL_INPUT(uint1_t, eth_rx_dv)
@@ -33,6 +32,7 @@ DECL_OUTPUT(uint1_t, eth_tx_en)
 DECL_OUTPUT(uint1_t, eth_mdc)
 DECL_OUTPUT(uint1_t, eth_rstn)
 
+// Header for nicer types related to the MAC
 #include "xil_temac.h"
 
 // Internal instance of the core
