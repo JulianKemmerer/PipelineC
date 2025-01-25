@@ -1,48 +1,41 @@
 #pragma once
 #include "uintN_t.h"
+#include "stream/stream.h"
 #include "stream/serializer.h"
 #include "stream/deserializer.h"
 
 // No generic sizes for now... :(
-// Woah AXIS spec is little endian - who knew?
-
-// Flow control signaling for AXIS
-typedef struct axis_fc_t
-{
-  uint1_t ready;
-}axis_fc_t;
-
-// TODO all convert to using arrays
 
 typedef struct axis8_t
 {
-	uint8_t data[1];
-	uint1_t valid;
-	uint1_t last;
+	uint8_t tdata[1];
+  uint1_t tkeep[1];
+	uint1_t tlast;
 } axis8_t;
+DECL_STREAM_TYPE(axis8_t)
 
 typedef struct axis32_t
 {
-	uint32_t data;
-	uint1_t valid;
-	uint1_t last;
-	uint4_t keep;
+  uint8_t tdata[4];
+  uint1_t tkeep[4];
+	uint1_t tlast;
 } axis32_t;
+DECL_STREAM_TYPE(axis32_t)
 
-// How useful is this?
+/* How useful is this?
 typedef struct axis32_sized16_t
 {
 	axis32_t axis;
 	uint16_t length;
-} axis32_sized16_t;
+} axis32_sized16_t;*/
 
 typedef struct axis16_t
 {
-	uint16_t data;
-	uint1_t valid;
-	uint1_t last;
-	uint2_t keep;
+  uint8_t tdata[2];
+  uint1_t tkeep[2];
+  uint1_t tlast;
 } axis16_t;
+DECL_STREAM_TYPE(axis16_t)
 
 // Convert to funcs taking ex. an axis16_t instead of just the .keep?
 
@@ -131,11 +124,11 @@ uint4_t axis32_bytes_keep(uint3_t num_bytes)
 // Convert axis8 to/from axis32
 typedef struct axis8_to_axis32_t
 {
-  axis32_t axis_out;
+  stream(axis32_t) axis_out;
   uint1_t axis_in_ready;
 }axis8_to_axis32_t;
 #pragma FUNC_BLACKBOX axis8_to_axis32  // Has no (known) timing delay (like wires) and doesnt even have real internal logic - is black, (just io regs is all we assume)
-axis8_to_axis32_t axis8_to_axis32(axis8_t axis_in, uint1_t axis_out_ready)
+axis8_to_axis32_t axis8_to_axis32(stream(axis8_t) axis_in, uint1_t axis_out_ready)
 {
   __vhdl__("\n\
     COMPONENT axis_dwidth_converter_1_to_4 \n\
@@ -154,6 +147,8 @@ axis8_to_axis32_t axis8_to_axis32(axis8_t axis_in, uint1_t axis_out_ready)
       m_axis_tlast : OUT STD_LOGIC \n\
     ); \n\
     END COMPONENT; \n\
+    signal m_axis_tdata : STD_LOGIC_VECTOR(31 DOWNTO 0); \n\
+    signal m_axis_tkeep : STD_LOGIC_VECTOR(3 DOWNTO 0); \n\
     \n\
     begin   \n\
       \n\
@@ -163,25 +158,33 @@ axis8_to_axis32_t axis8_to_axis32(axis8_t axis_in, uint1_t axis_out_ready)
       aresetn => '1',  \n\
       s_axis_tvalid => axis_in.valid(0),  \n\
       s_axis_tready => return_output.axis_in_ready(0),  \n\
-      s_axis_tdata => std_logic_vector(axis_in.data(0)),  \n\
-      s_axis_tkeep => std_logic_vector(axis_in.valid),  \n\
-      s_axis_tlast => axis_in.last(0),  \n\
+      s_axis_tdata => std_logic_vector(axis_in.data.tdata(0)),  \n\
+      s_axis_tkeep => std_logic_vector(axis_in.data.tkeep(0)),  \n\
+      s_axis_tlast => axis_in.data.tlast(0),  \n\
       m_axis_tvalid => return_output.axis_out.valid(0),  \n\
       m_axis_tready => axis_out_ready(0),  \n\
-      unsigned(m_axis_tdata) => return_output.axis_out.data,  \n\
-      unsigned(m_axis_tkeep) => return_output.axis_out.keep,  \n\
-      m_axis_tlast => return_output.axis_out.last(0)  \n\
+      m_axis_tdata => m_axis_tdata, \n\
+      m_axis_tkeep => m_axis_tkeep, \n\
+      m_axis_tlast => return_output.axis_out.data.tlast(0)  \n\
     );  \n\
+    return_output.axis_out.data.tdata(0) <= unsigned(m_axis_tdata(7 downto 0)); \n\
+    return_output.axis_out.data.tdata(1) <= unsigned(m_axis_tdata(15 downto 8)); \n\
+    return_output.axis_out.data.tdata(2) <= unsigned(m_axis_tdata(23 downto 16)); \n\
+    return_output.axis_out.data.tdata(3) <= unsigned(m_axis_tdata(31 downto 24)); \n\
+    return_output.axis_out.data.tkeep(0)(0) <= m_axis_tkeep(0); \n\
+    return_output.axis_out.data.tkeep(1)(0) <= m_axis_tkeep(1); \n\
+    return_output.axis_out.data.tkeep(2)(0) <= m_axis_tkeep(2); \n\
+    return_output.axis_out.data.tkeep(3)(0) <= m_axis_tkeep(3); \n\
   ");
 }
 
 typedef struct axis32_to_axis8_t
 {
-  axis8_t axis_out;
+  stream(axis8_t) axis_out;
   uint1_t axis_in_ready;
 }axis32_to_axis8_t;
 #pragma FUNC_BLACKBOX axis32_to_axis8  // Has no (known) timing delay (like wires) and doesnt even have real internal logic - is black, (just io regs is all we assume)
-axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
+axis32_to_axis8_t axis32_to_axis8(stream(axis32_t) axis_in, uint1_t axis_out_ready)
 {
   __vhdl__("\n\
     COMPONENT axis_dwidth_converter_4_to_1 \n\
@@ -200,7 +203,8 @@ axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
         m_axis_tlast : OUT STD_LOGIC \n\
       ); \n\
     END COMPONENT; \n\
-    \n\
+    signal s_axis_tdata : STD_LOGIC_VECTOR(31 DOWNTO 0);\n\
+    signal s_axis_tkeep : STD_LOGIC_VECTOR(3 DOWNTO 0);\n\
     begin   \n\
       \n\
     inst : axis_dwidth_converter_4_to_1  \n\
@@ -209,18 +213,27 @@ axis32_to_axis8_t axis32_to_axis8(axis32_t axis_in, uint1_t axis_out_ready)
       aresetn => '1',  \n\
       s_axis_tvalid => axis_in.valid(0),  \n\
       s_axis_tready => return_output.axis_in_ready(0),  \n\
-      s_axis_tdata => std_logic_vector(axis_in.data),  \n\
-      s_axis_tkeep => std_logic_vector(axis_in.keep),  \n\
-      s_axis_tlast => axis_in.last(0),  \n\
+      s_axis_tdata => s_axis_tdata,  \n\
+      s_axis_tkeep => s_axis_tkeep,  \n\
+      s_axis_tlast => axis_in.data.tlast(0),  \n\
       m_axis_tvalid => return_output.axis_out.valid(0),  \n\
       m_axis_tready => axis_out_ready(0),  \n\
-      unsigned(m_axis_tdata) => return_output.axis_out.data(0),  \n\
-      --unsigned(m_axis_tkeep) => return_output.axis_out.keep,  \n\
-      m_axis_tlast => return_output.axis_out.last(0)  \n\
+      unsigned(m_axis_tdata) => return_output.axis_out.data.tdata(0),  \n\
+      unsigned(m_axis_tkeep) => return_output.axis_out.data.tkeep(0),  \n\
+      m_axis_tlast => return_output.axis_out.data.tlast(0)  \n\
     );  \n\
+    s_axis_tdata(31 downto 24) <= std_logic_vector(axis_in.data.tdata(3)); \n\
+    s_axis_tdata(23 downto 16) <= std_logic_vector(axis_in.data.tdata(2)); \n\
+    s_axis_tdata(15 downto 8) <= std_logic_vector(axis_in.data.tdata(1)); \n\
+    s_axis_tdata(7 downto 0) <= std_logic_vector(axis_in.data.tdata(0)); \n\
+    s_axis_tkeep(3) <= axis_in.data.tkeep(3)(0); \n\
+    s_axis_tkeep(2) <= axis_in.data.tkeep(2)(0); \n\
+    s_axis_tkeep(1) <= axis_in.data.tkeep(1)(0); \n\
+    s_axis_tkeep(0) <= axis_in.data.tkeep(0)(0); \n\
   ");
 }
 
+#if 0 // TODO TEST payload tdata packing
 // sizeof(out_t) must be >= or divisble by axis_bits?
 #define axis_to_type(name,axis_bits,out_t) \
 /* Mostly just a deser instance */ \
@@ -239,7 +252,7 @@ name##_t name(axis##axis_bits##_t payload, uint1_t output_ready) \
   uint32_t i; \
   for(i=0;i<(axis_bits/8);i+=1) \
   { \
-    input_data[i] = payload.data >> (i*8); \
+    input_data[i] = payload.data.tdata[i]; \
   } \
   /* Deserialize byte stream to type */ \
   name##_type_byte_deserializer_t to_type = name##_type_byte_deserializer(input_data, payload.valid, output_ready); \
@@ -268,13 +281,12 @@ name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
   o.input_data_ready = from_type.in_data_ready; \
   \
   /* Byte stream to axis */ \
-  o.payload.data = 0; \
   uint32_t i; \
   for(i=0;i<(axis_bits/8);i+=1) \
   {  \
     /* AXIS32 only right now...*/ \
     uint##axis_bits##_t out_data_bits = from_type.out_data[i]; /* Temp avoid not implemented cast */ \
-    o.payload.data |= (out_data_bits<<(i*8)); \
+    o.payload.data.tdata[i] = (out_data_bits<<(i*8)); \
   } \
   o.payload.keep = 0xF; /* AXIS32 only right now...*/ \
   o.payload.valid = from_type.valid; \
@@ -295,3 +307,4 @@ name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
   } \
   return o; \
 }
+#endif

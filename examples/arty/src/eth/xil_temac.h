@@ -1,4 +1,5 @@
 #pragma once
+#include "stream/stream.h"
 
 typedef struct xil_temac_rx_inputs_t{
   uint1_t axi_rstn;
@@ -14,7 +15,7 @@ typedef struct xil_temac_rx_inputs_t{
 typedef struct xil_temac_tx_inputs_t{
   uint1_t axi_rstn;
   uint8_t ifg_delay;
-  axis8_t axis_mac;
+  stream(axis8_t) axis_mac;
   uint1_t mii_clk;
   uint80_t configuration_vector;
 }xil_temac_tx_inputs_t;
@@ -31,7 +32,7 @@ typedef struct xil_temac_rx_outputs_t{
   uint1_t mac_aclk;
   uint1_t reset;
   uint1_t enable;
-  axis8_t axis_mac;
+  stream(axis8_t) axis_mac;
 }xil_temac_rx_outputs_t;
 
 typedef struct xil_temac_tx_outputs_t{
@@ -100,6 +101,7 @@ xil_temac_outputs_t xil_temac(xil_temac_inputs_t inputs){
     tx_configuration_vector : IN STD_LOGIC_VECTOR(79 DOWNTO 0) \n\
   ); \n\
   END COMPONENT; \n\
+  signal rx_axis_mac_tvalid : STD_LOGIC; \n\
   begin \n\
   inst : tri_mode_ethernet_mac_0 \n\
   PORT MAP ( \n\
@@ -111,9 +113,9 @@ xil_temac_outputs_t xil_temac(xil_temac_inputs_t inputs){
     rx_mac_aclk => return_output.rx.mac_aclk(0), \n\
     rx_reset => return_output.rx.reset(0), \n\
     rx_enable => return_output.rx.enable(0), \n\
-    unsigned(rx_axis_mac_tdata) => return_output.rx.axis_mac.data(0), \n\
-    rx_axis_mac_tvalid => return_output.rx.axis_mac.valid(0), \n\
-    rx_axis_mac_tlast => return_output.rx.axis_mac.last(0), \n\
+    unsigned(rx_axis_mac_tdata) => return_output.rx.axis_mac.data.tdata(0), \n\
+    rx_axis_mac_tvalid => rx_axis_mac_tvalid, \n\
+    rx_axis_mac_tlast => return_output.rx.axis_mac.data.tlast(0), \n\
     rx_axis_mac_tuser => open, \n\
     tx_ifg_delay => std_logic_vector(inputs.tx.ifg_delay), \n\
     unsigned(tx_statistics_vector) => return_output.tx.statistics_vector, \n\
@@ -121,9 +123,9 @@ xil_temac_outputs_t xil_temac(xil_temac_inputs_t inputs){
     tx_mac_aclk => return_output.tx.mac_aclk(0), \n\
     tx_reset => return_output.tx.reset(0), \n\
     tx_enable => return_output.tx.enable(0), \n\
-    tx_axis_mac_tdata => std_logic_vector(inputs.tx.axis_mac.data(0)), \n\
+    tx_axis_mac_tdata => std_logic_vector(inputs.tx.axis_mac.data.tdata(0)), \n\
     tx_axis_mac_tvalid => inputs.tx.axis_mac.valid(0), \n\
-    tx_axis_mac_tlast => inputs.tx.axis_mac.last(0), \n\
+    tx_axis_mac_tlast => inputs.tx.axis_mac.data.tlast(0), \n\
     tx_axis_mac_tuser(0) => '0', \n\
     tx_axis_mac_tready => return_output.tx.axis_mac_ready(0), \n\
     pause_req => inputs.rx.pause_req(0), \n\
@@ -141,6 +143,8 @@ xil_temac_outputs_t xil_temac(xil_temac_inputs_t inputs){
     rx_configuration_vector => std_logic_vector(inputs.rx.configuration_vector), \n\
     tx_configuration_vector => std_logic_vector(inputs.tx.configuration_vector) \n\
   ); \n\
+  return_output.rx.axis_mac.valid(0) <= rx_axis_mac_tvalid; \n\
+  return_output.rx.axis_mac.data.tkeep(0)(0) <= rx_axis_mac_tvalid; \n\
   ");
 }
 
@@ -150,7 +154,7 @@ xil_temac_outputs_t xil_temac(xil_temac_inputs_t inputs){
 typedef struct xil_temac_to_rx_t
 {
   // RX data
-  axis8_t rx_axis_mac;
+  stream(axis8_t) rx_axis_mac;
   //rx_axis_mac_tuser : OUT STD_LOGIC;
   
   // RX stats
@@ -175,7 +179,7 @@ typedef struct xil_rx_to_temac_t
 typedef struct xil_tx_to_temac_t
 {
   // TX data
-  axis8_t tx_axis_mac;
+  stream(axis8_t) tx_axis_mac;
   //tx_axis_mac_tuser : IN STD_LOGIC_VECTOR(0 DOWNTO 0);
   
   // TX config

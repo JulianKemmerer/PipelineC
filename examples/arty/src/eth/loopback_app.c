@@ -15,8 +15,7 @@
 // Loopback RX to TX with two clock crossing async fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
 #include "stream/stream.h"
-DECL_STREAM_TYPE(axis32_t)
-DECL_STREAM_TYPE(eth_header_t)
+
 #include "global_fifo.h"
 GLOBAL_STREAM_FIFO(axis32_t, loopback_payload_fifo, 16) // One to hold the payload data
 GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
@@ -34,13 +33,13 @@ void rx_main()
   // TODO stats+reset+enable and overflow indicator
 
   // The stream of data from the RX MAC
-  axis8_t mac_axis_rx = xil_temac_to_rx.rx_axis_mac;
+  stream(axis8_t) mac_axis_rx = xil_temac_to_rx.rx_axis_mac;
   
   // Convert axis8 to axis32
   // Signal always ready, overflow occurs in eth_32_rx 
   //(TEMAC doesnt have mac axis ready flow control)
   axis8_to_axis32_t to_axis32 = axis8_to_axis32(mac_axis_rx, 1);
-  axis32_t axis_rx = to_axis32.axis_out;
+  stream(axis32_t) axis_rx = to_axis32.axis_out;
   
 	// Receive the ETH frame
   // Eth rx ready if payload fifo+header fifo ready
@@ -54,7 +53,7 @@ void rx_main()
 
   // Write into fifos if mac match
   // Frame payload and headers go into separate fifos
-  loopback_payload_fifo_in.data = frame.payload;
+  loopback_payload_fifo_in.data = frame.payload.data;
   loopback_payload_fifo_in.valid = frame.payload.valid & eth_rx_out_ready & mac_match;
   // Header only written once at the start of data packet
   loopback_headers_fifo_in.data = frame.header;
@@ -79,18 +78,18 @@ void tx_main()
   frame.header.dst_mac = frame.header.src_mac; // Send back to where came from
   frame.header.src_mac = FPGA_MAC; // From FPGA
   // Header and payload need to be valid to send
-  frame.payload = loopback_payload_fifo_out.data;
+  frame.payload.data = loopback_payload_fifo_out.data;
   frame.payload.valid = loopback_payload_fifo_out.valid & loopback_headers_fifo_out.valid;
   
   // The tx module
   uint1_t eth_tx_out_ready;
   #pragma FEEDBACK eth_tx_out_ready
   eth_32_tx_t eth_tx = eth_32_tx(frame, eth_tx_out_ready);
-  axis32_t axis_tx = eth_tx.mac_axis;
+  stream(axis32_t) axis_tx = eth_tx.mac_axis;
   // Read payload if was ready
   loopback_payload_fifo_out_ready = eth_tx.frame_ready & frame.payload.valid;
   // Ready header if was ready at end of packet
-  loopback_headers_fifo_out_ready = eth_tx.frame_ready & frame.payload.last & frame.payload.valid;
+  loopback_headers_fifo_out_ready = eth_tx.frame_ready & frame.payload.data.tlast & frame.payload.valid;
     
 	// Convert axis32 to axis8
   axis32_to_axis8_t to_axis8 = axis32_to_axis8(axis_tx, xil_temac_to_tx.tx_axis_mac_ready);

@@ -1,6 +1,8 @@
 #pragma once
 #include "uintN_t.h"
+#include "arrays.h"
 #include "bit_manip.h"
+#include "stream/stream.h"
 #include "axi/axis.h"
 
 typedef struct eth_header_t
@@ -9,11 +11,12 @@ typedef struct eth_header_t
   uint48_t dst_mac;
   uint16_t ethertype;
 } eth_header_t;
+DECL_STREAM_TYPE(eth_header_t)
 
 typedef struct eth32_frame_t
 {
   eth_header_t header;
-  axis32_t payload;
+  stream(axis32_t) payload;
 } eth32_frame_t;
 
 // States
@@ -31,18 +34,19 @@ typedef struct eth_32_rx_t
   uint1_t overflow;
   uint1_t start_of_packet;
 } eth_32_rx_t;
-eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
+eth_32_rx_t eth_32_rx(stream(axis32_t) mac_axis, uint1_t frame_ready)
 {
   // State regs
-  static axis16_t slice0;
+  static stream(axis16_t) slice0;
   static eth32_rx_state_t state; // Parser state
   static eth_32_rx_t output; // Data to output
   static uint1_t start_of_packet;
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
-  mac_axis.data = bswap_32(mac_axis.data);
-  mac_axis.keep = uint4_0_3(mac_axis.keep);
-  
+  ARRAY_REV(uint8_t, mac_axis.data.tdata, 4)
+  ARRAY_REV(uint1_t, mac_axis.data.tkeep, 4)
+  uint32_t mac_axis_data = uint8_array4_le(mac_axis.data.tdata);
+
   // Default no payload
   output.frame.payload.valid = 0; 
   output.overflow = 0;
@@ -52,7 +56,7 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
   {
     // DST MAC MSB
     uint32_t dst_mac_msb;
-    dst_mac_msb = uint32_31_0(mac_axis.data);
+    dst_mac_msb = uint32_31_0(mac_axis_data);
     output.frame.header.dst_mac = uint48_uint32_16(output.frame.header.dst_mac,dst_mac_msb);
     
     // Next state
@@ -65,11 +69,11 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
   {
     // DST MAC LSB
     uint16_t dst_mac_lsb;
-    dst_mac_lsb = uint32_31_16(mac_axis.data);
+    dst_mac_lsb = uint32_31_16(mac_axis_data);
     output.frame.header.dst_mac = uint48_uint16_0(output.frame.header.dst_mac,dst_mac_lsb);
     // SRC MAC MSB
     uint16_t src_mac_msb;
-    src_mac_msb = uint32_15_0(mac_axis.data);
+    src_mac_msb = uint32_15_0(mac_axis_data);
     output.frame.header.src_mac = uint48_uint16_32(output.frame.header.src_mac,src_mac_msb);
     
     // Next state
@@ -82,7 +86,7 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
   {
     // SRC MAC LSB
     uint32_t src_mac_lsb;
-    src_mac_lsb = uint32_31_0(mac_axis.data);
+    src_mac_lsb = uint32_31_0(mac_axis_data);
     output.frame.header.src_mac = uint48_uint32_0(output.frame.header.src_mac,src_mac_lsb);
     
     // Next state
@@ -94,11 +98,13 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
   else if(state==LEN_BUFF_INIT)
   {
     // LENGTH
-    output.frame.header.ethertype = uint32_31_16(mac_axis.data);
+    output.frame.header.ethertype = uint32_31_16(mac_axis_data);
     // First two bytes of payload into buff
-    slice0.data = uint32_15_0(mac_axis.data);
-    slice0.keep = 3; // These two bytes must be there
-    slice0.last = 0; // And not last
+    slice0.data.tdata[1] = mac_axis.data.tdata[1];
+    slice0.data.tdata[0] = mac_axis.data.tdata[0];
+    slice0.data.tkeep[0] = 1;
+    slice0.data.tkeep[1] = 1; // These two bytes must be there
+    slice0.data.tlast = 0; // And not last
     slice0.valid = 1; // Is valid 
     // Next state
     if(mac_axis.valid)
@@ -111,18 +117,22 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
   {
     // Break into three 16b slices
     // Slice0 always valid
-    axis16_t slice1; // MSB of data
+    stream(axis16_t) slice1; // MSB of data
     slice1.valid = mac_axis.valid;
-    slice1.data = uint32_31_16(mac_axis.data);
-    slice1.keep = uint4_3_2(mac_axis.keep);
+    slice1.data.tdata[1] = mac_axis.data.tdata[3];
+    slice1.data.tdata[0] = mac_axis.data.tdata[2];
+    slice1.data.tkeep[1] = mac_axis.data.tkeep[3];
+    slice1.data.tkeep[0] = mac_axis.data.tkeep[2];
     uint1_t slice2_has_keep;
-    slice2_has_keep = uint4_1_1(mac_axis.keep);
-    slice1.last = mac_axis.last & !slice2_has_keep;
-    axis16_t slice2; // LSB of data
+    slice2_has_keep = mac_axis.data.tkeep[1];
+    slice1.data.tlast = mac_axis.data.tlast & ~slice2_has_keep;
+    stream(axis16_t) slice2; // LSB of data
     slice2.valid = mac_axis.valid & slice2_has_keep;
-    slice2.data = uint32_15_0(mac_axis.data);
-    slice2.keep = uint4_1_0(mac_axis.keep);
-    slice2.last = mac_axis.last;
+    slice2.data.tdata[1] = mac_axis.data.tdata[1];
+    slice2.data.tdata[0] = mac_axis.data.tdata[0];
+    slice2.data.tkeep[1] = mac_axis.data.tkeep[1];
+    slice2.data.tkeep[0] = mac_axis.data.tkeep[0];
+    slice2.data.tlast = mac_axis.data.tlast;
     
     // Only output payload
     // if we have 32b of data OR last bit to output in first two slices
@@ -130,9 +140,9 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
     uint1_t has_32b;
     has_32b = slice0.valid & slice1.valid;
     uint1_t slice0_is_last;
-    slice0_is_last = slice0.valid & slice0.last;
+    slice0_is_last = slice0.valid & slice0.data.tlast;
     uint1_t slice1_is_last;
-    slice1_is_last = slice1.valid & slice1.last;
+    slice1_is_last = slice1.valid & slice1.data.tlast;
     uint1_t is_last;
     is_last = slice0_is_last | slice1_is_last;
     if(has_32b | is_last)
@@ -140,17 +150,22 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
       // Output is valid
       output.frame.payload.valid = 1;
       // Maybe last 
-      output.frame.payload.last = is_last;
+      output.frame.payload.data.tlast = is_last;
       // MSB data is slice0, lsb slice1
-      output.frame.payload.data = uint16_uint16(slice0.data,slice1.data);
+      output.frame.payload.data.tdata[3] = slice0.data.tdata[1];
+      output.frame.payload.data.tdata[2] = slice0.data.tdata[0];
+      output.frame.payload.data.tdata[1] = slice1.data.tdata[1];
+      output.frame.payload.data.tdata[0] = slice1.data.tdata[0];
+
       // Only keep slice1 lsb data if slice1 valid      
       uint1_t slice1_keep0;
-      slice1_keep0 = uint2_0_0(slice1.keep) & slice1.valid;
+      slice1_keep0 = slice1.data.tkeep[0] & slice1.valid;
       uint1_t slice1_keep1;
-      slice1_keep1 = uint2_1_1(slice1.keep) & slice1.valid;
-      uint2_t slice1_keep;
-      slice1_keep = uint1_uint1(slice1_keep1,slice1_keep0);
-      output.frame.payload.keep = uint2_uint2(slice0.keep,slice1_keep);
+      slice1_keep1 = slice1.data.tkeep[1] & slice1.valid;
+      output.frame.payload.data.tkeep[3] = slice0.data.tkeep[1];
+      output.frame.payload.data.tkeep[2] = slice0.data.tkeep[0];
+      output.frame.payload.data.tkeep[1] = slice1_keep1;
+      output.frame.payload.data.tkeep[0] = slice1_keep0;
       // SOP from reg
       output.start_of_packet = start_of_packet;
 
@@ -172,14 +187,14 @@ eth_32_rx_t eth_32_rx(axis32_t mac_axis, uint1_t frame_ready)
       start_of_packet = 0;
 
       // Not ready for payload data output - overflow if data was incoming
-      output.overflow = mac_axis.valid & !frame_ready;
+      output.overflow = mac_axis.valid & ~frame_ready;
     }
   }
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
-  output.frame.payload.data = bswap_32(output.frame.payload.data);
-  output.frame.payload.keep = uint4_0_3(output.frame.payload.keep);
-  
+  ARRAY_REV(uint8_t, output.frame.payload.data.tdata, 4)
+  ARRAY_REV(uint1_t, output.frame.payload.data.tkeep, 4)
+
   return output;
 }
 
@@ -195,18 +210,18 @@ typedef enum eth32_tx_state_t {
 typedef struct eth_32_tx_t
 {
   uint1_t frame_ready;
-  axis32_t mac_axis;
+  stream(axis32_t) mac_axis;
 } eth_32_tx_t;
 eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
 {
   // State regs
   static eth32_tx_state_t state;
   static eth_32_tx_t output;
-  static axis16_t slice0_tx;
+  static stream(axis16_t) slice0_tx;
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
-  eth.payload.data = bswap_32(eth.payload.data);
-  eth.payload.keep = uint4_0_3(eth.payload.keep);
+  ARRAY_REV(uint8_t, eth.payload.data.tdata, 4)
+  ARRAY_REV(uint1_t, eth.payload.data.tkeep, 4)
   
   // Default no payload, not ready
   output.mac_axis.valid = 0;
@@ -220,9 +235,9 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     dst_mac_msb = uint48_47_16(eth.header.dst_mac);
     
     // Output data
-    output.mac_axis.data = dst_mac_msb;
-    output.mac_axis.keep = 15;
-    output.mac_axis.last = 0;
+    UINT_TO_BYTE_ARRAY(output.mac_axis.data.tdata, 4, dst_mac_msb)
+    ARRAY_SET(output.mac_axis.data.tkeep, 1, 4)
+    output.mac_axis.data.tlast = 0;
     
     // Wait for valid payload first word to trigger start
     // not ready for payload yet though
@@ -250,9 +265,12 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     
     // Output
     output.mac_axis.valid = 1;
-    output.mac_axis.data = uint16_uint16(dst_mac_lsb, src_mac_msb);
-    output.mac_axis.keep = 15;
-    output.mac_axis.last = 0;
+    output.mac_axis.data.tdata[3] = dst_mac_lsb(15, 8);
+    output.mac_axis.data.tdata[2] = dst_mac_lsb(7, 0);
+    output.mac_axis.data.tdata[1] = src_mac_msb(15, 8);
+    output.mac_axis.data.tdata[0] = src_mac_msb(7, 0);
+    ARRAY_SET(output.mac_axis.data.tkeep, 1, 4)
+    output.mac_axis.data.tlast = 0;
     
     // Next state if mac ready, not ready for payload yet though
     if(mac_ready)
@@ -268,9 +286,9 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
 
     // Output
     output.mac_axis.valid = 1;
-    output.mac_axis.data = src_mac_lsb;
-    output.mac_axis.keep = 15;
-    output.mac_axis.last = 0;
+    UINT_TO_BYTE_ARRAY(output.mac_axis.data.tdata, 4, src_mac_lsb)
+    ARRAY_SET(output.mac_axis.data.tkeep, 1, 4)
+    output.mac_axis.data.tlast = 0;
 
     // Next state if mac ready,not ready for payload yet though
     if(mac_ready)
@@ -281,23 +299,31 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
   else if(state==LEN_PAYLOAD_MSB_BUFF_INIT)
   {
     // Payload into slices
-    axis16_t slice1_tx;
-    uint1_t has_lsb_data = uint4_1_1(eth.payload.keep);
-    slice0_tx.data = uint32_31_16(eth.payload.data);
-    slice1_tx.data = uint32_15_0(eth.payload.data);
-    slice0_tx.keep = uint4_3_2(eth.payload.keep);
-    slice1_tx.keep = uint4_1_0(eth.payload.keep);
-    slice0_tx.last = eth.payload.last & !has_lsb_data;
-    slice1_tx.last = eth.payload.last;
+    stream(axis16_t) slice1_tx;
+    uint1_t has_lsb_data = eth.payload.data.tkeep[1];
+    slice0_tx.data.tdata[1] = eth.payload.data.tdata[3];
+    slice0_tx.data.tdata[0] = eth.payload.data.tdata[2];
+    slice1_tx.data.tdata[1] = eth.payload.data.tdata[1];
+    slice1_tx.data.tdata[0] = eth.payload.data.tdata[0];
+    slice0_tx.data.tkeep[1] = eth.payload.data.tkeep[3];
+    slice0_tx.data.tkeep[0] = eth.payload.data.tkeep[2];
+    slice1_tx.data.tkeep[1] = eth.payload.data.tkeep[1];
+    slice1_tx.data.tkeep[0] = eth.payload.data.tkeep[0];
+    slice0_tx.data.tlast = eth.payload.data.tlast & !has_lsb_data;
+    slice1_tx.data.tlast = eth.payload.data.tlast;
     slice0_tx.valid = eth.payload.valid;
     slice1_tx.valid = eth.payload.valid & has_lsb_data;
     
     // Output length and first two bytes of payload
     output.frame_ready = mac_ready;
     output.mac_axis.valid = slice0_tx.valid;
-    output.mac_axis.data = uint16_uint16(eth.header.ethertype, slice0_tx.data);
-    output.mac_axis.keep = slice0_tx.keep;
-    output.mac_axis.last = slice0_tx.last;
+    output.mac_axis.data.tdata[3] = uint16_15_8(eth.header.ethertype);
+    output.mac_axis.data.tdata[2] = uint16_7_0(eth.header.ethertype);
+    output.mac_axis.data.tdata[1] = slice0_tx.data.tdata[1];
+    output.mac_axis.data.tdata[0] = slice0_tx.data.tdata[0];
+    output.mac_axis.data.tkeep[1] = slice0_tx.data.tkeep[1]; // Needed?
+    output.mac_axis.data.tkeep[0] = slice0_tx.data.tkeep[0]; // Needed?
+    output.mac_axis.data.tlast = slice0_tx.data.tlast;
     
     // Next state if mac ready for payload
     if(mac_ready & output.mac_axis.valid)
@@ -310,15 +336,19 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
   else if(state==PAYLOAD)
   {
     // Incoming payload into two slices (already have one from before, slice0_tx)
-    axis16_t slice1_tx;
-    axis16_t slice2_tx;
-    uint1_t has_lsb_data = uint4_1_1(eth.payload.keep);
-    slice1_tx.data = uint32_31_16(eth.payload.data);
-    slice2_tx.data = uint32_15_0(eth.payload.data);
-    slice1_tx.keep = uint4_3_2(eth.payload.keep);
-    slice2_tx.keep = uint4_1_0(eth.payload.keep);
-    slice1_tx.last = eth.payload.last & !has_lsb_data;
-    slice2_tx.last = eth.payload.last;
+    stream(axis16_t) slice1_tx;
+    stream(axis16_t) slice2_tx;
+    uint1_t has_lsb_data = eth.payload.data.tkeep[1];
+    slice1_tx.data.tdata[1] = eth.payload.data.tdata[3];
+    slice1_tx.data.tdata[0] = eth.payload.data.tdata[2];
+    slice2_tx.data.tdata[1] = eth.payload.data.tdata[1];
+    slice2_tx.data.tdata[0] = eth.payload.data.tdata[0];
+    slice1_tx.data.tkeep[1] = eth.payload.data.tkeep[3];
+    slice1_tx.data.tkeep[0] = eth.payload.data.tkeep[2];
+    slice2_tx.data.tkeep[1] = eth.payload.data.tkeep[1];
+    slice2_tx.data.tkeep[0] = eth.payload.data.tkeep[0];
+    slice1_tx.data.tlast = eth.payload.data.tlast & !has_lsb_data;
+    slice2_tx.data.tlast = eth.payload.data.tlast;
     slice1_tx.valid = eth.payload.valid;
     slice2_tx.valid = eth.payload.valid & has_lsb_data;
     
@@ -329,9 +359,9 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
     uint1_t has_32b;
     has_32b = slice0_tx.valid & slice1_tx.valid;
     uint1_t slice0_is_last;
-    slice0_is_last = slice0_tx.valid & slice0_tx.last;
+    slice0_is_last = slice0_tx.valid & slice0_tx.data.tlast;
     uint1_t slice1_is_last;
-    slice1_is_last = slice1_tx.valid & slice1_tx.last;
+    slice1_is_last = slice1_tx.valid & slice1_tx.data.tlast;
     uint1_t is_last;
     is_last = slice0_is_last | slice1_is_last;
     uint1_t has_32b_or_is_last;
@@ -344,18 +374,22 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
       // Output is valid
       output.mac_axis.valid = 1;
       // Maybe last 
-      output.mac_axis.last = is_last;
+      output.mac_axis.data.tlast = is_last;
       // MSB data is slice0_tx, lsb slice1_tx
-      output.mac_axis.data = uint16_uint16(slice0_tx.data,slice1_tx.data);
+      output.mac_axis.data.tdata[3] = slice0_tx.data.tdata[1];
+      output.mac_axis.data.tdata[2] = slice0_tx.data.tdata[0];
+      output.mac_axis.data.tdata[1] = slice1_tx.data.tdata[1];
+      output.mac_axis.data.tdata[0] = slice1_tx.data.tdata[0];
       
       // Only keep slice1_tx lsb data if slice1_tx valid          
       uint1_t slice1_keep0;
-      slice1_keep0 = uint2_0_0(slice1_tx.keep) & slice1_tx.valid;
+      slice1_keep0 = slice1_tx.data.tkeep[0] & slice1_tx.valid;
       uint1_t slice1_keep1;
-      slice1_keep1 = uint2_1_1(slice1_tx.keep) & slice1_tx.valid;
-      uint2_t slice1_keep;
-      slice1_keep = uint1_uint1(slice1_keep1,slice1_keep0);
-      output.mac_axis.keep = uint2_uint2(slice0_tx.keep,slice1_keep);
+      slice1_keep1 = slice1_tx.data.tkeep[1] & slice1_tx.valid;
+      output.mac_axis.data.tkeep[3] = slice0_tx.data.tkeep[1];
+      output.mac_axis.data.tkeep[2] = slice0_tx.data.tkeep[0];
+      output.mac_axis.data.tkeep[1] = slice1_keep1;
+      output.mac_axis.data.tkeep[0] = slice1_keep0;      
       
       // DO STATE CHANGES / accept input IF MAC READY
       if(mac_ready)
@@ -374,8 +408,8 @@ eth_32_tx_t eth_32_tx(eth32_frame_t eth, uint1_t mac_ready)
   }
   
   // This was written for big endian (didnt know axis was little endian) so change endianess of data and keep
-  output.mac_axis.data = bswap_32(output.mac_axis.data);
-  output.mac_axis.keep = uint4_0_3(output.mac_axis.keep);
+  ARRAY_REV(uint8_t, output.mac_axis.data.tdata, 4)
+  ARRAY_REV(uint1_t, output.mac_axis.data.tkeep, 4)
   
   return output;
 }
