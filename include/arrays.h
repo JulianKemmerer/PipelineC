@@ -14,6 +14,14 @@ for(ARRAY_SET_i=0;ARRAY_SET_i<n;ARRAY_SET_i+=1) \
   dest[ARRAY_SET_i] = val; \
 }
 
+#define ARRAY_REV(type_t, array, SIZE)\
+uint32_t ARRAY_REV_i; \
+type_t ARRAY_REV_temp_##type_t[SIZE] = array; \
+for(ARRAY_REV_i=0;ARRAY_REV_i<SIZE;ARRAY_REV_i+=1) \
+{ \
+  array[ARRAY_REV_i] = ARRAY_REV_temp_##type_t[SIZE-ARRAY_REV_i-1]; \
+}
+
 #define ARRAY_SHIFT_DOWN(array,SIZE,AMOUNT)\
 uint32_t ARRAY_SHIFT_DOWN_i; \
 for(ARRAY_SHIFT_DOWN_i=AMOUNT;ARRAY_SHIFT_DOWN_i<SIZE;ARRAY_SHIFT_DOWN_i+=1) \
@@ -77,7 +85,7 @@ for(UINT_TO_ARRAY_i=0;UINT_TO_ARRAY_i<BIT_WIDTH;UINT_TO_ARRAY_i+=1) \
 uint32_t UINT_TO_BYTE_ARRAY_i; \
 for(UINT_TO_BYTE_ARRAY_i=0;UINT_TO_BYTE_ARRAY_i<BYTE_WIDTH;UINT_TO_BYTE_ARRAY_i+=1) \
 { \
-  byte_array[UINT_TO_BYTE_ARRAY_i] = uint_val >> (UINT_TO_BYTE_ARRAY_i*4); \
+  byte_array[UINT_TO_BYTE_ARRAY_i] = uint_val >> (UINT_TO_BYTE_ARRAY_i*8); \
 }
 
 // Use arrays for delays/shift regs
