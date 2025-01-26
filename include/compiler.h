@@ -149,6 +149,13 @@ void PPCAT(name,_connect)(){ \
   wire = the_reg; \
   the_reg = name; \
 }
+#define GLOBAL_IN_WIRE_CONNECT(type_t, name, wire)\
+type_t name; \
+PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES name) \
+void PPCAT(name,_connect)(){ \
+  name = wire; \
+}
 #define GLOBAL_IN_REG_WIRE_CONNECT(type_t, name, wire)\
 type_t name; \
 PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
