@@ -7,18 +7,30 @@ uint1_t rmii_clk;
 CLK_MHZ(rmii_clk, RMII_CLK_MHZ)
 
 // Global wires for users
-uint1_t rmii_tx_en; // Output
 uint2_t rmii_tx; // Output
-uint1_t rmii_crs; // Input
+uint1_t rmii_tx_en; // Output
 uint2_t rmii_rx; // Input
+uint1_t rmii_crs_dv; // Input
 
 // Connect individual top level bits to global wires
 MAIN_MHZ(rmii_connect, RMII_CLK_MHZ)
 void rmii_connect(){
-  rmii_clk = RMII_CLK_WIRE;
-  RMII_TX_EN_WIRE = rmii_tx_en;
-  RMII_TX0_WIRE = rmii_tx(0);
-  RMII_TX1_WIRE = rmii_tx(1);
-  rmii_crs = RMII_CRS_WIRE;
-  rmii_rx = uint1_uint1(RMII_RX1_WIRE, RMII_RX0_WIRE);
+  rmii_clk = RMII_CLK_WIRE; // No reg on clock signal
+
+  static uint2_t rmii_tx_reg;
+  RMII_TX0_WIRE = rmii_tx_reg(0);
+  RMII_TX1_WIRE = rmii_tx_reg(1);
+  rmii_tx_reg = rmii_tx;
+
+  static uint1_t rmii_tx_en_reg;
+  RMII_TX_EN_WIRE = rmii_tx_en_reg;
+  rmii_tx_en_reg = rmii_tx_en;
+
+  static uint2_t rmii_rx_reg;
+  rmii_rx = rmii_rx_reg;
+  rmii_rx_reg = uint1_uint1(RMII_RX1_WIRE, RMII_RX0_WIRE);
+
+  static uint1_t rmii_crs_dv_reg;
+  rmii_crs_dv = rmii_crs_dv_reg;
+  rmii_crs_dv_reg = RMII_CRS_DV_WIRE;
 }
