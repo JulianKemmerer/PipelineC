@@ -11,8 +11,6 @@
 #define GN9_OUT
 #define GP10_OUT
 #define GN10_OUT
-#define GP13_OUT
-#define GP0_OUT
 #include "board/ulxs3.h"
 #define RMII_TX_EN_WIRE gn10
 #define RMII_TX0_WIRE gp10
