@@ -2,6 +2,7 @@
 #include "compiler.h"
 #include "axi/axis.h"
 
+// TODO replace with something from stream/serializer.h
 // Serializer 8bit -> 2bit
 typedef struct ser82_t
 {
@@ -27,6 +28,13 @@ ser82_t ser82(uint8_t byte, uint8_t en){
   return o;
 }
 
+typedef enum rmii_rx_mac_state_t{
+  IDLE,
+  PREAMBLE,
+  //SFD,
+  DATA
+}rmii_rx_mac_state_t;
+
 // RX-MAC Outputs
 typedef struct rmii_rx_mac_t{
   stream(axis8_t) rx_mac_axis_out;
@@ -37,14 +45,11 @@ rmii_rx_mac_t rmii_rx_mac(
   uint2_t rx_mac_data_in,
   uint1_t rx_mac_data_valid
 ){
-  static uint1_t last_reg;
-  static uint1_t valid_reg;
-  static uint1_t error_reg;
+  uint1_t last = 0;
+  uint1_t valid = 0;
+  uint1_t err = 0;
   static uint8_t data_reg;
-  static uint8_t data_fifo[4];
-  static uint32_t fcs_reg;
-  static uint32_t crc32_reg;
-  static uint2_t state;
+  static rmii_rx_mac_state_t state;
   static uint3_t bit_counter;
   static uint32_t byte_counter;
   rmii_rx_mac_t o;
@@ -53,39 +58,39 @@ rmii_rx_mac_t rmii_rx_mac(
   uint1_t preamble_bits = (rx_mac_data_valid && rx_mac_data_in == 0b01);
   uint1_t sfd_bits = (rx_mac_data_valid && rx_mac_data_in == 0b11);
 
-  if(state == 0){ // IDLE (Find Preamble)
-    last_reg = 0;
-    valid_reg = 0;
+  if(state == IDLE){ // IDLE (Find Preamble)
+    last = 0;
+    valid = 0;
     data_reg = 0;
     bit_counter = 0;
     byte_counter = 0;
     if(preamble_bits){ // preamble start
-      error_reg = 0; // reset error ?
-      state = 1; // Goto Preamble
+      err = 0; // reset error ?
+      state = PREAMBLE; // Goto Preamble
     }
   }
-  else if(state == 1){ // PREAMBLE (Find SFD)
+  else if(state == PREAMBLE){ // PREAMBLE (Find SFD)
     if(preamble_bits){
-      state = 1; // Repeat Preamble
+      state = PREAMBLE; // Repeat Preamble
     }
     else if(sfd_bits){
-      state = 2; // Found SFD goto DATA
+      state = DATA; // Found SFD goto DATA
     }
     else{
-      state = 0; // ERROR
-      error_reg = 1;
+      state = IDLE; // ERROR
+      err = 1;
     }
   }
-  else if(state == 2){ // DATA
+  else if(state == DATA){ // DATA
     if(rx_mac_data_valid){
       data_reg = uint2_uint6(rx_mac_data_in,data_reg(7,2));
       if(byte_counter == 1517 && bit_end){ // frame too long
-        valid_reg = 0;
-        error_reg = 1; // error
-        state = 0; // ERROR
+        valid = 0;
+        err = 1; // error
+        state = IDLE; // ERROR
       }
       else {
-        valid_reg = bit_end;
+        valid = bit_end;
         if(bit_end){
           byte_counter += 1;
           bit_counter = 0;
@@ -96,27 +101,35 @@ rmii_rx_mac_t rmii_rx_mac(
       }
     }
     else if(!rx_mac_data_valid && byte_counter >= 64){ // Frame end
-      last_reg = 1;
+      last = 1;
       bit_counter = 0; // reset for crc
       byte_counter = 0; // reset for crc
-      state = 0; // Goto Idle
+      state = IDLE; // Goto Idle
     }
     else if(!rx_mac_data_valid && byte_counter < 64){ // Frame too short
-      valid_reg = 0;
-      error_reg = 1; // error
-      state = 0; // Error
+      valid = 0;
+      err = 1; // error
+      state = IDLE; // Error
     }
   }
 
   // AXIS Output
   o.rx_mac_axis_out.data.tdata[0] = data_reg;
-  o.rx_mac_axis_out.data.tkeep[0] = valid_reg;
-  o.rx_mac_axis_out.valid = valid_reg;
-  o.rx_mac_axis_out.data.tlast = last_reg;
-  //rx_mac_error = error_reg;
+  o.rx_mac_axis_out.data.tkeep[0] = valid;
+  o.rx_mac_axis_out.valid = valid;
+  o.rx_mac_axis_out.data.tlast = last;
+  //rx_mac_error = err;
   return o;
 }
 
+typedef enum rmii_tx_mac_state_t{
+  IDLE,
+  PREAMBLE,
+  SFD,
+  DATA,
+  FCS,
+  FINISH
+}rmii_tx_mac_state_t;
 
 // AXI-S 8bit TX-MAC Outputs
 typedef struct rmii_tx_mac_t{
@@ -133,11 +146,9 @@ rmii_tx_mac_t rmii_tx_mac(
   // Appends PREAMBLE + SFD
   // Appends Data
   // Appends FCS
-  static uint3_t state;
+  static rmii_tx_mac_state_t state;
   static uint1_t mac_output_valid_reg;
   static uint1_t mac_input_ready_reg;
-  static uint1_t mac_output_valid_reg;
-  static uint1_t mac_output_last_reg;
   static uint8_t preamble_ctr;
   static uint2_t fcs_ctr;
   static uint32_t crc32;
@@ -151,33 +162,35 @@ rmii_tx_mac_t rmii_tx_mac(
   o.tx_mac_output_valid = mac_output_valid_reg;
   o.tx_mac_input_ready = mac_input_ready_reg;
 
-  if(state == 0){ // IDLE
+  if(state == IDLE){ // IDLE
     mac_input_ready_reg = 0;
     o.tx_mac_output_data = 0;
     mac_output_valid_reg = 0;
     crc32 = 0xFFFFFFFF;
-    state = tx_mac_axis_in.valid; // Send preamble if ready
+    if(tx_mac_axis_in.valid){
+      state = PREAMBLE; // Send preamble if ready
+    }
     loaded = 0;
   }
-  else if(state == 1){ // PREAMBLE
+  else if(state == PREAMBLE){ // PREAMBLE
     mac_input_ready_reg = 0;
     o.tx_mac_output_data = 0b01;
     mac_output_valid_reg = 1;
     if(preamble_ctr_end){
-      state = 2; // Goto SFD
+      state = SFD; // Goto SFD
       preamble_ctr = 0;
     }
     else{
       preamble_ctr += 1;
     }
   }
-  else if(state == 2){ // SFD
+  else if(state == SFD){ // SFD
     mac_input_ready_reg = 0;
     mac_output_valid_reg = 1;
     o.tx_mac_output_data = 0b11;
-    state = 3; // Goto DATA
+    state = DATA; // Goto DATA
   }
-  else if(state == 3){ // DATA
+  else if(state == DATA){ // DATA
     uint8_t b = tx_mac_axis_in.data.tdata[0];
     b = (b << 4) | (b >> 4);
     mac_output_valid_reg = 1;
@@ -201,25 +214,25 @@ rmii_tx_mac_t rmii_tx_mac(
       crc32 = crc_next;
     }
     else if(tx_mac_axis_in.data.tlast){
-      state = 4; // Goto FCS
+      state = FCS; // Goto FCS
     }
     else
     {
       if(ser.rdy)
-        state = 3; // Goto DATA
+        state = DATA; // Goto DATA
     }
   }
-  else if(state == 4){ // FCS
+  else if(state == FCS){ // FCS
     mac_input_ready_reg = 0;
     mac_output_valid_reg = 0;
     o.tx_mac_output_data = 0b00;
-    state = 5; // Goto Finsih
+    state = FINISH; // Goto Finsih
     //tx_byte = crc32_4[fcs_ctr];
     //tx_mac_output_data = uint1_uint1(tx_bits8[bitpos1], tx_bits8[bitpos0]);
     //if(fcs_ctr_end){
     //	if(bitend){
     //			fcs_ctr = 0;
-    //			state = 5; // Goto Finsih
+    //			state = FINISH; // Goto Finsih
     //			bit_idx = 0;
     //		}
     //		else
@@ -235,10 +248,10 @@ rmii_tx_mac_t rmii_tx_mac(
     //	
     //}
   }
-  else if(state == 5){ // Finsih
+  else if(state == FINISH){ // Finsih
     o.tx_mac_output_data = 0b00;
     mac_output_valid_reg = 0;
-    state = 0; // Goto IDLE
+    state = IDLE; // Goto IDLE
   }
   return o;
 }
