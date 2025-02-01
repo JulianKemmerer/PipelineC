@@ -40,6 +40,7 @@ typedef struct rmii_rx_mac_t{
   stream(axis8_t) rx_mac_axis_out;
   uint1_t rx_mac_error;
 }rmii_rx_mac_t;
+#pragma FUNC_MARK_DEBUG rmii_rx_mac
 rmii_rx_mac_t rmii_rx_mac(
   // RX-MAC Inputs
   uint2_t rx_mac_data_in,
@@ -137,6 +138,7 @@ typedef struct rmii_tx_mac_t{
   uint1_t tx_mac_output_valid;
   uint1_t tx_mac_input_ready;
 }rmii_tx_mac_t;
+#pragma FUNC_MARK_DEBUG rmii_tx_mac
 rmii_tx_mac_t rmii_tx_mac(
   // AXI-S 8bit TX-MAC Inputs
   stream(axis8_t) tx_mac_axis_in
@@ -199,27 +201,25 @@ rmii_tx_mac_t rmii_tx_mac(
       o.tx_mac_output_data = uint1_uint1(b(1),b(0));
       loaded = 1;
     }
-    else
+    else{
       o.tx_mac_output_data = ser.o;
+    }
     mac_input_ready_reg = tx_mac_axis_in.valid && ser.rdy;
     if(tx_mac_axis_in.valid){
       uint32_t crc_next = crc32 ^ (uint32_t)(tx_mac_axis_in.data.tdata[0]); // XOR input data
       uint4_t i = 0;
       for (i = 0; i < 8; i = i + 1){
-          if (crc_next(31))
+          if (crc_next(31)){
             crc_next = (crc_next << 1) ^ POLY;
-          else
+          }
+          else{
             crc_next = crc_next << 1;
+          }
       }
       crc32 = crc_next;
-    }
-    else if(tx_mac_axis_in.data.tlast){
-      state = FCS; // Goto FCS
-    }
-    else
-    {
-      if(ser.rdy)
-        state = DATA; // Goto DATA
+      if(tx_mac_axis_in.data.tlast){
+        state = FCS; // Goto FCS
+      }
     }
   }
   else if(state == FCS){ // FCS
