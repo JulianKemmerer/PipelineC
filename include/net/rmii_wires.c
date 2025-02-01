@@ -34,3 +34,18 @@ void rmii_connect(){
   rmii_crs_dv = rmii_crs_dv_reg;
   rmii_crs_dv_reg = RMII_CRS_DV_WIRE;
 }
+
+#ifdef RMII_WIRES_DEBUG
+#pragma FUNC_MARK_DEBUG rmii_wires_debug
+#pragma MAIN rmii_wires_debug
+void rmii_wires_debug(){
+  static uint2_t rmii_tx_reg;
+  static uint1_t rmii_tx_en_reg;
+  static uint2_t rmii_rx_reg;
+  static uint1_t rmii_crs_dv_reg;
+  rmii_tx_reg = rmii_tx;
+  rmii_tx_en_reg = rmii_tx_en;
+  rmii_rx_reg = rmii_rx;
+  rmii_crs_dv_reg = rmii_crs_dv;
+}
+#endif
