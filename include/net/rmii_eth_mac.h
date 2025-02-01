@@ -43,26 +43,33 @@ typedef struct rmii_rx_mac_t{
 #pragma FUNC_MARK_DEBUG rmii_rx_mac
 rmii_rx_mac_t rmii_rx_mac(
   // RX-MAC Inputs
-  uint2_t rx_mac_data_in,
-  uint1_t rx_mac_data_valid
+  uint2_t data_in,
+  uint1_t data_in_valid
 ){
   uint1_t last = 0;
   uint1_t valid = 0;
   uint1_t err = 0;
-  static uint8_t data_reg;
+  // Use 16 2b input regs to capture the last 32b CRC
+  // data_in_valid deasserting after as indicator of EOF
+  // tlast is then asserted ahead of that event during last payload bytes
+  static uint2_t data_in_regs[16];
+  static uint1_t data_in_valid_regs[16];
+  uint2_t data_in_delayed = data_in_regs[15];
+  uint1_t data_in_valid_delayed = data_in_valid_regs[15];
+  static uint8_t data_out_reg;
   static rmii_rx_mac_state_t state;
   static uint3_t bit_counter;
   static uint32_t byte_counter;
   rmii_rx_mac_t o;
 
   uint1_t bit_end = (bit_counter == 6);
-  uint1_t preamble_bits = (rx_mac_data_valid && rx_mac_data_in == 0b01);
-  uint1_t sfd_bits = (rx_mac_data_valid && rx_mac_data_in == 0b11);
+  uint1_t preamble_bits = (data_in_valid_delayed && data_in_delayed == 0b01);
+  uint1_t sfd_bits = (data_in_valid_delayed && data_in_delayed == 0b11);
 
   if(state == IDLE){ // IDLE (Find Preamble)
     last = 0;
     valid = 0;
-    data_reg = 0;
+    data_out_reg = 0;
     bit_counter = 0;
     byte_counter = 0;
     if(preamble_bits){ // preamble start
@@ -83,43 +90,46 @@ rmii_rx_mac_t rmii_rx_mac(
     }
   }
   else if(state == DATA){ // DATA
-    if(rx_mac_data_valid){
-      data_reg = uint2_uint6(rx_mac_data_in,data_reg(7,2));
-      if(byte_counter == 1517 && bit_end){ // frame too long
-        valid = 0;
-        err = 1; // error
-        state = IDLE; // ERROR
-      }
-      else {
-        valid = bit_end;
-        if(bit_end){
-          byte_counter += 1;
-          bit_counter = 0;
+    if(data_in_valid_delayed){
+      data_out_reg = uint2_uint6(data_in_delayed,data_out_reg(7,2));
+      valid = bit_end;
+      if(bit_end){
+        byte_counter += 1;
+        bit_counter = 0;
+        // Frame end
+        // If no more bits next cycle 
+        // (checking not register delayed version of valid)
+        // then this was last byte this cycle
+        // TODO not checking length or FCS
+        if(~data_in_valid){
+          last = 1;
+          bit_counter = 0; // reset for crc
+          byte_counter = 0; // reset for crc
+          state = IDLE; // Goto Idle
+          if(byte_counter < 64){ // Frame too short
+            err = 1; // error
+          } else if(byte_counter >= 1517){ // Frame too long
+            err = 1; // error
+          }
         }
-        else{
-          bit_counter += 2;
-        }
       }
-    }
-    else if(!rx_mac_data_valid && byte_counter >= 64){ // Frame end
-      last = 1;
-      bit_counter = 0; // reset for crc
-      byte_counter = 0; // reset for crc
-      state = IDLE; // Goto Idle
-    }
-    else if(!rx_mac_data_valid && byte_counter < 64){ // Frame too short
-      valid = 0;
-      err = 1; // error
-      state = IDLE; // Error
+      else{
+        bit_counter += 2;
+      }  
     }
   }
 
+  // Input delay registers
+  ARRAY_1SHIFT_INTO_BOTTOM(data_in_regs, 16, data_in)
+  ARRAY_1SHIFT_INTO_BOTTOM(data_in_valid_regs, 16, data_in_valid)
+
   // AXIS Output
-  o.rx_mac_axis_out.data.tdata[0] = data_reg;
+  o.rx_mac_axis_out.data.tdata[0] = data_out_reg;
+  o.rx_mac_axis_out.data.tlast = last;
   o.rx_mac_axis_out.data.tkeep[0] = valid;
   o.rx_mac_axis_out.valid = valid;
-  o.rx_mac_axis_out.data.tlast = last;
-  //rx_mac_error = err;
+  
+  o.rx_mac_error = err;
   return o;
 }
 
@@ -141,7 +151,7 @@ typedef struct rmii_tx_mac_t{
 #pragma FUNC_MARK_DEBUG rmii_tx_mac
 rmii_tx_mac_t rmii_tx_mac(
   // AXI-S 8bit TX-MAC Inputs
-  stream(axis8_t) tx_mac_axis_in
+  stream(axis8_t) axis_in
 ){
   // AXI-S TX-MAC FSM
   // Gen. full Eth Frame
@@ -169,7 +179,7 @@ rmii_tx_mac_t rmii_tx_mac(
     o.tx_mac_output_data = 0;
     mac_output_valid_reg = 0;
     crc32 = 0xFFFFFFFF;
-    if(tx_mac_axis_in.valid){
+    if(axis_in.valid){
       state = PREAMBLE; // Send preamble if ready
     }
     loaded = 0;
@@ -193,10 +203,10 @@ rmii_tx_mac_t rmii_tx_mac(
     state = DATA; // Goto DATA
   }
   else if(state == DATA){ // DATA
-    uint8_t b = tx_mac_axis_in.data.tdata[0];
+    uint8_t b = axis_in.data.tdata[0];
     b = (b << 4) | (b >> 4);
     mac_output_valid_reg = 1;
-    ser82_t ser = ser82(b, tx_mac_axis_in.valid);
+    ser82_t ser = ser82(b, axis_in.valid);
     if(!loaded){
       o.tx_mac_output_data = uint1_uint1(b(1),b(0));
       loaded = 1;
@@ -204,9 +214,9 @@ rmii_tx_mac_t rmii_tx_mac(
     else{
       o.tx_mac_output_data = ser.o;
     }
-    mac_input_ready_reg = tx_mac_axis_in.valid && ser.rdy;
-    if(tx_mac_axis_in.valid){
-      uint32_t crc_next = crc32 ^ (uint32_t)(tx_mac_axis_in.data.tdata[0]); // XOR input data
+    mac_input_ready_reg = axis_in.valid && ser.rdy;
+    if(axis_in.valid){
+      uint32_t crc_next = crc32 ^ (uint32_t)(axis_in.data.tdata[0]); // XOR input data
       uint4_t i = 0;
       for (i = 0; i < 8; i = i + 1){
           if (crc_next(31)){
@@ -217,7 +227,7 @@ rmii_tx_mac_t rmii_tx_mac(
           }
       }
       crc32 = crc_next;
-      if(tx_mac_axis_in.data.tlast){
+      if(axis_in.data.tlast){
         state = FCS; // Goto FCS
       }
     }
