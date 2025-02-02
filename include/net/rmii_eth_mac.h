@@ -211,6 +211,7 @@ rmii_tx_mac_t rmii_tx_mac(
     if(last_bits_of_byte){
       if(last_bits_of_last_byte){
         state = FCS; // Goto FCS
+        counter = 0;
       }else{
         // Next byte coming
         // Take input data this cycle to serialize next
