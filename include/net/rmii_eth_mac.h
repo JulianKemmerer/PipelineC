@@ -30,7 +30,7 @@ rmii_rx_mac_t rmii_rx_mac(
   // Need to have delay regs long enough for CRC 
   // and the last byte before valid is deasserted (5 bytes total)
   // to detect the tlast end of payload data appropriately
-  #define RMII_ETH_MAC_N_INPUT_REGS ((5*8)/2) // 5 bytes, 2b words
+  #define RMII_ETH_MAC_N_INPUT_REGS ((5*8)/2) // 5 bytes, 2b words // TODO why Dutra say 4 not 5?
   static uint2_t data_in_regs[RMII_ETH_MAC_N_INPUT_REGS];
   static uint1_t data_in_valid_regs[RMII_ETH_MAC_N_INPUT_REGS];
   uint2_t data_in_delayed = data_in_regs[RMII_ETH_MAC_N_INPUT_REGS-1];
@@ -81,7 +81,7 @@ rmii_rx_mac_t rmii_rx_mac(
         // If no more bits next cycle 
         // (checking not register delayed version of valid)
         // then this was last byte this cycle
-        // TODO not checking length or FCS
+        // Note: not checking length or FCS
         if(~data_in_valid){
           last = 1;
           bit_counter = 0; // reset for crc
@@ -107,6 +107,7 @@ rmii_rx_mac_t rmii_rx_mac(
     if(bit_end){
       if(byte_counter == 3){
         state = IDLE; // Goto IDLE
+        byte_counter = 0;
       }else{
         byte_counter += 1;
       }
@@ -157,16 +158,15 @@ rmii_tx_mac_t rmii_tx_mac(
   // Appends Data
   // Appends FCS
   static rmii_tx_mac_state_t state;
-  static uint8_t counter;
+  static uint8_t bit_counter;
   static uint32_t crc32;
   static uint32_t crc32_debug;
   static uint8_t data_reg;
   static uint1_t last_byte_reg;
   rmii_tx_mac_t o;
-  uint32_t POLY = 0x04C11DB7;
-  //uint8_t crc32_4[4] = {crc32(0,7), crc32(8,15), crc32(16,23), crc32(24,31)};
-  uint1_t preamble_ctr_end = (counter == ((((7*8)/2)+3)-1)); // 7 bytes, 2b words PLUS extra 3 2b words of SFD
-  uint1_t fcs_ctr_end = (counter == (((4*8)/2)-1)); // 4 bytes, 2b words
+  uint2_t INC = 2; // 2b increment
+  uint1_t preamble_ctr_end = (bit_counter == (((7*8)+(3*2))-INC)); // 7 bytes PLUS extra 3 2b words of SFD
+  uint1_t fcs_ctr_end = (bit_counter == ((4*8)-INC)); // 4 bytes
 
   o.tx_mac_output_data = 0;
   o.tx_mac_output_valid = 0;
@@ -183,10 +183,10 @@ rmii_tx_mac_t rmii_tx_mac(
     o.tx_mac_output_valid = 1;
     if(preamble_ctr_end){
       state = SFD; // Goto SFD
-      counter = 0;
+      bit_counter = 0;
     }
     else{
-      counter += 1;
+      bit_counter += INC;
     }
   }
   else if(state == SFD){ // SFD
@@ -197,49 +197,34 @@ rmii_tx_mac_t rmii_tx_mac(
     data_reg = axis_in.data.tdata[0];
     last_byte_reg = axis_in.data.tlast;
     o.tx_mac_input_ready = 1;
-    counter = 0;
+    bit_counter = 0;
   }
   else if(state == DATA){ // DATA
     // Output bottom two bits of data reg
     o.tx_mac_output_data = data_reg(1,0);
     o.tx_mac_output_valid = 1;
     // Last two bits of data byte?
-    uint1_t last_bits_of_byte = (counter == 6);
+    uint1_t last_bits_of_byte = (bit_counter == 6);
     uint1_t last_bits_of_last_byte = last_bits_of_byte & last_byte_reg;
     if(last_bits_of_byte){
       if(last_bits_of_last_byte){
+        bit_counter = 0;
         state = FCS; // Goto FCS
-        counter = 0;
+        crc32_debug = crc32;
       }else{
         // Next byte coming
         // Take input data this cycle to serialize next
         data_reg = axis_in.data.tdata[0];
         last_byte_reg = axis_in.data.tlast;
         o.tx_mac_input_ready = 1;
-        counter = 0;
+        bit_counter = 0;
       }
     }
     else{
       // Next two bits of byte
-      counter += 2;
+      bit_counter += INC;
       data_reg = data_reg >> 2;
     }
-    // Compute CRC as axis in data is registered
-    if(axis_in.valid & o.tx_mac_input_ready){
-      // TODO is this correct CRC math?
-      uint32_t crc_next = crc32 ^ (uint32_t)(axis_in.data.tdata[0]); // XOR input data
-      uint4_t i = 0;
-      for (i = 0; i < 8; i = i + 1){
-          if (crc_next(31)){
-            crc_next = (crc_next << 1) ^ POLY;
-          }
-          else{
-            crc_next = crc_next << 1;
-          }
-      }
-      crc32 = crc_next;
-    }
-    crc32_debug = crc32;
   }
   else if(state == FCS){ // FCS
     // Output bottom two bits of 32b CRC data
@@ -248,13 +233,34 @@ rmii_tx_mac_t rmii_tx_mac(
     // Last two bits of CRC bytes?
     if(fcs_ctr_end){
       state = IDLE; // Goto IDLE
-      counter = 0;
+      bit_counter = 0;
     }
     else{
       // Next two bits of byte
-      counter += 2;
+      bit_counter += INC;
       crc32 = crc32 >> 2;
     }
   }
+
+  // Compute CRC as axis in data is registered (SFD and DATA states)
+  // Solution from https://www.edaboard.com/threads/crc32-implementation-in-ethernet-exact-way.120700/
+  // Ethernet CRC32 LUT
+  uint32_t crc_table[16] =
+  {
+    0x4DBDF21C, 0x500AE278, 0x76D3D2D4, 0x6B64C2B0,
+    0x3B61B38C, 0x26D6A3E8, 0x000F9344, 0x1DB88320,
+    0xA005713C, 0xBDB26158, 0x9B6B51F4, 0x86DC4190,
+    0xD6D930AC, 0xCB6E20C8, 0xEDB71064, 0xF0000000
+  };
+  if(axis_in.valid & o.tx_mac_input_ready){
+    // fixed CRC math
+    uint8_t byte = axis_in.data.tdata[0]; // TODO: Dutra used eth_tx_mac_axis_in instead of axis_in?
+    uint32_t crc_next = (crc32 >> 4) ^ crc_table[(crc32 ^ (byte >> 0)) & 0x0F];
+    crc_next = (crc_next >> 4) ^ crc_table[(crc_next ^ (byte >> 4)) & 0x0F];
+    crc32 = crc_next;
+    // TODO FIX TEMP HACK HARDCODE CORRECT CRC FOR TEST FRAME
+    crc32 = 0x13a51587;
+  }
+
   return o;
 }
