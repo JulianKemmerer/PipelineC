@@ -194,9 +194,7 @@ rmii_tx_mac_t rmii_tx_mac(
     o.tx_mac_output_data = 0b11;
     state = DATA; // Goto DATA
     // Take input data this cycle to serialize next cycle
-    uint8_t b = axis_in.data.tdata[0];
-    b = (b << 4) | (b >> 4);
-    data_reg = b;
+    data_reg = axis_in.data.tdata[0];
     last_byte_reg = axis_in.data.tlast;
     o.tx_mac_input_ready = 1;
     counter = 0;
@@ -215,9 +213,7 @@ rmii_tx_mac_t rmii_tx_mac(
       }else{
         // Next byte coming
         // Take input data this cycle to serialize next
-        uint8_t b = axis_in.data.tdata[0];
-        b = (b << 4) | (b >> 4);
-        data_reg = b;
+        data_reg = axis_in.data.tdata[0];
         last_byte_reg = axis_in.data.tlast;
         o.tx_mac_input_ready = 1;
         counter = 0;
