@@ -30,11 +30,11 @@ rmii_rx_mac_t rmii_rx_mac(
   // Need to have delay regs long enough for CRC 
   // and the last byte before valid is deasserted (5 bytes total)
   // to detect the tlast end of payload data appropriately
-  #define N_INPUT_REGS ((5*8)/2) // 5 bytes, 2b words
-  static uint2_t data_in_regs[N_INPUT_REGS];
-  static uint1_t data_in_valid_regs[N_INPUT_REGS];
-  uint2_t data_in_delayed = data_in_regs[N_INPUT_REGS-1];
-  uint1_t data_in_valid_delayed = data_in_valid_regs[N_INPUT_REGS-1];
+  #define RMII_ETH_MAC_N_INPUT_REGS ((5*8)/2) // 5 bytes, 2b words
+  static uint2_t data_in_regs[RMII_ETH_MAC_N_INPUT_REGS];
+  static uint1_t data_in_valid_regs[RMII_ETH_MAC_N_INPUT_REGS];
+  uint2_t data_in_delayed = data_in_regs[RMII_ETH_MAC_N_INPUT_REGS-1];
+  uint1_t data_in_valid_delayed = data_in_valid_regs[RMII_ETH_MAC_N_INPUT_REGS-1];
   static uint8_t data_out_reg;
   static rmii_rx_mac_state_t state;
   static uint3_t bit_counter;
@@ -118,8 +118,8 @@ rmii_rx_mac_t rmii_rx_mac(
   }
 
   // Input delay registers
-  ARRAY_1SHIFT_INTO_BOTTOM(data_in_regs, 16, data_in)
-  ARRAY_1SHIFT_INTO_BOTTOM(data_in_valid_regs, 16, data_in_valid)
+  ARRAY_1SHIFT_INTO_BOTTOM(data_in_regs, RMII_ETH_MAC_N_INPUT_REGS, data_in)
+  ARRAY_1SHIFT_INTO_BOTTOM(data_in_valid_regs, RMII_ETH_MAC_N_INPUT_REGS, data_in_valid)
 
   // AXIS Output
   o.rx_mac_axis_out.data.tdata[0] = data_out_reg;
