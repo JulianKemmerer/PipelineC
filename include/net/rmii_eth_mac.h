@@ -2,37 +2,12 @@
 #include "compiler.h"
 #include "axi/axis.h"
 
-// TODO replace with something from stream/serializer.h
-// Serializer 8bit -> 2bit
-typedef struct ser82_t
-{
-  uint2_t o;
-  uint1_t rdy;
-}ser82_t;
-ser82_t ser82(uint8_t byte, uint8_t en){
-  static uint8_t reg;
-  static uint3_t ctr;
-  uint8_t tx_bits8[8] = {reg(0), reg(1), reg(2), reg(3), reg(4), reg(5), reg(6), reg(7)};
-  uint3_t bitpos0 = (uint3_t)(ctr);
-  uint3_t bitpos1 = (uint3_t)(ctr + 1);
-  ser82_t o = {.o = uint1_uint1(tx_bits8[bitpos1],tx_bits8[bitpos0]), .rdy = ctr == 6};
-  if(ctr == 6){
-    ctr = 0;
-  }
-  else{
-    ctr += 2;
-  }
-  if(en){
-    reg = byte;
-  }
-  return o;
-}
-
 typedef enum rmii_rx_mac_state_t{
   IDLE,
   PREAMBLE,
   //SFD,
-  DATA
+  DATA,
+  FCS
 }rmii_rx_mac_state_t;
 
 // RX-MAC Outputs
@@ -49,17 +24,22 @@ rmii_rx_mac_t rmii_rx_mac(
   uint1_t last = 0;
   uint1_t valid = 0;
   uint1_t err = 0;
-  // Use 16 2b input regs to capture the last 32b CRC
-  // data_in_valid deasserting after as indicator of EOF
-  // tlast is then asserted ahead of that event during last payload bytes
-  static uint2_t data_in_regs[16];
-  static uint1_t data_in_valid_regs[16];
-  uint2_t data_in_delayed = data_in_regs[15];
-  uint1_t data_in_valid_delayed = data_in_valid_regs[15];
+  // Per the LAN8720 datasheet figure 3-3 (is this RMII standard :-/?)
+  // the data valid signal is deasserted two 4b nibbles (a byte)
+  // after the data of the frame (which includes 4 bytes of CRC)
+  // Need to have delay regs long enough for CRC 
+  // and the last byte before valid is deasserted (5 bytes total)
+  // to detect the tlast end of payload data appropriately
+  #define N_INPUT_REGS ((5*8)/2) // 5 bytes, 2b words
+  static uint2_t data_in_regs[N_INPUT_REGS];
+  static uint1_t data_in_valid_regs[N_INPUT_REGS];
+  uint2_t data_in_delayed = data_in_regs[N_INPUT_REGS-1];
+  uint1_t data_in_valid_delayed = data_in_valid_regs[N_INPUT_REGS-1];
   static uint8_t data_out_reg;
   static rmii_rx_mac_state_t state;
   static uint3_t bit_counter;
   static uint32_t byte_counter;
+  static uint32_t fcs_reg;
   rmii_rx_mac_t o;
 
   uint1_t bit_end = (bit_counter == 6);
@@ -72,6 +52,7 @@ rmii_rx_mac_t rmii_rx_mac(
     data_out_reg = 0;
     bit_counter = 0;
     byte_counter = 0;
+    fcs_reg = 0;
     if(preamble_bits){ // preamble start
       err = 0; // reset error ?
       state = PREAMBLE; // Goto Preamble
@@ -105,7 +86,7 @@ rmii_rx_mac_t rmii_rx_mac(
           last = 1;
           bit_counter = 0; // reset for crc
           byte_counter = 0; // reset for crc
-          state = IDLE; // Goto Idle
+          state = FCS; // Goto FCS
           if(byte_counter < 64){ // Frame too short
             err = 1; // error
           } else if(byte_counter >= 1517){ // Frame too long
@@ -117,6 +98,23 @@ rmii_rx_mac_t rmii_rx_mac(
         bit_counter += 2;
       }  
     }
+  }
+  else if(state == FCS){
+    // Just wait through CRC bytes
+    // save data for debug only
+    fcs_reg = uint2_uint30(data_in_delayed,fcs_reg>>2);
+    data_out_reg = 0;
+    if(bit_end){
+      if(byte_counter == 3){
+        state = IDLE; // Goto IDLE
+      }else{
+        byte_counter += 1;
+      }
+      bit_counter = 0;
+    }
+    else{
+      bit_counter += 2;
+    } 
   }
 
   // Input delay registers
@@ -138,8 +136,8 @@ typedef enum rmii_tx_mac_state_t{
   PREAMBLE,
   SFD,
   DATA,
-  FCS,
-  FINISH
+  FCS
+  // TODO IPG
 }rmii_tx_mac_state_t;
 
 // AXI-S 8bit TX-MAC Outputs
@@ -159,63 +157,79 @@ rmii_tx_mac_t rmii_tx_mac(
   // Appends Data
   // Appends FCS
   static rmii_tx_mac_state_t state;
-  static uint1_t mac_output_valid_reg;
-  static uint1_t mac_input_ready_reg;
-  static uint8_t preamble_ctr;
-  static uint2_t fcs_ctr;
+  static uint8_t counter;
   static uint32_t crc32;
-  static uint1_t loaded;
+  static uint32_t crc32_debug;
+  static uint8_t data_reg;
+  static uint1_t last_byte_reg;
   rmii_tx_mac_t o;
   uint32_t POLY = 0x04C11DB7;
-  uint8_t crc32_4[4] = {crc32(0,7), crc32(8,15), crc32(16,23), crc32(24,31)};
-  uint1_t preamble_ctr_end = (preamble_ctr == 27);
-  uint1_t fcs_ctr_end = (fcs_ctr == 3);
+  //uint8_t crc32_4[4] = {crc32(0,7), crc32(8,15), crc32(16,23), crc32(24,31)};
+  uint1_t preamble_ctr_end = (counter == ((((7*8)/2)+3)-1)); // 7 bytes, 2b words PLUS extra 3 2b words of SFD
+  uint1_t fcs_ctr_end = (counter == (((4*8)/2)-1)); // 4 bytes, 2b words
 
-  o.tx_mac_output_valid = mac_output_valid_reg;
-  o.tx_mac_input_ready = mac_input_ready_reg;
+  o.tx_mac_output_data = 0;
+  o.tx_mac_output_valid = 0;
+  o.tx_mac_input_ready = 0;
 
   if(state == IDLE){ // IDLE
-    mac_input_ready_reg = 0;
-    o.tx_mac_output_data = 0;
-    mac_output_valid_reg = 0;
     crc32 = 0xFFFFFFFF;
     if(axis_in.valid){
       state = PREAMBLE; // Send preamble if ready
     }
-    loaded = 0;
   }
   else if(state == PREAMBLE){ // PREAMBLE
-    mac_input_ready_reg = 0;
     o.tx_mac_output_data = 0b01;
-    mac_output_valid_reg = 1;
+    o.tx_mac_output_valid = 1;
     if(preamble_ctr_end){
       state = SFD; // Goto SFD
-      preamble_ctr = 0;
+      counter = 0;
     }
     else{
-      preamble_ctr += 1;
+      counter += 1;
     }
   }
   else if(state == SFD){ // SFD
-    mac_input_ready_reg = 0;
-    mac_output_valid_reg = 1;
+    o.tx_mac_output_valid = 1;
     o.tx_mac_output_data = 0b11;
     state = DATA; // Goto DATA
-  }
-  else if(state == DATA){ // DATA
+    // Take input data this cycle to serialize next cycle
     uint8_t b = axis_in.data.tdata[0];
     b = (b << 4) | (b >> 4);
-    mac_output_valid_reg = 1;
-    ser82_t ser = ser82(b, axis_in.valid);
-    if(!loaded){
-      o.tx_mac_output_data = uint1_uint1(b(1),b(0));
-      loaded = 1;
+    data_reg = b;
+    last_byte_reg = axis_in.data.tlast;
+    o.tx_mac_input_ready = 1;
+    counter = 0;
+  }
+  else if(state == DATA){ // DATA
+    // Output bottom two bits of data reg
+    o.tx_mac_output_data = data_reg(1,0);
+    o.tx_mac_output_valid = 1;
+    // Last two bits of data byte?
+    uint1_t last_bits_of_byte = (counter == 6);
+    uint1_t last_bits_of_last_byte = last_bits_of_byte & last_byte_reg;
+    if(last_bits_of_byte){
+      if(last_bits_of_last_byte){
+        state = FCS; // Goto FCS
+      }else{
+        // Next byte coming
+        // Take input data this cycle to serialize next
+        uint8_t b = axis_in.data.tdata[0];
+        b = (b << 4) | (b >> 4);
+        data_reg = b;
+        last_byte_reg = axis_in.data.tlast;
+        o.tx_mac_input_ready = 1;
+        counter = 0;
+      }
     }
     else{
-      o.tx_mac_output_data = ser.o;
+      // Next two bits of byte
+      counter += 2;
+      data_reg = data_reg >> 2;
     }
-    mac_input_ready_reg = axis_in.valid && ser.rdy;
-    if(axis_in.valid){
+    // Compute CRC as axis in data is registered
+    if(axis_in.valid & o.tx_mac_input_ready){
+      // TODO is this correct CRC math?
       uint32_t crc_next = crc32 ^ (uint32_t)(axis_in.data.tdata[0]); // XOR input data
       uint4_t i = 0;
       for (i = 0; i < 8; i = i + 1){
@@ -227,41 +241,23 @@ rmii_tx_mac_t rmii_tx_mac(
           }
       }
       crc32 = crc_next;
-      if(axis_in.data.tlast){
-        state = FCS; // Goto FCS
-      }
     }
+    crc32_debug = crc32;
   }
   else if(state == FCS){ // FCS
-    mac_input_ready_reg = 0;
-    mac_output_valid_reg = 0;
-    o.tx_mac_output_data = 0b00;
-    state = FINISH; // Goto Finsih
-    //tx_byte = crc32_4[fcs_ctr];
-    //tx_mac_output_data = uint1_uint1(tx_bits8[bitpos1], tx_bits8[bitpos0]);
-    //if(fcs_ctr_end){
-    //	if(bitend){
-    //			fcs_ctr = 0;
-    //			state = FINISH; // Goto Finsih
-    //			bit_idx = 0;
-    //		}
-    //		else
-    //			bit_idx += 2;
-    //}
-    //else{
-    //	if(bitend){
-    //			fcs_ctr += 1;
-    //			bit_idx = 0;
-    //		}
-    //		else
-    //			bit_idx += 2;
-    //	
-    //}
-  }
-  else if(state == FINISH){ // Finsih
-    o.tx_mac_output_data = 0b00;
-    mac_output_valid_reg = 0;
-    state = IDLE; // Goto IDLE
+    // Output bottom two bits of 32b CRC data
+    o.tx_mac_output_data = crc32(1,0);
+    o.tx_mac_output_valid = 1;
+    // Last two bits of CRC bytes?
+    if(fcs_ctr_end){
+      state = IDLE; // Goto IDLE
+      counter = 0;
+    }
+    else{
+      // Next two bits of byte
+      counter += 2;
+      crc32 = crc32 >> 2;
+    }
   }
   return o;
 }
