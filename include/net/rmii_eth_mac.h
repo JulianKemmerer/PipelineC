@@ -159,7 +159,7 @@ rmii_tx_mac_t rmii_tx_mac(
   // Appends FCS
   static rmii_tx_mac_state_t state;
   static uint8_t bit_counter;
-  static uint32_t crc32;
+  static uint32_t crc;
   static uint32_t crc32_debug;
   static uint8_t data_reg;
   static uint1_t last_byte_reg;
@@ -173,7 +173,7 @@ rmii_tx_mac_t rmii_tx_mac(
   o.tx_mac_input_ready = 0;
 
   if(state == IDLE){ // IDLE
-    crc32 = 0xFFFFFFFF;
+    crc = 0;
     if(axis_in.valid){
       state = PREAMBLE; // Send preamble if ready
     }
@@ -210,7 +210,7 @@ rmii_tx_mac_t rmii_tx_mac(
       if(last_bits_of_last_byte){
         bit_counter = 0;
         state = FCS; // Goto FCS
-        crc32_debug = crc32;
+        crc32_debug = crc;
       }else{
         // Next byte coming
         // Take input data this cycle to serialize next
@@ -228,7 +228,7 @@ rmii_tx_mac_t rmii_tx_mac(
   }
   else if(state == FCS){ // FCS
     // Output bottom two bits of 32b CRC data
-    o.tx_mac_output_data = crc32(1,0);
+    o.tx_mac_output_data = crc(1,0);
     o.tx_mac_output_valid = 1;
     // Last two bits of CRC bytes?
     if(fcs_ctr_end){
@@ -236,15 +236,15 @@ rmii_tx_mac_t rmii_tx_mac(
       bit_counter = 0;
     }
     else{
-      // Next two bits of byte
+      // Next two bits of word
       bit_counter += INC;
-      crc32 = crc32 >> 2;
+      crc = crc >> 2;
     }
   }
 
   // Compute CRC as axis in data is registered (SFD and DATA states)
+  uint8_t data_n = axis_in.data.tdata[0];
   // Solution from https://www.edaboard.com/threads/crc32-implementation-in-ethernet-exact-way.120700/
-  // Ethernet CRC32 LUT
   uint32_t crc_table[16] =
   {
     0x4DBDF21C, 0x500AE278, 0x76D3D2D4, 0x6B64C2B0,
@@ -252,14 +252,9 @@ rmii_tx_mac_t rmii_tx_mac(
     0xA005713C, 0xBDB26158, 0x9B6B51F4, 0x86DC4190,
     0xD6D930AC, 0xCB6E20C8, 0xEDB71064, 0xF0000000
   };
-  if(axis_in.valid & o.tx_mac_input_ready){
-    // fixed CRC math
-    uint8_t byte = axis_in.data.tdata[0]; // TODO: Dutra used eth_tx_mac_axis_in instead of axis_in?
-    uint32_t crc_next = (crc32 >> 4) ^ crc_table[(crc32 ^ (byte >> 0)) & 0x0F];
-    crc_next = (crc_next >> 4) ^ crc_table[(crc_next ^ (byte >> 4)) & 0x0F];
-    crc32 = crc_next;
-    // TODO FIX TEMP HACK HARDCODE CORRECT CRC FOR TEST FRAME
-    crc32 = 0x13a51587;
+  if(axis_in.valid & o.tx_mac_input_ready){ // For each input data byte
+    crc = (crc >> 4) ^ crc_table[(crc ^ (data_n >> 0)) & 0x0F];
+    crc = (crc >> 4) ^ crc_table[(crc ^ (data_n >> 4)) & 0x0F];
   }
 
   return o;
