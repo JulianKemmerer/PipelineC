@@ -15,7 +15,6 @@ typedef struct rmii_rx_mac_t{
   stream(axis8_t) rx_mac_axis_out;
   uint1_t rx_mac_error;
 }rmii_rx_mac_t;
-#pragma FUNC_MARK_DEBUG rmii_rx_mac
 rmii_rx_mac_t rmii_rx_mac(
   // RX-MAC Inputs
   uint2_t data_in,
@@ -147,7 +146,6 @@ typedef struct rmii_tx_mac_t{
   uint1_t tx_mac_output_valid;
   uint1_t tx_mac_input_ready;
 }rmii_tx_mac_t;
-#pragma FUNC_MARK_DEBUG rmii_tx_mac
 rmii_tx_mac_t rmii_tx_mac(
   // AXI-S 8bit TX-MAC Inputs
   stream(axis8_t) axis_in
