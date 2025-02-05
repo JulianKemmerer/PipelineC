@@ -1,0 +1,175 @@
+#pragma once
+#include "uintN_t.h"
+#include "arrays.h"
+#include "bit_manip.h"
+#include "stream/stream.h"
+#include "axi/axis.h"
+#include "net/eth.h"
+
+typedef struct eth8_frame_t
+{
+  eth_header_t header;
+  axis8_t payload;
+} eth8_frame_t;
+DECL_STREAM_TYPE(eth8_frame_t)
+
+// FSM states for 8b wide ethernet
+typedef enum eth8_state_t {
+  IDLE_DST_MAC,
+  SRC_MAC,
+  LEN_TYPE,
+  PAYLOAD
+} eth8_state_t;
+
+// 8b RX FSM
+typedef struct eth_8_rx_t
+{
+  stream(eth8_frame_t) frame;
+  uint1_t overflow;
+  uint1_t start_of_packet;
+} eth_8_rx_t;
+eth_8_rx_t eth_8_rx(
+  stream(axis8_t) mac_axis,
+  uint1_t frame_ready
+){
+  // State regs
+  static eth8_state_t state;
+  static eth_header_t header;
+  static uint8_t counter;
+
+  // Default no output
+  eth_8_rx_t o;
+  o.frame.data.header = header;
+  o.frame.valid = 0; 
+  o.overflow = 0;
+  o.start_of_packet = 0;
+
+  // FSM using counter to parse bytes of each ethernet field
+  // MAC+LEN/TYPE MSBs are first
+  // shift into bottom so at end of data MSBs are in right positon
+  if(state == IDLE_DST_MAC){
+    if(mac_axis.valid){
+      header.dst_mac = uint40_uint8(header.dst_mac, mac_axis.data.tdata[0]);
+      if(counter==(MAC_LEN-1)){
+        state = SRC_MAC;
+        counter = 0;
+      }else{
+        counter += 1;
+      }
+    }
+  }else if(state == SRC_MAC){
+    if(mac_axis.valid){
+      header.src_mac = uint40_uint8(header.src_mac, mac_axis.data.tdata[0]);
+      if(counter==(MAC_LEN-1)){
+        state = LEN_TYPE;
+        counter = 0;
+      }else{
+        counter += 1;
+      }
+    }
+  }else if(state == LEN_TYPE){
+    if(mac_axis.valid){
+      header.ethertype = uint8_uint8(header.ethertype, mac_axis.data.tdata[0]);
+      if(counter==(ETHERTYPE_LEN-1)){
+        state = PAYLOAD;
+        counter = 0;
+      }else{
+        counter += 1;
+      }
+    }
+  }
+  // Pass through payload bytes
+  else if(state == PAYLOAD){
+    // Output
+    o.frame.data.payload = mac_axis.data;
+    o.start_of_packet = counter==0;
+    if(o.start_of_packet){
+      counter += 1;
+    }
+    o.frame.valid = mac_axis.valid;
+    // No ready used, overflow if have data and not ready
+    o.overflow = o.frame.valid & ~frame_ready;
+    if(o.frame.data.payload.tlast & o.frame.valid){
+      state = IDLE_DST_MAC;
+      counter = 0;
+    }
+  }
+  return o;
+}
+
+// 8b TX FSM
+typedef struct eth_8_tx_t
+{
+  stream(axis8_t) mac_axis;
+  uint1_t frame_ready;
+} eth_8_tx_t;
+eth_8_tx_t eth_8_tx(
+  stream(eth8_frame_t) frame,
+  uint1_t mac_axis_ready
+){
+  // State regs
+  static eth8_state_t state;
+  static eth_header_t header;
+  static uint8_t counter;
+  
+  // Default no payload, not ready
+  eth_8_tx_t o;
+  o.mac_axis.valid = 0;
+  o.frame_ready = 0;
+
+  // FSM using counter to build bytes of each ethernet field
+  // MAC+LEN/TYPE MSBs are first, shift from top
+  if(state == IDLE_DST_MAC){
+    // Wait for frame to TX
+    if(frame.valid){
+      header = frame.data.header;
+      o.mac_axis.valid = 1;
+      o.mac_axis.data.tdata[0] = uint48_47_40(header.dst_mac);
+      if(mac_axis_ready){
+        header.dst_mac = header.dst_mac << 8;
+        if(counter == (MAC_LEN-1)){
+          state = SRC_MAC;
+          counter = 0;
+        }else{
+          counter += 1;
+        }
+      }
+    }
+  }else if(state == SRC_MAC){
+    o.mac_axis.valid = 1;
+    o.mac_axis.data.tdata[0] = uint48_47_40(header.src_mac);
+    if(mac_axis_ready){
+      header.src_mac = header.src_mac << 8;
+      if(counter == (MAC_LEN-1)){
+        state = LEN_TYPE;
+        counter = 0;
+      }else{
+        counter += 1;
+      }
+    }
+  }else if(state == LEN_TYPE){
+    o.mac_axis.valid = 1;
+    o.mac_axis.data.tdata[0] = uint16_15_8(header.ethertype);
+    if(mac_axis_ready){
+      header.ethertype = header.ethertype << 8;
+      if(counter == (ETHERTYPE_LEN-1)){
+        state = PAYLOAD;
+        counter = 0;
+      }else{
+        counter += 1;
+      }
+    }
+  }
+  // Pass through payload bytes
+  else if(state == PAYLOAD){
+    // Output
+    o.mac_axis.data = frame.data.payload;
+    o.mac_axis.valid = frame.valid;
+    o.frame_ready = mac_axis_ready;
+    if(o.mac_axis.data.tlast & o.mac_axis.valid & mac_axis_ready){
+      state = IDLE_DST_MAC;
+      counter = 0;
+    }
+  }
+  return o;
+}

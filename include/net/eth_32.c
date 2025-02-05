@@ -5,14 +5,7 @@
 #include "bit_manip.h"
 #include "stream/stream.h"
 #include "axi/axis.h"
-
-typedef struct eth_header_t
-{
-  uint48_t src_mac;
-  uint48_t dst_mac;
-  uint16_t ethertype;
-} eth_header_t;
-DECL_STREAM_TYPE(eth_header_t)
+#include "net/eth.h"
 
 typedef struct eth32_frame_t
 {
