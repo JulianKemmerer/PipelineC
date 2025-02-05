@@ -48,18 +48,6 @@
 #include "net/eth_8.h"
 
 // MAC address info we want the fpga to have
-// Network, big endian, byte order
-// MAC0 is most signficant byte
-// MAC5 is least signficant byte
-// "0:1:2:3:4:5"
-/*#define FPGA_MAC0	0xA0
-#define FPGA_MAC1	0xB1
-#define FPGA_MAC2	0xC2
-#define FPGA_MAC3	0xD3
-#define FPGA_MAC4	0xE4
-#define FPGA_MAC5	0xF5
-uint8_t FPGA_MAC_BYTES[6] = {FPGA_MAC0, FPGA_MAC1, FPGA_MAC2, FPGA_MAC3, FPGA_MAC4, FPGA_MAC5};
-#define FPGA_MAC uint8_array6_be(FPGA_MAC_BYTES)*/
 #define FPGA_MAC 0xA0B1C2D3E4F5
 
 // Loopback structured as separate RX and TX MAINs
@@ -77,20 +65,21 @@ void rx_main()
 	// Receive the ETH frame
   // Eth rx ready if payload fifo+header fifo ready
   uint1_t eth_rx_out_ready = loopback_payload_fifo_in_ready & loopback_headers_fifo_in_ready;
+  
   // The rx module
 	eth_8_rx_t eth_rx = eth_8_rx(eth_rx_mac_axis_out, eth_rx_out_ready);
   stream(eth8_frame_t) frame = eth_rx.frame;
-  
   // Filter out all but matching destination mac frames
   uint1_t mac_match = frame.data.header.dst_mac == FPGA_MAC;
 
-  // Write into fifos if mac match
+  // Write DVR handshake into fifos if mac match
+  uint1_t valid_and_ready = frame.valid & eth_rx_out_ready & mac_match;
   // Frame payload and headers go into separate fifos
   loopback_payload_fifo_in.data = frame.data.payload;
-  loopback_payload_fifo_in.valid = frame.valid & eth_rx_out_ready & mac_match;
+  loopback_payload_fifo_in.valid = valid_and_ready;
   // Header only written once at the start of data packet
   loopback_headers_fifo_in.data = frame.data.header;
-  loopback_headers_fifo_in.valid = frame.valid & eth_rx.start_of_packet & eth_rx_out_ready & mac_match;
+  loopback_headers_fifo_in.valid = frame.data.start_of_payload & valid_and_ready;
 }
 
 #pragma MAIN tx_main
@@ -110,10 +99,12 @@ void tx_main()
   eth_8_tx_t eth_tx = eth_8_tx(frame, eth_tx_mac_input_ready);
   eth_tx_mac_axis_in = eth_tx.mac_axis;
   
+  // Read DVR handshake from fifos
+  uint1_t valid_and_ready = frame.valid & eth_tx.frame_ready;
   // Read payload if was ready
-  loopback_payload_fifo_out_ready = frame.valid & eth_tx.frame_ready;
+  loopback_payload_fifo_out_ready = valid_and_ready;
   // Ready header if was ready at end of packet
-  loopback_headers_fifo_out_ready = frame.data.payload.tlast & frame.valid & eth_tx.frame_ready;
+  loopback_headers_fifo_out_ready = frame.data.payload.tlast & valid_and_ready;
 }
 
 // Santy check clock is working with blinking LED

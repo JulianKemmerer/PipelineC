@@ -10,6 +10,7 @@ typedef struct eth8_frame_t
 {
   eth_header_t header;
   axis8_t payload;
+  uint1_t start_of_payload;
 } eth8_frame_t;
 DECL_STREAM_TYPE(eth8_frame_t)
 
@@ -26,7 +27,6 @@ typedef struct eth_8_rx_t
 {
   stream(eth8_frame_t) frame;
   uint1_t overflow;
-  uint1_t start_of_packet;
 } eth_8_rx_t;
 eth_8_rx_t eth_8_rx(
   stream(axis8_t) mac_axis,
@@ -40,9 +40,9 @@ eth_8_rx_t eth_8_rx(
   // Default no output
   eth_8_rx_t o;
   o.frame.data.header = header;
+  o.frame.data.start_of_payload = 0;
   o.frame.valid = 0; 
   o.overflow = 0;
-  o.start_of_packet = 0;
 
   // FSM using counter to parse bytes of each ethernet field
   // MAC+LEN/TYPE MSBs are first
@@ -82,16 +82,18 @@ eth_8_rx_t eth_8_rx(
   else if(state == PAYLOAD){
     // Output
     o.frame.data.payload = mac_axis.data;
-    o.start_of_packet = counter==0;
-    if(o.start_of_packet){
-      counter += 1;
-    }
+    o.frame.data.start_of_payload = counter==0;
     o.frame.valid = mac_axis.valid;
     // No ready used, overflow if have data and not ready
     o.overflow = o.frame.valid & ~frame_ready;
-    if(o.frame.data.payload.tlast & o.frame.valid){
-      state = IDLE_DST_MAC;
-      counter = 0;
+    if(o.frame.valid){
+      if(o.frame.data.start_of_payload){
+        counter += 1;
+      }
+      if(o.frame.data.payload.tlast){
+        state = IDLE_DST_MAC;
+        counter = 0;
+      }
     }
   }
   return o;
