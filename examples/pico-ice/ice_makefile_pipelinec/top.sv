@@ -1,33 +1,5 @@
 module top(
-  input clk_12p0,
-  // RGB LED
-  output ICE_39,
-  output ICE_40,
-  output ICE_41,
-  // UART
-  output ICE_25,
-  input ICE_27,
-  // PMODs for VGA demo
-  // PMOD0A
-  output ICE_45,
-  output ICE_47,
-  output ICE_2,
-  output ICE_4,
-  // PMOD0B
-  output ICE_44,
-  output ICE_46,
-  output ICE_48,
-  output ICE_3,
-  // PMOD1A
-  output ICE_31,
-  output ICE_34,
-  output ICE_38,
-  output ICE_43,
-  // PMOD1B
-  // UNUSED for VGA PMOD output ICE_28,
-  // UNUSED for VGA PMOD output ICE_32,
-  output ICE_36,
-  output ICE_42
+  `include "top_pins.svh"
 );
   // PLL instance to make a clock based on 12MHz input
   wire pll_clk;

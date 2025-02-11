@@ -32,15 +32,15 @@ Ex. `make clean all PIPELINEC_REPO=/path/to/PipelineC OSS_CAD_SUITE=/path/to/oss
 ## Top Level IO
 For now top level IO configuration needs to match across three files:
 1) `top.h` (for PipelineC)
-2) `top.sv` (for yosys)
+2) `top.sv` (`top_pins.svh`) (for yosys)
 3) `ice40.pcf` (for nextpnr)
 
-When changing the top level pinout in `top.h`, need to manually update wrapper `top.sv` and `ice40.pcf` to match.
+When changing the top level pinout in `top.h`, you may need to manually update wrapper `top.sv` and `ice40.pcf` to match.
 
 ## Clocks
 This design has been setup to work with at a single clock rate `PLL_CLK_MHZ`.
 
-Edit the `Makefile` to specify a target rate, ex. `PLL_CLK_MHZ = 25.0`.
+A `Makefile` variable exists to specify the target rate, ex. `PLL_CLK_MHZ = 25.0`.
 
 Critically this variable is used to:
 1) Invoke PipelineC with the expected constant in code

@@ -14,6 +14,7 @@ set_io -nowarn ICE_45 45
 set_io -nowarn ICE_47 47
 set_io -nowarn ICE_2 2
 set_io -nowarn ICE_4 4
+
 # PMOD0B
 set_io -nowarn ICE_44 44
 set_io -nowarn ICE_46 46
@@ -27,8 +28,8 @@ set_io -nowarn ICE_38 38
 set_io -nowarn ICE_43 43
 
 # PMOD1B
-# UNUSED for VGA PMOD set_io -nowarn ICE_28 28
-# UNUSED for VGA PMOD set_io -nowarn ICE_32 32
+set_io -nowarn ICE_28 28
+set_io -nowarn ICE_32 32
 set_io -nowarn ICE_36 36
 set_io -nowarn ICE_42 42
 
