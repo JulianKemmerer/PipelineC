@@ -5,7 +5,6 @@
 typedef enum rmii_rx_mac_state_t{
   IDLE,
   PREAMBLE,
-  //SFD,
   DATA,
   FCS
 }rmii_rx_mac_state_t;
@@ -37,20 +36,20 @@ rmii_rx_mac_t rmii_rx_mac(
   static uint8_t data_out_reg;
   static rmii_rx_mac_state_t state;
   static uint3_t bit_counter;
-  static uint32_t byte_counter;
+  static uint2_t byte_counter;
   static uint32_t fcs_reg;
   rmii_rx_mac_t o;
 
   uint1_t bit_end = (bit_counter == 6);
   uint1_t preamble_bits = (data_in_valid_delayed && data_in_delayed == 0b01);
   uint1_t sfd_bits = (data_in_valid_delayed && data_in_delayed == 0b11);
+  // TODO regs for "==" based signals?
 
   if(state == IDLE){ // IDLE (Find Preamble)
     last = 0;
     valid = 0;
     data_out_reg = 0;
     bit_counter = 0;
-    byte_counter = 0;
     fcs_reg = 0;
     if(preamble_bits){ // preamble start
       err = 0; // reset error ?
@@ -74,7 +73,6 @@ rmii_rx_mac_t rmii_rx_mac(
       data_out_reg = uint2_uint6(data_in_delayed,data_out_reg(7,2));
       valid = bit_end;
       if(bit_end){
-        byte_counter += 1;
         bit_counter = 0;
         // Frame end
         // If no more bits next cycle 
@@ -84,13 +82,7 @@ rmii_rx_mac_t rmii_rx_mac(
         if(~data_in_valid){
           last = 1;
           bit_counter = 0; // reset for crc
-          byte_counter = 0; // reset for crc
           state = FCS; // Goto FCS
-          if(byte_counter < 64){ // Frame too short
-            err = 1; // error
-          } else if(byte_counter >= 1517){ // Frame too long
-            err = 1; // error
-          }
         }
       }
       else{
@@ -156,22 +148,24 @@ rmii_tx_mac_t rmii_tx_mac(
   // Appends Data
   // Appends FCS
   static rmii_tx_mac_state_t state;
-  static uint8_t bit_counter;
-  static uint32_t crc;
-  static uint32_t crc32_debug;
+  static uint6_t bit_counter;
+  static uint32_t crc; // reg for compute
+  static uint32_t crc_shift_reg; // for output onto wire
   static uint8_t data_reg;
   static uint1_t last_byte_reg;
   rmii_tx_mac_t o;
   uint2_t INC = 2; // 2b increment
   uint1_t preamble_ctr_end = (bit_counter == (((7*8)+(3*2))-INC)); // 7 bytes PLUS extra 3 2b words of SFD
   uint1_t fcs_ctr_end = (bit_counter == ((4*8)-INC)); // 4 bytes
+  uint1_t last_bits_of_byte = (bit_counter == 6);
+  // TODO regs for "bit_counter ==" based signals?
 
   o.tx_mac_output_data = 0;
   o.tx_mac_output_valid = 0;
   o.tx_mac_input_ready = 0;
-
+  uint1_t reset_crc = 0;
   if(state == IDLE){ // IDLE
-    crc = 0;
+    reset_crc = 1;
     if(axis_in.valid){
       state = PREAMBLE; // Send preamble if ready
     }
@@ -201,14 +195,14 @@ rmii_tx_mac_t rmii_tx_mac(
     // Output bottom two bits of data reg
     o.tx_mac_output_data = data_reg(1,0);
     o.tx_mac_output_valid = 1;
+    // Update crc shift reg
+    crc_shift_reg = crc;
     // Last two bits of data byte?
-    uint1_t last_bits_of_byte = (bit_counter == 6);
     uint1_t last_bits_of_last_byte = last_bits_of_byte & last_byte_reg;
     if(last_bits_of_byte){
       if(last_bits_of_last_byte){
         bit_counter = 0;
         state = FCS; // Goto FCS
-        crc32_debug = crc;
       }else{
         // Next byte coming
         // Take input data this cycle to serialize next
@@ -226,7 +220,7 @@ rmii_tx_mac_t rmii_tx_mac(
   }
   else if(state == FCS){ // FCS
     // Output bottom two bits of 32b CRC data
-    o.tx_mac_output_data = crc(1,0);
+    o.tx_mac_output_data = crc_shift_reg(1,0);
     o.tx_mac_output_valid = 1;
     // Last two bits of CRC bytes?
     if(fcs_ctr_end){
@@ -236,12 +230,15 @@ rmii_tx_mac_t rmii_tx_mac(
     else{
       // Next two bits of word
       bit_counter += INC;
-      crc = crc >> 2;
+      crc_shift_reg = crc_shift_reg >> 2;
     }
   }
 
   // Compute CRC as axis in data is registered (SFD and DATA states)
-  uint8_t data_n = axis_in.data.tdata[0];
+  // (with extra regs to help meet tight timing)
+  static uint8_t axis_in_data_reg;
+  static uint1_t axis_in_data_reg_valid; 
+  uint8_t data_n = axis_in_data_reg;
   // Solution from https://www.edaboard.com/threads/crc32-implementation-in-ethernet-exact-way.120700/
   uint32_t crc_table[16] =
   {
@@ -250,10 +247,15 @@ rmii_tx_mac_t rmii_tx_mac(
     0xA005713C, 0xBDB26158, 0x9B6B51F4, 0x86DC4190,
     0xD6D930AC, 0xCB6E20C8, 0xEDB71064, 0xF0000000
   };
-  if(axis_in.valid & o.tx_mac_input_ready){ // For each input data byte
+  if(axis_in_data_reg_valid){ // For each input data byte
     crc = (crc >> 4) ^ crc_table[(crc ^ (data_n >> 0)) & 0x0F];
     crc = (crc >> 4) ^ crc_table[(crc ^ (data_n >> 4)) & 0x0F];
   }
+  if(reset_crc){
+    crc = 0;
+  }
+  axis_in_data_reg = axis_in.data.tdata[0];
+  axis_in_data_reg_valid = axis_in.valid & o.tx_mac_input_ready;
 
   return o;
 }
