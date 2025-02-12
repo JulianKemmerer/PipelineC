@@ -1,5 +1,7 @@
 #include "uintN_t.h"
 #include "compiler.h"
+#include "fifo.h"
+#include "global_fifo.h"
 
 // See pico-ice-sdk/rtl/pico_ice.pcf
 #pragma PART "ICE40UP5K-SG48"
@@ -43,50 +45,6 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define RMII_TX0_WIRE pmod_0b_o3
 #include "board/pico_ice.h"
 
-/*
-// ARTY TEST
-#pragma PART "xc7a35ticsg324-1l" 
-// and pull in board specific top level IO wires
-#define JD_0_IN
-#define JD_1_IN
-#define JD_2_OUT
-#define JD_3_OUT
-#define JD_4_IN
-#define JD_5_IN
-#define JD_6_OUT
-//
-#define LED0_B_OUT
-#define LED0_G_OUT
-#define LED0_R_OUT
-#include "board/arty.h"
-// Use RMII phy wires attached to Arty PMOD D
-//  LAN8720 board is not a real standard PMOD
-//  so is inserted offset in the PMOD connector
-//  Only the required RMII signals are connected
-// (VCC and GND pins connected with extra jumper wires)
-// Note requires Xilinx tcl:
-//  to ignore that the PMOD input clock signal is not high speed clock pin:
-//    create_clock -add -name rmii_clk -period 20.0 -waveform {0 10.0} [get_nets {jd_IBUF[0]}]
-//    set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets {jd_IBUF[0]}]
-//  A=top/inner row, pin1-6
-//    IO1 = rmii_clk
-//    IO2 = rmii_rx0
-//    IO3 = rmii_tx_en
-//    IO4 = rmii_tx1
-#define RMII_CLK_WIRE pmod_jd_a_i1
-#define RMII_RX0_WIRE pmod_jd_a_i2
-#define RMII_TX_EN_WIRE pmod_jd_a_o3
-#define RMII_TX1_WIRE pmod_jd_a_o4
-//  B=bottom/outter row, pin7-12
-//    IO1 = rmii_crs
-//    IO2 = rmii_rx1
-//    IO3 = rmii_tx0
-//    IO4 = NO CONNECT
-#define RMII_CRS_DV_WIRE pmod_jd_b_i1
-#define RMII_RX1_WIRE pmod_jd_b_i2
-#define RMII_TX0_WIRE pmod_jd_b_o3
-*/
-
 #include "net/rmii_wires.c"
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
@@ -102,84 +60,26 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 // (only one clock in this RMII example though, could write as one MAIN)
 // Loopback RX to TX with fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
-#include "global_fifo.h"
+
 //GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 64) // One to hold the payload data
 //GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
-GLOBAL_STREAM_FIFO(axis8_t, rx_fifo, 8) // TODO what is min? 16 doesnt always meet timing? (Xilinx min is 16)
-GLOBAL_STREAM_FIFO(axis8_t, tx_fifo, 8) // TODO what is min? 16 doesnt always meet timing? (Xilinx min is 16)
+GLOBAL_STREAM_FIFO(axis8_t, rx_fifo, 8)
+GLOBAL_STREAM_FIFO(axis8_t, tx_fifo, 8)
 
-// Skid buffer for registering DVR handshake in and out of FIFOs
-typedef struct skid_buf_t{
-  // Outputs from module
-  //  Output .data and .valid stream
-  stream(axis8_t) axis_out;
-  //  Output ready for input axis stream
-  uint1_t ready_for_axis_in;
-}skid_buf_t;
-skid_buf_t skid_buf(
-  // Inputs to module
-  //  Input .data and .valid stream
-  stream(axis8_t) axis_in,
-  //  Input ready for output axis stream
-  uint1_t ready_for_axis_out
-){
-  // Demo logic for skid buffer
-  // Static = register
-  static stream(axis8_t) buff;
-  static stream(axis8_t) skid_buff;
-  // Idea of skid buffer is to switch between two buffers
-  // to skid to a stop while avoiding a comb. path from 
-  //  ready_for_axis_out -> ready_for_axis_in
-  // loosely like a 2-element FIFO...
-  static uint1_t output_is_skid_buff; // aka input_is_buff
+// TODO MOVE SKID BUFFERS INTO FIFOs as DECLARED GLOBAL_STREAM_FIFO_SKID_BUFF
+// THEN MAKE GLOBAL_STREAM_FIFO_SKID_BUFF CDC FIFOS A rmii_eth_mac.c OPTION
+// REORG INTO separate rx/tx mains like original loopback demo? or use one MAIN with local fifo?
 
-  // Output signals
-  skid_buf_t o; // Default value all zeros
-
-  // Connect output based on buffer in use
-  // ready for input if other buffer is empty(not valid)
-  if(output_is_skid_buff){
-    o.axis_out = skid_buff;
-    o.ready_for_axis_in = ~buff.valid;
-  }else{
-    o.axis_out = buff;
-    o.ready_for_axis_in = ~skid_buff.valid;
-  }
-
-  // Input ready writes buffer
-  if(o.ready_for_axis_in){
-    if(output_is_skid_buff){
-      buff = axis_in;
-    }else{
-      skid_buff = axis_in;
-    }
-  }
-
-  // No Output or output ready
-  // clears buffer and switches to next buffer
-  if(~o.axis_out.valid | ready_for_axis_out){
-    if(output_is_skid_buff){
-      skid_buff.valid = 0;
-    }else{
-      buff.valid = 0;
-    }
-    output_is_skid_buff = ~output_is_skid_buff;
-  }
-
-  return o;
-}
-
+SKID_BUF(axis8_t, skid_buf)
 
 // Write into RX FIFO at 50M, Read from TX FIFO
 MAIN_MHZ(rx_fifo_write_tx_fifo_read, RMII_CLK_MHZ)
 void rx_fifo_write_tx_fifo_read(){
-  // TODO MOVE SKID BUFFERS INTO FIFOs as DECLARED
-
   // Skid buffer in path from
   // RX MAC OUT -> RX FIFO WR IN
   skid_buf_t skid = skid_buf(eth_rx_mac_axis_out, rx_fifo_in_ready);
-  rx_fifo_in = skid.axis_out;
+  rx_fifo_in = skid.stream_out;
   // no rx ready eth_rx_mac_axis_out_ready = skid.ready_for_axis_in;
 
   //rx_fifo_in = eth_rx_mac_axis_out;
@@ -188,15 +88,15 @@ void rx_fifo_write_tx_fifo_read(){
   // Skid buffer in path from
   // TX FIFO RD OUT -> TX MAC IN
   skid_buf_t skid = skid_buf(tx_fifo_out, eth_tx_mac_input_ready);
-  eth_tx_mac_axis_in = skid.axis_out;
-  tx_fifo_out_ready = skid.ready_for_axis_in;
+  eth_tx_mac_axis_in = skid.stream_out;
+  tx_fifo_out_ready = skid.ready_for_stream_in;
 
   //eth_tx_mac_axis_in = tx_fifo_out;
   //tx_fifo_out_ready = eth_tx_mac_input_ready;
 }
 
 // Loopback uses small fifo to to connect RX to TX
-#include "fifo.h"
+
 #define ETH_FIFO_DEPTH 16
 FIFO_FWFT(eth_fifo, axis8_t, ETH_FIFO_DEPTH)
 
@@ -290,7 +190,7 @@ MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
   led_r = 1;
-  led_g = 1;
-  led_b = counter >> 24;
+  led_g = counter >> 24;
+  led_b = 1;
   counter += 1;
 }
