@@ -14,6 +14,7 @@ uint1_t rmii_crs_dv; // Input
 
 // Connect individual top level bits to global wires
 MAIN_MHZ(rmii_connect, RMII_CLK_MHZ)
+#pragma FUNC_WIRES rmii_connect
 void rmii_connect(){
   rmii_clk = RMII_CLK_WIRE; // No reg on clock signal
 
@@ -37,6 +38,7 @@ void rmii_connect(){
 
 #ifdef RMII_WIRES_DEBUG
 #pragma FUNC_MARK_DEBUG rmii_wires_debug
+#pragma FUNC_WIRES rmii_wires_debug
 #pragma MAIN rmii_wires_debug
 void rmii_wires_debug(){
   static uint2_t rmii_tx_reg;

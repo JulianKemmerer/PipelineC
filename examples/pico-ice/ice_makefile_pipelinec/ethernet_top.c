@@ -64,35 +64,25 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 //GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 64) // One to hold the payload data
 //GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
-GLOBAL_STREAM_FIFO(axis8_t, rx_fifo, 8)
-GLOBAL_STREAM_FIFO(axis8_t, tx_fifo, 8)
+// Skid buffer in path from
+// RX MAC OUT -> RX FIFO WR IN
+GLOBAL_STREAM_FIFO_SKID_IN_BUFF(axis8_t, rx_fifo, 8)
+// Skid buffer in path from
+// TX FIFO RD OUT -> TX MAC IN
+GLOBAL_STREAM_FIFO_SKID_OUT_BUFF(axis8_t, tx_fifo, 8)
 
 // TODO MOVE SKID BUFFERS INTO FIFOs as DECLARED GLOBAL_STREAM_FIFO_SKID_BUFF
 // THEN MAKE GLOBAL_STREAM_FIFO_SKID_BUFF CDC FIFOS A rmii_eth_mac.c OPTION
 // REORG INTO separate rx/tx mains like original loopback demo? or use one MAIN with local fifo?
 
-SKID_BUF(axis8_t, skid_buf)
-
 // Write into RX FIFO at 50M, Read from TX FIFO
 MAIN_MHZ(rx_fifo_write_tx_fifo_read, RMII_CLK_MHZ)
 void rx_fifo_write_tx_fifo_read(){
-  // Skid buffer in path from
-  // RX MAC OUT -> RX FIFO WR IN
-  skid_buf_t skid = skid_buf(eth_rx_mac_axis_out, rx_fifo_in_ready);
-  rx_fifo_in = skid.stream_out;
-  // no rx ready eth_rx_mac_axis_out_ready = skid.ready_for_axis_in;
-
-  //rx_fifo_in = eth_rx_mac_axis_out;
+  rx_fifo_in = eth_rx_mac_axis_out;
   // no rx ready eth_rx_mac_axis_out_ready = rx_fifo_in_ready;
 
-  // Skid buffer in path from
-  // TX FIFO RD OUT -> TX MAC IN
-  skid_buf_t skid = skid_buf(tx_fifo_out, eth_tx_mac_input_ready);
-  eth_tx_mac_axis_in = skid.stream_out;
-  tx_fifo_out_ready = skid.ready_for_stream_in;
-
-  //eth_tx_mac_axis_in = tx_fifo_out;
-  //tx_fifo_out_ready = eth_tx_mac_input_ready;
+  eth_tx_mac_axis_in = tx_fifo_out;
+  tx_fifo_out_ready = eth_tx_mac_input_ready;
 }
 
 // Loopback uses small fifo to to connect RX to TX
