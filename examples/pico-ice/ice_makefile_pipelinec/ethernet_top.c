@@ -44,10 +44,12 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define PMOD_0B_O3
 #define RMII_TX0_WIRE pmod_0b_o3
 #include "board/pico_ice.h"
-
 #include "net/rmii_wires.c"
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
+// with enabled clock crossing fifos (with skid buffers)
+#define RMII_ETH_MAC_RX_SKID_IN_FIFO_DEPTH 8
+#define RMII_ETH_MAC_TX_SKID_OUT_FIFO_DEPTH 8
 #include "net/rmii_eth_mac.c"
 
 // Include logic for parsing/building ethernet frames (8b AXIS)
@@ -55,52 +57,29 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 // MAC address info we want the fpga to have
 //#define FPGA_MAC 0xA0B1C2D3E4F5
 
+// REORG INTO separate rx/tx mains like original loopback demo? or use one MAIN with local fifo?
 // Loopback structured as separate RX and TX MAINs
 // since typical to have different clocks for RX and TX
 // (only one clock in this RMII example though, could write as one MAIN)
 // Loopback RX to TX with fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
-
 //GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 64) // One to hold the payload data
 //GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
-// Skid buffer in path from
-// RX MAC OUT -> RX FIFO WR IN
-GLOBAL_STREAM_FIFO_SKID_IN_BUFF(axis8_t, rx_fifo, 8)
-// Skid buffer in path from
-// TX FIFO RD OUT -> TX MAC IN
-GLOBAL_STREAM_FIFO_SKID_OUT_BUFF(axis8_t, tx_fifo, 8)
-
-// TODO MOVE SKID BUFFERS INTO FIFOs as DECLARED GLOBAL_STREAM_FIFO_SKID_BUFF
-// THEN MAKE GLOBAL_STREAM_FIFO_SKID_BUFF CDC FIFOS A rmii_eth_mac.c OPTION
-// REORG INTO separate rx/tx mains like original loopback demo? or use one MAIN with local fifo?
-
-// Write into RX FIFO at 50M, Read from TX FIFO
-MAIN_MHZ(rx_fifo_write_tx_fifo_read, RMII_CLK_MHZ)
-void rx_fifo_write_tx_fifo_read(){
-  rx_fifo_in = eth_rx_mac_axis_out;
-  // no rx ready eth_rx_mac_axis_out_ready = rx_fifo_in_ready;
-
-  eth_tx_mac_axis_in = tx_fifo_out;
-  tx_fifo_out_ready = eth_tx_mac_input_ready;
-}
-
-// Loopback uses small fifo to to connect RX to TX
-
+// Loopback uses small fifo to connect RX to TX
 #define ETH_FIFO_DEPTH 16
 FIFO_FWFT(eth_fifo, axis8_t, ETH_FIFO_DEPTH)
-
-// Read from RX FIFO at 12.5M, Write into TX FIFO
-MAIN_MHZ(rx_fifo_read_tx_fifo_write, PLL_CLK_MHZ)
-void rx_fifo_read_tx_fifo_write(){
-
-  eth_fifo_t eth_read = eth_fifo(tx_fifo_in_ready, rx_fifo_out.data, rx_fifo_out.valid);
-  tx_fifo_in.data = eth_read.data_out;
-  tx_fifo_in.valid = eth_read.data_out_valid;
-  rx_fifo_out_ready = eth_read.data_in_ready;
-
-  //tx_fifo_in = rx_fifo_out;
-  //rx_fifo_out_ready = tx_fifo_in_ready;
+// Running in the slower clock domain (not RMII 50MHz)
+MAIN_MHZ(loopback, PLL_CLK_MHZ)
+void loopback(){
+  eth_fifo_t eth_read = eth_fifo(
+    eth_tx_mac_input_ready, 
+    eth_rx_mac_axis_out.data, 
+    eth_rx_mac_axis_out.valid
+  );
+  eth_tx_mac_axis_in.data = eth_read.data_out;
+  eth_tx_mac_axis_in.valid = eth_read.data_out_valid;
+  // no eth_rx_mac_axis_out_ready = eth_read.data_in_ready;
 }
 
 
@@ -179,8 +158,8 @@ void tx_main()
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = 1;
-  led_g = counter >> 24;
+  led_r = counter >> 24;
+  led_g = 1;
   led_b = 1;
   counter += 1;
 }
