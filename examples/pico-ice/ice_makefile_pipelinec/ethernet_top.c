@@ -53,74 +53,42 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "net/rmii_eth_mac.c"
 
 // Include logic for parsing/building ethernet frames (8b AXIS)
-//#include "net/eth_8.h"
+#include "net/eth_8.h"
 // MAC address info we want the fpga to have
-//#define FPGA_MAC 0xA0B1C2D3E4F5
+#define FPGA_MAC 0xA0B1C2D3E4F5
 
-// REORG INTO separate rx/tx mains like original loopback demo? or use one MAIN with local fifo?
 // Loopback structured as separate RX and TX MAINs
 // since typical to have different clocks for RX and TX
-// (only one clock in this RMII example though, could write as one MAIN)
+// (only one clock in this example though, could write as one MAIN)
 // Loopback RX to TX with fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
-//GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 64) // One to hold the payload data
-//GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
+GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 16) // One to hold the payload data
+GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
-// Loopback uses small fifo to connect RX to TX
-#define ETH_FIFO_DEPTH 16
-FIFO_FWFT(eth_fifo, axis8_t, ETH_FIFO_DEPTH)
-// Running in the slower clock domain (not RMII 50MHz)
-MAIN_MHZ(loopback, PLL_CLK_MHZ)
-void loopback(){
-  eth_fifo_t eth_read = eth_fifo(
-    eth_tx_mac_input_ready, 
-    eth_rx_mac_axis_out.data, 
-    eth_rx_mac_axis_out.valid
-  );
-  eth_tx_mac_axis_in.data = eth_read.data_out;
-  eth_tx_mac_axis_in.valid = eth_read.data_out_valid;
-  // no eth_rx_mac_axis_out_ready = eth_read.data_in_ready;
-}
-
-
-/*
-#pragma MAIN rx_main
+MAIN_MHZ(rx_main, PLL_CLK_MHZ)
 void rx_main()
 {  
 	// Receive the ETH frame
   // Eth rx ready if payload fifo+header fifo ready
-  uint1_t skid_buf_out_ready = loopback_payload_fifo_in_ready & loopback_headers_fifo_in_ready;
+  uint1_t eth_rx_out_ready = loopback_payload_fifo_in_ready & loopback_headers_fifo_in_ready;
   
-  #warning "TEMP FAKE MAC MATCH REG"
-  static uint1_t mac_match_reg;
-
   // The rx module
-  uint1_t eth_rx_out_ready;
-  #pragma FEEDBACK eth_rx_out_ready
 	eth_8_rx_t eth_rx = eth_8_rx(eth_rx_mac_axis_out, eth_rx_out_ready);
-
-  // Skid buffer between RX module and fifo
-  skid_buf_t skid = skid_buf(eth_rx.frame, skid_buf_out_ready);
-  eth_rx_out_ready = skid.ready_for_axis_in; // FEEDBACK
-  
-  stream(eth8_frame_t) frame = skid.axis_out;
-
+  stream(eth8_frame_t) frame = eth_rx.frame;
   // Filter out all but matching destination mac frames
   uint1_t mac_match = frame.data.header.dst_mac == FPGA_MAC;
 
   // Write DVR handshake into fifos if mac match
-  uint1_t valid_and_ready = frame.valid & skid_buf_out_ready & mac_match_reg;
+  uint1_t valid_and_ready = frame.valid & eth_rx_out_ready & mac_match;
   // Frame payload and headers go into separate fifos
   loopback_payload_fifo_in.data = frame.data.payload;
   loopback_payload_fifo_in.valid = valid_and_ready;
   // Header only written once at the start of data packet
   loopback_headers_fifo_in.data = frame.data.header;
   loopback_headers_fifo_in.valid = frame.data.start_of_payload & valid_and_ready;
-
-  mac_match_reg = mac_match;
 }
 
-#pragma MAIN tx_main
+MAIN_MHZ(tx_main, PLL_CLK_MHZ)
 void tx_main()
 {  
 	// Wire up the ETH frame to send by reading fifos
@@ -132,34 +100,25 @@ void tx_main()
   // Header and payload need to be valid to send
   frame.data.payload = loopback_payload_fifo_out.data;
   frame.valid = loopback_payload_fifo_out.valid & loopback_headers_fifo_out.valid;
-
-
-  // SKID buffer between FIFOs and TX module
-  uint1_t skid_buf_out_ready;
-  #pragma FEEDBACK skid_buf_out_ready
-  skid_buf_t skid = skid_buf(frame, skid_buf_out_ready);
-
   
   // The tx module
-  eth_8_tx_t eth_tx = eth_8_tx(skid.axis_out, eth_tx_mac_input_ready);
+  eth_8_tx_t eth_tx = eth_8_tx(frame, eth_tx_mac_input_ready);
   eth_tx_mac_axis_in = eth_tx.mac_axis;
-  skid_buf_out_ready = eth_tx.frame_ready; // FEEDBACK
   
   // Read DVR handshake from fifos
-  uint1_t valid_and_ready = skid.axis_out.valid & skid.ready_for_axis_in;
+  uint1_t valid_and_ready = frame.valid & eth_tx.frame_ready;
   // Read payload if was ready
   loopback_payload_fifo_out_ready = valid_and_ready;
   // Ready header if was ready at end of packet
-  loopback_headers_fifo_out_ready = skid.axis_out.data.payload.tlast & valid_and_ready;
+  loopback_headers_fifo_out_ready = frame.data.payload.tlast & valid_and_ready;
 }
-*/
 
-// Santy check clock is working with blinking LED
+// Santy check RMII clock is working with blinking LED
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = counter >> 24;
+  led_r = 1;
   led_g = 1;
-  led_b = 1;
+  led_b = counter >> 24;
   counter += 1;
 }
