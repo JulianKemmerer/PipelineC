@@ -68,12 +68,12 @@ GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hol
 MAIN_MHZ(rx_main, PLL_CLK_MHZ)
 void rx_main()
 {  
-	// Receive the ETH frame
+  // Receive the ETH frame
   // Eth rx ready if payload fifo+header fifo ready
   uint1_t eth_rx_out_ready = loopback_payload_fifo_in_ready & loopback_headers_fifo_in_ready;
   
   // The rx module
-	eth_8_rx_t eth_rx = eth_8_rx(eth_rx_mac_axis_out, eth_rx_out_ready);
+  eth_8_rx_t eth_rx = eth_8_rx(eth_rx_mac_axis_out, eth_rx_out_ready);
   stream(eth8_frame_t) frame = eth_rx.frame;
   // Filter out all but matching destination mac frames
   uint1_t mac_match = frame.data.header.dst_mac == FPGA_MAC;
@@ -91,7 +91,7 @@ void rx_main()
 MAIN_MHZ(tx_main, PLL_CLK_MHZ)
 void tx_main()
 {  
-	// Wire up the ETH frame to send by reading fifos
+  // Wire up the ETH frame to send by reading fifos
   stream(eth8_frame_t) frame;
   // Header matches what was sent other than SRC+DST macs
   frame.data.header = loopback_headers_fifo_out.data;
@@ -117,8 +117,8 @@ void tx_main()
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = 1;
+  led_r = counter >> 24;
   led_g = 1;
-  led_b = counter >> 24;
+  led_b = 1;
   counter += 1;
 }
