@@ -35,7 +35,7 @@ eth_8_rx_t eth_8_rx(
   // State regs
   static eth8_state_t state;
   static eth_header_t header;
-  static uint8_t counter;
+  static uint3_t counter;
 
   // Default no output
   eth_8_rx_t o;
@@ -112,7 +112,7 @@ eth_8_tx_t eth_8_tx(
   // State regs
   static eth8_state_t state;
   static eth_header_t header;
-  static uint8_t counter;
+  static uint3_t counter;
   
   // Default no payload, not ready
   eth_8_tx_t o;
@@ -124,7 +124,9 @@ eth_8_tx_t eth_8_tx(
   if(state == IDLE_DST_MAC){
     // Wait for frame to TX
     if(frame.valid){
-      header = frame.data.header;
+      if(counter==0){
+        header = frame.data.header;
+      }
       o.mac_axis.valid = 1;
       o.mac_axis.data.tdata[0] = uint48_47_40(header.dst_mac);
       if(mac_axis_ready){

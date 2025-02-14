@@ -83,11 +83,11 @@ void rmii_tx_mac_fifo_connect(){
 #pragma MAIN rmii_eth_mac_debug
 void rmii_eth_mac_debug(){
   static stream(axis8_t) eth_rx_mac_axis_out_reg;
-  static uint1_t eth_rx_mac_error_reg; 
+  //static uint1_t eth_rx_mac_error_reg; 
   static stream(axis8_t) eth_tx_mac_axis_in_reg;
   static uint1_t eth_tx_mac_input_ready_reg;
   eth_rx_mac_axis_out_reg = eth_rx_mac_axis_out;
-  eth_rx_mac_error_reg = eth_rx_mac_error;
+  //eth_rx_mac_error_reg = eth_rx_mac_error;
   eth_tx_mac_axis_in_reg = eth_tx_mac_axis_in;
   eth_tx_mac_input_ready_reg = eth_tx_mac_input_ready;  
 }
