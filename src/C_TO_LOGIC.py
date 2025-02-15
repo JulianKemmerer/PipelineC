@@ -10444,6 +10444,9 @@ def GET_GLOBAL_VAR_INFO(parser_state):
         # Skip consts, arent regs
         if ("const" in global_decl.quals) or (name_str in parser_state.global_consts):
             continue
+        # Skip function prototypes
+        if type(global_decl.type) == c_ast.FuncDecl:
+            continue
         var_info = VariableInfo()
         var_info.name = name_str
         c_type, var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
@@ -10812,18 +10815,19 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
                         or parser_state.main_clk_group[rw_main] is None
                         or parser_state.main_clk_group[rw_main] == valid_group
                     ):
-                        print(
-                            "Matching clock domain: main function",
-                            rw_main,
-                            "based on shared global variable",
-                            global_var,
-                            "used with clock domain for main function",
-                            valid_main,
-                            "@",
-                            valid_mhz,
-                            "MHz, Group:",
-                            valid_group,
-                        )
+                        if rw_main not in parser_state.func_marked_wires:
+                            print(
+                                "Matching clock domain: main function",
+                                rw_main,
+                                "based on shared global variable",
+                                global_var,
+                                "used with clock domain for main function",
+                                valid_main,
+                                "@",
+                                valid_mhz,
+                                "MHz, Group:",
+                                valid_group,
+                            )
                         parser_state.main_mhz[rw_main] = valid_mhz
                         parser_state.main_clk_group[rw_main] = valid_group
                         if (
@@ -11336,7 +11340,7 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
         if SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
-            print("Function skipped:", func_def.decl.name)
+            # print("Function skipped:", func_def.decl.name)
             continue
         parser_state.existing_logic = None
         driven_wire_names = []
@@ -11396,7 +11400,8 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
             )
         # Skip functions that are not found in the initial from-main hierarchy mapping
         elif SKIP_PARSING_FUNC(func_def.decl.name, parser_state):
-            print("Function skipped:", func_def.decl.name)
+            # if func_def.decl.name not in parser_state.func_marked_wires:
+            #    print("Function skipped:", func_def.decl.name)
             continue
         # Prims
         elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
@@ -11404,7 +11409,10 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
             parse_func_body = False
         # General user code
         else:
-            print("Elaborating dataflow of function:", func_def.decl.name, flush=True)
+            if func_def.decl.name not in parser_state.func_marked_wires:
+                print(
+                    "Elaborating dataflow of function:", func_def.decl.name, flush=True
+                )
 
         # Each func def produces a single logic item
         parser_state.existing_logic = None
