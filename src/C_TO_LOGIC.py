@@ -1936,6 +1936,8 @@ def C_AST_NODE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
         return C_AST_COMPOUND_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.Decl:
         return C_AST_DECL_TO_LOGIC(c_ast_node, prepend_text, parser_state)
+    elif type(c_ast_node) == c_ast.DeclList:
+        return C_AST_DECL_LIST_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.If:
         return C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state)
     elif type(c_ast_node) == c_ast.Return:
@@ -5207,6 +5209,15 @@ def C_AST_INIT_TO_LOGIC(
         # Update for next expr
         pos += 1
 
+    return parser_state.existing_logic
+
+
+def C_AST_DECL_LIST_TO_LOGIC(c_ast_node, prepend_text, parser_state):
+    # Apparently just a list of decls...
+    for decl in c_ast_node.decls:
+        parser_state.existing_logic = C_AST_DECL_TO_LOGIC(
+            decl, prepend_text, parser_state
+        )
     return parser_state.existing_logic
 
 
