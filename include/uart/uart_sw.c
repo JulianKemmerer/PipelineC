@@ -1,5 +1,9 @@
 // Code wrapping for read+writing UART file interface
 
+#ifndef UART_TTY_DEVICE
+#define UART_TTY_DEVICE "/dev/ttyUSB1"
+#endif 
+
 // Thanks https://stackoverflow.com/questions/6947413/how-to-open-read-and-write-from-serial-port-in-c
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,7 +77,7 @@ int uart_fd;
 // Wrapper around uart init
 int init_uart()
 {
-  char *portname = "/dev/ttyUSB1";
+  char *portname = UART_TTY_DEVICE;
   uart_fd = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
   if (uart_fd < 0)
   {
