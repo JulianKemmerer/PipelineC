@@ -184,12 +184,15 @@ GLOBAL_FIFO(uint8_t, probe0_fifo, 16)
 GLOBAL_FIFO(uint1_t, probe0_rd_en_fifo, 16)
 PROBE_FUNCS(0)
 // 1
-#ifdef probe1_t
+#ifdef probe1
 probe1_t probe1;
 uint1_t probe1_rd_en;
 GLOBAL_FIFO(uint8_t, probe1_fifo, 16)
 GLOBAL_FIFO(uint1_t, probe1_rd_en_fifo, 16)
 PROBE_FUNCS(1)
+#endif
+#ifdef probe2
+#error "More probes!"
 #endif
 
 // Main probes fsm
@@ -198,9 +201,12 @@ typedef enum probes_state_t
   WAIT_CMD,
   PROBE0_RD_REQ,
   PROBE0_RD_RESP,
-  #ifdef probe1_t
+  #ifdef probe1
   PROBE1_RD_REQ,
   PROBE1_RD_RESP
+  #endif
+  #ifdef probe2
+  #error "More probes!"
   #endif
 }probes_state_t;
 // Probes main module on uart clock for now
@@ -240,8 +246,11 @@ void probes()
     {
       // What command to do? (specific to if probe is read or write)
       if     (wait_data.cmd.probe_id == 0) state = PROBE0_RD_REQ;
-      #ifdef probe1_t
+      #ifdef probe1
       else if(wait_data.cmd.probe_id == 1) state = PROBE1_RD_REQ;
+      #endif
+      #ifdef probe2
+      #error "More probes!"
       #endif
     }
     byte_pos = 0;
@@ -249,9 +258,12 @@ void probes()
   // PROBES
   else if(state==PROBE0_RD_REQ) {  PROBE_RD_REQ(0) }
   else if(state==PROBE0_RD_RESP){ PROBE_RD_RESP(0) }
-  #ifdef probe1_t
+  #ifdef probe1
   else if(state==PROBE1_RD_REQ) {  PROBE_RD_REQ(1) }
   else if(state==PROBE1_RD_RESP){ PROBE_RD_RESP(1) }
+  #endif
+  #ifdef probe2
+  #error "More probes!"
   #endif
   
   // Write uart rx and tx output signals

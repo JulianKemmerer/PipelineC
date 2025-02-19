@@ -9,12 +9,10 @@
 #define UART_TTY_DEVICE "/dev/ttyACM1"
 #include "uart/uart_sw.c"
 
-// Generated code in the pipelinec output directory
-
-
-// User probe info
+// Info about user probes in hardware
+#define probe0 my_debug0
+//#define probe1 my_debug1
 #include "examples/pico-ice/ice_makefile_pipelinec/my_debug_signals.h"
-//#include "probe1.h"
 
 void write_cmd(probes_cmd_t cmd)
 {
@@ -33,8 +31,11 @@ void do_cmd(probes_cmd_t cmd)
   // Read how many bytes?
   size_t probe_num_bytes = 0;
   if(cmd.probe_id == 0) probe_num_bytes = PROBE0_SIZE;
-  #ifdef probe1_t
+  #ifdef probe1
   if(cmd.probe_id == 1) probe_num_bytes = PROBE1_SIZE;
+  #endif
+  #ifdef probe2
+  #error "More probes!"
   #endif
   
   // Do read of n bytes
@@ -47,13 +48,16 @@ void do_cmd(probes_cmd_t cmd)
     probe0_bytes_to_type(buff,&probe0);
     probe0_print(probe0);
   }
-  #ifdef probe1_t
+  #ifdef probe1
   if(cmd.probe_id == 1) 
   {
     probe1_t probe1;
     probe1_bytes_to_type(buff,&probe1);
     probe1_print(probe1);
   }
+  #endif
+  #ifdef probe2
+  #error "More probes!"
   #endif
 }
 
