@@ -43,13 +43,28 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define RMII_RX1_WIRE pmod_0b_i2
 #define PMOD_0B_O3
 #define RMII_TX0_WIRE pmod_0b_o3
+/*// UART
+#define ICE_25_OUT
+#define UART_TX_OUT_WIRE ice_25
+#define ICE_27_IN
+#define UART_RX_IN_WIRE ice_27
+#define UART_CLK_MHZ PLL_CLK_MHZ
+#define UART_BAUD 115200*/
 #include "board/pico_ice.h"
 #include "net/rmii_wires.c"
 
+/*// Debug probes demo
+//  define user debug signals in header shared with software as probe0
+#define probe0 payload_debug
+#define probe1 mac_debug
+#include "eth_debug_probes.h"
+//  then include UART based probes module
+#include "debug_probes/uart_probes.c"*/
+
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
 // with enabled clock crossing fifos (with skid buffers)
-#define RMII_ETH_MAC_RX_SKID_IN_FIFO_DEPTH 8
-#define RMII_ETH_MAC_TX_SKID_OUT_FIFO_DEPTH 8
+#define RMII_ETH_MAC_RX_SKID_IN_FIFO_DEPTH 4
+#define RMII_ETH_MAC_TX_SKID_OUT_FIFO_DEPTH 4
 #include "net/rmii_eth_mac.c"
 
 // Include logic for parsing/building ethernet frames (8b AXIS)
@@ -62,7 +77,7 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 // (only one clock in this example though, could write as one MAIN)
 // Loopback RX to TX with fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
-GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 16) // One to hold the payload data
+GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 32) // One to hold the payload data
 GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
 MAIN_MHZ(rx_main, PLL_CLK_MHZ)
@@ -111,14 +126,27 @@ void tx_main()
   loopback_payload_fifo_out_ready = valid_and_ready;
   // Ready header if was ready at end of packet
   loopback_headers_fifo_out_ready = frame.data.payload.tlast & valid_and_ready;
+
+  /*// Connect to debug probes
+  // Why does removing _reg's and using debug signals directly cause more resource use?
+  static payload_debug_t payload_debug_reg;
+  payload_debug = payload_debug_reg;
+  static mac_debug_t mac_debug_reg;
+  mac_debug = mac_debug_reg;
+  if(valid_and_ready){
+    mac_debug_reg.mac_lsb = frame.data.header.dst_mac;
+    mac_debug_reg.mac_msb = frame.data.header.dst_mac >> 32;
+    ARRAY_1SHIFT_INTO_TOP(payload_debug_reg.tdata, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tdata[0])
+    ARRAY_1SHIFT_INTO_TOP(payload_debug_reg.tlast, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tlast)
+  }*/
 }
 
 // Santy check RMII clock is working with blinking LED
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = counter >> 24;
+  led_r = 1;
   led_g = 1;
-  led_b = 1;
+  led_b = counter >> 24;
   counter += 1;
 }
