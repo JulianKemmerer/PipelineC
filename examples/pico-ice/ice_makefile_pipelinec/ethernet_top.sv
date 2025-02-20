@@ -12,6 +12,9 @@ module ethernet_top(
   // PipelineC output HDL instance
   pipelinec_top pipelinec_inst(
     .pll_clk_val_input(pll_clk),
+    /* // UART
+    .ice_25_return_output(ICE_25),
+    .ice_27_val_input(ICE_27),*/
     // RGB LED
     .ice_39_return_output(ICE_39),
     .ice_40_return_output(ICE_40),
