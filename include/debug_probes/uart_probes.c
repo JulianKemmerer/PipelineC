@@ -180,15 +180,15 @@ if(data_fifo_rd_en & tx_word.valid) \
 // 0
 probe0_t probe0;
 uint1_t probe0_rd_en;
-GLOBAL_FIFO(uint8_t, probe0_fifo, 16)
-GLOBAL_FIFO(uint1_t, probe0_rd_en_fifo, 16)
+GLOBAL_FIFO(uint8_t, probe0_fifo, 2)
+GLOBAL_FIFO(uint1_t, probe0_rd_en_fifo, 2)
 PROBE_FUNCS(0)
 // 1
 #ifdef probe1
 probe1_t probe1;
 uint1_t probe1_rd_en;
-GLOBAL_FIFO(uint8_t, probe1_fifo, 16)
-GLOBAL_FIFO(uint1_t, probe1_rd_en_fifo, 16)
+GLOBAL_FIFO(uint8_t, probe1_fifo, 2)
+GLOBAL_FIFO(uint1_t, probe1_rd_en_fifo, 2)
 PROBE_FUNCS(1)
 #endif
 #ifdef probe2
