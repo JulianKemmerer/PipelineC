@@ -15,7 +15,7 @@ for tok in text.split("\n"):
     if ":" in tok:
         # Get field names
         field_names = tok.split(":")[1].strip().split(",")
-        print("field_names", field_names)
+        # print("field_names", field_names)
         include = True
 
 # Each field has a list of values

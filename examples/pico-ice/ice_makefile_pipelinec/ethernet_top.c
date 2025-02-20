@@ -54,11 +54,11 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "net/rmii_wires.c"
 
 // Debug probes demo
-//  define user debug signals in header shared with software as probe0
+//  define user debug signals in header shared with software 
 #include "eth_debug_probes.h"
+//  as probes 0+1 in UART based debug probes module
 #define probe0 payload_debug
 #define probe1 mac_debug
-//  then include UART based probes module
 #include "debug_probes/uart_probes.c"
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
@@ -129,15 +129,15 @@ void tx_main()
 
   // Connect to debug probes
   // Why does removing _reg's and using debug signals directly cause more resource use?
-  static payload_debug_t payload_debug_reg;
-  payload_debug = payload_debug_reg;
-  static mac_debug_t mac_debug_reg;
-  mac_debug = mac_debug_reg;
+  //static payload_debug_t payload_debug_reg;
+  //payload_debug = payload_debug_reg;
+  //static mac_debug_t mac_debug_reg;
+  //mac_debug = mac_debug_reg;
   if(valid_and_ready){
-    mac_debug_reg.mac_lsb = frame.data.header.dst_mac;
-    mac_debug_reg.mac_msb = frame.data.header.dst_mac >> 32;
-    ARRAY_1SHIFT_INTO_TOP(payload_debug_reg.tdata, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tdata[0])
-    ARRAY_1SHIFT_INTO_TOP(payload_debug_reg.tlast, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tlast)
+    mac_debug.mac_lsb = frame.data.header.dst_mac;
+    mac_debug.mac_msb = frame.data.header.dst_mac >> 32;
+    ARRAY_1SHIFT_INTO_TOP(payload_debug.tdata, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tdata[0])
+    ARRAY_1SHIFT_INTO_TOP(payload_debug.tlast, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tlast)
   }
 }
 

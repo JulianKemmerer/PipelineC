@@ -35,7 +35,7 @@ typedef struct mac_debug_t{
   uint16_t mac_msb;
 }mac_debug_t;
 void mac_debug_print(mac_debug_t dbg){
-  printf("mac_msb mac_lsb 0x %x %x\n", dbg.mac_msb, dbg.mac_lsb);
+  printf("mac_msb mac_lsb 0x%04x%08x\n", dbg.mac_msb, dbg.mac_lsb);
 }
 #ifdef __PIPELINEC__
 #include "mac_debug_t_bytes_t.h"
