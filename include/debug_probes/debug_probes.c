@@ -10,9 +10,9 @@
 #include "uart/uart_sw.c"
 
 // Info about user probes in hardware
+#include "examples/pico-ice/ice_makefile_pipelinec/eth_debug_probes.h"
 #define probe0 payload_debug
 #define probe1 mac_debug
-#include "examples/pico-ice/ice_makefile_pipelinec/eth_debug_probes.h"
 
 // And final constants for debug probes as describes below
 #include "debug_probes/debug_probes.h"
