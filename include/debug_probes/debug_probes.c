@@ -3,16 +3,19 @@
 
 #include <stdint.h>
 #include <math.h>
-#include "debug_probes/debug_probes.h"
 
 // 'Software' side of uart
 #define UART_TTY_DEVICE "/dev/ttyACM1"
+#define UART_BAUD B115200
 #include "uart/uart_sw.c"
 
 // Info about user probes in hardware
-#define probe0 my_debug0
-//#define probe1 my_debug1
-#include "examples/pico-ice/ice_makefile_pipelinec/my_debug_signals.h"
+#define probe0 payload_debug
+#define probe1 mac_debug
+#include "examples/pico-ice/ice_makefile_pipelinec/eth_debug_probes.h"
+
+// And final constants for debug probes as describes below
+#include "debug_probes/debug_probes.h"
 
 void write_cmd(probes_cmd_t cmd)
 {

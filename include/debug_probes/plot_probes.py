@@ -12,7 +12,7 @@ for tok in text.split("\n"):
     if include:
         lines.append(tok)
     # Look for probe names
-    if tok.startswith("PROBE"):
+    if ":" in tok:
         # Get field names
         field_names = tok.split(":")[1].strip().split(",")
         print("field_names", field_names)
@@ -49,7 +49,7 @@ with VCDWriter(fp, timescale="1 ns", date="today") as writer:
         try:
             int_val = int(field_value_lists[field_i][0])
             field_type = "integer"  #'real'
-            field_size = 64  # hardcode assume big enough for now
+            field_size = 64  # hardcode assume big enough for now, TODO FIX
             field_var = writer.register_var(
                 "debug_probes", field_name, field_type, size=field_size
             )  # init=1.23
@@ -60,7 +60,8 @@ with VCDWriter(fp, timescale="1 ns", date="today") as writer:
         field_vars.append(field_var)
 
     # Then values values
-    for value_i in range(0, len(field_value_lists[0])):  # Assume all arrays same len
+    n_values = len(field_value_lists[0])  # Assume all arrays same len
+    for value_i in range(0, n_values):
         for field_i in range(0, len(field_names)):
             field_name = field_names[field_i]
             field_type = field_types[field_i]
@@ -75,6 +76,13 @@ with VCDWriter(fp, timescale="1 ns", date="today") as writer:
             # print("value",value)
             # print("timestamp",timestamp)
             writer.change(field_var, timestamp, value)
+
+    # Final change to make final cycle show up
+    timestamp = n_values
+    for field_i in range(0, len(field_names)):
+        field_name = field_names[field_i]
+        field_var = field_vars[field_i]
+        writer.change(field_var, timestamp, "X")
 
 # print("fp.name",fp.name)
 

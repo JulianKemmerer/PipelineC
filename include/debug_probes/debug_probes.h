@@ -32,5 +32,21 @@ typedef struct probes_cmd_t
 #define probe0_t_array_1_t      PPCAT(probe0_t,_array_1_t)
 
 #ifdef probe1
+// PROBE1
+#ifndef probe1_print
+#define probe1_print            PPCAT(probe1,_print)
+#endif
+#ifndef probe1_t
+#define probe1_t                PPCAT(probe1,_t)
+#endif
+#define PROBE1_SIZE             PPCAT(probe1_t,_SIZE)
+#define probe1_size_t           PPCAT(probe1_t,_size_t)
+#define probe1_bytes_to_type    PPCAT(bytes_to_,probe1_t)
+#define probe1_type_to_bytes    PPCAT(probe1_t,_to_bytes)
+#define probe1_t_bytes_t        PPCAT(probe1_t,_bytes_t)
+#define probe1_t_array_1_t      PPCAT(probe1_t,_array_1_t)
+#endif
+
+#ifdef probe2
 #error "More probes!"
 #endif
