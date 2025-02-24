@@ -4,6 +4,8 @@
 
 // Use global wires to connect up a new main func instance
 
+#define global_func_inst_counter_t uint16_t
+
 #define GLOBAL_FUNC_INST(inst_name, out_type, func_name, in_type) \
 /* Global wires connected to instance */ \
 in_type inst_name##_in; \
@@ -160,7 +162,7 @@ PRAGMA_MESSAGE(FUNC_WIRES PPCAT(inst_name,_handshake))\
 MAIN(PPCAT(inst_name,_handshake))\
 void PPCAT(inst_name,_handshake)(){\
   /* Keep count of how many words in FIFO*/\
-  static uint16_t fifo_count;\
+  static global_func_inst_counter_t fifo_count;\
   /* Signal ready for input if room in fifo*/\
   PPCAT(inst_name,_in_ready) = (fifo_count < MAX_IN_FLIGHT);\
   /* Logic for input side of pipeline without handshake*/\

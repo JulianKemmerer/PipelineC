@@ -1,6 +1,8 @@
 #pragma once
 #include "arrays.h"
 
+#define deserializer_counter_t uint16_t
+
 // OUTSIZE must be ?= or divisible by INSIZE ??
 #define deserializer_in_to_out(name, data_t, IN_SIZE, OUT_SIZE) \
 typedef struct name##_t \
@@ -13,7 +15,7 @@ name##_t name(data_t in_data[IN_SIZE], uint1_t in_data_valid, uint1_t out_data_r
 { \
   static data_t out_buffer[OUT_SIZE]; \
   static uint1_t out_buffer_valid; \
-  static uint32_t out_counter; /*TODO: reduce bits?*/ \
+  static deserializer_counter_t out_counter;\
   name##_t rv; \
   /* Read if buffer empty*/  \
   rv.in_data_ready = !out_buffer_valid; \
