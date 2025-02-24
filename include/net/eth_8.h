@@ -19,7 +19,8 @@ typedef enum eth8_state_t {
   IDLE_DST_MAC,
   SRC_MAC,
   LEN_TYPE,
-  PAYLOAD
+  PAYLOAD,
+  PADDING
 } eth8_state_t;
 
 // 8b RX FSM
@@ -112,12 +113,14 @@ eth_8_tx_t eth_8_tx(
   // State regs
   static eth8_state_t state;
   static eth_header_t header;
-  static uint3_t counter;
+  static uint6_t counter;
   
   // Default no payload, not ready
   eth_8_tx_t o;
   o.mac_axis.valid = 0;
   o.frame_ready = 0;
+  // Count payload bytes for min size
+  uint1_t undersized_payload = counter < ((64-14)-1);
 
   // FSM using counter to build bytes of each ethernet field
   // MAC+LEN/TYPE MSBs are first, shift from top
@@ -168,11 +171,36 @@ eth_8_tx_t eth_8_tx(
   else if(state == PAYLOAD){
     // Output
     o.mac_axis.data = frame.data.payload;
-    o.mac_axis.valid = frame.valid;
+    // tlast let through if not undersized
+    o.mac_axis.data.tlast = undersized_payload ? 0 : frame.data.payload.tlast;
+    o.mac_axis.valid = frame.valid; 
     o.frame_ready = mac_axis_ready;
-    if(o.mac_axis.data.tlast & o.mac_axis.valid & mac_axis_ready){
-      state = IDLE_DST_MAC;
-      counter = 0;
+    if(o.mac_axis.valid & mac_axis_ready){
+      if(frame.data.payload.tlast){
+        // Add padding after user frame payload?
+        if(undersized_payload){
+          state = PADDING;
+        }else{
+          state = IDLE_DST_MAC;
+          counter = 0;
+        }
+      }
+      if(undersized_payload){
+        counter += 1;
+      }
+    }
+  }
+  // Zeros for extra padding as needed
+  else if(state == PADDING){
+    o.mac_axis.data.tdata[0] = 0;
+    o.mac_axis.data.tlast = ~undersized_payload;
+    o.mac_axis.valid = 1;
+    if(o.mac_axis.valid & mac_axis_ready){
+      counter += 1;
+      if(o.mac_axis.data.tlast){
+        state = IDLE_DST_MAC;
+        counter = 0;
+      }
     }
   }
   return o;
