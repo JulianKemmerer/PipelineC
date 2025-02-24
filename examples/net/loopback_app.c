@@ -47,8 +47,8 @@
 // Include logic for parsing/building ethernet frames (8b AXIS)
 #include "net/eth_8.h"
 
-// MAC address info we want the fpga to have
-#define FPGA_MAC 0xA0B1C2D3E4F5
+// MAC address info we want the fpga to have (shared with software)
+#include "fpga_mac.h"
 
 // Loopback structured as separate RX and TX MAINs
 // since typical to have different clocks for RX and TX

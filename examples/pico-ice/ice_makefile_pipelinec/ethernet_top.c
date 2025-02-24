@@ -1,7 +1,5 @@
 #include "uintN_t.h"
 #include "compiler.h"
-#include "fifo.h"
-#include "global_fifo.h"
 
 // See pico-ice-sdk/rtl/pico_ice.pcf
 #pragma PART "ICE40UP5K-SG48"
@@ -53,13 +51,13 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "board/pico_ice.h"
 #include "net/rmii_wires.c"
 
-// Debug probes demo
+/* // Debug probes demo
 //  define user debug signals in header shared with software 
 #include "eth_debug_probes.h"
 //  as probes 0+1 in UART based debug probes module
 #define probe0 payload_debug
 #define probe1 mac_debug
-#include "debug_probes/uart_probes.c"
+#include "debug_probes/uart_probes.c" */
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
 // with enabled clock crossing fifos (with skid buffers)
@@ -69,35 +67,72 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 
 // Include logic for parsing/building ethernet frames (8b AXIS)
 #include "net/eth_8.h"
-// MAC address info we want the fpga to have
-#define FPGA_MAC 0xA0B1C2D3E4F5
+// MAC address info we want the fpga to have (shared with software)
+#include "examples/net/fpga_mac.h"
 
+// Instead of loopback, can wire up a demo of doing some work
+// TODO TEST LOOPBACK //#define ETH_DEMO_IS_WORK_PIPELINE
+#ifdef ETH_DEMO_IS_WORK_PIPELINE
+// Include definition of work to compute
+#include "examples/net/work.h"
+// Global stream pipeline interface looks same as FIFOs
+#include "global_func_inst.h"
+GLOBAL_VALID_READY_PIPELINE_INST(work_pipeline, work_outputs_t, work, work_inputs_t, 4)
+// De/serialize 1 byte at a time to/from the types for the work compute
+#include "stream/deserializer.h"
+#include "stream/serializer.h"
+type_byte_deserializer(work_deserialize, 1, work_inputs_t)
+type_byte_serializer(work_serialize, work_outputs_t, 1)
+#else
 // Loopback structured as separate RX and TX MAINs
 // since typical to have different clocks for RX and TX
 // (only one clock in this example though, could write as one MAIN)
 // Loopback RX to TX with fifos
 //  the FIFOs have valid,ready streaming handshake interfaces
 GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 32) // One to hold the payload data
+#endif
+// Work demo and regular loopback use headers FIFO
 GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
 MAIN_MHZ(rx_main, PLL_CLK_MHZ)
 void rx_main()
 {  
   // Receive the ETH frame
+  #ifdef ETH_DEMO_IS_WORK_PIPELINE
+  // Eth rx ready if deser+header fifo ready
+  uint1_t deser_ready_for_input;
+  #pragma FEEDBACK deser_ready_for_input
+  uint1_t eth_rx_out_ready = deser_ready_for_input & loopback_headers_fifo_in_ready;
+  #else
   // Eth rx ready if payload fifo+header fifo ready
   uint1_t eth_rx_out_ready = loopback_payload_fifo_in_ready & loopback_headers_fifo_in_ready;
-  
-  // The rx module
+  #endif
+
+  // The rx 'parsing' module
   eth_8_rx_t eth_rx = eth_8_rx(eth_rx_mac_axis_out, eth_rx_out_ready);
   stream(eth8_frame_t) frame = eth_rx.frame;
   // Filter out all but matching destination mac frames
   uint1_t mac_match = frame.data.header.dst_mac == FPGA_MAC;
 
-  // Write DVR handshake into fifos if mac match
+  // Write DVR handshake if mac match
   uint1_t valid_and_ready = frame.valid & eth_rx_out_ready & mac_match;
+  #ifdef ETH_DEMO_IS_WORK_PIPELINE
+  // Deserialize and connect to work pipeline input
+  uint8_t deser_in_data[1] = {frame.data.payload.tdata[0]};
+  uint1_t deser_output_ready = work_pipeline_in_ready;
+  work_deserialize_t deser = work_deserialize(
+    deser_in_data,
+    valid_and_ready,
+    deser_output_ready
+  );
+  deser_ready_for_input = deser.in_data_ready; // FEEDBACK
+  work_pipeline_in.data = deser.data;
+  work_pipeline_in.valid = deser.valid;
+  #else
   // Frame payload and headers go into separate fifos
   loopback_payload_fifo_in.data = frame.data.payload;
   loopback_payload_fifo_in.valid = valid_and_ready;
+  #endif
   // Header only written once at the start of data packet
   loopback_headers_fifo_in.data = frame.data.header;
   loopback_headers_fifo_in.valid = frame.data.start_of_payload & valid_and_ready;
@@ -105,29 +140,51 @@ void rx_main()
 
 MAIN_MHZ(tx_main, PLL_CLK_MHZ)
 void tx_main()
-{  
-  // Wire up the ETH frame to send by reading fifos
+{ 
+  // Wire up the ETH frame to send
   stream(eth8_frame_t) frame;
   // Header matches what was sent other than SRC+DST macs
   frame.data.header = loopback_headers_fifo_out.data;
   frame.data.header.dst_mac = frame.data.header.src_mac; // Send back to where came from
   frame.data.header.src_mac = FPGA_MAC; // From FPGA
-  // Header and payload need to be valid to send
+
+  #ifdef ETH_DEMO_IS_WORK_PIPELINE
+  // Serialize results coming out of work pipeline
+  uint1_t ser_output_ready;
+  #pragma FEEDBACK ser_output_ready
+  work_serialize_t ser = work_serialize(
+    work_pipeline_out.data,
+    work_pipeline_out.valid,
+    ser_output_ready
+  );
+  // Header and serializer payload need to be valid to send
+  work_pipeline_out_ready = ser.in_data_ready;
+  frame.data.payload.tdata = ser.out_data;
+  frame.data.payload.tlast = ser.last;
+  frame.valid = ser.valid & loopback_headers_fifo_out.valid;
+  #else
+  // Header and loopback payload need to be valid to send
   frame.data.payload = loopback_payload_fifo_out.data;
   frame.valid = loopback_payload_fifo_out.valid & loopback_headers_fifo_out.valid;
-  
-  // The tx module
+  #endif
+
+  // The tx 'building' module
   eth_8_tx_t eth_tx = eth_8_tx(frame, eth_tx_mac_input_ready);
   eth_tx_mac_axis_in = eth_tx.mac_axis;
   
-  // Read DVR handshake from fifos
+  // Read DVR handshake from inputs
   uint1_t valid_and_ready = frame.valid & eth_tx.frame_ready;
-  // Read payload if was ready
+  #ifdef ETH_DEMO_IS_WORK_PIPELINE
+  // Read payload from serializer if was ready
+  ser_output_ready = valid_and_ready; // FEEDBACK
+  #else
+  // Read payload from fifo if was ready
   loopback_payload_fifo_out_ready = valid_and_ready;
-  // Ready header if was ready at end of packet
+  #endif
+  // Read header if was ready at end of packet
   loopback_headers_fifo_out_ready = frame.data.payload.tlast & valid_and_ready;
 
-  // Connect to debug probes
+  /*// Connect to debug probes
   // Why does removing _reg's and using debug signals directly cause more resource use?
   //static payload_debug_t payload_debug_reg;
   //payload_debug = payload_debug_reg;
@@ -138,15 +195,15 @@ void tx_main()
     mac_debug.mac_msb = frame.data.header.dst_mac >> 32;
     ARRAY_1SHIFT_INTO_TOP(payload_debug.tdata, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tdata[0])
     ARRAY_1SHIFT_INTO_TOP(payload_debug.tlast, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tlast)
-  }
+  }*/
 }
 
 // Santy check RMII clock is working with blinking LED
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = counter >> 24;
-  led_g = 1;
+  led_r = 1;
+  led_g = counter >> 24;
   led_b = 1;
   counter += 1;
 }
