@@ -1,5 +1,6 @@
 // TODO how to make switchable between different MII interfaces?
 #include "rmii_eth_mac.h"
+#include "global_fifo.h"
 
 // Optional to include a FIFO (with built in skid buffers)
 #ifdef RMII_ETH_MAC_RX_SKID_IN_FIFO_DEPTH
