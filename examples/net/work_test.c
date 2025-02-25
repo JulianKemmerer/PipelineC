@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <pthread.h>
 #include <unistd.h> // for close
+#include <stdint.h>
 
 #define NUM_THREADS 1 // for cpu testing, 2 threads per 4 cores?
 
@@ -19,7 +20,9 @@ double get_wall_time(){
     return (double)time.tv_sec + (double)time.tv_usec * .000001;
 }
 
-// Use eth to inputs and outputs
+// Use eth to transport inputs and outputs
+#include "fpga_mac.h" // MAC addr to expect from FPGA
+#define DEFAULT_IF	"enx0050b6248f73" // host ethernet interface to use
 #include "eth_sw.c"
 
 // Definition of work related stuff
