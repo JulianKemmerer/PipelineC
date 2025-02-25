@@ -117,10 +117,11 @@ eth_8_tx_t eth_8_tx(
   
   // Default no payload, not ready
   eth_8_tx_t o;
+  o.mac_axis.data.tkeep[0] = 1;
   o.mac_axis.valid = 0;
   o.frame_ready = 0;
   // Count payload bytes for min size
-  uint1_t undersized_payload = counter < ((64-14)-1);
+  uint1_t undersized_payload = counter < ((64-(14+4))-1);
 
   // FSM using counter to build bytes of each ethernet field
   // MAC+LEN/TYPE MSBs are first, shift from top
