@@ -37,6 +37,11 @@ typedef struct axis16_t
 } axis16_t;
 DECL_STREAM_TYPE(axis16_t)
 
+// TODO make this into macro for all axis widths
+uint1_t axis8_keep_count(stream(axis8_t) s){
+  return s.valid; // & s.data.tkeep[0];
+}
+
 // Convert to funcs taking ex. an axis16_t instead of just the .keep?
 
 uint2_t axis16_keep_bytes(uint2_t keep)
@@ -232,6 +237,88 @@ axis32_to_axis8_t axis32_to_axis8(stream(axis32_t) axis_in, uint1_t axis_out_rea
     s_axis_tkeep(0) <= axis_in.data.tkeep(0)(0); \n\
   ");
 }
+
+// Module to limit the max size/length of AXIS frames by dropping excess data
+#define axis_max_len_limiter_count_t uint16_t
+#define axis_max_len_limiter(axis_bits) \
+typedef struct axis##axis_bits##_max_len_limiter_t \
+{ \
+  stream(axis##axis_bits##_t) out_stream; \
+  uint1_t ready_for_in_stream; \
+} axis##axis_bits##_max_len_limiter_t; \
+axis##axis_bits##_max_len_limiter_t axis##axis_bits##_max_len_limiter(axis_max_len_limiter_count_t max_byte_len, stream(axis##axis_bits##_t) in_stream, uint1_t ready_for_out_stream) \
+{ \
+  static axis_max_len_limiter_count_t counter;\
+  /* Allow passthrough if below limit*/\
+  axis##axis_bits##_max_len_limiter_t o; \
+  axis_max_len_limiter_count_t last_word_limit = (max_byte_len-(axis_bits/8));\
+  uint1_t last = counter == last_word_limit;\
+  uint1_t below = counter <= last_word_limit;\
+  if(below){\
+    o.out_stream = in_stream;\
+    o.ready_for_in_stream = ready_for_out_stream;\
+  }else{\
+    /* All incoming data above limit is dropped*/\
+    o.out_stream.valid = 0;\
+    o.ready_for_in_stream = 1;\
+  }\
+  /* Force tlast if at the limit */\
+  if(last){\
+    o.out_stream.data.tlast = 1;\
+  }\
+  /* Count as transfers happen*/\
+  if(o.out_stream.valid & ready_for_out_stream){\
+    if(below){/*Dont need check?*/\
+      counter += axis##axis_bits##_keep_count(in_stream);\
+    }\
+  }\
+  /*Reset counter at last of input stream*/\
+  if(in_stream.data.tlast & in_stream.valid & o.ready_for_in_stream){\
+    counter = 0;\
+  }\
+  return o; \
+}
+// Decls for various widths TODO more
+axis_max_len_limiter(8)
+
+// Mostly a deser instance with added size limiter for one struct per packet
+// sizeof(out_t) must be >= or divisble by axis_bits?
+#define axis_packet_to_type(name,axis_bits,out_t) \
+type_byte_deserializer(name##_type_byte_deserializer, (axis_bits/8), out_t) \
+typedef struct name##_t \
+{ \
+  out_t data; \
+  uint1_t valid; \
+  uint1_t packet_ready; \
+} name##_t; \
+name##_t name(stream(axis##axis_bits##_t) packet, uint1_t output_ready) \
+{ \
+  /* Limit size of packet to sizeof(out_t) into normal deserializer*/\
+  name##_t o; \
+  uint1_t ready_for_limter_out;\
+  FEEDBACK(ready_for_limter_out)\
+  axis##axis_bits##_max_len_limiter_t limiter = axis##axis_bits##_max_len_limiter(\
+    sizeof(out_t),\
+    packet,\
+    ready_for_limter_out\
+  );\
+  o.packet_ready = limiter.ready_for_in_stream;\
+  stream(axis##axis_bits##_t) limited_packet = limiter.out_stream;\
+  /* AXIS to byte stream */ \
+  uint8_t input_data[(axis_bits/8)]; \
+  uint32_t i; \
+  for(i=0;i<(axis_bits/8);i+=1) \
+  { \
+    input_data[i] = limited_packet.data.tdata[i]; \
+  } \
+  /* Deserialize byte stream to type */ \
+  name##_type_byte_deserializer_t to_type = name##_type_byte_deserializer(input_data, limited_packet.valid, output_ready); \
+  o.data = to_type.data; \
+  o.valid = to_type.valid; \
+  ready_for_limter_out = to_type.in_data_ready; /*FEEDBACK*/ \
+  return o; \
+}
+
 
 #if 0 // TODO TEST payload tdata packing
 // sizeof(out_t) must be >= or divisble by axis_bits?
