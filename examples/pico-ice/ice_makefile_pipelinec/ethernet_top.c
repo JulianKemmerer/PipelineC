@@ -51,14 +51,6 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "board/pico_ice.h"
 #include "net/rmii_wires.c"
 
-/* // Debug probes demo
-//  define user debug signals in header shared with software 
-#include "eth_debug_probes.h"
-//  as probes 0+1 in UART based debug probes module
-#define probe0 payload_debug
-#define probe1 mac_debug
-#include "debug_probes/uart_probes.c" */
-
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
 // with enabled clock crossing fifos (with skid buffers)
 #define RMII_ETH_MAC_RX_SKID_IN_FIFO_DEPTH 4
@@ -71,7 +63,7 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "examples/net/fpga_mac.h"
 
 // Instead of loopback, can wire up a demo of doing some work
-// TODO TEST LOOPBACK //#define ETH_DEMO_IS_WORK_PIPELINE
+//#define ETH_DEMO_IS_WORK_PIPELINE
 #ifdef ETH_DEMO_IS_WORK_PIPELINE
 // Include definition of work to compute
 #include "examples/net/work.h"
@@ -81,7 +73,8 @@ GLOBAL_VALID_READY_PIPELINE_INST(work_pipeline, work_outputs_t, work, work_input
 // De/serialize 1 byte at a time to/from the types for the work compute
 #include "stream/deserializer.h"
 #include "stream/serializer.h"
-type_byte_deserializer(work_deserialize, 1, work_inputs_t)
+// axis_packet deserialize variant to handle min eth frame size padding on incoming frames
+axis_packet_to_type(work_deserialize, 8, work_inputs_t) 
 type_byte_serializer(work_serialize, work_outputs_t, 1)
 #else
 // Loopback structured as separate RX and TX MAINs
@@ -93,6 +86,16 @@ GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 32) // One to hold the payloa
 #endif
 // Work demo and regular loopback use headers FIFO
 GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
+
+/*
+// Debug probes demo
+//  define user debug signals in header shared with software 
+#include "eth_debug_probes.h"
+//  as probes 0+1 in UART based debug probes module
+#define probe0 payload_debug
+//#define probe1 work_out_dbg
+#include "debug_probes/uart_probes.c"
+*/
 
 MAIN_MHZ(rx_main, PLL_CLK_MHZ)
 void rx_main()
@@ -118,14 +121,15 @@ void rx_main()
   uint1_t valid_and_ready = frame.valid & eth_rx_out_ready & mac_match;
   #ifdef ETH_DEMO_IS_WORK_PIPELINE
   // Deserialize and connect to work pipeline input
-  uint8_t deser_in_data[1] = {frame.data.payload.tdata[0]};
+  stream(axis8_t) deser_in_stream;
+  deser_in_stream.data = frame.data.payload;
+  deser_in_stream.valid = valid_and_ready;
   uint1_t deser_output_ready = work_pipeline_in_ready;
   work_deserialize_t deser = work_deserialize(
-    deser_in_data,
-    valid_and_ready,
+    deser_in_stream,
     deser_output_ready
   );
-  deser_ready_for_input = deser.in_data_ready; // FEEDBACK
+  deser_ready_for_input = deser.packet_ready; // FEEDBACK
   work_pipeline_in.data = deser.data;
   work_pipeline_in.valid = deser.valid;
   #else
@@ -191,8 +195,8 @@ void tx_main()
   //static mac_debug_t mac_debug_reg;
   //mac_debug = mac_debug_reg;
   if(valid_and_ready){
-    mac_debug.mac_lsb = frame.data.header.dst_mac;
-    mac_debug.mac_msb = frame.data.header.dst_mac >> 32;
+    //mac_debug.mac_lsb = frame.data.header.dst_mac;
+    //mac_debug.mac_msb = frame.data.header.dst_mac >> 32;
     ARRAY_1SHIFT_INTO_TOP(payload_debug.tdata, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tdata[0])
     ARRAY_1SHIFT_INTO_TOP(payload_debug.tlast, PAYLOAD_DEBUG_SAMPLES, frame.data.payload.tlast)
   }*/
@@ -202,8 +206,8 @@ void tx_main()
 MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
-  led_r = 1;
-  led_g = counter >> 24;
+  led_r = counter >> 24;
+  led_g = 1;
   led_b = 1;
   counter += 1;
 }
