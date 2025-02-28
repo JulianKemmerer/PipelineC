@@ -5,7 +5,9 @@
 // Ideally in PipelineC/C code that can be compiled+checked in software easily.
 #pragma once
 #include "intN_t.h"
-
+#ifdef __PIPELINEC__
+#include "stream/stream.h"
+#endif
 // Do work on inputs to form outputs
 
 // MATRIX MULT EXAMPLE
