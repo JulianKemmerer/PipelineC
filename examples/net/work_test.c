@@ -63,16 +63,16 @@ void* fpga_reader()
 // Do work()'s using the FPGA hardware
 void fpga_works()
 {
-  // Start thread writing inputs into work pipeline
-  pthread_t write_thread;
-  int rc = pthread_create(&write_thread, NULL, fpga_writer, NULL);
+  // Start another thread reading outputs from work pipeline
+  pthread_t read_thread;
+  int rc = pthread_create(&read_thread, NULL, fpga_reader, NULL);
   if (rc){
     printf("ERROR; return code from pthread_create() is %d\n", rc);
     exit(-1);
-  }  
-  // Start another thread reading outputs from work pipeline
-  pthread_t read_thread;
-  rc = pthread_create(&read_thread, NULL, fpga_reader, NULL);
+  }
+  // Start thread writing inputs into work pipeline
+  pthread_t write_thread;
+  rc = pthread_create(&write_thread, NULL, fpga_writer, NULL);
   if (rc){
     printf("ERROR; return code from pthread_create() is %d\n", rc);
     exit(-1);
