@@ -136,7 +136,7 @@ async def my_first_test(dut):
         if args.ghdl:
             sim_make_args += "SIM ?= ghdl\n"
             sim_make_args += "EXTRA_ARGS += --std=08\n"
-            sim_make_args += f"SIM_ARGS += --vcd={SYN.TOP_LEVEL_MODULE}.vcd\n"
+            sim_make_args += f"SIM_ARGS += --vcd={SYN.TOP_LEVEL_MODULE}.vcd --ieee-asserts=disable-at-0\n"
             sim_tool_path = GET_TOOL_PATH("ghdl")
             if sim_tool_path is None:
                 raise Exception("GHDL does not appear installed. ghdl not in path!")
