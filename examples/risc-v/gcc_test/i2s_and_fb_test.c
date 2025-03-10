@@ -22,20 +22,30 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color){
 
 // Spectrum is rect bins
 // Real freq part of spectrum is NFFT/2
-// most of the time audio isnt in upper half, so /4 for looks
-#define N_BINS (NFFT/4)
+// most of the time audio isnt in upper half, so /8 for looks
+#define N_DRAWN_BINS (NFFT/8)
 void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   // Remember the power value from last time to make updates faster
-  static int last_height[N_BINS] = {0};
+  static int last_height[N_DRAWN_BINS] = {0};
   // How wide is each bin in pixels
-  int bin_width = width / N_BINS;
-  #if N_BINS > FRAME_WIDTH
+  int bin_width = width / N_DRAWN_BINS;
+  #if N_DRAWN_BINS > FRAME_WIDTH
   #error "Fix int math for bin width"
   #endif
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
   static fft_data_t max_pwr = 1; // adjusts to fit max seen over time
-  for (size_t b = 0; b < N_BINS; b++)
+  // Decrease max ocasisonally. not too fast for normal silent gaps in audio
+  int RESET_TIME_SEC = 5;
+  static int max_reset_counter = 0;
+  if(max_reset_counter >= ((RESET_TIME_SEC*44100)/NFFT)){
+    max_pwr = (max_pwr * 9)/10;
+    max_pwr = max_pwr <= 0 ? 1 : max_pwr;
+    max_reset_counter = 0;
+  }else{
+    max_reset_counter += 1;
+  }
+  for (size_t b = 0; b < N_DRAWN_BINS; b++)
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
@@ -73,12 +83,22 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
   // How wide is each point forming line
   int point_width = width / NFFT;
   if(point_width <= 0) point_width = 1;
-  int half_height = height / 2;
-  int y_mid = half_height;
+  int wav_height = height / 3;
+  int y_mid = height / 2;
   // Remember the amplitude value from last time to make updates faster
   static int last_y_value[NFFT] = {0};
   // Remember max ampl for auto scale (fixed point only)
   static int max_abs_sample = 1;
+  // Decrease max ocasisonally. not too fast for normal silent gaps in audio
+  int RESET_TIME_SEC = 5;
+  static int max_reset_counter = 0;
+  if(max_reset_counter >= ((RESET_TIME_SEC*44100)/NFFT)){
+    max_abs_sample = (max_abs_sample * 9)/10;
+    max_abs_sample = max_abs_sample <= 0 ? 1 : max_abs_sample;
+    max_reset_counter = 0;
+  }else{
+    max_reset_counter += 1;
+  }
   for (size_t i = 0; i < NFFT; i++)
   {
     // Calc x position, gone too far?
@@ -87,14 +107,14 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
     if(x_end>FRAME_WIDTH) break;
     // Calc line current y pos
     #ifdef FFT_TYPE_IS_FLOAT
-    int ampl = (int)(half_height * input_samples[i].real);
+    int ampl = (int)(wav_height * input_samples[i].real);
     #endif
     #ifdef FFT_TYPE_IS_FIXED
     int sample_abs = abs(input_samples[i].real);
     if(sample_abs > max_abs_sample){
       max_abs_sample = sample_abs;
     }
-    int ampl = (half_height * input_samples[i].real)/max_abs_sample;
+    int ampl = (wav_height * input_samples[i].real)/max_abs_sample;
     #endif
     ampl = ampl * 2; // Scale x2 since rarely near max vol?
     int y_val = y_mid - ampl; // y inverted 0,0 top left
@@ -133,11 +153,13 @@ void main() {
     {
       // I2S samples are 24b fixed point
       #ifdef FFT_TYPE_IS_FLOAT
-      fft_input_samples[i].real = (float)samples[i].l/(float)(1<<24);
+      float l = (float)samples[i].l/(float)(1<<24);
+      float r = (float)samples[i].r/(float)(1<<24);
+      fft_input_samples[i].real = (l+r)/2.0;
       fft_input_samples[i].imag = 0;
       #endif
       #ifdef FFT_TYPE_IS_FIXED
-      fft_input_samples[i].real = samples[i].l >> (24-16);
+      fft_input_samples[i].real = ((samples[i].l >> (24-16)) + (samples[i].r >> (24-16))) >> 1;
       fft_input_samples[i].imag = 0;
       #endif
     }
@@ -155,7 +177,7 @@ void main() {
 
     // Compute power
     fft_data_t fft_output_pwr[NFFT] = {0};
-    compute_fake_power(fft_output, fft_output_pwr, NFFT);
+    compute_power(fft_output, fft_output_pwr, N_DRAWN_BINS);
 
     *LED = (1<<3);
     

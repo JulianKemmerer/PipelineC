@@ -108,10 +108,7 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
 }
 
 // Dont need real power for visualization, fake it
-//float pwr2 = (re*re) + (im*im);
-//float pwr = sqrtf(pwr2);
-//output_pwr[i] = pwr2;
-void compute_fake_power(fft_out_t* output, fft_data_t* output_pwr, int N)
+/*void compute_fake_power(fft_out_t* output, fft_data_t* output_pwr, int N)
 {
     for (uint32_t i = 0; i < N; i++)
     {
@@ -124,55 +121,83 @@ void compute_fake_power(fft_out_t* output, fft_data_t* output_pwr, int N)
         output_pwr[i] = abs(re) + abs(im);
         #endif
     }
+}*/
+
+// https://github.com/chmike/fpsqrt/blob/master/fpsqrt.c
+int32_t fixed_sqrt(int32_t v) {
+    uint32_t t, q, b, r;
+    r = (int32_t)v; 
+    q = 0;          
+    b = 0x40000000UL;
+    if( r < 0x40000200 )
+    {
+        while( b != 0x40 )
+        {
+            t = q + b;
+            if( r >= t )
+            {
+                r -= t;
+                q = t + b; // equivalent to q += 2*b
+            }
+            r <<= 1;
+            b >>= 1;
+        }
+        q >>= 8;
+        return q;
+    }
+    while( b > 0x40 )
+    {
+        t = q + b;
+        if( r >= t )
+        {
+            r -= t;
+            q = t + b; // equivalent to q += 2*b
+        }
+        if( (r & 0x80000000) != 0 )
+        {
+            q >>= 1;
+            b >>= 1;
+            r >>= 1;
+            while( b > 0x20 )
+            {
+                t = q + b;
+                if( r >= t )
+                {
+                    r -= t;
+                    q = t + b;
+                }
+                r <<= 1;
+                b >>= 1;
+            }
+            q >>= 7;
+            return q;
+        }
+        r <<= 1;
+        b >>= 1;
+    }
+    q >>= 8;
+    return q;
 }
-/*
-// https://en.wikipedia.org/wiki/Fast_inverse_square_root
-float Q_rsqrt( float number )
-{
-	long i;
-	float x2, y;
-	const float threehalfs = 1.5F;
-	x2 = number * 0.5F;
-	y  = number;
-	i  = * ( long * ) &y;						// evil floating point bit level hacking
-	i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
-	y  = * ( float * ) &i;
-	y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
-	return y;
-}
-float Q_sqrt(float x) { return x*Q_rsqrt(x); }
-// STILL TOO SLOW! TODO MAKE POWER COMPUTE INTO HARDWARE TOO!
+
 void compute_power(fft_out_t* output, fft_data_t* output_pwr, int N)
 {
     for (uint32_t i = 0; i < N; i++)
     {
-        #ifdef FFT_TYPE_IS_FLOAT
-        float re = output[i].real;
-        float im = output[i].imag;
-        float pwr2 = (re*re) + (im*im);
-        float pwr = sqrt(pwr2);
-        output_pwr[i] = pwr;
-        #endif
-        #ifdef FFT_TYPE_IS_FIXED
         fft_data_t re = output[i].real;
         fft_data_t im = output[i].imag;
-        int64_t pwr2_fixed = 
-            (
-                ((int64_t)re * (int64_t)re) +
-                ((int64_t)im * (int64_t)im)
-            ) >> 16;
-        // Approx with shift instead of divide?
-        //float pwr2 = (float)pwr2_fixed/(float)INT16_MAX;
-        float pwr2 = (float)(pwr2_fixed >> 15);
-        //printf("power2 %f\n", pwr2);
-        // Faster sqrt from quake?
-        //float pwr = sqrt(pwr2);
-        float pwr = Q_sqrt(pwr2);
-        //printf("power %f\n", pwr);
-        // Approx with shift instead of multiply?
-        //output_pwr[i] = (fft_data_t)(pwr*INT16_MAX);
-        output_pwr[i] = ((fft_data_t)pwr)<<15;
+        #ifdef FFT_TYPE_IS_FLOAT
+        fft_data_t pwr2 = (re*re) + (im*im);
+        output_pwr[i] = sqrtf(pwr2);
+        #endif
+        #ifdef FFT_TYPE_IS_FIXED
+        // Scaling down >>1 since was overflowing fixed format
+        fft_data_t pwr2 = mul32(re>>1,re>>1) + mul32(im>>1,im>>1);
+        // Scaled back up some to account for input scale down
+        output_pwr[i] = fixed_sqrt(pwr2) << 1;
+        // sqrt debug:
+        //float input = (float)pwr2 / (1 << 16);
+        //float output = (float)output_pwr[i] / (1 << 17); // << 17 for above scaling
+        //printf("sqrt(%f) = %f\n", input, output);
         #endif
     }
 }
-*/

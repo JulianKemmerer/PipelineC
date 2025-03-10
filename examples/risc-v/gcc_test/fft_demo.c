@@ -122,7 +122,7 @@ int main(){
     // apply fft (shift is handled in fft_demo.py, not here)
     compute_fft_cc(input, output);
     // compute power in each fft bin
-    compute_fake_power(output, output_pwr, NFFT);
+    compute_power(output, output_pwr, NFFT);
 
     // print fft and power output result 
     for (uint32_t i = 0; i < NFFT; i++)
