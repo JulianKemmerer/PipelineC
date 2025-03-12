@@ -1,5 +1,5 @@
 // gcc fft_demo.c -lm -o fft_demo && ./fft_demo
-#define NFFT (1<<10)
+#define NFFT (1<<11)
 #include "fft.h"
 #include "fft.c"
 
@@ -31,10 +31,7 @@ void draw_spectrum_fast(int width, int height, fft_data_t* pwr_bins){
   static int last_height[N_BINS] = {0};
   // How wide is each bin in pixels
   int bin_width = width / N_BINS;
-  if(N_BINS > width){
-    printf("Fix bin_width int math!\n");
-    exit(-1);
-  }
+  if(bin_width <= 0) bin_width = 1;
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
   // Auto size to max like live hardware demo does
@@ -47,6 +44,7 @@ void draw_spectrum_fast(int width, int height, fft_data_t* pwr_bins){
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
+    if(x_end >= width) break;
     int bin_height = ((uint64_t)pwr_bins[b] * (uint64_t)height)/max_pwr;
     if(bin_height > height) bin_height = height;
     uint8_t color = 0;

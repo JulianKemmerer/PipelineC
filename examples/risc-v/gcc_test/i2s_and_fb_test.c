@@ -29,9 +29,7 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   static int last_height[N_DRAWN_BINS] = {0};
   // How wide is each bin in pixels
   int bin_width = width / N_DRAWN_BINS;
-  #if N_DRAWN_BINS > FRAME_WIDTH
-  #error "Fix int math for bin width"
-  #endif
+  if(bin_width <= 0) bin_width = 1;
   // Max FFT value depends on if input is complex tone or not?
   // (Max=nfft/2)(*2 for complex tone input?)
   static fft_data_t max_pwr = 1; // adjusts to fit max seen over time
@@ -49,6 +47,7 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   {
     int x_start = b * bin_width;
     int x_end = (b+1) * bin_width;
+    if(x_end >= width) break;
     if(pwr_bins[b] > max_pwr) max_pwr = pwr_bins[b];
     int bin_height = ((uint64_t)pwr_bins[b] * (uint64_t)height)/max_pwr;
     bin_height = bin_height << 1; // extra height for looks
@@ -78,15 +77,15 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   }
 }
 // Waveform is n pixel wide rects to form line
-void draw_waveform(int width, int height, int line_width, fft_in_t* input_samples){
+void draw_waveform(int width, int height, int line_width, fft_in_t* input_samples, int n_samples){
   // line_width used in y height direction
   // How wide is each point forming line
-  int point_width = width / NFFT;
+  int point_width = width / n_samples;
   if(point_width <= 0) point_width = 1;
   int wav_height = height / 3;
   int y_mid = height / 2;
   // Remember the amplitude value from last time to make updates faster
-  static int last_y_value[NFFT] = {0};
+  static int last_y_value[FRAME_WIDTH] = {0};
   // Remember max ampl for auto scale (fixed point only)
   static int max_abs_sample = 1;
   // Decrease max ocasisonally. not too fast for normal silent gaps in audio
@@ -99,7 +98,7 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
   }else{
     max_reset_counter += 1;
   }
-  for (size_t i = 0; i < NFFT; i++)
+  for (size_t i = 0; i < n_samples; i++)
   {
     // Calc x position, gone too far?
     int x_start = i * point_width;
@@ -148,8 +147,16 @@ void main() {
     *LED = (1<<0);
 
     // Copy samples into buffer and convert to input type as needed (in BRAM)
+    
+    // FFT in hardware only needs input samples for final waveform display
+    // dont need full NFFT as number of samples, at most FRAME_WIDTH points
+    #ifdef FFT_USE_FULL_HARDWARE
+    fft_in_t fft_input_samples[FRAME_WIDTH] = {0};
+    n_samples = FRAME_WIDTH;
+    #else 
     fft_in_t fft_input_samples[NFFT] = {0};
-    for (size_t i = 0; i < NFFT; i++)
+    #endif
+    for (size_t i = 0; i < n_samples; i++)
     {
       // I2S samples are 24b fixed point
       #ifdef FFT_TYPE_IS_FLOAT
@@ -176,7 +183,7 @@ void main() {
     *LED = (1<<2);
 
     // Compute power
-    fft_data_t fft_output_pwr[NFFT] = {0};
+    fft_data_t fft_output_pwr[N_DRAWN_BINS] = {0};
     compute_power(fft_output, fft_output_pwr, N_DRAWN_BINS);
 
     *LED = (1<<3);
@@ -184,7 +191,7 @@ void main() {
     // Screen coloring result
     draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr);
     // Time domain waveform across top two thirds of display
-    draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 2, fft_input_samples);
+    draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 2, fft_input_samples, n_samples);
     //count += 1;
   }
 }
