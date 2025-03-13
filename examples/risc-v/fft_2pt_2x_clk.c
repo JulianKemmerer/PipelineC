@@ -1,4 +1,7 @@
+#include "uintN_t.h"
+#include "intN_t.h"
 #include "stream/stream.h"
+#include "debug_port.h"
 #include "global_fifo.h"
 #include "ram.h"
 #include "global_func_inst.h"
@@ -272,7 +275,9 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
     // data needs fixed point massaging
     // and only using the left channel as real inputs to FFT
     #ifdef FFT_TYPE_IS_FIXED
-    fft_data_t data_in = samples_in.data.l_data.qmn >> (24-16);
+    fft_data_t data_in = (
+      (samples_in.data.l_data.qmn >> (24-16)) + (samples_in.data.r_data.qmn >> (24-16))
+    ) >> 1;
     #endif
     // Array index is bit reversed, using 'j' as sample counter here
     uint32_t array_index = rev(wr_req_iters.j);
