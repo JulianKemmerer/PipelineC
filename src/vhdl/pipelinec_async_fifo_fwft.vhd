@@ -47,7 +47,8 @@ function gray2bin(g : unsigned(ADDR_WIDTH downto 0)) return unsigned is
   variable rv : unsigned(ADDR_WIDTH downto 0) := (others => '0');
 begin
   for i in 0 to ADDR_WIDTH loop
-    rv(i) := xor(g srl i);
+    -- Cant use 'xor' for reduce since no VHDL 2008 in Quartus Lite
+    rv(i) := xor_reduce(std_logic_vector(g srl i));
   end loop;
   return rv;
 end function;
@@ -108,6 +109,9 @@ signal pipe_ready : std_logic ;
 
 constant mask : unsigned(ADDR_WIDTH downto 0) := "11" & to_unsigned(0, ADDR_WIDTH-1); -- {2'b11, {ADDR_WIDTH-1{1'b0}}}
 
+-- Need internal copy of signal since no VHDL 2008 in Quartus Lite
+signal ready_out_internal : std_logic;
+
 begin
 
 -- full when first TWO MSBs do NOT match, but rest matches
@@ -116,7 +120,8 @@ full <= '1' when wr_ptr_gray_reg = (rd_ptr_gray_sync2_reg xor mask) else '0';
 -- empty when pointers match exactly
 empty <= '1' when (rd_ptr_gray_reg = wr_ptr_gray_sync2_reg) else '0';
 
-ready_out <= '1' when full='0' and in_por_rst='0' else '0';
+ready_out_internal <= '1' when full='0' and in_por_rst='0' else '0';
+ready_out <= ready_out_internal;
 
 input_stream <= data_in;
 
@@ -133,7 +138,7 @@ begin
 if rising_edge(in_clk) then
 
     -- normal FIFO mode
-    if ready_out='1' and valid_in='1' then
+    if ready_out_internal='1' and valid_in='1' then
         -- transfer in
         mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= input_stream;
         wr_ptr_temp := wr_ptr_reg + 1;
