@@ -177,8 +177,8 @@ int main(int argc, char *argv[]) {{
 
     # Write a shell script to execute
     sh_text = f"""
-{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module {SYN.TOP_LEVEL_MODULE} -cc ../{SYN.TOP_LEVEL_MODULE}/{SYN.TOP_LEVEL_MODULE}.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()} -I{REPO_ABS_DIR()}/pipelinec/include && \
-make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()} -I{REPO_ABS_DIR()}/pipelinec/include" -j4 -C obj_dir -f V{SYN.TOP_LEVEL_MODULE}.mk
+{VERILATOR_BIN_PATH}/verilator -Wno-UNOPTFLAT -Wno-WIDTH -Wno-CASEOVERLAP --top-module {SYN.TOP_LEVEL_MODULE} -cc ../{SYN.TOP_LEVEL_MODULE}/{SYN.TOP_LEVEL_MODULE}.v -O3 --exe {main_cpp_path} -I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()}/include && \
+make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()}/include" -j4 -C obj_dir -f V{SYN.TOP_LEVEL_MODULE}.mk
 """
     sh_path = VERILATOR_OUT_DIR + "/" + "verilator.sh"
     f = open(sh_path, "w")
