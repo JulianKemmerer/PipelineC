@@ -27,20 +27,25 @@ GHDL_PREFIX = None
 if os.path.exists(OSS_CAD_SUITE_PATH):
     YOSYS_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
     GHDL_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
-    NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
     GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
     GHDL_PLUGIN_BUILT_IN = False
-else:
+    NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
+
+if YOSYS_BIN_PATH is None or not os.path.exists(YOSYS_BIN_PATH + "/" + YOSYS_EXE):
     YOSYS_EXE_PATH = GET_TOOL_PATH(YOSYS_EXE)
     if YOSYS_EXE_PATH is not None:
         YOSYS_BIN_PATH = os.path.abspath(os.path.dirname(YOSYS_EXE_PATH))
 
+if GHDL_BIN_PATH is None or not os.path.exists(GHDL_BIN_PATH + "/" + GHDL_EXE):
     GHDL_EXE_PATH = GET_TOOL_PATH(GHDL_EXE)
     if GHDL_EXE_PATH is not None:
         GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
         GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH) + "/../lib/ghdl")
     GHDL_PLUGIN_BUILT_IN = False
 
+if NEXTPNR_BIN_PATH is None or not os.path.exists(
+    NEXTPNR_BIN_PATH + "/" + NEXT_PNR_EXE
+):
     NEXTPNR_EXE_PATH = GET_TOOL_PATH(NEXT_PNR_EXE)
     if NEXTPNR_EXE_PATH is not None:
         NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
