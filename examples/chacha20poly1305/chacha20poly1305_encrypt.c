@@ -38,3 +38,32 @@ chacha20_block_bytes_t main(
   return out_data;
 }
 
+// TODO revive simulation demo
+/* FAKE TEST
+#pragma MAIN_MHZ main 80.0
+chacha20_state main(){
+    static uint32_t counter;
+
+    // change for actual key ?
+    chacha20_key_t key = {{
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    }};
+
+    // change for actual nonce ?
+    chacha20_nonce_t nonce = {{
+        0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x00000000
+    }};
+
+    // these 3 steps would be on a FSM
+    chacha20_state state = chacha20_init(key, nonce, counter);
+    chacha20_state block = chacha20_block(state);
+    counter += 1;
+
+    return block;
+}*/

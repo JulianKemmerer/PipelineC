@@ -20,12 +20,12 @@ typedef struct chacha20_state
 // TODO is byte order for above struct little endian / does it match type_bytes_t.h?
 #include "chacha20_state_bytes_t.h" // PipelineC byte casting funcs
 
+// TODO use key and nonce structs if need to return these from funcs
 /* // ChaCha20 key structure
 typedef struct chacha20_key_t
 {
     uint32_t key[CHACHA20_KEY_NWORDS]; // ChaCha20 key (32 words)
 } chacha20_key_t;
-
 // ChaCha20 nonce structure
 typedef struct chacha20_nonce_t
 {
@@ -39,6 +39,7 @@ typedef struct chacha20_block_bytes_t
 } chacha20_block_bytes_t;
 
 // The ChaCha20 quarter round function
+// TODO abcd are constants and might get better results if this function made into macro
 chacha20_state quarter_round(chacha20_state s, uint4_t a, uint4_t b, uint4_t c, uint4_t d)
 {
     chacha20_state o = s;
@@ -137,35 +138,6 @@ chacha20_state chacha20_init(
     return state;
 }
 
-/* FAKE TEST
-#pragma MAIN_MHZ main 80.0
-chacha20_state main(){
-    static uint32_t counter;
-
-    // change for actual key ?
-    chacha20_key_t key = {{
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
-    }};
-
-    // change for actual nonce ?
-    chacha20_nonce_t nonce = {{
-        0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00000000, 0x00000000, 0x00000000, 0x00000000
-    }};
-
-    // these 3 steps would be on a FSM
-    chacha20_state state = chacha20_init(key, nonce, counter);
-    chacha20_state block = chacha20_block(state);
-    counter += 1;
-
-    return block;
-}*/
-
 /* Original software C
 // ChaCha20 encryption/decryption function
 void chacha20_encrypt(uint8_t *out, const uint8_t *in, size_t length, const uint8_t *key, const uint8_t *nonce, uint32_t counter)
@@ -233,7 +205,8 @@ chacha20_block_bytes_t chacha20_encrypt_loop_body(
   chacha20_block_bytes_t block_bytes = {.bytes = bytes.data};
 
   chacha20_block_bytes_t out_data;
-  // TODO partial in data, i.e. tlast, partial tkeep?
+  // TODO partial in data, i.e. partial tkeep
+  //    size_t chunk_size = length > 64 ? 64 : length;
   for(uint32_t i = 0; i < CHACHA20_BLOCK_SIZE; i+=1)
   {
     out_data.bytes[i] = in_data.bytes[i] ^ block_bytes.bytes[i];
