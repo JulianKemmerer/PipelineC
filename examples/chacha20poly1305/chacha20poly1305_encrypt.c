@@ -3,7 +3,7 @@
 #pragma PART "xc7a200tffg1156-2" // Artix 7 200T
 
 /*
-// Flattened top level ports with AXIS style manager/subdorinate naming
+// Flattened top level ports with AXIS style manager/subordinate naming
 // (could also have inputs and outputs of type stream(my_axis_32_t)
 //  but ex. Verilog does not support VHDL records...)
 // Input Stream
@@ -21,9 +21,10 @@ DECL_INPUT(uint1_t, m_axis_tready)
 */
 
 // The primary dataflow for single clock domain ChaCha20-Poly1305 encryption
-// For now just testing the encrypt loop body
+// For now just testing the loop bodies
 #pragma MAIN_MHZ main 80.0
-chacha20_block_bytes_t main(
+
+/*chacha20_block_bytes_t main(
   chacha20_block_bytes_t in_data,
   uint32_t key[CHACHA20_KEY_NWORDS], 
   uint32_t nonce[CHACHA20_NONCE_NWORDS],
@@ -36,6 +37,18 @@ chacha20_block_bytes_t main(
     counter
   );
   return out_data;
+}*/
+
+uint320_t main(
+  uint8_t block_bytes[BLOCK_SIZE],
+  uint320_t r,
+  uint320_t a
+){
+  return poly1305_mac_loop_body(
+    block_bytes,
+    r,
+    a
+  );
 }
 
 // TODO revive simulation demo
