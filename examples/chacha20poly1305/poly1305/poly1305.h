@@ -25,6 +25,7 @@ typedef struct uint320_t
 typedef struct u8_16_t{
   uint8_t bytes[16];
 } u8_16_t;
+// TODO can optimize bit manip
 u8_16_t clamp(u8_16_t r)
 {
     r.bytes[3] &= 15;
@@ -245,12 +246,20 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
 */
 /*
 Pass by value version of body part of per-block loop:
+    want in form: output_t func_name(input_t)
 */
+typedef struct poly1305_mac_loop_body_in_t{
+    uint8_t block_bytes[BLOCK_SIZE];
+    uint320_t r;
+    uint320_t a;
+} poly1305_mac_loop_body_in_t;
 uint320_t poly1305_mac_loop_body(
-    uint8_t block_bytes[BLOCK_SIZE],
-    uint320_t r,
-    uint320_t a
-){   
+    poly1305_mac_loop_body_in_t inputs
+){  
+    uint8_t block_bytes[BLOCK_SIZE] = inputs.block_bytes;
+    uint320_t r = inputs.r;
+    uint320_t a = inputs.a;
+
     uint8_t n_bytes[sizeof(uint320_t)] = {0};
     for(uint32_t i = 0; i < BLOCK_SIZE; i+=1){
         n_bytes[i] = block_bytes[i];

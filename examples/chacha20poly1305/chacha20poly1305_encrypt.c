@@ -40,15 +40,9 @@ DECL_INPUT(uint1_t, m_axis_tready)
 }*/
 
 uint320_t main(
-  uint8_t block_bytes[BLOCK_SIZE],
-  uint320_t r,
-  uint320_t a
+  poly1305_mac_loop_body_in_t inputs
 ){
-  return poly1305_mac_loop_body(
-    block_bytes,
-    r,
-    a
-  );
+  return poly1305_mac_loop_body(inputs);
 }
 
 // TODO revive simulation demo

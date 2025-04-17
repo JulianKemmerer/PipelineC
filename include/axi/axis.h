@@ -14,6 +14,14 @@ typedef struct axis8_t
 } axis8_t;
 DECL_STREAM_TYPE(axis8_t)
 
+typedef struct axis16_t
+{
+  uint8_t tdata[2];
+  uint1_t tkeep[2];
+  uint1_t tlast;
+} axis16_t;
+DECL_STREAM_TYPE(axis16_t)
+
 typedef struct axis32_t
 {
   uint8_t tdata[4];
@@ -22,6 +30,14 @@ typedef struct axis32_t
 } axis32_t;
 DECL_STREAM_TYPE(axis32_t)
 
+typedef struct axis128_t
+{
+  uint8_t tdata[16];
+  uint1_t tkeep[16];
+	uint1_t tlast;
+} axis128_t;
+DECL_STREAM_TYPE(axis128_t)
+
 /* How useful is this?
 typedef struct axis32_sized16_t
 {
@@ -29,13 +45,7 @@ typedef struct axis32_sized16_t
 	uint16_t length;
 } axis32_sized16_t;*/
 
-typedef struct axis16_t
-{
-  uint8_t tdata[2];
-  uint1_t tkeep[2];
-  uint1_t tlast;
-} axis16_t;
-DECL_STREAM_TYPE(axis16_t)
+
 
 // TODO make this into macro for all axis widths
 uint1_t axis8_keep_count(stream(axis8_t) s){
