@@ -10,11 +10,10 @@ uint64_t PRIME[3] = {0xFFFFFFFFFFFFFFFB, 0xFFFFFFFFFFFFFFFF, 0x3};
 /**
  * @brief Structure to hold a 320-bit unsigned integer for Poly1305 calculations
  */
-#define uint320_t u320 // "uint320_t" is pipelinec built in, is not a struct
-typedef struct uint320_t
+typedef struct u320_t
 {
     uint64_t limbs[5]; // 64-bit limbs
-} uint320_t;
+} u320_t;
 
 
 /**
@@ -39,29 +38,37 @@ u8_16_t clamp(u8_16_t r)
 }
 
 /**
- * @brief Copy bytes to a uint320_t
+ * @brief Copy bytes to a u320_t
  *
- * @param dst Destination uint320_t
+ * @param dst Destination u320_t
  * @param src Source byte array
  * @param len Number of bytes to copy (max 40)
  */
-#include "type_bytes_t.h/u320_bytes_t.h/u320_bytes_t.h" // for bytes_to_u320
-uint320_t bytes_to_uint320(uint8_t src[sizeof(uint320_t)])
+#include "type_bytes_t.h/u320_t_bytes_t.h/u320_t_bytes_t.h" // for bytes_to_u320_t
+u320_t bytes_to_uint320(uint8_t src[sizeof(u320_t)])
 {
-    return bytes_to_u320(src); // pipelinec built in
+    return bytes_to_u320_t(src); // pipelinec built in
 }
 
 /**
- * @brief Add two uint320_t values
+ * @brief Add two u320_t values
  *
  * @param res Result: a + b
  * @param a First operand
  * @param b Second operand
  */
 // TODO could this be implemented just as uint320_t + uint320_t?
-uint320_t uint320_add(uint320_t a, uint320_t b)
+u320_t uint320_add(u320_t a, u320_t b)
 {
-    uint320_t res = {0};
+    /*uint320_t a_uint = uint64_array5_le(a.limbs);
+    uint320_t b_uint = uint64_array5_le(b.limbs);
+    uint320_t rv_uint = a_uint + b_uint;
+    u320_t rv;
+    for(int32_t i = 0; i < 5; i+=1){
+        rv.limbs[i] = rv_uint >> (i*64);
+    }
+    return rv;*/
+    u320_t res = {0};
     uint64_t carry = 0;
     for (int32_t i = 0; i < 5; i+=1)
     {
@@ -73,16 +80,16 @@ uint320_t uint320_add(uint320_t a, uint320_t b)
 }
 
 /**
- * @brief Multiply two uint320_t values
+ * @brief Multiply two u320_t values
  *
  * @param res Result: a * b
  * @param a First operand
  * @param b Second operand
  */
 // TODO could this be implemented just as uint320_t * uint320_t?
-uint320_t uint320_mul(uint320_t a, uint320_t b)
+u320_t uint320_mul(u320_t a, u320_t b)
 {
-    uint320_t temp = {0};
+    u320_t temp = {0};
 
     // Schoolbook multiplication algorithm
     for (int32_t i = 0; i < 5; i+=1)
@@ -106,16 +113,16 @@ uint320_t uint320_mul(uint320_t a, uint320_t b)
         }
     }
 
-    uint320_t res = temp;
+    u320_t res = temp;
     return res;
 }
 
 /**
- * @brief Reduce a uint320_t modulo 2^130 - 5
+ * @brief Reduce a u320_t modulo 2^130 - 5
  *
  * @param a Value to reduce
  */
-uint320_t uint320_mod_prime(uint320_t a)
+u320_t uint320_mod_prime(u320_t a)
 {
     // First, handle the high bits (greater than or equal to 2^130)
     uint64_t mask = 0x3FFFFFFFFFF; // 2^130 - 1
@@ -130,7 +137,7 @@ uint320_t uint320_mod_prime(uint320_t a)
         a.limbs[4] = 0;
 
         // Multiply high bits by 5 and add to low bits
-        uint320_t mul5 = {0};
+        u320_t mul5 = {0};
 
         // high_bits * 5
         mul5.limbs[0] = (high_bits >> 2) * 5;
@@ -184,8 +191,8 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
     // Clamp r according to the spec
     clamp(r_bytes);
 
-    // Convert r and s to uint320_t
-    uint320_t r, s, a;
+    // Convert r and s to u320_t
+    u320_t r, s, a;
     memset(&a, 0, sizeof(a)); // Initialize accumulator to 0
     bytes_to_uint320(&r, r_bytes, 16);
     bytes_to_uint320(&s, s_bytes, 16);
@@ -197,7 +204,7 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
     // Process full blocks
     for (size_t i = 0; i < blocks; i++)
     {
-        uint320_t n;
+        u320_t n;
         bytes_to_uint320(&n, message + (i * BLOCK_SIZE), BLOCK_SIZE);
 
         // Set the high bit (2^128)
@@ -207,7 +214,7 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
         uint320_add(&a, &a, &n);
 
         // a *= r
-        uint320_t temp = a;
+        u320_t temp = a;
         uint320_mul(&a, &temp, &r);
 
         // a %= p
@@ -223,14 +230,14 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
         // Add the padding byte
         last_block[remain] = 0x01;
 
-        uint320_t n;
+        u320_t n;
         bytes_to_uint320(&n, last_block, BLOCK_SIZE);
 
         // a += n
         uint320_add(&a, &a, &n);
 
         // a *= r
-        uint320_t temp = a;
+        u320_t temp = a;
         uint320_mul(&a, &temp, &r);
 
         // a %= p
@@ -250,21 +257,21 @@ Pass by value version of body part of per-block loop:
 */
 typedef struct poly1305_mac_loop_body_in_t{
     uint8_t block_bytes[BLOCK_SIZE];
-    uint320_t r;
-    uint320_t a;
+    u320_t r;
+    u320_t a;
 } poly1305_mac_loop_body_in_t;
-uint320_t poly1305_mac_loop_body(
+u320_t poly1305_mac_loop_body(
     poly1305_mac_loop_body_in_t inputs
 ){  
     uint8_t block_bytes[BLOCK_SIZE] = inputs.block_bytes;
-    uint320_t r = inputs.r;
-    uint320_t a = inputs.a;
+    u320_t r = inputs.r;
+    u320_t a = inputs.a;
 
-    uint8_t n_bytes[sizeof(uint320_t)] = {0};
+    uint8_t n_bytes[sizeof(u320_t)] = {0};
     for(uint32_t i = 0; i < BLOCK_SIZE; i+=1){
         n_bytes[i] = block_bytes[i];
     }
-    uint320_t n = bytes_to_uint320(n_bytes);
+    u320_t n = bytes_to_uint320(n_bytes);
 
     // Set the high bit (2^128)
     n.limbs[2] |= 0x1;
@@ -273,7 +280,7 @@ uint320_t poly1305_mac_loop_body(
     a = uint320_add(a, n);
 
     // a *= r
-    uint320_t temp = a;
+    u320_t temp = a;
     a = uint320_mul(temp, r);
 
     // a %= p

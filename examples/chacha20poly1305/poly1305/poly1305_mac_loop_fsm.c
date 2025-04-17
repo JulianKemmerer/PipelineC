@@ -13,7 +13,7 @@ for (size_t i = 0; i < blocks; i++)
 // Declare poly1305_mac_loop_body pipeline to use (with valid bit)
 // TODO can declare as harder to meet timing GLOBAL_FUNCTION that doesnt add IO regs
 #include "global_func_inst.h"
-GLOBAL_PIPELINE_INST_W_VALID_ID(poly1305_pipeline, uint320_t, poly1305_mac_loop_body, poly1305_mac_loop_body_in_t)
+GLOBAL_PIPELINE_INST_W_VALID_ID(poly1305_pipeline, u320_t, poly1305_mac_loop_body, poly1305_mac_loop_body_in_t)
 
 // Global input and output wires for FSM
 // 32-byte key (r || s) input
@@ -46,9 +46,9 @@ void poly1305_mac_loop_fsm(){
   }
   // Clamp r according to the spec
   r_bytes = clamp(r_bytes);
-  // Convert r and s to uint320_t
-  uint320_t r = bytes_to_uint320(r_bytes.bytes);
-  uint320_t s = bytes_to_uint320(s_bytes.bytes);
+  // Convert r and s to u320_t
+  u320_t r = bytes_to_uint320(r_bytes.bytes);
+  u320_t s = bytes_to_uint320(s_bytes.bytes);
 
   // Default not ready for incoming data
   poly1305_mac_loop_fsm_data_in_ready = 0;
@@ -64,9 +64,9 @@ void poly1305_mac_loop_fsm(){
   // The FSM
   static poly1305_state_t state;
   static uint1_t is_last_block;
-  static uint320_t a;
+  static u320_t a;
   if(state == IDLE){
-    uint320_t u320_null = {0};
+    u320_t u320_null = {0};
     a = u320_null; // Initialize accumulator to 0
     is_last_block = 0; // Not the last block yet
     // Wait for first block
@@ -107,7 +107,7 @@ void poly1305_mac_loop_fsm(){
     state = OUTPUT_AUTH_TAG;
   }else if(state == OUTPUT_AUTH_TAG){
     // First 16 bytes of 'a' are the output  
-    u320_bytes_t a_bytes = u320_to_bytes(a);
+    u320_t_bytes_t a_bytes = u320_t_to_bytes(a);
     for(int32_t i=0; i<16; i+=1){
       poly1305_mac_loop_fsm_auth_tag[i] = a_bytes.data[i];
     }

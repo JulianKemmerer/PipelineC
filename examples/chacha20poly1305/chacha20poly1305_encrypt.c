@@ -39,7 +39,7 @@ DECL_INPUT(uint1_t, m_axis_tready)
   return out_data;
 }*/
 
-uint320_t main(
+u320_t main(
   poly1305_mac_loop_body_in_t inputs
 ){
   return poly1305_mac_loop_body(inputs);
