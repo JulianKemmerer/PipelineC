@@ -119,7 +119,7 @@ void poly1305_mac_loop_fsm(){
 }
 
 
-// Test synthesis
+/* Test synthesis
 #include "arrays.h"
 DECL_INPUT(uint256_t, key_in)
 DECL_INPUT(stream(axis128_t), data_in)
@@ -134,4 +134,4 @@ void poly1305_mac_loop_connect(){
   data_in_ready = poly1305_mac_loop_fsm_data_in_ready;
   auth_tag_out = uint8_array16_le(poly1305_mac_loop_fsm_auth_tag);
   auth_tag_out_valid = poly1305_mac_loop_fsm_auth_tag_valid;
-}
+}*/
