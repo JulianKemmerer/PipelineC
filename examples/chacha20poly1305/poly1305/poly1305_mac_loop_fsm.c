@@ -21,6 +21,7 @@ uint8_t poly1305_mac_loop_fsm_data_key[32];
 // 16 byte wide AXIS port for data input
 stream(axis128_t) poly1305_mac_loop_fsm_data_in;
 uint1_t poly1305_mac_loop_fsm_data_in_ready;
+// TODO is pass through of data preceeding auth tag expected? seems so
 // 16-byte authentication tag output (TODO also make AXIS?)
 uint8_t poly1305_mac_loop_fsm_auth_tag[16];
 uint1_t poly1305_mac_loop_fsm_auth_tag_valid;

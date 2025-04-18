@@ -57,17 +57,17 @@ u320_t bytes_to_uint320(uint8_t src[sizeof(u320_t)])
  * @param a First operand
  * @param b Second operand
  */
-// TODO could this be implemented just as uint320_t + uint320_t?
 u320_t uint320_add(u320_t a, u320_t b)
 {
-    /*uint320_t a_uint = uint64_array5_le(a.limbs);
+    // PipelineC built in uint320_t + uint320_t seems better
+    uint320_t a_uint = uint64_array5_le(a.limbs);
     uint320_t b_uint = uint64_array5_le(b.limbs);
-    uint320_t rv_uint = a_uint + b_uint;
+    uint320_t rv_uint = a_uint + b_uint; 
     u320_t rv;
     for(int32_t i = 0; i < 5; i+=1){
         rv.limbs[i] = rv_uint >> (i*64);
     }
-    return rv;*/
+    return rv;/*
     u320_t res = {0};
     uint64_t carry = 0;
     for (int32_t i = 0; i < 5; i+=1)
@@ -76,7 +76,7 @@ u320_t uint320_add(u320_t a, u320_t b)
         carry = (sum < a.limbs[i]) || (sum == a.limbs[i] && carry);
         res.limbs[i] = sum;
     }
-    return res;
+    return res;*/
 }
 
 /**
@@ -86,7 +86,6 @@ u320_t uint320_add(u320_t a, u320_t b)
  * @param a First operand
  * @param b Second operand
  */
-// TODO could this be implemented just as uint320_t * uint320_t?
 u320_t uint320_mul(u320_t a, u320_t b)
 {
     u320_t temp = {0};
@@ -115,6 +114,16 @@ u320_t uint320_mul(u320_t a, u320_t b)
 
     u320_t res = temp;
     return res;
+    /* // Could be implemented as uint320_t * uint320_t 
+    // but doesnt actually seem to produce better hardware? 
+    uint320_t a_uint = uint64_array5_le(a.limbs);
+    uint320_t b_uint = uint64_array5_le(b.limbs);
+    uint320_t rv_uint = a_uint * b_uint;
+    u320_t rv;
+    for(int32_t i = 0; i < 5; i+=1){
+        rv.limbs[i] = rv_uint >> (i*64);
+    }
+    return rv;*/
 }
 
 /**

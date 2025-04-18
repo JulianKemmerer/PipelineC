@@ -191,6 +191,7 @@ uint8_t[64] chacha20_encrypt_fixed(
   return out;
 }*/
 // PipelineC code for the loop body above
+// TODO key and nonce dont change every block right? per packet?
 chacha20_block_bytes_t chacha20_encrypt_loop_body(
   chacha20_block_bytes_t in_data,
   uint32_t key[CHACHA20_KEY_NWORDS], 
