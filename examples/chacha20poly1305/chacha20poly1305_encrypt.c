@@ -45,10 +45,10 @@ int chacha20poly1305_encrypt(
     return 0;
 }
 */
-// Shared chacha20-poly1305 encryption definitons
-#include "chacha20poly1305.h"
 // Instance of chacha20 part of encryption
 #include "chacha20/chacha20_encrypt.c"
+// Instance of preparing auth data part of encryption
+#include "prep_auth_data/prep_auth_data.c"
 // Instance of poly1305 part of encryption
 #include "poly1305/poly1305_mac_loop_fsm.c"
 
@@ -73,8 +73,14 @@ DECL_OUTPUT(uint1_t, m_axis_tvalid)
 DECL_INPUT(uint1_t, m_axis_tready)
 
 void main(){
-  // TODO start wriring up 
-  //  chacha20 -> prepare auth data -> poly1305
+  // TODO start wiring up
+
+  // Convert flattened input to stream(axis128_t)
+
+  // chacha20 -> prepare auth data -> poly1305
+
+  // Convert stream(axis128_t) to flattened output
+
 }
 
 // TODO revive simulation demo

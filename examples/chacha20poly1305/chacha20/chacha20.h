@@ -20,7 +20,7 @@ typedef struct chacha20_state
 // TODO is byte order for above struct little endian / does it match type_bytes_t.h?
 #include "chacha20_state_bytes_t.h" // PipelineC byte casting funcs
 
-// TODO use key and nonce structs if need to return these from funcs
+// TODO use structs if need to return these from funcs
 /* // ChaCha20 key structure
 typedef struct chacha20_key_t
 {
@@ -30,13 +30,12 @@ typedef struct chacha20_key_t
 typedef struct chacha20_nonce_t
 {
     uint32_t nonce[CHACHA20_NONCE_NWORDS]; // ChaCha20 nonce (12 words)
-} chacha20_nonce_t;*/
-
+} chacha20_nonce_t;
 // ChaCha20 block as bytes structure
 typedef struct chacha20_block_bytes_t
 {
     uint8_t bytes[CHACHA20_BLOCK_SIZE]; // ChaCha20 block (64 bytes)
-} chacha20_block_bytes_t;
+} chacha20_block_bytes_t;*/
 
 // The ChaCha20 quarter round function
 // TODO abcd are constants and might get better results if this function made into macro
@@ -190,27 +189,43 @@ uint8_t[64] chacha20_encrypt_fixed(
   }
   return out;
 }*/
-// PipelineC code for the loop body above
-// TODO key and nonce dont change every block right? per packet?
-chacha20_block_bytes_t chacha20_encrypt_loop_body(
-  chacha20_block_bytes_t in_data,
-  uint32_t key[CHACHA20_KEY_NWORDS], 
-  uint32_t nonce[CHACHA20_NONCE_NWORDS],
-  uint32_t counter
+/*
+Pass by value version of body part of per-block loop:
+    want in form: output_t func_name(input_t)
+*/
+typedef struct chacha20_encrypt_loop_body_in_t
+{
+  axis512_t axis_in; // Stream of 64 byte blocks
+  // TODO key and nonce dont change every block right? only per packet?
+  uint32_t key[CHACHA20_KEY_NWORDS]; 
+  uint32_t nonce[CHACHA20_NONCE_NWORDS];
+  uint32_t counter;
+} chacha20_encrypt_loop_body_in_t;
+axis512_t chacha20_encrypt_loop_body(
+  chacha20_encrypt_loop_body_in_t inputs
 ){
+  uint8_t[CHACHA20_BLOCK_SIZE] in_data = inputs.axis_in.data.tdata; // TODO handle tkeep
+  uint32_t key[CHACHA20_KEY_NWORDS] = inputs.key;
+  uint32_t nonce[CHACHA20_NONCE_NWORDS] = inputs.nonce;
+  uint32_t counter = inputs.counter;
+
   chacha20_state state = chacha20_init(key, nonce, counter);
   chacha20_state block = chacha20_block(state);
 
   // PipelineC byte casting funcs
-  chacha20_state_bytes_t bytes = chacha20_state_to_bytes(block);
-  chacha20_block_bytes_t block_bytes = {.bytes = bytes.data};
+  chacha20_state_bytes_t block_bytes_t = chacha20_state_to_bytes(block);
+  uint8_t[CHACHA20_BLOCK_SIZE] block_bytes = block_bytes_t.data;
 
-  chacha20_block_bytes_t out_data;
+  uint8_t[CHACHA20_BLOCK_SIZE] out_data;
   // TODO partial in data, i.e. partial tkeep
   //    size_t chunk_size = length > 64 ? 64 : length;
   for(uint32_t i = 0; i < CHACHA20_BLOCK_SIZE; i+=1)
   {
-    out_data.bytes[i] = in_data.bytes[i] ^ block_bytes.bytes[i];
+    out_data[i] = in_data[i] ^ block_bytes[i];
   }
-  return out_data;
+  // Output pass though AXIS tlast,tkeep,tvalid
+  stream(axis512_t) axis_out = inputs.axis_in;
+  // Data bytes are encrypted output of chacha20
+  axis_out.data.tdata = out_data.bytes;
+  return axis_out;
 }
