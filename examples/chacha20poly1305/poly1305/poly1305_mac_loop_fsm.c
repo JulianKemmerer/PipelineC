@@ -1,3 +1,4 @@
+// TODO rename file to poly1305_mac.c
 /* Code using a poly1305_mac_loop_body pipeline to evaluate: 
 for (size_t i = 0; i < blocks; i++)
 {
@@ -21,8 +22,12 @@ uint8_t poly1305_mac_loop_fsm_data_key[32];
 // 16 byte wide AXIS port for data input
 stream(axis128_t) poly1305_mac_loop_fsm_data_in;
 uint1_t poly1305_mac_loop_fsm_data_in_ready;
-// TODO is pass through of data preceeding auth tag expected? seems so
-// 16-byte authentication tag output (TODO also make AXIS?)
+// Pass through of data expected? seems so...
+// 16 byte wide AXIS port for data output
+stream(axis128_t) poly1305_mac_loop_fsm_data_out;
+uint1_t poly1305_mac_loop_fsm_data_out_ready;
+// 16-byte authentication tag output
+// Single cycle pulse, no handshake (TODO also make AXIS?)
 uint8_t poly1305_mac_loop_fsm_auth_tag[16];
 uint1_t poly1305_mac_loop_fsm_auth_tag_valid;
 
@@ -53,6 +58,9 @@ void poly1305_mac_loop_fsm(){
 
   // Default not ready for incoming data
   poly1305_mac_loop_fsm_data_in_ready = 0;
+  // Default not outputting pass through data
+  stream(axis128_t) axis128_null = {0};
+  poly1305_mac_loop_fsm_data_out = axis128_null;
   // Default not outputting an auth tag
   uint8_t auth_tag_null_outputs[16] = {0};
   poly1305_mac_loop_fsm_auth_tag = auth_tag_null_outputs;
@@ -75,18 +83,19 @@ void poly1305_mac_loop_fsm(){
       state = START_ITER; 
     }
   }else if(state == START_ITER){
-    // Ready to take an input data block and put into pipeline
-    poly1305_mac_loop_fsm_data_in_ready = 1;
+    // Ready to take an input data block if pass through to output is ready
+    poly1305_mac_loop_fsm_data_in_ready = poly1305_mac_loop_fsm_data_out_ready;
+    poly1305_mac_loop_fsm_data_out = poly1305_mac_loop_fsm_data_in;
     // Put 'a' and data block into pipeline
     poly1305_pipeline_in.block_bytes = poly1305_mac_loop_fsm_data_in.data.tdata;
     // TODO tkeep partial block, process remaining bytes with padding
     poly1305_pipeline_in.a = a;
     poly1305_pipeline_in.r = r;
-    poly1305_pipeline_in_valid = poly1305_mac_loop_fsm_data_in.valid;
+    poly1305_pipeline_in_valid = poly1305_mac_loop_fsm_data_in.valid & poly1305_mac_loop_fsm_data_in_ready;
     // Record if this is the last block
     is_last_block = poly1305_mac_loop_fsm_data_in.data.tlast;
-    // And then wait for the output once input accepted
-    if(poly1305_mac_loop_fsm_data_in.valid & poly1305_mac_loop_fsm_data_in_ready){
+    // And then wait for the output once input into pipeline happens
+    if(poly1305_pipeline_in_valid){
       state = FINISH_ITER;
     }
   }else if(state == FINISH_ITER){
