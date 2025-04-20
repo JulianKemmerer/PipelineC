@@ -45,6 +45,7 @@ int chacha20poly1305_encrypt(
     return 0;
 }
 */
+#include "arrays.h"
 // Instance of chacha20 part of encryption
 #include "chacha20/chacha20_encrypt.c"
 // Instance of preparing auth data part of encryption
@@ -73,14 +74,44 @@ DECL_OUTPUT(uint1_t, m_axis_tvalid)
 DECL_INPUT(uint1_t, m_axis_tready)
 
 void main(){
-  // TODO start wiring up
+    // Convert flattened multiple input wires to stream(axis128_t)
+    stream(axis128_t) s_axis;
+    UINT_TO_BYTE_ARRAY(s_axis.data.tdata, 16, s_axis_tdata)
+    UINT_TO_BIT_ARRAY(s_axis.data.tkeep, 16, s_axis_tkeep)
+    s_axis.data.tlast = s_axis_tlast;
+    s_axis.valid = s_axis_tvalid;
 
-  // Convert flattened input to stream(axis128_t)
+    // chacha20 -> prepare auth data -> poly1305
 
-  // chacha20 -> prepare auth data -> poly1305
+    // Connect input stream to chacha20_encrypt
+    /*TODO uint32_t chacha20_encrypt_key[CHACHA20_KEY_NWORDS]; // input
+    uint32_t chacha20_encrypt_nonce[CHACHA20_NONCE_NWORDS]; // input
+    uint32_t chacha20_encrypt_counter; // input*/
+    chacha20_encrypt_axis_in = s_axis;
+    s_axis_tready = chacha20_encrypt_axis_in_ready;
 
-  // Convert stream(axis128_t) to flattened output
+    // Connect chacha20_encrypt output to prep_auth_data input
+    prep_auth_data_axis_in = chacha20_encrypt_axis_out;
+    chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
 
+    // Connect prep_auth_data output to poly1305_mac input
+    /*TODO // 32-byte key (r || s) input
+    uint8_t poly1305_mac_loop_fsm_data_key[32];*/
+    poly1305_mac_loop_fsm_data_in = prep_auth_data_axis_out;
+    prep_auth_data_axis_out_ready = poly1305_mac_loop_fsm_data_in_ready;
+
+    // Connect poly1305_mac output to output
+    /*TODO // Single cycle pulse, no handshake (TODO also make AXIS?)
+    uint8_t poly1305_mac_loop_fsm_auth_tag[16];
+    uint1_t poly1305_mac_loop_fsm_auth_tag_valid;*/
+    stream(axis128_t) m_axis = poly1305_mac_loop_fsm_data_out;
+    poly1305_mac_loop_fsm_data_out_ready = m_axis_tready;
+
+    // Convert stream(axis128_t) to flattened output multiple wires
+    m_axis_tdata = uint8_array16_le(m_axis.data.tdata);
+    m_axis_tkeep = uint1_array16_le(m_axis.data.tkeep);
+    m_axis_tlast = m_axis.data.tlast;
+    m_axis_tvalid = m_axis.valid;
 }
 
 // TODO revive simulation demo

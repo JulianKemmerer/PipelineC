@@ -197,6 +197,7 @@ typedef struct chacha20_encrypt_loop_body_in_t
 {
   axis512_t axis_in; // Stream of 64 byte blocks
   // TODO key and nonce dont change every block right? only per packet?
+  // make global volatile input wire instead of function arg to prevent excess pipeline regs?
   uint32_t key[CHACHA20_KEY_NWORDS]; 
   uint32_t nonce[CHACHA20_NONCE_NWORDS];
   uint32_t counter;
