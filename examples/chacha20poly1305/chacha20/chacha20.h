@@ -202,10 +202,11 @@ typedef struct chacha20_encrypt_loop_body_in_t
   uint32_t nonce[CHACHA20_NONCE_NWORDS];
   uint32_t counter;
 } chacha20_encrypt_loop_body_in_t;
+DECL_STREAM_TYPE(chacha20_encrypt_loop_body_in_t)
 axis512_t chacha20_encrypt_loop_body(
   chacha20_encrypt_loop_body_in_t inputs
 ){
-  uint8_t[CHACHA20_BLOCK_SIZE] in_data = inputs.axis_in.data.tdata; // TODO handle tkeep
+  uint8_t in_data[CHACHA20_BLOCK_SIZE] = inputs.axis_in.tdata; // TODO handle tkeep
   uint32_t key[CHACHA20_KEY_NWORDS] = inputs.key;
   uint32_t nonce[CHACHA20_NONCE_NWORDS] = inputs.nonce;
   uint32_t counter = inputs.counter;
@@ -215,9 +216,9 @@ axis512_t chacha20_encrypt_loop_body(
 
   // PipelineC byte casting funcs
   chacha20_state_bytes_t block_bytes_t = chacha20_state_to_bytes(block);
-  uint8_t[CHACHA20_BLOCK_SIZE] block_bytes = block_bytes_t.data;
+  uint8_t block_bytes[CHACHA20_BLOCK_SIZE] = block_bytes_t.data;
 
-  uint8_t[CHACHA20_BLOCK_SIZE] out_data;
+  uint8_t out_data[CHACHA20_BLOCK_SIZE];
   // TODO partial in data, i.e. partial tkeep
   //    size_t chunk_size = length > 64 ? 64 : length;
   for(uint32_t i = 0; i < CHACHA20_BLOCK_SIZE; i+=1)
@@ -225,8 +226,8 @@ axis512_t chacha20_encrypt_loop_body(
     out_data[i] = in_data[i] ^ block_bytes[i];
   }
   // Output pass though AXIS tlast,tkeep,tvalid
-  stream(axis512_t) axis_out = inputs.axis_in;
+  axis512_t axis_out = inputs.axis_in;
   // Data bytes are encrypted output of chacha20
-  axis_out.data.tdata = out_data.bytes;
+  axis_out.tdata = out_data;
   return axis_out;
 }

@@ -60,12 +60,20 @@ int chacha20poly1305_encrypt(
 // Flattened top level ports with AXIS style manager/subordinate naming
 // (could also have inputs and outputs of type stream(my_axis_32_t)
 //  but ex. Verilog does not support VHDL records...)
+// Top level input wires
+DECL_INPUT(uint1024_t, key)
+DECL_INPUT(uint384_t, nonce)
+DECL_INPUT(uint32_t, counter)
+DECL_INPUT(uint256_t, poly1305_key)
 // Top level input Stream
 DECL_INPUT(uint128_t, s_axis_tdata)
 DECL_INPUT(uint16_t, s_axis_tkeep)
 DECL_INPUT(uint1_t, s_axis_tlast)
 DECL_INPUT(uint1_t, s_axis_tvalid)
 DECL_OUTPUT(uint1_t, s_axis_tready)
+// Top level output wires
+DECL_OUTPUT(uint128_t, poly1305_auth_tag)
+DECL_OUTPUT(uint1_t, poly1305_auth_tag_valid)
 // Top level output Stream
 DECL_OUTPUT(uint128_t, m_axis_tdata)
 DECL_OUTPUT(uint16_t, m_axis_tkeep)
@@ -84,9 +92,13 @@ void main(){
     // chacha20 -> prepare auth data -> poly1305
 
     // Connect input stream to chacha20_encrypt
-    /*TODO uint32_t chacha20_encrypt_key[CHACHA20_KEY_NWORDS]; // input
-    uint32_t chacha20_encrypt_nonce[CHACHA20_NONCE_NWORDS]; // input
-    uint32_t chacha20_encrypt_counter; // input*/
+    for(int32_t i=0; i<CHACHA20_KEY_NWORDS; i+=1){
+        chacha20_encrypt_key[i] = key >> (i*32);
+    }
+    for(int32_t i=0; i<CHACHA20_NONCE_NWORDS; i+=1){
+        chacha20_encrypt_nonce[i] = nonce >> (i*32);
+    }
+    chacha20_encrypt_counter = counter;
     chacha20_encrypt_axis_in = s_axis;
     s_axis_tready = chacha20_encrypt_axis_in_ready;
 
@@ -95,15 +107,15 @@ void main(){
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
 
     // Connect prep_auth_data output to poly1305_mac input
-    /*TODO // 32-byte key (r || s) input
-    uint8_t poly1305_mac_loop_fsm_data_key[32];*/
+    for(int32_t i=0; i<32; i+=1){
+        poly1305_mac_loop_fsm_data_key[i] = poly1305_key >> (i*8);
+    }
     poly1305_mac_loop_fsm_data_in = prep_auth_data_axis_out;
     prep_auth_data_axis_out_ready = poly1305_mac_loop_fsm_data_in_ready;
 
     // Connect poly1305_mac output to output
-    /*TODO // Single cycle pulse, no handshake (TODO also make AXIS?)
-    uint8_t poly1305_mac_loop_fsm_auth_tag[16];
-    uint1_t poly1305_mac_loop_fsm_auth_tag_valid;*/
+    poly1305_auth_tag = uint8_array16_le(poly1305_mac_loop_fsm_auth_tag);
+    poly1305_auth_tag_valid = poly1305_mac_loop_fsm_auth_tag_valid;
     stream(axis128_t) m_axis = poly1305_mac_loop_fsm_data_out;
     poly1305_mac_loop_fsm_data_out_ready = m_axis_tready;
 

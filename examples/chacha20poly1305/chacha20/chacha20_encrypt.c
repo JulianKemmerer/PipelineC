@@ -3,7 +3,7 @@
 // use axis128/512 stream types
 #include "axi/axis.h"
 #include "global_func_inst.h"
-#include "chacha20/chacha20.h"
+#include "chacha20.h"
 
 // Globally visible ports
 uint32_t chacha20_encrypt_key[CHACHA20_KEY_NWORDS]; // input
@@ -29,10 +29,10 @@ void chacha20_encrypt()
   chacha20_encrypt_axis_in_ready = in_to_block.axis_in_ready;
 
   // Connect input 512b block into pipeline
-  chacha20_encrypt_pipeline_in.key = chacha20_encrypt_key;
-  chacha20_encrypt_pipeline_in.nonce = chacha20_encrypt_nonce;
-  chacha20_encrypt_pipeline_in.counter = chacha20_encrypt_counter;
-  chacha20_encrypt_pipeline_in.axis_in = block_in_stream.data;
+  chacha20_encrypt_pipeline_in.data.key = chacha20_encrypt_key;
+  chacha20_encrypt_pipeline_in.data.nonce = chacha20_encrypt_nonce;
+  chacha20_encrypt_pipeline_in.data.counter = chacha20_encrypt_counter;
+  chacha20_encrypt_pipeline_in.data.axis_in = block_in_stream.data;
   chacha20_encrypt_pipeline_in.valid = block_in_stream.valid;
   block_in_ready = chacha20_encrypt_pipeline_in_ready; // FEEDBACK
 
