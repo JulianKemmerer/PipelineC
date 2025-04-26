@@ -272,6 +272,64 @@ axis32_to_axis8_t axis32_to_axis8(stream(axis32_t) axis_in, uint1_t axis_out_rea
   ");
 }
 
+// TODO make this example axis128 to/from axis512 into macros for any axis size
+
+#define axis128_to_axis512_RATIO (512/128)
+#define axis512_to_axis128_RATIO (512/128)
+
+// Convert from axis512 to chunks of size axis128
+typedef struct axis512_to_axis128_array_t{
+  stream(axis128_t) axis_chunks[axis512_to_axis128_RATIO];
+}axis512_to_axis128_array_t;
+axis512_to_axis128_array_t axis512_to_axis128_array(axis512_t axis)
+{
+  axis512_to_axis128_array_t o;
+  uint32_t CHUNK_SIZE = 128/8;
+  for(uint32_t c=0; c<axis512_to_axis128_RATIO; c+=1)
+  {
+    // Chunks are valid based on tkeep parts of whole 512b
+    // only need to check b=0 bottom tkeep bit for this chunk since assumed aligned
+    o.axis_chunks[c].valid = axis.tkeep[(c*CHUNK_SIZE)];
+    for(uint32_t b=0; b<CHUNK_SIZE; b+=1)
+    {
+      o.axis_chunks[c].data.tdata[b] = axis.tdata[(c*CHUNK_SIZE)+b];
+      o.axis_chunks[c].data.tkeep[b] = axis.tkeep[(c*CHUNK_SIZE)+b];
+    }
+  }
+  // tlast is only for the last chunk 
+  // But might be applied to an earlier chunk if a partial valid chunks cycle
+  // can tell a chunk is partially last, if next chunk is empty/invalid
+  // (fine to set even if chunk not .valid)
+  o.axis_chunks[(axis512_to_axis128_RATIO-1)].data.tlast = axis.tlast;
+  for(uint32_t c=0; c<(axis512_to_axis128_RATIO-1); c+=1)
+  {
+    uint1_t next_chunk_is_empty = ~o.axis_chunks[c+1].valid;
+    o.axis_chunks[c].data.tlast = next_chunk_is_empty;
+  }
+  return o;
+}
+
+// Convert from chunks of size axis128 to axis512
+axis512_t axis128_array_to_axis512(stream(axis128_t) axis_chunks[axis128_to_axis512_RATIO])
+{
+  uint32_t CHUNK_SIZE = 128/8;
+  axis512_t axis;
+  // output is last word if any of chunks were last
+  axis.tlast = 0;
+  for(uint32_t c=0; c<axis128_to_axis512_RATIO; c+=1)
+  {
+    // last flag only used if valid
+    axis.tlast |= (axis_chunks[c].valid & axis_chunks[c].data.tlast);
+    for(uint32_t b=0; b<CHUNK_SIZE; b+=1)
+    {
+      axis.tdata[(c*CHUNK_SIZE)+b] = axis_chunks[c].data.tdata[b];
+      // keep flag only used if valid
+      axis.tkeep[(c*CHUNK_SIZE)+b] = (axis_chunks[c].valid & axis_chunks[c].data.tkeep[b]);
+    }
+  }
+  return axis;
+}
+
 typedef struct axis128_to_axis512_t
 {
   stream(axis512_t) axis_out;
@@ -281,8 +339,78 @@ axis128_to_axis512_t axis128_to_axis512(
   stream(axis128_t) axis_in,
   uint1_t axis_out_ready
 ){
-  //#warning "TODO axis128_to_axis512"
+  uint32_t IN_SIZE = 128/8;
+  uint32_t OUT_SIZE = 512/8;
+  
+  // Output wires
   axis128_to_axis512_t o;
+  // IO regs for data+valid signals (not for ready, not skid buffer)
+  static stream(axis128_t) axis_in_reg;
+  static stream(axis512_t) axis_out_reg;
+
+  // Output data+valid comes from reg
+  o.axis_out = axis_out_reg;
+  // if outgoing transfer then output reg can be cleared now
+  if(o.axis_out.valid & axis_out_ready)
+  {
+    // all except tdata needs reset
+    axis_out_reg.valid = 0;
+    ARRAY_SET(axis_out_reg.data.tkeep, 0, OUT_SIZE)
+    axis_out_reg.data.tlast = 0;
+  }
+
+  // Move one chunk of data from input to output
+  // if have input valid chunk and
+  // output reg is ready to accumulate data = not yet valid with full output
+  uint1_t out_reg_ready = ~axis_out_reg.valid;
+  if(axis_in_reg.valid & out_reg_ready)
+  {
+    // Existing chunks start off as some aligned axis data in output reg
+    stream(axis128_t) axis_out_as_chunks[axis128_to_axis512_RATIO];
+    axis512_to_axis128_array_t to_array = axis512_to_axis128_array(axis_out_reg.data);
+    axis_out_as_chunks = to_array.axis_chunks;
+
+    // Move the new input data chunk into the top/input part of output reg
+    // Doing so might be an unaligned axis word depending on partial tkeep in tlast cycle
+    ARRAY_1SHIFT_INTO_TOP(axis_out_as_chunks, axis128_to_axis512_RATIO, axis_in_reg)
+    uint1_t last_cycle = axis_in_reg.data.tlast;
+    // having taken the input reg contents, clear the input reg now
+    // all except tdata needs reset
+    axis_in_reg.valid = 0;
+    ARRAY_SET(axis_in_reg.data.tkeep, 0, IN_SIZE)
+    axis_in_reg.data.tlast = 0;
+
+    // Finally re-align any partial cycles if this last cycle of input data
+    if(last_cycle)
+    {
+      // Need to keep shifting the array chunks down towards bottom [0]
+      // until a valid chunk is there, properly aligning everything
+      for(uint32_t i=0; i<(axis128_to_axis512_RATIO-1); i+=1)
+      {
+        // If bottom spot is empty, shift down one
+        // by shifting zeros into top
+        if(~axis_out_as_chunks[0].valid)
+        {
+          stream(axis128_t) NULL_CHUNK = {0}; // Dont actually need to clear tdata too
+          ARRAY_1SHIFT_INTO_TOP(axis_out_as_chunks, axis128_to_axis512_RATIO, NULL_CHUNK)
+        }
+      }
+    }
+
+    // Assemble aligned chunks into output reg
+    axis_out_reg.data = axis128_array_to_axis512(axis_out_as_chunks);
+    // Full output word is valid if bottom [0] spot has a valid chunk
+    // (full and/or aligned partial data ends with that spot valid)
+    axis_out_reg.valid = axis_out_as_chunks[0].valid;
+  }
+
+  // Ready for input if input reg is empty/
+  // (dont need to check axis_in.valid actually)
+  o.axis_in_ready = ~axis_in_reg.valid;
+  if(axis_in.valid & o.axis_in_ready){
+    axis_in_reg = axis_in;
+  }
+
   return o;
 }
 
@@ -295,8 +423,68 @@ axis512_to_axis128_t axis512_to_axis128(
   stream(axis512_t) axis_in,
   uint1_t axis_out_ready
 ){
-  //#warning "TODO axis512_to_axis128"
+  uint32_t IN_SIZE = 512/8;
+  uint32_t OUT_SIZE = 128/8;
+
+  // Output wires
   axis512_to_axis128_t o;
+  
+  // IO regs for data+valid signals (not for ready, not skid buffer)
+  static stream(axis512_t) axis_in_reg;
+  static stream(axis128_t) axis_out_reg;
+  
+  // Output data+valid comes from reg
+  o.axis_out = axis_out_reg;
+  // if outgoing transfer then output reg can be cleared now
+  if(o.axis_out.valid & axis_out_ready)
+  {
+    // all except tdata needs reset
+    axis_out_reg.valid = 0;
+    ARRAY_SET(axis_out_reg.data.tkeep, 0, OUT_SIZE)
+    axis_out_reg.data.tlast = 0;
+  }
+
+  // Move one chunk of data from input to output
+  // if have input valid chunk and
+  // output reg is ready to accumulate data = not yet valid with full output
+  uint1_t out_reg_ready = ~axis_out_reg.valid;
+  if(axis_in_reg.valid & out_reg_ready)
+  {
+    // Existing chunks start off as some aligned axis data in input reg
+    stream(axis128_t) axis_in_as_chunks[axis512_to_axis128_RATIO];
+    axis512_to_axis128_array_t to_array = axis512_to_axis128_array(axis_in_reg.data);
+    axis_in_as_chunks = to_array.axis_chunks;
+
+    // Move one chunk of input data (from bottom/[0] end) into output reg
+    axis_out_reg = axis_in_as_chunks[0];
+    // Shift the rest of the chunks down
+    // by shifting zeros into top
+    stream(axis128_t) NULL_CHUNK = {0}; // Dont actually need to clear tdata too
+    ARRAY_1SHIFT_INTO_TOP(axis_in_as_chunks, axis512_to_axis128_RATIO, NULL_CHUNK)
+
+    // Assemble and store the shifting chunks in the input reg
+    axis_in_reg.data = axis128_array_to_axis512(axis_in_as_chunks);
+    
+    // Having taken a chunk of the input reg it might be fully empty now
+    // can just check the first/bottom chunk and clear the whole input reg if so
+    if(~axis_in_as_chunks[0].valid)
+    {
+      // all except tdata needs reset
+      axis_in_reg.valid = 0;
+      ARRAY_SET(axis_in_reg.data.tkeep, 0, IN_SIZE)
+      axis_in_reg.data.tlast = 0;
+    }
+
+    // No alignment or assembly into multi chunk output is needed
+  }
+
+  // Ready for input if input reg is empty/invalid
+  // (dont need to check axis_in.valid actually)
+  o.axis_in_ready = ~axis_in_reg.valid;
+  if(axis_in.valid & o.axis_in_ready){
+    axis_in_reg = axis_in;
+  }
+
   return o;
 }
 
