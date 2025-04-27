@@ -55,7 +55,7 @@ int chacha20poly1305_encrypt(
 // Instance of preparing auth data part of encryption
 #include "prep_auth_data/prep_auth_data.c"
 // Instance of poly1305 part of encryption
-#include "poly1305/poly1305_mac_loop_fsm.c"
+#include "poly1305/poly1305_mac.c"
 
 // Flattened top level ports with AXIS style manager/subordinate naming
 // (could also have inputs and outputs of type stream(my_axis_t)
@@ -116,15 +116,15 @@ void main(){
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
 
     // Connect prep_auth_data output to poly1305_mac input
-    UINT_TO_BYTE_ARRAY(poly1305_mac_loop_fsm_data_key, 32, poly1305_key)
-    poly1305_mac_loop_fsm_data_in = prep_auth_data_axis_out;
-    prep_auth_data_axis_out_ready = poly1305_mac_loop_fsm_data_in_ready;
+    UINT_TO_BYTE_ARRAY(poly1305_mac_data_key, 32, poly1305_key)
+    poly1305_mac_data_in = prep_auth_data_axis_out;
+    prep_auth_data_axis_out_ready = poly1305_mac_data_in_ready;
 
     // Connect poly1305_mac output to output
-    auth_tag = uint8_array16_le(poly1305_mac_loop_fsm_auth_tag);
-    auth_tag_valid = poly1305_mac_loop_fsm_auth_tag_valid;
-    stream(axis128_t) m_axis = poly1305_mac_loop_fsm_data_out;
-    poly1305_mac_loop_fsm_data_out_ready = m_axis_tready;
+    auth_tag = uint8_array16_le(poly1305_mac_auth_tag);
+    auth_tag_valid = poly1305_mac_auth_tag_valid;
+    stream(axis128_t) m_axis = poly1305_mac_data_out;
+    poly1305_mac_data_out_ready = m_axis_tready;
 
     // Convert stream(axis128_t) to flattened output multiple wires
     m_axis_tdata = uint8_array16_le(m_axis.data.tdata);
