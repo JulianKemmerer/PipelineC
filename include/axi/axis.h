@@ -78,6 +78,14 @@ uint1_t axis8_keep_count(stream(axis8_t) s){
 
 // Convert to funcs taking ex. an axis16_t instead of just the .keep?
 
+uint5_t axis128_keep_count(axis128_t axis){
+  uint5_t rv = 0;
+  for(uint32_t i=0; i<16; i+=1){
+    rv += axis.tkeep[i];
+  }
+  return rv;
+}
+
 uint2_t axis16_keep_bytes(uint2_t keep)
 {
 	uint2_t rv;

@@ -63,6 +63,7 @@ int chacha20poly1305_encrypt(
 // Top level input wires
 DECL_INPUT(uint1024_t, key)
 DECL_INPUT(uint384_t, nonce)
+// TODO is block counter internal reg in chacha20 encrypt?
 DECL_INPUT(uint32_t, counter)
 DECL_INPUT(uint256_t, aad)
 DECL_INPUT(uint8_t, aad_len)
@@ -115,9 +116,7 @@ void main(){
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
 
     // Connect prep_auth_data output to poly1305_mac input
-    for(int32_t i=0; i<32; i+=1){
-        poly1305_mac_loop_fsm_data_key[i] = poly1305_key >> (i*8);
-    }
+    UINT_TO_BYTE_ARRAY(poly1305_mac_loop_fsm_data_key, 32, poly1305_key)
     poly1305_mac_loop_fsm_data_in = prep_auth_data_axis_out;
     prep_auth_data_axis_out_ready = poly1305_mac_loop_fsm_data_in_ready;
 
