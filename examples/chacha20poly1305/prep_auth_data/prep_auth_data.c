@@ -22,8 +22,8 @@
 */
 #include "prep_auth_data.h"
 
-// TODO add aad port when data type/size determined
-
+uint8_t prep_auth_data_aad[16];
+uint8_t prep_auth_data_aad_len; // length of aad
 stream(axis128_t) prep_auth_data_axis_in; // input
 uint1_t prep_auth_data_axis_in_ready; // output
 stream(axis128_t) prep_auth_data_axis_out; // output

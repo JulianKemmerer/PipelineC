@@ -1,3 +1,7 @@
+/**
+ * based on code from
+ * https://github.com/chili-chips-ba/wireguard-fpga/blob/main/2.sw/app/chacha20poly1305/
+*/
 /*
 int chacha20poly1305_encrypt(
     uint8_t *ciphertext,
@@ -53,34 +57,38 @@ int chacha20poly1305_encrypt(
 // Instance of poly1305 part of encryption
 #include "poly1305/poly1305_mac_loop_fsm.c"
 
-// The primary dataflow for single clock domain ChaCha20-Poly1305 encryption
-#pragma PART "xc7a200tffg1156-2" // Artix 7 200T
-#pragma MAIN_MHZ main 80.0
-
 // Flattened top level ports with AXIS style manager/subordinate naming
-// (could also have inputs and outputs of type stream(my_axis_32_t)
+// (could also have inputs and outputs of type stream(my_axis_t)
 //  but ex. Verilog does not support VHDL records...)
 // Top level input wires
 DECL_INPUT(uint1024_t, key)
 DECL_INPUT(uint384_t, nonce)
 DECL_INPUT(uint32_t, counter)
-DECL_INPUT(uint256_t, poly1305_key)
-// Top level input Stream
+DECL_INPUT(uint256_t, aad)
+DECL_INPUT(uint8_t, aad_len)
+// TODO is poly1305_key a real input since can be derived from key and nonce?
+// i.e. is the one time poly1305_key_gen done in software or hardware?
+DECL_INPUT(uint256_t, poly1305_key) 
+// Top level input stream of plaintext
 DECL_INPUT(uint128_t, s_axis_tdata)
 DECL_INPUT(uint16_t, s_axis_tkeep)
 DECL_INPUT(uint1_t, s_axis_tlast)
 DECL_INPUT(uint1_t, s_axis_tvalid)
 DECL_OUTPUT(uint1_t, s_axis_tready)
 // Top level output wires
-DECL_OUTPUT(uint128_t, poly1305_auth_tag)
-DECL_OUTPUT(uint1_t, poly1305_auth_tag_valid)
-// Top level output Stream
+DECL_OUTPUT(uint128_t, auth_tag)
+DECL_OUTPUT(uint1_t, auth_tag_valid)
+// Top level output stream of ciphertext
 DECL_OUTPUT(uint128_t, m_axis_tdata)
 DECL_OUTPUT(uint16_t, m_axis_tkeep)
 DECL_OUTPUT(uint1_t, m_axis_tlast)
 DECL_OUTPUT(uint1_t, m_axis_tvalid)
 DECL_INPUT(uint1_t, m_axis_tready)
 
+// The primary dataflow for single clock domain ChaCha20-Poly1305 encryption
+// chacha20 -> prepare auth data -> poly1305
+#pragma PART "xc7a200tffg1156-2" // Artix 7 200T
+#pragma MAIN_MHZ main 80.0
 void main(){
     // Convert flattened multiple input wires to stream(axis128_t)
     stream(axis128_t) s_axis;
@@ -88,8 +96,6 @@ void main(){
     UINT_TO_BIT_ARRAY(s_axis.data.tkeep, 16, s_axis_tkeep)
     s_axis.data.tlast = s_axis_tlast;
     s_axis.valid = s_axis_tvalid;
-
-    // chacha20 -> prepare auth data -> poly1305
 
     // Connect input stream to chacha20_encrypt
     for(int32_t i=0; i<CHACHA20_KEY_NWORDS; i+=1){
@@ -103,6 +109,8 @@ void main(){
     s_axis_tready = chacha20_encrypt_axis_in_ready;
 
     // Connect chacha20_encrypt output to prep_auth_data input
+    UINT_TO_BYTE_ARRAY(prep_auth_data_aad, 16, aad)
+    prep_auth_data_aad_len = aad_len;
     prep_auth_data_axis_in = chacha20_encrypt_axis_out;
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
 
@@ -114,8 +122,8 @@ void main(){
     prep_auth_data_axis_out_ready = poly1305_mac_loop_fsm_data_in_ready;
 
     // Connect poly1305_mac output to output
-    poly1305_auth_tag = uint8_array16_le(poly1305_mac_loop_fsm_auth_tag);
-    poly1305_auth_tag_valid = poly1305_mac_loop_fsm_auth_tag_valid;
+    auth_tag = uint8_array16_le(poly1305_mac_loop_fsm_auth_tag);
+    auth_tag_valid = poly1305_mac_loop_fsm_auth_tag_valid;
     stream(axis128_t) m_axis = poly1305_mac_loop_fsm_data_out;
     poly1305_mac_loop_fsm_data_out_ready = m_axis_tready;
 
@@ -126,7 +134,7 @@ void main(){
     m_axis_tvalid = m_axis.valid;
 }
 
-// TODO revive simulation demo
+#warning "TODO revive simulation demo once AXIS dwidth converters done"
 /* FAKE TEST
 #pragma MAIN_MHZ main 80.0
 chacha20_state main(){
