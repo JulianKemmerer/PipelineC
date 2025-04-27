@@ -63,8 +63,6 @@ int chacha20poly1305_encrypt(
 // Top level input wires
 DECL_INPUT(uint1024_t, key)
 DECL_INPUT(uint384_t, nonce)
-// TODO is block counter internal reg in chacha20 encrypt?
-DECL_INPUT(uint32_t, counter)
 DECL_INPUT(uint256_t, aad)
 DECL_INPUT(uint8_t, aad_len)
 // TODO is poly1305_key a real input since can be derived from key and nonce?
@@ -105,7 +103,6 @@ void main(){
     for(int32_t i=0; i<CHACHA20_NONCE_NWORDS; i+=1){
         chacha20_encrypt_nonce[i] = nonce >> (i*32);
     }
-    chacha20_encrypt_counter = counter;
     chacha20_encrypt_axis_in = s_axis;
     s_axis_tready = chacha20_encrypt_axis_in_ready;
 

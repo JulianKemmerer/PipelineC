@@ -8,7 +8,6 @@
 // Globally visible ports
 uint32_t chacha20_encrypt_key[CHACHA20_KEY_NWORDS]; // input
 uint32_t chacha20_encrypt_nonce[CHACHA20_NONCE_NWORDS]; // input
-uint32_t chacha20_encrypt_counter; // input // TODO should this be internal counter reg?
 stream(axis128_t) chacha20_encrypt_axis_in; // input
 uint1_t chacha20_encrypt_axis_in_ready; // output
 stream(axis128_t) chacha20_encrypt_axis_out; // output
@@ -29,12 +28,21 @@ void chacha20_encrypt()
   chacha20_encrypt_axis_in_ready = in_to_block.axis_in_ready;
 
   // Connect input 512b block into pipeline
+  // As input blocks go into pipeline count them starting at 1
+  static uint32_t block_count = 1;
   chacha20_encrypt_pipeline_in.data.key = chacha20_encrypt_key;
   chacha20_encrypt_pipeline_in.data.nonce = chacha20_encrypt_nonce;
-  chacha20_encrypt_pipeline_in.data.counter = chacha20_encrypt_counter;
+  chacha20_encrypt_pipeline_in.data.counter = block_count;
   chacha20_encrypt_pipeline_in.data.axis_in = block_in_stream.data;
   chacha20_encrypt_pipeline_in.valid = block_in_stream.valid;
   block_in_ready = chacha20_encrypt_pipeline_in_ready; // FEEDBACK
+  if(chacha20_encrypt_pipeline_in.valid & chacha20_encrypt_pipeline_in_ready){
+    block_count += 1;
+    // if this was last block then reset counter
+    if(chacha20_encrypt_pipeline_in.data.axis_in.tlast){
+      block_count = 1;
+    }
+  }
 
   // Convert pipeline output 512b block stream to 128b
   axis512_to_axis128_t block_to_out = axis512_to_axis128(chacha20_encrypt_pipeline_out, chacha20_encrypt_axis_out_ready);
