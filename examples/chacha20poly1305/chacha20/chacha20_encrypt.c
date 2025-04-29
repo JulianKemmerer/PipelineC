@@ -6,8 +6,8 @@
 #include "chacha20.h"
 
 // Globally visible ports
-uint32_t chacha20_encrypt_key[CHACHA20_KEY_NWORDS]; // input
-uint32_t chacha20_encrypt_nonce[CHACHA20_NONCE_NWORDS]; // input
+uint8_t chacha20_encrypt_key[CHACHA20_KEY_SIZE]; // input
+uint8_t chacha20_encrypt_nonce[CHACHA20_NONCE_SIZE]; // input
 stream(axis128_t) chacha20_encrypt_axis_in; // input
 uint1_t chacha20_encrypt_axis_in_ready; // output
 stream(axis128_t) chacha20_encrypt_axis_out; // output

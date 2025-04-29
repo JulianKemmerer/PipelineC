@@ -1,6 +1,11 @@
 // Based on https://github.com/chili-chips-ba/wireguard-fpga/blob/main/2.sw/app/chacha20poly1305/poly1305.c
 
-#define BLOCK_SIZE 16
+#define POLY1305_BLOCK_SIZE 16
+#define POLY1305_KEY_SIZE 32
+#define poly1305_key_uint_t uint256_t
+#define POLY1305_AUTH_TAG_SIZE 16
+#define poly1305_auth_tag_uint_t uint128_t
+#define poly1305_auth_tag_uint_from_bytes uint8_array16_le
 
 /**
  * @brief 130-bit prime: 2^130 - 5
@@ -207,14 +212,14 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
     bytes_to_uint320(&s, s_bytes, 16);
 
     // Process message in 16-byte blocks
-    size_t blocks = message_length / BLOCK_SIZE;
-    size_t remain = message_length % BLOCK_SIZE;
+    size_t blocks = message_length / POLY1305_BLOCK_SIZE;
+    size_t remain = message_length % POLY1305_BLOCK_SIZE;
 
     // Process full blocks
     for (size_t i = 0; i < blocks; i++)
     {
         u320_t n;
-        bytes_to_uint320(&n, message + (i * BLOCK_SIZE), BLOCK_SIZE);
+        bytes_to_uint320(&n, message + (i * POLY1305_BLOCK_SIZE), POLY1305_BLOCK_SIZE);
 
         // Set the high bit (2^128)
         n.limbs[2] |= 0x1;
@@ -233,14 +238,14 @@ void poly1305_mac(uint8_t *auth_tag, const uint8_t *key, const uint8_t *message,
     // Process remaining bytes
     if (remain > 0)
     {
-        uint8_t last_block[BLOCK_SIZE] = {0};
-        memcpy(last_block, message + (blocks * BLOCK_SIZE), remain);
+        uint8_t last_block[POLY1305_BLOCK_SIZE] = {0};
+        memcpy(last_block, message + (blocks * POLY1305_BLOCK_SIZE), remain);
 
         // Add the padding byte
         last_block[remain] = 0x01;
 
         u320_t n;
-        bytes_to_uint320(&n, last_block, BLOCK_SIZE);
+        bytes_to_uint320(&n, last_block, POLY1305_BLOCK_SIZE);
 
         // a += n
         uint320_add(&a, &a, &n);
@@ -265,19 +270,19 @@ Pass by value version of body part of per-block loop:
     want in form: output_t func_name(input_t)
 */
 typedef struct poly1305_mac_loop_body_in_t{
-    uint8_t block_bytes[BLOCK_SIZE];
+    uint8_t block_bytes[POLY1305_BLOCK_SIZE];
     u320_t r;
     u320_t a;
 } poly1305_mac_loop_body_in_t;
 u320_t poly1305_mac_loop_body(
     poly1305_mac_loop_body_in_t inputs
 ){  
-    uint8_t block_bytes[BLOCK_SIZE] = inputs.block_bytes;
+    uint8_t block_bytes[POLY1305_BLOCK_SIZE] = inputs.block_bytes;
     u320_t r = inputs.r;
     u320_t a = inputs.a;
 
     uint8_t n_bytes[sizeof(u320_t)] = {0};
-    for(uint32_t i = 0; i < BLOCK_SIZE; i+=1){
+    for(uint32_t i = 0; i < POLY1305_BLOCK_SIZE; i+=1){
         n_bytes[i] = block_bytes[i];
     }
     u320_t n = bytes_to_uint320(n_bytes);

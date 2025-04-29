@@ -9,8 +9,10 @@
 #include "axi/axis.h"
 
 #define CHACHA20_STATE_NWORDS 16
-#define CHACHA20_KEY_NWORDS 32
-#define CHACHA20_NONCE_NWORDS 12
+#define CHACHA20_KEY_SIZE 32
+#define key_uint_t uint256_t
+#define CHACHA20_NONCE_SIZE 12
+#define nonce_uint_t uint96_t
 #define CHACHA20_BLOCK_SIZE 64
 
 // ChaCha20 state structure
@@ -20,23 +22,6 @@ typedef struct chacha20_state
 } chacha20_state;
 // TODO is byte order for above struct little endian / does it match type_bytes_t.h?
 #include "chacha20_state_bytes_t.h" // PipelineC byte casting funcs
-
-// TODO use structs if need to return these from funcs
-/* // ChaCha20 key structure
-typedef struct chacha20_key_t
-{
-    uint32_t key[CHACHA20_KEY_NWORDS]; // ChaCha20 key (32 words)
-} chacha20_key_t;
-// ChaCha20 nonce structure
-typedef struct chacha20_nonce_t
-{
-    uint32_t nonce[CHACHA20_NONCE_NWORDS]; // ChaCha20 nonce (12 words)
-} chacha20_nonce_t;
-// ChaCha20 block as bytes structure
-typedef struct chacha20_block_bytes_t
-{
-    uint8_t bytes[CHACHA20_BLOCK_SIZE]; // ChaCha20 block (64 bytes)
-} chacha20_block_bytes_t;*/
 
 // The ChaCha20 quarter round function
 // TODO abcd are constants and might get better results if this function made into macro
@@ -96,7 +81,7 @@ chacha20_state chacha20_block(chacha20_state state)
     
     // 2. final parallel add
     uint4_t i;
-    for (i = 0; i < 16; i+=1)
+    for (i = 0; i < CHACHA20_STATE_NWORDS; i+=1)
     {
         output.state[i] = step10.state[i] + state.state[i];
     }
@@ -107,8 +92,8 @@ chacha20_state chacha20_block(chacha20_state state)
 
 // ChaCha20 initialization function
 chacha20_state chacha20_init(
-  uint32_t key[CHACHA20_KEY_NWORDS], 
-  uint32_t nonce[CHACHA20_NONCE_NWORDS], 
+  uint8_t key[CHACHA20_KEY_SIZE], 
+  uint8_t nonce[CHACHA20_NONCE_SIZE], 
   uint32_t counter
 ){
     chacha20_state state;
@@ -120,19 +105,32 @@ chacha20_state chacha20_init(
     state.state[3] = 0x6b206574; // "k et"
 
     // Key
-    uint8_t i;
-    for (i = 0; i < 8; i+=1)
+    uint32_t key_as_u32s[CHACHA20_KEY_SIZE/4];
+    for(uint32_t i = 0; i < CHACHA20_KEY_SIZE/4; i+=1)
     {
-        state.state[4 + i] = key[i];
+      uint16_t lsbs = uint8_uint8(key[(i*4)+1], key[(i*4)+0]);
+      uint16_t msbs = uint8_uint8(key[(i*4)+3], key[(i*4)+2]);
+      key_as_u32s[i] = uint16_uint16(msbs, lsbs);
+    }
+    for(uint32_t i = 0; i < CHACHA20_KEY_SIZE/4; i+=1)
+    {
+        state.state[4 + i] = key_as_u32s[i];
     }
 
     // Counter
     state.state[12] = counter;
 
     // Nonce
-    for (i = 0; i < 3; i+=1)
+    uint32_t nonce_as_u32s[CHACHA20_NONCE_SIZE/4];
+    for(uint32_t i = 0; i < CHACHA20_NONCE_SIZE/4; i+=1)
     {
-        state.state[13 + i] = nonce[i];
+      uint16_t lsbs = uint8_uint8(nonce[(i*4)+1], nonce[(i*4)+0]);
+      uint16_t msbs = uint8_uint8(nonce[(i*4)+3], nonce[(i*4)+2]);
+      nonce_as_u32s[i] = uint16_uint16(msbs, lsbs);
+    }
+    for(uint32_t i = 0; i < CHACHA20_NONCE_SIZE/4; i+=1)
+    {
+        state.state[13 + i] = nonce_as_u32s[i];
     }
 
     return state;
@@ -199,8 +197,8 @@ typedef struct chacha20_encrypt_loop_body_in_t
   axis512_t axis_in; // Stream of 64 byte blocks
   // TODO key and nonce dont change every block right? only per packet?
   // make global volatile input wire instead of function arg to prevent excess pipeline regs?
-  uint32_t key[CHACHA20_KEY_NWORDS]; 
-  uint32_t nonce[CHACHA20_NONCE_NWORDS];
+  uint8_t key[CHACHA20_KEY_SIZE]; 
+  uint8_t nonce[CHACHA20_NONCE_SIZE];
   uint32_t counter;
 } chacha20_encrypt_loop_body_in_t;
 DECL_STREAM_TYPE(chacha20_encrypt_loop_body_in_t)
@@ -208,8 +206,8 @@ axis512_t chacha20_encrypt_loop_body(
   chacha20_encrypt_loop_body_in_t inputs
 ){
   uint8_t in_data[CHACHA20_BLOCK_SIZE] = inputs.axis_in.tdata; // TODO handle tkeep
-  uint32_t key[CHACHA20_KEY_NWORDS] = inputs.key;
-  uint32_t nonce[CHACHA20_NONCE_NWORDS] = inputs.nonce;
+  uint8_t key[CHACHA20_KEY_SIZE] = inputs.key;
+  uint8_t nonce[CHACHA20_NONCE_SIZE] = inputs.nonce;
   uint32_t counter = inputs.counter;
 
   chacha20_state state = chacha20_init(key, nonce, counter);

@@ -3,7 +3,6 @@
 #include "prep_auth_data/prep_auth_data.h"
 #include "poly1305/poly1305.h"
 
-#warning "TODO revive simulation demo!"
 // #define SIMULATION // Turn off or on simulation mode
 
 #ifndef SIMULATION
@@ -11,11 +10,11 @@
 // (could also have inputs and outputs of type stream(my_axis_t)
 //  but ex. Verilog does not support VHDL arrays or records...)
 // Top level input wires
-DECL_INPUT(uint1024_t, key)
-DECL_INPUT(uint384_t, nonce)
-DECL_INPUT(uint256_t, aad)
+DECL_INPUT(key_uint_t, key)
+DECL_INPUT(nonce_uint_t, nonce)
+DECL_INPUT(aad_uint_t, aad)
 DECL_INPUT(uint8_t, aad_len)
-DECL_INPUT(uint256_t, poly1305_key) 
+DECL_INPUT(poly1305_key_uint_t, poly1305_key) 
 // Top level input stream of plaintext
 DECL_INPUT(uint128_t, s_axis_tdata)
 DECL_INPUT(uint16_t, s_axis_tkeep)
@@ -23,7 +22,7 @@ DECL_INPUT(uint1_t, s_axis_tlast)
 DECL_INPUT(uint1_t, s_axis_tvalid)
 DECL_OUTPUT(uint1_t, s_axis_tready)
 // Top level output wires
-DECL_OUTPUT(uint128_t, auth_tag)
+DECL_OUTPUT(poly1305_auth_tag_uint_t, auth_tag)
 DECL_OUTPUT(uint1_t, auth_tag_valid)
 // Top level output stream of ciphertext
 DECL_OUTPUT(uint128_t, m_axis_tdata)
@@ -38,14 +37,14 @@ DECL_INPUT(uint1_t, m_axis_tready)
 // in hardware these wires are driven by the top level ports
 stream(axis128_t) chacha20poly1305_encrypt_axis_in; // input
 uint1_t chacha20poly1305_encrypt_axis_in_ready; // output
-uint32_t chacha20poly1305_encrypt_key[CHACHA20_KEY_NWORDS]; // input
-uint32_t chacha20poly1305_encrypt_nonce[CHACHA20_NONCE_NWORDS]; // input
+uint8_t chacha20poly1305_encrypt_key[CHACHA20_KEY_SIZE]; // input
+uint8_t chacha20poly1305_encrypt_nonce[CHACHA20_NONCE_SIZE]; // input
 uint8_t chacha20poly1305_encrypt_aad[AAD_MAX_LEN]; // input
 uint8_t chacha20poly1305_encrypt_aad_len; // input
-uint8_t chacha20poly1305_encrypt_poly1305_key[32]; // input
+uint8_t chacha20poly1305_encrypt_poly1305_key[POLY1305_KEY_SIZE]; // input
 stream(axis128_t) chacha20poly1305_encrypt_axis_out; // output
 uint1_t chacha20poly1305_encrypt_axis_out_ready; // input
-uint8_t chacha20poly1305_encrypt_auth_tag[16]; // output
+uint8_t chacha20poly1305_encrypt_auth_tag[POLY1305_AUTH_TAG_SIZE]; // output
 uint1_t chacha20poly1305_encrypt_auth_tag_valid; // output
 
 // For real hardware connect top level ports to these wires
@@ -59,22 +58,18 @@ void chacha20poly1305_encrypt_io_wires(){
   chacha20poly1305_encrypt_axis_in.data.tlast = s_axis_tlast;
   chacha20poly1305_encrypt_axis_in.valid = s_axis_tvalid;
   s_axis_tready = chacha20poly1305_encrypt_axis_in_ready;
-  for(int32_t i=0; i<CHACHA20_KEY_NWORDS; i+=1){
-    chacha20poly1305_encrypt_key[i] = key >> (i*32);
-  }
-  for(int32_t i=0; i<CHACHA20_NONCE_NWORDS; i+=1){
-    chacha20poly1305_encrypt_nonce[i] = nonce >> (i*32);
-  }
+  UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_key, CHACHA20_KEY_SIZE, key)
+  UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_nonce, CHACHA20_NONCE_SIZE, nonce)
   UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_aad, AAD_MAX_LEN, aad)
   chacha20poly1305_encrypt_aad_len = aad_len;
-  UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_poly1305_key, 32, poly1305_key)
+  UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_poly1305_key, POLY1305_KEY_SIZE, poly1305_key)
   // Convert stream(axis128_t) to flattened output multiple wires
   m_axis_tdata = uint8_array16_le(chacha20poly1305_encrypt_axis_out.data.tdata);
   m_axis_tkeep = uint1_array16_le(chacha20poly1305_encrypt_axis_out.data.tkeep);
   m_axis_tlast = chacha20poly1305_encrypt_axis_out.data.tlast;
   m_axis_tvalid = chacha20poly1305_encrypt_axis_out.valid;
   chacha20poly1305_encrypt_axis_out_ready = m_axis_tready;
-  auth_tag = uint8_array16_le(chacha20poly1305_encrypt_auth_tag);
+  auth_tag = poly1305_auth_tag_uint_from_bytes(chacha20poly1305_encrypt_auth_tag);
   auth_tag_valid = chacha20poly1305_encrypt_auth_tag_valid;
 }
 #endif

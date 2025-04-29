@@ -17,7 +17,7 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(poly1305_pipeline, u320_t, poly1305_mac_loop_bod
 
 // Global input and output wires for FSM
 // 32-byte key (r || s) input
-uint8_t poly1305_mac_data_key[32];
+uint8_t poly1305_mac_data_key[POLY1305_KEY_SIZE];
 // 16 byte wide AXIS port for data input
 stream(axis128_t) poly1305_mac_data_in;
 uint1_t poly1305_mac_data_in_ready;
@@ -27,7 +27,7 @@ stream(axis128_t) poly1305_mac_data_out;
 uint1_t poly1305_mac_data_out_ready;
 // 16-byte authentication tag output
 // Single cycle pulse, no handshake (TODO also make AXIS?)
-uint8_t poly1305_mac_auth_tag[16];
+uint8_t poly1305_mac_auth_tag[POLY1305_AUTH_TAG_SIZE];
 uint1_t poly1305_mac_auth_tag_valid;
 
 // FSM that uses pipeline iteratively to compute poly1305 MAC
@@ -45,7 +45,7 @@ void poly1305_mac(){
   u8_16_t r_bytes; // r part of the key
   u8_16_t s_bytes; // s part of the key
   // Split key into r and s 
-  for(int32_t i=0; i<16; i+=1){
+  for(int32_t i=0; i<(POLY1305_KEY_SIZE/2); i+=1){
     r_bytes.bytes[i] = poly1305_mac_data_key[i];
     s_bytes.bytes[i] = poly1305_mac_data_key[i+16];
   }
@@ -61,7 +61,7 @@ void poly1305_mac(){
   stream(axis128_t) axis128_null = {0};
   poly1305_mac_data_out = axis128_null;
   // Default not outputting an auth tag
-  uint8_t auth_tag_null_outputs[16] = {0};
+  uint8_t auth_tag_null_outputs[POLY1305_AUTH_TAG_SIZE] = {0};
   poly1305_mac_auth_tag = auth_tag_null_outputs;
   poly1305_mac_auth_tag_valid = 0;
   // Default nothing into pipeline
@@ -117,7 +117,7 @@ void poly1305_mac(){
   }else if(state == OUTPUT_AUTH_TAG){
     // First 16 bytes of 'a' are the output  
     u320_t_bytes_t a_bytes = u320_t_to_bytes(a);
-    for(int32_t i=0; i<16; i+=1){
+    for(int32_t i=0; i<POLY1305_BLOCK_SIZE; i+=1){
       poly1305_mac_auth_tag[i] = a_bytes.data[i];
     }
     poly1305_mac_auth_tag_valid = 1;
