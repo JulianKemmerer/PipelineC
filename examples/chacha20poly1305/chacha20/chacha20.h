@@ -6,6 +6,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 #include "compiler.h"
+#include "axi/axis.h"
 
 #define CHACHA20_STATE_NWORDS 16
 #define CHACHA20_KEY_NWORDS 32

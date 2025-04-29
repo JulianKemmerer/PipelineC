@@ -50,6 +50,8 @@ int chacha20poly1305_encrypt(
 }
 */
 #include "arrays.h"
+// Top level IO port config, named like chacha20poly1305_encrypt_*
+#include "chacha20poly1305_encrypt.h"
 // Instance of chacha20 part of encryption
 #include "chacha20/chacha20_encrypt.c"
 // Instance of preparing auth data part of encryption
@@ -57,81 +59,108 @@ int chacha20poly1305_encrypt(
 // Instance of poly1305 part of encryption
 #include "poly1305/poly1305_mac.c"
 
-// Flattened top level ports with AXIS style manager/subordinate naming
-// (could also have inputs and outputs of type stream(my_axis_t)
-//  but ex. Verilog does not support VHDL records...)
-// Top level input wires
-DECL_INPUT(uint1024_t, key)
-DECL_INPUT(uint384_t, nonce)
-DECL_INPUT(uint256_t, aad)
-DECL_INPUT(uint8_t, aad_len)
-// TODO is poly1305_key a real input since can be derived from key and nonce?
-// i.e. is the one time poly1305_key_gen done in software or hardware?
-DECL_INPUT(uint256_t, poly1305_key) 
-// Top level input stream of plaintext
-DECL_INPUT(uint128_t, s_axis_tdata)
-DECL_INPUT(uint16_t, s_axis_tkeep)
-DECL_INPUT(uint1_t, s_axis_tlast)
-DECL_INPUT(uint1_t, s_axis_tvalid)
-DECL_OUTPUT(uint1_t, s_axis_tready)
-// Top level output wires
-DECL_OUTPUT(uint128_t, auth_tag)
-DECL_OUTPUT(uint1_t, auth_tag_valid)
-// Top level output stream of ciphertext
-DECL_OUTPUT(uint128_t, m_axis_tdata)
-DECL_OUTPUT(uint16_t, m_axis_tkeep)
-DECL_OUTPUT(uint1_t, m_axis_tlast)
-DECL_OUTPUT(uint1_t, m_axis_tvalid)
-DECL_INPUT(uint1_t, m_axis_tready)
-
 // The primary dataflow for single clock domain ChaCha20-Poly1305 encryption
 // chacha20 -> prepare auth data -> poly1305
 #pragma PART "xc7a200tffg1156-2" // Artix 7 200T
 #pragma MAIN_MHZ main 80.0
 void main(){
-    // Convert flattened multiple input wires to stream(axis128_t)
-    stream(axis128_t) s_axis;
-    UINT_TO_BYTE_ARRAY(s_axis.data.tdata, 16, s_axis_tdata)
-    UINT_TO_BIT_ARRAY(s_axis.data.tkeep, 16, s_axis_tkeep)
-    s_axis.data.tlast = s_axis_tlast;
-    s_axis.valid = s_axis_tvalid;
-
-    // Connect input stream to chacha20_encrypt
-    for(int32_t i=0; i<CHACHA20_KEY_NWORDS; i+=1){
-        chacha20_encrypt_key[i] = key >> (i*32);
-    }
-    for(int32_t i=0; i<CHACHA20_NONCE_NWORDS; i+=1){
-        chacha20_encrypt_nonce[i] = nonce >> (i*32);
-    }
-    chacha20_encrypt_axis_in = s_axis;
-    s_axis_tready = chacha20_encrypt_axis_in_ready;
+    // Connect chacha20poly1305_encrypt_* input stream to chacha20_encrypt
+    chacha20_encrypt_axis_in = chacha20poly1305_encrypt_axis_in;
+    chacha20poly1305_encrypt_axis_in_ready = chacha20_encrypt_axis_in_ready;
+    chacha20_encrypt_key = chacha20poly1305_encrypt_key;
+    chacha20_encrypt_nonce = chacha20poly1305_encrypt_nonce;
 
     // Connect chacha20_encrypt output to prep_auth_data input
-    UINT_TO_BYTE_ARRAY(prep_auth_data_aad, 16, aad)
-    prep_auth_data_aad_len = aad_len;
     prep_auth_data_axis_in = chacha20_encrypt_axis_out;
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready;
+    prep_auth_data_aad = chacha20poly1305_encrypt_aad;
+    prep_auth_data_aad_len = chacha20poly1305_encrypt_aad_len;
 
     // Connect prep_auth_data output to poly1305_mac input
-    UINT_TO_BYTE_ARRAY(poly1305_mac_data_key, 32, poly1305_key)
     poly1305_mac_data_in = prep_auth_data_axis_out;
     prep_auth_data_axis_out_ready = poly1305_mac_data_in_ready;
+    poly1305_mac_data_key = chacha20poly1305_encrypt_poly1305_key;
 
-    // Connect poly1305_mac output to output
-    auth_tag = uint8_array16_le(poly1305_mac_auth_tag);
-    auth_tag_valid = poly1305_mac_auth_tag_valid;
-    stream(axis128_t) m_axis = poly1305_mac_data_out;
-    poly1305_mac_data_out_ready = m_axis_tready;
-
-    // Convert stream(axis128_t) to flattened output multiple wires
-    m_axis_tdata = uint8_array16_le(m_axis.data.tdata);
-    m_axis_tkeep = uint1_array16_le(m_axis.data.tkeep);
-    m_axis_tlast = m_axis.data.tlast;
-    m_axis_tvalid = m_axis.valid;
+    // Connect poly1305_mac output to chacha20poly1305_encrypt_* output
+    chacha20poly1305_encrypt_axis_out = poly1305_mac_data_out;
+    poly1305_mac_data_out_ready = chacha20poly1305_encrypt_axis_out_ready;
+    chacha20poly1305_encrypt_auth_tag = poly1305_mac_auth_tag;
+    chacha20poly1305_encrypt_auth_tag_valid = poly1305_mac_auth_tag_valid;
 }
 
-#warning "TODO revive simulation demo once AXIS dwidth converters done"
-/* FAKE TEST
+
+// TODO Try to copy software test code demo inputs and outputs
+#ifdef SIMULATION
+int main(void)
+{
+    // Test vectors
+    uint8_t key[32] = {
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+        0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+        0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f};
+
+    uint8_t nonce[12] = {
+        0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43,
+        0x44, 0x45, 0x46, 0x47};
+
+    const char *aad_str = "Additional authenticated data";
+    uint8_t *aad = (uint8_t *)aad_str;
+    size_t aad_len = strlen(aad_str);
+
+    const char *plaintext_str = "Hello CHILIChips - Wireguard team, let's test this aead!";
+    uint8_t *plaintext = (uint8_t *)plaintext_str;
+    size_t plaintext_len = strlen(plaintext_str);
+
+    // Use stack allocation instead of malloc
+    uint8_t ciphertext[256]; // Buffer large enough for the plaintext
+    uint8_t decrypted[256];  // Buffer large enough for the plaintext
+    uint8_t auth_tag[16];
+
+    printf("=== ChaCha20-Poly1305 AEAD Test ===\n\n");
+
+    // Print test inputs
+    print_hex("Key", key, sizeof(key));
+    print_hex("Nonce", nonce, sizeof(nonce));
+    printf("AAD (%zu bytes): \"%s\"\n", aad_len, aad_str);
+    printf("Plaintext (%zu bytes): \"%s\"\n\n", plaintext_len, plaintext_str);
+
+    // Encrypt
+    printf("Encrypting...\n");
+    int ret = chacha20poly1305_encrypt(
+        ciphertext, auth_tag, key, nonce,
+        plaintext, plaintext_len, aad, aad_len);
+
+    if (ret != 0)
+    {
+        printf("Encryption failed with error %d\n", ret);
+        return -1;
+    }
+
+    print_hex("Ciphertext", ciphertext, plaintext_len);
+    print_hex("Auth Tag", auth_tag, sizeof(auth_tag));
+    printf("\n");
+
+    // Decrypt
+    printf("Decrypting...\n");
+    ret = chacha20poly1305_decrypt(
+        decrypted, key, nonce, ciphertext, plaintext_len,
+        auth_tag, aad, aad_len);
+
+    if (ret != 0)
+    {
+        printf("Decryption failed with error %d\n", ret);
+        return -1;
+    }
+
+    // Verify
+    decrypted[plaintext_len] = '\0'; // Null-terminate for printing
+    printf("Decrypted (%zu bytes): \"%s\"\n\n", plaintext_len, decrypted);
+
+    int success = (memcmp(plaintext, decrypted, plaintext_len) == 0);
+    printf("Test %s\n", success ? "PASSED" : "FAILED");
+}
+// FAKE TEST
 #pragma MAIN_MHZ main 80.0
 chacha20_state main(){
     static uint32_t counter;
@@ -158,4 +187,5 @@ chacha20_state main(){
     counter += 1;
 
     return block;
-}*/
+}
+#endif

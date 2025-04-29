@@ -1,1 +1,1 @@
-// TODO anything needed here? remove?
+#define AAD_MAX_LEN 32

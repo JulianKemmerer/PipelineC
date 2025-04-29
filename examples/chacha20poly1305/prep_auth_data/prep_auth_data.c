@@ -25,7 +25,6 @@ encode_le64(lengths + 8, plaintext_len);
 #include "prep_auth_data.h"
 
 // Additional authenticated data input wires
-#define AAD_MAX_LEN 32
 uint8_t prep_auth_data_aad[AAD_MAX_LEN];
 uint8_t prep_auth_data_aad_len;
 // Input stream of ciphertext
