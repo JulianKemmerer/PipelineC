@@ -1,7 +1,7 @@
 # Example command lines:
 #  PICO ICE:
 #    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
-#    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite TOP_NAME=ethernet_top PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py"
+#    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite TOP_NAME=ethernet_top PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py" SV_TOP_FILE=pico_ethernet_top.sv
 #    sudo make prog_pico OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
 #  PICE2 ICE:
 #    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite BOARD=PICO2 SV_TOP_FILE=pico2_top.sv
@@ -46,10 +46,10 @@ prog_pico2: gateware.bin
 	mpremote cp gateware.bin : > mpremote.log
 	mpremote run pico2_program_ice.py >> mpremote.log
 
-gateware.bin: $(TOP_NAME).sv
+gateware.bin: $(SV_TOP_FILE)
 	$(ICEPLL) -q -i 12 -o $(PLL_CLK_MHZ) -m -f pll.v
 	$(YOSYS) -q --hash-seed 0 -m ghdl -p "ghdl --std=08 -frelaxed `cat pipelinec_output/vhdl_files.txt` -e pipelinec_top; read_verilog -sv $(SV_TOP_FILE) pll.v; synth_ice40 -top $(TOP_NAME) -json $*.json" 2> yosys_stderr.log
-	$(NEXTPNR) --seed 0 --up5k --package sg48 --pcf ice40.pcf --json $*.json --asc $*.asc $(NEXTPNR_ARGS)
+	$(NEXTPNR) -q --seed 0 --up5k --package sg48 --pcf ice40.pcf --json $*.json --asc $*.asc $(NEXTPNR_ARGS)
 	$(ICEPACK) $*.asc $@
 
 .bin.uf2:
