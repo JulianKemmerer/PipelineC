@@ -1,13 +1,24 @@
 module ethernet_top(
   `include "top_pins.svh"
 );
-  // PLL instance to make a clock based on 12MHz input
+  // No 12M input for PICO2_ICE
+  // High frequency oscillator
+  //  CLKHF_DIV
+  //  0b00 = 48 MHz, 0b01 = 24 MHz,
+  //  0b10 = 12 MHz, 0b11 = 6 MHz
+  wire clk_12p0;
+  SB_HFOSC#(.CLKHF_DIV("0b10")) u_hfosc (
+    .CLKHFPU(1'b1),
+    .CLKHFEN(1'b1),
+    .CLKHF(clk_12p0)
+  );
+  // PLL instance to make a clock based on 12MHz
   wire pll_clk;
   pll pll_inst(
     .clock_in(clk_12p0),
     .clock_out(pll_clk),
     .locked()
-	);
+  );
 
   // PipelineC output HDL instance
   pipelinec_top pipelinec_inst(

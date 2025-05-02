@@ -28,8 +28,8 @@ module top(
     .ice_40_return_output(ICE_40),
     .ice_41_return_output(ICE_41),
     // UART
-    .ice_25_return_output(ICE_25),
-    .ice_27_val_input(ICE_27),
+    .ice_11_return_output(ICE_11),
+    .ice_9_val_input(ICE_9),
     // PMODs for VGA demo
     // PMOD0A
     .ice_45_return_output(ICE_45),

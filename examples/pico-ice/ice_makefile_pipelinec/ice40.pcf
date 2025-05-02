@@ -1,33 +1,34 @@
-set_io -nowarn clk_12p0         35 # 12MHz clock in default RP firmware
+# 12MHz clock in pico-ce default RP firmware
+# Cannot be used if HFOSC and PLL are being used in top.sv
+#set_io -nowarn ICE_35         35 
 
 # RGB LED
 set_io -nowarn ICE_39           39 # LED_G active-low
 set_io -nowarn ICE_40           40 # LED_B active-low
 set_io -nowarn ICE_41           41 # LED_R active-low
 
-# UART in default RP firmware
+# UART in default pico-ice RP firmware
 set_io -nowarn ICE_25           25
 set_io -nowarn ICE_27           27
 
-# PMOD0A
+set_io -nowarn ICE_11          11
+set_io -nowarn ICE_9           9
+
 set_io -nowarn ICE_45 45
 set_io -nowarn ICE_47 47
 set_io -nowarn ICE_2 2
 set_io -nowarn ICE_4 4
 
-# PMOD0B
 set_io -nowarn ICE_44 44
 set_io -nowarn ICE_46 46
 set_io -nowarn ICE_48 48
 set_io -nowarn ICE_3 3
 
-# PMOD1A
 set_io -nowarn ICE_31 31
 set_io -nowarn ICE_34 34
 set_io -nowarn ICE_38 38
 set_io -nowarn ICE_43 43
 
-# PMOD1B
 set_io -nowarn ICE_28 28
 set_io -nowarn ICE_32 32
 set_io -nowarn ICE_36 36

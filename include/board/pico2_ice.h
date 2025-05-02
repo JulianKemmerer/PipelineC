@@ -1,4 +1,5 @@
-// See pico-ice-sdk/rtl/pico_ice.pcf
+// Mix of pinout digram https://pico2-ice.tinyvision.ai/md_pinout.html
+// and old pico-ice pinout: pico-ice-sdk/rtl/pico_ice.pcf for anything not shown in diagram
 #pragma once
 #include "compiler.h"
 #include "uintN_t.h"
@@ -24,18 +25,19 @@ DECL_OUTPUT(uint1_t, ice_41)
 #define LED_R_WIRE ice_41
 #include "rgb_led/led_rgb_wires.c"
 
-// This UART is not hard wired, but is default in pico_ice
-#define ICE_25_OUT
-#define UART_TX_OUT_WIRE ice_25
-#define ICE_27_IN
-#define UART_RX_IN_WIRE ice_27
+// This UART is not hard wired, but is first one used in testing
+// Requires extra micropython code to set up on RaspPi
+#define ICE_11_OUT
+#define UART_TX_OUT_WIRE ice_11
+#define ICE_9_IN
+#define UART_RX_IN_WIRE ice_9
 
 // GPIO multiple use pins
-#ifdef ICE_25_OUT
-DECL_OUTPUT(uint1_t, ice_25)
+#ifdef ICE_11_OUT
+DECL_OUTPUT(uint1_t, ice_11)
 #endif
-#ifdef ICE_27_IN
-DECL_INPUT(uint1_t, ice_27)
+#ifdef ICE_9_IN
+DECL_INPUT(uint1_t, ice_9)
 #endif
 
 // Expose named PMOD ports
@@ -46,33 +48,33 @@ DECL_INPUT(uint1_t, ice_27)
 #define PMOD_NAME pmod_0a
 
 #ifdef PMOD_0A_O4
-#define ICE_45_OUT
-#define PMOD_O4_WIRE ice_45
-#endif
-#ifdef ICE_45_OUT
-DECL_OUTPUT(uint1_t, ice_45)
-#endif
-#ifdef PMOD_0A_I4
-#define ICE_45_IN
-#define PMOD_I4_WIRE ice_45
-#endif
-#ifdef ICE_45_IN
-DECL_INPUT(uint1_t, ice_45)
-#endif
-
-#ifdef PMOD_0A_O3
 #define ICE_47_OUT
-#define PMOD_O3_WIRE ice_47
+#define PMOD_O4_WIRE ice_47
 #endif
 #ifdef ICE_47_OUT
 DECL_OUTPUT(uint1_t, ice_47)
 #endif
-#ifdef PMOD_0A_I3
+#ifdef PMOD_0A_I4
 #define ICE_47_IN
-#define PMOD_I3_WIRE ice_47
+#define PMOD_I4_WIRE ice_47
 #endif
 #ifdef ICE_47_IN
 DECL_INPUT(uint1_t, ice_47)
+#endif
+
+#ifdef PMOD_0A_O3
+#define ICE_45_OUT
+#define PMOD_O3_WIRE ice_45
+#endif
+#ifdef ICE_45_OUT
+DECL_OUTPUT(uint1_t, ice_45)
+#endif
+#ifdef PMOD_0A_I3
+#define ICE_45_IN
+#define PMOD_I3_WIRE ice_45
+#endif
+#ifdef ICE_45_IN
+DECL_INPUT(uint1_t, ice_45)
 #endif
 
 #ifdef PMOD_0A_O2
@@ -111,18 +113,18 @@ DECL_INPUT(uint1_t, ice_4)
 #define PMOD_NAME pmod_0b
 
 #ifdef PMOD_0B_O4
-#define ICE_44_OUT
-#define PMOD_O4_WIRE ice_44
+#define ICE_48_OUT
+#define PMOD_O4_WIRE ice_48
 #endif
-#ifdef ICE_44_OUT
-DECL_OUTPUT(uint1_t, ice_44)
+#ifdef ICE_48_OUT
+DECL_OUTPUT(uint1_t, ice_48)
 #endif
-#ifdef PMOD_0B_I4
-#define ICE_44_IN
-#define PMOD_I4_WIRE ice_44
+#ifdef PMOD_0B_42
+#define ICE_48_IN
+#define PMOD_I4_WIRE ice_48
 #endif
-#ifdef ICE_44_IN
-DECL_INPUT(uint1_t, ice_44)
+#ifdef ICE_48_IN
+DECL_INPUT(uint1_t, ice_48)
 #endif
 
 #ifdef PMOD_0B_O3
@@ -141,18 +143,18 @@ DECL_INPUT(uint1_t, ice_46)
 #endif
 
 #ifdef PMOD_0B_O2
-#define ICE_48_OUT
-#define PMOD_O2_WIRE ice_48
+#define ICE_44_OUT
+#define PMOD_O2_WIRE ice_44
 #endif
-#ifdef ICE_48_OUT
-DECL_OUTPUT(uint1_t, ice_48)
+#ifdef ICE_44_OUT
+DECL_OUTPUT(uint1_t, ice_44)
 #endif
 #ifdef PMOD_0B_I2
-#define ICE_48_IN
-#define PMOD_I2_WIRE ice_48
+#define ICE_44_IN
+#define PMOD_I2_WIRE ice_44
 #endif
-#ifdef ICE_48_IN
-DECL_INPUT(uint1_t, ice_48)
+#ifdef ICE_44_IN
+DECL_INPUT(uint1_t, ice_44)
 #endif
 
 #ifdef PMOD_0B_O1

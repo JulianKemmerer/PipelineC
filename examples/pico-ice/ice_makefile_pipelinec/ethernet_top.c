@@ -4,7 +4,7 @@
 // See pico-ice-sdk/rtl/pico_ice.pcf
 #pragma PART "ICE40UP5K-SG48"
 // Get clock rate constant PLL_CLK_MHZ from header written by make flow
-#include "pll_clk_mhz.h"
+#include "pipelinec_makefile_config.h"
 // By default PipelineC names clock ports with the rate included
 // ex. clk_12p0
 // Override this behavior by creating an input with a constant name
@@ -42,13 +42,15 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define PMOD_0B_O3
 #define RMII_TX0_WIRE pmod_0b_o3
 // UART
-#define ICE_25_OUT
-#define UART_TX_OUT_WIRE ice_25
-#define ICE_27_IN
-#define UART_RX_IN_WIRE ice_27
 #define UART_CLK_MHZ PLL_CLK_MHZ
 #define UART_BAUD 115200
+#ifdef BOARD_PICO
 #include "board/pico_ice.h"
+#elif defined(BOARD_PICO2)
+#include "board/pico2_ice.h"
+#else
+#warning "Unknown board?"
+#endif
 #include "net/rmii_wires.c"
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS

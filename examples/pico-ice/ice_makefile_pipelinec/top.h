@@ -3,7 +3,7 @@
 #pragma PART "ICE40UP5K-SG48"
 
 // Get clock rate constant PLL_CLK_MHZ from header written by make flow
-#include "pll_clk_mhz.h"
+#include "pipelinec_makefile_config.h"
 // By default PipelineC names clock ports with the rate included
 // ex. clk_12p0
 // Override this behavior by creating an input with a constant name
@@ -13,10 +13,6 @@ DECL_INPUT(uint1_t, pll_clk)
 CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 
 // UART
-#define ICE_25_OUT
-#define UART_TX_OUT_WIRE ice_25
-#define ICE_27_IN
-#define UART_RX_IN_WIRE ice_27
 #define UART_CLK_MHZ PLL_CLK_MHZ
 #define UART_BAUD 115200
 // Configure VGA module to use PMOD0 and PMOD1
@@ -57,7 +53,13 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define PMOD_1B_O1
 #define VGA_HS_WIRE pmod_1b_o1 // J2-7 = 1B IO 1
 #define VGA_VS_WIRE pmod_1b_o2 // J2-8 = 1B IO 2
+#ifdef BOARD_PICO
 #include "board/pico_ice.h"
+#elif defined(BOARD_PICO2)
+#include "board/pico2_ice.h"
+#else
+#warning "Unknown board?"
+#endif
 #include "uart/uart_mac.c"
 #include "vga/vga_wires_4b.c"
 
