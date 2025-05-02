@@ -13,9 +13,10 @@ import SIM
 
 # import CLANG_TO_LOGIC
 import SYN
+from utilities import SRC_ABS_DIR
 
 # Defaults
-default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
+default_c_file = SRC_ABS_DIR() + "/../main.c"
 default_top_module = "top"
 
 # Parse args

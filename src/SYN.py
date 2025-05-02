@@ -26,7 +26,7 @@ import RAW_VHDL
 import SW_LIB
 import VHDL
 import VIVADO
-from utilities import REPO_ABS_DIR
+from utilities import SRC_ABS_DIR
 
 START_TIME = timer()
 
@@ -2425,9 +2425,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top)
 
     # Copy pipelinec vhdl directory to output so users can export output directory alone
-    copy_tree(
-        f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl", SYN_OUTPUT_DIRECTORY + "/built_in"
-    )
+    copy_tree(f"{SRC_ABS_DIR()}/vhdl", SYN_OUTPUT_DIRECTORY + "/built_in")
 
     # Do generic dump of vhdl files
     # Which vhdl files?
@@ -4555,13 +4553,12 @@ def GET_OUTPUT_DIRECTORY(Logic):
     else:
         # Use source file if not built in?
         src_file = str(Logic.c_ast_node.coord.file)
-        # # hacky catch files from same dir as script?
-        # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
-        repo_dir = REPO_ABS_DIR()
-        if src_file.startswith(repo_dir + "/"):
-            # hacky
-            src_file = src_file.replace(repo_dir + "/src/../", "")
-            src_file = src_file.replace(repo_dir + "/", "")
+        # hacky catch files from same dir as script?
+        repo_path = SRC_ABS_DIR() + "/../"
+        repo_abs_path = os.path.abspath(repo_path)
+        if src_file.startswith(repo_abs_path + "/"):
+            src_file = src_file.replace(repo_path, "")
+            src_file = src_file.replace(repo_abs_path + "/", "")
             output_directory = (
                 SYN_OUTPUT_DIRECTORY + "/" + src_file + "/" + Logic.func_name
             )
@@ -5171,7 +5168,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
     # Read in vhdl files with a single (faster than multiple) read_vhdl
     files_txt = ""
 
-    # Built in src/vhdl #TODO just auto add every file in dir
+    # Built in vhdl #TODO just auto add every file in dir
     files_txt += SYN_OUTPUT_DIRECTORY + "/" + "built_in/pipelinec_fifo_fwft.vhd" + " "
     files_txt += (
         SYN_OUTPUT_DIRECTORY + "/" + "built_in/pipelinec_async_fifo_fwft.vhd" + " "

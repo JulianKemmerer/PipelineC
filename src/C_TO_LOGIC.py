@@ -17,7 +17,7 @@ import SW_LIB
 import SYN
 import VHDL
 from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR, GET_TOOL_PATH
+from utilities import GET_TOOL_PATH, C_INCLUDE_ABS_DIR, SRC_ABS_DIR
 
 # Detect cpp install
 if GET_TOOL_PATH("cpp") is None:
@@ -102,13 +102,9 @@ def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
                     isdir = False
                 if isdir:
                     path_list += ["-I" + thing_path]
-    # Also include src files in git root dir
-    dir_path = REPO_ABS_DIR()
 
-    # TODO: Temporarily include both paths to avoid breakage while still refactoring
-    path_list += ["-I" + dir_path + "/"]
-    path_list += ["-I" + dir_path + "/pipelinec/include/"]
-    path_list += ["-I" + dir_path + "/include/"]
+    # Also include files in git root dir
+    path_list += ["-I" + C_INCLUDE_ABS_DIR(), "-I" + SRC_ABS_DIR() + "/../"]
 
     # For now global __PIPELINEC__ define lives here
     path_list += ["-D__PIPELINEC__"]
@@ -2199,7 +2195,7 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
             print("Whats this ref eh?", ref_tok, c_ast_node.coord)
             sys.exit(-1)
 
-    # Alias will include location in src
+    # Alias will include location in source
     coord_str = C_AST_NODE_COORD_STR(c_ast_node)
     # Base name
     alias_base = prepend_text + id_str + "_" + coord_str
@@ -2233,7 +2229,7 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
 def ORIG_WIRE_NAME_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
     orig_wire_name, c_ast_node, existing_logic
 ):
-    # Alias will include location in src
+    # Alias will include location in source
     coord_str = C_AST_NODE_COORD_STR(c_ast_node)
     # Base name
     alias_base = orig_wire_name + "_" + coord_str + "_"
@@ -5075,7 +5071,7 @@ def C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(c_ast_decl, parser_state):
     elif type(c_ast_decl.type) is c_ast.PtrDecl:
         c_ast_typedecl = c_ast_decl.type.type  # one type node lower down
         wire_name = c_ast_decl.name
-        print(f"Ignoring pointer declaration: {wire_name} {c_ast_decl.type.coord}")
+        # print(f"Ignoring pointer declaration: {wire_name} {c_ast_decl.type.coord}")
         # c_type = c_ast_typedecl.type.names[0]
         c_type = None
     else:
@@ -9684,6 +9680,7 @@ def DEL_ALL_CACHES():
 _EXE_ABS_DIR = None
 
 
+# TODO remove this
 def EXE_ABS_DIR():
     global _EXE_ABS_DIR
     if _EXE_ABS_DIR:

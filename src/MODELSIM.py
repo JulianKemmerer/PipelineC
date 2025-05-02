@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
 import os
+import shutil
 import sys
 
 import C_TO_LOGIC
 import SIM
 import SYN
 import VIVADO
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from utilities import GET_TOOL_PATH, SRC_ABS_DIR
 
 # Default to env if there
 TOOL_EXE = "vsim"
@@ -17,10 +18,6 @@ if ENV_TOOL_PATH:
 else:
     # MODELSIM_PATH="/media/1TB/Programs/Linux/Modelsim/modelsim_ase/bin/vsim"
     MODELSIM_PATH = "/media/1TB/Programs/Linux/Modelsim18.0.0.219/modelsim_ase/bin/vsim"
-
-MODEL_SIM_INI_TEXT = ""
-with open(REPO_ABS_DIR() + "/src/text/model_sim_ini.txt", "r") as ms_ini:
-    MODEL_SIM_INI_TEXT = ms_ini.read()
 
 
 def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
@@ -94,10 +91,14 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
     else:
         raise Exception("vsim executable not found!")
 
+    # Write copy of modelsim ini
     ini_filepath = proj_dir + "pipelinec_modelsim.ini"
-    f = open(ini_filepath, "w")
-    f.write(MODEL_SIM_INI_TEXT)
-    f.close()
+    shutil.copy(
+        SRC_ABS_DIR() + "/text/model_sim_ini.txt",
+        ini_filepath,
+    )
+
+    # Write .do file
     do_filename = proj_name + ".do"
     do_filepath = proj_dir + do_filename
     f = open(do_filepath, "w")

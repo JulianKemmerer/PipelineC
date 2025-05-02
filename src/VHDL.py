@@ -15,6 +15,7 @@ import SYN
 import VERILATOR
 import VIVADO
 from pycparser import c_ast
+from utilities import SRC_ABS_DIR
 
 VHDL_FILE_EXT = ".vhd"
 VHDL_PKG_EXT = ".pkg" + VHDL_FILE_EXT
@@ -230,7 +231,7 @@ def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=Fals
         + entity_name
         + """ is
 port(
--- All clocks
+-- All unnamed clocks
 """
     )
     # All user generated clocks
@@ -4588,7 +4589,7 @@ def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
         ]
         for f in pro_files:
             shutil.copy(
-                f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl/ieee/{f}",
+                f"{SRC_ABS_DIR()}/vhdl/ieee/{f}",
                 ieee_pro_dir + "/" + f"{f}",
             )
         # And write vhdl using those proposed files

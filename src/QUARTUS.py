@@ -4,7 +4,7 @@ import sys
 import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from utilities import GET_TOOL_PATH
 
 TOOL_EXE = "quartus_sh"
 # Default to env if there
