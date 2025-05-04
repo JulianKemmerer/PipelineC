@@ -6,8 +6,7 @@
 #include "intN_t.h"
 #include "uintN_t.h"
 
-//#pragma MAIN_MHZ my_pipeline 250.0
-#pragma MAIN my_pipeline
+#pragma MAIN_MHZ my_pipeline 100.0
 float my_pipeline(float x, float y)
 {
   return x + y;

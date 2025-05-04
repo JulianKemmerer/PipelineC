@@ -2,6 +2,7 @@
 // In this example the domains are sync integer ratios and 
 // so the crossing is implemented with 
 // 'volatile' (inserting zeros) de/serializer buffers
+#pragma PART "LFE5UM5G-85F-8BG756C"
 
 #include "compiler.h"
 #include "wire.h"

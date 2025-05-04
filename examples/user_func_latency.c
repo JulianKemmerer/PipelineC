@@ -1,6 +1,4 @@
-
-
-#pragma PART "xc7a35ticsg324-1l"
+#pragma PART "LFE5UM5G-85F-8BG756C"
 // How to allow user defined fixed pipeline latencies?
 // https://github.com/JulianKemmerer/PipelineC/issues/97
 #include "uintN_t.h"

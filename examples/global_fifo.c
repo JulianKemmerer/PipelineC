@@ -1,39 +1,34 @@
-// Similar to clock_crossing.c except that instead of 
-// data width integer ratioed clock crossing stream,
-// this uses same size read and write ports on an async fifo
-//#pragma PART "xc7a35ticsg324-1l" // Artix 7 35T (Arty)
-//#pragma PART "LFE5U-85F-6BG381C"
-#pragma PART "LFE5UM5G-85F-8BG756C"
+//#pragma PART "xc7a35ticsg324-1l"
+#pragma PART "LFE5U-85F-6BG381C8"
+
+// Similar to async_clock_crossing.c except is a sync global fifo
+#pragma MAIN_MHZ process_a 100.0
+#pragma MAIN_MHZ process_b 100.0
+
 #include "uintN_t.h"
 #include "leds/led0_3_ports.c"
 
-#pragma MAIN_MHZ fast 50.0
-#pragma MAIN_MHZ slow 25.0
-
+// The fifos
+#include "global_fifo.h"
 // Write+read 2 'datas' in/out the fifo at a time
-// (port sizes on each side of async fifo)
+// (port sizes on each side of fifo)
 #define data_t uint8_t
 #define DATAS_PER_ITER 2
-#define fast_to_slow_WRITE_N fast_to_slow_WRITE_2
-#define slow_to_fast_READ_N slow_to_fast_READ_2
-#define slow_to_fast_WRITE_N slow_to_fast_WRITE_2
-#define fast_to_slow_READ_N fast_to_slow_READ_2
-
 // Fifo depth=4
-//data_t fast_to_slow[4]; 
-//#include "clock_crossing/fast_to_slow.h" // Auto generated
-#include "clock_crossing.h"
-ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, fast_to_slow, DATAS_PER_ITER, 4)
+//data_t process_a_to_process_b[4];
+//data_t process_b_to_process_a[4]; 
+GLOBAL_FIFO_WIDTH_DEPTH(data_t, process_a_to_process_b, DATAS_PER_ITER, 256)
+GLOBAL_FIFO_WIDTH_DEPTH(data_t, process_b_to_process_a, DATAS_PER_ITER, 256)
+// TODO include 'wrapper' read+write N func names in macros?
+#define process_a_to_process_b_WRITE_N process_a_to_process_b_WRITE_2
+#define process_b_to_process_a_READ_N process_b_to_process_a_READ_2
+#define process_b_to_process_a_WRITE_N process_b_to_process_a_WRITE_2
+#define process_a_to_process_b_READ_N process_a_to_process_b_READ_2
 
-// Fifo depth=4
-//data_t slow_to_fast[4]; 
-//#include "clock_crossing/slow_to_fast.h" // Auto generated
-ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, slow_to_fast, DATAS_PER_ITER, 4)
-
-void fast() 
+void process_a()
 {  
-  uint1_t reset = 0; // No reset for now
   // Drive leds with state, default lit
+  static uint1_t power_on_reset = 1;
   static uint1_t test_failed = 0;
   uint1_t led = 1;
   if(test_failed)
@@ -41,9 +36,9 @@ void fast()
     led = 0;
   }
   led0 = led;
-  led1 = !reset;
+  led1 = !power_on_reset;
   
-  // Send a test pattern into slow
+  // Send a test pattern into process_b
   static data_t test_data = 0;
   // Try to write test datas
   data_t wr_data[DATAS_PER_ITER];
@@ -54,34 +49,34 @@ void fast()
   }
   uint1_t wr_en = 1;
   // Reset input to fifo
-  if(reset)
+  if(power_on_reset)
   {
     wr_en = 0;
   }
-  fast_to_slow_write_t write = fast_to_slow_WRITE_N(wr_data, wr_en);
+  process_a_to_process_b_write_t write = process_a_to_process_b_WRITE_N(wr_data, wr_en);
   // Did the write go through?
-  if(wr_en & write.ready)
+  if(write.ready)
   {
     // Next test data
     test_data += DATAS_PER_ITER;
   }
   // Reset statics
-  if(reset)
+  if(power_on_reset)
   {
     test_data = 0;
   }
   
-  // Receive test pattern from slow
+  // Receive test pattern from process_b
   static data_t expected = 0;
-  // Get data from slow domain
+  // Get data from process_b domain
   uint1_t rd_en = 1;
   // Reset input to fifo
-  if(reset)
+  if(power_on_reset)
   {
     rd_en = 0;
   }
   // Try to read N data elements from the fifo
-  slow_to_fast_read_t read = slow_to_fast_READ_N(rd_en);
+  process_b_to_process_a_read_t read = process_b_to_process_a_READ_N(rd_en);
   // Did the read go through
   if(rd_en & read.valid)
   {
@@ -95,22 +90,24 @@ void fast()
       else
       {
         // Continue checking test pattern
+        printf("Process A: Expected %d, got %d\n", expected, read.data[i]);
         expected += 1;
       }
     }
   }
   // Reset statics
-  if(reset)
+  if(power_on_reset)
   {
     test_failed = 0;
     expected = 0;
   }
+  power_on_reset = 0;
 }
 
-void slow()
+void process_b()
 {
-  uint1_t reset = 0; // No reset for now
   // Drive leds with state, default lit
+  static uint1_t power_on_reset = 1;
   static uint1_t test_failed = 0;
   uint1_t led = 1;
   if(test_failed)
@@ -118,9 +115,9 @@ void slow()
     led = 0;
   }
   led2 = led;
-  led3 = !reset;
+  led3 = !power_on_reset;
   
-  // Send a test pattern into fast
+  // Send a test pattern into process_a
   static data_t test_data = 0;
   // Try to write a test data
   data_t wr_data[DATAS_PER_ITER];
@@ -131,34 +128,34 @@ void slow()
   }  
   uint1_t wr_en = 1;
   // Reset input to fifo
-  if(reset)
+  if(power_on_reset)
   {
     wr_en = 0;
   }
-  slow_to_fast_write_t write = slow_to_fast_WRITE_N(wr_data, wr_en);
+  process_b_to_process_a_write_t write = process_b_to_process_a_WRITE_N(wr_data, wr_en);
   // Did the write go through?
-  if(wr_en & write.ready)
+  if(write.ready)
   {
     // Next test data
     test_data += DATAS_PER_ITER;
   }
   // Reset statics
-  if(reset)
+  if(power_on_reset)
   {
     test_data = 0;
   }
   
-  // Receive test pattern from fast
+  // Receive test pattern from process_a
   static data_t expected = 0;
-  // Get data from fast domain
+  // Get data from process_a domain
   uint1_t rd_en = 1;
   // Reset input to fifo
-  if(reset)
+  if(power_on_reset)
   {
     rd_en = 0;
   }
   // Try to read N data elements from the fifo
-  fast_to_slow_read_t read = fast_to_slow_READ_N(rd_en);
+  process_a_to_process_b_read_t read = process_a_to_process_b_READ_N(rd_en);
   // Did the read go through
   if(rd_en & read.valid)
   {
@@ -172,14 +169,17 @@ void slow()
       else
       {
         // Continue checking test pattern
+        printf("Process B: Expected %d, got %d\n", expected, read.data[i]);
         expected += 1;
       }
     }
   }
   // Reset statics
-  if(reset)
+  if(power_on_reset)
   {
     test_failed = 0;
     expected = 0;
+    printf("Test starting...\n");
   }
+  power_on_reset = 0;
 }

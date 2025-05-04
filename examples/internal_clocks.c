@@ -1,5 +1,5 @@
 // Generate an internally used slow clock from an externally provided fast clock.
-
+#pragma PART "LFE5UM5G-85F-8BG756C"
 #include "compiler.h"
 #include "uintN_t.h"
 

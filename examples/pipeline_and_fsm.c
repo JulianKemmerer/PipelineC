@@ -1,3 +1,4 @@
+#pragma PART "LFE5UM5G-85F-8BG756C"
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "global_func_inst.h"
