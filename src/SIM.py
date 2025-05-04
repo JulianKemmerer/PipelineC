@@ -94,18 +94,14 @@ def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
     sim_gen_info.clock_name_to_mhz = clock_name_to_mhz
 
     # Debug ports
-    for func in parser_state.main_mhz:
-        debug_name = func.split("_DEBUG")[0]
-        if func.endswith("_DEBUG"):
-            func_logic = parser_state.FuncLogicLookupTable[func]
-            if len(func_logic.inputs) >= 1:
-                # Input debug port
-                debug_vhdl_name = func.replace("__", "_") + "_val_input"
-                sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
-            elif len(func_logic.outputs) >= 1:
-                # Output debug port
-                debug_vhdl_name = func.replace("__", "_") + "_return_output"
-                sim_gen_info.debug_input_to_vhdl_name[debug_name] = debug_vhdl_name
+    for output in parser_state.output_wires:
+        if output.endswith("_DEBUG"):
+            debug_name = output.split("_DEBUG")[0]
+            sim_gen_info.debug_output_to_vhdl_name[debug_name] = output
+    for input in parser_state.input_wires:
+        if input.endswith("_DEBUG"):
+            debug_name = input.split("_DEBUG")[0]
+            sim_gen_info.debug_input_to_vhdl_name[debug_name] = input
 
     # Main func latencies
     for func in parser_state.main_mhz:

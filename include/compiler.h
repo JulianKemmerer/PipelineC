@@ -98,41 +98,36 @@ PRAGMA_MESSAGE(FEEDBACK name)
 // https://github.com/JulianKemmerer/PipelineC/issues/130
 #define DECL_INPUT(type_t, name) \
 type_t name; \
-PRAGMA_MESSAGE(MAIN name) \
-PRAGMA_MESSAGE(FUNC_WIRES name) \
-void name(type_t val_input) \
-{ \
-  name = val_input;\
-}
+PRAGMA_MESSAGE(INPUT name)
+
 #define DECL_INPUT_REG(type_t, name) \
+DECL_INPUT(type_t, name##_REG) \
 type_t name; \
 PRAGMA_MESSAGE(MAIN name) \
 PRAGMA_MESSAGE(FUNC_WIRES name) \
-void name(type_t val_input) \
+void name() \
 { \
   static type_t the_reg; \
   name = the_reg; \
-  the_reg = val_input;\
+  the_reg = name##_REG;\
 }
+
 #define DECL_OUTPUT(type_t, name) \
 type_t name; \
-PRAGMA_MESSAGE(MAIN name) \
-PRAGMA_MESSAGE(FUNC_WIRES name) \
-type_t name() \
-{ \
-  return name; \
-}
+PRAGMA_MESSAGE(OUTPUT name)
+
 #define DECL_OUTPUT_REG(type_t, name) \
+DECL_OUTPUT(type_t, name##_REG) \
 type_t name; \
 PRAGMA_MESSAGE(MAIN name) \
 PRAGMA_MESSAGE(FUNC_WIRES name) \
-type_t name() \
+void name() \
 { \
   static type_t the_reg; \
-  type_t rv = the_reg; \
+  name##_REG = the_reg; \
   the_reg = name; \
-  return rv; \
 }
+
 #define GLOBAL_OUT_WIRE_CONNECT(type_t, wire, name)\
 type_t name; \
 PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
@@ -140,6 +135,7 @@ PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_connect)) \
 void PPCAT(name,_connect)(){ \
   wire = name; \
 }
+
 #define GLOBAL_OUT_REG_WIRE_CONNECT(type_t, wire, name)\
 type_t name; \
 PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
@@ -149,6 +145,7 @@ void PPCAT(name,_connect)(){ \
   wire = the_reg; \
   the_reg = name; \
 }
+
 #define GLOBAL_IN_WIRE_CONNECT(type_t, name, wire)\
 type_t name; \
 PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
@@ -156,6 +153,7 @@ PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_connect)) \
 void PPCAT(name,_connect)(){ \
   name = wire; \
 }
+
 #define GLOBAL_IN_REG_WIRE_CONNECT(type_t, name, wire)\
 type_t name; \
 PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \

@@ -243,12 +243,22 @@ port(
         clk_name = "clk_" + clk_ext_str
         all_clks.add(clk_name)
     for clk_name in sorted(list(all_clks)):
-        # User clocks declared internally and are outputs
+        # User clocks declared internally and are no longer output...
         if clk_name in all_user_clks:
-            text += clk_name + "_out : out std_logic;\n"
+            pass  # text += clk_name + "_out : out std_logic;\n"
         else:
             # Regular clocks are inputs
             text += clk_name + " : in std_logic;\n"
+
+    # Top level port shared global wires
+    text += "-- Global wires marked as top level IO\n"
+    for var_name, var_info in parser_state.global_vars.items():
+        if var_name in parser_state.output_wires:
+            vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
+            text += var_name + " : out " + vhdl_type + ";\n"
+        if var_name in parser_state.input_wires:
+            vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
+            text += var_name + " : in " + vhdl_type + ";\n"
 
     main_func_io_text = ""
     # IO
@@ -483,29 +493,42 @@ begin
                 raise Exception(
                     f"More than one function trying to write to global {clk_var_name}: {write_funcs}!"
                 )
-            write_func = list(write_funcs)[0]
-            write_insts = parser_state.FuncToInstances[write_func]
-            if len(write_insts) > 1:
-                raise Exception(
-                    f"More than one instance trying to write to global {clk_var_name}: {write_insts}!"
+            if len(write_funcs) > 0:
+                write_func = list(write_funcs)[0]
+                write_insts = parser_state.FuncToInstances[write_func]
+                if len(write_insts) > 1:
+                    raise Exception(
+                        f"More than one instance trying to write to global {clk_var_name}: {write_insts}!"
+                    )
+                write_func_inst = list(write_insts)[0]
+                # Assemble driver write wire text
+                write_func_inst_toks = write_func_inst.split(
+                    C_TO_LOGIC.SUBMODULE_MARKER
                 )
-            write_func_inst = list(write_insts)[0]
-            # Assemble driver write wire text
-            write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-            # Start with main func then apply hier instances
-            write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                write_func_inst, parser_state
-            )
-            for write_func_inst_tok in write_func_inst_toks[
-                1 : len(write_func_inst_toks)
-            ]:
-                write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
-                write_text += "." + write_func_inst_str
-            write_text += "." + clk_var_name + "(0)"
+                # Start with main func then apply hier instances
+                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    write_func_inst, parser_state
+                )
+                for write_func_inst_tok in write_func_inst_toks[
+                    1 : len(write_func_inst_toks)
+                ]:
+                    write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+                    write_text += "." + write_func_inst_str
+                write_text += "." + clk_var_name + "(0)"
+                write_text = "module_to_global." + write_text
+            else:
+                # No write side found, last chance is if a top level input
+                if clk_var_name in parser_state.input_wires:
+                    write_text = clk_var_name + "(0)"
+                else:
+                    raise Exception(
+                        f"User defined clock {clk_var_name} is not driven/assigned anywhere?"
+                    )
+
             # Is struct wrapped array of 1 unsigned 0 downto 0
-            text += clk_name + " <= " + "module_to_global." + write_text + ";\n"
-            # Also connect to output
-            text += clk_name + "_out <= " + clk_name + ";\n"
+            text += clk_name + " <= " + write_text + ";\n"
+            # No longer connect to output...
+            # text += clk_name + "_out <= " + clk_name + ";\n"
 
     # IO regs
     if not is_final_top:
@@ -1102,7 +1125,7 @@ begin
             shared_global_vars.add(var_name)
     if len(shared_global_vars) > 0:
         text += """
--- Directly connected global register read wires
+-- Directly connected global wires
 """
     for var_name in shared_global_vars:
         var_info = parser_state.global_vars[var_name]
@@ -1120,19 +1143,45 @@ begin
             raise Exception(
                 f"More than one function trying to write to global {var_name}: {write_funcs}!"
             )
-        if len(write_funcs) <= 0:
-            raise Exception(
-                f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
-            )
-        write_func = list(write_funcs)[0]
+        rw_func_insts = set()
+        if len(write_funcs) > 0:
+            write_func = list(write_funcs)[0]
 
-        # Find the one write inst
-        write_insts = parser_state.FuncToInstances[write_func]
-        if len(write_insts) > 1:
-            raise Exception(
-                f"More than one instance trying to write to global {var_name}: {write_insts}!"
+            # Find the one write inst
+            write_insts = parser_state.FuncToInstances[write_func]
+            if len(write_insts) > 1:
+                raise Exception(
+                    f"More than one instance trying to write to global {var_name}: {write_insts}!"
+                )
+            write_func_inst = list(write_insts)[0]
+            rw_func_insts.add(write_func_inst)
+
+            # Assemble driver write wire text
+            write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            # Start with main func then apply hier instances
+            write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_func_inst, parser_state
             )
-        write_func_inst = list(write_insts)[0]
+            for write_func_inst_tok in write_func_inst_toks[
+                1 : len(write_func_inst_toks)
+            ]:
+                write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
+                write_text += "." + write_func_inst_str
+            write_text += "." + var_name
+            write_text = "module_to_global." + write_text
+        else:
+            # If not write side driving this global wire then last chance
+            # is it being a top level input
+            if var_name in parser_state.input_wires:
+                write_text = var_name
+            else:
+                raise Exception(
+                    f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
+                )
+
+        # One reader of the wire might be an output port
+        if var_name in parser_state.output_wires:
+            text += var_name + " <= " + write_text + ";\n"
 
         # Find the many read funcs
         read_funcs = set()
@@ -1150,9 +1199,7 @@ begin
 
         # Find main funcs for all insts
         # Find clock names for all main funcs, can only be one clock
-        rw_func_insts = set()
         rw_func_insts |= read_insts
-        rw_func_insts.add(write_func_inst)
         rw_clk_names = set()
         for rw_func_inst in rw_func_insts:
             rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
@@ -1164,17 +1211,6 @@ begin
                 raise Exception(
                     f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names} {rw_func_insts}"
                 )
-
-        # Assemble driver write wire text
-        write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-        # Start with main func then apply hier instances
-        write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-            write_func_inst, parser_state
-        )
-        for write_func_inst_tok in write_func_inst_toks[1 : len(write_func_inst_toks)]:
-            write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
-            write_text += "." + write_func_inst_str
-        write_text += "." + var_name
 
         # Write lines connecting write side to many read sides
         for read_func_inst in read_insts:
@@ -1188,13 +1224,7 @@ begin
                 read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
                 read_text += "." + read_func_inst_str
             read_text += "." + var_name
-            text += (
-                "global_to_module."
-                + read_text
-                + " <= module_to_global."
-                + write_text
-                + ";\n"
-            )
+            text += "global_to_module." + read_text + " <= " + write_text + ";\n"
 
         text += "\n"
 
@@ -3311,6 +3341,10 @@ port map
 
 
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+    if var_name in parser_state.output_wires:
+        return True
+    if var_name in parser_state.input_wires:
+        return True
     # # Async wires assumed shared
     # if var_name in parser_state.async_wires:
     #   return True

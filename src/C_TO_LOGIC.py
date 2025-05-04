@@ -9739,6 +9739,8 @@ class ParserState:
         self.io_pairs = set()
         self.inst_array_dict = dict()
         self.async_wires = set()
+        self.input_wires = set()
+        self.output_wires = set()
         self.clk_mhz = {}
         self.clk_group = {}  # dict[user_clk_wire]=clk_group_str
 
@@ -9803,6 +9805,8 @@ class ParserState:
         rv.io_pairs = set(self.io_pairs)
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
+        rv.input_wires = set(self.input_wires)
+        rv.output_wires = set(self.output_wires)
         rv.clk_mhz = dict(self.clk_mhz)
         rv.clk_group = dict(self.clk_group)
 
@@ -10606,6 +10610,8 @@ def GET_GLOBAL_CONST_INFO(parser_state):
         if name_str in parser_state.inst_array_dict.values():
             continue
         if name_str in parser_state.inst_array_dict.keys():
+            continue
+        if name_str in parser_state.input_wires:
             continue
         if (name_str in vars_w_no_write) and (name_str in vars_w_some_use):
             print(
@@ -11716,6 +11722,16 @@ def APPEND_PRAGMA_INFO(parser_state):
         elif name == "ASYNC_WIRE":
             thing = toks[1]
             parser_state.async_wires.add(thing)
+
+        # INPUT top level port
+        elif name == "INPUT":
+            thing = toks[1]
+            parser_state.input_wires.add(thing)
+
+        # OUTPUT top level port
+        elif name == "OUTPUT":
+            thing = toks[1]
+            parser_state.output_wires.add(thing)
 
         # CLK_MHZ
         elif name == "CLK_MHZ":
