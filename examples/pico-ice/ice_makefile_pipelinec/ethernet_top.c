@@ -41,9 +41,10 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define RMII_RX1_WIRE pmod_0b_i2
 #define PMOD_0B_O3
 #define RMII_TX0_WIRE pmod_0b_o3
-// UART
+/*// UART
+#define DEFAULT_PI_UART
 #define UART_CLK_MHZ PLL_CLK_MHZ
-#define UART_BAUD 115200
+#define UART_BAUD 115200*/
 #ifdef BOARD_PICO
 #include "board/pico_ice.h"
 #elif defined(BOARD_PICO2)
@@ -65,7 +66,7 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #include "examples/net/fpga_mac.h"
 
 // Instead of loopback, can wire up a demo of doing some work
-//#define ETH_DEMO_IS_WORK_PIPELINE
+#define ETH_DEMO_IS_WORK_PIPELINE
 #ifdef ETH_DEMO_IS_WORK_PIPELINE
 // Include definition of work to compute
 #include "examples/net/work.h"

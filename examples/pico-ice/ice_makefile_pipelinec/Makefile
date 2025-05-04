@@ -1,10 +1,20 @@
 # Example command lines:
+#  # Export common env variables for all targets, ex.
+#  export PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC; export OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
 #  PICO ICE:
-#    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
-#    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite TOP_NAME=ethernet_top PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py" SV_TOP_FILE=pico_ethernet_top.sv
-#    sudo make prog_pico OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
+#    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
+#    make clean all
+#    # Pong demo, see pong_top.c
+#    make clean all PIPELINEC_TOP_FILE=pong_top.c
+#    # Ethernet demo, see ethernet_top.c
+#    make clean all PIPELINEC_TOP_FILE=ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py"
+#    # Program the FPGA
+#    sudo make prog_pico
 #  PICE2 ICE:
-#    make clean all PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite BOARD=PICO2 SV_TOP_FILE=pico2_top.sv
+#    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
+#    make clean all BOARD=PICO2
+#		 #   ^etc same commands as pico-ice, just append new BOARD=PICO2 argument
+#    # Program the FPGA
 #    sudo make prog_pico2
 YOSYS = $(OSS_CAD_SUITE)/bin/yosys
 NEXTPNR = $(OSS_CAD_SUITE)/bin/nextpnr-ice40

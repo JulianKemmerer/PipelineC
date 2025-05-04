@@ -1,4 +1,4 @@
-# 12MHz clock in pico-ce default RP firmware
+# Pin 35 12MHz clock in pico-ice default RP firmware
 # Cannot be used if HFOSC and PLL are being used in top.sv
 #set_io -nowarn ICE_35         35 
 

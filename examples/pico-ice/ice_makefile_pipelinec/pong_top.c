@@ -64,6 +64,11 @@ void pong_vga_datapath(){
   vga_b = color.b;
   vga_hs = vga_signals.hsync;
   vga_vs = vga_signals.vsync;
+
+  // Unused UART TX signals driven from this clock domain
+  // to avoid inferring None clock domain
+  uart_tx_mac_word_in.data = 0;
+  uart_tx_mac_word_in.valid = 0;
 }
 
 // Blinky part of demo // TODO make related to pong somehow?

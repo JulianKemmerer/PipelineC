@@ -13,6 +13,7 @@ DECL_INPUT(uint1_t, pll_clk)
 CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 
 // UART
+#define DEFAULT_PI_UART
 #define UART_CLK_MHZ PLL_CLK_MHZ
 #define UART_BAUD 115200
 // Configure VGA module to use PMOD0 and PMOD1

@@ -1,4 +1,6 @@
 // These pins should all exist in ice40.pcf
+// Pin 35 12MHz clock in pico-ice default RP firmware
+// Cannot be used if HFOSC and PLL are being used in top.sv
 //inout ICE_35,
 inout ICE_39,
 inout ICE_40,

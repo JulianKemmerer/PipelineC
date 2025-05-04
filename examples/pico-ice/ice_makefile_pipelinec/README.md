@@ -29,7 +29,7 @@ Set `PIPELINEC_REPO` environment variable expected by make flow.
 
 Ex. `make clean all PIPELINEC_REPO=/path/to/PipelineC OSS_CAD_SUITE=/path/to/oss-cad-suite && sudo make prog_pico OSS_CAD_SUITE=/path/to/oss-cad-suite`
 
-See more example build command lines at the top of Makefile.
+See more example build command lines at the top of `Makefile`.
 
 ## Top Level IO
 For now top level IO configuration needs to match across three files:
@@ -53,16 +53,3 @@ Critically this variable is used to:
 3) Inform `nextpnr-ice40` of the target clock frequency
   * `--freq $(PLL_CLK_MHZ)` argument
 
-
-# TODO
-* remove return_output and val_input from port names and make match pcf exactly
-* then use:
-```
-  SystemVerilog can implicitly instantiate ports using a .* wildcard syntax
-   for all ports where the instance port name matches 
-   the connecting port name and their data types are equivalent. 
-   This eliminates the requirement to list any port where 
-   the name and type of the connecting declaration match
-    the name and equivalent type of the instance port.
-```
-* then can get rid of separate *_top.sv variants
