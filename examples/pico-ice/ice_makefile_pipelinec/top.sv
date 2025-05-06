@@ -6,6 +6,7 @@ module top(
   //  CLKHF_DIV
   //  0b00 = 48 MHz, 0b01 = 24 MHz,
   //  0b10 = 12 MHz, 0b11 = 6 MHz
+  // This config needs to match micropython fpga = ice.fpga(frequency= argument?
   wire clk_12p0;
   SB_HFOSC#(.CLKHF_DIV("0b10")) u_hfosc (
     .CLKHFPU(1'b1),

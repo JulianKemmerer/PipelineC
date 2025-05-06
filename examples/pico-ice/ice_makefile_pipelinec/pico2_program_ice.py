@@ -7,6 +7,7 @@ flash = ice.flash(miso=Pin(4), mosi=Pin(7), sck=Pin(6), cs=Pin(5))
 flash.erase(4096)  # Optional
 flash.write(file)
 # Optional
+#   frequency config needs to match top.sv SB_HFOSC#(.CLKHF_DIV param?
 fpga = ice.fpga(
     cdone=Pin(40),
     clock=Pin(21),
@@ -14,7 +15,7 @@ fpga = ice.fpga(
     cram_cs=Pin(5),
     cram_mosi=Pin(4),
     cram_sck=Pin(6),
-    frequency=48,
+    frequency=12,
 )
 fpga.start()
 # start() does not reboot FPGA?
