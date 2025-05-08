@@ -9,7 +9,7 @@
 #    # Ethernet demo, see ethernet_top.c
 #    make clean all PIPELINEC_TOP_FILE=ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py"
 #    # Program the FPGA
-#    sudo make prog_pico
+#    make prog_pico
 #  PICE2 ICE:
 #    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
 #    make clean all BOARD=PICO2
@@ -58,7 +58,7 @@ prog_pico2: gateware.bin
 
 gateware.bin: $(SV_TOP_FILE)
 	$(ICEPLL) -q -i 12 -o $(PLL_CLK_MHZ) -m -f pll.v
-	$(YOSYS) -q --hash-seed 0 -m ghdl -p "ghdl --std=08 -frelaxed `cat pipelinec_output/vhdl_files.txt` -e pipelinec_top; read_verilog -sv $(SV_TOP_FILE) pll.v; synth_ice40 -top $(TOP_NAME) -json $*.json" 2> yosys_stderr.log
+	$(YOSYS) -q -m ghdl -p "ghdl --std=08 -frelaxed `cat pipelinec_output/vhdl_files.txt` -e pipelinec_top; read_verilog -sv $(SV_TOP_FILE) pll.v; synth_ice40 -top $(TOP_NAME) -json $*.json" 2> yosys_stderr.log
 	$(NEXTPNR) -q --seed 0 --up5k --package sg48 --pcf ice40.pcf --json $*.json --asc $*.asc $(NEXTPNR_ARGS)
 	$(ICEPACK) $*.asc $@
 
