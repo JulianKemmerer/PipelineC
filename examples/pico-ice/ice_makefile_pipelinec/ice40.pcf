@@ -11,6 +11,7 @@ set_io -nowarn ICE_41           41 # LED_R active-low
 set_io -nowarn ICE_25           25
 set_io -nowarn ICE_27           27
 
+# Trying to make this UART work in pico2-ice
 set_io -nowarn ICE_11          11
 set_io -nowarn ICE_9           9
 
