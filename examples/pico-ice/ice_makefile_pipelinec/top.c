@@ -2,15 +2,20 @@
 #include "top.h"
 
 // Blinky part of demo
-#define N 22
-#define count_t uint23_t
+#define HALF_SEC ((uint32_t)((PLL_CLK_MHZ*1000000.0)/2.0))
+#define count_t uint32_t
 MAIN_MHZ(blinky_main, PLL_CLK_MHZ)
 void blinky_main(){
   static count_t counter;
-  led_r = 1;
+  static uint1_t led_reg;
+  led_r = led_reg;
   led_g = 1;
-  led_b = counter >> N;
+  led_b = 1;
   counter += 1;
+  if(counter >= HALF_SEC){
+    counter = 0;
+    led_reg = ~led_reg;
+  }
 }
 
 // UART part of demo
