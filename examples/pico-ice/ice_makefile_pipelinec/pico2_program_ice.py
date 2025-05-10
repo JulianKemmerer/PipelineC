@@ -3,8 +3,7 @@
 from machine import Pin
 import ice
 
-# Frequency config needs to match top.sv SB_HFOSC#(.CLKHF_DIV param?
-# and should match main.py too so same at reboot?
+# Frequency config should match main.py too so same at reboot
 fpga = ice.fpga(
     cdone=Pin(40),
     clock=Pin(21),  # aka ICE_35
