@@ -15,7 +15,7 @@
 #    make clean all BOARD=PICO2
 #		 #   ^etc same commands as pico-ice, just append new BOARD=PICO2 argument
 #    # Program the FPGA
-#    sudo make prog_pico2
+#    make prog_pico2
 YOSYS = $(OSS_CAD_SUITE)/bin/yosys
 NEXTPNR = $(OSS_CAD_SUITE)/bin/nextpnr-ice40
 ICEPACK = $(OSS_CAD_SUITE)/bin/icepack
@@ -57,7 +57,7 @@ prog_pico2: gateware.bin
 	mpremote run pico2_program_ice.py >> mpremote.log
 
 gateware.bin: $(SV_TOP_FILE)
-	$(ICEPLL) -q -i 12 -o $(PLL_CLK_MHZ) -m -f pll.v
+	$(ICEPLL) -q -i 48 -o $(PLL_CLK_MHZ) -m -f pll.v
 	$(YOSYS) -q -m ghdl -p "ghdl --std=08 -frelaxed `cat pipelinec_output/vhdl_files.txt` -e pipelinec_top; read_verilog -sv $(SV_TOP_FILE) pll.v; synth_ice40 -top $(TOP_NAME) -json $*.json" 2> yosys_stderr.log
 	$(NEXTPNR) -q --seed 0 --up5k --package sg48 --pcf ice40.pcf --json $*.json --asc $*.asc $(NEXTPNR_ARGS)
 	$(ICEPACK) $*.asc $@
