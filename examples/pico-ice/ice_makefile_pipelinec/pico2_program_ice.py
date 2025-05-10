@@ -1,13 +1,10 @@
-# from https://pico2-ice.tinyvision.ai/md_mpy.html
+# Based on https://pico2-ice.tinyvision.ai/md_mpy.html
+# and Discord conversations
 from machine import Pin
 import ice
 
-file = open("gateware.bin", "br")
-flash = ice.flash(miso=Pin(4), mosi=Pin(7), sck=Pin(6), cs=Pin(5))
-flash.erase(4096)  # Optional
-flash.write(file)
-# Optional
-#   frequency config needs to match top.sv SB_HFOSC#(.CLKHF_DIV param?
+# Frequency config needs to match top.sv SB_HFOSC#(.CLKHF_DIV param?
+# and should match main.py too so same at reboot?
 fpga = ice.fpga(
     cdone=Pin(40),
     clock=Pin(21),
@@ -15,9 +12,20 @@ fpga = ice.fpga(
     cram_cs=Pin(5),
     cram_mosi=Pin(4),
     cram_sck=Pin(6),
-    frequency=12,
+    frequency=48,
 )
+
+# Stop the FPGA
+fpga.stop()
+
+# Do flash operations
+file = open("gateware.bin", "br")
+flash = ice.flash(miso=Pin(4), mosi=Pin(7), sck=Pin(6), cs=Pin(5))
+# flash.erase(4096)  # Optional
+flash.write(file)
+
+# Start FPGA
 fpga.start()
-# start() does not reboot FPGA?
-# Start the FPGA with the same bitstream now too
-fpga.cram(file)
+fpga.reset()  # in new versions
+
+# Now FPGA should be up and running new gateware...
