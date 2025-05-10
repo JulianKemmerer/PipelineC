@@ -41,10 +41,10 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define RMII_RX1_WIRE pmod_0b_i2
 #define PMOD_0B_O3
 #define RMII_TX0_WIRE pmod_0b_o3
-/*// UART
+// UART
 #define DEFAULT_PI_UART
 #define UART_CLK_MHZ PLL_CLK_MHZ
-#define UART_BAUD 115200*/
+#define UART_BAUD 115200
 #ifdef BOARD_PICO
 #include "board/pico_ice.h"
 #elif defined(BOARD_PICO2)
@@ -53,6 +53,7 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #warning "Unknown board?"
 #endif
 #include "net/rmii_wires.c"
+#include "uart/uart_mac.c"
 
 // Include ethernet media access controller configured to use RMII wires and 8b AXIS
 // with enabled clock crossing fifos (with skid buffers)
@@ -90,7 +91,7 @@ GLOBAL_STREAM_FIFO(axis8_t, loopback_payload_fifo, 32) // One to hold the payloa
 // Work demo and regular loopback use headers FIFO
 GLOBAL_STREAM_FIFO(eth_header_t, loopback_headers_fifo, 2) // another one to hold the headers
 
-/*
+/* TODO need to remove uart_main to use uart for debug probes
 // Debug probes demo
 //  define user debug signals in header shared with software 
 #include "eth_debug_probes.h"
@@ -213,4 +214,23 @@ void blinky_main(){
   led_g = 1;
   led_b = 1;
   counter += 1;
+}
+
+// UART part of demo
+MAIN_MHZ(uart_main, PLL_CLK_MHZ)
+void uart_main(){
+  // Default loopback connect
+  uart_tx_mac_word_in = uart_rx_mac_word_out;
+  uart_rx_mac_out_ready = uart_tx_mac_in_ready;
+
+  // Override .data to do case change demo
+  char in_char = uart_rx_mac_word_out.data;
+  char out_char = in_char;
+  uint8_t case_diff = 'a' - 'A';
+  if(in_char >= 'a' && in_char <= 'z'){
+    out_char = in_char - case_diff;
+  }else if(in_char >= 'A' && in_char <= 'Z'){
+    out_char = in_char + case_diff;
+  }
+  uart_tx_mac_word_in.data = out_char;
 }
