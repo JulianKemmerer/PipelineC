@@ -1,8 +1,6 @@
 module top(
   // These pins should all exist in ice40.pcf
-  // Pin 35 12MHz clock in pico-ice default RP firmware
-  // Cannot be used if HFOSC and PLL are being used in top.sv
-  //inout ICE_35,
+  inout ICE_35,
   inout ICE_39,
   inout ICE_40,
   inout ICE_41,
@@ -29,22 +27,11 @@ module top(
   inout ICE_23,
   inout ICE_26
 );
-  // No 12M input for PICO2_ICE
-  // High frequency oscillator
-  //  CLKHF_DIV
-  //  0b00 = 48 MHz, 0b01 = 24 MHz,
-  //  0b10 = 12 MHz, 0b11 = 6 MHz
-  // This config needs to match micropython fpga = ice.fpga(frequency= argument?
-  wire clk_48p0;
-  SB_HFOSC#(.CLKHF_DIV("0b00")) u_hfosc (
-    .CLKHFPU(1'b1),
-    .CLKHFEN(1'b1),
-    .CLKHF(clk_48p0)
-  );
+  // ICE_35 has a default 12MHz clock in pico and pico2
   // PLL instance to make a clock based on 12MHz
   wire pll_clk;
   pll pll_inst(
-    .clock_in(clk_48p0),
+    .clock_in(ICE_35),
     .clock_out(pll_clk),
     .locked()
   );

@@ -1,6 +1,6 @@
-# Pin 35 12MHz clock in pico-ice default RP firmware
-# Cannot be used if HFOSC and PLL are being used in top.sv
-#set_io -nowarn ICE_35         35 
+# These pins should all exist in top.sv
+
+set_io -nowarn ICE_35         35 # Default 12MHz clock from RaspPi
 
 # RGB LED
 set_io -nowarn ICE_39           39 # LED_G active-low
