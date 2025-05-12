@@ -3,7 +3,7 @@
 #include "prep_auth_data/prep_auth_data.h"
 #include "poly1305/poly1305.h"
 
-// #define SIMULATION // Turn off or on simulation mode
+#define SIMULATION // Turn off or on simulation mode
 
 #ifndef SIMULATION
 // Flattened top level ports with AXIS style manager/subordinate naming
@@ -21,10 +21,7 @@ DECL_INPUT(uint16_t, s_axis_tkeep)
 DECL_INPUT(uint1_t, s_axis_tlast)
 DECL_INPUT(uint1_t, s_axis_tvalid)
 DECL_OUTPUT(uint1_t, s_axis_tready)
-// Top level output wires
-DECL_OUTPUT(poly1305_auth_tag_uint_t, auth_tag)
-DECL_OUTPUT(uint1_t, auth_tag_valid)
-// Top level output stream of ciphertext
+// Top level output stream of ciphertext w/ auth tag
 DECL_OUTPUT(uint128_t, m_axis_tdata)
 DECL_OUTPUT(uint16_t, m_axis_tkeep)
 DECL_OUTPUT(uint1_t, m_axis_tlast)
@@ -44,8 +41,6 @@ uint8_t chacha20poly1305_encrypt_aad_len; // input
 uint8_t chacha20poly1305_encrypt_poly1305_key[POLY1305_KEY_SIZE]; // input
 stream(axis128_t) chacha20poly1305_encrypt_axis_out; // output
 uint1_t chacha20poly1305_encrypt_axis_out_ready; // input
-uint8_t chacha20poly1305_encrypt_auth_tag[POLY1305_AUTH_TAG_SIZE]; // output
-uint1_t chacha20poly1305_encrypt_auth_tag_valid; // output
 
 // For real hardware connect top level ports to these wires
 #ifndef SIMULATION
@@ -69,7 +64,5 @@ void chacha20poly1305_encrypt_io_wires(){
   m_axis_tlast = chacha20poly1305_encrypt_axis_out.data.tlast;
   m_axis_tvalid = chacha20poly1305_encrypt_axis_out.valid;
   chacha20poly1305_encrypt_axis_out_ready = m_axis_tready;
-  auth_tag = poly1305_auth_tag_uint_from_bytes(chacha20poly1305_encrypt_auth_tag);
-  auth_tag_valid = chacha20poly1305_encrypt_auth_tag_valid;
 }
 #endif

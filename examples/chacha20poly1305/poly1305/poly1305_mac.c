@@ -21,14 +21,9 @@ uint8_t poly1305_mac_data_key[POLY1305_KEY_SIZE];
 // 16 byte wide AXIS port for data input
 stream(axis128_t) poly1305_mac_data_in;
 uint1_t poly1305_mac_data_in_ready;
-// Pass through of data expected? seems so...
-// 16 byte wide AXIS port for data output
-stream(axis128_t) poly1305_mac_data_out;
-uint1_t poly1305_mac_data_out_ready;
-// 16-byte authentication tag output
-// Single cycle pulse, no handshake (TODO also make AXIS?)
-uint8_t poly1305_mac_auth_tag[POLY1305_AUTH_TAG_SIZE];
-uint1_t poly1305_mac_auth_tag_valid;
+// 16-byte authentication tag output as DVR handshake
+stream(poly1305_auth_tag_uint_t) poly1305_mac_auth_tag; // output
+uint1_t poly1305_mac_auth_tag_ready; // input
 
 // FSM that uses pipeline iteratively to compute poly1305 MAC
 typedef enum poly1305_state_t{
@@ -57,13 +52,9 @@ void poly1305_mac(){
 
   // Default not ready for incoming data
   poly1305_mac_data_in_ready = 0;
-  // Default not outputting pass through data
-  stream(axis128_t) axis128_null = {0};
-  poly1305_mac_data_out = axis128_null;
   // Default not outputting an auth tag
-  uint8_t auth_tag_null_outputs[POLY1305_AUTH_TAG_SIZE] = {0};
-  poly1305_mac_auth_tag = auth_tag_null_outputs;
-  poly1305_mac_auth_tag_valid = 0;
+  poly1305_mac_auth_tag.data = 0;
+  poly1305_mac_auth_tag.valid = 0;
   // Default nothing into pipeline
   poly1305_mac_loop_body_in_t pipeline_null_inputs = {0};
   poly1305_pipeline_in = pipeline_null_inputs;
@@ -82,9 +73,8 @@ void poly1305_mac(){
       state = START_ITER; 
     }
   }else if(state == START_ITER){
-    // Ready to take an input data block if pass through to output is ready
-    poly1305_mac_data_in_ready = poly1305_mac_data_out_ready;
-    poly1305_mac_data_out = poly1305_mac_data_in;
+    // Ready to take an input data block
+    poly1305_mac_data_in_ready = 1;
     // Put 'a' and data block into pipeline
     poly1305_pipeline_in.block_bytes = poly1305_mac_data_in.data.tdata;
     // TODO tkeep partial block, process remaining bytes with padding
@@ -117,12 +107,13 @@ void poly1305_mac(){
   }else if(state == OUTPUT_AUTH_TAG){
     // First 16 bytes of 'a' are the output  
     u320_t_bytes_t a_bytes = u320_t_to_bytes(a);
-    for(int32_t i=0; i<POLY1305_BLOCK_SIZE; i+=1){
-      poly1305_mac_auth_tag[i] = a_bytes.data[i];
+    uint8_t auth_tag[POLY1305_AUTH_TAG_SIZE];
+    ARRAY_COPY(auth_tag, a_bytes.data, POLY1305_AUTH_TAG_SIZE)
+    poly1305_mac_auth_tag.data = poly1305_auth_tag_uint_from_bytes(auth_tag);
+    poly1305_mac_auth_tag.valid = 1;
+    if(poly1305_mac_auth_tag.valid & poly1305_mac_auth_tag_ready){
+      state = IDLE;
     }
-    poly1305_mac_auth_tag_valid = 1;
-    // No handshake, single cycle pulse, done now and back to idle
-    state = IDLE;
   }
 }
 

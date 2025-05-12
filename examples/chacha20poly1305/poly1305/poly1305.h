@@ -6,6 +6,7 @@
 #define POLY1305_AUTH_TAG_SIZE 16
 #define poly1305_auth_tag_uint_t uint128_t
 #define poly1305_auth_tag_uint_from_bytes uint8_array16_le
+DECL_STREAM_TYPE(poly1305_auth_tag_uint_t)
 
 /**
  * @brief 130-bit prime: 2^130 - 5
