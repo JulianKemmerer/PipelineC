@@ -8955,14 +8955,15 @@ def APPLY_CONNECT_WIRES_LOGIC(
                         )
                     ):
                         # Unhandled
-                        print(
-                            "Error handling assignment of array : RHS",
+                        raise Exception(
+                            "Error handling assignment of array element type or size : RHS",
                             driving_wire,
+                            rhs_elem_t,
                             "drives LHS",
                             driven_wire_name,
-                            c_ast_node.coord,
+                            lhs_elem_t,
+                            str(c_ast_node.coord),
                         )
-                        sys.exit(-1)
                     lhs_size = lhs_dims[0]
                     rhs_size = rhs_dims[0]
                     """
