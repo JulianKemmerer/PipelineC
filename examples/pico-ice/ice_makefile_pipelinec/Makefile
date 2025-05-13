@@ -1,6 +1,9 @@
 # Example command lines:
 #  # Export common env variables for all targets, ex.
-#  export PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC; export OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
+#  # If running from outside the PipelineC repo examples, need to know path
+#  export PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC;
+#  # Always need path to ghdl yosys nextpnr etc
+#  export OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
 #  PICO ICE:
 #    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
 #    make clean all
@@ -8,12 +11,15 @@
 #    make clean all PIPELINEC_TOP_FILE=pong_top.c
 #    # Ethernet demo, see ethernet_top.c
 #    make clean all PIPELINEC_TOP_FILE=ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py"
+#    # RISC-V Demo, see risc-v_top.c
+#    #   First run 'make hex' in examples/risc-v/gcc_test/ to build software for RISC-V CPU
+#    make clean all PIPELINEC_TOP_FILE=risc-v_top.c PLL_CLK_MHZ=16.0
 #    # Program the FPGA
 #    make prog_pico
 #  PICE2 ICE:
 #    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
 #    make clean all BOARD=PICO2
-#		 #   ^etc same commands as pico-ice, just append new BOARD=PICO2 argument
+#    #   ^etc same commands as pico-ice, just append new BOARD=PICO2 argument
 #    # Program the FPGA
 #    make prog_pico2
 YOSYS = $(OSS_CAD_SUITE)/bin/yosys
@@ -22,6 +28,7 @@ ICEPACK = $(OSS_CAD_SUITE)/bin/icepack
 ICEPLL = $(OSS_CAD_SUITE)/bin/icepll
 DFU_UTIL = $(OSS_CAD_SUITE)/bin/dfu-util
 BIN2UF2 = bin2uf2
+PIPELINEC_REPO ?= $(realpath ../../../)
 PIPELINEC = $(PIPELINEC_REPO)/src/pipelinec
 TOP_NAME ?= top
 PIPELINEC_TOP_FILE ?= $(TOP_NAME).c
