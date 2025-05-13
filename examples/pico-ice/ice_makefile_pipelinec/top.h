@@ -1,6 +1,5 @@
 #include "uintN_t.h"
-// See pico-ice-sdk/rtl/pico_ice.pcf
-#pragma PART "ICE40UP5K-SG48"
+#pragma PART "ICE40UP5K-SG48" // TODO move into board/.h file?
 
 // Get clock rate constant PLL_CLK_MHZ from header written by make flow
 #include "pipelinec_makefile_config.h"
@@ -12,10 +11,7 @@
 DECL_INPUT(uint1_t, pll_clk)
 CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 
-// UART
-#define DEFAULT_PI_UART
-#define UART_CLK_MHZ PLL_CLK_MHZ
-#define UART_BAUD 115200
+#ifdef USE_VGA_WIRES
 // Configure VGA module to use PMOD0 and PMOD1
 // rgb is 8b internally, 4b on pmod
 // PMOD0 = VGA PMOD J1
@@ -54,6 +50,9 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #define PMOD_1B_O1
 #define VGA_HS_WIRE pmod_1b_o1 // J2-7 = 1B IO 1
 #define VGA_VS_WIRE pmod_1b_o2 // J2-8 = 1B IO 2
+#endif
+
+// Board specific config
 #ifdef BOARD_PICO
 #include "board/pico_ice.h"
 #elif defined(BOARD_PICO2)
@@ -61,12 +60,21 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #else
 #warning "Unknown board?"
 #endif
-#include "uart/uart_mac.c"
-#include "vga/vga_wires_4b.c"
 
+// Instantiate UART MAC module
+#ifdef DEFAULT_PI_UART
+#define UART_CLK_MHZ PLL_CLK_MHZ
+#define UART_BAUD 115200
+#include "uart/uart_mac.c"
+#endif
+
+// Instantiate VGA output wires
+#ifdef USE_VGA_WIRES
+#include "vga/vga_wires_4b.c"
 // Configure the VGA timing to use
 // 640x480 is a 25MHz pixel clock
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 #include "vga/vga_timing.h"
+#endif
 

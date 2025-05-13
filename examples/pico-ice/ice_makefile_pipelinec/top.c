@@ -1,4 +1,6 @@
 // See configuration details like top level pin mapping in top.h
+#define DEFAULT_PI_UART
+#define USE_VGA_WIRES
 #include "top.h"
 
 // Blinky part of demo
@@ -18,6 +20,7 @@ void blinky_main(){
   }
 }
 
+#ifdef DEFAULT_PI_UART
 // UART part of demo
 MAIN_MHZ(uart_main, PLL_CLK_MHZ)
 void uart_main(){
@@ -36,7 +39,9 @@ void uart_main(){
   }
   uart_tx_mac_word_in.data = out_char;
 }
+#endif
 
+#ifdef USE_VGA_WIRES
 // VGA pmod part of demo
 #include "vga/test_pattern.h"
 // vga_timing() and PIXEL_CLK_MHZ from vga_timing.h in top.h
@@ -55,6 +60,7 @@ void vga_pmod_main(){
   vga_hs = test_pattern_out.vga_signals.hsync;
   vga_vs = test_pattern_out.vga_signals.vsync;
 }
+#endif
 
 
 #ifdef LED_8SSD_ENABLED
