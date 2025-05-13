@@ -13,13 +13,12 @@
 // Starts with shared with software memory map info
 #include "gcc_test/mem_map.h" 
 // Define inputs and outputs
+// Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
-  uint1_t button;
+  mm_status_regs_t status;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
-  uint32_t return_value;
-  uint1_t halt;
-  uint1_t led;
+  mm_ctrl_regs_t ctrl;
 }my_mmio_out_t;
 // Define the hardware memory for those IO
 RISCV_DECL_MEM_MAP_MOD_OUT_T(my_mmio_out_t)
@@ -29,11 +28,20 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Outputs
   static riscv_mem_map_mod_out_t(my_mmio_out_t) o;
   o.addr_is_mapped = 0; // since o is static regs
+
+  // MM Control+status registers
+  static mm_ctrl_regs_t ctrl;
+  o.outputs.ctrl = ctrl; // output reg
+  static mm_status_regs_t status;
+
   // Memory muxing/select logic
   // Uses helper comparing word address and driving a variable
-  WORD_MM_ENTRY(o, THREAD_ID_RETURN_OUTPUT_ADDR, o.outputs.return_value)
-  o.outputs.halt = wr_byte_ens[0] & (addr==THREAD_ID_RETURN_OUTPUT_ADDR);
-  WORD_MM_ENTRY(o, LED_ADDR, o.outputs.led)
+  STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
+  STRUCT_MM_ENTRY_NEW(MM_STATUS_REGS_ADDR, mm_status_regs_t, status, status, addr, o.addr_is_mapped, o.rd_data)
+
+  // Input regs
+  status = inputs.status;
+
   return o;
 }
 
@@ -59,8 +67,8 @@ MAIN_MHZ(my_top, CPU_CLK_MHZ)
 #include "debug_port.h"
 DEBUG_OUTPUT_DECL(uint1_t, unknown_op) // Unknown instruction
 DEBUG_OUTPUT_DECL(uint1_t, mem_out_of_range) // Exception, stop sim
-DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
-DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
+//DEBUG_OUTPUT_DECL(uint1_t, halt) // Stop/done signal
+//DEBUG_OUTPUT_DECL(int32_t, main_return) // Output from main()
 
 void my_top()
 {
@@ -71,12 +79,12 @@ void my_top()
   // Sim debug
   unknown_op = out.unknown_op;
   mem_out_of_range = out.mem_out_of_range;
-  halt = out.mem_map_outputs.halt;
-  main_return = out.mem_map_outputs.return_value;
+  //halt = out.mem_map_outputs.halt;
+  //main_return = out.mem_map_outputs.return_value;
 
   // Output LEDs for hardware debug
   leds = 0;
-  leds |= (uint4_t)out.mem_map_outputs.led << 0;
+  leds |= (uint4_t)out.mem_map_outputs.ctrl.led << 0;
   leds |= (uint4_t)mem_out_of_range << 1;
   leds |= (uint4_t)unknown_op << 2;
 }

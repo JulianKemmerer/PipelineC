@@ -87,7 +87,8 @@ riscv_out_t riscv_name(
     mem_addr, // Main memory read/write address
     mem_wr_data, // Main memory write data
     mem_wr_byte_ens, // Main memory write data byte enables
-    mem_rd_byte_ens // Main memory read enable
+    mem_rd_byte_ens, // Main memory read enable
+    1 // Single cycle always valid input every cycle
     // Optional memory map inputs
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs

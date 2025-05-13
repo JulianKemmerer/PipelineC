@@ -275,7 +275,8 @@ riscv_dmem_out_t riscv_dmem(
     wr_word,
     wr_word_byte_ens,
     rd_word_byte_ens,
-    valid
+    valid,
+    1 // always ready for output in free flowing pipeline dmem
     #ifdef riscv_mem_map_inputs_t
     , mem_map_inputs
     #endif

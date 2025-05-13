@@ -2,9 +2,11 @@
 # https://github.com/agra-uni-bremen/microrv32/blob/master/microrv32/sw/basic-c/Makefile
 # export PATH=$PATH:/opt/riscv/bin
 
+# TODO make switchable between archs
+# -march=rv32im
+
 all : main.c bootstrap.S
-	# Stack size needs to match linker script? default of 4096? use larger than warning of 1/4 stack size? -Wl,-z stack-size=32768 -Wlarger-than=8196 
-	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32im -mabi=ilp32 -mstrict-align -nostartfiles -T link.ld
+	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32i -mabi=ilp32 -mstrict-align -nostartfiles -T link.ld
 	
 dump-elf: all
 	riscv32-unknown-elf-readelf -a main
