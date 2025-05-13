@@ -37,13 +37,16 @@ void main(){
     prep_auth_data_axis_in.valid = 0;
     append_auth_tag_axis_in = chacha20_encrypt_axis_out;
     append_auth_tag_axis_in.valid = 0;
-    //  unless both sinks are ready
+    //  allow pass through if both sinks are ready
+    //  or if sink isnt ready (no data passing anyway)
     chacha20_encrypt_axis_out_ready = prep_auth_data_axis_in_ready & append_auth_tag_axis_in_ready;
-    if(chacha20_encrypt_axis_out_ready){
-        // Both sinks ready, so can pass through to both
+    if(chacha20_encrypt_axis_out_ready | ~prep_auth_data_axis_in_ready){
         prep_auth_data_axis_in.valid = chacha20_encrypt_axis_out.valid;
+    }
+    if(chacha20_encrypt_axis_out_ready | ~append_auth_tag_axis_in_ready){
         append_auth_tag_axis_in.valid = chacha20_encrypt_axis_out.valid;
     }
+
     // Prep auth data CSR inputs
     prep_auth_data_aad = chacha20poly1305_encrypt_aad;
     prep_auth_data_aad_len = chacha20poly1305_encrypt_aad_len;
