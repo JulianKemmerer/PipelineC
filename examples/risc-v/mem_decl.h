@@ -215,8 +215,8 @@ riscv_dmem_out_t riscv_dmem(
   uint1_t is_mmio;
   is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
   is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
-  if(~is_dmem & ~is_mmio){
-    printf("Error: memory address=%d is not for dmem or mmio?\n", rw_addr);
+  if((~is_dmem & ~is_mmio)&(word_wr_en|word_rd_en)){
+    printf("Error: mem_out_of_range memory address=%d is not for dmem or mmio?\n", rw_addr);
     mem_out.mem_out_of_range = 1;
   }
   if(is_dmem){
@@ -286,7 +286,7 @@ riscv_dmem_out_t riscv_dmem(
       if(word_wr_en) printf("Memory mapped IO store addr=0x%X\n", rw_addr);
       if(word_rd_en) printf("Memory mapped IO load addr=0x%X\n", rw_addr); 
     }else{
-      printf("Error: MMIO access to unmapped address=%d?\n", rw_addr);
+      printf("Error: mem_out_of_range MMIO access to unmapped address=%d?\n", rw_addr);
       mem_out.mem_out_of_range = 1;
     }
   }
