@@ -10,10 +10,10 @@
 #    # Pong demo, see pong_top.c
 #    make clean all PIPELINEC_TOP_FILE=pong_top.c
 #    # Ethernet demo, see ethernet_top.c
-#    make clean all PIPELINEC_TOP_FILE=ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth_clocks.py"
+#    make clean all PIPELINEC_TOP_FILE=eth/ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth/eth_clocks.py"
 #    # RISC-V Demo, see risc-v_top.c
-#    #   First run 'make hex' in examples/risc-v/gcc_test/ to build software for RISC-V CPU
-#    make clean all PIPELINEC_TOP_FILE=risc-v_top.c PLL_CLK_MHZ=16.0
+#    #   First run 'make hex' in ./risc-v/ to build software for RISC-V CPU
+#    make clean all PIPELINEC_TOP_FILE=risc-v/risc-v_top.c PLL_CLK_MHZ=16.0
 #    # Program the FPGA
 #    make prog_pico
 #  PICE2 ICE:

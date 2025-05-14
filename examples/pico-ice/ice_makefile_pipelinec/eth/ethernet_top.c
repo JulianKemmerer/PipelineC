@@ -4,7 +4,7 @@
 // See pico-ice-sdk/rtl/pico_ice.pcf
 #pragma PART "ICE40UP5K-SG48"
 // Get clock rate constant PLL_CLK_MHZ from header written by make flow
-#include "pipelinec_makefile_config.h"
+#include "../pipelinec_makefile_config.h"
 // By default PipelineC names clock ports with the rate included
 // ex. clk_12p0
 // Override this behavior by creating an input with a constant name

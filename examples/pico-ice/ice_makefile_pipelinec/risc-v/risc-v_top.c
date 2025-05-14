@@ -1,7 +1,7 @@
 // See configuration details like top level pin mapping in top.h
 //#define DEFAULT_PI_UART
 //#define USE_VGA_WIRES // TODO can't meet 25MHz pixel clock yet...
-#include "top.h"
+#include "../top.h"
 
 #include "uintN_t.h"
 #include "intN_t.h"
@@ -9,15 +9,13 @@
 // RISC-V components
 #include "examples/risc-v/risc-v.h"
 
-// TODO remove dependence on gcc_test dir?
-
 // Include test gcc compiled program
-#include "examples/risc-v/gcc_test/text_mem_init.h"
-#include "examples/risc-v/gcc_test/data_mem_init.h"
+#include "text_mem_init.h"
+#include "data_mem_init.h"
 
 // Declare memory map information
 // Starts with shared with software memory map info
-#include "examples/risc-v/gcc_test/mem_map.h" 
+#include "mem_map.h"
 // Define inputs and outputs
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
@@ -53,10 +51,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // Declare a RISCV core type using memory info
 #define riscv_name              my_riscv
-#define RISCV_IMEM_INIT         text_MEM_INIT // from gcc_test/
-#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE     // from gcc_test/
-#define RISCV_DMEM_INIT         data_MEM_INIT // from gcc_test/
-#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     // from gcc_test/
+#define RISCV_IMEM_INIT         text_MEM_INIT
+#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE     
+#define RISCV_DMEM_INIT         data_MEM_INIT 
+#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     
 #define riscv_mem_map           my_mem_map_module
 #define riscv_mem_map_inputs_t  my_mmio_in_t
 #define riscv_mem_map_outputs_t my_mmio_out_t
