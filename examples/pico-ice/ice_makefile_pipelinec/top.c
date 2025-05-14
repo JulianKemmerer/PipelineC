@@ -1,6 +1,6 @@
 // See configuration details like top level pin mapping in top.h
 #define DEFAULT_PI_UART
-#define USE_VGA_WIRES
+#define DEFAULT_VGA_PMOD
 #include "top.h"
 
 // Blinky part of demo
@@ -41,7 +41,7 @@ void uart_main(){
 }
 #endif
 
-#ifdef USE_VGA_WIRES
+#ifdef DEFAULT_VGA_PMOD
 // VGA pmod part of demo
 #include "vga/test_pattern.h"
 // vga_timing() and PIXEL_CLK_MHZ from vga_timing.h in top.h

@@ -11,7 +11,7 @@
 DECL_INPUT(uint1_t, pll_clk)
 CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 
-#ifdef USE_VGA_WIRES
+#ifdef DEFAULT_VGA_PMOD
 // Configure VGA module to use PMOD0 and PMOD1
 // rgb is 8b internally, 4b on pmod
 // PMOD0 = VGA PMOD J1
@@ -69,7 +69,7 @@ CLK_MHZ(pll_clk, PLL_CLK_MHZ)
 #endif
 
 // Instantiate VGA output wires
-#ifdef USE_VGA_WIRES
+#ifdef DEFAULT_VGA_PMOD
 #include "vga/vga_wires_4b.c"
 // Configure the VGA timing to use
 // 640x480 is a 25MHz pixel clock

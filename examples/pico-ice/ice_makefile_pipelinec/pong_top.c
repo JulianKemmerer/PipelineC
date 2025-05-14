@@ -1,6 +1,6 @@
 // See configuration details like top level pin mapping in top.h
 #define DEFAULT_PI_UART
-#define USE_VGA_WIRES
+#define DEFAULT_VGA_PMOD
 #include "top.h"
 
 // Pong stuff like user_input_t and render state machine

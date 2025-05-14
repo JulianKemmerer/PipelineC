@@ -1,6 +1,6 @@
 // See configuration details like top level pin mapping in top.h
 //#define DEFAULT_PI_UART
-//#define USE_VGA_WIRES // TODO can't meet 25MHz pixel clock yet...
+//#define DEFAULT_VGA_PMOD // TODO can't meet 25MHz pixel clock yet...
 #include "../top.h"
 
 #include "uintN_t.h"
@@ -100,7 +100,7 @@ void uart_main(){
 }
 #endif
 
-#ifdef USE_VGA_WIRES
+#ifdef DEFAULT_VGA_PMOD
 // VGA pmod part of demo
 #include "vga/test_pattern.h"
 // vga_timing() and PIXEL_CLK_MHZ from vga_timing.h in top.h
