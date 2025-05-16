@@ -187,7 +187,7 @@ void tb()
     uint8_t aad[AAD_MAX_LEN] = AAD_TEST_STR;
     uint32_t aad_len = strlen(AAD_TEST_STR);
     
-    // poly1305_key obtained by running test main software C code
+    // poly1305_key obtained by running test main.c software C code
     uint8_t poly1305_key[POLY1305_KEY_SIZE] = {
         0x7b, 0xac, 0x2b, 0x25, 0x2d, 0xb4, 0x47, 0xaf,
         0x09, 0xb6, 0x7a, 0x55, 0xa4, 0xe9, 0x55, 0x84,
@@ -251,12 +251,53 @@ void tb()
     chacha20poly1305_encrypt_aad_len = aad_len;
     chacha20poly1305_encrypt_poly1305_key = poly1305_key;
 
+    // Expected ciphertext output from running main.c demo
+    // Ciphertext: d71e85316edd03f25caec6b85ee87adde1eda86860730bb9a8eba2e375f666c423b2eb54c9fa795898aed77c8efb26801c77920fdb08096e
+    #define CIPHERTEXT_SIZE ((4*16) + POLY1305_AUTH_TAG_SIZE)
+    static uint32_t ciphertext_remaining = CIPHERTEXT_SIZE;
+    static uint8_t expected_ciphertext[CIPHERTEXT_SIZE] = {
+        0xd7, 0x1e, 0x85, 0x31, 0x6e, 0xdd, 0x03, 0xf2, 0x5c, 0xae, 0xc6, 0xb8, 0x5e, 0xe8, 0x7a, 0xdd,
+        0xe1, 0xed, 0xa8, 0x68, 0x60, 0x73, 0x0b, 0xb9, 0xa8, 0xeb, 0xa2, 0xe3, 0x75, 0xf6, 0x66, 0xc4,
+        0x23, 0xb2, 0xeb, 0x54, 0xc9, 0xfa, 0x79, 0x58, 0x98, 0xae, 0xd7, 0x7c, 0x8e, 0xfb, 0x26, 0x80,
+        0x1c, 0x77, 0x92, 0x0f, 0xb5, 0x4e, 0x8a, 0xed, 0x77, 0x92, 0x0f, 0xdb, 0x08, 0x09, 0x6e, /*pad ciphertext*/ 0x0,
+        // Auth Tag: 5da87d6a2d15036ca7cb91a8ec3dba7c
+        0x5d, 0xa8, 0x7d, 0x6a, 0x2d, 0x15, 0x03, 0x6c, 0xa7, 0xcb, 0x91, 0xa8, 0xec, 0x3d, 0xba, 0x7c
+    };
+
     // Stream ciphertext out of dut
     chacha20poly1305_encrypt_axis_out_ready = 1;
     if(chacha20poly1305_encrypt_axis_out.valid & chacha20poly1305_encrypt_axis_out_ready)
     {
         // Print ciphertext as it flows out of dut
         PRINT_16_BYTES("Ciphertext next 16 bytes: ", chacha20poly1305_encrypt_axis_out.data.tdata)
+        // compare to expected_ciphertext and shift
+        for(int32_t i = 0; i<16; i+=1)
+        {
+            if(ciphertext_remaining > i)
+            {
+                if(chacha20poly1305_encrypt_axis_out.data.tdata[i] != expected_ciphertext[i])
+                {
+                    uint32_t ciphertext_pos = (CIPHERTEXT_SIZE-ciphertext_remaining) + i;
+                    printf("ERROR: Ciphertext mismatch at byte[%d]. expected %d got %d\n", ciphertext_pos, expected_ciphertext[i], chacha20poly1305_encrypt_axis_out.data.tdata[i]);
+                }
+            }
+        }
+        // Too much data?
+        if(ciphertext_remaining == 0){
+            printf("ERROR: Extra ciphertext output!\n");
+        }
+        // Too little data? Or more to come?
+        if(chacha20poly1305_encrypt_axis_out.data.tlast){
+            if(ciphertext_remaining > 16){
+                printf("ERROR: Early end to ciphertext output!\n");
+            }else{
+                printf("Test DONE\n");
+            }
+            ciphertext_remaining = 0;
+        }else{
+            ciphertext_remaining -= 16;
+        }
+        ARRAY_SHIFT_DOWN(expected_ciphertext, CIPHERTEXT_SIZE, 16)
     }
 
     cycle_counter += 1;
