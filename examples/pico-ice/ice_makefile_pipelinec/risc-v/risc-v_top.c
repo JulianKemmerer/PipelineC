@@ -1,3 +1,8 @@
+// Timing improvements?
+//  try one hot state?
+//  turn off all?some? same cycle state transition?
+//  make mmio regs 1 cycle read instead of comb?
+
 // See configuration details like top level pin mapping in top.h
 //#define DEFAULT_PI_UART
 //#define DEFAULT_VGA_PMOD // TODO can't meet 25MHz pixel clock yet...
@@ -293,11 +298,11 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 #include "examples/risc-v/mem_decl.h"
 
 // Declare globally visible auto pipelines out of exe logic
-#include "global_func_inst.h"
 //  Global function has no built in delay, can 'return' in same cycle
-GLOBAL_FUNC_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
-#ifdef RV32_M
 //  Global pipeline has built in minimum 2 cycle delay for input and output regs
+#include "global_func_inst.h"
+GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t)
+#ifdef RV32_M
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_mul_pipeline, execute_t, execute_rv32_mul, execute_rv32_m_ext_in_t)
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_div_pipeline, execute_t, execute_rv32_div, execute_rv32_m_ext_in_t)
 #endif
@@ -457,7 +462,9 @@ riscv_out_t fsm_riscv(
       execute_rv32i_pipeline_in_valid = 1;
       // RV32I might not need pipelining, so allow same cycle execution
       // (same cycle as if in-line execute() called here)
-      state = EXE_END; next_state = state; // SAME CYCLE STATE TRANSITION
+      //state = EXE_END; next_state = state; // SAME CYCLE STATE TRANSITION
+      // Not same cycle transition since RV32I exe is pipeline with io regs
+      next_state = EXE_END;
     }
     #ifdef RV32_M
     else if(decoded_reg.is_rv32_mul){
