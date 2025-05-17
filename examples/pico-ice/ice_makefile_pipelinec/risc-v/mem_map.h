@@ -8,6 +8,7 @@
 #else
 #include <stdint.h>
 #include <stddef.h>
+//#include <string.h>
 #endif
 
 // Define bounds for IMEM, DMEM, and MMIO
@@ -46,15 +47,16 @@ static volatile mm_ctrl_regs_t* mm_ctrl_regs = (mm_ctrl_regs_t*)MM_CTRL_REGS_ADD
 static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_REGS_ADDR;
 #define MM_STATUS_REGS_END_ADDR (MM_STATUS_REGS_ADDR+sizeof(mm_status_regs_t))
 
-/* 
 // Separate handshake data regs 
 // so not mixed in with strictly simple in or out status and ctrl registers
 // MM Handshake registers
 typedef struct mm_handshake_data_t{ 
-  uint32_t dummy;
+  uint32_t uart_rx; // Only bottom 8b used
+  uint32_t uart_tx; // Only bottom 8b used
 }mm_handshake_data_t;
-typedef struct mm_handshake_valid_t{ 
-  uint32_t dummy;
+typedef struct mm_handshake_valid_t{
+  uint32_t uart_rx; // Only 1b used
+  uint32_t uart_tx; // Only 1b used
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -68,6 +70,35 @@ static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)M
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
 #define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
 
+// Helper funcs for reading and writing, i.e. software side of doing a DVR handshake using regs
+int try_read_handshake(void* data_out, int size, void* hs_data, uint32_t* hs_valid){
+  // If have valid data copy data out and then clear valid
+  if(*hs_valid){
+    //memcpy(data_out, hs_data, size);
+    int nwords = size/sizeof(uint32_t);
+    for(int i=0; i<nwords; i++){
+      ((uint32_t*)data_out)[i] = ((uint32_t*)hs_data)[i];
+    }
+    *hs_valid = 0;
+    return 1;
+  }
+  return 0;
+}
+int try_write_handshake(void* hs_data, uint32_t* hs_valid, void* data_in, int size){
+  // If there is not currently pending write data, set data and valid
+  if(!*hs_valid){
+    //memcpy(hs_data, data_in, size);
+    int nwords = size/sizeof(uint32_t);
+    for(int i=0; i<nwords; i++){
+      ((uint32_t*)hs_data)[i] = ((uint32_t*)data_in)[i];
+    }
+    *hs_valid = 1;
+    return 1;
+  }
+  return 0;
+}
+
+/*
 // Block RAMs
 #define MMIO_BRAM0
 #ifdef MMIO_BRAM0

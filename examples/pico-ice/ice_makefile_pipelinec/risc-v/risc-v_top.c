@@ -4,7 +4,7 @@
 //  make mmio regs 1 cycle read instead of comb?
 
 // See configuration details like top level pin mapping in top.h
-//#define DEFAULT_PI_UART
+#define DEFAULT_PI_UART
 //#define DEFAULT_VGA_PMOD // TODO can't meet 25MHz pixel clock yet...
 #include "../top.h"
 
@@ -87,6 +87,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // MM Handshake regs start off looking like regular ctrl+status MM regs
   static mm_handshake_data_t handshake_data;
   static mm_handshake_valid_t handshake_valid;
+  // Handshake signals writes happen below
+  // better timing to use registers directly for handshake valid set/clear logic below
+  mm_handshake_valid_t handshake_valid_reg_value = handshake_valid;
+  mm_handshake_data_t handshake_data_reg_value = handshake_data;
 
   // Start MM operation
   if(is_START_state){
@@ -192,20 +196,27 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
 
-  // Handshake valid signals are sometimes auto set/cleared
-  mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
-
-  // 2 point FFT comb logic blob between MMIO regs
-  #ifdef FFT_USE_COMB_LOGIC_HARDWARE
-  inputs.status.fft_2pt_out = fft_2pt_w_omega_lut(ctrl.fft_2pt_in);
-  #endif
-
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
     STRUCT_MM_ENTRY_NEW(MM_STATUS_REGS_ADDR, mm_status_regs_t, status, status, addr, o.addr_is_mapped, o.rd_data)
     STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_DATA_ADDR, mm_handshake_data_t, handshake_data, handshake_data, addr, o.addr_is_mapped, o.rd_data)
     STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_VALID_ADDR, mm_handshake_valid_t, handshake_valid, handshake_valid, addr, o.addr_is_mapped, o.rd_data)
+  }
+
+  // Connect UART RX and TX handshakes
+  // TODO MAKE MACROS FOR THIS
+  // UART RX Handshake Input/Read
+  uart_rx_mac_out_ready = ~handshake_valid_reg_value.uart_rx;
+  if(uart_rx_mac_word_out.valid & uart_rx_mac_out_ready){
+    handshake_data.uart_rx = uart_rx_mac_word_out.data;
+    handshake_valid.uart_rx = 1;
+  } 
+  // UART TX Handshake Output/Write
+  uart_tx_mac_word_in.data = handshake_data_reg_value.uart_tx;
+  uart_tx_mac_word_in.valid = handshake_valid_reg_value.uart_tx;
+  if(uart_tx_mac_word_in.valid & uart_tx_mac_in_ready){
+    handshake_valid.uart_tx = 0;
   }
 
   // BRAM0 instance
@@ -661,27 +672,6 @@ void my_cpu_top()
   mem_out_of_range |= out.mem_out_of_range;
   unknown_op |= out.unknown_op;
 }
-
-#ifdef DEFAULT_PI_UART
-// UART part of demo
-MAIN_MHZ(uart_main, PLL_CLK_MHZ)
-void uart_main(){
-  // Default loopback connect
-  uart_tx_mac_word_in = uart_rx_mac_word_out;
-  uart_rx_mac_out_ready = uart_tx_mac_in_ready;
-
-  // Override .data to do case change demo
-  char in_char = uart_rx_mac_word_out.data;
-  char out_char = in_char;
-  uint8_t case_diff = 'a' - 'A';
-  if(in_char >= 'a' && in_char <= 'z'){
-    out_char = in_char - case_diff;
-  }else if(in_char >= 'A' && in_char <= 'Z'){
-    out_char = in_char + case_diff;
-  }
-  uart_tx_mac_word_in.data = out_char;
-}
-#endif
 
 #ifdef DEFAULT_VGA_PMOD
 // VGA pmod part of demo
