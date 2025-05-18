@@ -347,8 +347,6 @@ typedef enum cpu_state_t{
 // CPU top level
 typedef struct riscv_out_t{
   // Debug IO
-  uint1_t halt;
-  uint32_t return_value;
   uint32_t pc;
   uint1_t unknown_op;
   uint1_t mem_out_of_range;
@@ -412,6 +410,7 @@ riscv_out_t fsm_riscv(
   // Instruction memory
   imem_out = riscv_imem_ram(pc>>2, 1);
   if((pc>>2) >= RISCV_IMEM_NUM_WORDS){
+    printf("Error: PC = 0x%X out of range, size = 0x%X\n", pc, RISCV_IMEM_NUM_WORDS<<2);
     o.pc_out_of_range = 1;
   }
 
@@ -655,7 +654,8 @@ riscv_out_t fsm_riscv(
 MAIN_MHZ(my_cpu_top, PLL_CLK_MHZ)
 void my_cpu_top()
 {
-  uint1_t reset = 0; // TODO use
+  // For for PLL to lock before releasing reset
+  uint1_t reset = ~pll_locked;
 
   // Instance of core
   my_mmio_in_t in;
@@ -665,12 +665,21 @@ void my_cpu_top()
   // Output LEDs for hardware debug
   // (active low on pico ice)
   led_g = out.mem_map_outputs.ctrl.led;
-  static uint1_t mem_out_of_range;
-  static uint1_t unknown_op;
-  led_b = ~mem_out_of_range;
-  led_r = ~unknown_op;
-  mem_out_of_range |= out.mem_out_of_range;
-  unknown_op |= out.unknown_op;
+  led_b = 1;
+  led_r = 1;
+  static uint1_t saw_error;
+  if(saw_error)
+  {
+    led_r = 0;
+    led_g = 1;
+    led_b = 1;
+  }
+  saw_error |= out.pc_out_of_range;
+  saw_error |= out.mem_out_of_range;
+  saw_error |= out.unknown_op; // UART code hits this? WTF?
+  if(reset){
+    saw_error = 0;
+  }
 }
 
 #ifdef DEFAULT_VGA_PMOD
