@@ -76,6 +76,9 @@ int try_read_handshake(void* data_out, int size, void* hs_data, uint32_t* hs_val
   if(*hs_valid){
     //memcpy(data_out, hs_data, size);
     int nwords = size/sizeof(uint32_t);
+    if((nwords*sizeof(uint32_t)) < size){
+      nwords += 1;
+    }
     for(int i=0; i<nwords; i++){
       ((uint32_t*)data_out)[i] = ((uint32_t*)hs_data)[i];
     }
@@ -89,6 +92,9 @@ int try_write_handshake(void* hs_data, uint32_t* hs_valid, void* data_in, int si
   if(!*hs_valid){
     //memcpy(hs_data, data_in, size);
     int nwords = size/sizeof(uint32_t);
+    if((nwords*sizeof(uint32_t)) < size){
+      nwords += 1;
+    }
     for(int i=0; i<nwords; i++){
       ((uint32_t*)hs_data)[i] = ((uint32_t*)data_in)[i];
     }
