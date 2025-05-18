@@ -30,10 +30,11 @@ module top(
   // ICE_35 has a default 12MHz clock in pico and pico2
   // PLL instance to make a clock based on 12MHz
   wire pll_clk;
+  wire pll_locked;
   pll pll_inst(
     .clock_in(ICE_35),
     .clock_out(pll_clk),
-    .locked()
+    .locked(pll_locked)
   );
 
   // PipelineC output HDL instance

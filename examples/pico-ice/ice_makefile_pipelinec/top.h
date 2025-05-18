@@ -10,6 +10,7 @@
 #include "compiler.h"
 DECL_INPUT(uint1_t, pll_clk)
 CLK_MHZ(pll_clk, PLL_CLK_MHZ)
+DECL_INPUT(uint1_t, pll_locked)
 
 #ifdef DEFAULT_VGA_PMOD
 // Configure VGA module to use PMOD0 and PMOD1
