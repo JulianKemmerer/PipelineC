@@ -21,6 +21,23 @@ typedef struct u320_t
     uint64_t limbs[5]; // 64-bit limbs
 } u320_t;
 
+// print a u320_t
+void print_u320(u320_t x){
+    // print 32b hex chunks all one line
+    printf("u320_t 0x"
+           " %X %X"
+           " %X %X"
+           " %X %X"
+           " %X %X"
+           " %X %X"
+           "\n",
+           x.limbs[4]>>32, x.limbs[4],
+           x.limbs[3]>>32, x.limbs[3],
+           x.limbs[2]>>32, x.limbs[2],
+           x.limbs[1]>>32, x.limbs[1],
+           x.limbs[0]>>32, x.limbs[0]
+        );
+}
 
 /**
  * @brief Apply clamping to the 'r' part of the key

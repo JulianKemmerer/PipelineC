@@ -91,6 +91,8 @@ void poly1305_mac(){
     // Wait for 'a' data out of pipeline
     if(poly1305_pipeline_out_valid){
       a = poly1305_pipeline_out;
+      // print 'a' every block
+      print_u320(a);
       // if last block do final step
       if(is_last_block){
         state = A_PLUS_S;
