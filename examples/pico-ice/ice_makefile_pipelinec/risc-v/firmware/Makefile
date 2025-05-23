@@ -23,8 +23,11 @@ hex: all
 	./bin2vhdl.py text.bin
 	riscv32-unknown-elf-objcopy -O binary main data.bin --only-section .data
 	./bin2vhdl.py data.bin
+	#the following command copies the "firmware" to be embedded into the risc-v cpu gateware
+	cp *_mem_init.h ../
 	
 clean:
 	rm -f main text.bin data.bin text_mem_init.h data_mem_init.h
+	rm -f ../text_mem_init.h ../data_mem_init.h
 
 .PHONY: all sim dump-elf dump-code dump-comment hex clean

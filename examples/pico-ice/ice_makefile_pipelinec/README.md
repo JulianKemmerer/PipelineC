@@ -53,3 +53,9 @@ Critically this variable is used to:
 3) Inform `nextpnr-ice40` of the target clock frequency
   * `--freq $(PLL_CLK_MHZ)` argument
 
+##Demos - see make file for more info
+1) Pong
+2) Ethernet
+3) Risc-v
+
+
