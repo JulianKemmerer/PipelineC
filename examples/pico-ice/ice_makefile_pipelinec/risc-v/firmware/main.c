@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "mem_map.h"
+#include "../mem_map.h" //header file defined in gateware risc-v directory
 
 // Helper funcs to read and write uart
 int try_read_uart(uint8_t* data_out){

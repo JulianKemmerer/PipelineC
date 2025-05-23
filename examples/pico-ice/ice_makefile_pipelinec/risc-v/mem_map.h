@@ -1,6 +1,5 @@
+// Shared header fwith Hardware memory with address mappings for PipelineC and firmware C code
 #pragma once
-
-// Hardware memory address mappings for PipelineC and software C code
 
 #ifdef __PIPELINEC__
 #include "compiler.h"

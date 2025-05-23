@@ -4,18 +4,26 @@
 #  export PIPELINEC_REPO=/media/1TB/Dropbox/PipelineC/git/PipelineC;
 #  # Always need path to ghdl yosys nextpnr etc
 #  export OSS_CAD_SUITE=/media/1TB/Programs/Linux/oss-cad-suite
+#
 #  PICO ICE:
 #    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
 #    make clean all
 #    # Pong demo, see pong_top.c
 #    make clean all PIPELINEC_TOP_FILE=pong_top.c
+#
 #    # Ethernet demo, see ethernet_top.c
 #    make clean all PIPELINEC_TOP_FILE=eth/ethernet_top.c PLL_CLK_MHZ=16.0 NEXTPNR_ARGS="--pre-pack eth/eth_clocks.py"
+#
 #    # RISC-V Demo, see risc-v_top.c
-#    #   First run 'make hex' in ./risc-v/ to build software for RISC-V CPU
+#    #   First run 'make hex' in ./risc-v/firmware to build software/firmware for RISC-V CPU. This will be embedded into the risc-v cpu gateware
+#	 #   afte the gateware is flashed to the pico-ice you can try uart echo demo in action (green led should be blinking all the time). If you are in linux use "screen /dev/ttyACM1 115200" 
 #    make clean all PIPELINEC_TOP_FILE=risc-v/risc-v_top.c PLL_CLK_MHZ=16.0
-#    # Program the FPGA
+#    
+#
+#    # Program the FPGA. This applies to all the demos
 #    make prog_pico
+#
+#
 #  PICE2 ICE:
 #    # The basic 'top' design, see top.c, same as PIPELINEC_TOP_FILE=top.c default
 #    make clean all BOARD=PICO2
