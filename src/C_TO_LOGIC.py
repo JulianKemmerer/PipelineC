@@ -5001,6 +5001,13 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
     is_negated=False,
     known_c_type=None,
 ):
+    # Try to absorb type from known driven wires
+    if known_c_type is None:
+        for driven_wire in driven_wire_names:
+            if driven_wire in parser_state.existing_logic.wire_to_c_type:
+                known_c_type = parser_state.existing_logic.wire_to_c_type[driven_wire]
+
+    # Determine type if needed
     wire_name = BUILD_CONST_WIRE(value_str, c_ast_node, is_negated)
     if known_c_type is None:
         value, c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
@@ -7507,7 +7514,9 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
             f.c_type = "uint32_t"  # VHDL cant do full u32 range printed as int?32
             f.base = 10
             f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
-        elif format_specifier == "%X":  # hstring is UPPER CASE
+        elif (format_specifier == "%08X") or (
+            format_specifier == "%X"
+        ):  # hstring is UPPER CASE and 32b wide
             f.c_type = "uint32_t"
             f.base = 16
             f.vhdl_to_string_toks = ["to_hstring(", ")"]
