@@ -72,7 +72,7 @@ void main(){
 #define PRINT_32_BYTES(label, array) \
 uint256_t PRINT_32_BYTES_uint = uint8_array32_be(array); \
 printf(label \
-    "%X%X%X%X%X%X%X%X\n", \
+    "%08X%08X%08X%08X%08X%08X%08X%08X\n", \
     PRINT_32_BYTES_uint >> (8*28), \
     PRINT_32_BYTES_uint >> (8*24), \
     PRINT_32_BYTES_uint >> (8*20), \
@@ -86,7 +86,7 @@ printf(label \
 #define PRINT_16_BYTES(label, array) \
 uint128_t PRINT_16_BYTES_uint = uint8_array16_be(array); \
 printf(label \
-    "%X%X%X%X\n", \
+    "%08X%08X%08X%08X\n", \
     PRINT_16_BYTES_uint >> (8*12), \
     PRINT_16_BYTES_uint >> (8*8), \
     PRINT_16_BYTES_uint >> (8*4), \
@@ -96,7 +96,7 @@ printf(label \
 #define PRINT_12_BYTES(label, array) \
 uint96_t PRINT_12_BYTES_uint = uint8_array12_be(array); \
 printf(label \
-    "%X%X%X\n", \
+    "%08X%08X%08X\n", \
     PRINT_12_BYTES_uint >> (8*8), \
     PRINT_12_BYTES_uint >> (8*4), \
     PRINT_12_BYTES_uint >> (8*0) \
