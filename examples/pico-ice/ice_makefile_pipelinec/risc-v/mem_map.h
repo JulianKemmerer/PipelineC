@@ -13,7 +13,7 @@
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
-#define IMEM_SIZE 512 // Must be decimal constant since VHDL+C literal
+#define IMEM_SIZE 1024 // Must be decimal constant since VHDL+C literal
 #define DMEM_SIZE 2048 // Must be decimal constant since VHDL+C literal
 #define DMEM_ADDR_BIT_CHECK 30
 #define DMEM_BASE_ADDR ((uint32_t)((uint32_t)1<<DMEM_ADDR_BIT_CHECK))
@@ -75,12 +75,8 @@ int try_read_handshake(void* data_out, int size, void* hs_data, uint32_t* hs_val
   // If have valid data copy data out and then clear valid
   if(*hs_valid){
     //memcpy(data_out, hs_data, size);
-    int nwords = size/sizeof(uint32_t);
-    if((nwords*sizeof(uint32_t)) < size){
-      nwords += 1;
-    }
-    for(int i=0; i<nwords; i++){
-      ((uint32_t*)data_out)[i] = ((uint32_t*)hs_data)[i];
+    for(int i=0; i<size; i++){
+      ((uint8_t*)data_out)[i] = ((uint8_t*)hs_data)[i];
     }
     *hs_valid = 0;
     return 1;
@@ -91,12 +87,8 @@ int try_write_handshake(void* hs_data, uint32_t* hs_valid, void* data_in, int si
   // If there is not currently pending write data, set data and valid
   if(!*hs_valid){
     //memcpy(hs_data, data_in, size);
-    int nwords = size/sizeof(uint32_t);
-    if((nwords*sizeof(uint32_t)) < size){
-      nwords += 1;
-    }
-    for(int i=0; i<nwords; i++){
-      ((uint32_t*)hs_data)[i] = ((uint32_t*)data_in)[i];
+    for(int i=0; i<size; i++){
+      ((uint8_t*)hs_data)[i] = ((uint8_t*)data_in)[i];
     }
     *hs_valid = 1;
     return 1;
