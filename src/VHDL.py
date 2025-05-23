@@ -251,14 +251,21 @@ port(
             text += clk_name + " : in std_logic;\n"
 
     # Top level port shared global wires
-    text += "-- Global wires marked as top level IO\n"
+    global_io_text = ""
     for var_name, var_info in parser_state.global_vars.items():
         if var_name in parser_state.output_wires:
             vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
-            text += var_name + " : out " + vhdl_type + ";\n"
+            global_io_text += var_name + " : out " + vhdl_type + ";\n"
         if var_name in parser_state.input_wires:
             vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
-            text += var_name + " : in " + vhdl_type + ";\n"
+            global_io_text += var_name + " : in " + vhdl_type + ";\n"
+    if global_io_text != "":
+        text += (
+            """
+-- Global wires marked as top level IO
+"""
+            + global_io_text
+        )
 
     main_func_io_text = ""
     # IO
@@ -3673,13 +3680,13 @@ package c_structs_pkg is
     # TODO for all other array types
     text += """
   type byte_array_t is array (natural range <>) of unsigned(7 downto 0);
-  function to_byte_array(s : string) return byte_array_t;
+  function to_byte_array(s : string; constant len : natural) return byte_array_t;
   """
 
     # String to byte array func
     pkg_body_text += """
-  function to_byte_array(s : string) return byte_array_t is
-    variable rv : byte_array_t(0 to s'length-1);
+  function to_byte_array(s : string; constant len : natural) return byte_array_t is
+    variable rv : byte_array_t(0 to len-1) := (others=> (others=>'0'));
   begin
     for i in 0 to s'length-1 loop
         -- i+1 since strings start at index 1
@@ -6778,13 +6785,13 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
     # Strings
     if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
         elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-        if elem_t != "char" or len(dims) != 1:
+        if (elem_t != "char" and elem_t != "uint8_t") or len(dims) != 1:
             # Unhandled
-            print("Unhandled array const:", val_str)
+            print("Unhandled array const:", val_str, elem_t, dims)
             sys.exit(-1)
         elem_t = "char"
         size = dims[0]
-        return "to_byte_array(" + C_CONST_STR_TO_VHDL_CONST_STR(val_str) + ")"
+        return "to_byte_array(" + C_CONST_STR_TO_VHDL_CONST_STR(val_str) + f", {size})"
 
     # print("CONST_VAL_STR_TO_VHDL val_str",val_str)
     expected_c_type = c_type
