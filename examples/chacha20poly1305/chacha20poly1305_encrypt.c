@@ -15,10 +15,6 @@
 #include "append_auth_tag/append_auth_tag.c"
 
 // The primary dataflow for single clock domain ChaCha20-Poly1305 encryption
-// plaintext -> chacha20 -> ciphertext ...
-//  ...
-// ciphertext -------------------------------------------------> append auth tag -> output axis
-//             |-> prep auth data -> auth data -> poly1305 -> auth tag --^
 #pragma PART "xc7a200tffg1156-2" // Artix 7 200T
 #pragma MAIN_MHZ main 80.0
 void main(){
@@ -105,46 +101,6 @@ printf(label \
     PRINT_12_BYTES_uint >> (8*0) \
 );
 
-/*void print_hex_key(uint8_t key[CHACHA20_KEY_SIZE])
-{
-    // 32 2-char wide hex bytes
-    printf(
-        "Key: "
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "\n",
-        key[0], key[1], key[2], key[3],
-        key[4], key[5], key[6], key[7],
-        key[8], key[9], key[10], key[11],
-        key[12], key[13], key[14], key[15],
-        key[16], key[17], key[18], key[19],
-        key[20], key[21], key[22], key[23],
-        key[24], key[25], key[26], key[27],
-        key[28], key[29], key[30], key[31]
-    );
-}
-
-void print_hex_nonce(uint8_t nonce[CHACHA20_NONCE_SIZE])
-{
-    // 12 2-char wide hex bytes
-    printf(
-        "Nonce: "
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "%02x%02x%02x%02x"
-        "\n",
-        nonce[0], nonce[1], nonce[2], nonce[3],
-        nonce[4], nonce[5], nonce[6], nonce[7],
-        nonce[8], nonce[9], nonce[10], nonce[11]
-    );
-}*/
-
 void print_aad(uint8_t aad[AAD_MAX_LEN], uint32_t aad_len)
 {
     // 32 chars
@@ -170,12 +126,12 @@ void print_aad(uint8_t aad[AAD_MAX_LEN], uint32_t aad_len)
     );
 }
 
+// CSR values available all at once do not need to be static=registers
+// Streaming inputs data is done as shift register
 #pragma MAIN tb
 void tb()
 {
     // Test vectors
-    //   CSR values available all at once do not need to be static=registers
-    //   Streaming inputs data is done as shift register
     uint8_t key[CHACHA20_KEY_SIZE] = {
         0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
         0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
@@ -189,27 +145,13 @@ void tb()
     #define AAD_TEST_STR "Additional authenticated data"
     uint8_t aad[AAD_MAX_LEN] = AAD_TEST_STR;
     uint32_t aad_len = strlen(AAD_TEST_STR);
-    
-    /* // poly1305_key obtained by running test main.c software C code
-    uint8_t poly1305_key[POLY1305_KEY_SIZE] = {
-        0x7b, 0xac, 0x2b, 0x25, 0x2d, 0xb4, 0x47, 0xaf,
-        0x09, 0xb6, 0x7a, 0x55, 0xa4, 0xe9, 0x55, 0x84,
-        0x0a, 0xe1, 0xd6, 0x73, 0x10, 0x75, 0xd9, 0xeb,
-        0x2a, 0x93, 0x75, 0x78, 0x3e, 0xd5, 0x53, 0xff
-    };*/
-    if(poly1305_mac_key.valid & poly1305_mac_key_ready){
-        uint8_t poly1305_mac_data_key[POLY1305_KEY_SIZE];
-        UINT_TO_BYTE_ARRAY(poly1305_mac_data_key, POLY1305_KEY_SIZE, poly1305_mac_key.data)
-        PRINT_32_BYTES("Poly1305 key: ", poly1305_mac_data_key)
-    }
 
     #define PLAINTEXT_TEST_STR "Hello CHILIChips - Wireguard team, let's test this aead!"
     #define PLAINTEXT_TEST_STR_LEN strlen(PLAINTEXT_TEST_STR)
     static char plaintext[PLAINTEXT_TEST_STR_LEN] = PLAINTEXT_TEST_STR;
     static uint32_t plaintext_remaining = PLAINTEXT_TEST_STR_LEN;
 
-    static uint32_t cycle_counter; 
-    //printf("Cycle %u:\n", cycle_counter);
+    static uint32_t cycle_counter;
     if(cycle_counter == 0)
     {
         printf("=== ChaCha20-Poly1305 AEAD Test ===\n");
@@ -217,7 +159,6 @@ void tb()
         PRINT_32_BYTES("Key: ", key)
         PRINT_12_BYTES("Nonce: ", nonce)
         print_aad(aad, aad_len);
-        //PRINT_32_BYTES("Poly1305 key: ", poly1305_key)
         printf("Encrypting...\n");
     }
 
@@ -257,7 +198,6 @@ void tb()
     chacha20poly1305_encrypt_nonce = nonce;
     chacha20poly1305_encrypt_aad = aad;
     chacha20poly1305_encrypt_aad_len = aad_len;
-    //chacha20poly1305_encrypt_poly1305_key = poly1305_key;
 
     // Expected ciphertext and auth tag output from running main.c demo
     // Ciphertext: 
@@ -286,10 +226,6 @@ void tb()
         0x5d, 0xa8, 0x7d, 0x6a, 0x2d, 0x03, 0xc9, 0xba,
         0xdf, 0x5c, 0xb9, 0x47, 0x74, 0x42, 0x12, 0x3f
     };
-    // HW says auth tag mismatch start at authtag[5]?
-    //                |->
-    //      5DA87D6A2DBA689C
-    //      1AE4E05086947B2A
 
     // Stream ciphertext out of dut
     chacha20poly1305_encrypt_axis_out_ready = 1;
