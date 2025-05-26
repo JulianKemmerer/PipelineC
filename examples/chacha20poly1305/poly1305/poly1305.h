@@ -3,9 +3,11 @@
 #define POLY1305_BLOCK_SIZE 16
 #define POLY1305_KEY_SIZE 32
 #define poly1305_key_uint_t uint256_t
+#define poly1305_key_uint_from_bytes uint8_array32_le
 #define POLY1305_AUTH_TAG_SIZE 16
 #define poly1305_auth_tag_uint_t uint128_t
 #define poly1305_auth_tag_uint_from_bytes uint8_array16_le
+DECL_STREAM_TYPE(poly1305_key_uint_t)
 DECL_STREAM_TYPE(poly1305_auth_tag_uint_t)
 
 /**
@@ -25,11 +27,11 @@ typedef struct u320_t
 void print_u320(u320_t x){
     // print 32b hex chunks all one line
     printf("u320_t 0x"
-           " %X %X"
-           " %X %X"
-           " %X %X"
-           " %X %X"
-           " %X %X"
+           " %08X %08X"
+           " %08X %08X"
+           " %08X %08X"
+           " %08X %08X"
+           " %08X %08X"
            "\n",
            x.limbs[4]>>32, x.limbs[4],
            x.limbs[3]>>32, x.limbs[3],

@@ -14,7 +14,6 @@ DECL_INPUT(key_uint_t, key)
 DECL_INPUT(nonce_uint_t, nonce)
 DECL_INPUT(aad_uint_t, aad)
 DECL_INPUT(uint8_t, aad_len)
-DECL_INPUT(poly1305_key_uint_t, poly1305_key) 
 // Top level input stream of plaintext
 DECL_INPUT(uint128_t, s_axis_tdata)
 DECL_INPUT(uint16_t, s_axis_tkeep)
@@ -38,7 +37,6 @@ uint8_t chacha20poly1305_encrypt_key[CHACHA20_KEY_SIZE]; // input
 uint8_t chacha20poly1305_encrypt_nonce[CHACHA20_NONCE_SIZE]; // input
 uint8_t chacha20poly1305_encrypt_aad[AAD_MAX_LEN]; // input
 uint8_t chacha20poly1305_encrypt_aad_len; // input
-uint8_t chacha20poly1305_encrypt_poly1305_key[POLY1305_KEY_SIZE]; // input
 stream(axis128_t) chacha20poly1305_encrypt_axis_out; // output
 uint1_t chacha20poly1305_encrypt_axis_out_ready; // input
 
@@ -57,7 +55,6 @@ void chacha20poly1305_encrypt_io_wires(){
   UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_nonce, CHACHA20_NONCE_SIZE, nonce)
   UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_aad, AAD_MAX_LEN, aad)
   chacha20poly1305_encrypt_aad_len = aad_len;
-  UINT_TO_BYTE_ARRAY(chacha20poly1305_encrypt_poly1305_key, POLY1305_KEY_SIZE, poly1305_key)
   // Convert stream(axis128_t) to flattened output multiple wires
   m_axis_tdata = uint8_array16_le(chacha20poly1305_encrypt_axis_out.data.tdata);
   m_axis_tkeep = uint1_array16_le(chacha20poly1305_encrypt_axis_out.data.tkeep);

@@ -28,7 +28,11 @@ void main(){
     chacha20_encrypt_key = chacha20poly1305_encrypt_key;
     chacha20_encrypt_nonce = chacha20poly1305_encrypt_nonce;
 
-    // Connect chacha20_encrypt output to both
+    // Connect chacha20_encrypt output poly key into poly1305_mac key input
+    poly1305_mac_key = chacha20_encrypt_poly_key;
+    chacha20_encrypt_poly_key_ready = poly1305_mac_key_ready;
+
+    // Connect chacha20_encrypt ciphertext output to both
     //  prep_auth_data input
     //  append auth tag input
     // Fork the stream by combining valids and readys
@@ -54,7 +58,6 @@ void main(){
     // Connect prep_auth_data output to poly1305_mac input
     poly1305_mac_data_in = prep_auth_data_axis_out;
     prep_auth_data_axis_out_ready = poly1305_mac_data_in_ready;
-    poly1305_mac_data_key = chacha20poly1305_encrypt_poly1305_key;
 
     // Connect poly1305_mac auth tag output to append auth tag input
     append_auth_tag_auth_tag_in = poly1305_mac_auth_tag;
@@ -187,13 +190,18 @@ void tb()
     uint8_t aad[AAD_MAX_LEN] = AAD_TEST_STR;
     uint32_t aad_len = strlen(AAD_TEST_STR);
     
-    // poly1305_key obtained by running test main.c software C code
+    /* // poly1305_key obtained by running test main.c software C code
     uint8_t poly1305_key[POLY1305_KEY_SIZE] = {
         0x7b, 0xac, 0x2b, 0x25, 0x2d, 0xb4, 0x47, 0xaf,
         0x09, 0xb6, 0x7a, 0x55, 0xa4, 0xe9, 0x55, 0x84,
         0x0a, 0xe1, 0xd6, 0x73, 0x10, 0x75, 0xd9, 0xeb,
         0x2a, 0x93, 0x75, 0x78, 0x3e, 0xd5, 0x53, 0xff
-    };
+    };*/
+    if(poly1305_mac_key.valid & poly1305_mac_key_ready){
+        uint8_t poly1305_mac_data_key[POLY1305_KEY_SIZE];
+        UINT_TO_BYTE_ARRAY(poly1305_mac_data_key, POLY1305_KEY_SIZE, poly1305_mac_key.data)
+        PRINT_32_BYTES("Poly1305 key: ", poly1305_mac_data_key)
+    }
 
     #define PLAINTEXT_TEST_STR "Hello CHILIChips - Wireguard team, let's test this aead!"
     #define PLAINTEXT_TEST_STR_LEN strlen(PLAINTEXT_TEST_STR)
@@ -209,7 +217,7 @@ void tb()
         PRINT_32_BYTES("Key: ", key)
         PRINT_12_BYTES("Nonce: ", nonce)
         print_aad(aad, aad_len);
-        PRINT_32_BYTES("Poly1305 key: ", poly1305_key)
+        //PRINT_32_BYTES("Poly1305 key: ", poly1305_key)
         printf("Encrypting...\n");
     }
 
@@ -249,7 +257,7 @@ void tb()
     chacha20poly1305_encrypt_nonce = nonce;
     chacha20poly1305_encrypt_aad = aad;
     chacha20poly1305_encrypt_aad_len = aad_len;
-    chacha20poly1305_encrypt_poly1305_key = poly1305_key;
+    //chacha20poly1305_encrypt_poly1305_key = poly1305_key;
 
     // Expected ciphertext and auth tag output from running main.c demo
     // Ciphertext: 
