@@ -3,8 +3,6 @@
 #include "prep_auth_data/prep_auth_data.h"
 #include "poly1305/poly1305.h"
 
-#define SIMULATION // Turn off or on simulation mode
-
 #ifndef SIMULATION
 // Flattened top level ports with AXIS style manager/subordinate naming
 // (could also have inputs and outputs of type stream(my_axis_t)
