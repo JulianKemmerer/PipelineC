@@ -78,6 +78,14 @@ uint1_t axis8_keep_count(stream(axis8_t) s){
 
 // Convert to funcs taking ex. an axis16_t instead of just the .keep?
 
+uint7_t axis512_keep_count(axis512_t axis){
+  uint7_t rv = 0;
+  for(uint32_t i=0; i<64; i+=1){
+    rv += axis.tkeep[i];
+  }
+  return rv;
+}
+
 uint5_t axis128_keep_count(axis128_t axis){
   uint5_t rv = 0;
   for(uint32_t i=0; i<16; i+=1){
@@ -312,7 +320,7 @@ axis512_to_axis128_array_t axis512_to_axis128_array(axis512_t axis)
   for(uint32_t c=0; c<(axis512_to_axis128_RATIO-1); c+=1)
   {
     uint1_t next_chunk_is_empty = ~o.axis_chunks[c+1].valid;
-    o.axis_chunks[c].data.tlast = next_chunk_is_empty;
+    o.axis_chunks[c].data.tlast = axis.tlast & next_chunk_is_empty;
   }
   return o;
 }
