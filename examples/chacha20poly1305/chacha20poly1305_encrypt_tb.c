@@ -81,12 +81,77 @@ void tb()
     uint8_t aad[AAD_MAX_LEN] = AAD_TEST_STR;
     uint32_t aad_len = strlen(AAD_TEST_STR);
 
-    #define PLAINTEXT_TEST_STR "Hello CHILIChips - Wireguard team, let's test this aead!"
-    #define PLAINTEXT_TEST_STR_LEN strlen(PLAINTEXT_TEST_STR)
-    static char plaintext[PLAINTEXT_TEST_STR_LEN] = PLAINTEXT_TEST_STR;
-    static uint32_t plaintext_remaining = PLAINTEXT_TEST_STR_LEN;
+    #define NUM_PLAINTEXT_TEST_STRS 2
+    #define PLAINTEXT_TEST_STR_MAX_SIZE 128
+    #define PLAINTEXT_TEST_STR0 "Hello CHILIChips - Wireguard team, let's test this aead!"
+    #define PLAINTEXT_TEST_STR0_LEN strlen(PLAINTEXT_TEST_STR0)
+    #define PLAINTEXT_TEST_STR1 "PipelineC is the best HDL around :) Let's go CHILIChips Wireguard team!"
+    #define PLAINTEXT_TEST_STR1_LEN strlen(PLAINTEXT_TEST_STR1)
+    char plaintexts[NUM_PLAINTEXT_TEST_STRS][PLAINTEXT_TEST_STR_MAX_SIZE] = {
+        PLAINTEXT_TEST_STR0,
+        PLAINTEXT_TEST_STR1
+    };
+    uint32_t plaintext_lens[NUM_PLAINTEXT_TEST_STRS] = {
+        PLAINTEXT_TEST_STR0_LEN,
+        PLAINTEXT_TEST_STR1_LEN
+    };
 
+    // Expected ciphertext and auth tag output from running software main.c demo
+    #define CIPHERTEXT_MAX_SIZE (PLAINTEXT_TEST_STR_MAX_SIZE + POLY1305_AUTH_TAG_SIZE)
+    #define CIPHERTEXT0_SIZE (64 + POLY1305_AUTH_TAG_SIZE)
+    uint8_t expected_ciphertext0[CIPHERTEXT_MAX_SIZE] = {
+        // Ciphertext:
+        0xd7, 0x1e, 0x85, 0x31, 0x6e, 0xdd, 0x03, 0xf2, 
+        0x5c, 0xae, 0xc6, 0xb8, 0x5e, 0xe8, 0x7a, 0xdd,
+        0xe1, 0xed, 0xa8, 0x68, 0x60, 0x73, 0x0b, 0xb9,
+        0xa8, 0xeb, 0xa2, 0xe3, 0x75, 0xf6, 0x66, 0xc4,
+        0x23, 0xb2, 0xeb, 0x54, 0xc9, 0xfa, 0x79, 0x58,
+        0x98, 0xae, 0xd7, 0x7c, 0x8e, 0xfb, 0x26, 0x80,
+        0x1c, 0x77, 0x92, 0x0f, 0xdb, 0x08, 0x09, 0x6e,
+        0x60, 0xa4, 0x85, 0xcf, 0x11, 0xb8, 0x1b, 0x59,
+        // Auth Tag: 
+        0x5d, 0xa8, 0x7d, 0x6a, 0x2d, 0x03, 0xc9, 0xba,
+        0xdf, 0x5c, 0xb9, 0x47, 0x74, 0x42, 0x12, 0x3f
+    };
+    #define CIPHERTEXT1_SIZE (80 + POLY1305_AUTH_TAG_SIZE)
+    uint8_t expected_ciphertext1[CIPHERTEXT_MAX_SIZE] = {
+        // Ciphertext:
+        0xcf, 0x12, 0x99, 0x38, 0x6d, 0x94, 0x2e, 0xdf, 
+        0x56, 0xc2, 0xe6, 0x88, 0x16, 0xf5, 0x62, 0xcb, 
+        0xe1, 0xa2, 0xed, 0x4c, 0x7d, 0x21, 0x26, 0x9a, 
+        0x91, 0xaa, 0xb1, 0xf5, 0x3a, 0xf7, 0x6d, 0xc1, 
+        0x6e, 0xa4, 0xe2, 0x18, 0xe0, 0xeb, 0x2a, 0x0c, 
+        0xcb, 0xfa, 0xd5, 0x60, 0xda, 0x98, 0x1a, 0xa1, 
+        0x39, 0x4d, 0xf1, 0x06, 0xd7, 0x19, 0x1e, 0x6f, 
+        0x37, 0xcd, 0xf7, 0xaa, 0x76, 0xcd, 0x7a, 0x2b, 
+        0x98, 0x91, 0xb0, 0x3a, 0x23, 0x74, 0xcf, 0xac, 
+        0xec, 0x6a, 0xde, 0xc3, 0x4e, 0x66, 0x69, 0x78,
+        // Auth Tag:
+        0x07, 0xc7, 0xe3, 0x1f, 0x0f, 0xeb, 0x4b, 0x61, 
+        0xea, 0x2d, 0xd2, 0xa4, 0x59, 0x7c, 0xae, 0xe9
+    };
+    uint8_t expected_ciphertexts[NUM_PLAINTEXT_TEST_STRS][CIPHERTEXT_MAX_SIZE] = {
+        expected_ciphertext0,
+        expected_ciphertext1
+    };
+    uint32_t ciphertext_lens[NUM_PLAINTEXT_TEST_STRS] = {
+        CIPHERTEXT0_SIZE,
+        CIPHERTEXT1_SIZE
+    };
+
+    // Connect CSR inputs to dut
+    chacha20poly1305_encrypt_key = key;
+    chacha20poly1305_encrypt_nonce = nonce;
+    chacha20poly1305_encrypt_aad = aad;
+    chacha20poly1305_encrypt_aad_len = aad_len;
+
+    // Registers for the input side of testbench state machine
+    static uint32_t input_packet_count;
+    static char plaintext[PLAINTEXT_TEST_STR_MAX_SIZE];
+    static uint32_t plaintext_remaining;
     static uint32_t cycle_counter;
+
+    // Encrypt:
     if(cycle_counter == 0)
     {
         printf("=== ChaCha20-Poly1305 AEAD Test ===\n");
@@ -94,10 +159,11 @@ void tb()
         PRINT_32_BYTES("Key: ", key)
         PRINT_12_BYTES("Nonce: ", nonce)
         print_aad(aad, aad_len);
-        printf("Encrypting...\n");
+        // Init regs with first test string
+        plaintext = plaintexts[input_packet_count];
+        plaintext_remaining = plaintext_lens[input_packet_count];
+        printf("Encrypting test string %d...\n", input_packet_count);
     }
-
-    // Encrypt:
 
     // Stream plaintext into dut
     chacha20poly1305_encrypt_axis_in.valid = 0;
@@ -121,46 +187,38 @@ void tb()
         {
             PRINT_16_BYTES("Plaintext next 16 bytes: ", chacha20poly1305_encrypt_axis_in.data.tdata)
             if(chacha20poly1305_encrypt_axis_in.data.tlast){
+                printf("End of plaintext for test %d\n", input_packet_count);
                 plaintext_remaining = 0;
+                input_packet_count += 1;
+                if(input_packet_count < NUM_PLAINTEXT_TEST_STRS)
+                {
+                    // Reset for next test string
+                    plaintext = plaintexts[input_packet_count];
+                    plaintext_remaining = plaintext_lens[input_packet_count];
+                    printf("Encrypting next test string %d...\n", input_packet_count);
+                }
             }else{
                 plaintext_remaining -= 16;
+                ARRAY_SHIFT_DOWN(plaintext, PLAINTEXT_TEST_STR_MAX_SIZE, 16)
             }
-            ARRAY_SHIFT_DOWN(plaintext, PLAINTEXT_TEST_STR_LEN, 16)
         }
     }
-    // Connect other inputs to dut
-    chacha20poly1305_encrypt_key = key;
-    chacha20poly1305_encrypt_nonce = nonce;
-    chacha20poly1305_encrypt_aad = aad;
-    chacha20poly1305_encrypt_aad_len = aad_len;
+    
+    // Registers for the output side of testbench state machine
+    static uint32_t output_packet_count;
+    static uint32_t ciphertext_size;
+    static uint32_t ciphertext_remaining;
+    static uint8_t expected_ciphertext[CIPHERTEXT_MAX_SIZE];
 
-    // Expected ciphertext and auth tag output from running main.c demo
-    // Ciphertext: 
-    //  d71e85316edd03f2
-    //  5caec6b85ee87add
-    //  e1eda86860730bb9
-    //  a8eba2e375f666c4
-    //  23b2eb54c9fa7958
-    //  98aed77c8efb2680
-    //  1c77920fdb08096e
-    //  60a485cf11b81b59
-    #define CIPHERTEXT_SIZE ((8*8) + POLY1305_AUTH_TAG_SIZE)
-    static uint32_t ciphertext_remaining = CIPHERTEXT_SIZE;
-    static uint8_t expected_ciphertext[CIPHERTEXT_SIZE] = {
-        0xd7, 0x1e, 0x85, 0x31, 0x6e, 0xdd, 0x03, 0xf2, 
-        0x5c, 0xae, 0xc6, 0xb8, 0x5e, 0xe8, 0x7a, 0xdd,
-        0xe1, 0xed, 0xa8, 0x68, 0x60, 0x73, 0x0b, 0xb9,
-        0xa8, 0xeb, 0xa2, 0xe3, 0x75, 0xf6, 0x66, 0xc4,
-        0x23, 0xb2, 0xeb, 0x54, 0xc9, 0xfa, 0x79, 0x58,
-        0x98, 0xae, 0xd7, 0x7c, 0x8e, 0xfb, 0x26, 0x80,
-        0x1c, 0x77, 0x92, 0x0f, 0xdb, 0x08, 0x09, 0x6e,
-        0x60, 0xa4, 0x85, 0xcf, 0x11, 0xb8, 0x1b, 0x59,
-        // Auth Tag: 
-        //  5da87d6a2d03c9ba
-        //  df5cb9477442123f
-        0x5d, 0xa8, 0x7d, 0x6a, 0x2d, 0x03, 0xc9, 0xba,
-        0xdf, 0x5c, 0xb9, 0x47, 0x74, 0x42, 0x12, 0x3f
-    };
+    // Check encrypted ciphertext output:
+    if(cycle_counter == 0)
+    {
+        // Init regs for first test string
+        expected_ciphertext = expected_ciphertexts[output_packet_count];
+        ciphertext_size = ciphertext_lens[output_packet_count];
+        ciphertext_remaining = ciphertext_size;
+        printf("Checking ciphertext for test string %d...\n", output_packet_count);
+    }
 
     // Stream ciphertext out of dut
     chacha20poly1305_encrypt_axis_out_ready = 1;
@@ -175,7 +233,7 @@ void tb()
             {
                 if(chacha20poly1305_encrypt_axis_out.data.tdata[i] != expected_ciphertext[i])
                 {
-                    uint32_t ciphertext_pos = (CIPHERTEXT_SIZE-ciphertext_remaining) + i;
+                    uint32_t ciphertext_pos = (ciphertext_size-ciphertext_remaining) + i;
                     printf("ERROR: Ciphertext mismatch at byte[%d]. expected 0x%X got 0x%X\n", 
                            ciphertext_pos, expected_ciphertext[i], chacha20poly1305_encrypt_axis_out.data.tdata[i]);
                 }
@@ -190,13 +248,22 @@ void tb()
             if(ciphertext_remaining > 16){
                 printf("ERROR: Early end to ciphertext output!\n");
             }else{
-                printf("Test DONE\n");
+                printf("Test %d DONE!\n", output_packet_count);
+                ciphertext_remaining = 0;
+                output_packet_count += 1;
+                if(output_packet_count < NUM_PLAINTEXT_TEST_STRS)
+                {
+                    // Reset for next test string
+                    expected_ciphertext = expected_ciphertexts[output_packet_count];
+                    ciphertext_size = ciphertext_lens[output_packet_count];
+                    ciphertext_remaining = ciphertext_size;
+                    printf("Checking ciphertext for next test string %d...\n", output_packet_count);
+                }
             }
-            ciphertext_remaining = 0;
         }else{
             ciphertext_remaining -= 16;
-        }
-        ARRAY_SHIFT_DOWN(expected_ciphertext, CIPHERTEXT_SIZE, 16)
+            ARRAY_SHIFT_DOWN(expected_ciphertext, CIPHERTEXT_MAX_SIZE, 16)
+        }   
     }
 
     cycle_counter += 1;
