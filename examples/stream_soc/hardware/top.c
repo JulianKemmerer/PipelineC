@@ -10,7 +10,7 @@ DECL_STREAM_TYPE(uint32_t)
 
 // Include test gcc compiled program
 #define FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
-#include "../fft/software/fft_mem_map.h"
+#include "../software/mem_map.h"
 #include "../software/text_mem_init.h"
 #include "../software/data_mem_init.h"
 
