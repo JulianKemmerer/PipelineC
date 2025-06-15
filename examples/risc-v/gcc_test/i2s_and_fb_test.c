@@ -4,7 +4,7 @@
 // FFT algorithm demo code
 #define FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
 #include "fft.h"
-#include "mem_map.h"
+#include "fft_mem_map.h"
 #include "fft.c"
 
 // Some helper drawing code 

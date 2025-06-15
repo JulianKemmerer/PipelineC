@@ -691,7 +691,7 @@ riscv_out_t fsm_riscv(
 #include "cdc.h"
 
 // FFT speed measure connected to debug chipscope reg
-DEBUG_REG_DECL(uint32_t, compute_fft_cycles)
+DEBUG_OUTPUT_REG_DECL(uint32_t, compute_fft_cycles)
 
 MAIN_MHZ(cpu_top, 62.5)
 void cpu_top(uint1_t areset)
