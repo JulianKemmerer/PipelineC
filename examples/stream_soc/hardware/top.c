@@ -301,7 +301,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
 // RISC-V components
 // For now hard coded flags to enable different extensions
-#define RV32_M
+//#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
 #include "examples/risc-v/risc-v.h"
 
