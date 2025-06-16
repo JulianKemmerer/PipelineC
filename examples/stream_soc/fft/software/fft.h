@@ -24,7 +24,7 @@ typedef struct complex_t
 //#define FFT_TYPE_IS_FLOAT
 #define FFT_TYPE_IS_FIXED
 // Use a lookup table for complex exponential values?
-#define FFT_USE_OMEGA_LUT // Doesnt work in hardware yet? Get bad looking spectrum!
+#define FFT_USE_OMEGA_LUT
 
 #ifdef FFT_TYPE_IS_FLOAT
 #define fft_data_t float
@@ -311,9 +311,7 @@ void print_omega_lookup(){
 }*/
 #ifdef __PIPELINEC__
 // PipelineC hardware hard coded ROM, see print function above
-#ifndef FFT_USE_COMB_LOGIC_HARDWARE
 #pragma FUNC_LATENCY omega_lut_rom 1
-#endif
 fft_in_t omega_lut_rom(uint16_t i){
     #if NFFT==1024
     static fft_in_t the_rom[1024] = {

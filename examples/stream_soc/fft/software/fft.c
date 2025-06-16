@@ -1,36 +1,16 @@
 #include "fft.h"
 
-#ifdef FFT_USE_COMB_LOGIC_HARDWARE
-static inline fft_2pt_out_t fft_2pt_comb_hardware(fft_2pt_w_omega_lut_in_t i){
-  // Write input registers contents
-  mm_ctrl_regs->fft_2pt_in = i;
-  //(takes just 1 or 2 CPU clock cycle, output ready immediately)
-  // Return output register contents
-  return mm_status_regs->fft_2pt_out;
-}
-// Macro version of above that does less loads and stores
-#define fft_2pt_comb_hardware_macro(T, U, S, J)\
-mm_ctrl_regs->fft_2pt_in.t = T;\
-mm_ctrl_regs->fft_2pt_in.u = U;\
-mm_ctrl_regs->fft_2pt_in.s = S;\
-mm_ctrl_regs->fft_2pt_in.j = J;\
-/*(takes just 1 or 2 CPU clock cycle, output ready immediately)*/\
-T = mm_status_regs->fft_2pt_out.t;\
-U = mm_status_regs->fft_2pt_out.u
-#endif
-
 /* Based on https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm#Data_reordering,_bit_reversal,_and_in-place_algorithms */
 /* Compute Iterative Complex-FFT with N < 2^16 bins */
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
 void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     uint32_t N = NFFT;
-    #ifdef FFT_USE_FULL_HARDWARE
     // FFT done in hw, just copy results to output
     for (uint32_t i = 0; i < N; i++)
     {
         fft_out_READ(&(output[i]));
     }
-    #else // Some work done by CPU
+    #if 0
     /* Bit-Reverse copy */
     for (uint32_t i = 0; i < N; i++)
     {
@@ -49,10 +29,6 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
         uint16_t m_1_2 = m >> 1;
         uint16_t t_index = k + j + m_1_2;
         uint16_t u_index = k + j;
-        #ifdef FFT_USE_COMB_LOGIC_HARDWARE
-        // Invoke hardware comb logic 2pt butterfly
-        fft_2pt_comb_hardware_macro(output[t_index], output[u_index], s, j);
-        #else
         // Run comb logic on CPU instead of using hardware
         fft_2pt_w_omega_lut_in_t fft_in;
         fft_in.t = output[t_index];
@@ -62,7 +38,6 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
         fft_2pt_out_t fft_out = fft_2pt_w_omega_lut(fft_in);
         output[t_index] = fft_out.t;
         output[u_index] = fft_out.u;
-        #endif
         if(last_iter(iters)){
             //iters = FFT_ITERS_NULL;
             break;
@@ -87,10 +62,6 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
             {
                 uint32_t t_index = t_base_index + j;
                 uint32_t u_index = u_base_index + j;
-                #ifdef FFT_USE_COMB_LOGIC_HARDWARE
-                // Invoke hardware comb logic 2pt butterfly
-                fft_2pt_comb_hardware_macro(output[t_index], output[u_index], s, j);
-                #else
                 // Run comb logic on CPU instead of using hardware
                 fft_2pt_w_omega_lut_in_t fft_in;
                 fft_in.t = output[t_index];
@@ -100,7 +71,6 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
                 fft_2pt_out_t fft_out = fft_2pt_w_omega_lut(fft_in);
                 output[t_index] = fft_out.t;
                 output[u_index] = fft_out.u;
-                #endif
             }
         }
     }*/ 

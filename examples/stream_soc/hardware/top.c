@@ -9,7 +9,6 @@
 DECL_STREAM_TYPE(uint32_t)
 
 // Include test gcc compiled program
-#define FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
 #include "../software/mem_map.h"
 #include "../software/text_mem_init.h"
 #include "../software/data_mem_init.h"
@@ -40,25 +39,11 @@ DECL_4BYTE_RAM_SP_RF_1(
 // Configured to use memory mapped addr offset in CPU's AXI0 region
 // also include extra port for samples right into FFT hardware
 #define I2S_RX_MONITOR_PORT
-#ifdef FFT_USE_FULL_HARDWARE
 #define I2S_RX_STREAM_MONITOR_PORT
-#endif
 #include "examples/arty/src/i2s/i2s_axi_loopback.c"
 
 // Hardware for doing the full FFT
-#ifdef FFT_USE_FULL_HARDWARE
-#define FFT_CLK_MHZ 120.0
-#define FFT_CLK_2X_MHZ 240.0
-#include "../fft/hardware/fft_2pt_2x_clk.c"
-// FFT output connected into CPU in memory map below
-// Connect I2S samples stream into samples fifo for FFT here
-// (little bit of glue in the I2S clock domain)
-#pragma MAIN i2s_to_fft_connect
-#pragma FUNC_WIRES i2s_to_fft_connect
-void i2s_to_fft_connect(){
-  samples_fifo_in = i2s_rx_samples_monitor_stream;
-}
-#endif
+#include "../fft/hardware/fft.c"
 
 // Helpers macros for building mmio modules
 #include "examples/risc-v/mem_map.h" 
@@ -218,11 +203,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Handshake valid signals are sometimes auto set/cleared
   mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
 
-  // 2 point FFT comb logic blob between MMIO regs
-  #ifdef FFT_USE_COMB_LOGIC_HARDWARE
-  inputs.status.fft_2pt_out = fft_2pt_w_omega_lut(ctrl.fft_2pt_in);
-  #endif
-
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
@@ -244,7 +224,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   #endif
 
   // Read out result from hardware FFT output FIFO
-  #ifdef FFT_USE_FULL_HARDWARE
   // Connect the outputs from FFT results FIFO into memory map
   // Start with ~copy of above then make macros for both
   output_fifo_out_ready = ~handshake_valid_reg_value.fft_out;
@@ -252,7 +231,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     handshake_data.fft_out = output_fifo_out.data;
     handshake_valid.fft_out = 1;
   }
-  #endif
 
   // BRAM0 instance
   #ifdef MMIO_BRAM0

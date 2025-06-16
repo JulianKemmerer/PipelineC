@@ -2,7 +2,6 @@
 #include <stdlib.h>
 
 // FFT algorithm demo code
-#define FFT_USE_FULL_HARDWARE // FFT_USE_COMB_LOGIC_HARDWARE
 #include "../fft/software/fft.h"
 #include "mem_map.h"
 #include "../fft/software/fft.c"
@@ -107,16 +106,11 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
     int x_end = (i+1) * point_width;
     if(x_end>FRAME_WIDTH) break;
     // Calc line current y pos
-    #ifdef FFT_TYPE_IS_FLOAT
-    int ampl = (int)(wav_height * input_samples[i].real);
-    #endif
-    #ifdef FFT_TYPE_IS_FIXED
     int sample_abs = abs(input_samples[i].real);
     if(sample_abs > max_abs_sample){
       max_abs_sample = sample_abs;
     }
     int ampl = (wav_height * input_samples[i].real)/max_abs_sample;
-    #endif
     ampl = ampl * 2; // Scale x2 since rarely near max vol?
     int y_val = y_mid - ampl; // y inverted 0,0 top left
     if(y_val < 0) y_val = 0;
@@ -141,11 +135,7 @@ void main() {
 
   // FFT in hardware only needs input samples for final waveform display
   // dont need full NFFT as number of samples, at most FRAME_WIDTH points
-  #ifdef FFT_USE_FULL_HARDWARE
   fft_in_t fft_input_samples[FRAME_WIDTH] = {0};
-  #else 
-  fft_in_t fft_input_samples[NFFT] = {0};
-  #endif
   fft_out_t fft_output[NFFT] = {0};
   fft_data_t fft_output_pwr[N_DRAWN_BINS] = {0};
 
@@ -160,22 +150,12 @@ void main() {
     *LED = (1<<0);
 
     // Copy samples into buffer and convert to input type as needed (in BRAM)
-    #ifdef FFT_USE_FULL_HARDWARE
     n_samples = FRAME_WIDTH;
-    #endif
     for (size_t i = 0; i < n_samples; i++)
     {
       // I2S samples are 24b fixed point
-      #ifdef FFT_TYPE_IS_FLOAT
-      float l = (float)samples[i].l/(float)(1<<24);
-      float r = (float)samples[i].r/(float)(1<<24);
-      fft_input_samples[i].real = (l+r)/2.0;
-      fft_input_samples[i].imag = 0;
-      #endif
-      #ifdef FFT_TYPE_IS_FIXED
       fft_input_samples[i].real = ((samples[i].l >> (24-16)) + (samples[i].r >> (24-16))) >> 1;
       fft_input_samples[i].imag = 0;
-      #endif
     }
 
     *LED = (1<<1);
