@@ -64,7 +64,7 @@ void print_aad(uint8_t aad[AAD_MAX_LEN], uint32_t aad_len)
 // CSR values available all at once do not need to be static=registers
 // Streaming inputs data is done as shift register
 #pragma MAIN tb
-void tb()
+stream(axis128_t) tb()
 {
     // Test vectors
     uint8_t key[CHACHA20_KEY_SIZE] = {
@@ -267,4 +267,8 @@ void tb()
     }
 
     cycle_counter += 1;
+
+    // dummy return for synthesis
+    // so everything doesnt optimize away
+    return chacha20poly1305_encrypt_axis_out;
 }
