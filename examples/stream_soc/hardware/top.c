@@ -1,8 +1,8 @@
 // Started with copy of fft_risc-v.c
 // RISCV CPU, FSM that takes multiple cycles
 // uses autopipelines for some stages
+#include "top.h" // Top level configuration
 
-#pragma PART "xc7a100tcsg324-1" //LFE5U-85F-6BG381C"
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "stream/stream.h"

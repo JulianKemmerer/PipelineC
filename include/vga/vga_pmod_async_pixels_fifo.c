@@ -87,8 +87,8 @@ DEBUG_REG_DECL(vga_fifo_word_t, async_fifo_data_out_debug)
 #endif
 
 
-// Pixel clock output side using standard vga pmod connection
-#include "vga_pmod.c"
+// Pixel clock output side using standard vga connection
+#include "vga_wires.c"
 #include "stream/serializer.h"
 serializer(pixel_serializer, pixel_t, VGA_ASYNC_FIFO_N_PIXELS)
 MAIN_MHZ(pmod_async_fifo_reader, PIXEL_CLK_MHZ)
@@ -119,8 +119,12 @@ void pmod_async_fifo_reader()
   pixel_serializer_o_t pixel_ser = pixel_serializer(rd_data.pixels, fifo_read.valid, ser_out_data_ready);
   ser_in_ready = pixel_ser.in_data_ready; // FEEDBACK
 
-  // For now directly into regs
-  pmod_register_outputs(vga_signals, pixel_ser.out_data);
+  // For now directly into top level output regs
+  vga_hs = vga_signals.hsync;
+  vga_vs = vga_signals.vsync;
+  vga_r = pixel_ser.out_data.r;
+  vga_g = pixel_ser.out_data.g;
+  vga_b = pixel_ser.out_data.b;
 
   // Advance vga timing when wait is done
   if(wait_done)
