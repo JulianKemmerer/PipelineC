@@ -32,7 +32,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 // Declares AXI shared resource bus wires
 //   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
 #define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
-#include "examples/shared_resource_bus/axi_frame_buffer/dual_frame_buffer.c"
+#include "../frame_buffers/hardware/dual_frame_buffer.c"
 #endif
 
 // I2S RX + TX code hard coded in loop back
@@ -40,13 +40,13 @@ DECL_4BYTE_RAM_SP_RF_1(
 // also include extra port for samples right into FFT hardware
 #define I2S_RX_MONITOR_PORT
 #define I2S_RX_STREAM_MONITOR_PORT
-#include "examples/arty/src/i2s/i2s_axi_loopback.c"
+#include "../i2s/hardware/i2s_axi_loopback.c"
 
 // Hardware for doing the full FFT
 #include "../fft/hardware/fft.c"
 
 // Helpers macros for building mmio modules
-#include "examples/risc-v/mem_map.h" 
+#include "examples/risc-v/mem_map.h" // TODO move into riscv include dir
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   mm_status_regs_t status;
@@ -303,7 +303,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 // For now hard coded flags to enable different extensions
 //#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
-#include "examples/risc-v/risc-v.h"
+#include "examples/risc-v/risc-v.h" // TODO move into riscv include dir
 
 // Declare instruction and data memory
 // also includes memory mapped IO
@@ -320,7 +320,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 // Multi cycle is not a pipeline
 #define RISCV_IMEM_NO_AUTOPIPELINE
 #define RISCV_DMEM_NO_AUTOPIPELINE
-#include "examples/risc-v/mem_decl.h"
+#include "examples/risc-v/mem_decl.h" // TODO move into riscv include dir
 
 // Declare globally visible auto pipelines out of exe logic
 #include "global_func_inst.h"

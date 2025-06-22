@@ -5,7 +5,7 @@
 #include "global_fifo.h"
 #include "ram.h"
 #include "global_func_inst.h"
-#include "examples/arty/src/i2s/i2s_samples.h"
+#include "i2s/i2s_samples.h"
 #include "../software/fft.h"
 
 // Compute FFT using 2pt butterfly unit and memory at 2x clock rate

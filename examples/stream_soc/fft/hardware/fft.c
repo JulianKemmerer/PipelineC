@@ -7,10 +7,10 @@
 #include "stream/deserializer.h"
 #include "axi/axis.h"
 
-// Library wrapping AXI bus
+// Code wrapping AXI bus to DDR via Xilinx memory controller
 // https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 //#include "examples/shared_resource_bus/axi_shared_bus.h"
-#include "examples/shared_resource_bus/axi_ddr/axi_xil_mem.c" // TODO move axi_ddr into stream_soc dir
+#include "../../shared_ddr/hardware/axi_xil_mem.c"
 
 // The core FFT hardware
 #define FFT_CLK_MHZ 120.0

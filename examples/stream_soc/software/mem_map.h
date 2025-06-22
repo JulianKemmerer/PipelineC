@@ -10,8 +10,10 @@
 #include <stddef.h>
 #endif
 
-// Peripherals like FFT hardware, TODO move VGA and I2S into includes like this?
-#include "../fft/software/fft.h"
+#include "vga/pixel.h"
+#include "../frame_buffers/software/frame_buf.h"
+#include "axi/axi_shared_bus.h" // For axi_descriptor_t
+#include "../fft/software/fft_types.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
@@ -52,14 +54,6 @@ static volatile uint32_t* LED = (uint32_t*)(MM_CTRL_REGS_ADDR + offsetof(mm_ctrl
 #define MM_STATUS_REGS_ADDR MM_CTRL_REGS_END_ADDR
 static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_REGS_ADDR;
 #define MM_STATUS_REGS_END_ADDR (MM_STATUS_REGS_ADDR+sizeof(mm_status_regs_t))
-
-
-// TODO FIX DONT HAVE TWO COPIES OF THIS DEF
-typedef struct axi_descriptor_t
-{
-  uint32_t addr;
-  uint32_t num_words; // TODO make number of bytes?
-}axi_descriptor_t;
 
 // Separate handshake data regs 
 // so not mixed in with strictly simple in or out status and ctrl registers
@@ -122,36 +116,8 @@ static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
 
 // Frame buffer in AXI0 DDR
-typedef struct pixel_t{
- uint8_t a, b, g, r; 
-}pixel_t; // 24bpp color, matching hardware byte order
 #define FB0_ADDR MMIO_AXI0_ADDR
 static volatile pixel_t* FB0 = (pixel_t*)FB0_ADDR;
-// TODO FIX DONT HAVE TWO COPIES OF THIS DEF
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
-#define TILE_FACTOR 1
-#define TILE_FACTOR_LOG2 0
-#define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
-#define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
-#define BYTES_PER_PIXEL 4
-#define BYTES_PER_PIXEL_LOG2 2
-#define FB_SIZE ((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)
-// Pixel x,y pos to pixel index in array
-uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
-{
-  uint32_t x_tile_index = x >> TILE_FACTOR_LOG2;
-  uint32_t y_tile_index = y >> TILE_FACTOR_LOG2;
-  return (y_tile_index*NUM_X_TILES) + x_tile_index;
-}
-pixel_t frame_buf_read(uint16_t x, uint16_t y)
-{
-  return FB0[pos_to_pixel_index(x,y)];
-}
-void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
-{
-  FB0[pos_to_pixel_index(x,y)] = pixel;
-}
 #define FB0_END_ADDR (FB0_ADDR + FB_SIZE)
 
 // I2S samples also in AXI0 DDR
@@ -168,6 +134,7 @@ typedef struct i2s_sample_in_mem_t{ // TODO FIX DONT HAVE TWO COPIES OF THIS DEF
   int32_t l;
   int32_t r;
 }i2s_sample_in_mem_t;
+// TODO move into i2s/software
 void i2s_read(i2s_sample_in_mem_t** samples_ptr_out, int* n_samples_out){
   // Read description of samples in memory
   axi_descriptor_t samples_desc;

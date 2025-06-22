@@ -116,14 +116,16 @@ typedef struct axi32_dev_to_host_t
   axi32_read_dev_to_host_t read;
 } axi32_dev_to_host_t;
 
+#ifdef __PIPELINEC__
+
 // Write has two channels to begin request: address and data
 // Helpr func requires that inputs are valid/held constant
 // until data phase done (ready_for_inputs asserted)
 typedef enum axi32_write_state_t
 {
-  ADDR_REQ,
-  DATA_REQ,
-  RESP,
+  WR_ADDR_REQ,
+  WR_DATA_REQ,
+  WR_RESP,
 }axi32_write_state_t;
 typedef struct axi32_write_logic_outputs_t
 {
@@ -140,7 +142,7 @@ axi32_write_logic_outputs_t axi32_write_logic(
 ){
   static axi32_write_state_t state;
   axi32_write_logic_outputs_t o;
-  if(state==ADDR_REQ)
+  if(state==WR_ADDR_REQ)
   {
     // Wait device to be ready for write address first
     if(from_dev.write.awready)
@@ -153,10 +155,10 @@ axi32_write_logic_outputs_t axi32_write_logic(
       o.to_dev.write.req.awsize = 2; // 2^2=4 bytes per transfer
       o.to_dev.write.req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
       // And then data next
-      state = DATA_REQ;
+      state = WR_DATA_REQ;
     }
   }
-  else if(state==DATA_REQ)
+  else if(state==WR_DATA_REQ)
   {
     // Wait device to be ready for write data
     if(from_dev.write.wready)
@@ -174,10 +176,10 @@ axi32_write_logic_outputs_t axi32_write_logic(
       }
       o.to_dev.write.data.wlast = 1; // 1 transfer is last one
       // And then begin waiting for response
-      state = RESP;
+      state = WR_RESP;
     }
   }
-  else if(state==RESP)
+  else if(state==WR_RESP)
   {
     // Wait for this function to be ready for output
     if(ready_for_outputs)
@@ -190,7 +192,7 @@ axi32_write_logic_outputs_t axi32_write_logic(
         // Done (error code not checked, just returned)
         o.done = 1;
         o.bresp = from_dev.write.resp.bresp;
-        state = ADDR_REQ;
+        state = WR_ADDR_REQ;
       }
     }
   }
@@ -200,8 +202,8 @@ axi32_write_logic_outputs_t axi32_write_logic(
 // Read is slightly simpler than write
 typedef enum axi32_read_state_t
 {
-  REQ,
-  RESP,
+  RD_REQ,
+  RD_RESP
 }axi32_read_state_t;
 typedef struct axi32_read_logic_outputs_t
 {
@@ -218,7 +220,7 @@ axi32_read_logic_outputs_t axi32_read_logic(
 ){
   static axi32_read_state_t state;
   axi32_read_logic_outputs_t o;
-  if(state==REQ)
+  if(state==RD_REQ)
   {
     // Wait device to be ready for request inputs
     if(from_dev.read.arready)
@@ -233,10 +235,10 @@ axi32_read_logic_outputs_t axi32_read_logic(
       o.to_dev.read.req.arsize = 2; // 2^2=4 bytes per transfer
       o.to_dev.read.req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
       // And then begin waiting for response
-      state = RESP;
+      state = RD_RESP;
     }
   }
-  else if(state==RESP)
+  else if(state==RD_RESP)
   {
     // Wait for this function to be ready for output
     if(ready_for_outputs)
@@ -251,7 +253,7 @@ axi32_read_logic_outputs_t axi32_read_logic(
         o.done = 1;
         o.data = uint8_array4_le(from_dev.read.data.rdata); // Array to uint
         o.rresp = from_dev.read.resp.rresp;
-        state = REQ;
+        state = RD_REQ;
       }
     }
   }
@@ -364,3 +366,5 @@ typedef struct axi512_i_t
   
 } axi512_i_t;
 */
+
+#endif
