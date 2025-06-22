@@ -5,12 +5,6 @@
 // Each bin is SAMPLE_RATE / NUM_POINTS (Hz) wide? TODO what about neg freqencies?
 void compute_fft_cc(fft_in_t* input, fft_out_t* output){
     uint32_t N = NFFT;
-    // FFT done in hw, just copy results to output
-    for (uint32_t i = 0; i < N; i++)
-    {
-        fft_out_READ(&(output[i]));
-    }
-    #if 0
     /* Bit-Reverse copy */
     for (uint32_t i = 0; i < N; i++)
     {
@@ -73,8 +67,7 @@ void compute_fft_cc(fft_in_t* input, fft_out_t* output){
                 output[u_index] = fft_out.u;
             }
         }
-    }*/ 
-    #endif
+    }*/
 }
 
 // Dont need real power for visualization, fake it

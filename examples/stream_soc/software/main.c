@@ -162,7 +162,13 @@ void main() {
 
     // Compute FFT
     uint32_t start_time = mm_status_regs->cpu_clock;
-    compute_fft_cc(fft_input_samples, fft_output);
+    //compute_fft_cc(fft_input_samples, fft_output);
+    // FFT result in AXI DDR RAM
+    // Copy fft output into buffer
+    for (size_t i = 0; i < N_DRAWN_BINS; i++)
+    {
+      fft_output[i] = ((fft_out_t*)FFT_OUT_ADDR)[i];
+    }
     uint32_t end_time = mm_status_regs->cpu_clock;
     mm_ctrl_regs->compute_fft_cycles = end_time - start_time;
     

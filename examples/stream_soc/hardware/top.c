@@ -223,14 +223,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }
   #endif
 
-  // Read out result from hardware FFT output FIFO
+  /* // Read out result from hardware FFT output FIFO
   // Connect the outputs from FFT results FIFO into memory map
   // Start with ~copy of above then make macros for both
   output_fifo_out_ready = ~handshake_valid_reg_value.fft_out;
   if(output_fifo_out_ready & output_fifo_out.valid){
     handshake_data.fft_out = output_fifo_out.data;
     handshake_valid.fft_out = 1;
-  }
+  } */
 
   // BRAM0 instance
   #ifdef MMIO_BRAM0

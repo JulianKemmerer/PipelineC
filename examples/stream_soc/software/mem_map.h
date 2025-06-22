@@ -66,11 +66,11 @@ typedef struct axi_descriptor_t
 // MM Handshake registers
 typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_out_desc;
-  fft_out_t fft_out;
+  //fft_out_t fft_out;
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
   uint32_t i2s_rx_out_desc;
-  uint32_t fft_out;
+  //uint32_t fft_out;
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -93,14 +93,14 @@ void i2s_rx_out_desc_READ(axi_descriptor_t* desc_out){
   // Signal done with data
   mm_handshake_valid->i2s_rx_out_desc = 0;
 }
-void fft_out_READ(fft_out_t* out){
+/*void fft_out_READ(fft_out_t* out){
   // Wait for valid data to show up
   while(!mm_handshake_valid->fft_out){}
   // Copy the data to output
   *out = mm_handshake_data->fft_out;
   // Signal done with data
   mm_handshake_valid->fft_out = 0;
-}
+}*/
 
 // Block RAMs
 #define MMIO_BRAM0
@@ -120,6 +120,7 @@ static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
 static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
+
 // Frame buffer in AXI0 DDR
 typedef struct pixel_t{
  uint8_t a, b, g, r; 
@@ -152,6 +153,7 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel)
   FB0[pos_to_pixel_index(x,y)] = pixel;
 }
 #define FB0_END_ADDR (FB0_ADDR + FB_SIZE)
+
 // I2S samples also in AXI0 DDR
 #define I2S_BUFFS_ADDR FB0_END_ADDR
 // Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
@@ -178,6 +180,12 @@ void i2s_read(i2s_sample_in_mem_t** samples_ptr_out, int* n_samples_out){
   *samples_ptr_out = samples;
   *n_samples_out = n_samples;
 }
+#define I2S_BUFFS_END_ADDR (I2S_BUFFS_ADDR+(sizeof(i2s_sample_in_mem_t)*I2S_LOOPBACK_DEMO_N_SAMPLES*I2S_LOOPBACK_DEMO_N_DESC))
+
+// FFT output data into AXI0 DDR
+#define FFT_OUT_ADDR I2S_BUFFS_END_ADDR
+#define FFT_OUT_AXI0_ADDR (FFT_OUT_ADDR-MMIO_AXI0_ADDR)
+#define FFT_OUT_END_ADDR (FFT_OUT_ADDR + (NFFT*sizeof(fft_out_t)))
 
 // Often dont care if writes are finished before returning frame_buf_write returning
 // turn off waiting for writes to finish and create a RAW hazzard
