@@ -1,7 +1,7 @@
 #pragma once
 #include "i2s/i2s_32b.h"
 #include "axi/axi_shared_bus.h"
-#include "../../../risc-v/mem_map.h" // TODO move examples/risc-v into include/risc-v
+#include "risc-v/mem_map.h" // TODO move examples/risc-v into include/risc-v
 
 void i2s_read(i2s_sample_in_mem_t** samples_ptr_out, int* n_samples_out){
   // Read description of samples in memory

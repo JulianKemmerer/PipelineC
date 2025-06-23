@@ -46,7 +46,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 #include "../fft/hardware/fft.c"
 
 // Helpers macros for building mmio modules
-#include "examples/risc-v/mem_map.h" // TODO move into riscv include dir
+#include "risc-v/mem_map.h"
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{
   mm_status_regs_t status;
@@ -303,7 +303,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 // For now hard coded flags to enable different extensions
 //#define RV32_M
 #define RISCV_REGFILE_1_CYCLE
-#include "examples/risc-v/risc-v.h" // TODO move into riscv include dir
+#include "risc-v/risc-v.h"
 
 // Declare instruction and data memory
 // also includes memory mapped IO
@@ -320,7 +320,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 // Multi cycle is not a pipeline
 #define RISCV_IMEM_NO_AUTOPIPELINE
 #define RISCV_DMEM_NO_AUTOPIPELINE
-#include "examples/risc-v/mem_decl.h" // TODO move into riscv include dir
+#include "risc-v/mem_decl.h"
 
 // Declare globally visible auto pipelines out of exe logic
 #include "global_func_inst.h"
