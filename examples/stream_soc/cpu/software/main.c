@@ -2,14 +2,14 @@
 #include <stdlib.h> 
 
 // FFT algorithm demo code
-#include "../fft/software/fft_types.h"
-#include "../fft/software/power.h"
-#include "../fft/software/draw.h"
+#include "../../fft/software/fft_types.h"
+#include "../../fft/software/power.h"
+#include "../../fft/software/draw.h"
 // Not doing FFT in software right now but could...
 //#include "../fft/software/fft.c"
 #include "mem_map.h"
 // I2S hardware
-#include "../i2s/software/i2s.h"
+#include "../../i2s/software/i2s.h"
 
 void main() {
   //int count = 0;

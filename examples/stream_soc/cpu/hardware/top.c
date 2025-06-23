@@ -14,7 +14,7 @@ DECL_STREAM_TYPE(uint32_t)
 #include "../software/data_mem_init.h"
 
 // FFT C code to be instantiated in hardware
-#include "../fft/software/fft.c"
+#include "../../fft/software/fft.c"
 
 // BRAM modules as needed by user memory mappings
 #ifdef MMIO_BRAM0
@@ -32,7 +32,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 // Declares AXI shared resource bus wires
 //   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
 #define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
-#include "../frame_buffers/hardware/dual_frame_buffer.c"
+#include "../../frame_buffers/hardware/dual_frame_buffer.c"
 #endif
 
 // I2S RX + TX code hard coded in loop back
@@ -40,10 +40,10 @@ DECL_4BYTE_RAM_SP_RF_1(
 // also include extra port for samples right into FFT hardware
 #define I2S_RX_MONITOR_PORT
 #define I2S_RX_STREAM_MONITOR_PORT
-#include "../i2s/hardware/i2s_axi_loopback.c"
+#include "../../i2s/hardware/i2s_axi_loopback.c"
 
 // Hardware for doing the full FFT
-#include "../fft/hardware/fft.c"
+#include "../../fft/hardware/fft.c"
 
 // Helpers macros for building mmio modules
 #include "risc-v/mem_map.h"

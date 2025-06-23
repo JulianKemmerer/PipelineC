@@ -11,11 +11,11 @@
 #endif
 
 #include "vga/pixel.h"
-#include "../frame_buffers/software/frame_buf.h"
+#include "../../frame_buffers/software/frame_buf.h"
 #include "axi/axi_shared_bus.h" // For axi_descriptor_t
-#include "../i2s/software/mem_map.h"
-#include "../fft/software/mem_map.h"
-#include "../fft/software/fft_types.h"
+#include "../../i2s/software/mem_map.h"
+#include "../../fft/software/mem_map.h"
+#include "../../fft/software/fft_types.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
