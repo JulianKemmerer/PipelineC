@@ -13,6 +13,8 @@
 #include "vga/pixel.h"
 #include "../frame_buffers/software/frame_buf.h"
 #include "axi/axi_shared_bus.h" // For axi_descriptor_t
+#include "../i2s/software/mem_map.h"
+#include "../fft/software/mem_map.h"
 #include "../fft/software/fft_types.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
@@ -78,24 +80,6 @@ static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)M
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
 #define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
 
-// TODO make macro or generic byte copying helper func?
-void i2s_rx_out_desc_READ(axi_descriptor_t* desc_out){
-  // Wait for valid data to show up
-  while(!mm_handshake_valid->i2s_rx_out_desc){}
-  // Copy the data to output
-  *desc_out = mm_handshake_data->i2s_rx_out_desc;
-  // Signal done with data
-  mm_handshake_valid->i2s_rx_out_desc = 0;
-}
-/*void fft_out_READ(fft_out_t* out){
-  // Wait for valid data to show up
-  while(!mm_handshake_valid->fft_out){}
-  // Copy the data to output
-  *out = mm_handshake_data->fft_out;
-  // Signal done with data
-  mm_handshake_valid->fft_out = 0;
-}*/
-
 // Block RAMs
 #define MMIO_BRAM0
 #ifdef MMIO_BRAM0
@@ -106,7 +90,6 @@ static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
 #define MMIO_BRAM0_END_ADDR (MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE)
 #endif
 
-// TODO ORGANIZE THIS BETTER
 // AXI buses (type of shared resource bus)
 #define MMIO_AXI0
 #ifdef MMIO_AXI0
@@ -122,37 +105,11 @@ static volatile pixel_t* FB0 = (pixel_t*)FB0_ADDR;
 
 // I2S samples also in AXI0 DDR
 #define I2S_BUFFS_ADDR FB0_END_ADDR
-// Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
-#ifndef NFFT
-#define NFFT (1<<10)
-#endif
-#define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
-#define I2S_LOOPBACK_DEMO_N_SAMPLES NFFT // Match FFT size
-#define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
-// TODO I2S_BUFFS_END_ADDR using size info above
-typedef struct i2s_sample_in_mem_t{ // TODO FIX DONT HAVE TWO COPIES OF THIS DEF
-  int32_t l;
-  int32_t r;
-}i2s_sample_in_mem_t;
-// TODO move into i2s/software
-void i2s_read(i2s_sample_in_mem_t** samples_ptr_out, int* n_samples_out){
-  // Read description of samples in memory
-  axi_descriptor_t samples_desc;
-  i2s_rx_out_desc_READ(&samples_desc);
-  // gets pointer to samples in AXI DDR memory
-  i2s_sample_in_mem_t* samples = (i2s_sample_in_mem_t*)(samples_desc.addr + MMIO_AXI0_ADDR);
-  // and number of samples (in u32 word count)
-  int n_samples = (samples_desc.num_words*sizeof(uint32_t))/sizeof(i2s_sample_in_mem_t);
-  // return outputs
-  *samples_ptr_out = samples;
-  *n_samples_out = n_samples;
-}
-#define I2S_BUFFS_END_ADDR (I2S_BUFFS_ADDR+(sizeof(i2s_sample_in_mem_t)*I2S_LOOPBACK_DEMO_N_SAMPLES*I2S_LOOPBACK_DEMO_N_DESC))
+#define I2S_BUFFS_END_ADDR (I2S_BUFFS_ADDR+I2S_BUFFS_SIZE)
 
 // FFT output data into AXI0 DDR
 #define FFT_OUT_ADDR I2S_BUFFS_END_ADDR
-#define FFT_OUT_AXI0_ADDR (FFT_OUT_ADDR-MMIO_AXI0_ADDR)
-#define FFT_OUT_END_ADDR (FFT_OUT_ADDR + (NFFT*sizeof(fft_out_t)))
+#define FFT_OUT_END_ADDR (FFT_OUT_ADDR + FFT_OUT_SIZE)
 
 // Often dont care if writes are finished before returning frame_buf_write returning
 // turn off waiting for writes to finish and create a RAW hazzard

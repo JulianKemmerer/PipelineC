@@ -41,6 +41,8 @@ float q0_23_to_float(q0_23_t x)
   return rv;
 }
 
+#ifdef __PIPELINEC__
+
 #define saturate_int24(i24_out_val, i25_or_larger_val) \
 { \
   /* Saturate int24 */ \
@@ -94,3 +96,5 @@ q0_23_t q0_23_mult(q0_23_t a, q0_23_t b)
   rv.qmn = product;
   return rv;
 }
+
+#endif

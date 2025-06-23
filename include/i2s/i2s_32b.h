@@ -4,13 +4,14 @@
 #include "stream/stream.h"
 #include "stream/serializer.h"
 #include "stream/deserializer.h"
+#include "i2s/i2s_samples.h"
 
 // Type for the unpacked, aligned, easy to debug samples data as layed out in memory
 typedef struct i2s_sample_in_mem_t{
   int32_t l;
   int32_t r;
 }i2s_sample_in_mem_t;
-#include "i2s_sample_in_mem_t_bytes_t.h" // Auto gen func casting i2s_sample_in_mem_t to-from byte array
+
 i2s_sample_in_mem_t i2s_samples_in_mem(i2s_samples_t samples){
   i2s_sample_in_mem_t rv;
   rv.l = samples.l_data.qmn; // fixed point type
@@ -23,6 +24,9 @@ i2s_samples_t i2s_samples_from_mem(i2s_sample_in_mem_t mem){
   rv.r_data.qmn = mem.r; // fixed point type
   return rv;
 }
+
+#ifdef __PIPELINEC__
+#include "i2s_sample_in_mem_t_bytes_t.h" // Auto gen func casting i2s_sample_in_mem_t to-from byte array
 
 // Convert rounded type to 4 byte chunks
 // Macro to define serializer for a struct type
@@ -82,3 +86,5 @@ u32_to_samples_t u32_to_samples(stream(uint32_t) in_stream, uint1_t out_stream_r
   
   return rv;
 }
+
+#endif

@@ -3,6 +3,18 @@
 // Helpers for building memory maps
 // TODO move into risc-v.h?
 
+// TODO move macro to riscv mem map helper header?
+// Read hanshake helper macro
+#define mm_handshake_read(out_ptr, hs_name) \
+/* Wait for valid data to show up */ \
+while(!mm_handshake_valid->hs_name){} \
+/* Copy the data to output */ \
+*(out_ptr) = mm_handshake_data->hs_name; \
+/* Signal done with data */ \
+mm_handshake_valid->hs_name = 0
+
+// TODO write handshake helper macro
+
 // Base/default version without user types
 typedef struct mem_map_out_t
 {

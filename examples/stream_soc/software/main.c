@@ -8,6 +8,8 @@
 // Not doing FFT in software right now but could...
 //#include "../fft/software/fft.c"
 #include "mem_map.h"
+// I2S hardware
+#include "../i2s/software/i2s.h"
 
 void main() {
   //int count = 0;
