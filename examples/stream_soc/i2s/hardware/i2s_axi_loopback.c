@@ -9,7 +9,7 @@
 #include "leds/leds_port.c"
 
 // Include I2S 'media access controller' (PMOD+de/serializer logic)
-#include "i2s_pmod.c"
+#include "i2s/i2s_regs.c"
 #include "i2s/i2s_mac.c"
 
 // Logic for converting the samples stream to-from MAC to-from 32b chunks
@@ -20,7 +20,7 @@
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
 #endif
 #ifndef I2S_LOOPBACK_DEMO_N_SAMPLES
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 64 // TODO want 1024+ for FFT?
+#define I2S_LOOPBACK_DEMO_N_SAMPLES 64
 #endif
 #ifndef I2S_LOOPBACK_DEMO_N_DESC
 #define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
@@ -66,7 +66,12 @@ void i2s_loopback_app(uint1_t reset_n)
   uint1_t mac_tx_samples_ready;
   stream(i2s_samples_t) mac_tx_samples;
   #pragma FEEDBACK mac_tx_samples
-  i2s_to_app_t from_i2s = read_i2s_pmod();
+
+  // Read I2S PMOD inputs
+  i2s_to_app_t from_i2s;
+  from_i2s.rx_data = i2s_rx_data;
+  
+  // Instance of I2S MAC
   i2s_mac_t mac = i2s_mac(reset_n, 
     mac_rx_samples_ready, 
     mac_tx_samples, 
@@ -74,7 +79,13 @@ void i2s_loopback_app(uint1_t reset_n)
   );
   mac_rx_samples = mac.rx.samples;
   mac_tx_samples_ready = mac.tx.samples_ready;
-  write_i2s_pmod(mac.to_i2s);
+
+  // Write I2S PMOD outputs
+  i2s_tx_lrck = mac.to_i2s.tx_lrck;
+  i2s_tx_sclk = mac.to_i2s.tx_sclk;
+  i2s_tx_data = mac.to_i2s.tx_data;
+  i2s_rx_lrck = mac.to_i2s.rx_lrck;
+  i2s_rx_sclk = mac.to_i2s.rx_sclk;
 
   // External stream port for samples
   #ifdef I2S_RX_STREAM_MONITOR_PORT

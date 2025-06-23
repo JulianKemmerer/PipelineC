@@ -9,7 +9,18 @@
 // Logic to send and receive I2S samples via a streaming interface
 
 // Include I2S signals to/from PMOD
-//#include "i2s_pmod.c"
+typedef struct i2s_to_app_t
+{
+  uint1_t rx_data;
+}i2s_to_app_t;
+typedef struct app_to_i2s_t
+{
+  uint1_t tx_lrck;
+  uint1_t tx_sclk;
+  uint1_t tx_data;
+  uint1_t rx_lrck;
+  uint1_t rx_sclk;
+}app_to_i2s_t;
 
 /*
 https://reference.digilentinc.com/pmod/pmodi2s2/reference-manual

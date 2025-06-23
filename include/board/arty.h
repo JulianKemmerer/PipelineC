@@ -36,6 +36,78 @@ DECL_OUTPUT(uint1_t, ck_30)
 
 // Expose named PMOD ports
 
+// PMOD JA
+//  A=top/inner row, pin1-6
+#define PMOD_NAME pmod_ja_a
+#ifdef JA_0_OUT
+DECL_OUTPUT(uint1_t, ja_0)
+#define PMOD_O1_WIRE ja_0
+#endif
+#ifdef JA_0_IN
+DECL_INPUT(uint1_t, ja_0)
+#define PMOD_I1_WIRE ja_0
+#endif
+#ifdef JA_1_OUT
+DECL_OUTPUT(uint1_t, ja_1)
+#define PMOD_O2_WIRE ja_1
+#endif
+#ifdef JA_1_IN
+DECL_INPUT(uint1_t, ja_1)
+#define PMOD_I2_WIRE ja_1
+#endif
+#ifdef JA_2_OUT
+DECL_OUTPUT(uint1_t, ja_2)
+#define PMOD_O3_WIRE ja_2
+#endif
+#ifdef JA_2_IN
+DECL_INPUT(uint1_t, ja_2)
+#define PMOD_I3_WIRE ja_2
+#endif
+#ifdef JA_3_OUT
+DECL_OUTPUT(uint1_t, ja_3)
+#define PMOD_O4_WIRE ja_3
+#endif
+#ifdef JA_3_IN
+DECL_INPUT(uint1_t, ja_3)
+#define PMOD_I4_WIRE ja_3
+#endif
+#include "pmod/pmod_wires.h"
+//  B=bottom/outter row, pin7-12
+#define PMOD_NAME pmod_ja_b
+#ifdef JA_4_OUT
+DECL_OUTPUT(uint1_t, ja_4)
+#define PMOD_O1_WIRE ja_4
+#endif
+#ifdef JA_4_IN
+DECL_INPUT(uint1_t, ja_4)
+#define PMOD_I1_WIRE ja_4
+#endif
+#ifdef JA_5_OUT
+DECL_OUTPUT(uint1_t, ja_5)
+#define PMOD_O2_WIRE ja_5
+#endif
+#ifdef JA_5_IN
+DECL_INPUT(uint1_t, ja_5)
+#define PMOD_I2_WIRE ja_5
+#endif
+#ifdef JA_6_OUT
+DECL_OUTPUT(uint1_t, ja_6)
+#define PMOD_O3_WIRE ja_6
+#endif
+#ifdef JA_6_IN
+DECL_INPUT(uint1_t, ja_6)
+#define PMOD_I3_WIRE ja_6
+#endif
+#ifdef JA_7_OUT
+DECL_OUTPUT(uint1_t, ja_7)
+#define PMOD_O4_WIRE ja_7
+#endif
+#ifdef JA_7_IN
+DECL_INPUT(uint1_t, ja_7) 
+#define PMOD_I4_WIRE ja_7
+#endif
+#include "pmod/pmod_wires.h"
+
 // PMOD JB
 //  A=top/inner row, pin1-6
 #define PMOD_NAME pmod_jb_a
