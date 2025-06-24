@@ -62,11 +62,11 @@ static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_
 // MM Handshake registers
 typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_out_desc;
-  //fft_out_t fft_out;
+  axi_descriptor_t fft_out_desc;
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
   uint32_t i2s_rx_out_desc;
-  //uint32_t fft_out;
+  uint32_t fft_out_desc;
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__

@@ -32,6 +32,10 @@ void i2s_to_fft_connect(){
 #include "ci32_t_bytes_t.h" // Auto gen funcs casting ci32_t to-from byte array
 type_byte_serializer(fft_out_to_bytes, ci32_t, sizeof(uint32_t))
 
+// Globally visible stream of FFT output descriptors
+stream(axi_descriptor_t) fft_out_desc_written;
+uint1_t fft_out_desc_written_ready;
+
 #pragma MAIN fft_to_ddr_connect
 void fft_to_ddr_connect()
 {
@@ -58,15 +62,14 @@ void fft_to_ddr_connect()
   to_write_descriptor.valid = 1; // Valid descriptor
   
   // FFT outputs written to AXI mem
-  uint1_t ready_for_descriptors_written = 1; // Always ready, not using this output stream
   axi_stream_to_writes_t to_axi_wr = u32_stream_to_axi_writes(
     to_write_descriptor, // Input stream of descriptors to write
     fft_out_u32, // Input data stream to write
-    ready_for_descriptors_written, // Ready for output stream of descriptors written
+    fft_out_desc_written_ready, // Ready for output stream of descriptors written
     dev_to_host(axi_xil_mem, cpu).write // Inputs for write side of AXI bus
   );
-  // UNUSED to_axi_wr.descriptors_out_stream;
   // UNUSED to_axi_wr.ready_for_descriptors_in;
+  fft_out_desc_written = to_axi_wr.descriptors_out_stream;
   ready_for_fft_out_u32 = to_axi_wr.ready_for_data_stream; // FEEDBACK
   host_to_dev(axi_xil_mem, cpu).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus  
 }

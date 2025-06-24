@@ -211,8 +211,11 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_VALID_ADDR, mm_handshake_valid_t, handshake_valid, handshake_valid, addr, o.addr_is_mapped, o.rd_data)
   }
 
+  // TODO HANDSHAKE MACROs
+
+  // I2S samples descriptors
   #ifdef I2S_RX_MONITOR_PORT
-  // TODO HANDSHAKE MACRO
+  // TODO convert to stream FIFO
   // Handshake data for cpu read written when ready got valid data
   uint1_t i2s_rx_out_desc_rd_en = ~handshake_valid_reg_value.i2s_rx_out_desc;
   i2s_rx_descriptors_monitor_fifo_read_t i2s_rx_out_desc_fifo =
@@ -223,14 +226,12 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }
   #endif
 
-  /* // Read out result from hardware FFT output FIFO
-  // Connect the outputs from FFT results FIFO into memory map
-  // Start with ~copy of above then make macros for both
-  output_fifo_out_ready = ~handshake_valid_reg_value.fft_out;
-  if(output_fifo_out_ready & output_fifo_out.valid){
-    handshake_data.fft_out = output_fifo_out.data;
-    handshake_valid.fft_out = 1;
-  } */
+  // FFT output descriptors
+  fft_out_desc_written_ready = ~handshake_valid_reg_value.fft_out_desc;
+  if(fft_out_desc_written_ready & fft_out_desc_written.valid){
+    handshake_data.fft_out_desc = fft_out_desc_written.data;
+    handshake_valid.fft_out_desc = 1;
+  }
 
   // BRAM0 instance
   #ifdef MMIO_BRAM0
@@ -238,7 +239,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     bram0_word_addr, wr_data, wr_byte_ens, bram0_valid_in
   );
   #endif
-
 
   // End MMIO operation
   if(~is_START_state){

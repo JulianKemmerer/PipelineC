@@ -1,15 +1,15 @@
 #include <stdint.h>
 #include <stdlib.h> 
 
-// FFT algorithm demo code
+// TODO organize includes
 #include "../../fft/software/fft_types.h"
 #include "../../fft/software/power.h"
 #include "../../fft/software/draw.h"
 // Not doing FFT in software right now but could...
 //#include "../fft/software/fft.c"
 #include "mem_map.h"
-// I2S hardware
 #include "../../i2s/software/i2s.h"
+#include "../../fft/software/fft_read.h"
 
 void main() {
   //int count = 0;
@@ -27,37 +27,31 @@ void main() {
   fft_data_t fft_output_pwr[N_DRAWN_BINS] = {0};
 
   while(1){
-    *LED = 0; //mm_status_regs->i2s_rx_out_desc_overflow;
+    *LED = (1<<0);
     
     // Read i2s samples (in DDR3 off chip)
-    i2s_sample_in_mem_t* samples = NULL;
+    i2s_sample_in_mem_t* samples_in_dram = NULL;
     int n_samples = 0;
-    i2s_read(&samples, &n_samples);
-
-    *LED = (1<<0);
-
-    // Copy samples into buffer and convert to input type as needed (in BRAM)
+    i2s_read(&samples_in_dram, &n_samples);
+    // Copy samples into BRAM DMEM buffer and convert to input type as needed
     n_samples = FRAME_WIDTH;
     for (size_t i = 0; i < n_samples; i++)
     {
       // I2S samples are 24b fixed point
-      fft_input_samples[i].real = ((samples[i].l >> (24-16)) + (samples[i].r >> (24-16))) >> 1;
+      fft_input_samples[i].real = ((samples_in_dram[i].l >> (24-16)) + (samples_in_dram[i].r >> (24-16))) >> 1;
       fft_input_samples[i].imag = 0;
     }
 
     *LED = (1<<1);
 
-    // Compute FFT
-    uint32_t start_time = mm_status_regs->cpu_clock;
-    //compute_fft_cc(fft_input_samples, fft_output);
-    // FFT result in AXI DDR RAM
-    // Copy fft output into buffer
+    // Read FFT result (in DDR3 off chip mem)
+    fft_out_t* fft_out_in_dram;
+    fft_read(&fft_out_in_dram, &n_samples);
+    // Copy fft output into BRAM DMEM buffer
     for (size_t i = 0; i < N_DRAWN_BINS; i++)
     {
-      fft_output[i] = ((fft_out_t*)FFT_OUT_ADDR)[i];
+      fft_output[i] = fft_out_in_dram[i];
     }
-    uint32_t end_time = mm_status_regs->cpu_clock;
-    mm_ctrl_regs->compute_fft_cycles = end_time - start_time;
     
     *LED = (1<<2);
 
@@ -70,6 +64,8 @@ void main() {
     draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_output_pwr, FB0);
     // Time domain waveform across top two thirds of display
     draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 2, fft_input_samples, n_samples, FB0);
+
+    *LED = 0;
     //count += 1;
   }
 }
