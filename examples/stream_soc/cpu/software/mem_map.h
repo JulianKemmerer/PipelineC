@@ -13,6 +13,7 @@
 #include "vga/pixel.h"
 #include "../../frame_buffers/software/frame_buf.h"
 #include "axi/axi_shared_bus.h" // For axi_descriptor_t
+#include "risc-v/mem_map.h" // For mm_handshake_read
 #include "../../i2s/software/mem_map.h"
 #include "../../fft/software/mem_map.h"
 #include "../../fft/software/fft_types.h"
@@ -79,6 +80,16 @@ static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)M
 #define MM_HANDSHAKE_VALID_ADDR MM_HANDSHAKE_DATA_END_ADDR
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
 #define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
+
+// TODO rewrite as void* and size of element int based function?
+// descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
+#define mm_axi_desc_read(desc_out_ptr, type_t, out_addr_ptr, out_nelems_ptr, desc_hs_name, MMIO_ADDR)\
+/* Read description of elements in memory*/\
+mm_handshake_read(desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
+/* gets pointer to elements in some MMIO space*/\
+*(out_addr_ptr) = (type_t*)((desc_out_ptr)->addr + (MMIO_ADDR));\
+/* and number of elements (in u32 word count)*/\
+*(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t)
 
 // Block RAMs
 #define MMIO_BRAM0

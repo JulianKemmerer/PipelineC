@@ -8,6 +8,7 @@
 // Not doing FFT in software right now but could...
 //#include "../fft/software/fft.c"
 #include "mem_map.h"
+// TODO how to organize the funcs in these headers?
 #include "../../i2s/software/i2s.h"
 #include "../../fft/software/fft_read.h"
 
@@ -47,7 +48,7 @@ void main() {
     // Read FFT result (in DDR3 off chip mem)
     fft_out_t* fft_out_in_dram;
     fft_read(&fft_out_in_dram, &n_samples);
-    // Copy fft output into BRAM DMEM buffer
+    // Copy fft output into BRAM DMEM buffer // TODO try without copy?
     for (size_t i = 0; i < N_DRAWN_BINS; i++)
     {
       fft_output[i] = fft_out_in_dram[i];
