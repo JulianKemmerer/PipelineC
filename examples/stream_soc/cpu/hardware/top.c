@@ -200,8 +200,16 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
 
-  // Handshake valid signals are sometimes auto set/cleared
-  mm_handshake_valid_t handshake_valid_reg_value = handshake_valid; // Before writes below
+  // Handshakes
+
+  // FFT output descriptors read from handshake into registers
+  // fft_out_desc handshake = fft_out_desc_written
+  HANDSHAKE_MM_READ(handshake_data, handshake_valid, fft_out_desc, fft_out_desc_written, fft_out_desc_written_ready)
+
+  #ifdef I2S_RX_MONITOR_PORT
+  // I2S samples descriptors read from handshake into registers
+  HANDSHAKE_MM_READ(handshake_data, handshake_valid, i2s_rx_out_desc, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
+  #endif
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
@@ -209,28 +217,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     STRUCT_MM_ENTRY_NEW(MM_STATUS_REGS_ADDR, mm_status_regs_t, status, status, addr, o.addr_is_mapped, o.rd_data)
     STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_DATA_ADDR, mm_handshake_data_t, handshake_data, handshake_data, addr, o.addr_is_mapped, o.rd_data)
     STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_VALID_ADDR, mm_handshake_valid_t, handshake_valid, handshake_valid, addr, o.addr_is_mapped, o.rd_data)
-  }
-
-  // TODO HANDSHAKE MACROs
-
-  // I2S samples descriptors
-  #ifdef I2S_RX_MONITOR_PORT
-  // TODO convert to stream FIFO
-  // Handshake data for cpu read written when ready got valid data
-  uint1_t i2s_rx_out_desc_rd_en = ~handshake_valid_reg_value.i2s_rx_out_desc;
-  i2s_rx_descriptors_monitor_fifo_read_t i2s_rx_out_desc_fifo =
-     i2s_rx_descriptors_monitor_fifo_READ_1(i2s_rx_out_desc_rd_en);
-  if(i2s_rx_out_desc_rd_en & i2s_rx_out_desc_fifo.valid){
-    handshake_data.i2s_rx_out_desc = i2s_rx_out_desc_fifo.data[0];
-    handshake_valid.i2s_rx_out_desc = 1;
-  }
-  #endif
-
-  // FFT output descriptors
-  fft_out_desc_written_ready = ~handshake_valid_reg_value.fft_out_desc;
-  if(fft_out_desc_written_ready & fft_out_desc_written.valid){
-    handshake_data.fft_out_desc = fft_out_desc_written.data;
-    handshake_valid.fft_out_desc = 1;
   }
 
   // BRAM0 instance

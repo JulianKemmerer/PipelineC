@@ -296,3 +296,9 @@ if(addr_var==ADDR){\
   }\
 }
 
+#define HANDSHAKE_MM_READ(hs_data_reg, hs_valid_reg, hs_data_name, stream_in, stream_ready_out)\
+stream_ready_out = ~hs_valid_reg.hs_data_name;\
+if(stream_ready_out & stream_in.valid){\
+  hs_data_reg.hs_data_name = stream_in.data;\
+  hs_valid_reg.hs_data_name = 1;\
+}

@@ -37,8 +37,7 @@ FIFO_FWFT(desc_fifo, axi_descriptor_t, I2S_LOOPBACK_DEMO_N_DESC)
 // Expose external port FIFO wires for reading RX sample descriptors
 // as they go through loopback in DDR mem
 #ifdef I2S_RX_MONITOR_PORT
-// TODO make i2s_rx_descriptors_monitor_fifo a stream fifo w macros for mem map too
-GLOBAL_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
 //  with extra signal to indicate if missed samples
 uint1_t i2s_rx_descriptors_out_monitor_overflow;
 #pragma ASYNC_WIRE i2s_rx_descriptors_out_monitor_overflow // Disable timing checks
@@ -144,21 +143,18 @@ void i2s_loopback_app(uint1_t reset_n)
   
   #ifdef I2S_RX_MONITOR_PORT
   // Monitor port for another application to use RX samples too
-  axi_descriptor_t montor_fifo_wr_data[1];
-  montor_fifo_wr_data[0] = rx_descriptors_out.data;
-  uint1_t monitor_fifo_wr_en = rx_descriptors_out.valid & rx_descriptors_out_ready;
-  i2s_rx_descriptors_monitor_fifo_write_t monitor_fifo_wr =
-    i2s_rx_descriptors_monitor_fifo_WRITE_1(montor_fifo_wr_data, monitor_fifo_wr_en);
-  if(monitor_fifo_wr_en){
-    if(~monitor_fifo_wr.ready){
-      i2s_rx_descriptors_out_monitor_overflow = 1;
-    }else{
-      i2s_rx_descriptors_out_monitor_overflow = 0;
-    }
+  i2s_rx_descriptors_monitor_fifo_in.data = rx_descriptors_out.data;
+  i2s_rx_descriptors_monitor_fifo_in.valid = rx_descriptors_out.valid & rx_descriptors_out_ready;
+  if(i2s_rx_descriptors_monitor_fifo_in.valid & ~i2s_rx_descriptors_monitor_fifo_in_ready){
+    i2s_rx_descriptors_out_monitor_overflow = 1;
+  }else{
+    i2s_rx_descriptors_out_monitor_overflow = 0;
   }
   #endif
 
   // Xilinx AXI DDR would be here in top to bottom data flow
+
+  // TODO dont need read out of samples from mem for loopback anymore...
 
   // FIFO holding description of memory locations to read TX samples from
   // Descriptor stream out of read fifo
