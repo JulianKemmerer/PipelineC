@@ -27,6 +27,11 @@ void main() {
   fft_out_t fft_output[NFFT] = {0};
   fft_data_t fft_output_pwr[N_DRAWN_BINS] = {0};
 
+  // TODO setup fft then in loop do read desc, update display, enq next des
+
+  // Configure FFT result AXIS sink to write to AXI DDR at specific address
+  fft_config_result((fft_out_t*)FFT_OUT_ADDR);
+
   while(1){
     *LED = (1<<0);
     
@@ -47,12 +52,14 @@ void main() {
 
     // Read FFT result (in DDR3 off chip mem)
     fft_out_t* fft_out_in_dram;
-    fft_read(&fft_out_in_dram, &n_samples);
+    fft_read_result(&fft_out_in_dram, &n_samples);
     // Copy fft output into BRAM DMEM buffer // TODO try without copy?
     for (size_t i = 0; i < N_DRAWN_BINS; i++)
     {
       fft_output[i] = fft_out_in_dram[i];
     }
+    // Confgure next FFT result output buffer at same place as current
+    fft_config_result(fft_out_in_dram); // Or (fft_out_t*)FFT_OUT_ADDR)...
     
     *LED = (1<<2);
 

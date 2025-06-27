@@ -203,8 +203,11 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // Handshakes
 
   // FFT output descriptors read from handshake into registers
-  // fft_out_desc handshake = fft_out_desc_written
-  HANDSHAKE_MM_READ(handshake_data, handshake_valid, fft_out_desc, fft_out_desc_written, fft_out_desc_written_ready)
+  // fft_out_desc_written handshake = fft_desc_written stream
+  HANDSHAKE_MM_READ(handshake_data, handshake_valid, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
+  // FFT descriptors to write stream written by handshake registers
+  // fft_in_desc_to_write stream = fft_desc_to_write handshake
+  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, handshake_data, handshake_valid, fft_desc_to_write)
 
   #ifdef I2S_RX_MONITOR_PORT
   // I2S samples descriptors read from handshake into registers

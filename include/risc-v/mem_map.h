@@ -3,8 +3,9 @@
 // Helpers for building memory maps
 // TODO move into risc-v.h?
 
-// TODO move macro to riscv mem map helper header?
-// Read hanshake helper macro
+// TODO move mm handshake macros to riscv mem map helper header?
+
+// Read handshake helper macro
 #define mm_handshake_read(out_ptr, hs_name) \
 /* Wait for valid data to show up */ \
 while(!mm_handshake_valid->hs_name){} \
@@ -13,7 +14,14 @@ while(!mm_handshake_valid->hs_name){} \
 /* Signal done with data */ \
 mm_handshake_valid->hs_name = 0
 
-// TODO write handshake helper macro
+// Write hanshake helper macro
+#define mm_handshake_write(hs_name, in_ptr) \
+/* Wait for buffer to be invalid=empty */\
+while(mm_handshake_valid->hs_name){} \
+/* Put input data into data reg */ \
+mm_handshake_data->hs_name = *in_ptr; \
+/* Signal data is valid now */ \
+mm_handshake_valid->hs_name = 1;
 
 // Base/default version without user types
 typedef struct mem_map_out_t
@@ -301,4 +309,11 @@ stream_ready_out = ~hs_valid_reg.hs_data_name;\
 if(stream_ready_out & stream_in.valid){\
   hs_data_reg.hs_data_name = stream_in.data;\
   hs_valid_reg.hs_data_name = 1;\
+}
+
+#define HANDSHAKE_MM_WRITE(stream_out, stream_ready_in, hs_data_reg, hs_valid_reg, hs_data_name)\
+stream_out.data = hs_data_reg.hs_data_name;\
+stream_out.valid = hs_valid_reg.hs_data_name;\
+if(stream_out.valid & stream_ready_in){\
+    hs_valid_reg.hs_data_name = 0;\
 }

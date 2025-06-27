@@ -63,11 +63,13 @@ static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_
 // MM Handshake registers
 typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_out_desc;
-  axi_descriptor_t fft_out_desc;
+  axi_descriptor_t fft_desc_to_write;
+  axi_descriptor_t fft_desc_written;
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
   uint32_t i2s_rx_out_desc;
-  uint32_t fft_out_desc;
+  uint32_t fft_desc_to_write;
+  uint32_t fft_desc_written;
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -81,7 +83,8 @@ static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)M
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
 #define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
 
-// TODO rewrite as void* and size of element int based function?
+// TODO rewrite desc helper macros as void* and size of element int based functions?
+
 // descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
 #define mm_axi_desc_read(desc_out_ptr, type_t, out_addr_ptr, out_nelems_ptr, desc_hs_name, MMIO_ADDR)\
 /* Read description of elements in memory*/\
@@ -90,6 +93,15 @@ mm_handshake_read(desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
 *(out_addr_ptr) = (type_t*)((desc_out_ptr)->addr + (MMIO_ADDR));\
 /* and number of elements (in u32 word count)*/\
 *(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t)
+
+// descriptor: desc_hs_name in MMIO_ADDR = type_t in_ptr,in_nelems
+#define mm_axi_desc_write(desc_out_ptr, desc_hs_name, MMIO_ADDR, type_t, in_ptr, in_nelems)\
+/* compute desc addr from input ptr addr */\
+(desc_out_ptr)->addr = (uint32_t)((uint8_t*)(in_ptr) - (MMIO_ADDR));\
+/* compare desc size from input nelems */\
+(desc_out_ptr)->num_words = (uint32_t)((in_nelems)*sizeof(type_t))/sizeof(uint32_t);\
+/* Write description of elements in memory*/\
+mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 
 // Block RAMs
 #define MMIO_BRAM0
