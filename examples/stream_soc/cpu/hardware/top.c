@@ -35,11 +35,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 #include "../../frame_buffers/hardware/dual_frame_buffer.c"
 #endif
 
-// I2S RX + TX code hard coded in loop back
-// Configured to use memory mapped addr offset in CPU's AXI0 region
-// also include extra port for samples right into FFT hardware
-#define I2S_RX_MONITOR_PORT
-#define I2S_RX_STREAM_MONITOR_PORT
+// I2S RX + TX code
 #include "../../i2s/hardware/i2s_axi.c"
 
 // Hardware for doing the full FFT
@@ -209,10 +205,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // fft_in_desc_to_write stream = fft_desc_to_write handshake
   HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, handshake_data, handshake_valid, fft_desc_to_write)
 
-  #ifdef I2S_RX_MONITOR_PORT
   // I2S samples descriptors read from handshake into registers
   HANDSHAKE_MM_READ(handshake_data, handshake_valid, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
-  #endif
   // I2S descriptors stream written from regs, i2s_rx_desc_to_write
   HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, handshake_data, handshake_valid, i2s_rx_desc_to_write)
 
@@ -663,7 +657,7 @@ riscv_out_t fsm_riscv(
 DEBUG_OUTPUT_REG_DECL(uint32_t, compute_fft_cycles)
 
 MAIN_MHZ(cpu_top, 62.5)
-void cpu_top(uint1_t areset)
+void cpu_top(uint1_t areset) // TODO replace reset with global top level wire port
 {
   // TODO drive or dont use reset during sim
   // Sync reset
@@ -677,9 +671,7 @@ void cpu_top(uint1_t areset)
   my_mmio_in_t in;
   in.status.button = 0; // TODO
   in.status.cpu_clock = cpu_clock;
-  #ifdef I2S_RX_MONITOR_PORT
   //in.status.i2s_rx_out_desc_overflow = xil_cdc2_bit(i2s_rx_descriptors_out_monitor_overflow); // CDC since async
-  #endif
   riscv_out_t out = fsm_riscv(reset, in);
 
   // Sim debug
