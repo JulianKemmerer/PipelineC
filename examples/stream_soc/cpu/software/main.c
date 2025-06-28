@@ -27,10 +27,16 @@ void main() {
   fft_out_t fft_output[NFFT] = {0};
   fft_data_t fft_output_pwr[N_DRAWN_BINS] = {0};
 
-  // TODO setup fft then in loop do read desc, update display, enq next des
-
   // Configure FFT result AXIS sink to write to AXI DDR at specific address
   fft_config_result((fft_out_t*)FFT_OUT_ADDR);
+
+  // Configure I2S_LOOPBACK_DEMO_N_DESC chunks of I2S samples to read
+  uint32_t i2s_addr = I2S_BUFFS_ADDR;
+  for(uint32_t i = 0; i < I2S_LOOPBACK_DEMO_N_DESC; i++)
+  {
+    i2s_rx_enq_write((i2s_sample_in_mem_t*)i2s_addr, NFFT);
+    i2s_addr += sizeof(i2s_sample_in_mem_t)*NFFT;
+  } 
 
   while(1){
     *LED = (1<<0);
@@ -40,13 +46,14 @@ void main() {
     int n_samples = 0;
     i2s_read(&samples_in_dram, &n_samples);
     // Copy samples into BRAM DMEM buffer and convert to input type as needed
-    n_samples = FRAME_WIDTH;
-    for (size_t i = 0; i < n_samples; i++)
+    for (size_t i = 0; i < FRAME_WIDTH; i++) // Only need to copy as much as will show in draw_waveform FRAME
     {
       // I2S samples are 24b fixed point
       fft_input_samples[i].real = ((samples_in_dram[i].l >> (24-16)) + (samples_in_dram[i].r >> (24-16))) >> 1;
       fft_input_samples[i].imag = 0;
     }
+    // Enqueue the buffer to be used for future rx samples writes
+    i2s_rx_enq_write(samples_in_dram, n_samples);
 
     *LED = (1<<1);
 

@@ -1,4 +1,5 @@
 #pragma once
+// TODO rename _loopback stuff to remove loopback just axi rx and tx
 // Configure i2s_axi_loopback.c to use memory mapped addr offset in CPU's AXI0 region
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
 #define I2S_LOOPBACK_DEMO_N_SAMPLES NFFT // Match FFT size

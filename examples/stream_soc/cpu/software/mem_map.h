@@ -61,13 +61,24 @@ static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_
 // Separate handshake data regs 
 // so not mixed in with strictly simple in or out status and ctrl registers
 // MM Handshake registers
+// TODO switch to structs of axi_descriptor_t+u32valid flag ...why not done originally?
 typedef struct mm_handshake_data_t{ 
-  axi_descriptor_t i2s_rx_out_desc;
+  axi_descriptor_t i2s_rx_desc_to_write;
+  axi_descriptor_t i2s_rx_desc_written;
+  //
+  // I2S TX unused for now axi_descriptor_t i2s_tx_desc_to_read;
+  // I2S TX unused for now axi_descriptor_t i2s_tx_desc_read_from;
+  //
   axi_descriptor_t fft_desc_to_write;
   axi_descriptor_t fft_desc_written;
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
-  uint32_t i2s_rx_out_desc;
+  uint32_t i2s_rx_desc_to_write;
+  uint32_t i2s_rx_desc_written;
+  //
+  // I2S TX unused for now uint32_t i2s_tx_desc_to_read;
+  // I2S TX unused for now uint32_t i2s_tx_desc_read_from;
+  //
   uint32_t fft_desc_to_write;
   uint32_t fft_desc_written;
 }mm_handshake_valid_t;

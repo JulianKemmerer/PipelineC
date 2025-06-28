@@ -15,6 +15,7 @@
 // Logic for converting the samples stream to-from MAC to-from 32b chunks
 #include "i2s/i2s_32b.h"
 
+// TODO rename _loopback stuff after removing loopback ...
 // Where to put samples for demo?
 #ifndef I2S_LOOPBACK_DEMO_SAMPLES_ADDR
 #define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
@@ -31,8 +32,8 @@
 //#include "/axi/axi_shared_bus.h"
 #include "../../shared_ddr/hardware/axi_xil_mem.c"
 
-// Declare a fifo to instantiate for holding descriptors
-FIFO_FWFT(desc_fifo, axi_descriptor_t, I2S_LOOPBACK_DEMO_N_DESC)
+// Globally visible fifo as input port for I2S RX desc to be written
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, I2S_LOOPBACK_DEMO_N_DESC)
 
 // Expose external port FIFO wires for reading RX sample descriptors
 // as they go through loopback in DDR mem
@@ -62,9 +63,9 @@ void i2s_loopback_app(uint1_t reset_n)
   uint1_t mac_rx_samples_ready;
   #pragma FEEDBACK mac_rx_samples_ready
   //  TX Ready,Data+Valid handshake
-  uint1_t mac_tx_samples_ready;
+  //uint1_t mac_tx_samples_ready;
   stream(i2s_samples_t) mac_tx_samples;
-  #pragma FEEDBACK mac_tx_samples
+  //#pragma FEEDBACK mac_tx_samples
 
   // Read I2S PMOD inputs
   i2s_to_app_t from_i2s;
@@ -77,7 +78,7 @@ void i2s_loopback_app(uint1_t reset_n)
     from_i2s
   );
   mac_rx_samples = mac.rx.samples;
-  mac_tx_samples_ready = mac.tx.samples_ready;
+  //mac_tx_samples_ready = mac.tx.samples_ready;
 
   // Write I2S PMOD outputs
   i2s_tx_lrck = mac.to_i2s.tx_lrck;
@@ -103,59 +104,26 @@ void i2s_loopback_app(uint1_t reset_n)
   mac_rx_samples_ready = rx_to_u32.ready_for_samples; // FEEDBACK
   rx_u32_stream = rx_to_u32.out_stream;
 
-  // FIFO holding description of memory locations to write RX samples into
-  // Descriptor stream into write fifo
-  //  Ready,Data+Valid handshake
-  uint1_t wr_desc_fifo_in_stream_ready;
-  stream(axi_descriptor_t) wr_desc_fifo_in_stream;
-  #pragma FEEDBACK wr_desc_fifo_in_stream
-  // Descriptor stream out of write fifo
-  //  Data+Valid,Ready handshake
-  stream(axi_descriptor_t) wr_desc_fifo_out_stream;
-  uint1_t wr_desc_fifo_out_stream_ready;
-  #pragma FEEDBACK wr_desc_fifo_out_stream_ready
-  desc_fifo_t desc_to_write_fifo_out = desc_fifo(
-    wr_desc_fifo_out_stream_ready,
-    wr_desc_fifo_in_stream.data,
-    wr_desc_fifo_in_stream.valid
-  );
-  wr_desc_fifo_out_stream.data = desc_to_write_fifo_out.data_out;
-  wr_desc_fifo_out_stream.valid = desc_to_write_fifo_out.data_out_valid;
-  wr_desc_fifo_in_stream_ready = desc_to_write_fifo_out.data_in_ready;
-  
   // Received samples written to AXI mem
   // Stream of rx descriptors in
   // what memory will be written with received samples?
   //  Data+Valid,Ready handshake
   stream(axi_descriptor_t) rx_descriptors_out;
-  uint1_t rx_descriptors_out_ready;
-  #pragma FEEDBACK rx_descriptors_out_ready
   axi_stream_to_writes_t to_axi_wr = u32_stream_to_axi_writes(
-    wr_desc_fifo_out_stream, // Input stream of descriptors to write
+    i2s_rx_desc_to_write_fifo_out, // Input stream of descriptors to write
     rx_u32_stream, // Input data stream to write (from I2S MAC)
-    rx_descriptors_out_ready, // Ready for output stream of descriptors written
+    i2s_rx_descriptors_monitor_fifo_in_ready, // Ready for output stream of descriptors written
     dev_to_host(axi_xil_mem, i2s).write // Inputs for write side of AXI bus
   );
-  wr_desc_fifo_out_stream_ready = to_axi_wr.ready_for_descriptors_in; // FEEDBACK
+  i2s_rx_desc_to_write_fifo_out_ready = to_axi_wr.ready_for_descriptors_in;
   rx_u32_stream_ready = to_axi_wr.ready_for_data_stream; // FEEDBACK
-  rx_descriptors_out = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
+  i2s_rx_descriptors_monitor_fifo_in = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
   host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
-  
-  #ifdef I2S_RX_MONITOR_PORT
-  // Monitor port for another application to use RX samples too
-  i2s_rx_descriptors_monitor_fifo_in.data = rx_descriptors_out.data;
-  i2s_rx_descriptors_monitor_fifo_in.valid = rx_descriptors_out.valid & rx_descriptors_out_ready;
-  if(i2s_rx_descriptors_monitor_fifo_in.valid & ~i2s_rx_descriptors_monitor_fifo_in_ready){
-    i2s_rx_descriptors_out_monitor_overflow = 1;
-  }else{
-    i2s_rx_descriptors_out_monitor_overflow = 0;
-  }
-  #endif
 
   // Xilinx AXI DDR would be here in top to bottom data flow
-
-  // TODO dont need read out of samples from mem for loopback anymore...
-
+  
+  // UNUSED TX
+  /*
   // FIFO holding description of memory locations to read TX samples from
   // Descriptor stream out of read fifo
   //  Data+Valid,Ready handshake
@@ -202,22 +170,7 @@ void i2s_loopback_app(uint1_t reset_n)
   tx_u32_stream_ready = tx_from_u32.ready_for_data_in; // FEEDBACK
   // Feedback samples for transmit
   mac_tx_samples = tx_from_u32.out_stream; // FEEDBACK
-
-  // FSM to insert some descriptors at power on
-  static uint32_t init_desc_addr = I2S_LOOPBACK_DEMO_SAMPLES_ADDR;
-  uint32_t init_desc_n_samples = I2S_LOOPBACK_DEMO_N_SAMPLES;
-  uint32_t init_desc_size = init_desc_n_samples * sizeof(i2s_sample_in_mem_t);
-  static uint32_t num_init_desc = I2S_LOOPBACK_DEMO_N_DESC;
-  if(num_init_desc > 0){
-    // FEEDBACK
-    wr_desc_fifo_in_stream.data.addr = init_desc_addr;
-    wr_desc_fifo_in_stream.data.num_words = init_desc_size / sizeof(uint32_t);
-    wr_desc_fifo_in_stream.valid = 1;
-    if(wr_desc_fifo_in_stream_ready){
-      init_desc_addr += init_desc_size;
-      num_init_desc -= 1;
-    }
-  }
+  */
   
   /* // Detect overflow 
   leds = uint1_4(overflow); // Light up LEDs 0-3 if overflow

@@ -211,8 +211,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   #ifdef I2S_RX_MONITOR_PORT
   // I2S samples descriptors read from handshake into registers
-  HANDSHAKE_MM_READ(handshake_data, handshake_valid, i2s_rx_out_desc, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
+  HANDSHAKE_MM_READ(handshake_data, handshake_valid, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
   #endif
+  // I2S descriptors stream written from regs, i2s_rx_desc_to_write
+  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, handshake_data, handshake_valid, i2s_rx_desc_to_write)
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
