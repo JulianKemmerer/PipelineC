@@ -30,9 +30,9 @@ void main() {
   // Configure FFT result AXIS sink to write to AXI DDR at specific address
   fft_config_result((fft_out_t*)FFT_OUT_ADDR);
 
-  // Configure I2S_LOOPBACK_DEMO_N_DESC chunks of I2S samples to read
+  // Configure chunks of I2S samples to read
   uint32_t i2s_addr = I2S_BUFFS_ADDR;
-  for(uint32_t i = 0; i < I2S_LOOPBACK_DEMO_N_DESC; i++)
+  for(uint32_t i = 0; i < I2S_N_DESC; i++)
   {
     i2s_rx_enq_write((i2s_sample_in_mem_t*)i2s_addr, NFFT);
     i2s_addr += sizeof(i2s_sample_in_mem_t)*NFFT;

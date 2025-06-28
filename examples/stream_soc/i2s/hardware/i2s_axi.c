@@ -15,17 +15,8 @@
 // Logic for converting the samples stream to-from MAC to-from 32b chunks
 #include "i2s/i2s_32b.h"
 
-// TODO rename _loopback stuff after removing loopback ...
-// Where to put samples for demo?
-#ifndef I2S_LOOPBACK_DEMO_SAMPLES_ADDR
-#define I2S_LOOPBACK_DEMO_SAMPLES_ADDR 0
-#endif
-#ifndef I2S_LOOPBACK_DEMO_N_SAMPLES
-#define I2S_LOOPBACK_DEMO_N_SAMPLES 64
-#endif
-#ifndef I2S_LOOPBACK_DEMO_N_DESC
-#define I2S_LOOPBACK_DEMO_N_DESC 16 // 16 is good min, since xilinx async fifo min size 16
-#endif
+// Constants for where to put samples in memory
+#include "../software/mem_map.h"
 
 // Library wrapping AXI bus
 // https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
@@ -33,26 +24,24 @@
 #include "../../shared_ddr/hardware/axi_xil_mem.c"
 
 // Globally visible fifo as input port for I2S RX desc to be written
-GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, I2S_LOOPBACK_DEMO_N_DESC)
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, I2S_N_DESC)
 
 // Expose external port FIFO wires for reading RX sample descriptors
-// as they go through loopback in DDR mem
-#ifdef I2S_RX_MONITOR_PORT
-GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_LOOPBACK_DEMO_N_DESC)
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_N_DESC)
 //  with extra signal to indicate if missed samples
 uint1_t i2s_rx_descriptors_out_monitor_overflow;
 #pragma ASYNC_WIRE i2s_rx_descriptors_out_monitor_overflow // Disable timing checks
-#endif
 
 // Also expose direct stream wires of samples from I2S RX
 // for ex. right into FFT hardware
-#ifdef I2S_RX_STREAM_MONITOR_PORT
 stream(i2s_samples_t) i2s_rx_samples_monitor_stream;
-#endif
 
-// AXI loopback
-MAIN_MHZ(i2s_loopback_app, I2S_MCLK_MHZ)
-void i2s_loopback_app(uint1_t reset_n)
+// Need reset specific for I2S clock domain?
+DECL_INPUT(uint1_t, i2s_reset_n)
+
+// AXI
+MAIN_MHZ(i2s_axi_main, I2S_MCLK_MHZ)
+void i2s_axi_main()
 {
   // Debug reg to light up leds if overflow occurs
   static uint1_t overflow;
@@ -72,7 +61,7 @@ void i2s_loopback_app(uint1_t reset_n)
   from_i2s.rx_data = i2s_rx_data;
   
   // Instance of I2S MAC
-  i2s_mac_t mac = i2s_mac(reset_n, 
+  i2s_mac_t mac = i2s_mac(i2s_reset_n, 
     mac_rx_samples_ready, 
     mac_tx_samples, 
     from_i2s
@@ -88,10 +77,8 @@ void i2s_loopback_app(uint1_t reset_n)
   i2s_rx_sclk = mac.to_i2s.rx_sclk;
 
   // External stream port for samples
-  #ifdef I2S_RX_STREAM_MONITOR_PORT
   i2s_rx_samples_monitor_stream.data = mac_rx_samples.data;
   i2s_rx_samples_monitor_stream.valid = mac_rx_samples.valid & mac_rx_samples_ready;
-  #endif 
 
   // Received samples to u32 stream
   //  u32 Data+Valid,Ready handshake
@@ -180,7 +167,7 @@ void i2s_loopback_app(uint1_t reset_n)
   }*/
   
   // Reset registers
-  if(!reset_n)
+  if(!i2s_reset_n)
   {
     overflow = 0;
   }
