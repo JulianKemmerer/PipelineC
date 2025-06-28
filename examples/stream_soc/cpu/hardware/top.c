@@ -40,7 +40,7 @@ DECL_4BYTE_RAM_SP_RF_1(
 // also include extra port for samples right into FFT hardware
 #define I2S_RX_MONITOR_PORT
 #define I2S_RX_STREAM_MONITOR_PORT
-#include "../../i2s/hardware/i2s_axi_loopback.c"
+#include "../../i2s/hardware/i2s_axi.c"
 
 // Hardware for doing the full FFT
 #include "../../fft/hardware/fft.c"
