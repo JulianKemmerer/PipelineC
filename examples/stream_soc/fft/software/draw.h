@@ -1,6 +1,7 @@
 
 // Draw shapes in frame buffer
 #include "../../frame_buffers/software/draw.h"
+#include "i2s/i2s_32b.h"
 
 // Spectrum is rect bins
 // Real freq part of spectrum is NFFT/2
@@ -61,7 +62,7 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins, volatile pixel_t
   }
 }
 // Waveform is n pixel wide rects to form line
-void draw_waveform(int width, int height, int line_width, fft_in_t* input_samples, int n_samples, volatile pixel_t* FB){
+void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i2s_input_samples, int n_samples, volatile pixel_t* FB){
   // line_width used in y height direction
   // How wide is each point forming line
   int point_width = width / n_samples;
@@ -84,16 +85,18 @@ void draw_waveform(int width, int height, int line_width, fft_in_t* input_sample
   }
   for (size_t i = 0; i < n_samples; i++)
   {
+    fft_in_t sample;
+    sample.real = ((i2s_input_samples[i].l >> (24-16)) + (i2s_input_samples[i].r >> (24-16))) >> 1;
     // Calc x position, gone too far?
     int x_start = i * point_width;
     int x_end = (i+1) * point_width;
     if(x_end>FRAME_WIDTH) break;
     // Calc line current y pos
-    int sample_abs = abs(input_samples[i].real);
+    int sample_abs = abs(sample.real);
     if(sample_abs > max_abs_sample){
       max_abs_sample = sample_abs;
     }
-    int ampl = (wav_height * input_samples[i].real)/max_abs_sample;
+    int ampl = (wav_height * sample.real)/max_abs_sample;
     ampl = ampl * 2; // Scale x2 since rarely near max vol?
     int y_val = y_mid - ampl; // y inverted 0,0 top left
     if(y_val < 0) y_val = 0;

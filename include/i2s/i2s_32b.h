@@ -1,3 +1,4 @@
+#pragma once
 // Code for converting i2s stream to and from 32b chunks, ex for AXI
 #include "uintN_t.h"
 #include "arrays.h"
