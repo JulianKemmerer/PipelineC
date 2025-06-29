@@ -5,7 +5,8 @@
 
 // TODO move mm handshake macros to riscv mem map helper header?
 
-// Read handshake helper macro
+// Read handshake helper macros
+
 #define mm_handshake_read(out_ptr, hs_name) \
 /* Wait for valid data to show up */ \
 while(!mm_handshake_valid->hs_name){} \
@@ -13,6 +14,17 @@ while(!mm_handshake_valid->hs_name){} \
 *(out_ptr) = mm_handshake_data->hs_name; \
 /* Signal done with data */ \
 mm_handshake_valid->hs_name = 0
+
+#define mm_handshake_try_read(success_ptr, out_ptr, hs_name) \
+*(success_ptr) = 0;\
+if(mm_handshake_valid->hs_name){\
+  /* Copy the data to output */ \
+  *(out_ptr) = mm_handshake_data->hs_name; \
+  /* Signal done with data */ \
+  mm_handshake_valid->hs_name = 0;\
+  /* Set success */ \
+  *(success_ptr) = 1;\
+}
 
 // Write hanshake helper macro
 #define mm_handshake_write(hs_name, in_ptr) \

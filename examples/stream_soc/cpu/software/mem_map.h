@@ -105,6 +105,17 @@ mm_handshake_read(desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
 /* and number of elements (in u32 word count)*/\
 *(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t)
 
+// success ? descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
+#define mm_axi_desc_try_read(success_ptr, desc_out_ptr, type_t, out_addr_ptr, out_nelems_ptr, desc_hs_name, MMIO_ADDR)\
+/* Read description of elements in memory*/\
+mm_handshake_try_read(success_ptr, desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
+if(*(success_ptr)){\
+  /* gets pointer to elements in some MMIO space*/\
+  *(out_addr_ptr) = (type_t*)((desc_out_ptr)->addr + (MMIO_ADDR));\
+  /* and number of elements (in u32 word count)*/\
+  *(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t);\
+}
+
 // descriptor: desc_hs_name in MMIO_ADDR = type_t in_ptr,in_nelems
 #define mm_axi_desc_write(desc_out_ptr, desc_hs_name, MMIO_ADDR, type_t, in_ptr, in_nelems)\
 /* compute desc addr from input ptr addr */\
