@@ -3673,8 +3673,80 @@ package c_structs_pkg is
     max_bit_width = 2048  # Stolen from GENERATE_INT_N_HEADERS that was once run
     for i in range(max_bit_width):
         text += f"subtype uint{i+1}_t is unsigned({i} downto 0);\n"
+        text += (
+            "constant uint"
+            + str(i + 1)
+            + "_t_SLV_LEN : integer := "
+            + str(i + 1)
+            + ";\n"
+        )
+        to_slv_func_sig = (
+            "function uint"
+            + str(i + 1)
+            + "_t_to_slv(x : uint"
+            + str(i + 1)
+            + "_t) return std_logic_vector"
+        )
+        to_slv_func_pkg_body_text = f"""  variable rv : std_logic_vector({str(i)} downto 0);
+begin
+  rv := std_logic_vector(x);
+  return rv;
+end function;
+"""
+        text += to_slv_func_sig + ";\n"
+        pkg_body_text += to_slv_func_sig + " is\n"
+        pkg_body_text += to_slv_func_pkg_body_text
+        slv_to_func_sig = (
+            "function slv_to_uint"
+            + str(i + 1)
+            + "_t(x : std_logic_vector) return uint"
+            + str(i + 1)
+            + "_t"
+        )
+        slv_to_func_pkg_body_text = f"""  variable rv : uint{str(i + 1)}_t;
+begin
+    rv := unsigned(x);
+    return rv;
+end function;
+"""
+        text += slv_to_func_sig + ";\n"
+        pkg_body_text += slv_to_func_sig + " is\n"
+        pkg_body_text += slv_to_func_pkg_body_text
         if i > 0:
             text += f"subtype int{i+1}_t is signed({i} downto 0);\n"
+            text += (
+                "constant int"
+                + str(i + 1)
+                + "_t_SLV_LEN : integer := "
+                + str(i + 1)
+                + ";\n"
+            )
+            to_slv_func_sig = (
+                "function int"
+                + str(i + 1)
+                + "_t_to_slv(x : int"
+                + str(i + 1)
+                + "_t) return std_logic_vector"
+            )
+            text += to_slv_func_sig + ";\n"
+            pkg_body_text += to_slv_func_sig + " is\n"
+            pkg_body_text += to_slv_func_pkg_body_text
+            slv_to_func_sig = (
+                "function slv_to_int"
+                + str(i + 1)
+                + "_t(x : std_logic_vector) return int"
+                + str(i + 1)
+                + "_t"
+            )
+            slv_to_func_pkg_body_text = f"""  variable rv : int{str(i + 1)}_t;
+begin
+    rv := signed(x);
+    return rv;
+end function;
+"""
+            text += slv_to_func_sig + ";\n"
+            pkg_body_text += slv_to_func_sig + " is\n"
+            pkg_body_text += slv_to_func_pkg_body_text
 
     # Byte array type to be sub typed for u8 and char array
     # TODO for all other array types
