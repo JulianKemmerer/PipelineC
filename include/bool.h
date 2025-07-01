@@ -2,9 +2,6 @@
 
 #ifndef __PIPELINEC__
 #include <stdbool.h>
-#ifndef __cplusplus
-#define uint1_t bool
-#endif
 
 #else // __PIPELINEC__
 

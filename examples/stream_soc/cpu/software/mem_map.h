@@ -125,6 +125,15 @@ if(*(success_ptr)){\
 /* Write description of elements in memory*/\
 mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 
+// Byte sized version of above
+#define mm_axi_desc_sized_write(desc_out_ptr, desc_hs_name, MMIO_ADDR, total_size, in_ptr)\
+/* compute desc addr from input ptr addr */\
+(desc_out_ptr)->addr = (uint32_t)((void*)(in_ptr) - (MMIO_ADDR));\
+/* compare desc size from input nelems */\
+(desc_out_ptr)->num_words = (uint32_t)(total_size)/sizeof(uint32_t);\
+/* Write description of elements in memory*/\
+mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
+
 // Block RAMs
 #define MMIO_BRAM0
 #ifdef MMIO_BRAM0

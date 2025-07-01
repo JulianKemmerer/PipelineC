@@ -1,6 +1,7 @@
-// gcc fft_demo.c -lm -o fft_demo && ./fft_demo
+// gcc fft_demo.c -lm -o fft_demo -I/media/1TB/Dropbox/PipelineC/git/PipelineC/include && ./fft_demo
 #include "fft.h"
 #include "fft.c"
+#include "power.h"
 
 // Set sample rate for working out units
 #define SAMPLE_RATE_INT_HZ 44100 // Fs in integer Hz

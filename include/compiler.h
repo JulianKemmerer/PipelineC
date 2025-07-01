@@ -61,6 +61,10 @@ FLOOR((float)(N)/(float)(D))
 #define __attribute__(x)
 #endif
 
+// Helper for converting while loops to for loops
+#define limited_while(cond, iter, N)\
+for(uint32_t iter = 0; iter < (N); iter+=1) if(cond)
+
 // Pragma helpers
 #define PRAGMA_MESSAGE_(x) _Pragma(#x)
 #define PRAGMA_MESSAGE(x) PRAGMA_MESSAGE_(x)
