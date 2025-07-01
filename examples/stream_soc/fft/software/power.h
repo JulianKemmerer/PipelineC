@@ -1,6 +1,7 @@
 #pragma once
 #include "compiler.h"
 #include "uintN_t.h"
+#include "fft_types.h"
 
 // https://github.com/chmike/fpsqrt/blob/master/fpsqrt.c
 int32_t fixed_sqrt(int32_t v) {
