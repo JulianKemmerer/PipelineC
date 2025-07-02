@@ -247,7 +247,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     #ifdef MMIO_AXI0
     #ifdef MMIO_AXI0_RAW_HAZZARD
     // Hazzard doesnt wait for writes to finish. Ignores/drains responses
-    host_clk_to_dev(axi_xil_mem).write.resp_ready = 1;
+    host_to_dev(axi_xil_mem, cpu).write.resp_ready = 1;
     #endif
     if(mmio_type_is_axi0){
       #ifdef MMIO_AXI0_RAW_HAZZARD
@@ -256,8 +256,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
         o.valid = 1;
       }else{
         // Regular read wait for valid response
-        host_clk_to_dev(axi_xil_mem).read.data_ready = ready_for_outputs;
-        o.valid = dev_to_host_clk(axi_xil_mem).read.data.valid;
+        host_to_dev(axi_xil_mem, cpu).read.data_ready = ready_for_outputs;
+        o.valid = dev_to_host(axi_xil_mem, cpu).read.data.valid;
       }
       #else // Normal wait for mem to properly finish both reads or writes
       // Signal ready for both read and write responses
