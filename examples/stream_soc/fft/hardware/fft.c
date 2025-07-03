@@ -9,14 +9,17 @@
 #include "axi/axis.h"
 #include "../software/power.h"
 
+// FFT C code to be instantiated in hardware
+#include "../../fft/software/fft.h"
+
 // Code wrapping AXI bus to DDR via Xilinx memory controller
 // https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
 //#include "examples/shared_resource_bus/axi_shared_bus.h"
 #include "../../shared_ddr/hardware/axi_xil_mem.c"
 
 // The core FFT hardware
-#define FFT_CLK_MHZ 120.0
-#define FFT_CLK_2X_MHZ 240.0
+#define FFT_CLK_MHZ 110.0
+#define FFT_CLK_2X_MHZ 220.0
 #include "fft_2pt_2x_clk.c"
 
 // Connect I2S samples stream into samples fifo for FFT here

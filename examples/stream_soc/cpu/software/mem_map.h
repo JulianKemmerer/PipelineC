@@ -10,6 +10,7 @@
 #include <stddef.h>
 #endif
 
+// TODO organize includes
 #include "vga/pixel.h"
 #include "../../frame_buffers/software/frame_buf.h"
 #include "axi/axi_shared_bus.h" // For axi_descriptor_t
@@ -61,7 +62,7 @@ static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_
 // Separate handshake data regs 
 // so not mixed in with strictly simple in or out status and ctrl registers
 // MM Handshake registers
-// TODO switch to structs of axi_descriptor_t+u32valid flag ...why not done originally?
+// TODO have memory map struct provided by fft,i2s modules that includes handshake fields etc
 typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_desc_to_write;
   axi_descriptor_t i2s_rx_desc_written;
@@ -134,20 +135,8 @@ mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 /* Write description of elements in memory*/\
 mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 
-// Block RAMs
-#define MMIO_BRAM0
-#ifdef MMIO_BRAM0
-#define MMIO_BRAM0_SIZE 1024
-#define MMIO_BRAM0_ADDR MM_HANDSHAKE_VALID_END_ADDR
-#define MMIO_BRAM0_INIT "(others => (others => '0'))"
-static volatile uint8_t* BRAM0 = (uint8_t*)MMIO_BRAM0_ADDR;
-#define MMIO_BRAM0_END_ADDR (MMIO_BRAM0_ADDR+MMIO_BRAM0_SIZE)
-#endif
-
 // AXI buses (type of shared resource bus)
-#define MMIO_AXI0
-#ifdef MMIO_AXI0
-#define MMIO_AXI0_ADDR MMIO_BRAM0_END_ADDR
+#define MMIO_AXI0_ADDR MM_HANDSHAKE_VALID_END_ADDR
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
 static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
@@ -169,4 +158,3 @@ static volatile pixel_t* FB0 = (pixel_t*)FB0_ADDR;
 // turn off waiting for writes to finish and create a RAW hazzard
 // Do not read after write (not reliable to read back data after write has supposedly 'finished')
 //#define MMIO_AXI0_RAW_HAZZARD
-#endif
