@@ -5,18 +5,12 @@
 #include "fifo.h"
 #include "compiler.h"
 
-// LEDs for debug
-#include "leds/leds_port.c"
-
 // Include I2S 'media access controller' (PMOD+de/serializer logic)
 #include "i2s/i2s_regs.c"
 #include "i2s/i2s_mac.c"
 
 // Logic for converting the samples stream to-from MAC to-from 32b chunks
 #include "i2s/i2s_32b.h"
-
-// Constants for where to put samples in memory
-#include "../software/mem_map.h"
 
 // Include types for axi shared bus axi_shared_bus_t
 #include "axi/axi_shared_bus.h"
@@ -25,10 +19,10 @@ axi_shared_bus_t_dev_to_host_t i2s_axi_host_from_dev;
 axi_shared_bus_t_host_to_dev_t i2s_axi_host_to_dev;
 
 // Globally visible fifo as input port for I2S RX desc to be written
-GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, I2S_N_DESC)
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, 16)
 
 // Expose external port FIFO wires for reading RX sample descriptors
-GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, I2S_N_DESC)
+GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, 16)
 //  with extra signal to indicate if missed samples
 uint1_t i2s_rx_descriptors_out_monitor_overflow;
 #pragma ASYNC_WIRE i2s_rx_descriptors_out_monitor_overflow // Disable timing checks

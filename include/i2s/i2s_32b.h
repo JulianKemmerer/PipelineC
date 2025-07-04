@@ -7,6 +7,8 @@
 #include "stream/deserializer.h"
 #include "i2s/i2s_samples.h"
 
+DECL_STREAM_TYPE(uint32_t)
+
 // Type for the unpacked, aligned, easy to debug samples data as layed out in memory
 typedef struct i2s_sample_in_mem_t{
   int32_t l;

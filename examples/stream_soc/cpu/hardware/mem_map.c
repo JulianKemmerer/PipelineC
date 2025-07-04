@@ -9,7 +9,7 @@
 // Declares AXI shared resource bus wires
 //   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
 #define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
-#include "../../frame_buffers/hardware/dual_frame_buffer.c"
+#include "../../frame_buffers/hardware/frame_buffers.c"
 
 // Connect I2S to AXI bus (in I2S clock domain)
 #pragma MAIN i2s_axi_connect

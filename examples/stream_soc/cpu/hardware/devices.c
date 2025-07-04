@@ -1,7 +1,7 @@
 // Devices attached to the CPU
 
 // I2S RX + TX code
-#include "../../i2s/hardware/i2s_axi.c"
+#include "../../i2s/hardware/i2s.c"
 
 // Hardware for doing the full FFT
 #include "../../fft/hardware/fft.c"

@@ -1,8 +1,7 @@
 // Top level of stream soc cpu
-#include "uintN_t.h"
-#include "intN_t.h"
-#include "stream/stream.h"
-DECL_STREAM_TYPE(uint32_t)
+
+// CDC helpers for reset
+#include "cdc.h"
 
 // Top level configuration, IO etc
 #include "top.h"
@@ -17,10 +16,10 @@ DECL_STREAM_TYPE(uint32_t)
 #include "fsm_riscv.c"
 
 // Wire up instance of fsm_riscv CPU
+
 // LEDs for demo
 #include "leds/leds_port.c"
-// CDC for reset
-#include "cdc.h"
+
 // FFT speed measure connected to debug chipscope reg
 MAIN_MHZ(cpu_top, 62.5)
 void cpu_top(uint1_t areset) // TODO replace reset with global top level wire port
