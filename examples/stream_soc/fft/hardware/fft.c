@@ -12,23 +12,16 @@
 // FFT C code to be instantiated in hardware
 #include "../../fft/software/fft.h"
 
-// Code wrapping AXI bus to DDR via Xilinx memory controller
-// https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
-//#include "examples/shared_resource_bus/axi_shared_bus.h"
-#include "../../shared_ddr/hardware/axi_xil_mem.c"
+// Include types for axi shared bus axi_shared_bus_t
+#include "axi/axi_shared_bus.h"
+// Globally visible AXI bus for this module
+axi_shared_bus_t_dev_to_host_t fft_axi_host_from_dev;
+axi_shared_bus_t_host_to_dev_t fft_axi_host_to_dev;
 
 // The core FFT hardware
 #define FFT_CLK_MHZ 110.0
 #define FFT_CLK_2X_MHZ 220.0
 #include "fft_2pt_2x_clk.c"
-
-// Connect I2S samples stream into samples fifo for FFT here
-// (little bit of glue in the I2S clock domain)
-#pragma MAIN i2s_to_fft_connect
-#pragma FUNC_WIRES i2s_to_fft_connect
-void i2s_to_fft_connect(){
-  samples_fifo_in = i2s_rx_samples_monitor_stream;
-}
 
 // Instance of pipeline for computing power from FFT output
 DECL_STREAM_TYPE(fft_out_t)
@@ -78,10 +71,10 @@ void fft_to_ddr_connect()
     fft_in_desc_to_write, // Input stream of descriptors to write
     out_as_u32, // Input data stream to write
     fft_out_desc_written_ready, // Ready for output stream of descriptors written
-    dev_to_host(axi_xil_mem, cpu).write // Inputs for write side of AXI bus
+    fft_axi_host_from_dev.write // Inputs for write side of AXI bus
   );
   fft_in_desc_to_write_ready = to_axi_wr.ready_for_descriptors_in;
   fft_out_desc_written = to_axi_wr.descriptors_out_stream;
   ready_for_out_as_u32 = to_axi_wr.ready_for_data_stream; // FEEDBACK
-  host_to_dev(axi_xil_mem, cpu).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus  
+  fft_axi_host_to_dev.write = to_axi_wr.to_dev; // Outputs for write side of AXI bus  
 }

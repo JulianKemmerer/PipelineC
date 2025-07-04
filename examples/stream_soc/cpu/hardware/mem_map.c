@@ -4,7 +4,26 @@
 // Include memory map to implement in hardware
 #include "../software/mem_map.h"
 
-// TODO connect MAINs for driving host_to_dev(axi_xil_mem, cpu) etc to/from devices
+// AXI buses as specified by user memory mappings
+// Include code for Xilinx DDR AXI shared resource bus as frame buffer example
+// Declares AXI shared resource bus wires
+//   host_clk_to_dev(axi_xil_mem) and dev_to_host_clk(axi_xil_mem)
+#define AXI_RAM_MODE_DDR // Configure frame buffer to use Xilinx AXI DDR RAM (not bram)
+#include "../../frame_buffers/hardware/dual_frame_buffer.c"
+
+// Connect I2S to AXI bus (in I2S clock domain)
+#pragma MAIN i2s_axi_connect
+void i2s_axi_connect(){
+  host_to_dev(axi_xil_mem, i2s) = i2s_axi_host_to_dev;
+  i2s_axi_host_from_dev = dev_to_host(axi_xil_mem, i2s);
+}
+
+// Connect FFT to AXI bus (in CPU clock domain)
+#pragma MAIN fft_axi_connect
+void fft_axi_connect(){
+  host_to_dev(axi_xil_mem, cpu) = fft_axi_host_to_dev;
+  fft_axi_host_from_dev = dev_to_host(axi_xil_mem, cpu);
+}
 
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{

@@ -7,10 +7,8 @@ DECL_STREAM_TYPE(uint32_t)
 // Top level configuration, IO etc
 #include "top.h"
 
-// Devices attached to the CPU
+// Devices attached to the CPU interconnected in a dataflow network
 #include "devices.c"
-
-// TODO dataflow interconnecting devices
 
 // Code implementing memory map for devices attached to the CPU
 #include "mem_map.c"

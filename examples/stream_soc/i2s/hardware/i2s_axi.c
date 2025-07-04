@@ -18,10 +18,11 @@
 // Constants for where to put samples in memory
 #include "../software/mem_map.h"
 
-// Library wrapping AXI bus
-// https://github.com/JulianKemmerer/PipelineC/wiki/Shared-Resource-Bus
-//#include "/axi/axi_shared_bus.h"
-#include "../../shared_ddr/hardware/axi_xil_mem.c"
+// Include types for axi shared bus axi_shared_bus_t
+#include "axi/axi_shared_bus.h"
+// Globally visible AXI bus for this module
+axi_shared_bus_t_dev_to_host_t i2s_axi_host_from_dev;
+axi_shared_bus_t_host_to_dev_t i2s_axi_host_to_dev;
 
 // Globally visible fifo as input port for I2S RX desc to be written
 GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, I2S_N_DESC)
@@ -100,12 +101,12 @@ void i2s_axi_main()
     i2s_rx_desc_to_write_fifo_out, // Input stream of descriptors to write
     rx_u32_stream, // Input data stream to write (from I2S MAC)
     i2s_rx_descriptors_monitor_fifo_in_ready, // Ready for output stream of descriptors written
-    dev_to_host(axi_xil_mem, i2s).write // Inputs for write side of AXI bus
+    i2s_axi_host_from_dev.write // Inputs for write side of AXI bus
   );
   i2s_rx_desc_to_write_fifo_out_ready = to_axi_wr.ready_for_descriptors_in;
   rx_u32_stream_ready = to_axi_wr.ready_for_data_stream; // FEEDBACK
   i2s_rx_descriptors_monitor_fifo_in = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
-  host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
+  i2s_axi_host_to_dev.write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
 
   // Xilinx AXI DDR would be here in top to bottom data flow
   
