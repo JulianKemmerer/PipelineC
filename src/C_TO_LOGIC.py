@@ -10,6 +10,7 @@ import subprocess
 import sys
 import re
 from collections import OrderedDict
+from distutils.dir_util import copy_tree
 from subprocess import PIPE, Popen
 
 import C_TO_FSM
@@ -10282,7 +10283,7 @@ def PARSE_FILE(c_filename):
         sys.exit(-1)
 
 
-def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
+def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
     # print("Building map of logic to be pipelined...", flush=True)
     SYN.PART_SET_TOOL(
         parser_state.part, allow_fail=True
@@ -10310,8 +10311,9 @@ def WRITE_0_ADDED_CLKS_FINAL_FILES(parser_state):
     VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
     print("Writing global wire definitions as parsed from C code...", flush=True)
     VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
-    print("Writing output files before adding pipelining...", flush=True)
-    SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+
+    # Copy pipelinec vhdl directory to output so users can export output directory alone
+    copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")
 
 
 def INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, inst_name):

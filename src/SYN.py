@@ -8,7 +8,6 @@ import math
 import os
 import pickle
 import sys
-from distutils.dir_util import copy_tree
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from timeit import default_timer as timer
@@ -2418,16 +2417,20 @@ def WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top):
 
 
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
+    if multimain_timing_params is None:
+        ZeroAddedClocksTimingParamsLookupTable = (
+            GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+        )
+        multimain_timing_params = MultiMainTimingParams()
+        multimain_timing_params.TimingParamsLookupTable = (
+            ZeroAddedClocksTimingParamsLookupTable
+        )
+
     is_final_top = True
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
     # Black boxes are different in final files
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top)
-
-    # Copy pipelinec vhdl directory to output so users can export output directory alone
-    copy_tree(
-        f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl", SYN_OUTPUT_DIRECTORY + "/built_in"
-    )
 
     # Do generic dump of vhdl files
     # Which vhdl files?
