@@ -393,9 +393,11 @@ def SYN_AND_REPORT_TIMING_NEW(
             if parser_state.part.lower().startswith("ice"):
                 exe_ext = "ice40"
                 nowidelut = ""
+                dsp = "-dsp"
             else:
                 exe_ext = "ecp5"
                 nowidelut = "-nowidelut"
+                dsp = ""
             f.write(
                 """
 #!/usr/bin/env bash
@@ -409,7 +411,7 @@ export GHDL_PREFIX="""
                 + top_entity_name
                 + """; synth_"""
                 + exe_ext
-                + f""" -abc9 {nowidelut}"""
+                + f""" -abc9 {dsp} {nowidelut}"""
                 + """ -top """
                 + top_entity_name
                 + """ -json """
@@ -482,7 +484,7 @@ export GHDL_PREFIX="""
 def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     out_file = f"{output_dir}/{SYN.TOP_LEVEL_MODULE}.v"
-    print("Rendering final top level Verilog...")
+    print("Rendering top level Verilog...")
     # Identify tool versions
     if not os.path.exists(f"{GHDL_BIN_PATH}/ghdl"):
         raise Exception("ghdl executable not found!")
