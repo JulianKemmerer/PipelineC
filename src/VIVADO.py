@@ -354,7 +354,12 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     rv = ""
 
     # What vivado version?
-    ver_decimal = float(os.path.basename(VIVADO_DIR))
+    try:
+        ver_decimal = float(os.path.basename(VIVADO_DIR))
+    except:
+        raise Exception(
+            f"Failed to get vivado version from directory path: {VIVADO_DIR}. (expects '/path/to/Xilinx/Vivado/<year version>'"
+        )
 
     # Add in VHDL 2008 fixed/float support for pre 2022.2
     if ver_decimal < 2022.2:
