@@ -7123,7 +7123,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 ):
     # @@@@@@@@@ Maybe just require casting operation instead?  don't allow float + int  (bin op still changes to float+float  and errors connecting int to float ???
     #  Maybe?^ SEEMS RIGHT
-    """
+    f"""
     # OTherwise? \/
     @TODO if defined in C code use parsed C def for types
     @OTHERwise  need to infer types with LOOKAHEAD "precast" wires  (TODO remove if extra?)
@@ -7487,18 +7487,22 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
     # Parse format string to get types of arguments
     # Thanks internet, https://stackoverflow.com/questions/30011379/how-can-i-parse-a-c-format-string-in-python
 
-    cfmt = """\
-  (                                  # start of capture group 1
-  %                                  # literal "%"
-  (?:                                # first option
-  (?:[-+0 #]{0,5})                   # optional flags
-  (?:\d+|\*)?                        # width
-  (?:\.(?:\d+|\*))?                  # precision
-  (?:h|l|ll|w|I|I32|I64)?            # size
-  [cCdiouxXeEfgGaAnpsSZ]             # type
-  ) |                                # OR
-  %%)                                # literal "%%"
-  """
+    cfmt = (
+        f"""\
+        (                                  # start of capture group 1
+        %                                  # literal "%"
+        (?:                                # first option
+        (?:[-+0 #]"""
+        + "{0,5})"
+        + f"""    # optional flags
+        (?:\d+|\*)?                        # width
+        (?:\.(?:\d+|\*))?                  # precision
+        (?:h|l|ll|w|I|I32|I64)?            # size
+        [cCdiouxXeEfgGaAnpsSZ]             # type
+        ) |                                # OR
+        %%)                                # literal "%%"
+        """
+    )
     format_specifier_tups = tuple(
         (m.start(1), m.group(1)) for m in re.finditer(cfmt, format_string, flags=re.X)
     )
@@ -10701,17 +10705,17 @@ class ClkCrossVarInfo:
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Regex search c_text for pair of write and read funcs
     write_func_calls = []
-    r = "\w+" + "_WRITE" + "\s?\("
+    r = f"\w+" + "_WRITE" + f"\s?\("
     write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = "\w+" + "_WRITE_[0-9]+" + "\s?\("
+    r = f"\w+" + "_WRITE_[0-9]+" + f"\s?\("
     write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
     write_func_names = []
     for write_func_call in write_func_calls:
         write_func_names.append(write_func_call.strip("(").strip())
     read_func_calls = []
-    r = "\w+" + "_READ" + "\s?\("
+    r = f"\w+" + "_READ" + f"\s?\("
     read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = "\w+" + "_READ_[0-9]+" + "\s?\("
+    r = f"\w+" + "_READ_[0-9]+" + f"\s?\("
     read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
     read_func_names = []
     for read_func_call in read_func_calls:
