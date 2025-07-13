@@ -238,6 +238,7 @@ def STATE_GROUP_TO_C_CODE(
     generator,
     single_inst_flow_ctrl_func_call_names,
     first_state_in_group=True,
+    elif_str="else if",
 ):
     text = ""
     for state_info in state_group:
@@ -248,7 +249,9 @@ def STATE_GROUP_TO_C_CODE(
         else:
             # Can use IF instead of ELSE-IF since can one be in one state from each group
             # and dont need priority logic - works especially well as one hot
-            text += "  if("
+            # but then any assignments in the suposedly parrallel section appear as sequential?
+            # dont use?
+            text += f"  {elif_str}("
         first_state_in_group = False
         text += "ONE_HOT_CONST_EQ(FSM_STATE," + state_info.name + "))\n"
         text += "  {\n"
@@ -573,10 +576,6 @@ def STATE_GROUP_TO_C_CODE(
                 + "\n"
             )
             if state_info.sub_func_name is not None:
-                if state_info.always_next_state is not None:
-                    raise Exception(
-                        "Subroutine return has always next set? Instead of using a FUNC_CALL_RETURN_FSM_STATE?"
-                    )
                 text += "    // Subroutine returning to scheduled return state\n"
                 text += GET_SUB_FUNC_ONE_HOT_VAR_ASSIGN_REPLACEMENT_C_CODE(
                     state_info, fsm_logic, parser_state
@@ -1186,6 +1185,22 @@ typedef struct """
                 single_inst_flow_ctrl_func_call_names,
             )
 
+    # Last stage group of clock delay states is parallel with return
+    if last_group_is_clk_delay:
+        text += """  
+  // Clock delay last group of states
+"""
+        text += STATE_GROUP_TO_C_CODE(
+            last_group,
+            len(fsm_logic.state_groups) - 1,
+            fsm_logic,
+            parser_state,
+            generator,
+            single_inst_flow_ctrl_func_call_names,
+            first_state_in_group=False,
+            elif_str="if",  # Known last state has no sequential looking depending assignments
+        )
+
     text += """
   // Pass through to RETURN_REG in same clk cycle
   
@@ -1226,19 +1241,6 @@ typedef struct """
     text += """    }
   }
 """
-    # Last stage group of clock delay states is parallel with return
-    if last_group_is_clk_delay:
-        text += """  // Clock delay last group of states
-"""
-        text += STATE_GROUP_TO_C_CODE(
-            last_group,
-            len(fsm_logic.state_groups) - 1,
-            fsm_logic,
-            parser_state,
-            generator,
-            single_inst_flow_ctrl_func_call_names,
-            first_state_in_group=False,
-        )
 
     text += """
   return fsm_o;
@@ -1398,8 +1400,9 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
     # start_state.print()
     # print()
     # visited_states is primarily to resolve loops for user instead of requiring __clk()?
-    if start_state in visited_states:
-        return [[]]  # [[start_state]]
+    # if start_state in visited_states:
+    #    print("Already visited",start_state.name)
+    #    return [[]]  # [[start_state]]
     visited_states.append(start_state)
 
     debug = False
@@ -1452,7 +1455,9 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
                 exit_states = FIND_EXIT_STATES(
                     start_state.sub_func_name, parser_state, visited_states
                 )
-                poss_next_states += exit_states
+                for poss_next_state in exit_states:
+                    if poss_next_state not in visited_states:
+                        poss_next_states.append(poss_next_state)
 
     # Normal single next state
     elif start_state.always_next_state is not None:
@@ -1471,7 +1476,9 @@ def GET_STATE_TRANS_LISTS(start_state, parser_state, visited_states=None):
             exit_states = FIND_EXIT_STATES(
                 start_state.sub_func_name, parser_state, visited_states
             )
-            poss_next_states += exit_states
+            for poss_next_state in exit_states:
+                if poss_next_state not in visited_states:
+                    poss_next_states.append(poss_next_state)
 
     # Make a return state list for each state
     states_trans_lists = []
