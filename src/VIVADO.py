@@ -32,6 +32,7 @@ else:
         # then fallback to hardcoded
         VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
     VIVADO_PATH = VIVADO_DIR + "/bin/vivado"
+VIVADO_VERSION = None
 
 FIXED_PKG_PATH = VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd"
 
@@ -353,18 +354,20 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
 ):
     rv = ""
 
-    # What vivado version?
-    try:
-        ver_decimal = float(os.path.basename(VIVADO_DIR))
-    except:
-        raise Exception(
-            f"Failed to get vivado version from directory path: {VIVADO_DIR}. (expects '/path/to/Xilinx/Vivado/<year version>'"
-        )
-
     # Add in VHDL 2008 fixed/float support for pre 2022.2
-    if ver_decimal < 2022.2:
-        rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
-        rv += "set_property library ieee_proposed [get_files " + FIXED_PKG_PATH + "]\n"
+    # (currently the only reason why we need to know vivado version...)
+    global VIVADO_VERSION
+    if VIVADO_VERSION is None and os.path.exists(VIVADO_PATH):
+        ver_output = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(VIVADO_PATH + " -version")
+        VIVADO_VERSION = ver_output.split("\n")[0].split(" ")[1].strip("v")
+    if VIVADO_VERSION:
+        if float(VIVADO_VERSION) < 2022.2:
+            rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
+            rv += (
+                "set_property library ieee_proposed [get_files "
+                + FIXED_PKG_PATH
+                + "]\n"
+            )
 
     # Bah tcl doesnt like brackets in file names
     # Becuase dumb
