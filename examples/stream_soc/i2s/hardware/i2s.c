@@ -31,7 +31,9 @@ uint1_t i2s_rx_descriptors_out_monitor_overflow;
 // for ex. right into FFT hardware
 stream(i2s_samples_t) i2s_rx_samples_monitor_stream;
 
-// Need reset specific for I2S clock domain?
+// I2S MCLK clock domain and reset
+DECL_INPUT(uint1_t, i2s_mclk)
+CLK_MHZ(i2s_mclk, I2S_MCLK_MHZ)
 DECL_INPUT(uint1_t, i2s_reset_n)
 
 // AXI
@@ -65,9 +67,11 @@ void i2s_axi_main()
   //mac_tx_samples_ready = mac.tx.samples_ready;
 
   // Write I2S PMOD outputs
+  i2s_tx_mclk = i2s_mclk;
   i2s_tx_lrck = mac.to_i2s.tx_lrck;
   i2s_tx_sclk = mac.to_i2s.tx_sclk;
   i2s_tx_data = mac.to_i2s.tx_data;
+  i2s_rx_mclk = i2s_mclk;
   i2s_rx_lrck = mac.to_i2s.rx_lrck;
   i2s_rx_sclk = mac.to_i2s.rx_sclk;
 

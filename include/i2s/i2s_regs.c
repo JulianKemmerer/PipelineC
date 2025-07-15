@@ -16,7 +16,17 @@ typedef struct app_to_i2s_t
 
 // Separate wires and MAINs so can be different clock domains
 
-// TODO use CLK_MHZ macro to have connections for mclk's
+#ifdef I2S_TX_MCLK_WIRE
+GLOBAL_OUT_WIRE_CONNECT(uint1_t, I2S_TX_MCLK_WIRE, i2s_tx_mclk)
+#else
+DECL_OUTPUT(uint1_t, i2s_tx_mclk)
+#endif
+
+#ifdef I2S_RX_MCLK_WIRE
+GLOBAL_OUT_WIRE_CONNECT(uint1_t, I2S_RX_MCLK_WIRE, i2s_rx_mclk)
+#else
+DECL_OUTPUT(uint1_t, i2s_rx_mclk)
+#endif
 
 #ifdef I2S_RX_DATA_WIRE
 GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, i2s_rx_data, I2S_RX_DATA_WIRE)
