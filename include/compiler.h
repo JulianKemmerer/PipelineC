@@ -134,17 +134,17 @@ void name() \
 
 #define GLOBAL_OUT_WIRE_CONNECT(type_t, wire, name)\
 type_t name; \
-PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
-PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_connect)) \
-void PPCAT(name,_connect)(){ \
+PRAGMA_MESSAGE(MAIN PPCAT(wire,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(wire,_connect)) \
+void PPCAT(wire,_connect)(){ \
   wire = name; \
 }
 
 #define GLOBAL_OUT_REG_WIRE_CONNECT(type_t, wire, name)\
 type_t name; \
-PRAGMA_MESSAGE(MAIN PPCAT(name,_connect)) \
-PRAGMA_MESSAGE(FUNC_WIRES PPCAT(name,_connect)) \
-void PPCAT(name,_connect)(){ \
+PRAGMA_MESSAGE(MAIN PPCAT(wire,_connect)) \
+PRAGMA_MESSAGE(FUNC_WIRES PPCAT(wire,_connect)) \
+void PPCAT(wire,_connect)(){ \
   static type_t the_reg; \
   wire = the_reg; \
   the_reg = name; \
