@@ -222,6 +222,13 @@ DECL_OUTPUT(uint1_t, ICE_43)
 #ifdef ICE_28_OUT
 DECL_OUTPUT(uint1_t, ICE_28)
 #endif
+#ifdef PMOD_1B_I4
+#define ICE_28_IN
+#define PMOD_I4_WIRE ICE_28
+#endif
+#ifdef ICE_28_IN
+DECL_INPUT(uint1_t, ICE_28)
+#endif
 
 #ifdef PMOD_1B_O3
 #define ICE_32_OUT
@@ -229,6 +236,13 @@ DECL_OUTPUT(uint1_t, ICE_28)
 #endif
 #ifdef ICE_32_OUT
 DECL_OUTPUT(uint1_t, ICE_32)
+#endif
+#ifdef PMOD_1B_I3
+#define ICE_32_IN
+#define PMOD_I3_WIRE ICE_32
+#endif
+#ifdef ICE_32_IN
+DECL_INPUT(uint1_t, ICE_32)
 #endif
 
 #ifdef PMOD_1B_O2
@@ -238,6 +252,13 @@ DECL_OUTPUT(uint1_t, ICE_32)
 #ifdef ICE_36_OUT
 DECL_OUTPUT(uint1_t, ICE_36)
 #endif
+#ifdef PMOD_1B_I2
+#define ICE_36_IN
+#define PMOD_I2_WIRE ICE_36
+#endif
+#ifdef ICE_36_IN
+DECL_INPUT(uint1_t, ICE_36)
+#endif
 
 #ifdef PMOD_1B_O1
 #define ICE_42_OUT
@@ -245,6 +266,13 @@ DECL_OUTPUT(uint1_t, ICE_36)
 #endif
 #ifdef ICE_42_OUT
 DECL_OUTPUT(uint1_t, ICE_42)
+#endif
+#ifdef PMOD_1B_I1
+#define ICE_42_IN
+#define PMOD_I1_WIRE ICE_42
+#endif
+#ifdef ICE_42_IN
+DECL_INPUT(uint1_t, ICE_42)
 #endif
 
 #include "pmod/pmod_wires.h"
