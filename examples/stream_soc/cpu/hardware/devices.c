@@ -16,3 +16,6 @@ void dataflow()
   samples_fifo_in = i2s_rx_samples_monitor_stream;
   // No ready, just overflows
 }
+
+// Completely separate from stream soc (for now) ethernet loopback using Xilinx TEMAC
+#include "../../eth/hardware/eth.c"
