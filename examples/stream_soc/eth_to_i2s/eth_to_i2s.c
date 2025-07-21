@@ -91,12 +91,6 @@ void rx_main()
   // No flow control feedback for eth rx, overflows = to_axi_wr.ready_for_data_stream;
   i2s_rx_descriptors_monitor_fifo_in = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
   i2s_axi_host_to_dev.write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
-
-  // TEMP DEBUG
-  static stream(axis32_t) debug_axis;
-  debug_axis = limiter.out_stream;
-  static uint1_t debug_axis_ready;
-  debug_axis_ready = to_axi_wr.ready_for_data_stream;
   
   // Deserialize axis32 into i2s samples, always ready, overflows
   axis32_to_i2s_t to_i2s = axis32_to_i2s(
