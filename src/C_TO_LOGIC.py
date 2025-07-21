@@ -11571,7 +11571,7 @@ def APPEND_PRAGMA_INFO(parser_state):
             if main_func not in parser_state.main_clk_group:
                 parser_state.main_clk_group[main_func] = None
 
-        # MAIN_MHZ
+        # MAIN_MHZ (CLK GROUP optional)
         elif name == "MAIN_MHZ":
             toks = pragma.string.split(" ")
             main_func = toks[1]
@@ -11579,6 +11579,8 @@ def APPEND_PRAGMA_INFO(parser_state):
             group = None
             if len(toks) > 3:
                 group = toks[3]
+                if group == "None":
+                    group = None
             if (
                 group is not None
                 or main_func not in parser_state.main_clk_group
@@ -11605,7 +11607,7 @@ def APPEND_PRAGMA_INFO(parser_state):
                     print("Error in MAIN_MHZ:", main_func, mhz_tok)
                     sys.exit(-1)
 
-        # MAIN_SYN_MHZ
+        # MAIN_SYN_MHZ (CLK GROUP optional)
         elif name == "MAIN_SYN_MHZ":
             toks = pragma.string.split(" ")
             main_func = toks[1]
@@ -11613,6 +11615,8 @@ def APPEND_PRAGMA_INFO(parser_state):
             group = None
             if len(toks) > 3:
                 group = toks[3]
+                if group == "None":
+                    group = None
             if (
                 group is not None
                 or main_func not in parser_state.main_clk_group
@@ -11650,6 +11654,8 @@ def APPEND_PRAGMA_INFO(parser_state):
             toks = pragma.string.split(" ")
             main_func = toks[1]
             group = toks[2]
+            if group == "None":
+                group = None
             parser_state.main_clk_group[main_func] = group
             if main_func not in parser_state.main_mhz:
                 parser_state.main_mhz[main_func] = None
@@ -11762,6 +11768,8 @@ def APPEND_PRAGMA_INFO(parser_state):
             clk = toks[1]
             mhz = float(toks[2])
             group = toks[3]
+            if group == "None":
+                group = None
             parser_state.clk_mhz[clk] = mhz
             parser_state.clk_group[clk] = group
 
