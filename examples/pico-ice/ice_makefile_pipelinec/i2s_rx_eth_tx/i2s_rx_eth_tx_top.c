@@ -172,6 +172,7 @@ void eth_tx_main()
   // Header hard coded
   frame.data.header.dst_mac = FPGA_MAC; // To other FPGA
   frame.data.header.src_mac = 0; // Source not important
+  frame.data.header.ethertype = 0xFFFF;
   // Payload is the i2s rx data from FIFO
   frame.data.payload = i2s_rx_to_eth_tx_fifo_out.data;
   frame.valid = i2s_rx_to_eth_tx_fifo_out.valid;
@@ -187,7 +188,7 @@ MAIN_MHZ(blinky_main, RMII_CLK_MHZ)
 void blinky_main(){
   static uint25_t counter;
   led_r = 1;
-  led_g = counter >> 24;
-  led_b = 1;
+  led_g = 1;
+  led_b = counter >> 24;
   counter += 1;
 }
