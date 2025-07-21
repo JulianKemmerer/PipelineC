@@ -100,7 +100,8 @@ app_to_xil_mem_t xil_mem_module(xil_mem_to_app_t mem_to_app)
 #define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST0_CLK_MHZ  62.5
 #define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST1_NAME     i2s
 #define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST1_PORTS    1
-#define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST1_CLK_MHZ  22.579
+#define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST1_CLK_MHZ  25.0 //22.579
+#define MULTI_HOST_CLK_SHARED_RESOURCE_BUS_HOST1_CLK_GROUP xil_temac_rx // None
 #include "multi_host_clk_shared_resource_bus_decl.h"
 
 // Connect Xilinx MIG example AXI types to shared bus AXI types

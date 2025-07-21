@@ -1,7 +1,9 @@
 // Devices attached to the CPU
 
 // I2S RX + TX code
-#include "../../i2s/hardware/i2s.c"
+//#include "../../i2s/hardware/i2s.c"
+// Instead get I2S samples over ethernet (from other dev board)
+#include "../../eth_to_i2s/eth_to_i2s.c"
 
 // Hardware for doing the full FFT
 #include "../../fft/hardware/fft.c"
@@ -16,6 +18,3 @@ void dataflow()
   samples_fifo_in = i2s_rx_samples_monitor_stream;
   // No ready, just overflows
 }
-
-// Completely separate from stream soc (for now) ethernet loopback using Xilinx TEMAC
-#include "../../eth/hardware/eth.c"
