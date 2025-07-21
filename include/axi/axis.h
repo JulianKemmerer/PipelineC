@@ -71,12 +71,11 @@ typedef struct axis32_sized16_t
 
 
 
-// TODO make this into macro for all axis widths
-uint1_t axis8_keep_count(stream(axis8_t) s){
-  return s.valid; // & s.data.tkeep[0];
-}
+// TODO make these _keep_count funcs into macro for all axis widths
 
-// Convert to funcs taking ex. an axis16_t instead of just the .keep?
+uint1_t axis8_keep_count(axis8_t s){
+  return s.data.tkeep[0];
+}
 
 uint7_t axis512_keep_count(axis512_t axis){
   uint7_t rv = 0;
@@ -89,6 +88,14 @@ uint7_t axis512_keep_count(axis512_t axis){
 uint5_t axis128_keep_count(axis128_t axis){
   uint5_t rv = 0;
   for(uint32_t i=0; i<16; i+=1){
+    rv += axis.tkeep[i];
+  }
+  return rv;
+}
+
+uint3_t axis32_keep_count(axis32_t axis){
+  uint3_t rv = 0;
+  for(uint32_t i=0; i<4; i+=1){
     rv += axis.tkeep[i];
   }
   return rv;
@@ -535,7 +542,7 @@ axis##axis_bits##_max_len_limiter_t axis##axis_bits##_max_len_limiter(axis_max_l
   /* Count as transfers happen*/\
   if(o.out_stream.valid & ready_for_out_stream){\
     if(below){/*Dont need check?*/\
-      counter += axis##axis_bits##_keep_count(in_stream);\
+      counter += axis##axis_bits##_keep_count(in_stream.data);\
     }\
   }\
   /*Reset counter at last of input stream*/\
@@ -546,8 +553,10 @@ axis##axis_bits##_max_len_limiter_t axis##axis_bits##_max_len_limiter(axis_max_l
 }
 // Decls for various widths TODO more
 axis_max_len_limiter(8)
+axis_max_len_limiter(32)
 
 // Mostly a deser instance with added size limiter for one struct per packet
+// TODO also make size add padding if needed
 // sizeof(out_t) must be >= or divisble by axis_bits?
 #define axis_packet_to_type(name,axis_bits,out_t) \
 type_byte_deserializer(name##_type_byte_deserializer, (axis_bits/8), out_t) \
@@ -615,14 +624,14 @@ name##_t name(axis##axis_bits##_t payload, uint1_t output_ready) \
   return o; \
 }
 
+#endif
 
-/* AXIS32 only right now...*/
 #define type_to_axis(name,in_t,axis_bits) \
 /* Mostly just a ser instance */ \
-type_byte_serializer(name##type_byte_serializer, in_t, (axis_bits/8)) \
+type_byte_serializer(name##_type_byte_serializer, in_t, (axis_bits/8)) \
 typedef struct name##_t \
 { \
-  axis##axis_bits##_t payload; \
+  stream(axis##axis_bits##_t) payload; \
   uint1_t input_data_ready; \
 }name##_t; \
 name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
@@ -630,21 +639,23 @@ name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
   name##_t o; \
   \
   /* Serialize type to byte stream */ \
-  name##type_byte_serializer_t from_type = name##type_byte_serializer(data, valid, output_ready); \
+  name##_type_byte_serializer_t from_type = name##_type_byte_serializer(data, valid, output_ready); \
   o.input_data_ready = from_type.in_data_ready; \
   \
   /* Byte stream to axis */ \
   uint32_t i; \
   for(i=0;i<(axis_bits/8);i+=1) \
   {  \
-    /* AXIS32 only right now...*/ \
-    uint##axis_bits##_t out_data_bits = from_type.out_data[i]; /* Temp avoid not implemented cast */ \
-    o.payload.data.tdata[i] = (out_data_bits<<(i*8)); \
+    o.payload.data.tdata[i] = from_type.out_data[i];\
+    o.payload.data.tkeep[i] = 1;\
   } \
-  o.payload.keep = 0xF; /* AXIS32 only right now...*/ \
   o.payload.valid = from_type.valid; \
-  o.payload.last = 0; \
-  /* Counter for last assertion */ \
+  o.payload.data.tlast = from_type.last; \
+  return o; \
+}
+#if 0
+// DONT NEED COUNTER ANYMORE SINCE INSIDE serialzier?
+/* Counter for last assertion */ \
   static uint32_t last_counter; /* TODO smaller counter? */ \
   if(o.payload.valid & output_ready) \
   {\
@@ -657,7 +668,5 @@ name##_t name(in_t data, uint1_t valid, uint1_t output_ready) \
     { \
       last_counter = last_counter+(axis_bits/8); \
     } \
-  } \
-  return o; \
-}
+  }
 #endif
