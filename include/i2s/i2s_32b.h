@@ -14,6 +14,7 @@ typedef struct i2s_sample_in_mem_t{
   int32_t l;
   int32_t r;
 }i2s_sample_in_mem_t;
+DECL_STREAM_TYPE(i2s_sample_in_mem_t)
 
 i2s_sample_in_mem_t i2s_samples_in_mem(i2s_samples_t samples){
   i2s_sample_in_mem_t rv;
