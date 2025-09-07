@@ -115,17 +115,33 @@ DECL_INPUT(uint1_t, ja_7)
 DECL_OUTPUT(uint1_t, jb_0)
 #define PMOD_O1_WIRE jb_0
 #endif
+#ifdef JB_0_IN
+DECL_INPUT(uint1_t, jb_0)
+#define PMOD_I1_WIRE jb_0
+#endif
 #ifdef JB_1_OUT
 DECL_OUTPUT(uint1_t, jb_1)
 #define PMOD_O2_WIRE jb_1
+#endif
+#ifdef JB_1_IN
+DECL_INPUT(uint1_t, jb_1)
+#define PMOD_I2_WIRE jb_1
 #endif
 #ifdef JB_2_OUT
 DECL_OUTPUT(uint1_t, jb_2)
 #define PMOD_O3_WIRE jb_2
 #endif
+#ifdef JB_2_IN
+DECL_INPUT(uint1_t, jb_2)
+#define PMOD_I3_WIRE jb_2
+#endif
 #ifdef JB_3_OUT
 DECL_OUTPUT(uint1_t, jb_3)
 #define PMOD_O4_WIRE jb_3
+#endif
+#ifdef JB_3_IN
+DECL_INPUT(uint1_t, jb_3)
+#define PMOD_I4_WIRE jb_3
 #endif
 #include "pmod/pmod_wires.h"
 //  B=bottom/outter row, pin7-12
@@ -134,17 +150,33 @@ DECL_OUTPUT(uint1_t, jb_3)
 DECL_OUTPUT(uint1_t, jb_4)
 #define PMOD_O1_WIRE jb_4
 #endif
+#ifdef JB_4_IN
+DECL_INPUT(uint1_t, jb_4)
+#define PMOD_I1_WIRE jb_4
+#endif
 #ifdef JB_5_OUT
 DECL_OUTPUT(uint1_t, jb_5)
 #define PMOD_O2_WIRE jb_5
+#endif
+#ifdef JB_5_IN
+DECL_INPUT(uint1_t, jb_5)
+#define PMOD_I2_WIRE jb_5
 #endif
 #ifdef JB_6_OUT
 DECL_OUTPUT(uint1_t, jb_6)
 #define PMOD_O3_WIRE jb_6
 #endif
+#ifdef JB_6_IN
+DECL_INPUT(uint1_t, jb_6)
+#define PMOD_I3_WIRE jb_6
+#endif
 #ifdef JB_7_OUT
 DECL_OUTPUT(uint1_t, jb_7)
 #define PMOD_O4_WIRE jb_7
+#endif
+#ifdef JB_7_IN
+DECL_INPUT(uint1_t, jb_7)
+#define PMOD_I4_WIRE jb_7
 #endif
 #include "pmod/pmod_wires.h"
 
@@ -155,17 +187,33 @@ DECL_OUTPUT(uint1_t, jb_7)
 DECL_OUTPUT(uint1_t, jc_0)
 #define PMOD_O1_WIRE jc_0
 #endif
+#ifdef JC_0_IN
+DECL_INPUT(uint1_t, jc_0)
+#define PMOD_I1_WIRE jc_0
+#endif
 #ifdef JC_1_OUT
 DECL_OUTPUT(uint1_t, jc_1)
 #define PMOD_O2_WIRE jc_1
+#endif
+#ifdef JC_1_IN
+DECL_INPUT(uint1_t, jc_1)
+#define PMOD_I2_WIRE jc_1
 #endif
 #ifdef JC_2_OUT
 DECL_OUTPUT(uint1_t, jc_2)
 #define PMOD_O3_WIRE jc_2
 #endif
+#ifdef JC_2_IN
+DECL_INPUT(uint1_t, jc_2)
+#define PMOD_I3_WIRE jc_2
+#endif
 #ifdef JC_3_OUT
 DECL_OUTPUT(uint1_t, jc_3)
 #define PMOD_O4_WIRE jc_3
+#endif
+#ifdef JC_3_IN
+DECL_INPUT(uint1_t, jc_3)
+#define PMOD_I4_WIRE jc_3
 #endif
 #include "pmod/pmod_wires.h"
 //  B=bottom/outter row, pin7-12
@@ -174,17 +222,42 @@ DECL_OUTPUT(uint1_t, jc_3)
 DECL_OUTPUT(uint1_t, jc_4)
 #define PMOD_O1_WIRE jc_4
 #endif
+#ifdef JC_4_IN
+DECL_INPUT(uint1_t, jc_4)
+#define PMOD_I1_WIRE jc_4
+#endif
 #ifdef JC_5_OUT
 DECL_OUTPUT(uint1_t, jc_5)
 #define PMOD_O2_WIRE jc_5
+#endif
+#ifdef JC_5_IN
+DECL_INPUT(uint1_t, jc_5)
+#define PMOD_I2_WIRE jc_5
 #endif
 #ifdef JC_6_OUT
 DECL_OUTPUT(uint1_t, jc_6)
 #define PMOD_O3_WIRE jc_6
 #endif
+#ifdef JC_6_IN
+DECL_INPUT(uint1_t, jc_6)
+#define PMOD_I3_WIRE jc_6
+#endif
 #ifdef JC_7_OUT
 DECL_OUTPUT(uint1_t, jc_7)
 #define PMOD_O4_WIRE jc_7
+#endif
+#ifdef JC_7_IN
+DECL_INPUT(uint1_t, jc_7) 
+#define PMOD_I4_WIRE jc_7
+#endif
+// TODO more tristate wires...
+#ifdef JC_7_INOUT
+DECL_OUTPUT(uint1_t, jc_7_o)
+DECL_INPUT(uint1_t, jc_7_i)
+DECL_OUTPUT(uint1_t, jc_7_t)
+#define PMOD_O4_WIRE jc_7_o
+#define PMOD_I4_WIRE jc_7_i
+#define PMOD_T4_WIRE jc_7_t
 #endif
 #include "pmod/pmod_wires.h"
 
