@@ -184,38 +184,38 @@ typedef struct sccb_do_start_t{
 sccb_do_start_t sccb_do_start()
 {
   static uint8_t sys_clk_counter;
-  static uint2_t q_counter; // quarter bit counter
+  static uint2_t bit_counter;
   sccb_do_start_t o;
 
   // Drive outputs
   //   0123
   // C ---_
   // D --__
-  if(q_counter==0){
+  if(bit_counter==0){
     o.sio_c = 1;
     o.sio_d_out = 1;
-  }else if(q_counter==1){
+  }else if(bit_counter==1){
     o.sio_c = 1;
     o.sio_d_out = 1;
-  }else if(q_counter==2){
+  }else if(bit_counter==2){
     o.sio_c = 1;
     o.sio_d_out = 0;
-  }else if(q_counter==3){
+  }else if(bit_counter==3){
     o.sio_c = 0;
     o.sio_d_out = 0;
   }
 
-  // Count up to quarter bit time four times
-  if(sys_clk_counter==(SCCB_SYS_CLKS_PER_QUARTER_BIT-1)){
-    // Done all quarters or next quarter bit?
+  // Count up to bit time four times
+  if(sys_clk_counter==(SCCB_SYS_CLKS_PER_BIT-1)){
+    // Done all bits or next bit?
     sys_clk_counter = 0;
-    if(q_counter==3){
+    if(bit_counter==3){
       // Done, reset when ready
       o.done = 1;
-      q_counter = 0;
+      bit_counter = 0;
     }else{
-      // Next quarter bit
-      q_counter = q_counter + 1;
+      // Next bit
+      bit_counter = bit_counter + 1;
     }
   }else{
     sys_clk_counter = sys_clk_counter + 1;
@@ -235,38 +235,38 @@ typedef struct sccb_do_stop_t{
 sccb_do_stop_t sccb_do_stop()
 {
   static uint8_t sys_clk_counter;
-  static uint2_t q_counter; // quarter bit counter
+  static uint2_t bit_counter; // bit counter
   sccb_do_stop_t o;
 
   // Drive outputs
   //   0123
   // C _---
   // D __--
-  if(q_counter==0){
+  if(bit_counter==0){
     o.sio_c = 0;
     o.sio_d_out = 0;
-  }else if(q_counter==1){
+  }else if(bit_counter==1){
     o.sio_c = 1;
     o.sio_d_out = 0;
-  }else if(q_counter==2){
+  }else if(bit_counter==2){
     o.sio_c = 1;
     o.sio_d_out = 1;
-  }else if(q_counter==3){
+  }else if(bit_counter==3){
     o.sio_c = 1;
     o.sio_d_out = 1;
   }
 
-  // Count up to quarter bit time four times
-  if(sys_clk_counter==(SCCB_SYS_CLKS_PER_QUARTER_BIT-1)){
-    // Done all quarters or next quarter bit?
+  // Count up to bit time four times
+  if(sys_clk_counter==(SCCB_SYS_CLKS_PER_BIT-1)){
+    // Done all bits or next bit?
     sys_clk_counter = 0;
-    if(q_counter==3){
+    if(bit_counter==3){
       // Done, reset when ready
       o.done = 1;
-      q_counter = 0;
+      bit_counter = 0;
     }else{
-      // Next quarter bit
-      q_counter = q_counter + 1;
+      // Next bit
+      bit_counter = bit_counter + 1;
     }
   }else{
     sys_clk_counter = sys_clk_counter + 1;
