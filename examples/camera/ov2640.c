@@ -297,6 +297,7 @@ sccb_do_write_data_t sccb_do_write_data(
   static uint3_t bit_count;
 
   sccb_do_write_data_t o; // outputs, default all zeros
+  o.sio_d_out = 1; // Default IDLE high data
 
   if(state==INPUT_REG){
     UINT_TO_BIT_ARRAY(shift_reg, 8, input_data)
@@ -354,6 +355,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
   uint1_t d_out_change_now = (sio_c_reg==0) & (sys_clk_counter==(SCCB_SYS_CLKS_PER_QUARTER_BIT-1));
   // During data clock is free running output from toggling reg
   o.sio_c = sio_c_reg;
+  o.sio_d_out = 1; // Default high data
   // Toggle clock every half period
   if(sys_clk_counter==(SCCB_SYS_CLKS_PER_HALF_BIT-1)){
     sys_clk_counter = 0;
@@ -486,6 +488,10 @@ sccb_do_2phase_read_t sccb_do_2phase_read(
   uint8_t write_data
 ){
   sccb_do_2phase_read_t o;
+  // Default IDLE high data and high clock
+  o.sio_d_out = 1;
+  o.sio_d_out_enable = 1;
+  o.sio_c = 1;
 
   // TODO make clock generator code into standalone module
   // SIO_C 'Clock' generator counts to half period time then toggles output
@@ -510,8 +516,6 @@ sccb_do_2phase_read_t sccb_do_2phase_read(
   // Output read data from reg
   static uint8_t read_data;
   o.output_data = read_data;
-  // Default other than during read phase, output is being driven
-  o.sio_d_out_enable = 1;
 
   static sccb_do_2phase_read_state_t state;
   if(state==START){
@@ -579,11 +583,12 @@ sccb_do_read_t sccb_do_read(
   uint1_t sio_d_in
 ){
   sccb_do_read_t o;
-  // Default floating data and high clock for IDLE time
-  o.sio_d_out_enable = 0;
+  // Default high data and high clock for IDLE time
+  o.sio_d_out = 1;
+  o.sio_d_out_enable = 1;
   o.sio_c = 1;
-  uint8_t IDLE_NUM_BITS = 1;
-  static uint8_t sys_clk_counter;
+  uint8_t IDLE_NUM_BITS = 4;
+  static uint16_t sys_clk_counter;
   uint1_t idle_time_done = sys_clk_counter==((IDLE_NUM_BITS*SCCB_SYS_CLKS_PER_BIT)-1);
   sys_clk_counter = sys_clk_counter + 1;
 
@@ -661,8 +666,9 @@ sccb_ctrl_t sccb_ctrl(
   uint1_t sio_d_in
 ){
   sccb_ctrl_t o;
-  // Default floating data and high clock for IDLE time
-  o.sio_d_out_enable = 0;
+  // Default high data and high clock for IDLE time
+  o.sio_d_out = 1;
+  o.sio_d_out_enable = 1;
   o.sio_c = 1;
   static sccb_ctrl_state_t state;
   // IO regs for handshakes
@@ -725,11 +731,12 @@ void test(){
   static test_state_t state;
   // Default lights off, bus idle
   leds = 0;
-  sccb_sio_d_out = 0;
-  sccb_sio_d_tristate_enable = 1;
+  sccb_sio_d_out = 1;
+  sccb_sio_d_tristate_enable = 0;
   sccb_sio_c = 1;
-  uint8_t expected_pidh = 0x26;
-  static uint8_t pidh; // Actual received from cam
+  //uint8_t expected_pidh = 0x26;
+  //static uint8_t pidh; // Actual received from cam
+  static uint8_t bank;
   if(state==WAIT_RESET_DONE){
     leds = (uint4_t)1 << 0;
     if(cam_reset_done){
@@ -740,20 +747,21 @@ void test(){
     // Read the manufacturer ID from the OV2640 camera device
     uint8_t device_id = 0x60; // From app notes
     uint1_t is_read = 1;
-    uint8_t pidh_addr = 0x0A; // From datasheet
+    //uint8_t pidh_addr = 0x0A; // From datasheet
+    uint8_t bank_addr = 0xFF;
     sccb_ctrl_t ctrl_fsm = sccb_ctrl(
-      device_id, is_read, pidh_addr, 0, 1, 1, sccb_sio_d_in
+      device_id, is_read, bank_addr, 0, 1, 1, sccb_sio_d_in
     );
     sccb_sio_d_out = ctrl_fsm.sio_d_out;
     sccb_sio_d_tristate_enable = ~ctrl_fsm.sio_d_out_enable;
     sccb_sio_c = ctrl_fsm.sio_c;
     if(ctrl_fsm.output_valid){
-      pidh = ctrl_fsm.output_read_data;
+      bank = ctrl_fsm.output_read_data;
       state = LIGHT_LED;
     }
   }else if(state==LIGHT_LED){
     leds = (uint4_t)1 << 2;
-    if(pidh==expected_pidh){
+    if(bank > 0){
       leds = 0b1111;
     }
   }
