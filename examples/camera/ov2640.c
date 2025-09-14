@@ -577,7 +577,7 @@ typedef struct sccb_do_read_t{
 }sccb_do_read_t;
 #pragma FUNC_MARK_DEBUG sccb_do_read
 sccb_do_read_t sccb_do_read(
-  uint8_t id,
+  uint7_t id,
   uint8_t addr,
   // Input data pin
   uint1_t sio_d_in
@@ -599,8 +599,7 @@ sccb_do_read_t sccb_do_read(
   static sccb_do_read_state_t state;
   if(state==TWO_PHASE_WRITE){
     uint1_t is_read = 0;
-    //uint8_t phase1_data = uint7_uint1(id, is_read);
-    uint8_t phase1_data = uint7_uint1(id>>1, is_read);
+    uint8_t phase1_data = uint7_uint1(id, is_read);
     uint8_t phase2_data = addr;
     sccb_do_2phase_write_t write_fsm = sccb_do_2phase_write(phase1_data, phase2_data);
     o.sio_c = write_fsm.sio_c;
@@ -616,8 +615,7 @@ sccb_do_read_t sccb_do_read(
     }
   }else if(state==TWO_PHASE_READ){
     uint1_t is_read = 1;
-    //uint8_t phase1_data = uint7_uint1(id, is_read);
-    uint8_t phase1_data = uint7_uint1(id>>1, is_read);
+    uint8_t phase1_data = uint7_uint1(id, is_read);
     sccb_do_2phase_read_t read_fsm = sccb_do_2phase_read(sio_d_in, phase1_data);
     o.sio_c = read_fsm.sio_c;
     o.sio_d_out = read_fsm.sio_d_out;
@@ -656,7 +654,7 @@ typedef struct sccb_ctrl_t{
 #pragma FUNC_MARK_DEBUG sccb_ctrl
 sccb_ctrl_t sccb_ctrl(
   // IO handshakes
-  uint8_t id,
+  uint7_t id,
   uint1_t is_read,
   uint8_t addr,
   uint8_t write_data, // unused for now
@@ -672,7 +670,7 @@ sccb_ctrl_t sccb_ctrl(
   o.sio_c = 1;
   static sccb_ctrl_state_t state;
   // IO regs for handshakes
-  static uint8_t id_reg;
+  static uint7_t id_reg;
   static uint1_t is_read_reg;
   static uint8_t addr_reg;
   static uint8_t read_data;
@@ -745,12 +743,17 @@ void test(){
   }else if(state==DO_READ){
     leds = (uint4_t)1 << 1;
     // Read the manufacturer ID from the OV2640 camera device
-    uint8_t device_id = 0x60; // From app notes
+    // Select the device using first 8b written to device
+    //   Examples and app notes show D[7:0] = 0x60
+    //   where D[0] is RW bit, write=0
+    //   D[7:1] = 0x30 selects the device
+    uint8_t write_device_id_with_rw = 0x60; // From app notes
+    uint7_t id_7b_no_rw = write_device_id_with_rw >> 1;
     uint1_t is_read = 1;
     //uint8_t pidh_addr = 0x0A; // From datasheet
     uint8_t bank_addr = 0xFF;
     sccb_ctrl_t ctrl_fsm = sccb_ctrl(
-      device_id, is_read, bank_addr, 0, 1, 1, sccb_sio_d_in
+      id_7b_no_rw, is_read, bank_addr, 0, 1, 1, sccb_sio_d_in
     );
     sccb_sio_d_out = ctrl_fsm.sio_d_out;
     sccb_sio_d_tristate_enable = ~ctrl_fsm.sio_d_out_enable;
