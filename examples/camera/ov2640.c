@@ -573,7 +573,7 @@ typedef struct sccb_do_read_t{
 }sccb_do_read_t;
 #pragma FUNC_MARK_DEBUG sccb_do_read
 sccb_do_read_t sccb_do_read(
-  uint7_t id,
+  uint8_t id,
   uint8_t addr,
   // Input data pin
   uint1_t sio_d_in
@@ -594,7 +594,8 @@ sccb_do_read_t sccb_do_read(
   static sccb_do_read_state_t state;
   if(state==TWO_PHASE_WRITE){
     uint1_t is_read = 0;
-    uint8_t phase1_data = uint7_uint1(id, is_read);
+    //uint8_t phase1_data = uint7_uint1(id, is_read);
+    uint8_t phase1_data = uint7_uint1(id>>1, is_read);
     uint8_t phase2_data = addr;
     sccb_do_2phase_write_t write_fsm = sccb_do_2phase_write(phase1_data, phase2_data);
     o.sio_c = write_fsm.sio_c;
@@ -610,7 +611,8 @@ sccb_do_read_t sccb_do_read(
     }
   }else if(state==TWO_PHASE_READ){
     uint1_t is_read = 1;
-    uint8_t phase1_data = uint7_uint1(id, is_read);
+    //uint8_t phase1_data = uint7_uint1(id, is_read);
+    uint8_t phase1_data = uint7_uint1(id>>1, is_read);
     sccb_do_2phase_read_t read_fsm = sccb_do_2phase_read(sio_d_in, phase1_data);
     o.sio_c = read_fsm.sio_c;
     o.sio_d_out = read_fsm.sio_d_out;
@@ -649,7 +651,7 @@ typedef struct sccb_ctrl_t{
 #pragma FUNC_MARK_DEBUG sccb_ctrl
 sccb_ctrl_t sccb_ctrl(
   // IO handshakes
-  uint7_t id,
+  uint8_t id,
   uint1_t is_read,
   uint8_t addr,
   uint8_t write_data, // unused for now
@@ -664,7 +666,7 @@ sccb_ctrl_t sccb_ctrl(
   o.sio_c = 1;
   static sccb_ctrl_state_t state;
   // IO regs for handshakes
-  static uint7_t id_reg;
+  static uint8_t id_reg;
   static uint1_t is_read_reg;
   static uint8_t addr_reg;
   static uint8_t read_data;
@@ -736,7 +738,7 @@ void test(){
   }else if(state==DO_READ){
     leds = (uint4_t)1 << 1;
     // Read the manufacturer ID from the OV2640 camera device
-    uint7_t device_id = 0x60; // From app notes
+    uint8_t device_id = 0x60; // From app notes
     uint1_t is_read = 1;
     uint8_t pidh_addr = 0x0A; // From datasheet
     sccb_ctrl_t ctrl_fsm = sccb_ctrl(
