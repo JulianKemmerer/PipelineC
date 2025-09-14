@@ -279,12 +279,13 @@ sccb_do_stop_t sccb_do_stop()
 typedef enum sccb_do_write_data_state_t{
   INPUT_REG,
   DATA_BYTE,
-  DONT_CARE,
+  DONT_CARE_OR_ACK,
 }sccb_do_write_data_state_t;
 typedef struct sccb_do_write_data_t{
   uint1_t done;
   // Control of data pin
   uint1_t sio_d_out;
+  uint1_t sio_d_out_enable;
 }sccb_do_write_data_t;
 #pragma FUNC_MARK_DEBUG sccb_do_write_data
 sccb_do_write_data_t sccb_do_write_data(
@@ -298,6 +299,7 @@ sccb_do_write_data_t sccb_do_write_data(
 
   sccb_do_write_data_t o; // outputs, default all zeros
   o.sio_d_out = 1; // Default IDLE high data
+  o.sio_d_out_enable = 1;
 
   if(state==INPUT_REG){
     UINT_TO_BIT_ARRAY(shift_reg, 8, input_data)
@@ -308,16 +310,18 @@ sccb_do_write_data_t sccb_do_write_data(
 
   if(state==DATA_BYTE){
     o.sio_d_out = shift_reg[7]; // MSB first
+    o.sio_d_out_enable = 1;
     if(sio_d_clk_enable){
       ARRAY_SHIFT_UP(shift_reg, 8, 1)
       if(bit_count==7){
-        state = DONT_CARE;
+        state = DONT_CARE_OR_ACK;
       }else{
         bit_count = bit_count + 1;
       }
     }
-  }else if(state==DONT_CARE){
-    o.sio_d_out = 0; // Dont care always zero?
+  }else if(state==DONT_CARE_OR_ACK){
+    o.sio_d_out = 0; // Dont care always zero? I2C expects 0?
+    o.sio_d_out_enable = 0; // I2C says not driving here?
     if(sio_d_clk_enable){
       o.done = 1;
       state = INPUT_REG;
@@ -337,6 +341,7 @@ typedef struct sccb_do_2phase_write_t{
   uint1_t done;
   // Control of pins
   uint1_t sio_d_out;
+  uint1_t sio_d_out_enable;
   uint1_t sio_c;
 }sccb_do_2phase_write_t;
 #pragma FUNC_MARK_DEBUG sccb_do_2phase_write
@@ -356,6 +361,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
   // During data clock is free running output from toggling reg
   o.sio_c = sio_c_reg;
   o.sio_d_out = 1; // Default high data
+  o.sio_d_out_enable = 1;
   // Toggle clock every half period
   if(sys_clk_counter==(SCCB_SYS_CLKS_PER_HALF_BIT-1)){
     sys_clk_counter = 0;
@@ -371,6 +377,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
     // Start FSM drives clock different than default free running
     o.sio_c = start_fsm.sio_c;
     o.sio_d_out = start_fsm.sio_d_out;
+    o.sio_d_out_enable = 1; // start drives bus entire time
     if(start_fsm.done){
       // Data phases start in the middle of a clock low period
       sys_clk_counter = SCCB_SYS_CLKS_PER_QUARTER_BIT;
@@ -383,6 +390,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
     uint8_t phase_data = phase_count ? phase2_data : phase1_data;
     sccb_do_write_data_t write_fsm = sccb_do_write_data(phase_data, d_out_change_now);
     o.sio_d_out = write_fsm.sio_d_out;
+    o.sio_d_out_enable = write_fsm.sio_d_out_enable;
     if(write_fsm.done){
       if(phase_count==1){
         state = STOP;
@@ -395,6 +403,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
     // Stop FSM drives clock different than default free running
     o.sio_c = stop_fsm.sio_c;
     o.sio_d_out = stop_fsm.sio_d_out;
+    o.sio_d_out_enable = 1; // stop drives bus entire time
     if(stop_fsm.done){
       o.done = 1;
       state = START;
@@ -408,7 +417,7 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
 typedef enum sccb_do_read_data_state_t{
   DATA_BYTE,
   WAIT_NA_START,
-  NA_BIT
+  NACK_BIT
 }sccb_do_read_data_state_t;
 typedef struct sccb_do_read_data_t{
   // Control of data pin
@@ -450,10 +459,10 @@ sccb_do_read_data_t sccb_do_read_data(
     // Time before start of NA bit
     // second half of last data bit
     if(sio_d_out_clk_enable){
-      state = NA_BIT;
+      state = NACK_BIT;
     }
-  }else if(state==NA_BIT){
-    // NA bit drives 1
+  }else if(state==NACK_BIT){
+    // NACK bit drives 1 
     o.sio_d_out = 1;
     o.sio_d_out_enable = 1;
     if(sio_d_out_clk_enable){
@@ -534,6 +543,7 @@ sccb_do_2phase_read_t sccb_do_2phase_read(
     uint8_t phase_data = write_data;
     sccb_do_write_data_t write_fsm = sccb_do_write_data(phase_data, d_out_change_now);
     o.sio_d_out = write_fsm.sio_d_out;
+    o.sio_d_out_enable = write_fsm.sio_d_out_enable;
     if(write_fsm.done){
       state = READ_PHASE;
     }
@@ -604,7 +614,7 @@ sccb_do_read_t sccb_do_read(
     sccb_do_2phase_write_t write_fsm = sccb_do_2phase_write(phase1_data, phase2_data);
     o.sio_c = write_fsm.sio_c;
     o.sio_d_out = write_fsm.sio_d_out;
-    o.sio_d_out_enable = 1; // write drives bus entire time
+    o.sio_d_out_enable = write_fsm.sio_d_out_enable;
     if(write_fsm.done){
       state = WRITE_IDLE_DELAY;
       sys_clk_counter = 0;
