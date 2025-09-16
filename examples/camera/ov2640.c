@@ -742,9 +742,8 @@ void test(){
   sccb_sio_d_out = 1;
   sccb_sio_d_tristate_enable = 0;
   sccb_sio_c = 1;
-  //uint8_t expected_pidh = 0x26;
-  //static uint8_t pidh; // Actual received from cam
-  static uint8_t bank;
+  uint8_t expected_pidh = 0x26;
+  static uint8_t pidh; // Actual received from cam
   if(state==WAIT_RESET_DONE){
     leds = (uint4_t)1 << 0;
     if(cam_reset_done){
@@ -760,21 +759,20 @@ void test(){
     uint8_t write_device_id_with_rw = 0x60; // From app notes
     uint7_t id_7b_no_rw = write_device_id_with_rw >> 1;
     uint1_t is_read = 1;
-    //uint8_t pidh_addr = 0x0A; // From datasheet
-    uint8_t bank_addr = 0xFF;
+    uint8_t pidh_addr = 0x0A; // From datasheet
     sccb_ctrl_t ctrl_fsm = sccb_ctrl(
-      id_7b_no_rw, is_read, bank_addr, 0, 1, 1, sccb_sio_d_in
+      id_7b_no_rw, is_read, pidh_addr, 0, 1, 1, sccb_sio_d_in
     );
     sccb_sio_d_out = ctrl_fsm.sio_d_out;
     sccb_sio_d_tristate_enable = ~ctrl_fsm.sio_d_out_enable;
     sccb_sio_c = ctrl_fsm.sio_c;
     if(ctrl_fsm.output_valid){
-      bank = ctrl_fsm.output_read_data;
+      pidh = ctrl_fsm.output_read_data;
       state = LIGHT_LED;
     }
   }else if(state==LIGHT_LED){
     leds = (uint4_t)1 << 2;
-    if(bank > 0){
+    if(pidh==expected_pidh){
       leds = 0b1111;
     }
   }
