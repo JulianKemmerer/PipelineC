@@ -332,24 +332,24 @@ sccb_do_write_data_t sccb_do_write_data(
 }
 
 
-typedef enum sccb_do_2phase_write_state_t{
+typedef enum sccb_do_multi_phase_write_state_t{
   START,
   PHASES,
   STOP
-}sccb_do_2phase_write_state_t;
-typedef struct sccb_do_2phase_write_t{
+}sccb_do_multi_phase_write_state_t;
+typedef struct sccb_do_multi_phase_write_t{
   uint1_t done;
   // Control of pins
   uint1_t sio_d_out;
   uint1_t sio_d_out_enable;
   uint1_t sio_c;
-}sccb_do_2phase_write_t;
-#pragma FUNC_MARK_DEBUG sccb_do_2phase_write
-sccb_do_2phase_write_t sccb_do_2phase_write(
-  uint8_t phase1_data,
-  uint8_t phase2_data
+}sccb_do_multi_phase_write_t;
+#pragma FUNC_MARK_DEBUG sccb_do_multi_phase_write
+sccb_do_multi_phase_write_t sccb_do_multi_phase_write(
+  uint8_t phase_data[3],
+  uint2_t num_phases
 ){
-  sccb_do_2phase_write_t o;
+  sccb_do_multi_phase_write_t o;
   // TODO make clock generator code into standalone module
   // SIO_C 'Clock' generator counts to half period time then toggles output
   // starts low, middle of low period is when output data should change
@@ -370,8 +370,8 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
     sys_clk_counter = sys_clk_counter + 1;
   }
 
-  static sccb_do_2phase_write_state_t state;
-  static uint1_t phase_count;
+  static sccb_do_multi_phase_write_state_t state;
+  static uint2_t phase_count;
   if(state==START){
     sccb_do_start_t start_fsm = sccb_do_start();
     // Start FSM drives clock different than default free running
@@ -387,15 +387,14 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
     }
   }else if(state==PHASES){
     // Do write fsm for current phase
-    uint8_t phase_data = phase_count ? phase2_data : phase1_data;
-    sccb_do_write_data_t write_fsm = sccb_do_write_data(phase_data, d_out_change_now);
+    sccb_do_write_data_t write_fsm = sccb_do_write_data(phase_data[phase_count], d_out_change_now);
     o.sio_d_out = write_fsm.sio_d_out;
     o.sio_d_out_enable = write_fsm.sio_d_out_enable;
     if(write_fsm.done){
-      if(phase_count==1){
+      if(phase_count==(num_phases-1)){
         state = STOP;
       }else{
-        phase_count = 1;
+        phase_count = phase_count + 1;
       }
     }
   }else if(state==STOP){
@@ -411,6 +410,24 @@ sccb_do_2phase_write_t sccb_do_2phase_write(
   }
   
   return o;
+}
+
+
+sccb_do_multi_phase_write_t sccb_do_write(
+  uint7_t id,
+  uint8_t addr,
+  uint8_t data
+){
+  uint1_t is_read = 0;
+  uint8_t phase_data[3] = {
+    uint7_uint1(id, is_read),
+    addr,
+    data
+  };
+  return sccb_do_multi_phase_write(
+    phase_data,
+    3 // num phases
+  );
 }
 
 
@@ -609,9 +626,12 @@ sccb_do_read_t sccb_do_read(
   static sccb_do_read_state_t state;
   if(state==TWO_PHASE_WRITE){
     uint1_t is_read = 0;
-    uint8_t phase1_data = uint7_uint1(id, is_read);
-    uint8_t phase2_data = addr;
-    sccb_do_2phase_write_t write_fsm = sccb_do_2phase_write(phase1_data, phase2_data);
+    uint8_t phase_data[3] = {
+      uint7_uint1(id, is_read),
+      addr,
+      0 // unused write data
+    };
+    sccb_do_multi_phase_write_t write_fsm = sccb_do_multi_phase_write(phase_data, 2);
     o.sio_c = write_fsm.sio_c;
     o.sio_d_out = write_fsm.sio_d_out;
     o.sio_d_out_enable = write_fsm.sio_d_out_enable;
@@ -667,7 +687,7 @@ sccb_ctrl_t sccb_ctrl(
   uint7_t id,
   uint1_t is_read,
   uint8_t addr,
-  uint8_t write_data, // unused for now
+  uint8_t write_data,
   uint1_t inputs_valid, // aka start
   uint1_t ready_for_output,
   // Input data pin
@@ -683,6 +703,7 @@ sccb_ctrl_t sccb_ctrl(
   static uint7_t id_reg;
   static uint1_t is_read_reg;
   static uint8_t addr_reg;
+  static uint8_t write_data_reg;
   static uint8_t read_data;
   o.output_read_data = read_data;
 
@@ -692,6 +713,7 @@ sccb_ctrl_t sccb_ctrl(
       id_reg = id;
       is_read_reg = is_read;
       addr_reg = addr;
+      write_data_reg = write_data;
       state = READ_OR_WRITE;
     }
   }else if(state==READ_OR_WRITE){
@@ -705,14 +727,13 @@ sccb_ctrl_t sccb_ctrl(
         state = OUTPUT_HANDSHAKE;
       }
     }else{
-      /* TODO sccb_do_write()
-      sccb_do_write_t write_fsm = sccb_do_write(id_reg, addr_reg, write_data_reg sio_d_in);
+      sccb_do_multi_phase_write_t write_fsm = sccb_do_write(id_reg, addr_reg, write_data_reg);
       o.sio_c = write_fsm.sio_c;
       o.sio_d_out = write_fsm.sio_d_out;
       o.sio_d_out_enable = write_fsm.sio_d_out_enable;
       if(write_fsm.done){
         state = OUTPUT_HANDSHAKE;
-      }*/
+      }
     }
   }else if(state==OUTPUT_HANDSHAKE){
     o.output_valid = 1;
@@ -726,54 +747,88 @@ sccb_ctrl_t sccb_ctrl(
 
 
 // OV2640 SCCB bus test
-// Light LEDs if read back of manufacturer ID works
+// Light all four LEDs if read and write of test register works
 #include "leds/leds_port.c"
 typedef enum test_state_t{
   WAIT_RESET_DONE,
-  DO_READ,
-  LIGHT_LED
+  READ_POWER_ON,
+  WRITE_NEW,
+  READ_VERIFY,
+  LIGHT_LED,
+  SCCB_BUS_OP
 }test_state_t;
 MAIN_MHZ(test, CAM_SYS_CLK_MHZ)
 #pragma FUNC_MARK_DEBUG test
 void test(){
-  static test_state_t state;
-  // Default lights off, bus idle
-  leds = 0;
+  // Default bus idle
   sccb_sio_d_out = 1;
   sccb_sio_d_tristate_enable = 0;
   sccb_sio_c = 1;
-  uint8_t expected_pidh = 0x26;
-  static uint8_t pidh; // Actual received from cam
+
+  // Select the device using first 8b written to device
+  //   Examples and app notes show D[7:0] = 0x60
+  //   where D[0] is RW bit, write=0
+  //   D[7:1] = 0x30 selects the device
+  uint8_t write_device_id_with_rw = 0x60; // From app notes
+  uint7_t id_7b_no_rw = write_device_id_with_rw >> 1; // drop RW bit
+
+  // SCCB ctrl module regs
+  static uint8_t addr;
+  static uint1_t is_read;
+  static uint8_t write_data;
+  static uint8_t read_data;
+  static test_state_t state_after_sccb_op;
+ 
+  // Test FSM
+  static test_state_t state;
+  static uint8_t expected_read_data;
+  static uint4_t leds_reg;
+  leds = leds_reg;
   if(state==WAIT_RESET_DONE){
-    leds = (uint4_t)1 << 0;
+    leds_reg = (uint4_t)1 << 0;
     if(cam_reset_done){
-      state = DO_READ;
+      state = READ_POWER_ON;
     }
-  }else if(state==DO_READ){
-    leds = (uint4_t)1 << 1;
-    // Read the manufacturer ID from the OV2640 camera device
-    // Select the device using first 8b written to device
-    //   Examples and app notes show D[7:0] = 0x60
-    //   where D[0] is RW bit, write=0
-    //   D[7:1] = 0x30 selects the device
-    uint8_t write_device_id_with_rw = 0x60; // From app notes
-    uint7_t id_7b_no_rw = write_device_id_with_rw >> 1;
-    uint1_t is_read = 1;
-    uint8_t pidh_addr = 0x0A; // From datasheet
+  }else if(state==READ_POWER_ON){
+    leds_reg = (uint4_t)1 << 1;
+    is_read = 1;
+    // Test reg is addr=0x08 'Frame exposure', 
+    // an arbitrary register to read+write. The default value is 0x040.
+    addr = 0x08;
+    expected_read_data = 0x40;
+    state_after_sccb_op = WRITE_NEW;
+    state = SCCB_BUS_OP;
+  }else if(state==WRITE_NEW){
+    leds_reg = (uint4_t)1 << 2;
+    is_read = 0;
+    write_data = ~expected_read_data; // invert bits for test
+    state_after_sccb_op = READ_VERIFY;
+    state = SCCB_BUS_OP;
+  }else if(state==READ_VERIFY){
+    leds_reg = (uint4_t)1 << 3;
+    is_read = 1;
+    expected_read_data = write_data; // expected to read back what was written
+    state_after_sccb_op = LIGHT_LED;
+    state = SCCB_BUS_OP;
+  }else if(state==SCCB_BUS_OP){
     sccb_ctrl_t ctrl_fsm = sccb_ctrl(
-      id_7b_no_rw, is_read, pidh_addr, 0, 1, 1, sccb_sio_d_in
+      id_7b_no_rw, is_read, addr, write_data, 1, 1, sccb_sio_d_in
     );
     sccb_sio_d_out = ctrl_fsm.sio_d_out;
     sccb_sio_d_tristate_enable = ~ctrl_fsm.sio_d_out_enable;
     sccb_sio_c = ctrl_fsm.sio_c;
     if(ctrl_fsm.output_valid){
-      pidh = ctrl_fsm.output_read_data;
-      state = LIGHT_LED;
+      read_data = ctrl_fsm.output_read_data;
+      state = state_after_sccb_op;
+      // Go to next state if read data continues to match
+      if(is_read & (read_data != expected_read_data)){
+        state = LIGHT_LED;
+      }
     }
   }else if(state==LIGHT_LED){
-    leds = (uint4_t)1 << 2;
-    if(pidh==expected_pidh){
-      leds = 0b1111;
+    leds_reg |= 0x1; // Failed with less than all leds lit
+    if(read_data==expected_read_data){
+      leds_reg = 0b1111;
     }
   }
 
