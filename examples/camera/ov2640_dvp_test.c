@@ -159,20 +159,22 @@ DECL_INPUT_REG(uint1_t, cam_d0)
 
 
 // Cam out of reset at power on
-// wait at least 3ms for sccb init, be safe 10ms
-// ...for debug delay for like 10sec prob...
+// wait at least 3ms for sccb init
 MAIN_MHZ(cam_por, CAM_SYS_CLK_MHZ)
 uint1_t cam_reset_done;
 void cam_por()
 {
   static uint32_t counter;
-  cam_reset_done = counter==(10*(CAM_SYS_CLK_MHZ*1000000));
+  uint32_t ONE_SEC = CAM_SYS_CLK_MHZ*1000000;
+  uint32_t THREE_MS = 3*(ONE_SEC/1000);
+  cam_reset_done = counter==(THREE_MS-1);
   if(~cam_reset_done){
     counter += 1;
   }
 }
 
-
+// Timing params for SCCB
+// TODO start/stop high/low times can likely be less than full bit periods
 #define SCCB_CLK_RATE_KHZ 100
 #define SCCB_SYS_CLKS_PER_BIT ((CAM_SYS_CLK_MHZ*1000)/SCCB_CLK_RATE_KHZ)
 #define SCCB_SYS_CLKS_PER_HALF_BIT (SCCB_SYS_CLKS_PER_BIT/2)
@@ -774,6 +776,7 @@ void cam_init_test(){
   uint1_t is_read = 0;
   #define N_CONFIG_REGS 177
   uint16_t RESET_WRITE_INDEX = 1; // Soft reset write is second
+  // TODO is delay after soft reset needed?
   static uint16_t num_writes;
   static uint8_t config_addr_value[N_CONFIG_REGS][2] = {
 // 13.2 RGB 565 Reference Setting
@@ -1040,9 +1043,6 @@ typedef struct dvp_rgb565_decoder_t{
   uint5_t r;
   uint6_t g;
   uint5_t b;
-  uint5_t r_swapped;
-  uint6_t g_swapped;
-  uint5_t b_swapped;
   uint16_t x;
   uint16_t y;
   uint1_t pixel_valid;
@@ -1141,31 +1141,7 @@ dvp_rgb565_decoder_t dvp_rgb565_decoder(
       b_bits[2] = second_byte[2];
       b_bits[1] = second_byte[1];
       b_bits[0] = second_byte[0];
-      o.b = uint1_array5_le(b_bits);    
-
-      // TEST SWAPPED BYTE DECODE
-      uint1_t r_swapped_bits[5];
-      r_swapped_bits[4] = second_byte[7];
-      r_swapped_bits[3] = second_byte[6];
-      r_swapped_bits[2] = second_byte[5];
-      r_swapped_bits[1] = second_byte[4];
-      r_swapped_bits[0] = second_byte[3];
-      o.r_swapped = uint1_array5_le(r_swapped_bits);
-      uint1_t g_swapped_bits[6];
-      g_swapped_bits[5] = second_byte[2];
-      g_swapped_bits[4] = second_byte[1];
-      g_swapped_bits[3] = second_byte[0];
-      g_swapped_bits[2] = first_byte[7];
-      g_swapped_bits[1] = first_byte[6];
-      g_swapped_bits[0] = first_byte[5];
-      o.g_swapped = uint1_array6_le(g_swapped_bits);
-      uint1_t b_swapped_bits[5];
-      b_swapped_bits[4] = first_byte[4];
-      b_swapped_bits[3] = first_byte[3];
-      b_swapped_bits[2] = first_byte[2];
-      b_swapped_bits[1] = first_byte[1];
-      b_swapped_bits[0] = first_byte[0];
-      o.b_swapped = uint1_array5_le(b_swapped_bits);
+      o.b = uint1_array5_le(b_bits);
     }
   }
 
@@ -1174,7 +1150,6 @@ dvp_rgb565_decoder_t dvp_rgb565_decoder(
 
 
 // Light RGB led based on pixel intensity
-// If doesnt work try entire camera init sequence
 #include "cdc.h"
 MAIN_MHZ(cam_pixel_test, CAM_PCLK_MHZ)
 #pragma FUNC_MARK_DEBUG cam_pixel_test
