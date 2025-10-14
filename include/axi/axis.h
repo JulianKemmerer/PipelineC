@@ -73,8 +73,8 @@ typedef struct axis32_sized16_t
 
 // TODO make these _keep_count funcs into macro for all axis widths
 
-uint1_t axis8_keep_count(axis8_t s){
-  return s.tkeep[0];
+uint1_t axis8_keep_count(axis8_t axis){
+  return axis.tkeep[0];
 }
 
 uint7_t axis512_keep_count(axis512_t axis){
