@@ -33,18 +33,24 @@ def WIRE_TO_VHDL_NULL_STR(global_wire, logic, parser_state):
 def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
     # Single item / not list
     if type(c_ast_init) == c_ast.Constant:
-        return CONST_VAL_STR_TO_VHDL(str(c_ast_init.value), c_type, parser_state)
+        return CONST_VAL_STR_TO_VHDL(
+            str(c_ast_init.value), c_type, parser_state, ast_node=c_ast_init
+        )
     elif (
         type(c_ast_init) == c_ast.UnaryOp
         and str(c_ast_init.op) == "-"
         and (type(c_ast_init.expr) is c_ast.Constant)
     ):
         negated_str = "-" + str(c_ast_init.expr.value)
-        return CONST_VAL_STR_TO_VHDL(negated_str, c_type, parser_state)
+        return CONST_VAL_STR_TO_VHDL(
+            negated_str, c_type, parser_state, ast_node=c_ast_init
+        )
     elif type(c_ast_init) == c_ast.ID and C_TO_LOGIC.ID_IS_ENUM_CONST(
         c_ast_init, logic, "", parser_state
     ):
-        return CONST_VAL_STR_TO_VHDL(str(c_ast_init.name), c_type, parser_state)
+        return CONST_VAL_STR_TO_VHDL(
+            str(c_ast_init.name), c_type, parser_state, ast_node=c_ast_init
+        )
 
     # Each thing in init list is either position based, [index], .member
     pos = 0
@@ -167,7 +173,9 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     # Try to use resolved to a constant string? ugh
     if resolved_const_str is not None:
         # print("resolved_const_str", resolved_const_str, logic.func_name,init.coord)
-        return CONST_VAL_STR_TO_VHDL(resolved_const_str, c_type, parser_state)
+        return CONST_VAL_STR_TO_VHDL(
+            resolved_const_str, c_type, parser_state, wire_name=wire
+        )
 
     # Default handle c code
     return INIT_C_AST_NODE_TO_VHDL_INIT_STR(init, c_type, logic, parser_state)
@@ -6822,7 +6830,7 @@ def GET_LHS(driven_wire_to_handle, logic, parser_state):
     return LHS
 
 
-def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
+def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_node=None):
     is_negated = val_str.startswith("-")
     no_neg_val_str = val_str.strip("-")
 
@@ -6865,7 +6873,6 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
         size = dims[0]
         return "to_byte_array(" + C_CONST_STR_TO_VHDL_CONST_STR(val_str) + f", {size})"
 
-    # print("CONST_VAL_STR_TO_VHDL val_str",val_str)
     expected_c_type = c_type
     (
         value_num,
@@ -6916,13 +6923,19 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
             # print("new f_str",f_str,"was",value_num)
         return "to_slv(to_float(" + f_str + ", " + str(e) + ", " + str(m) + "))"
     else:
+        coord_str = ""
+        if ast_node:
+            coord_str = str(ast_node.coord)
         print(
             "Error: How to give const",
             val_str,
             "generated VHDL?",
+            "When used for to type",
             c_type,
-            wire_name,
+            "but looks like",
             unused_c_type_str,
+            coord_str,
+            wire_name,
         )
         sys.exit(-1)
 
@@ -6933,7 +6946,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
         # Use type to cast value string to type
         c_type = Logic.wire_to_c_type[wire_name]
         val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
-        return CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name)
+        return CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=wire_name)
     else:
         # print wire_name, "IS NOT CONSTANT"
         return "VAR_" + WIRE_TO_VHDL_NAME(wire_name, Logic)
