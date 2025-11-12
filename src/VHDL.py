@@ -6916,7 +6916,14 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None):
             # print("new f_str",f_str,"was",value_num)
         return "to_slv(to_float(" + f_str + ", " + str(e) + ", " + str(m) + "))"
     else:
-        print("How to give const", val_str, "gen VHDL?")
+        print(
+            "Error: How to give const",
+            val_str,
+            "generated VHDL?",
+            c_type,
+            wire_name,
+            unused_c_type_str,
+        )
         sys.exit(-1)
 
 
