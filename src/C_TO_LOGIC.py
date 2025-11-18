@@ -11417,6 +11417,17 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
     # Read in file with C parser and get function def nodes
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
+        # Warn about duplicate functions, if not overly false positive then make error
+        if func_def.decl.name in parser_state.FuncLogicLookupTable:
+            print(
+                "WARNING: Duplicate function definition found:",
+                func_def.decl.name,
+                "at:",
+                parser_state.FuncLogicLookupTable[func_def.decl.name].c_ast_node.coord,
+                "and again at:",
+                func_def.decl.coord,
+                ". Using second definition.",
+            )
         # Silently skip fsm clk funcs
         parse_func_body = parse_body
         if (
