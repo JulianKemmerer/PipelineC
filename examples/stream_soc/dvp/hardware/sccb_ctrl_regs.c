@@ -1,0 +1,1 @@
+cam_init_done = ctrl.cam_init_done;

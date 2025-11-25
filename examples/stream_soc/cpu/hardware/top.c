@@ -20,17 +20,13 @@
 // LEDs for demo
 #include "leds/leds_port.c"
 
-// FFT speed measure connected to debug chipscope reg
-MAIN_MHZ(cpu_top, 62.5)
+MAIN_MHZ(cpu_top, CPU_CLK_MHZ)
 void cpu_top(uint1_t areset) // TODO replace reset with global top level wire port
 {
   // TODO drive or dont use reset during sim
   // Sync reset
   uint1_t reset = xil_cdc2_bit(areset);
   //uint1_t reset = 0;
-
-  // Clock counter for debug
-  static uint32_t cpu_clock;
 
   // Instance of core
   my_mmio_in_t in;
@@ -57,6 +53,5 @@ void cpu_top(uint1_t areset) // TODO replace reset with global top level wire po
     unknown_op_reg = 0;
     mem_out_of_range_reg = 0;
   }
-  cpu_clock += 1;
 }
 

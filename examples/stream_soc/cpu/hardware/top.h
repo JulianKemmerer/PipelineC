@@ -1,6 +1,12 @@
 // See Arty-A7-35|100-Master.xdc files
 #pragma PART "xc7a100tcsg324-1"
 
+// CPU CLK MHZ const
+#include "../../clock/software/clock.h"
+
+// DVP board config
+#include "../../dvp/hardware/board_config.h"
+
 /* TODO TEST CHIPKIT HEADER AS UART PINS
 // Configure IO direction for each pin used
 // UART on ChipKit header pins
@@ -74,6 +80,7 @@ rx_data  ja[7] b i4
 #include "board/arty.h"
 //#include "i2s/i2s_regs.c"
 #include "vga/vga_wires_4b.c"
+#include "../../dvp/hardware/io.c"
 
 /* TODO TEST CHIPKIT HEADER AS UART PINS
    (personal Arty has broken built in USB UART)

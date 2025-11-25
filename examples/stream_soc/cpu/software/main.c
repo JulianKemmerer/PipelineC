@@ -11,8 +11,12 @@
 // TODO how to organize the funcs in these headers?
 #include "../../i2s/software/i2s.h"
 #include "../../fft/software/fft_read.h"
+#include "../../dvp/software/ov2640.h"
 
 void main() {
+  // Initialize OV2640 camera over SCCB
+  ov2640_cam_init();
+
   // Clear screen to black
   drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, 0, FB0);
 

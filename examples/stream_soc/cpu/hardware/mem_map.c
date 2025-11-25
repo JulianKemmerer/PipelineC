@@ -61,6 +61,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // MM Control+status registers
   static mm_ctrl_regs_t ctrl;
   o.outputs.ctrl = ctrl; // output reg
+  #include "../../dvp/hardware/sccb_ctrl_regs.c"
   static mm_status_regs_t status;
   // MM Handshake regs start off looking like regular ctrl+status MM regs
   static mm_handshake_data_t handshake_data;
@@ -170,6 +171,9 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   // I2S descriptors stream written from regs, i2s_rx_desc_to_write
   HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, handshake_data, handshake_valid, i2s_rx_desc_to_write)
 
+  // SCCB start and finish handshakes
+  #include "../../dvp/hardware/sccb_handshake_mmio.c"
+
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, o.rd_data)
@@ -223,6 +227,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // Input regs
   status = inputs.status;
+  #include "../../dvp/hardware/sccb_status_regs.c"
 
   return o;
 }

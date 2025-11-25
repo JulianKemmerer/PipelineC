@@ -18,6 +18,7 @@
 #include "../../i2s/software/mem_map.h"
 #include "../../fft/software/mem_map.h"
 #include "../../fft/software/fft_types.h"
+#include "../../dvp/software/sccb_types.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
@@ -39,11 +40,13 @@
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
   uint32_t compute_fft_cycles; // Cycles per fft iter debug counter
+  #include "../../dvp/software/sccb_ctrl_regs.h"
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
   //uint32_t i2s_rx_out_desc_overflow; // Single bit
+  #include "../../dvp/software/sccb_status_regs.h"
 }mm_status_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -72,6 +75,8 @@ typedef struct mm_handshake_data_t{
   //
   axi_descriptor_t fft_desc_to_write;
   axi_descriptor_t fft_desc_written;
+  //
+  #include "../../dvp/software/sccb_handshake_datas.h"
 }mm_handshake_data_t;
 typedef struct mm_handshake_valid_t{ 
   uint32_t i2s_rx_desc_to_write;
@@ -82,6 +87,8 @@ typedef struct mm_handshake_valid_t{
   //
   uint32_t fft_desc_to_write;
   uint32_t fft_desc_written;
+  //
+  #include "../../dvp/software/sccb_handshake_valids.h"
 }mm_handshake_valid_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
