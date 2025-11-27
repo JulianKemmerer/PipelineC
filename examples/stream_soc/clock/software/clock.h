@@ -1,4 +1,4 @@
-#define CPU_CLK_MHZ 50.0
+#define CPU_CLK_MHZ 62.5
 
 void wait_ms(uint32_t ms){
   uint32_t clks_per_ms = CPU_CLK_MHZ * 1000;

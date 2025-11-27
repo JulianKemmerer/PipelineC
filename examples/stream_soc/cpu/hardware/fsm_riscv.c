@@ -53,7 +53,6 @@ typedef enum cpu_state_t{
   //     \/ SAME CYCLE \/
   // Data into dmem starting mem transaction
   MEM_START,
-  //     \/ SAME CYCLE \/
   // Wait for DMEM mem transfer to finish
   MEM_END,
   //     \/ SAME CYCLE \/
@@ -296,8 +295,8 @@ riscv_out_t fsm_riscv(
   // Transition out of MEM_START depends on ready output from memory
   if(state==MEM_START){
     if(dmem_out.ready_for_inputs){
-      // MMIO regs can read in same cycle, if bad for fmax can make 1 cycle delay like bram...
-      state = MEM_END; next_state = state; // SAME CYCLE STATE TRANSITION
+      // All mem ops takes 1+ cycle, dont need same cycle transition
+      next_state = MEM_END;
     }
   }
   // Data memory outputs

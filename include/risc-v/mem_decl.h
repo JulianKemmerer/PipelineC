@@ -348,14 +348,14 @@ riscv_dmem_out_t riscv_dmem(
 
 // Copy of above dmem module 
 // modified to no longer be a pipeline
-// in support FSM style memory access that takes variable amount of time
+// in support FSM style memory access that takes variable amount of time, 1+ cycles
 #ifdef RISCV_DMEM_NO_AUTOPIPELINE
 #ifdef RISCV_DMEM_1_CYCLE
 riscv_dmem_out_t riscv_dmem(
   uint32_t rw_addr,
   uint32_t wr_data,
   uint1_t wr_byte_ens[4],
-  uint1_t rd_byte_ens[4],
+  uint1_t rd_byte_ens_in[4],
   uint1_t valid_in, // aka start
   uint1_t ready_for_outputs
   #ifdef riscv_mem_map_inputs_t
@@ -365,17 +365,24 @@ riscv_dmem_out_t riscv_dmem(
   riscv_dmem_out_t mem_out;
 
   // Two states like CPU
-  static uint1_t is_START_state = 1; // Otherwise is END
+  static uint1_t is_START_state_reg = 1; // Otherwise is END
+  uint1_t is_START_state = is_START_state_reg;
 
   // Registers to hold things supplied during start state
   // but needed later during end state
   // To adjust output of whatever memory
-  static uint1_t rd_byte_ens_reg[4]; 
+  static uint1_t rd_byte_ens_reg[4];
+  uint1_t rd_byte_ens[4] = rd_byte_ens_reg;
   // Decode mem hardware type
-  static uint1_t is_dmem;
-  static uint1_t is_mmio;
+  static uint1_t is_dmem_reg;
+  uint1_t is_dmem = is_dmem_reg;
+  static uint1_t is_mmio_reg;
+  uint1_t is_mmio = is_mmio_reg;
+  static uint2_t byte_mux_sel_reg;
+  uint2_t byte_mux_sel = byte_mux_sel_reg;
   if(valid_in){
-    rd_byte_ens_reg = rd_byte_ens;
+    byte_mux_sel = rw_addr(1,0);
+    rd_byte_ens = rd_byte_ens_in;
     is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
     is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
     if(~is_dmem & ~is_mmio){
@@ -383,18 +390,13 @@ riscv_dmem_out_t riscv_dmem(
       mem_out.mem_out_of_range = 1;
     }
   }
-  // Overide input signal with valid gated input reg contents
-  if(~valid_in){
-    rd_byte_ens = rd_byte_ens_reg;
-  }
    
   // Account for data memory being mapped to upper physical addr range
   if(is_dmem){
-    rw_addr &= ~DMEM_BASE_ADDR;
+    rw_addr = rw_addr(DMEM_ADDR_BIT_CHECK-1, 0);
   }
   // Convert byte addresses to 4-byte word index
   uint32_t mem_rw_word_index = rw_addr >> 2;
-  uint2_t byte_mux_sel = rw_addr(1,0);
 
   // Write or read helper flags
   uint1_t word_wr_en = 0;
@@ -449,7 +451,7 @@ riscv_dmem_out_t riscv_dmem(
   // Start state signalling into memories
   uint1_t dmem_valid_in;
   uint1_t mmio_valid_in;
-  if(is_START_state){
+  if(is_START_state_reg){
     // Wait for valid input
     if(valid_in){
       if(is_dmem){
@@ -491,7 +493,7 @@ riscv_dmem_out_t riscv_dmem(
   #endif
 
   // Start state transitions to end if selected memory accepted valid input as ready
-  if(is_START_state){
+  if(is_START_state_reg){
     // Wait for valid input
     if(valid_in){
       if(is_dmem){
@@ -505,10 +507,6 @@ riscv_dmem_out_t riscv_dmem(
         // Need to wait for MMIO to be ready for starting input
         // before moving to next state waiting to end and get output
         mem_out.ready_for_inputs = mem_map_out.ready_for_inputs;
-        if(~mem_map_out.addr_is_mapped){
-          printf("Error: MMIO access to unmapped address=%d?\n", rw_addr);
-          mem_out.mem_out_of_range = 1;
-        }
       }
       if(mem_out.ready_for_inputs){
         is_START_state = 0;
@@ -520,15 +518,19 @@ riscv_dmem_out_t riscv_dmem(
   // Drive mem out valid and rd_data
   uint32_t mem_rd_data = 0;
   mem_out.valid = 0;
-  if(~is_START_state){
+  if(~is_START_state_reg){
     // Wait for valid output from selected memory hardware
-    if(is_dmem){
+    if(is_dmem_reg){
       mem_rd_data = ram_out.rd_data0;
       mem_out.valid = ram_out.valid0;
     }
-    if(is_mmio){
+    if(is_mmio_reg){
       mem_rd_data = mem_map_out.rd_data;
       mem_out.valid = mem_map_out.valid;
+      if(mem_map_out.valid & ~mem_map_out.addr_is_mapped){
+        printf("Error: MMIO access to unmapped address=%d?\n", rw_addr);
+        mem_out.mem_out_of_range = 1;
+      }
     }
     // Back to start once output happened
     if(mem_out.valid & ready_for_outputs){
@@ -537,18 +539,18 @@ riscv_dmem_out_t riscv_dmem(
   }
   
   // Shift read data to account for conversion to 32b word index access
-  if(byte_mux_sel==3){
+  if(byte_mux_sel_reg==3){
     mem_rd_data = mem_rd_data >> (8*3);
-  }else if(byte_mux_sel==2){
+  }else if(byte_mux_sel_reg==2){
     mem_rd_data = mem_rd_data >> (8*2);
-  }else if(byte_mux_sel==1){
+  }else if(byte_mux_sel_reg==1){
     mem_rd_data = mem_rd_data >> (8*1);
   }  
   // Apply read enable byte enables to clear unused bits
   // Likely unecessary since sign extend done in reg wr stage?
-  if(rd_byte_ens[3] & rd_byte_ens[2] & rd_byte_ens[1] & rd_byte_ens[0]){
+  if(rd_byte_ens_reg[3] & rd_byte_ens_reg[2] & rd_byte_ens_reg[1] & rd_byte_ens_reg[0]){
     mem_rd_data = mem_rd_data; // No byte truncating
-  }else if(rd_byte_ens[1] & rd_byte_ens[0]){
+  }else if(rd_byte_ens_reg[1] & rd_byte_ens_reg[0]){
     // Lower two bytes only
     mem_rd_data = uint16_uint16(0, mem_rd_data(15,0));
   }else {
@@ -557,6 +559,13 @@ riscv_dmem_out_t riscv_dmem(
   }
   // Final mem rd data assignment to output
   mem_out.rd_data = mem_rd_data;
+
+  // Register next
+  is_START_state_reg = is_START_state;
+  is_dmem_reg = is_dmem;
+  is_mmio_reg = is_mmio;
+  byte_mux_sel_reg = byte_mux_sel;
+  rd_byte_ens_reg = rd_byte_ens;
 
   return mem_out;
 }

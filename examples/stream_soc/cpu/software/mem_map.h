@@ -102,6 +102,52 @@ static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)M
 static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
 #define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
 
+// Handshake hardware helper macros
+
+#define HANDSHAKE_MM_READ(hs_data_reg, hs_valid_reg, hs_data_name, stream_in, stream_ready_out)\
+stream_ready_out = ~hs_valid_reg.hs_data_name;\
+if(stream_ready_out & stream_in.valid){\
+  hs_data_reg.hs_data_name = stream_in.data;\
+  hs_valid_reg.hs_data_name = 1;\
+}
+
+#define HANDSHAKE_MM_WRITE(stream_out, stream_ready_in, hs_data_reg, hs_valid_reg, hs_data_name)\
+stream_out.data = hs_data_reg.hs_data_name;\
+stream_out.valid = hs_valid_reg.hs_data_name;\
+if(stream_out.valid & stream_ready_in){\
+    hs_valid_reg.hs_data_name = 0;\
+}
+
+// Read handshake helper macros
+
+#define mm_handshake_read(out_ptr, hs_name) \
+/* Wait for valid data to show up */ \
+while(!mm_handshake_valid->hs_name){} \
+/* Copy the data to output */ \
+*(out_ptr) = mm_handshake_data->hs_name; \
+/* Signal done with data */ \
+mm_handshake_valid->hs_name = 0
+
+#define mm_handshake_try_read(success_ptr, out_ptr, hs_name) \
+*(success_ptr) = 0;\
+if(mm_handshake_valid->hs_name){\
+  /* Copy the data to output */ \
+  *(out_ptr) = mm_handshake_data->hs_name; \
+  /* Signal done with data */ \
+  mm_handshake_valid->hs_name = 0;\
+  /* Set success */ \
+  *(success_ptr) = 1;\
+}
+
+// Write handshake helper macro
+#define mm_handshake_write(hs_name, in_ptr) \
+/* Wait for buffer to be invalid=empty */\
+while(mm_handshake_valid->hs_name){} \
+/* Put input data into data reg */ \
+mm_handshake_data->hs_name = *in_ptr; \
+/* Signal data is valid now */ \
+mm_handshake_valid->hs_name = 1;
+
 // TODO rewrite desc helper macros as void* and size of element int based functions?
 
 // descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
