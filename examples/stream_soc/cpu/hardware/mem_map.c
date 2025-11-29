@@ -86,8 +86,33 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // MM registers
   static mm_regs_t mm_regs;
+
+  // TODO collapse into organized includes
+  
+  // Output ctrl regs
   o.outputs.ctrl = mm_regs.ctrl;
   #include "../../dvp/hardware/sccb_ctrl_regs.c"
+  
+  // Input status regs
+  mm_regs.status = inputs.status;
+  #include "../../dvp/hardware/sccb_status_regs.c"
+  
+  // Handshakes
+
+  // FFT output descriptors read from handshake into registers
+  // fft_out_desc_written handshake = fft_desc_written stream
+  HANDSHAKE_MM_READ(mm_regs, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
+  // FFT descriptors to write stream written by handshake registers
+  // fft_in_desc_to_write stream = fft_desc_to_write handshake
+  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, mm_regs, fft_desc_to_write)
+
+  // I2S samples descriptors read from handshake into registers
+  HANDSHAKE_MM_READ(mm_regs, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
+  // I2S descriptors stream written from regs, i2s_rx_desc_to_write
+  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, mm_regs, i2s_rx_desc_to_write)
+
+  // SCCB start and finish handshakes
+  #include "../../dvp/hardware/sccb_handshake_mmio.c"
 
   // Start MM operation
   if(is_START_state_reg){
@@ -104,8 +129,12 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       // Starting regs operation?
       mm_regs_enabled = 1; // Dont need addr check, MM ENTRY includes
       // Regs are contiguous so single check will work...
-      mmio_type_is_axi0 = addr>=MMIO_AXI0_ADDR; // AXI0 assumed all upper
-      mm_type_is_regs = ~mmio_type_is_axi0; // regs assumed all lower than AXI0
+      // 60MHz to check >=?
+      //mmio_type_is_axi0 = addr>=MMIO_AXI0_ADDR; // AXI0 assumed all upper
+      //mm_type_is_regs = ~mmio_type_is_axi0; // regs assumed all lower than AXI0
+      // 65+MHz for < ?
+      mm_type_is_regs = addr<MM_REGS_END_ADDR; // regs assumed all lower than AXI0
+      mmio_type_is_axi0 = ~mm_type_is_regs; // AXI0 assumed all upper
       if(mm_type_is_regs){
         // Regs always ready now
         o.ready_for_inputs = 1;
@@ -152,23 +181,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
     }
   }
 
-  // Handshakes
-
-  // FFT output descriptors read from handshake into registers
-  // fft_out_desc_written handshake = fft_desc_written stream
-  HANDSHAKE_MM_READ(mm_regs, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
-  // FFT descriptors to write stream written by handshake registers
-  // fft_in_desc_to_write stream = fft_desc_to_write handshake
-  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, mm_regs, fft_desc_to_write)
-
-  // I2S samples descriptors read from handshake into registers
-  HANDSHAKE_MM_READ(mm_regs, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
-  // I2S descriptors stream written from regs, i2s_rx_desc_to_write
-  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, mm_regs, i2s_rx_desc_to_write)
-
-  // SCCB start and finish handshakes
-  #include "../../dvp/hardware/sccb_handshake_mmio.c"
-
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
     STRUCT_MM_ENTRY_NEW(MM_REGS_ADDR, mm_regs_t, mm_regs, mm_regs, addr, o.addr_is_mapped, regs_rd_data_out)
@@ -214,10 +226,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       is_START_state = 1;
     }
   }
-
-  // Input regs
-  mm_regs.status = inputs.status;
-  #include "../../dvp/hardware/sccb_status_regs.c"
 
   // Other regs
   is_START_state_reg = is_START_state;

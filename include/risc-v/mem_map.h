@@ -34,6 +34,57 @@ uint1_t valid,/*aka start*/\
 uint1_t ready_for_outputs,\
 mem_map_inputs_t inputs
 
+// Little macro for stream() like vars made out of mem map u32s
+#define MM_STREAM(type_t, name)\
+type_t name;\
+uint32_t name##_valid
+
+// Handshake hardware helper macros
+
+#define HANDSHAKE_MM_READ(regs, hs_name, stream_in, stream_ready_out)\
+stream_ready_out = ~regs.hs_name##_valid;\
+if(stream_ready_out & stream_in.valid){\
+  regs.hs_name = stream_in.data;\
+  regs.hs_name##_valid = 1;\
+}
+
+#define HANDSHAKE_MM_WRITE(stream_out, stream_ready_in, regs, hs_name)\
+stream_out.data = regs.hs_name;\
+stream_out.valid = regs.hs_name##_valid;\
+if(stream_out.valid & stream_ready_in){\
+    regs.hs_name##_valid = 0;\
+}
+
+// Read handshake helper macros
+
+#define mm_handshake_read(out_ptr, hs_name) \
+/* Wait for valid data to show up */ \
+while(!mm_regs->hs_name##_valid){} \
+/* Copy the data to output */ \
+*(out_ptr) = mm_regs->hs_name; \
+/* Signal done with data */ \
+mm_regs->hs_name##_valid = 0
+
+#define mm_handshake_try_read(success_ptr, out_ptr, hs_name) \
+*(success_ptr) = 0;\
+if(mm_regs->hs_name##_valid){\
+  /* Copy the data to output */ \
+  *(out_ptr) = mm_regs->hs_name; \
+  /* Signal done with data */ \
+  mm_regs->hs_name##_valid = 0;\
+  /* Set success */ \
+  *(success_ptr) = 1;\
+}
+
+// Write handshake helper macro
+#define mm_handshake_write(hs_name, in_ptr) \
+/* Wait for buffer to be invalid=empty */\
+while(mm_regs->hs_name##_valid){} \
+/* Put input data into data reg */ \
+mm_regs->hs_name = *in_ptr; \
+/* Signal data is valid now */ \
+mm_regs->hs_name##_valid = 1;
+
 
 // Helper macros to reduce code in and around mem_map_module
 

@@ -36,33 +36,33 @@ void main() {
     i2s_sample_in_mem_t* samples_in_dram = NULL;
     int n_samples = 0;
     if(i2s_try_read(&samples_in_dram, &n_samples)){
-      *LED = (1<<0);
+      mm_regs->ctrl.led = (1<<0);
 
       // Time domain waveform across top two thirds of display
       draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 2, samples_in_dram, n_samples, FB0);
 
-      *LED = (1<<1);
+      mm_regs->ctrl.led = (1<<1);
 
       // Enqueue the buffer to be used for future rx samples writes
       i2s_rx_enq_write(samples_in_dram, n_samples);
     }
 
-    *LED = 0;
+    mm_regs->ctrl.led = 0;
 
     // Read FFT result (in DDR3 off chip mem)
     fft_data_t* fft_out_in_dram;
     if(fft_try_read_power_result(&fft_out_in_dram, &n_samples)){
-      *LED = (1<<2);
+      mm_regs->ctrl.led = (1<<2);
 
       // Screen coloring result
       draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_out_in_dram, FB0);
 
-      *LED = (1<<3);
+      mm_regs->ctrl.led = (1<<3);
 
       // Confgure next FFT result output buffer at same place as current
       fft_config_power_result((fft_data_t*)fft_out_in_dram, n_samples); // Or (fft_data_t*)FFT_OUT_ADDR)...
     }
     
-    *LED = 0;
+    mm_regs->ctrl.led = 0;
   }
 }

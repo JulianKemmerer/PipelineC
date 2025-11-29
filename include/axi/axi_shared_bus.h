@@ -66,6 +66,46 @@ typedef struct axi_descriptor_t
   uint32_t num_words;
 }axi_descriptor_t;
 
+// TODO rewrite desc helper macros as void* and size of element int based functions?
+
+// descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
+#define mm_axi_desc_read(desc_out_ptr, type_t, out_addr_ptr, out_nelems_ptr, desc_hs_name, MMIO_ADDR)\
+/* Read description of elements in memory*/\
+mm_handshake_read(desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
+/* gets pointer to elements in some MMIO space*/\
+*(out_addr_ptr) = (type_t*)((desc_out_ptr)->addr + (MMIO_ADDR));\
+/* and number of elements (in u32 word count)*/\
+*(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t)
+
+// success ? descriptor: type_t out_ptr,out_nelems_ptr = desc_hs_name in MMIO_ADDR
+#define mm_axi_desc_try_read(success_ptr, desc_out_ptr, type_t, out_addr_ptr, out_nelems_ptr, desc_hs_name, MMIO_ADDR)\
+/* Read description of elements in memory*/\
+mm_handshake_try_read(success_ptr, desc_out_ptr, desc_hs_name); /* desc_out_ptr = desc_hs_name*/\
+if(*(success_ptr)){\
+  /* gets pointer to elements in some MMIO space*/\
+  *(out_addr_ptr) = (type_t*)((desc_out_ptr)->addr + (MMIO_ADDR));\
+  /* and number of elements (in u32 word count)*/\
+  *(out_nelems_ptr) = ((desc_out_ptr)->num_words*sizeof(uint32_t))/sizeof(type_t);\
+}
+
+// descriptor: desc_hs_name in MMIO_ADDR = type_t in_ptr,in_nelems
+#define mm_axi_desc_write(desc_out_ptr, desc_hs_name, MMIO_ADDR, type_t, in_ptr, in_nelems)\
+/* compute desc addr from input ptr addr */\
+(desc_out_ptr)->addr = (uint32_t)((uint8_t*)(in_ptr) - (MMIO_ADDR));\
+/* compare desc size from input nelems */\
+(desc_out_ptr)->num_words = (uint32_t)((in_nelems)*sizeof(type_t))/sizeof(uint32_t);\
+/* Write description of elements in memory*/\
+mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
+
+// Byte sized version of above
+#define mm_axi_desc_sized_write(desc_out_ptr, desc_hs_name, MMIO_ADDR, total_size, in_ptr)\
+/* compute desc addr from input ptr addr */\
+(desc_out_ptr)->addr = (uint32_t)((void*)(in_ptr) - (MMIO_ADDR));\
+/* compare desc size from input nelems */\
+(desc_out_ptr)->num_words = (uint32_t)(total_size)/sizeof(uint32_t);\
+/* Write description of elements in memory*/\
+mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
+
 #ifdef __PIPELINEC__
 
 // Helpers to fill in single word requests and responses
