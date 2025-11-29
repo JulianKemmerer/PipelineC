@@ -1,1 +1,1 @@
-cam_init_done = ctrl.cam_init_done;
+cam_init_done = mm_regs.cam_init_done;

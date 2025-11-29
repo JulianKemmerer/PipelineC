@@ -84,14 +84,10 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   axi_rd_req.arsize = 2; // 2^2=4 bytes per transfer
   axi_rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
 
-  // MM Control+status registers
-  static mm_ctrl_regs_t ctrl;
-  o.outputs.ctrl = ctrl; // output reg
+  // MM registers
+  static mm_regs_t mm_regs;
+  o.outputs.ctrl = mm_regs.ctrl;
   #include "../../dvp/hardware/sccb_ctrl_regs.c"
-  static mm_status_regs_t status;
-  // MM Handshake regs start off looking like regular ctrl+status MM regs
-  static mm_handshake_data_t handshake_data;
-  static mm_handshake_valid_t handshake_valid;
 
   // Start MM operation
   if(is_START_state_reg){
@@ -108,17 +104,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
       // Starting regs operation?
       mm_regs_enabled = 1; // Dont need addr check, MM ENTRY includes
       // Regs are contiguous so single check will work...
-      /*mm_type_is_regs = (
-        ( (addr>=MM_CTRL_REGS_ADDR)   & (addr<(MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t))) ) |
-        ( (addr>=MM_STATUS_REGS_ADDR) & (addr<(MM_STATUS_REGS_ADDR+sizeof(mm_status_regs_t))) ) |
-        ( (addr>=MM_HANDSHAKE_DATA_ADDR) & (addr<(MM_HANDSHAKE_DATA_ADDR+sizeof(mm_handshake_data_t))) ) |
-        ( (addr>=MM_HANDSHAKE_VALID_ADDR) & (addr<(MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))) )
-      );*/
-      //mm_type_is_regs = (addr>=MM_CTRL_REGS_ADDR) & (addr<(MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t)));
-      // AXI0 start/request signaling (direct global wiring for now)
-      // Use helper axi shared resource bus fsm funcs to do the AXI stuff and signal when done
-      // mmio_type_is_axi0 = (addr>=MMIO_AXI0_ADDR) & (addr<(MMIO_AXI0_ADDR+MMIO_AXI0_SIZE));
-      //mmio_type_is_axi0 = ~mm_type_is_regs; // TEMP ONLY TWO TYPES assume AXI if not regs...
       mmio_type_is_axi0 = addr>=MMIO_AXI0_ADDR; // AXI0 assumed all upper
       mm_type_is_regs = ~mmio_type_is_axi0; // regs assumed all lower than AXI0
       if(mm_type_is_regs){
@@ -171,25 +156,22 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // FFT output descriptors read from handshake into registers
   // fft_out_desc_written handshake = fft_desc_written stream
-  HANDSHAKE_MM_READ(handshake_data, handshake_valid, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
+  HANDSHAKE_MM_READ(mm_regs, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
   // FFT descriptors to write stream written by handshake registers
   // fft_in_desc_to_write stream = fft_desc_to_write handshake
-  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, handshake_data, handshake_valid, fft_desc_to_write)
+  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, mm_regs, fft_desc_to_write)
 
   // I2S samples descriptors read from handshake into registers
-  HANDSHAKE_MM_READ(handshake_data, handshake_valid, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
+  HANDSHAKE_MM_READ(mm_regs, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
   // I2S descriptors stream written from regs, i2s_rx_desc_to_write
-  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, handshake_data, handshake_valid, i2s_rx_desc_to_write)
+  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, mm_regs, i2s_rx_desc_to_write)
 
   // SCCB start and finish handshakes
   #include "../../dvp/hardware/sccb_handshake_mmio.c"
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
-    STRUCT_MM_ENTRY_NEW(MM_CTRL_REGS_ADDR, mm_ctrl_regs_t, ctrl, ctrl, addr, o.addr_is_mapped, regs_rd_data_out)
-    STRUCT_MM_ENTRY_NEW(MM_STATUS_REGS_ADDR, mm_status_regs_t, status, status, addr, o.addr_is_mapped, regs_rd_data_out)
-    STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_DATA_ADDR, mm_handshake_data_t, handshake_data, handshake_data, addr, o.addr_is_mapped, regs_rd_data_out)
-    STRUCT_MM_ENTRY_NEW(MM_HANDSHAKE_VALID_ADDR, mm_handshake_valid_t, handshake_valid, handshake_valid, addr, o.addr_is_mapped, regs_rd_data_out)
+    STRUCT_MM_ENTRY_NEW(MM_REGS_ADDR, mm_regs_t, mm_regs, mm_regs, addr, o.addr_is_mapped, regs_rd_data_out)
   }
 
   // End MMIO operation
@@ -234,7 +216,7 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   }
 
   // Input regs
-  status = inputs.status;
+  mm_regs.status = inputs.status;
   #include "../../dvp/hardware/sccb_status_regs.c"
 
   // Other regs

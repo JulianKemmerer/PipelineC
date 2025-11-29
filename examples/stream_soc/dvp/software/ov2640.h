@@ -224,8 +224,8 @@ ov2640_sccb_write(0xdd, 0x7f);
 ov2640_sccb_write(0x05, 0x00);
 
   // Signal init done to enable decoder output stream
-  mm_ctrl_regs->cam_init_done = 1;
+  mm_regs->cam_init_done = 1;
 
   // Wait for frame size valid from decoder to ensure frame lock
-  while(!mm_status_regs->cam_frame_size_valid){}
+  while(!mm_regs->cam_frame_size_valid){}
 }

@@ -36,37 +36,21 @@
 
 // Not using attribute packed for now, so manually dont use ints smaller than 32b...
 
-// Registers
+// OG regs for top IO
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
-  uint32_t compute_fft_cycles; // Cycles per fft iter debug counter
-  #include "../../dvp/software/sccb_ctrl_regs.h"
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
   uint32_t button; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
+}mm_status_regs_t;
+
+typedef struct mm_regs_t{ 
+  mm_ctrl_regs_t ctrl;
+  #include "../../dvp/software/sccb_ctrl_regs.h"
+  mm_status_regs_t status;
   //uint32_t i2s_rx_out_desc_overflow; // Single bit
   #include "../../dvp/software/sccb_status_regs.h"
-}mm_status_regs_t;
-// To-from bytes conversion func
-#ifdef __PIPELINEC__
-#include "mm_ctrl_regs_t_bytes_t.h"
-#include "mm_status_regs_t_bytes_t.h"
-#endif
-#define MM_CTRL_REGS_ADDR MEM_MAP_BASE_ADDR
-static volatile mm_ctrl_regs_t* mm_ctrl_regs = (mm_ctrl_regs_t*)MM_CTRL_REGS_ADDR;
-// LED (copying old def)
-static volatile uint32_t* LED = (uint32_t*)(MM_CTRL_REGS_ADDR + offsetof(mm_ctrl_regs_t, led));//&(mm_ctrl_regs->led);
-#define MM_CTRL_REGS_END_ADDR (MM_CTRL_REGS_ADDR+sizeof(mm_ctrl_regs_t))
-#define MM_STATUS_REGS_ADDR MM_CTRL_REGS_END_ADDR
-static volatile mm_status_regs_t* mm_status_regs = (mm_status_regs_t*)MM_STATUS_REGS_ADDR;
-#define MM_STATUS_REGS_END_ADDR (MM_STATUS_REGS_ADDR+sizeof(mm_status_regs_t))
-
-// Separate handshake data regs 
-// so not mixed in with strictly simple in or out status and ctrl registers
-// MM Handshake registers
-// TODO have memory map struct provided by fft,i2s modules that includes handshake fields etc
-typedef struct mm_handshake_data_t{ 
   axi_descriptor_t i2s_rx_desc_to_write;
   axi_descriptor_t i2s_rx_desc_written;
   //
@@ -77,64 +61,60 @@ typedef struct mm_handshake_data_t{
   axi_descriptor_t fft_desc_written;
   //
   #include "../../dvp/software/sccb_handshake_datas.h"
-}mm_handshake_data_t;
-typedef struct mm_handshake_valid_t{ 
-  uint32_t i2s_rx_desc_to_write;
-  uint32_t i2s_rx_desc_written;
+  uint32_t i2s_rx_desc_to_write_valid;
+  uint32_t i2s_rx_desc_written_valid;
   //
-  // I2S TX unused for now uint32_t i2s_tx_desc_to_read;
-  // I2S TX unused for now uint32_t i2s_tx_desc_read_from;
+  // I2S TX unused for now uint32_t i2s_tx_desc_to_read_valid;
+  // I2S TX unused for now uint32_t i2s_tx_desc_read_from_valid;
   //
-  uint32_t fft_desc_to_write;
-  uint32_t fft_desc_written;
+  uint32_t fft_desc_to_write_valid;
+  uint32_t fft_desc_written_valid;
   //
   #include "../../dvp/software/sccb_handshake_valids.h"
-}mm_handshake_valid_t;
+}mm_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
-#include "mm_handshake_data_t_bytes_t.h"
-#include "mm_handshake_valid_t_bytes_t.h"
+#include "mm_regs_t_bytes_t.h"
 #endif
-#define MM_HANDSHAKE_DATA_ADDR MM_STATUS_REGS_END_ADDR
-static volatile mm_handshake_data_t* mm_handshake_data = (mm_handshake_data_t*)MM_HANDSHAKE_DATA_ADDR;
-#define MM_HANDSHAKE_DATA_END_ADDR (MM_HANDSHAKE_DATA_ADDR+sizeof(mm_handshake_data_t))
-#define MM_HANDSHAKE_VALID_ADDR MM_HANDSHAKE_DATA_END_ADDR
-static volatile mm_handshake_valid_t* mm_handshake_valid = (mm_handshake_valid_t*)MM_HANDSHAKE_VALID_ADDR;
-#define MM_HANDSHAKE_VALID_END_ADDR (MM_HANDSHAKE_VALID_ADDR+sizeof(mm_handshake_valid_t))
+#define MM_REGS_ADDR MEM_MAP_BASE_ADDR
+static volatile mm_regs_t* mm_regs = (mm_regs_t*)MM_REGS_ADDR;
+// LED (copying old def)
+static volatile uint32_t* LED = (uint32_t*)(MM_REGS_ADDR + offsetof(mm_regs_t, ctrl) + offsetof(mm_ctrl_regs_t, led));//&(mm_regs->led);
+#define MM_REGS_END_ADDR (MM_REGS_ADDR+sizeof(mm_regs_t))
 
 // Handshake hardware helper macros
 
-#define HANDSHAKE_MM_READ(hs_data_reg, hs_valid_reg, hs_data_name, stream_in, stream_ready_out)\
-stream_ready_out = ~hs_valid_reg.hs_data_name;\
+#define HANDSHAKE_MM_READ(regs, hs_name, stream_in, stream_ready_out)\
+stream_ready_out = ~regs.hs_name##_valid;\
 if(stream_ready_out & stream_in.valid){\
-  hs_data_reg.hs_data_name = stream_in.data;\
-  hs_valid_reg.hs_data_name = 1;\
+  regs.hs_name = stream_in.data;\
+  regs.hs_name##_valid = 1;\
 }
 
-#define HANDSHAKE_MM_WRITE(stream_out, stream_ready_in, hs_data_reg, hs_valid_reg, hs_data_name)\
-stream_out.data = hs_data_reg.hs_data_name;\
-stream_out.valid = hs_valid_reg.hs_data_name;\
+#define HANDSHAKE_MM_WRITE(stream_out, stream_ready_in, regs, hs_name)\
+stream_out.data = regs.hs_name;\
+stream_out.valid = regs.hs_name##_valid;\
 if(stream_out.valid & stream_ready_in){\
-    hs_valid_reg.hs_data_name = 0;\
+    regs.hs_name##_valid = 0;\
 }
 
 // Read handshake helper macros
 
 #define mm_handshake_read(out_ptr, hs_name) \
 /* Wait for valid data to show up */ \
-while(!mm_handshake_valid->hs_name){} \
+while(!mm_regs->hs_name##_valid){} \
 /* Copy the data to output */ \
-*(out_ptr) = mm_handshake_data->hs_name; \
+*(out_ptr) = mm_regs->hs_name; \
 /* Signal done with data */ \
-mm_handshake_valid->hs_name = 0
+mm_regs->hs_name##_valid = 0
 
 #define mm_handshake_try_read(success_ptr, out_ptr, hs_name) \
 *(success_ptr) = 0;\
-if(mm_handshake_valid->hs_name){\
+if(mm_regs->hs_name##_valid){\
   /* Copy the data to output */ \
-  *(out_ptr) = mm_handshake_data->hs_name; \
+  *(out_ptr) = mm_regs->hs_name; \
   /* Signal done with data */ \
-  mm_handshake_valid->hs_name = 0;\
+  mm_regs->hs_name##_valid = 0;\
   /* Set success */ \
   *(success_ptr) = 1;\
 }
@@ -142,11 +122,11 @@ if(mm_handshake_valid->hs_name){\
 // Write handshake helper macro
 #define mm_handshake_write(hs_name, in_ptr) \
 /* Wait for buffer to be invalid=empty */\
-while(mm_handshake_valid->hs_name){} \
+while(mm_regs->hs_name##_valid){} \
 /* Put input data into data reg */ \
-mm_handshake_data->hs_name = *in_ptr; \
+mm_regs->hs_name = *in_ptr; \
 /* Signal data is valid now */ \
-mm_handshake_valid->hs_name = 1;
+mm_regs->hs_name##_valid = 1;
 
 // TODO rewrite desc helper macros as void* and size of element int based functions?
 
@@ -189,7 +169,7 @@ mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 mm_handshake_write(desc_hs_name, desc_out_ptr) /* desc_hs_name = desc_out_ptr */
 
 // AXI buses (type of shared resource bus)
-#define MMIO_AXI0_ADDR MM_HANDSHAKE_VALID_END_ADDR
+#define MMIO_AXI0_ADDR MM_REGS_END_ADDR
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
 static volatile uint8_t* AXI0 = (uint8_t*)MMIO_AXI0_ADDR;
 #define MMIO_AXI0_END_ADDR (MMIO_AXI0_ADDR+MMIO_AXI0_SIZE)
