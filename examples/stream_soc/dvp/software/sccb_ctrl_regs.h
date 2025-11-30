@@ -1,1 +1,0 @@
-uint32_t cam_init_done;

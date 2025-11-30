@@ -86,33 +86,14 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
 
   // MM registers
   static mm_regs_t mm_regs;
-
-  // TODO collapse into organized includes
-  
-  // Output ctrl regs
-  o.outputs.ctrl = mm_regs.ctrl;
-  #include "../../dvp/hardware/sccb_ctrl_regs.c"
-  
   // Input status regs
   mm_regs.status = inputs.status;
-  #include "../../dvp/hardware/sccb_status_regs.c"
-  
-  // Handshakes
-
-  // FFT output descriptors read from handshake into registers
-  // fft_out_desc_written handshake = fft_desc_written stream
-  HANDSHAKE_MM_READ(mm_regs, fft_desc_written, fft_out_desc_written, fft_out_desc_written_ready)
-  // FFT descriptors to write stream written by handshake registers
-  // fft_in_desc_to_write stream = fft_desc_to_write handshake
-  HANDSHAKE_MM_WRITE(fft_in_desc_to_write, fft_in_desc_to_write_ready, mm_regs, fft_desc_to_write)
-
-  // I2S samples descriptors read from handshake into registers
-  HANDSHAKE_MM_READ(mm_regs, i2s_rx_desc_written, i2s_rx_descriptors_monitor_fifo_out, i2s_rx_descriptors_monitor_fifo_out_ready)
-  // I2S descriptors stream written from regs, i2s_rx_desc_to_write
-  HANDSHAKE_MM_WRITE(i2s_rx_desc_to_write_fifo_in, i2s_rx_desc_to_write_fifo_in_ready, mm_regs, i2s_rx_desc_to_write)
-
-  // SCCB start and finish handshakes
-  #include "../../dvp/hardware/sccb_handshake_mmio.c"
+  // Output ctrl regs
+  o.outputs.ctrl = mm_regs.ctrl;
+  // Other modules regs
+  #include "../../i2s/hardware/i2s_mm_regs.c"
+  #include "../../fft/hardware/fft_mm_regs.c"
+  #include "../../dvp/hardware/sccb_mm_regs.c"
 
   // Start MM operation
   if(is_START_state_reg){

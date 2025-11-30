@@ -1,1 +1,0 @@
-mm_regs.cam_frame_size_valid = xil_cdc2_bit(cam_frame_size_valid);

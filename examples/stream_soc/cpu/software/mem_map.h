@@ -10,14 +10,11 @@
 #include <stddef.h>
 #endif
 
-// TODO organize includes
-#include "vga/pixel.h"
-#include "../../frame_buffers/software/frame_buf.h"
-#include "axi/axi_shared_bus.h" // For axi_descriptor_t, etc
 #include "risc-v/mem_map.h" // For mm_handshake_read, etc
+#include "axi/axi_shared_bus.h" // For axi_descriptor_t, etc
+#include "vga/pixel.h"
 #include "../../i2s/software/mem_map.h"
 #include "../../fft/software/mem_map.h"
-#include "../../fft/software/fft_types.h"
 #include "../../dvp/software/sccb_types.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
@@ -36,7 +33,7 @@
 
 // Not using attribute packed for now, so manually dont use ints smaller than 32b...
 
-// OG regs for top IO
+// Original regs for top IO, TODO make into modules
 typedef struct mm_ctrl_regs_t{ 
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
 }mm_ctrl_regs_t;
@@ -48,14 +45,8 @@ typedef struct mm_status_regs_t{
 typedef struct mm_regs_t{ 
   mm_ctrl_regs_t ctrl;
   mm_status_regs_t status;
-  // I2S Regs, TODO #include
-  MM_STREAM(axi_descriptor_t, i2s_rx_desc_to_write);
-  MM_STREAM(axi_descriptor_t, i2s_rx_desc_written);
-  // I2S TX unused for now MM_STREAM(axi_descriptor_t, i2s_tx_desc_to_read);
-  // I2S TX unused for now MM_STREAM(axi_descriptor_t, i2s_tx_desc_read_from);
-  // FFT Regs, TODO #include
-  MM_STREAM(axi_descriptor_t, fft_desc_to_write);
-  MM_STREAM(axi_descriptor_t, fft_desc_written);
+  #include "../../i2s/software/i2s_mm_regs.h"
+  #include "../../fft/software/fft_mm_regs.h"
   #include "../../dvp/software/sccb_mm_regs.h"
 }mm_regs_t;
 // To-from bytes conversion func

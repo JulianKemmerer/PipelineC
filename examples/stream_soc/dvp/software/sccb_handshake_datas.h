@@ -1,2 +1,0 @@
-sccb_op_start_t sccb_op_start;
-sccb_op_finish_t sccb_op_finish;

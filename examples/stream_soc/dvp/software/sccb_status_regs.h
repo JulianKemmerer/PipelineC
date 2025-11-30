@@ -1,1 +1,0 @@
-uint32_t cam_frame_size_valid;
