@@ -5,6 +5,10 @@
 DECL_STREAM_TYPE(uint32_t)
 
 // TODO move all module board and io to here via includes
+//  ETH io is board specific so can come from arty.h
+//    eth to i2s uses that
+//  Break apart board config .h and io.c for sccb vs dvp
+//  DDR io flatten to not use old struct with lots of vhdl in board.vhd
 
 // CPU CLK MHZ const
 #include "../../clock/software/clock.h"

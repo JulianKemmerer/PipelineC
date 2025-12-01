@@ -1,6 +1,6 @@
 
 // Draw shapes in frame buffer
-#include "../../frame_buffers/software/draw.h"
+//#include "../../frame_buffers/software/draw.h"
 #include "i2s/i2s_32b.h"
 
 // Spectrum is rect bins

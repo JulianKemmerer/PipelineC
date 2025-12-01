@@ -3,25 +3,25 @@
 // TODO group collections of includes into larger logical devices?
 
 // Simple clock for software wait()
-#include "../../clock/hardware/clock.c"
+#include "../../clock/hardware/device.c"
 
 // DDR memory controller IO and shared AXI bus
-#include "../../ddr/hardware/ddr.c"
-#include "../../shared_ddr/hardware/shared_ddr.c"
+#include "../../ddr/hardware/device.c"
+#include "../../shared_ddr/hardware/device.c"
 
 // VGA display from frame buffer in DDR
-#include "../../vga/hardware/vga.c"
+#include "../../vga/hardware/device.c"
 
 // I2S RX + TX code
 //#include "../../i2s/hardware/i2s.c"
 // Instead get I2S samples over ethernet (from other dev board)
-#include "../../eth_to_i2s/eth_to_i2s.c"
+#include "../../eth_to_i2s/hardware/device.c"
 
 // Hardware for doing the full FFT power spectrum
 #define FFT_CLK_MHZ 110.0
 #define FFT_CLK_2X_MHZ 220.0
-#include "../../fft/hardware/fft_2pt_2x_clk.c"
-#include "../../power/hardware/power.c"
+#include "../../fft/hardware/device.c"
+#include "../../power/hardware/device.c"
 
 // OV2640 SCCB+DVP camera
 #include "../../cam/ov2640/hardware/device.c"

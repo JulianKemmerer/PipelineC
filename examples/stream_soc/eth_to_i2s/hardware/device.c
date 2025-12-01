@@ -4,13 +4,13 @@
 #include "axi/axis.h"
 
 // Include board media access controller (8b AXIS)
-#include "../eth/hardware/xil_temac.c"
+#include "../../eth/hardware/xil_temac.c"
 
 // Include logic for parsing/building ethernet frames (32b AXIS)
 #include "net/eth_32.c"
 
 // Include the mac address info we want the fpga to have
-#include "../eth/hardware/fpga_mac.h"
+#include "../../eth/hardware/fpga_mac.h"
 
 // Loopback RX to TX with two clock crossing async fifos
 //  the FIFOs have valid,ready streaming handshake interfaces

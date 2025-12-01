@@ -1,17 +1,19 @@
 #include <stdint.h>
-#include <stdlib.h> 
+#include <stdlib.h>
+#include "uintN_t.h"
 
-// TODO organize includes
-#include "../../fft/software/fft_types.h"
-#include "../../power/software/power.h"
-#include "../../fft/software/draw.h"
-// Not doing FFT in software right now but could...
-//#include "../fft/software/fft.c"
+// Hardware memory map
 #include "mem_map.h"
-// TODO how to organize the funcs in these headers?
-#include "../../i2s/software/i2s.h"
-#include "../../power/software/power_read.h"
-#include "../../cam/ov2640/software/ov2640.h"
+
+// Device specific functionality using memory map
+// TODO move into bottom of mem_map.h?
+#include "../../i2s/software/device.h"
+#include "../../power/software/device.h"
+#include "../../frame_buffers/software/device.h"
+#include "../../cam/ov2640/software/device.h"
+
+// Application software using devices, drawing waveform and spectrum:
+#include "../../fft/software/draw.h"
 
 void main() {
   // Initialize OV2640 camera over SCCB

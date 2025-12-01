@@ -1,0 +1,2 @@
+uint32_t cam_frame_size_valid;
+uint32_t cam_init_done;
