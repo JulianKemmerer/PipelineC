@@ -1,7 +1,7 @@
 #pragma once
 #include "compiler.h"
 #include "uintN_t.h"
-#include "fft_types.h"
+#include "../../fft/software/fft_types.h"
 
 // https://github.com/chmike/fpsqrt/blob/master/fpsqrt.c
 int32_t fixed_sqrt(int32_t v) {
@@ -86,6 +86,8 @@ int32_t fixed_sqrt(int32_t v) {
 }
 
 fft_data_t sample_power(fft_out_t fft_out_sample){
+    //#warning "sample_power DISABLED FOR TESTING"
+    //return fft_out_sample.real;
     fft_data_t re = fft_out_sample.real;
     fft_data_t im = fft_out_sample.imag;
     #ifdef FFT_TYPE_IS_FLOAT

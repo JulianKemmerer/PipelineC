@@ -3,15 +3,15 @@
 
 // TODO organize includes
 #include "../../fft/software/fft_types.h"
-#include "../../fft/software/power.h"
+#include "../../power/software/power.h"
 #include "../../fft/software/draw.h"
 // Not doing FFT in software right now but could...
 //#include "../fft/software/fft.c"
 #include "mem_map.h"
 // TODO how to organize the funcs in these headers?
 #include "../../i2s/software/i2s.h"
-#include "../../fft/software/fft_read.h"
-#include "../../dvp/software/ov2640.h"
+#include "../../power/software/power_read.h"
+#include "../../cam/ov2640/software/ov2640.h"
 
 void main() {
   // Initialize OV2640 camera over SCCB
@@ -28,8 +28,8 @@ void main() {
     i2s_addr += sizeof(i2s_sample_in_mem_t)*NFFT;
   }
 
-  // Configure FFT result AXIS sink to write to AXI DDR at specific address
-  fft_config_power_result((fft_data_t*)FFT_OUT_ADDR, NFFT);
+  // Configure power spectrum result AXIS sink to write to AXI DDR at specific address
+  fft_config_power_result((fft_data_t*)POWER_OUT_ADDR, NFFT);
 
   while(1){
     // Read i2s samples (in DDR3 off chip)
@@ -49,18 +49,18 @@ void main() {
 
     mm_regs->ctrl.led = 0;
 
-    // Read FFT result (in DDR3 off chip mem)
-    fft_data_t* fft_out_in_dram;
-    if(fft_try_read_power_result(&fft_out_in_dram, &n_samples)){
+    // Read power result (in DDR3 off chip mem)
+    fft_data_t* power_out_in_dram;
+    if(fft_try_read_power_result(&power_out_in_dram, &n_samples)){
       mm_regs->ctrl.led = (1<<2);
 
       // Screen coloring result
-      draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, fft_out_in_dram, FB0);
+      draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, power_out_in_dram, FB0);
 
       mm_regs->ctrl.led = (1<<3);
 
-      // Confgure next FFT result output buffer at same place as current
-      fft_config_power_result((fft_data_t*)fft_out_in_dram, n_samples); // Or (fft_data_t*)FFT_OUT_ADDR)...
+      // Confgure next power result output buffer at same place as current
+      fft_config_power_result((fft_data_t*)power_out_in_dram, n_samples); // Or (fft_data_t*)POWER_OUT_ADDR)...
     }
     
     mm_regs->ctrl.led = 0;

@@ -1,0 +1,3 @@
+#include "../../i2s/hardware/i2s_mm_regs.c"
+#include "../../power/hardware/power_mm_regs.c"
+#include "../../sccb/hardware/sccb_mm_regs.c"

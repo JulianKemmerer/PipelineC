@@ -1,5 +1,5 @@
 #pragma once
-#include "fft_types.h"
+#include "../../fft/software/fft_types.h"
 #include "axi/axi_shared_bus.h"
 
 /*
@@ -52,7 +52,7 @@ void fft_config_power_result(fft_data_t* addr, int nelems){
   int size = sizeof(fft_data_t) * nelems;
   mm_axi_desc_sized_write(
     &desc, 
-    fft_desc_to_write, 
+    power_desc_to_write, 
     MMIO_AXI0_ADDR, 
     size, 
     addr
@@ -69,7 +69,7 @@ uint32_t fft_try_read_power_result(fft_data_t** out_ptr, int* n_elems_out){
     fft_data_t,
     out_ptr, // output pointer to elements in memory
     n_elems_out,   // output number of elements in memory
-    fft_desc_written, // descriptor name in MMIO
+    power_desc_written, // descriptor name in MMIO
     MMIO_AXI0_ADDR  // MMIO address offset
   );
   return success;

@@ -30,6 +30,13 @@ stream(i2s_samples_t) i2s_rx_samples_monitor_stream;
 axi_shared_bus_t_dev_to_host_t i2s_axi_host_from_dev;
 axi_shared_bus_t_host_to_dev_t i2s_axi_host_to_dev;
 
+// Connect I2S to AXI bus (in I2S clock domain)
+#pragma MAIN i2s_axi_connect
+void i2s_axi_connect(){
+  host_to_dev(axi_xil_mem, i2s) = i2s_axi_host_to_dev;
+  i2s_axi_host_from_dev = dev_to_host(axi_xil_mem, i2s);
+}
+
 // Globally visible fifo as input port for I2S RX desc to be written
 GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, 16)
 

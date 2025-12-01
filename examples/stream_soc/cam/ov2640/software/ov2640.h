@@ -1,5 +1,5 @@
-#include "sccb.h"
-#include "../../clock/software/clock.h"
+#include "../../../sccb/software/sccb.h"
+#include "../../../clock/software/clock.h"
 
 // Select the device using first 8b written to device
 //   Examples and app notes show D[7:0] = 0x60
