@@ -164,7 +164,8 @@ void PPCAT(inst_name,_handshake)(){\
   /* Keep count of how many words in FIFO*/\
   static global_func_inst_counter_t fifo_count;\
   /* Signal ready for input if room in fifo*/\
-  PPCAT(inst_name,_in_ready) = (fifo_count < MAX_IN_FLIGHT);\
+  static uint1_t in_ready_reg;\
+  PPCAT(inst_name,_in_ready) = in_ready_reg;\
   /* Logic for input side of pipeline without handshake*/\
   /* Gate valid with ready signal*/\
   PPCAT(inst_name,_no_handshake_in_valid) = PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready);\
@@ -180,14 +181,16 @@ void PPCAT(inst_name,_handshake)(){\
   PPCAT(inst_name,_out.valid) = fifo_o.data_out_valid;\
   PPCAT(inst_name,_out.data) = fifo_o.data_out;\
   /* Count input writes and output reads from fifo*/\
-  if(PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready)){\
+  uint1_t fifo_count_plus_1 = PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready);\
+  uint1_t fifo_count_minus_1 = PPCAT(inst_name,_out.valid) & PPCAT(inst_name,_out_ready);\
+  if(fifo_count_plus_1 & ~fifo_count_minus_1){\
       fifo_count += 1;\
-  }\
-  if(PPCAT(inst_name,_out.valid) & PPCAT(inst_name,_out_ready)){\
+  }else if(fifo_count_minus_1 & ~fifo_count_plus_1){\
       fifo_count -= 1;\
   }\
+  in_ready_reg = (fifo_count < MAX_IN_FLIGHT);\
 }
-
+// ^TODO Use MAX_IN_FLIGHT to do comptime selection of compare/increment fifo_count math width casting?
 
 // Pipeline with id and valid that includes ONE HOT mux fan-in and fan-out
 #define GLOBAL_PIPELINE_INST_W_ARB(inst_name, out_type, func_name, in_type, NUM_HOSTS) \
