@@ -1244,6 +1244,18 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
     right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
 
+    # Cannot do compare operations between mixed compound types right now...
+    # arrays vs non arrays, structs vs non structs
+    if (
+        C_TO_LOGIC.C_TYPE_IS_ARRAY(left_type) != C_TO_LOGIC.C_TYPE_IS_ARRAY(right_type)
+    ) or (
+        C_TO_LOGIC.C_TYPE_IS_STRUCT(left_type, parser_state)
+        != C_TO_LOGIC.C_TYPE_IS_STRUCT(right_type, parser_state)
+    ):
+        raise Exception(
+            f"Unsupported == or != compare between array/struct and non array/struct. {logic.c_ast_node.coord}"
+        )
+
     # Only ints+floats for now, check all inputs
     if (
         VHDL.WIRES_ARE_INT_N(logic.inputs, logic)
@@ -1851,6 +1863,7 @@ def SLICES_TO_SIZE_LIST(slices):
     return adj_percents
 
 
+# TODO min bits per stage roughly based on smallest add op in one lut/carry?
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
     bits_per_stage_dict = {}
 
