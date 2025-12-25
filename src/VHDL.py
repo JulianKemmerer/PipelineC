@@ -7081,6 +7081,45 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
     return text
 
 
+def VHDL_FUNC_INST_CAN_BE_EXPR(
+    containing_func_logic, submodule_logic, submodule_inst, parser_state
+):
+    # But some const ref funcs can be replaced can also be VHDL expressions if the syntax feeling is right
+    if not submodule_logic.func_name.startswith(
+        C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
+    ):
+        return False
+    # The feeling is not right if trying to dereference a NULL array constant
+    has_null_array_inputs = False
+    for input_name in submodule_logic.inputs:
+        input_wire_name = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_name
+        c_type = submodule_logic.wire_to_c_type[input_name]
+        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+            const_driver = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(
+                input_wire_name, containing_func_logic
+            )
+            if const_driver is not None:
+                const_val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+                    const_driver, containing_func_logic, parser_state
+                )
+                if const_val_str == C_TO_LOGIC.COMPOUND_NULL:
+                    has_null_array_inputs = True
+                    break
+    if not has_null_array_inputs:
+        # Needs just one input
+        driven_ref_toks_list = (
+            containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[
+                submodule_inst
+            ]
+        )
+        if len(driven_ref_toks_list) == 1:
+            driven_ref_toks = driven_ref_toks_list[0]
+            # Driving the base variable
+            if len(driven_ref_toks) == 1:
+                return True
+    return False
+
+
 def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(
     submodule_logic,
     submodule_inst,
@@ -7089,6 +7128,16 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(
     TimingParamsLookupTable,
     parser_state,
 ):
+    # VHDL func can be replaced with expression instead
+    if VHDL_FUNC_INST_CAN_BE_EXPR(logic, submodule_logic, submodule_inst, parser_state):
+        return GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
+            submodule_logic,
+            submodule_inst,
+            inst_name,
+            logic,
+            TimingParamsLookupTable,
+            parser_state,
+        )
     rv = "     "
     # FUNC INSTANCE
     out_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
