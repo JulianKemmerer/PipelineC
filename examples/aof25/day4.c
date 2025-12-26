@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~? MHz
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~? MHz
-#define CLOCK_MHZ 80 // Limited by ? stateful function
+#pragma PART "xc7a100tcsg324-1" // FMAX ~200 MHz
+//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~120 MHz
+#define CLOCK_MHZ 120 // Limited by sliding_window stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -9,15 +9,14 @@
 
 #define WINDOW_HEIGHT 3
 #define WINDOW_WIDTH 3
-#define win_h_t uint3_t // log2 height +1
 #define WINDOW_CENTER_X (WINDOW_WIDTH / 2)
 #define WINDOW_CENTER_Y (WINDOW_HEIGHT / 2)
 #define X_INIT ((-WINDOW_CENTER_X) - 1)
 #define Y_INIT (-WINDOW_CENTER_Y)
-#define LINE_WIDTH 10
-#define NUM_LINES 10
-#define line_w_t int5_t // min: log2 line width +1
-#define line_h_t int5_t // min: log2 num lines + 1
+#define LINE_WIDTH 10 // Used to size fifo buffers
+#define NUM_LINES 10 // Used to know when test input ends
+#define line_w_t int8_t // min: log2 line width +1
+#define line_h_t int8_t // min: log2 num lines + 1
 #define input_t char
 #define EMPTY '.'
 #define ROLL '@'
@@ -27,7 +26,7 @@
 typedef struct window_t{
   input_t data[WINDOW_WIDTH][WINDOW_HEIGHT];
 }window_t;
-// Fixed size types print for sim
+// Fixed size arrays printf for sim
 void print_3x3(char name[16], char data[3][3]){
   // Print null as EMPTY
   for (uint32_t i = 0; i < 3; i+=1)
@@ -44,10 +43,6 @@ void print_3x3(char name[16], char data[3][3]){
     data[0][2],data[1][2],data[2][2]
   );
 }
-window_t empty_window(){
-  window_t rv = {0};
-  return rv;
-}
 window_t slide_window(window_t curr, input_t next_input_col[WINDOW_HEIGHT]){
   // Sliding right, shifting columns
   window_t next = curr;
@@ -62,53 +57,6 @@ window_t slide_window(window_t curr, input_t next_input_col[WINDOW_HEIGHT]){
     }
   }
   return next;
-}
-
-
-// Inputs to dataflow
-// Global wires connect this process into rest of design
-input_t input_data;
-uint1_t input_valid;
-uint1_t ready_for_input;
-#pragma MAIN inputs_process
-MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
-void inputs_process()
-{
-  // Hard code inputs for sim for now...
-  static input_t inputs[NUM_LINES][LINE_WIDTH] = {
-    "..@@.@@@@.",
-    "@@@.@.@.@@",
-    "@@@@@.@.@@",
-    "@.@@@@..@.",
-    "@@.@@@@.@@",
-    ".@@@@@@@.@",
-    ".@.@.@.@@@",
-    "@.@@@.@@@@",
-    ".@@@@@@@@.",
-    "@.@.@@@.@."
-  };
-  static uint32_t y_counter;
-  static uint32_t x_counter;
-  static uint1_t test_running = 1;
-  uint1_t is_end_of_line = x_counter >= (LINE_WIDTH-1);
-  uint1_t is_last_line = y_counter >= (NUM_LINES-1);
-  input_data = inputs[0][0];
-  input_valid = test_running;
-  if(input_valid & ready_for_input){
-    //printf("Input line %d char[%d]: %c\n", y_counter, x_counter, input_data);
-    // End of line?
-    if(is_end_of_line){
-      // next line
-      ARRAY_SHIFT_DOWN(inputs, NUM_LINES, 1)
-      y_counter += 1;
-      x_counter = 0;
-    }else{
-      // next char in line
-      ARRAY_SHIFT_DOWN(inputs[0], LINE_WIDTH, 1)
-      x_counter += 1;
-    }
-    test_running = ~(is_end_of_line & is_last_line);
-  }
 }
 
 
@@ -195,7 +143,7 @@ sliding_window_t sliding_window(
   uint1_t want_data_from_fifo[WINDOW_HEIGHT];
   // X range applies to all fifos
   if(window_x_pos < (LINE_WIDTH-2)){
-    // Y range is specific to each fifo
+    // Y range is specific to each fifo, annoying magic number ranges
     for(uint32_t i=0; i<WINDOW_HEIGHT; i+=1){
       want_data_from_fifo[i] = (window_y_pos >= (i-WINDOW_CENTER_Y)) & (window_y_pos <= (NUM_LINES-WINDOW_CENTER_Y-1+i));
     }
@@ -222,14 +170,14 @@ sliding_window_t sliding_window(
   // relative to input stream into fifo[i=0] indexing above
   input_t next_input_col[WINDOW_HEIGHT];
   for(uint32_t i=0; i<WINDOW_HEIGHT; i+=1){
-    win_h_t y = WINDOW_HEIGHT - 1 - i;
+    uint32_t y = WINDOW_HEIGHT - 1 - i;
     next_input_col[y] = EMPTY;
     if(fifo_output_valids[i] & fifo_readys_for_output[i]){
       next_input_col[y] = fifo_outputs[i];
     }
   }
   
-  // Do window sliding on current row/clearing as needed for next row
+  // Do window sliding along current row/clearing as needed for next row
   if(window_sliding){
     printf("Current window center pos: %d,%d (valid=%d)\n", window_x_pos, window_y_pos, o.window_valid);
     print_3x3("Current:", window.data);
@@ -243,33 +191,84 @@ sliding_window_t sliding_window(
       //printf("End of line reset...\n");
       window_x_pos = X_INIT;
       window_y_pos += 1;
-      window = empty_window();
+      window_t empty_window;
+      window = empty_window;
     }
+    // TODO last line end of frame reset
   }
 
   return o;
 }
 
 
-// Pure function pipeline for counting neighbors around the center paper roll location
+// Pure function pipeline counting neighbors around the center paper roll location
 uint1_t center_roll_accessible(window_t window){
-  // Easy loops hard coded to 3x3 problem
   uint4_t neighbor_count;
+  input_t center;
   for (uint32_t i = 0; i < WINDOW_WIDTH; i+=1)
   {
     for (uint32_t j = 0; j < WINDOW_HEIGHT; j+=1)
     {
-      if(~((i==WINDOW_CENTER_X)&(j==WINDOW_CENTER_Y))){
+      if((i==WINDOW_CENTER_X)&(j==WINDOW_CENTER_Y)){
+        center = window.data[i][j];
+      }else{
         neighbor_count += (window.data[i][j]==ROLL);
       }
     }
   }
-  return (window.data[WINDOW_CENTER_X][WINDOW_CENTER_Y]==ROLL) & (neighbor_count < 4);
+  return (center==ROLL) & (neighbor_count < 4);
 }
 // center_roll_accessible_pipeline : uint1_t center_roll_accessible(window_t)
 //  instance of pipeline without handshaking but does include stream valid bit
 //  delcares global variable wires as ports to connect to, named like center_roll_accessible_pipeline _in/_out...
 GLOBAL_PIPELINE_INST_W_VALID_ID(center_roll_accessible_pipeline, uint1_t, center_roll_accessible, window_t)
+
+
+// Inputs to dataflow
+// Global wires connect this process into rest of design
+input_t input_data;
+uint1_t input_valid;
+uint1_t ready_for_input;
+#pragma MAIN inputs_process
+MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
+void inputs_process()
+{
+  // Hard code inputs for sim for now...
+  static input_t inputs[NUM_LINES][LINE_WIDTH] = {
+    "..@@.@@@@.",
+    "@@@.@.@.@@",
+    "@@@@@.@.@@",
+    "@.@@@@..@.",
+    "@@.@@@@.@@",
+    ".@@@@@@@.@",
+    ".@.@.@.@@@",
+    "@.@@@.@@@@",
+    ".@@@@@@@@.",
+    "@.@.@@@.@."
+  };
+  static uint16_t y_counter;
+  static uint16_t x_counter;
+  static uint1_t test_running = 1;
+  uint1_t is_end_of_line = x_counter >= (LINE_WIDTH-1);
+  uint1_t is_last_line = y_counter >= (NUM_LINES-1);
+  input_data = inputs[0][0];
+  input_valid = test_running;
+  if(input_valid & ready_for_input){
+    //printf("Input line %d char[%d]: %c\n", y_counter, x_counter, input_data);
+    // End of line?
+    if(is_end_of_line){
+      // next line
+      ARRAY_SHIFT_DOWN(inputs, NUM_LINES, 1)
+      y_counter += 1;
+      x_counter = 0;
+    }else{
+      // next char in line
+      ARRAY_SHIFT_DOWN(inputs[0], LINE_WIDTH, 1)
+      x_counter += 1;
+    }
+    test_running = ~(is_end_of_line & is_last_line);
+  }
+}
 
 
 #pragma MAIN sliding_window_process
