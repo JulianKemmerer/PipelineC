@@ -7,6 +7,8 @@
 #include "global_func_inst.h"
 #include "fifo.h"
 
+// https://adventofcode.com/2025/day/4
+
 #define WINDOW_HEIGHT 3
 #define WINDOW_WIDTH 3
 #define WINDOW_CENTER_X (WINDOW_WIDTH / 2)
