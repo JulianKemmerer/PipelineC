@@ -10,15 +10,18 @@
 #define WINDOW_HEIGHT 3
 #define WINDOW_WIDTH 3
 #define win_h_t uint3_t // log2 height +1
+#define WINDOW_CENTER_X (WINDOW_WIDTH / 2)
+#define WINDOW_CENTER_Y (WINDOW_HEIGHT / 2)
+#define X_INIT ((-WINDOW_CENTER_X) - 1)
+#define Y_INIT (-WINDOW_CENTER_Y)
 #define LINE_WIDTH 10
 #define NUM_LINES 10
-// signed for x,y dimension since counts from negative positions as window slides
 #define line_w_t int5_t // min: log2 line width +1
 #define line_h_t int5_t // min: log2 num lines + 1
 #define input_t char
 #define EMPTY '.'
 #define ROLL '@'
-// TODO param for N inputs per cycle
+// TODO param for N input chars per cycle
 
 // Window stuff
 typedef struct window_t{
@@ -186,20 +189,16 @@ sliding_window_t sliding_window(
   }
 
   // Window center begins outside of frame
-  /*#define WINDOW_CENTER_X (WINDOW_WIDTH / 2)
-  #define WINDOW_CENTER_Y (WINDOW_HEIGHT / 2)
-  #define X_INIT ((-WINDOW_CENTER_X) - 1)
-  #define Y_INIT (-WINDOW_CENTER_Y)*/
-  static line_w_t window_x_pos = -2; // TODO consts based on window size
-  static line_h_t window_y_pos = -1;
+  static line_w_t window_x_pos = X_INIT;
+  static line_h_t window_y_pos = Y_INIT;
   // When is more data needed from which fifos?
   uint1_t want_data_from_fifo[WINDOW_HEIGHT];
   // X range applies to all fifos
-  if((window_x_pos >= -2) & (window_x_pos < (LINE_WIDTH-2))){ // TODO const
-    // Y range is specific to each fifo // TODO CONSTS
-    want_data_from_fifo[0] = (window_y_pos >= -1) & (window_y_pos <= (NUM_LINES-2));
-    want_data_from_fifo[1] = (window_y_pos >= 0) & (window_y_pos <= (NUM_LINES-1));
-    want_data_from_fifo[2] = (window_y_pos >= 1) & (window_y_pos <= (NUM_LINES-0));
+  if(window_x_pos < (LINE_WIDTH-2)){
+    // Y range is specific to each fifo
+    for(uint32_t i=0; i<WINDOW_HEIGHT; i+=1){
+      want_data_from_fifo[i] = (window_y_pos >= (i-WINDOW_CENTER_Y)) & (window_y_pos <= (NUM_LINES-WINDOW_CENTER_Y-1+i));
+    }
   }
   
   // Want to slide window if not yet done frame
@@ -242,7 +241,7 @@ sliding_window_t sliding_window(
       window_valid = (window_x_pos >= 0) & (window_y_pos >= 0) & (window_y_pos < NUM_LINES);
     }else{
       //printf("End of line reset...\n");
-      window_x_pos = -2; // TODO CONST
+      window_x_pos = X_INIT;
       window_y_pos += 1;
       window = empty_window();
     }
@@ -255,18 +254,17 @@ sliding_window_t sliding_window(
 // Pure function pipeline for counting neighbors around the center paper roll location
 uint1_t center_roll_accessible(window_t window){
   // Easy loops hard coded to 3x3 problem
-  // Center is [1][1] // TODO consts?
   uint4_t neighbor_count;
   for (uint32_t i = 0; i < WINDOW_WIDTH; i+=1)
   {
     for (uint32_t j = 0; j < WINDOW_HEIGHT; j+=1)
     {
-      if(~((i==1)&(j==1))){
+      if(~((i==WINDOW_CENTER_X)&(j==WINDOW_CENTER_Y))){
         neighbor_count += (window.data[i][j]==ROLL);
       }
     }
   }
-  return (window.data[1][1]==ROLL) & (neighbor_count < 4);
+  return (window.data[WINDOW_CENTER_X][WINDOW_CENTER_Y]==ROLL) & (neighbor_count < 4);
 }
 // center_roll_accessible_pipeline : uint1_t center_roll_accessible(window_t)
 //  instance of pipeline without handshaking but does include stream valid bit
