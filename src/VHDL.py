@@ -3756,6 +3756,24 @@ end function;
             pkg_body_text += slv_to_func_sig + " is\n"
             pkg_body_text += slv_to_func_pkg_body_text
 
+    # Char to from slv since user C type char macros for raw VHDL
+    text += """
+    subtype char is unsigned(7 downto 0);
+    constant char_SLV_LEN : integer := 8;
+    function char_to_slv(x : char) return std_logic_vector;
+    function slv_to_char(x : std_logic_vector) return char;
+    """
+    pkg_body_text += """
+    function char_to_slv(x : char) return std_logic_vector is
+    begin
+        return std_logic_vector(x);
+    end function;
+    function slv_to_char(x : std_logic_vector) return char is
+    begin
+        return unsigned(x);
+    end function;
+    """
+
     # Byte array type to be sub typed for u8 and char array
     # TODO for all other array types
     text += """
