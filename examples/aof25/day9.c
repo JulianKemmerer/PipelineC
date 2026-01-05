@@ -1,6 +1,6 @@
 #pragma PART "xc7a100tcsg324-1" // FMAX ~150 MHz
 //#pragma PART "LFE5U-85F-6BG381C" // FMAX ~80 MHz
-#define CLOCK_MHZ 80 // Limited by ctrl_fsm stateful function
+#define CLOCK_MHZ 150 // Limited by ctrl_fsm stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -13,7 +13,7 @@
 #define int_t int18_t
 #define abs int18_abs
 #define area_t uint34_t // type for resulting area
-#define N_POINTS_PER_CYCLE 4 // Scale resources+bandwidth, min 2
+#define N_POINTS_PER_CYCLE 2 // Scale resources+bandwidth, min 2
 #define group_len_t uint3_t // log2 points per cycle group size + 1
 #define N_TEST_POINTS 8 // total should be muliple of points per cycle for now
 #define RAM_DEPTH 128 // min (N_TEST_POINTS/N_POINTS_PER_CYCLE)
@@ -33,7 +33,6 @@ n_points_t input_points;
 uint1_t last_input_points;
 uint1_t input_points_valid;
 uint1_t ready_for_input_points;
-#pragma MAIN inputs_process
 MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
 void inputs_process()
 {
@@ -76,16 +75,19 @@ area_t area(point_t p1, point_t p2){
   return rv;
 }
 typedef struct area_max_req_t{
-  point_t corner;
-  n_points_t poss_other_corners;
+  n_points_t p1_points;
+  n_points_t p2_points;
 }area_max_req_t;
 area_t area_maximize(area_max_req_t area_req){
   area_t rv;
   for(uint32_t i = 0; i < N_POINTS_PER_CYCLE; i+=1)
   {
-    area_t area_i = area(area_req.corner, area_req.poss_other_corners.points[i]);
-    if(area_i > rv){
-      rv = area_i;
+    for(uint32_t j = 0; j < N_POINTS_PER_CYCLE; j+=1)
+    {
+      area_t area_i = area(area_req.p1_points.points[i], area_req.p2_points.points[j]);
+      if(area_i > rv){
+        rv = area_i;
+      }
     }
   }
   printf("Next group max area: %d\n", rv);
@@ -120,8 +122,7 @@ void ctrl_fsm(){
   static state_t state;
   static group_counter_t total_point_groups;
   static group_counter_t curr_point_group; // aka current point group starting from
-  static group_len_t curr_group_pos; // which of N points in this group is starting corner
-  static point_t corner_point; // selected corner point paired with all other points
+  static n_points_t corner_points; // selected corner points paired with all other points
   static group_counter_t reqs_counter; // aka addresses for read/write request/resp
   static group_counter_t resp_counter;
 
@@ -171,32 +172,29 @@ void ctrl_fsm(){
     if(resp_counter < total_point_groups){
       n_points_ram_rd_out_ready = 1; // area_maximize_pipeline_in_ready
       // First response is special first group of points from RAM 
-      // that also contains the starting corner point
+      // that acts as the starting corner points
       if(resp_counter == curr_point_group){
-        corner_point = n_points_ram_rd_data_out.points[curr_group_pos];
+        corner_points = n_points_ram_rd_data_out;
       }
 
-      // Send corner point and 
+      // Send corner points and 
       // other group of N points from RAM into area maximize function
-      area_maximize_pipeline_in.corner = corner_point;
-      area_maximize_pipeline_in.poss_other_corners = n_points_ram_rd_data_out;
+      area_maximize_pipeline_in.p1_points = corner_points;
+      area_maximize_pipeline_in.p2_points = n_points_ram_rd_data_out;
       area_maximize_pipeline_in_valid = n_points_ram_rd_out_valid;
       if(area_maximize_pipeline_in_valid /*& area_maximize_pipeline_in_ready*/){
         for(uint32_t i = 0; i<N_POINTS_PER_CYCLE; i+=1){
-          printf("Testing area for start %d,%d -> %d,%d\n",
-            corner_point.x, corner_point.y,
-            n_points_ram_rd_data_out.points[i].x, n_points_ram_rd_data_out.points[i].y);
+          for(uint32_t j = 0; j<N_POINTS_PER_CYCLE; j+=1){
+            printf("Testing area for %d,%d -> %d,%d\n",
+              corner_points.points[i].x, corner_points.points[i].y,
+              n_points_ram_rd_data_out.points[j].x, n_points_ram_rd_data_out.points[j].y);
+          }
         }
         resp_counter += 1;
         if(resp_counter==total_point_groups){
           // Got final response for this iteration, reset for next
-          // prepare for next starting corner point which might be in current group or next
-          if(curr_group_pos==(N_POINTS_PER_CYCLE-1)){
-            curr_point_group += 1;
-            curr_group_pos = 0;
-          }else{
-            curr_group_pos += 1;
-          }
+          // prepare for next starting corner points group
+          curr_point_group += 1;
           reqs_counter = curr_point_group;
           resp_counter = curr_point_group;
         }
