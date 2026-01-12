@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~140 MHz LINE_WIDTH=15, FMAX ~80 MHz LINE_WIDTH=142
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~100 MHz LINE_WIDTH=15, FMAX ~60 MHz LINE_WIDTH=142
-#define CLOCK_MHZ 80 // Limited by beam_splitter stateful function
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~140 MHz LINE_WIDTH=15, FMAX ~80 MHz LINE_WIDTH=142
+#pragma PART "LFE5U-85F-6BG381C" // FMAX ~100 MHz LINE_WIDTH=15, FMAX ~60 MHz LINE_WIDTH=142
+#define CLOCK_MHZ 60 // Limited by beam_splitter stateful function
 #include "compiler.h"
 #include "uintN_t.h"
 #include "arrays.h"
