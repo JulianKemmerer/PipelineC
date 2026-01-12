@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~140 MHz LINE_WIDTH=15, FMAX ~75 MHz LINE_WIDTH=142
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~85 MHz LINE_WIDTH=15, FMAX ~50 MHz LINE_WIDTH=142
-#define CLOCK_MHZ 75 // Limited by beam_splitter stateful function
+#pragma PART "xc7a100tcsg324-1" // FMAX ~140 MHz LINE_WIDTH=15, FMAX ~80 MHz LINE_WIDTH=142
+//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~100 MHz LINE_WIDTH=15, FMAX ~60 MHz LINE_WIDTH=142
+#define CLOCK_MHZ 80 // Limited by beam_splitter stateful function
 #include "compiler.h"
 #include "uintN_t.h"
 #include "arrays.h"
@@ -20,7 +20,6 @@
 // Global wires connect this process into rest of design
 input_t input_line[LINE_WIDTH];
 uint1_t input_valid;
-#pragma MAIN inputs_process
 MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
 void inputs_process()
 {
@@ -68,7 +67,7 @@ uint32_t beam_splitter(){
   // instead keep 1b flag for each input position 'is_splitting' and sum that
   uint1_t is_spltting[LINE_WIDTH];
   for(uint32_t i=0; i<LINE_WIDTH; i+=1){
-    if((current_line[i]==EMPTY)&(input_line[i]==BEAM)){
+    if(input_line[i]==BEAM){
       next_line[i] = BEAM;
     }else if((current_line[i]==BEAM)&(input_line[i]==SPLITTER)){
       if(i>0) next_line[i-1] = BEAM;
