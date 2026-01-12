@@ -4,7 +4,9 @@
 
 // Use global wires to connect up a new main func instance
 
+#ifndef global_func_inst_counter_t
 #define global_func_inst_counter_t uint16_t
+#endif
 
 #define GLOBAL_FUNC_INST(inst_name, out_type, func_name, in_type) \
 /* Global wires connected to instance */ \
@@ -183,12 +185,14 @@ void PPCAT(inst_name,_handshake)(){\
   /* Count input writes and output reads from fifo*/\
   uint1_t fifo_count_plus_1 = PPCAT(inst_name,_in.valid) & PPCAT(inst_name,_in_ready);\
   uint1_t fifo_count_minus_1 = PPCAT(inst_name,_out.valid) & PPCAT(inst_name,_out_ready);\
+  in_ready_reg = fifo_count < MAX_IN_FLIGHT;\
   if(fifo_count_plus_1 & ~fifo_count_minus_1){\
-      fifo_count += 1;\
+    in_ready_reg = (fifo_count < (MAX_IN_FLIGHT-1));\
+    fifo_count += 1;\
   }else if(fifo_count_minus_1 & ~fifo_count_plus_1){\
-      fifo_count -= 1;\
+    in_ready_reg = 1;\
+    fifo_count -= 1;\
   }\
-  in_ready_reg = (fifo_count < MAX_IN_FLIGHT);\
 }
 // ^TODO Use MAX_IN_FLIGHT to do comptime selection of compare/increment fifo_count math width casting?
 
