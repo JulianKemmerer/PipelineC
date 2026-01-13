@@ -1,11 +1,13 @@
-//#pragma PART "xc7a100tcsg324-1" // ~300MHz max based on FSMs? 150 works.
-#pragma PART "LFE5U-85F-6BG381C" // ~150Mhz max based on FSMs? 100 works.
-#define CLOCK_MHZ 100 
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~280 MHz
+#pragma PART "LFE5U-85F-6BG381C" // ~140 MHz
+#define CLOCK_MHZ 140 // Limited by range_iterator_fsm stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "stream/stream.h"
-#include "global_func_inst.h"
 #include "arrays.h"
+// Override default pipeline flow control fifo in-flight counter size to help timing
+#define global_func_inst_counter_t uint6_t 
+#include "global_func_inst.h"
 
 // https://adventofcode.com/2025/day/2
 
@@ -259,7 +261,6 @@ GLOBAL_VALID_READY_PIPELINE_INST(decode_range_pipeline, decoded_range_strings_t,
 GLOBAL_PIPELINE_INST_W_VALID_ID(invalid_check_pipeline, uint_t, invalid_check, query_t)
 
 // Inputs to dataflow
-#pragma MAIN inputs_process
 MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
 void inputs_process()
 {
