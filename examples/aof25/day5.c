@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~235 MHz
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~85 MHz (not inferring RAM right?)
-#define CLOCK_MHZ 235 // Limited by ctrl_fsm stateful function
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~235 MHz
+#pragma PART "LFE5U-85F-6BG381C" // FMAX ~80 MHz // Something is wrong when ctrl_fsm synthesized alone...
+#define CLOCK_MHZ 80 // Limited by ctrl_fsm stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -14,7 +14,7 @@
 #define sum_is_fresh_flags uint1_array_sum3
 #define uint_t uint50_t // id type
 #define N_TEST_RANGES 4 // should be muliple of ranges per cycle for now
-#define RAM_DEPTH 128 // min (N_TEST_RANGES/N_RANGES_PER_CYCLE)
+#define RAM_DEPTH 256 // min (N_TEST_RANGES/N_RANGES_PER_CYCLE)
 #define N_TEST_IDS 6 // should be multiple of ids per cycle for now
 
 typedef struct range_t{
@@ -231,7 +231,7 @@ void ctrl_fsm(){
 
 // Accum the freshness flags coming out of pipeline
 #pragma MAIN get_fresh_ids_count
-uint32_t get_fresh_ids_count(){
+uint16_t get_fresh_ids_count(){
   static uint16_t fresh_count;
   static uint1_t id_is_fresh[N_IDS_PER_CYCLE];
   static uint16_t increment_reg;
