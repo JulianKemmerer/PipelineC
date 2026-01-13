@@ -60,7 +60,6 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(find_max_2_digits_pipeline, max2digits_t, find_m
 
 
 // Inputs to dataflow
-#pragma MAIN inputs_process
 MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
 void inputs_process()
 {
