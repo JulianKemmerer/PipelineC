@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~150 MHz
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~80 MHz
-#define CLOCK_MHZ 150 // Limited by ctrl_fsm stateful function
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~150 MHz
+#pragma PART "LFE5U-85F-6BG381C" // FMAX ~80 MHz
+#define CLOCK_MHZ 80 // Limited by ctrl_fsm stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -16,7 +16,7 @@
 #define N_POINTS_PER_CYCLE 2 // Scale resources+bandwidth, min 2
 #define group_len_t uint3_t // log2 points per cycle group size + 1
 #define N_TEST_POINTS 8 // total should be muliple of points per cycle for now
-#define RAM_DEPTH 128 // min (N_TEST_POINTS/N_POINTS_PER_CYCLE)
+#define RAM_DEPTH 512 // min (N_TEST_POINTS/N_POINTS_PER_CYCLE)
 #define group_counter_t uint8_t // min log2 (N_TEST_POINTS/N_POINTS_PER_CYCLE) + 1
 
 typedef struct point_t{
