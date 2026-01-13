@@ -1,6 +1,6 @@
-#pragma PART "xc7a100tcsg324-1" // FMAX ~200 MHz
-//#pragma PART "LFE5U-85F-6BG381C" // FMAX ~120 MHz
-#define CLOCK_MHZ 120 // Limited by sliding_window stateful function
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~170 MHz
+#pragma PART "LFE5U-85F-6BG381C" // FMAX ~100 MHz
+#define CLOCK_MHZ 100 // Limited by sliding_window stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -17,8 +17,8 @@
 #define Y_INIT (-WINDOW_CENTER_Y)
 #define LINE_WIDTH 10 // Used to size fifo buffers
 #define NUM_LINES 10 // Used to know when test input ends
-#define line_w_t int8_t // min: log2 line width +1
-#define line_h_t int8_t // min: log2 num lines + 1
+#define line_w_t int9_t // min: log2 line width +1
+#define line_h_t int9_t // min: log2 num lines + 1
 #define input_t char
 #define EMPTY '.'
 #define ROLL '@'
@@ -231,7 +231,6 @@ GLOBAL_PIPELINE_INST_W_VALID_ID(center_roll_accessible_pipeline, uint1_t, center
 input_t input_data;
 uint1_t input_valid;
 uint1_t ready_for_input;
-#pragma MAIN inputs_process
 MAIN_MHZ(inputs_process, CLOCK_MHZ) // Other MAIN funcs absorb this clock domain
 void inputs_process()
 {
