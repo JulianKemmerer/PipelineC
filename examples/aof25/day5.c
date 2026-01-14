@@ -1,6 +1,6 @@
-//#pragma PART "xc7a100tcsg324-1" // FMAX ~235 MHz
-#pragma PART "LFE5U-85F-6BG381C" // FMAX ~80 MHz // Something is wrong when ctrl_fsm synthesized alone...
-#define CLOCK_MHZ 80 // Limited by ctrl_fsm stateful function
+//#pragma PART "xc7a100tcsg324-1" // FMAX ~220 MHz
+#pragma PART "LFE5U-85F-6BG381C" // FMAX ~90 MHz
+#define CLOCK_MHZ 90 // Limited by ctrl_fsm stateful function
 #include "uintN_t.h"
 #include "intN_t.h"
 #include "arrays.h"
@@ -13,6 +13,7 @@
 #define N_IDS_PER_CYCLE 3
 #define sum_is_fresh_flags uint1_array_sum3
 #define uint_t uint50_t // id type
+#define uint_t_ones uint1_50(1)
 #define N_TEST_RANGES 4 // should be muliple of ranges per cycle for now
 #define RAM_DEPTH 256 // min (N_TEST_RANGES/N_RANGES_PER_CYCLE)
 #define N_TEST_IDS 6 // should be multiple of ids per cycle for now
@@ -49,9 +50,15 @@ void input_ranges_process()
     for(uint32_t i = 0; i<N_RANGES_PER_CYCLE; i+=1){
       printf("Input range[%d] = %d,%d\n", test_counter+i, input_ranges[i].lo, input_ranges[i].hi);
     }
-    ARRAY_SHIFT_DOWN(inputs, N_TEST_RANGES, N_RANGES_PER_CYCLE)
     test_counter += N_RANGES_PER_CYCLE;
     test_running = ~is_last_cycle;
+    // Shift in special all ones null value to avoid synthesis optimizing things away
+    range_t null_ranges[N_RANGES_PER_CYCLE];
+    for(uint32_t i = 0; i<N_RANGES_PER_CYCLE; i+=1){
+      null_ranges[i].lo = uint_t_ones;
+      null_ranges[i].hi = uint_t_ones;
+    }
+    ARRAY_SHIFT_INTO_TOP(inputs, N_TEST_RANGES, null_ranges, N_RANGES_PER_CYCLE)
   }
 }
 
@@ -82,9 +89,14 @@ void input_ids_process()
     for(uint32_t i = 0; i<N_IDS_PER_CYCLE; i+=1){
       printf("Input id[%d] = %d\n", test_counter+i, input_ids[i]);
     }
-    ARRAY_SHIFT_DOWN(inputs, N_TEST_IDS, N_IDS_PER_CYCLE)
     test_counter += N_IDS_PER_CYCLE;
     test_running = ~is_last_cycle;
+    // Shift in special all ones null value to avoid synthesis optimizing things away
+    uint_t null_ids[N_IDS_PER_CYCLE];
+    for(uint32_t i = 0; i<N_IDS_PER_CYCLE; i+=1){
+      null_ids[i] = uint_t_ones;
+    }
+    ARRAY_SHIFT_INTO_TOP(inputs, N_TEST_IDS, null_ids, N_IDS_PER_CYCLE)
   }
 }
 
