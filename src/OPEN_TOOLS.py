@@ -232,7 +232,7 @@ class PathReport:
 
             # Netlist resources + start and end
             if in_netlist_resources:
-                tok1 = "  Net "
+                tok1 = " Net "
                 if tok1 in line:
                     net_str = line.split(tok1)[1].strip()
                     net = net_str.split(" ")[0]
@@ -245,7 +245,7 @@ class PathReport:
             if "ns logic," in line and "ns routing" in line:
                 in_netlist_resources = False
                 self.end_reg_name = last_net_name
-            tok1 = "Info: curr total"
+            tok1 = "Info:       type"
             if tok1 in line:
                 in_netlist_resources = True
 
