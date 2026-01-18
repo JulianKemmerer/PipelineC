@@ -423,7 +423,8 @@ def GET_MCP_PATH_CONSTRAINTS(
         raise Exception("Multi cycle paths have only been tested with Vivado!")
     rv = []
     # Determine partial hierarchy path being synthesized
-    partial_inst_name = inst_name.replace(top_inst, "")
+    if inst_name.startswith(top_inst):
+        partial_inst_name = inst_name[len(top_inst) :]
     partial_inst_name = partial_inst_name.strip(C_TO_LOGIC.SUBMODULE_MARKER)
     partial_inst_path = ""
     toks = partial_inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
