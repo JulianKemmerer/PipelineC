@@ -293,7 +293,7 @@ def GET_ALL_USER_CLOCKS(parser_state):
 
 
 # return path
-def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
+def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=None):
     # Use specified mhz is multimain top
     clock_name_to_mhz, out_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
         parser_state, inst_name
@@ -372,8 +372,80 @@ def WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name=None):
                     f"How does tool {SYN_TOOL.__name__} deal with async clocks?"
                 )
 
+    # Multi cycle path constraints:
+    # TODO should mcps be in separate file? - how will user consume like vhdl_files.txt or read_vhdl.tcl?
+    # Loop over funcs, records instances of those with MCP constraints
+    insts = []
+    for func_logic in parser_state.FuncLogicLookupTable.values():
+        if len(func_logic.mcp_tuples) > 0:
+            func_insts = parser_state.FuncToInstances[func_logic.func_name]
+            for func_inst in func_insts:
+                if inst_name is None or func_inst.startswith(inst_name):
+                    insts.append(func_inst)
+    for inst in insts:
+        # Top level has different name if individual module with inst_name or multi main top
+        if inst_name is None:
+            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                inst, parser_state
+            )
+            main_logic = parser_state.LogicInstLookupTable[main_func]
+            top_path = VHDL.GET_ENTITY_NAME(
+                main_func,
+                main_logic,
+                multimain_timing_params.TimingParamsLookupTable,
+                parser_state,
+            )
+            top_inst = main_func
+        else:
+            func_logic = parser_state.LogicInstLookupTable[inst_name]
+            top_path = VHDL.GET_ENTITY_NAME(
+                inst_name,
+                func_logic,
+                multimain_timing_params.TimingParamsLookupTable,
+                parser_state,
+            )
+            top_inst = inst_name
+        constraints = GET_MCP_PATH_CONSTRAINTS(
+            inst, top_inst, top_path, multimain_timing_params, parser_state
+        )
+        for constraint in constraints:
+            f.write(constraint + "\n")
+
     f.close()
     return out_filepath
+
+
+def GET_MCP_PATH_CONSTRAINTS(
+    inst_name, top_inst, top_path, multimain_timing_params, parser_state
+):
+    # Hard coded to Vivado for now...
+    if SYN_TOOL is not VIVADO:
+        raise Exception("Multi cycle paths have only been tested with Vivado!")
+    rv = []
+    # Determine partial hierarchy path being synthesized
+    partial_inst_name = inst_name.replace(top_inst, "")
+    partial_inst_name = partial_inst_name.strip(C_TO_LOGIC.SUBMODULE_MARKER)
+    partial_inst_path = ""
+    toks = partial_inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    for tok in toks:
+        partial_inst_path += VHDL.WIRE_TO_VHDL_NAME(tok) + "/"
+    partial_inst_path = partial_inst_path.strip("/")
+    if partial_inst_path != "":
+        partial_inst_path = partial_inst_path + "/"
+    # Loop over all MCP constraints in this func
+    func_logic = parser_state.LogicInstLookupTable[inst_name]
+    for mcp_tup in func_logic.mcp_tuples:
+        ncycles = mcp_tup[0]
+        start_reg_name = mcp_tup[1]
+        start_reg_path = (
+            top_path + "/" + partial_inst_path + start_reg_name + "_reg[*]/C"
+        )  # TODO keep/dont touch to avoid _reg renaming?
+        end_reg_name = mcp_tup[2]
+        end_reg_path = top_path + "/" + partial_inst_path + end_reg_name + "_reg[*]/D"
+        rv.append(
+            f"set_multicycle_path {ncycles} -setup -from [get_pins {start_reg_path}] -to [get_pins {end_reg_path}]"
+        )
+    return rv
 
 
 # These are the parameters that describe how multiple pipelines are timed

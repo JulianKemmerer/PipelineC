@@ -279,40 +279,18 @@ class PathReport:
             if tok1 in syn_output_line:
                 self.path_group = syn_output_line.replace(tok1, "").strip()
 
-            #####################################################################################################
             # Data path delay in report is not the total delay in the path
-            # OMG slack is not jsut a funciton of slack=goal-delay
-            # Wow so dumb of me
-            # VIVADO prints out for 1ns clock
-            """
-      Slack (VIOLATED) :        -1.021ns  (required time - arrival time)
-      Source:                 add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/SML_DELAY/i_pipe/opt_has_pipe.first_q_reg[0]/C
-                  (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Destination:            add0/U0/i_synth/ADDSUB_OP.ADDSUB/SPEED_OP.DSP.OP/DSP48E1_BODY.ALIGN_ADD/DSP2/DSP/A[0]
-                  (rising edge-triggered cell DSP48E1 clocked by clk  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Path Group:             clk
-      Path Type:              Setup (Max at Slow Process Corner)
-      Requirement:            1.000ns  (clk rise@1.000ns - clk rise@0.000ns)
-      Data Path Delay:        0.688ns  (logic 0.254ns (36.896%)  route 0.434ns (63.104%))
-      """
-            # ^ Actual operating freq period = goal - slack
-            # period = 1.0 - (-1.021) = 2.021 ns
-            """ Another example from own program
-      Slack (VIOLATED) :        -0.738ns  (required time - arrival time)
-      Source:                 main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][uint24_negate_BIN_OP_PLUS_main_c_9_c_108_registers][submodules][BIN_OP_PLUS_bit_math_h_17_registers][self][0][left_resized][11]/C
-                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Destination:            main_registers_r_reg[submodules][BIN_OP_PLUS_main_c_9_registers][submodules][int26_abs_BIN_OP_PLUS_main_c_9_c_123_registers][self][0][rv_bit_math_h_58_0][21]/D
-                  (rising edge-triggered cell FDRE clocked by sys_clk_pin  {rise@0.000ns fall@0.500ns period=1.000ns})
-      Path Group:             sys_clk_pin
-      Path Type:              Setup (Max at Slow Process Corner)
-      Requirement:            1.000ns  (sys_clk_pin rise@1.000ns - sys_clk_pin rise@0.000ns)
-      Data Path Delay:        1.757ns  (logic 1.258ns (71.599%)  route 0.499ns (28.401%))
-      """
-            # 1.0 - (-0.738) = 1.738ns
+            tok1 = "  Requirement:            "
+            if tok1 in syn_output_line:
+                self.requirement_ns = float(
+                    syn_output_line.replace(tok1, "").split(" ")[0].replace("ns", "")
+                )
             tok1 = "Data Path Delay:        "
             if tok1 in syn_output_line:
-                self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
-            #####################################################################################################
+                # self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
+                self.path_delay_ns = self.requirement_ns - self.slack_ns
+                mcp_ratio = self.requirement_ns / self.source_ns_per_clock
+                self.path_delay_ns /= mcp_ratio
 
             # LOGIC DELAY
             tok1 = "Data Path Delay:        "
@@ -379,7 +357,9 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     rv += "read_vhdl -vhdl2008 -library work {" + files_txt + "}\n"
 
     # Write clock xdc and include it
-    clk_xdc_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
+    clk_xdc_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+        multimain_timing_params, parser_state, inst_name
+    )
     # Single xdc with single clock for now
     rv += "read_xdc {" + clk_xdc_filepath + "}\n"
 
@@ -396,6 +376,8 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     rv += "set_msg_config -id {Vivado 12-584} -new_severity ERROR" + "\n"
     # ERROR WARNING: [Vivado 12-507] No nets matched
     rv += "set_msg_config -id {Vivado 12-507} -new_severity ERROR" + "\n"
+    # ERROR CRITICAL WARNING: [Vivado 12-4739] set_multicycle_path:No valid object(s)
+    rv += "set_msg_config -id {Vivado 12-4739} -new_severity ERROR" + "\n"
 
     # CRITICAL WARNING WARNING: [Synth 8-326] inferred exception to break timing loop:
     rv += 'set_msg_config -id {Synth 8-326} -new_severity "CRITICAL WARNING"' + "\n"

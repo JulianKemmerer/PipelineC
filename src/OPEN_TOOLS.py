@@ -357,7 +357,9 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         # Constraints
         # Write clock xdc and include it
-        constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
+        constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+            multimain_timing_params, parser_state, inst_name
+        )
         clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
             parser_state, inst_name
         )

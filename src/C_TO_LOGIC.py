@@ -415,6 +415,7 @@ class Logic:
         self.submodule_instances = {}  # instance name -> logic func_name
         self.next_user_inst_name = None  # User name for func
         self.debug_names = set()  # Names MARK_DEBUG
+        self.mcp_tuples = set()  # Tuples of MCP params
         self.c_ast_node = None
         # Is this logic a c built in C function?
         self.is_c_built_in = False
@@ -501,6 +502,7 @@ class Logic:
         )  # instance name -> logic func_name all IMMUTABLE types?
         rv.next_user_inst_name = self.next_user_inst_name
         rv.debug_names = set(self.debug_names)
+        rv.mcp_tuples = set(self.mcp_tuples)
         rv.c_ast_node = copy.copy(self.c_ast_node)
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func
@@ -2031,6 +2033,11 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
     if toks[0] == "MARK_DEBUG":
         var_name = toks[1]
         parser_state.existing_logic.debug_names.add(var_name)
+
+    # Multi cycle paths
+    if toks[0] == "MULTI_CYCLE":
+        mcp_tup = (toks[1], toks[2], toks[3])
+        parser_state.existing_logic.mcp_tuples.add(mcp_tup)
 
     return parser_state.existing_logic
 
@@ -8951,14 +8958,6 @@ def APPLY_CONNECT_WIRES_LOGIC(
                             lhs_elem_t,
                             str(c_ast_node.coord),
                         )
-                    lhs_size = lhs_dims[0]
-                    rhs_size = rhs_dims[0]
-                    """
-          if rhs_size > lhs_size:
-            # Unhandled
-            print(rhs_type, "array at", c_ast_node.coord, "does not fit into", driven_wire_type, "assignment")
-            sys.exit(-1)
-          """
                     # Allow it to be resolved in VHDL
                     continue
                 # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
@@ -11774,6 +11773,11 @@ def APPEND_PRAGMA_INFO(parser_state):
 
         # MARK_DEBUG
         elif name == "MARK_DEBUG":
+            # Not handled here, done in func def parsing
+            pass
+
+        # MULTI_CYCLE
+        elif name == "MULTI_CYCLE":
             # Not handled here, done in func def parsing
             pass
 

@@ -80,7 +80,9 @@ class PathHTMLReport:
                     self.start_reg_name = node[3][1].text
                     self.end_reg_name = node[4][1].text
                     self.path_group = node[5][1].text
-                    self.path_delay_ns = self.source_ns_per_clock - self.slack_ns
+                    self.path_delay_ns = (
+                        self.source_ns_per_clock - self.slack_ns
+                    )  # TODO use requirement time with mcp ratio instead of ns per clock
                 elif looking_for == "Data Arrival Path:":
                     for row in node:
                         if row[5].tag != "th":
@@ -520,7 +522,9 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     # Constraints
     # Write clock xdc and include it
-    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
+    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+        multimain_timing_params, parser_state, inst_name
+    )
     clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
         parser_state, inst_name
     )

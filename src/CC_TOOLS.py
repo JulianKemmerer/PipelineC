@@ -41,9 +41,9 @@ class PathReport:
         for line in path_report_text.split("\n"):
             tok = "Maximum Clock Frequency"
             if tok in line:
-                #print(line)
+                # print(line)
                 fmax_mhz = float(line.split(":")[1].strip().split(" ")[0])
-                #print("fmax_mhz",fmax_mhz)
+                # print("fmax_mhz",fmax_mhz)
                 self.path_delay_ns = 1000.0 / fmax_mhz
 
 
@@ -101,7 +101,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     log_path = output_directory + "/" + log_file_name
-    syn_log_path = output_directory + "/syn_" + log_file_name # Need separate logs?
+    syn_log_path = output_directory + "/syn_" + log_file_name  # Need separate logs?
     # Use same configs based on to speed up run time?
     log_to_read = log_path
 
@@ -137,7 +137,9 @@ def SYN_AND_REPORT_TIMING_NEW(
     # Generate files for this SYN
 
     # Write clock constraint and include it
-    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(parser_state, inst_name)
+    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+        multimain_timing_params, parser_state, inst_name
+    )
     clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
         parser_state, inst_name
     )
@@ -146,14 +148,15 @@ def SYN_AND_REPORT_TIMING_NEW(
     # TODO dont base on cc-toolchain directory?
     CC_TOOLS_YOSYS = CC_TOOLS_PATH + "/bin/yosys/yosys"
     CC_TOOLS_PR = CC_TOOLS_PATH + "/bin/p_r/p_r"
-    CC_TOOLS_PR_FLAGS = f"-ccf {constraints_filepath}" #-cCP?
-    temp_local_out_dir = CC_TOOLS_PATH + "/workspace/pipelinec_temp_"+top_entity_name
+    CC_TOOLS_PR_FLAGS = f"-ccf {constraints_filepath}"  # -cCP?
+    temp_local_out_dir = CC_TOOLS_PATH + "/workspace/pipelinec_temp_" + top_entity_name
     shutil.rmtree(temp_local_out_dir, ignore_errors=True)
     os.makedirs(temp_local_out_dir)
     os.makedirs(f"{output_directory}/net", exist_ok=True)
     sh_text = ""
     sh_text += f"""
 #!/bin/bash
+# -noiopad
 {CC_TOOLS_YOSYS} -ql {syn_log_path} -p 'ghdl --std=08 --warn-no-binding -C --ieee=synopsys {vhdl_files_texts} -e {top_entity_name}; synth_gatemate -top {top_entity_name} -nomx8 -vlog {output_directory}/net/{top_entity_name}_synth.v' &> /dev/null
 {CC_TOOLS_PR} -i {output_directory}/net/{top_entity_name}_synth.v -o {top_entity_name} {CC_TOOLS_PR_FLAGS} &> {log_path}
 """
@@ -163,11 +166,9 @@ def SYN_AND_REPORT_TIMING_NEW(
     f.write(sh_text)
     f.close()
 
-    # Run the build script 
+    # Run the build script
     print("Running CC_TOOLS:", sh_path, flush=True)
-    syn_imp_bash_cmd = (
-        "bash " + sh_path
-    )
+    syn_imp_bash_cmd = "bash " + sh_path
     C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=temp_local_out_dir)
     f = open(log_path, "r")
     log_text = f.read()
