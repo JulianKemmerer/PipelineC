@@ -380,7 +380,11 @@ def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=
         if len(func_logic.mcp_tuples) > 0:
             func_insts = parser_state.FuncToInstances[func_logic.func_name]
             for func_inst in func_insts:
-                if inst_name is None or func_inst.startswith(inst_name):
+                if (
+                    (inst_name is None)
+                    or (inst_name == func_inst)
+                    or func_inst.startswith(inst_name + C_TO_LOGIC.SUBMODULE_MARKER)
+                ):
                     insts.append(func_inst)
     for inst in insts:
         # Top level has different name if individual module with inst_name or multi main top
@@ -423,8 +427,11 @@ def GET_MCP_PATH_CONSTRAINTS(
         raise Exception("Multi cycle paths have only been tested with Vivado!")
     rv = []
     # Determine partial hierarchy path being synthesized
-    if inst_name.startswith(top_inst):
-        partial_inst_name = inst_name[len(top_inst) :]
+    top_inst_tok = top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+    if inst_name == top_inst:
+        partial_inst_name = ""
+    elif inst_name.startswith(top_inst_tok):
+        partial_inst_name = inst_name[len(top_inst_tok) :]
     partial_inst_name = partial_inst_name.strip(C_TO_LOGIC.SUBMODULE_MARKER)
     partial_inst_path = ""
     toks = partial_inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
