@@ -378,6 +378,10 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     rv += "set_msg_config -id {Vivado 12-507} -new_severity ERROR" + "\n"
     # ERROR CRITICAL WARNING: [Vivado 12-4739] set_multicycle_path:No valid object(s)
     rv += "set_msg_config -id {Vivado 12-4739} -new_severity ERROR" + "\n"
+    # ERROR WARNING: [Vivado 12-180] No cells matched
+    rv += "set_msg_config -id {Vivado 12-180} -new_severity ERROR" + "\n"
+    # ERROR CRITICAL WARNING: [Common 17-55] 'set_property' expects at least one object.
+    rv += "set_msg_config -id {Common 17-55} -new_severity ERROR" + "\n"
 
     # CRITICAL WARNING WARNING: [Synth 8-326] inferred exception to break timing loop:
     rv += 'set_msg_config -id {Synth 8-326} -new_severity "CRITICAL WARNING"' + "\n"

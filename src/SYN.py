@@ -445,14 +445,23 @@ def GET_MCP_PATH_CONSTRAINTS(
     for mcp_tup in func_logic.mcp_tuples:
         ncycles = mcp_tup[0]
         start_reg_name = mcp_tup[1]
-        start_reg_path = (
-            top_path + "/" + partial_inst_path + start_reg_name + "_reg[*]/C"
-        )  # TODO keep/dont touch to avoid _reg renaming?
+        start_reg_cell_path = (
+            top_path + "/" + partial_inst_path + start_reg_name + "_reg[*]"
+        )
+        start_reg_path = start_reg_cell_path + "/C"
         end_reg_name = mcp_tup[2]
-        end_reg_path = top_path + "/" + partial_inst_path + end_reg_name + "_reg[*]/D"
+        end_reg_cell_path = (
+            top_path + "/" + partial_inst_path + end_reg_name + "_reg[*]"
+        )
+        end_reg_path = end_reg_cell_path + "/D"
         rv.append(
             f"set_multicycle_path {ncycles} -setup -from [get_pins {start_reg_path}] -to [get_pins {end_reg_path}]"
         )
+        # Also need to stop tool from mangling the path of start and end regs
+        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {start_reg_cell_path}]")
+        # rv.append(f"set_property DONT_TOUCH TRUE [get_nets {start_reg_path}]")
+        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {end_reg_cell_path}]")
+        # rv.append(f"set_property DONT_TOUCH TRUE [get_nets {end_reg_path}]")
     return rv
 
 
