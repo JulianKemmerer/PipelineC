@@ -458,10 +458,8 @@ def GET_MCP_PATH_CONSTRAINTS(
             f"set_multicycle_path {ncycles} -setup -from [get_pins {start_reg_path}] -to [get_pins {end_reg_path}]"
         )
         # Also need to stop tool from mangling the path of start and end regs
-        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {start_reg_cell_path}]")
-        # rv.append(f"set_property DONT_TOUCH TRUE [get_nets {start_reg_path}]")
-        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {end_reg_cell_path}]")
-        # rv.append(f"set_property DONT_TOUCH TRUE [get_nets {end_reg_path}]")
+        rv.append(f"set_property KEEP TRUE [get_cells {start_reg_cell_path}]")
+        rv.append(f"set_property KEEP TRUE [get_cells {end_reg_cell_path}]")
     return rv
 
 
