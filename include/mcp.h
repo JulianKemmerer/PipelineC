@@ -25,7 +25,7 @@ PPCAT(PPCAT(PPCAT(func_name,_mcp),NCYCLES),_t) PPCAT(PPCAT(func_name,_mcp),NCYCL
   o.stream_out.data = capture;\
   static uint8_t cycles_since_launch;\
   /* Output side first for same cycle output and input handshake */\
-  if(cycles_since_launch==NCYCLES){\
+  if(cycles_since_launch==(NCYCLES+1)){\
     o.stream_out.valid = 1;\
     if(o.stream_out.valid & ready_for_stream_out){\
       cycles_since_launch = 0;\
