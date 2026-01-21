@@ -30,7 +30,7 @@ PPCAT(PPCAT(PPCAT(func_name,_mcp),NCYCLES),_t) PPCAT(PPCAT(func_name,_mcp),NCYCL
     if(o.stream_out.valid & ready_for_stream_out){\
       cycles_since_launch = 0;\
     }\
-  }else{\
+  }else if(cycles_since_launch > 0){\
     cycles_since_launch += 1;\
   }\
   if(cycles_since_launch==0){\
