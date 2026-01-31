@@ -25,10 +25,8 @@
 
 // OV2640 SCCB+DVP camera
 #include "../../cam/ov2640/hardware/device.c"
-// TODO include video/crop,scale,pos
-// WORKING BACKWARDS FROM FINAL FB OUTPUT
-//#include "../../video/crop/hardware/device.c"
-//#include "../../video/scale/hardware/device.c"
+#include "../../video/crop/hardware/device.c"
+#include "../../video/scale/hardware/device.c"
 #include "../../video/fb_pos/hardware/device.c"
 
 // Devices attached to the CPU interconnected in a dataflow network
@@ -54,9 +52,18 @@ void fft_dataflow()
   output_fifo_out_ready = sample_power_pipeline_in_ready;
 }
 
-// TODO pixels from DVP into video processing modules
-#pragma MAIN fb_pos_axi_connect
-void fb_pos_axi_connect(){
+// TODO USE CAMERA PIXELS INPUT TO CROP!
+#pragma MAIN video_dataflow
+void video_dataflow(){
+  // Crop output into scale input
+  scale_video_in = crop_video_out;
+  crop_video_out_ready = scale_video_in_ready;
+
+  // Scale output into position input
+  fb_pos_video_in = scale_video_out;
+  scale_video_out_ready = fb_pos_video_in_ready;  
+  
+  // Frame buffer position module output pixels into frame buffer
   host_to_dev(axi_xil_mem, cpu) = fb_pos_axi_host_to_dev;
   fb_pos_axi_host_from_dev = dev_to_host(axi_xil_mem, cpu);
 }
