@@ -26,6 +26,10 @@
 // OV2640 SCCB+DVP camera
 #include "../../cam/ov2640/hardware/device.c"
 // TODO include video/crop,scale,pos
+// WORKING BACKWARDS FROM FINAL FB OUTPUT
+//#include "../../video/crop/hardware/device.c"
+//#include "../../video/scale/hardware/device.c"
+#include "../../video/fb_pos/hardware/device.c"
 
 // Devices attached to the CPU interconnected in a dataflow network
 // Different dataflow MAINs are needed for different clock domains
@@ -51,3 +55,8 @@ void fft_dataflow()
 }
 
 // TODO pixels from DVP into video processing modules
+#pragma MAIN fb_pos_axi_connect
+void fb_pos_axi_connect(){
+  host_to_dev(axi_xil_mem, cpu) = fb_pos_axi_host_to_dev;
+  fb_pos_axi_host_from_dev = dev_to_host(axi_xil_mem, cpu);
+}
