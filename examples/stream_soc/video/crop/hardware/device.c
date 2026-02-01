@@ -11,14 +11,16 @@ typedef struct ndarray_stream_pixel_t_2{
   uint1_t eod[2];
 }ndarray_stream_pixel_t_2;
 
+#define TPW 60
+#define TPH 60
 ndarray_stream_pixel_t_2 test_pattern(
   uint1_t ready_for_video_out
 ){
   static uint16_t x;
   static uint16_t y;
-  // 60x60 test square rgb pattern
+  // test square rgb pattern
   ndarray_stream_pixel_t_2 video_out;
-  uint16_t color_width = 60 / 3;
+  uint16_t color_width = TPW / 3;
   if(x < (1*color_width)){
     video_out.stream.data.r = 255;
   }else if(x < (2*color_width)){
@@ -27,8 +29,8 @@ ndarray_stream_pixel_t_2 test_pattern(
     video_out.stream.data.b = 255;
   }
   video_out.stream.valid = 1;
-  video_out.eod[0] = x==(60-1); // last pixel / EOL
-  video_out.eod[1] = y==(60-1); // last line / EOF
+  video_out.eod[0] = x==(TPW-1); // last pixel / EOL
+  video_out.eod[1] = y==(TPH-1); // last line / EOF
   if(video_out.stream.valid & ready_for_video_out){
     x += 1;
     if(video_out.eod[0]){
@@ -108,17 +110,25 @@ crop2d_t crop2d(
     ready_for_decoded
   );
   o.ready_for_video_in = decoded.ready_for_video_in;
-  
-  // TEMP PASS THROUGH
+  // Filter out pixels outside crop
+  // todo make pipeline out of filter function?
+  // Quick easy comb logic enough?
+  // Pass through default, invalidated
   o.video_out = decoded.video_out;
+  o.video_out.stream.valid = 0;
   ready_for_decoded = ready_for_video_out;
-  return o; 
-
-  // TODO = decoded.video_out
-
-  // Filter out pixels outside crop todo make pipeline out of filter function?
-
-  // Make new output video stream with new eod bits set
+  if(
+    (decoded.dim[0] >= params.top_left_x) & 
+    (decoded.dim[0] <= params.bot_right_x) &
+    (decoded.dim[1] >= params.top_left_y) & 
+    (decoded.dim[1] <= params.bot_right_y)
+  ){
+    o.video_out.stream.valid = decoded.video_out.stream.valid;
+  }
+  // Set new eod bits
+  o.video_out.eod[0] = decoded.dim[0] == params.bot_right_x;
+  o.video_out.eod[1] = decoded.dim[1] == params.bot_right_y;
+  return o;
 }
 
 // Globally visible video bus
@@ -141,8 +151,8 @@ void crop_main()
   // TEMP const
   params.top_left_x = 0;
   params.top_left_y = 0;
-  params.bot_right_x = 59;
-  params.bot_right_y = 60/2;
+  params.bot_right_x = TPW-1;
+  params.bot_right_y = TPH/2;
   crop2d_t crop = crop2d(
     params,
     tp_vid,
