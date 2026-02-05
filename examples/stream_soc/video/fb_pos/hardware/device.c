@@ -30,7 +30,7 @@ fb_pos_addr_t fb_pos_addr(fb_pos_addr_req_t req){
 GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 16)
 
 // Globally visible video bus
-ndarray_stream_pixel_t_2 fb_pos_video_in; // input
+stream(video_t) fb_pos_video_in; // input
 uint1_t fb_pos_video_in_ready; // output
 // Globally visible AXI bus for this module
 axi_shared_bus_t_dev_to_host_t fb_pos_axi_host_from_dev;
@@ -51,11 +51,11 @@ void fb_pos_main()
   fb_pos_params_t fb_pos_params; // TEMP const
   fb_pos_params.xpos = 640/2;
   fb_pos_params.ypos = 480/2;
-  fb_pos_addr_pipeline_in.data.p = decoded.video_out.stream.data;
+  fb_pos_addr_pipeline_in.data.p = decoded.video_out.data.data;
   fb_pos_addr_pipeline_in.data.xpos = decoded.dim[0];
   fb_pos_addr_pipeline_in.data.ypos = decoded.dim[1];
   fb_pos_addr_pipeline_in.data.fb_pos = fb_pos_params; // CSR 
-  fb_pos_addr_pipeline_in.valid = decoded.video_out.stream.valid;
+  fb_pos_addr_pipeline_in.valid = decoded.video_out.valid;
   ready_for_decoded = fb_pos_addr_pipeline_in_ready;
 
   // Stream pixels with address into ram

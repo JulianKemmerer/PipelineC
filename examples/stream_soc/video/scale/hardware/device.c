@@ -6,9 +6,11 @@ typedef struct scale2d_params_t{
   uint4_t scale;
 }scale2d_params_t;
 
+// Define FIFO to instantiate late
 #define SCALE_MAX_IN_WIDTH 1024
-FIFO_FWFT(scale_line_fifo, ndarray_stream_pixel_t_2, SCALE_MAX_IN_WIDTH) 
+FIFO_FWFT(scale_line_fifo, video_t, SCALE_MAX_IN_WIDTH) 
 
+// Scaler is little two state FSM with counters
 typedef enum scale_state_t{
   LOAD_PIXELS,
   //  enqueue entire line of input pixels
@@ -18,19 +20,21 @@ typedef enum scale_state_t{
 }scale_state_t;
 
 typedef struct scale2d_t{
-  ndarray_stream_pixel_t_2 video_out;
+  // Module outputs
+  stream(video_t) video_out;
   uint1_t ready_for_video_in;
 }scale2d_t;
 scale2d_t scale2d(
-  scale2d_params_t params,
-  ndarray_stream_pixel_t_2 video_in,
+  // Module inputs
+  scale2d_params_t params, // TODO HANDLE MID FRAME CHANGES!
+  stream(video_t) video_in,
   uint1_t ready_for_video_out
 ){
   // The line fifo instance
   // Input into fifo are driven after the instance later by FSM
   // so are declared here as FEEDBACK to be used as now
   DECL_FEEDBACK_WIRE(uint1_t, ready_for_fifo_out)
-  DECL_FEEDBACK_WIRE(ndarray_stream_pixel_t_2, fifo_data_in)
+  DECL_FEEDBACK_WIRE(video_t, fifo_data_in)
   DECL_FEEDBACK_WIRE(uint1_t, fifo_data_in_valid)
   scale_line_fifo_t fifo = scale_line_fifo(
     ready_for_fifo_out,
@@ -47,36 +51,36 @@ scale2d_t scale2d(
   scale2d_t o;
   // Default no xfers in or out of fifo
   ready_for_fifo_out = 0;
-  ndarray_stream_pixel_t_2 NULL_PIXELS;
+  video_t NULL_PIXELS;
   fifo_data_in = NULL_PIXELS;
   fifo_data_in_valid = 0;
   if(state==LOAD_PIXELS){
     // Connect input stream of pixels into fifo
-    fifo_data_in = video_in;
-    fifo_data_in_valid = video_in.stream.valid;
+    fifo_data_in = video_in.data;
+    fifo_data_in_valid = video_in.valid;
     o.ready_for_video_in = fifo.data_in_ready;
     // Until end of line goes into fifo
-    if(video_in.stream.valid &
+    if(video_in.valid &
        o.ready_for_video_in &
-       video_in.eod[0]
+       video_in.data.eod[0]
     ){
       // Then begin outputting duplicate pixels
       state = OUTPUT_PIXELS;
       width_counter = 0;
       height_counter = 0;
-      is_last_input_line = video_in.eod[1];
+      is_last_input_line = video_in.data.eod[1];
     }
   }else{/*state==OUTPUT_PIXELS*/
     // Outputting pixel value from fifo read side
-    o.video_out = fifo.data_out;
-    o.video_out.stream.valid = fifo.data_out_valid;
+    o.video_out.data = fifo.data_out;
+    o.video_out.valid = fifo.data_out_valid;
     ready_for_fifo_out = ready_for_video_out;
     // Only actually reading from fifo during last repeat in this line
     ready_for_fifo_out &= (width_counter==(params.scale-1));
 
     // New end of line/end of frame flags based on counters
-    o.video_out.eod[0] = fifo.data_out.eod[0] & (width_counter==(params.scale-1));
-    o.video_out.eod[1] = is_last_input_line & (height_counter==(params.scale-1));
+    o.video_out.data.eod[0] = fifo.data_out.eod[0] & (width_counter==(params.scale-1));
+    o.video_out.data.eod[1] = is_last_input_line & (height_counter==(params.scale-1));
 
     // Pixels are recycled back into fifo if not last repeat of line
     // Assumes fifo write side is ready
@@ -88,7 +92,7 @@ scale2d_t scale2d(
 
     // Update width and height repeat counters
     // maybe resetting back to load state for next line
-    if(o.video_out.stream.valid & ready_for_video_out){
+    if(o.video_out.valid & ready_for_video_out){
       if(width_counter==(params.scale-1)){
         // Last repeat of this pixel
         width_counter = 0;
@@ -114,9 +118,9 @@ scale2d_t scale2d(
 }
 
 // Globally visible video bus
-ndarray_stream_pixel_t_2 scale_video_in; // input
+stream(video_t) scale_video_in; // input
 uint1_t scale_video_in_ready; // output
-ndarray_stream_pixel_t_2 scale_video_out; // output
+stream(video_t) scale_video_out; // output
 uint1_t scale_video_out_ready; // input
 
 DECL_INPUT(uint4_t, scale_factor) // TEMP DEBUG

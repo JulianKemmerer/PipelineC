@@ -4,39 +4,51 @@
 
 DECL_STREAM_TYPE(pixel_t)
 #include "pixel_t_bytes_t.h"
+
 // ndarray_stream(type, NDIMS)
-// one tlast bit per dimension, eod, 
-typedef struct ndarray_stream_pixel_t_2{
-  stream(pixel_t) stream;
-  uint1_t eod[2];
-}ndarray_stream_pixel_t_2;
+// one tlast bit per dimension, eod,
+// TODO eod should be inside type for stream(type)
+//  ex. storing eod and not .valid in stream fifo
+
+#define ndarray(NDIMS, type_t) PPCAT(PPCAT(PPCAT(ndarray_,NDIMS),_),type_t)
+
+#define DECL_NDARRAY_TYPE(NDIMS, type_t)\
+typedef struct ndarray(NDIMS, type_t){\
+  type_t data;\
+  uint1_t eod[NDIMS];\
+}ndarray(NDIMS, type_t);
+
+DECL_NDARRAY_TYPE(2,pixel_t)
+DECL_STREAM_TYPE(ndarray(2,pixel_t))
+
+#define video_t ndarray(2,pixel_t)
 
 #define TPW 60
 #define TPH 60
-ndarray_stream_pixel_t_2 test_pattern(
+stream(video_t) test_pattern(
   uint1_t ready_for_video_out
 ){
   static uint16_t x;
   static uint16_t y;
   // test square rgb pattern
-  ndarray_stream_pixel_t_2 video_out;
+  stream(video_t) video_out;
   uint16_t color_width = TPW / 3;
   if(x < (1*color_width)){
-    video_out.stream.data.r = 255;
+    video_out.data.data.r = 255;
   }else if(x < (2*color_width)){
-    video_out.stream.data.g = 255;
+    video_out.data.data.g = 255;
   }else{
-    video_out.stream.data.b = 255;
+    video_out.data.data.b = 255;
   }
-  video_out.stream.valid = 1;
-  video_out.eod[0] = x==(TPW-1); // last pixel / EOL
-  video_out.eod[1] = y==(TPH-1); // last line / EOF
-  if(video_out.stream.valid & ready_for_video_out){
+  video_out.valid = 1;
+  video_out.data.eod[0] = x==(TPW-1); // last pixel / EOL
+  video_out.data.eod[1] = y==(TPH-1); // last line / EOF
+  if(video_out.valid & ready_for_video_out){
     x += 1;
-    if(video_out.eod[0]){
+    if(video_out.data.eod[0]){
       y += 1;
       x = 0;
-      if(video_out.eod[1]){
+      if(video_out.data.eod[1]){
         y = 0;
       }
     }
@@ -45,18 +57,18 @@ ndarray_stream_pixel_t_2 test_pattern(
 }
 
 typedef struct position_decoder_t{
-  ndarray_stream_pixel_t_2 video_out;
+  stream(video_t) video_out;
   uint16_t dim[2]; // 2d x,y pos
   uint1_t ready_for_video_in;
 }position_decoder_t;
 position_decoder_t position_decoder(
-  ndarray_stream_pixel_t_2 video_in,
+  stream(video_t) video_in,
   uint1_t ready_for_outputs
 ){
   position_decoder_t o;
   // Dont need to pass video through with valid ready handshake?
   o.video_out = video_in;
-  o.video_out.stream.valid = 0;
+  o.video_out.valid = 0;
   o.ready_for_video_in = ready_for_outputs;
   static uint1_t frame_syncd;
   uint1_t frame_syncd_next = frame_syncd;
@@ -65,13 +77,13 @@ position_decoder_t position_decoder(
   o.dim[0] = x;
   o.dim[1] = y;
   // Track x,y pos to sync with frame
-  if(video_in.stream.valid & o.ready_for_video_in)
+  if(video_in.valid & o.ready_for_video_in)
   {
     x += 1;
-    if(video_in.eod[0]){
+    if(video_in.data.eod[0]){
       y += 1;
       x = 0;
-      if(video_in.eod[1]){
+      if(video_in.data.eod[1]){
         y = 0;
         frame_syncd_next = 1;
       }
@@ -80,7 +92,7 @@ position_decoder_t position_decoder(
   // Output video when synced
   if(frame_syncd)
   {
-    o.video_out.stream.valid = video_in.stream.valid;
+    o.video_out.valid = video_in.valid;
   }
   frame_syncd = frame_syncd_next;
   return o;
@@ -94,12 +106,12 @@ typedef struct crop2d_params_t{
 }crop2d_params_t;
 
 typedef struct crop2d_t{
-  ndarray_stream_pixel_t_2 video_out;
+  stream(video_t) video_out;
   uint1_t ready_for_video_in;
 }crop2d_t;
 crop2d_t crop2d(
   crop2d_params_t params,
-  ndarray_stream_pixel_t_2 video_in,
+  stream(video_t) video_in,
   uint1_t ready_for_video_out
 ){
   crop2d_t o;
@@ -115,7 +127,7 @@ crop2d_t crop2d(
   // Quick easy comb logic enough?
   // Pass through default, invalidated
   o.video_out = decoded.video_out;
-  o.video_out.stream.valid = 0;
+  o.video_out.valid = 0;
   ready_for_decoded = ready_for_video_out;
   if(
     (decoded.dim[0] >= params.top_left_x) & 
@@ -123,18 +135,18 @@ crop2d_t crop2d(
     (decoded.dim[1] >= params.top_left_y) & 
     (decoded.dim[1] <= params.bot_right_y)
   ){
-    o.video_out.stream.valid = decoded.video_out.stream.valid;
+    o.video_out.valid = decoded.video_out.valid;
   }
   // Set new eod bits
-  o.video_out.eod[0] = decoded.dim[0] == params.bot_right_x;
-  o.video_out.eod[1] = decoded.dim[1] == params.bot_right_y;
+  o.video_out.data.eod[0] = decoded.dim[0] == params.bot_right_x;
+  o.video_out.data.eod[1] = decoded.dim[1] == params.bot_right_y;
   return o;
 }
 
 // Globally visible video bus
-//ndarray_stream_pixel_t_2 crop_video_in; // input
+//stream(video_t) crop_video_in; // input
 //uint1_t crop_video_in_ready; // output
-ndarray_stream_pixel_t_2 crop_video_out; // output
+stream(video_t) crop_video_out; // output
 uint1_t crop_video_out_ready; // input
 
 #pragma MAIN crop_main
@@ -142,7 +154,7 @@ void crop_main()
 {
   // TEMP Test pattern
   DECL_FEEDBACK_WIRE(uint1_t, ready_for_tp_vid)
-  ndarray_stream_pixel_t_2 tp_vid = test_pattern(
+  stream(video_t) tp_vid = test_pattern(
     ready_for_tp_vid
   );  
 
