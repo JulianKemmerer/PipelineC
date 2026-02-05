@@ -6,7 +6,7 @@ typedef struct scale2d_params_t{
   uint4_t scale;
 }scale2d_params_t;
 
-// Define FIFO to instantiate late
+// Define FIFO to instantiate later
 #define SCALE_MAX_IN_WIDTH 1024
 FIFO_FWFT(scale_line_fifo, video_t, SCALE_MAX_IN_WIDTH) 
 
