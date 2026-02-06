@@ -2,6 +2,7 @@
 #include "axi/axi_shared_bus.h"
 #include "stream/stream.h"
 #include "global_func_inst.h"
+#include "pixel_t_bytes_t.h"
 
 typedef struct fb_pos_params_t{
   uint16_t xpos;
@@ -29,7 +30,7 @@ fb_pos_addr_t fb_pos_addr(fb_pos_addr_req_t req){
 }
 GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 16)
 
-// Globally visible video bus
+// Globally visible video bus for SoC
 stream(video_t) fb_pos_video_in; // input
 uint1_t fb_pos_video_in_ready; // output
 // Globally visible AXI bus for this module
@@ -41,7 +42,7 @@ void fb_pos_main()
 {
   // Decode x,y positon of stream
   DECL_FEEDBACK_WIRE(uint1_t, ready_for_decoded)
-  position_decoder_t decoded = position_decoder(
+  frame_decoder_t decoded = frame_decoder(
     fb_pos_video_in,
     ready_for_decoded
   );

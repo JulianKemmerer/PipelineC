@@ -117,7 +117,7 @@ scale2d_t scale2d(
   return o;
 }
 
-// Globally visible video bus
+// Globally visible video bus for SoC
 stream(video_t) scale_video_in; // input
 uint1_t scale_video_in_ready; // output
 stream(video_t) scale_video_out; // output

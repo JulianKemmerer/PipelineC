@@ -1,28 +1,7 @@
-// TODO break into library .h defs vs instances in .c
-// Rest of SoC uses pixel_t 24b rgb so video built around
-#include "stream/stream.h"
+#include "../../video_stream.h"
 
-DECL_STREAM_TYPE(pixel_t)
-#include "pixel_t_bytes_t.h"
-
-// ndarray_stream(type, NDIMS)
-// one tlast bit per dimension, eod,
-// TODO eod should be inside type for stream(type)
-//  ex. storing eod and not .valid in stream fifo
-
-#define ndarray(NDIMS, type_t) PPCAT(PPCAT(PPCAT(ndarray_,NDIMS),_),type_t)
-
-#define DECL_NDARRAY_TYPE(NDIMS, type_t)\
-typedef struct ndarray(NDIMS, type_t){\
-  type_t data;\
-  uint1_t eod[NDIMS];\
-}ndarray(NDIMS, type_t);
-
-DECL_NDARRAY_TYPE(2,pixel_t)
-DECL_STREAM_TYPE(ndarray(2,pixel_t))
-
-#define video_t ndarray(2,pixel_t)
-
+// TEMP TEST PATTERN
+// instead of camera image...
 #define TPW 60
 #define TPH 60
 stream(video_t) test_pattern(
@@ -56,48 +35,6 @@ stream(video_t) test_pattern(
   return video_out;
 }
 
-typedef struct position_decoder_t{
-  stream(video_t) video_out;
-  uint16_t dim[2]; // 2d x,y pos
-  uint1_t ready_for_video_in;
-}position_decoder_t;
-position_decoder_t position_decoder(
-  stream(video_t) video_in,
-  uint1_t ready_for_outputs
-){
-  position_decoder_t o;
-  // Dont need to pass video through with valid ready handshake?
-  o.video_out = video_in;
-  o.video_out.valid = 0;
-  o.ready_for_video_in = ready_for_outputs;
-  static uint1_t frame_syncd;
-  uint1_t frame_syncd_next = frame_syncd;
-  static uint16_t x;
-  static uint16_t y;
-  o.dim[0] = x;
-  o.dim[1] = y;
-  // Track x,y pos to sync with frame
-  if(video_in.valid & o.ready_for_video_in)
-  {
-    x += 1;
-    if(video_in.data.eod[0]){
-      y += 1;
-      x = 0;
-      if(video_in.data.eod[1]){
-        y = 0;
-        frame_syncd_next = 1;
-      }
-    }
-  }
-  // Output video when synced
-  if(frame_syncd)
-  {
-    o.video_out.valid = video_in.valid;
-  }
-  frame_syncd = frame_syncd_next;
-  return o;
-}
-
 typedef struct crop2d_params_t{
   uint16_t top_left_x;
   uint16_t top_left_y;
@@ -117,7 +54,7 @@ crop2d_t crop2d(
   crop2d_t o;
   // Decode x,y positon of stream
   DECL_FEEDBACK_WIRE(uint1_t, ready_for_decoded)
-  position_decoder_t decoded = position_decoder(
+  frame_decoder_t decoded = frame_decoder(
     video_in,
     ready_for_decoded
   );
@@ -143,7 +80,7 @@ crop2d_t crop2d(
   return o;
 }
 
-// Globally visible video bus
+// Globally visible video bus for SoC
 //stream(video_t) crop_video_in; // input
 //uint1_t crop_video_in_ready; // output
 stream(video_t) crop_video_out; // output
