@@ -3,3 +3,4 @@
 #include "../../i2s/software/mem_map.h"
 #include "../../power/software/mem_map.h"
 #include "../../sccb/software/sccb_types.h"
+#include "../../gpu/types.h"

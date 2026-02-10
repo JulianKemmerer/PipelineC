@@ -29,8 +29,14 @@
 #include "../../video/scale/hardware/device.c"
 #include "../../video/fb_pos/hardware/device.c"
 
+// Basic proto-GPU thing
+#include "../../gpu/hardware/device.c"
+
 // Devices attached to the CPU interconnected in a dataflow network
 // Different dataflow MAINs are needed for different clock domains
+
+// TODO does it make sense to have AXI bus connections here that are always from dev to DDR directly anyway?
+// keep with each module instead...
 
 #pragma MAIN i2s_dataflow
 void i2s_dataflow()
@@ -66,4 +72,11 @@ void video_dataflow(){
   // Frame buffer position module output pixels into frame buffer
   host_to_dev(axi_xil_mem, cpu) = fb_pos_axi_host_to_dev;
   fb_pos_axi_host_from_dev = dev_to_host(axi_xil_mem, cpu);
+}
+
+// GPU AXI frame buffer connection
+#pragma MAIN gpu_dataflow
+void gpu_dataflow(){
+  host_to_dev(axi_xil_mem, cpu) = gpu_axi_host_to_dev;
+  gpu_axi_host_from_dev = dev_to_host(axi_xil_mem, cpu);
 }
