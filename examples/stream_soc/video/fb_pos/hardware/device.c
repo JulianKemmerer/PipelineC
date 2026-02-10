@@ -33,9 +33,6 @@ GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_add
 // Globally visible video bus for SoC
 stream(video_t) fb_pos_video_in; // input
 uint1_t fb_pos_video_in_ready; // output
-// Globally visible AXI bus for this module
-axi_shared_bus_t_dev_to_host_t fb_pos_axi_host_from_dev;
-axi_shared_bus_t_host_to_dev_t fb_pos_axi_host_to_dev;
 
 #pragma MAIN fb_pos_main
 void fb_pos_main()
@@ -63,7 +60,7 @@ void fb_pos_main()
   uint8_t wr_bytes[4] = pixel_t_to_bytes(fb_pos_addr_pipeline_out.data.p);
   uint32_t word_in = uint8_array4_le(wr_bytes);
   axi_write_t axi_write_info = axi_addr_data_to_write(fb_pos_addr_pipeline_out.data.addr, word_in);
-  fb_pos_axi_host_to_dev = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  host_to_dev(axi_xil_mem, cpu) = axi_shared_bus_t_HOST_TO_DEV_NULL;
   fb_pos_addr_pipeline_out_ready = 0;
   if(fb_pos_addr_pipeline_out.valid){
     axi_shared_bus_t_write_start_logic_outputs_t write_start = 
@@ -71,12 +68,12 @@ void fb_pos_main()
       axi_write_info.req,
       axi_write_info.data, 
       1,
-      fb_pos_axi_host_from_dev.write
+      dev_to_host(axi_xil_mem, cpu).write
     );
-    fb_pos_axi_host_to_dev.write = write_start.to_dev;
+    host_to_dev(axi_xil_mem, cpu).write = write_start.to_dev;
     fb_pos_addr_pipeline_out_ready = write_start.ready_for_inputs;
   }
 
   // Drop all write responses
-  fb_pos_axi_host_to_dev.write.resp_ready = 1;
+  host_to_dev(axi_xil_mem, cpu).write.resp_ready = 1;
 }

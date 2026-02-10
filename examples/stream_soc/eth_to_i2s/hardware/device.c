@@ -26,16 +26,6 @@ stream(i2s_samples_t) i2s_rx_samples_monitor_stream;
 
 // Include types for axi shared bus axi_shared_bus_t
 #include "axi/axi_shared_bus.h"
-// Globally visible AXI bus for this module
-axi_shared_bus_t_dev_to_host_t i2s_axi_host_from_dev;
-axi_shared_bus_t_host_to_dev_t i2s_axi_host_to_dev;
-
-// Connect I2S to AXI bus (in I2S clock domain)
-#pragma MAIN i2s_axi_connect
-void i2s_axi_connect(){
-  host_to_dev(axi_xil_mem, i2s) = i2s_axi_host_to_dev;
-  i2s_axi_host_from_dev = dev_to_host(axi_xil_mem, i2s);
-}
 
 // Globally visible fifo as input port for I2S RX desc to be written
 GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_desc_to_write_fifo, 16)
@@ -91,12 +81,12 @@ void rx_main()
     i2s_rx_desc_to_write_fifo_out, // Input stream of descriptors to write
     rx_u32_stream, // Input data stream to write (from I2S MAC)
     i2s_rx_descriptors_monitor_fifo_in_ready, // Ready for output stream of descriptors written
-    i2s_axi_host_from_dev.write // Inputs for write side of AXI bus
+    dev_to_host(axi_xil_mem, i2s).write // Inputs for write side of AXI bus
   );
   i2s_rx_desc_to_write_fifo_out_ready = to_axi_wr.ready_for_descriptors_in;
   // No flow control feedback for eth rx, overflows = to_axi_wr.ready_for_data_stream;
   i2s_rx_descriptors_monitor_fifo_in = to_axi_wr.descriptors_out_stream; // Output stream of written descriptors
-  i2s_axi_host_to_dev.write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
+  host_to_dev(axi_xil_mem, i2s).write = to_axi_wr.to_dev; // Outputs for write side of AXI bus
   
   // Deserialize axis32 into i2s samples, always ready, overflows
   axis32_to_i2s_t to_i2s = axis32_to_i2s(

@@ -57,10 +57,6 @@ gpu_rect_iter_fsm_t gpu_rect_iter_fsm(
 // Globally visible fifo of commands that CPU will load
 GLOBAL_STREAM_FIFO(draw_rect_t, gpu_draw_cmd_fifo, 16)
 
-// Globally visible AXI bus for this module to talk to frame buffer
-axi_shared_bus_t_dev_to_host_t gpu_axi_host_from_dev;
-axi_shared_bus_t_host_to_dev_t gpu_axi_host_to_dev;
-
 #pragma MAIN gpu_main
 void gpu_main()
 {
@@ -76,7 +72,7 @@ void gpu_main()
   uint8_t wr_bytes[4] = pixel_t_to_bytes(rect_iter.p);
   uint32_t word_in = uint8_array4_le(wr_bytes);
   axi_write_t axi_write_info = axi_addr_data_to_write(rect_iter.addr, word_in);
-  gpu_axi_host_to_dev = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  host_to_dev(axi_xil_mem, cpu) = axi_shared_bus_t_HOST_TO_DEV_NULL;
   ready_for_pixel_and_addr = 0;
   if(rect_iter.valid_out){
     axi_shared_bus_t_write_start_logic_outputs_t write_start = 
@@ -84,12 +80,12 @@ void gpu_main()
       axi_write_info.req,
       axi_write_info.data, 
       1,
-      gpu_axi_host_from_dev.write
+      dev_to_host(axi_xil_mem, cpu).write
     );
-    gpu_axi_host_to_dev.write = write_start.to_dev;
+    host_to_dev(axi_xil_mem, cpu).write = write_start.to_dev;
     ready_for_pixel_and_addr = write_start.ready_for_inputs;
   }
 
   // Drop all write responses
-  gpu_axi_host_to_dev.write.resp_ready = 1;
+  host_to_dev(axi_xil_mem, cpu).write.resp_ready = 1;
 }
