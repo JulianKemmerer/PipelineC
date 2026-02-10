@@ -26,6 +26,8 @@ void frame_buf_write(uint16_t x, uint16_t y, pixel_t pixel, volatile pixel_t* FB
 
 // Some helper drawing code 
 // Rect from Dutra :) (has text console stuff too!?)
+// Moved into hardware now :)
+/*
 void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color, volatile pixel_t* FB){
     pixel_t p = {color, color, color, color};
     for (int32_t i = start_x; i < end_x; i++)
@@ -36,3 +38,4 @@ void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color, vol
         }
     }
 }
+*/

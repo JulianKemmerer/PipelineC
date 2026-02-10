@@ -45,7 +45,6 @@ GLOBAL_STREAM_FIFO(axi_descriptor_t, i2s_rx_descriptors_monitor_fifo, 16)
 
 // Same clock group as Xilinx TEMAC
 MAIN_MHZ_GROUP(rx_main, XIL_TEMAC_RX_MHZ, xil_temac_rx)
-#pragma FUNC_MARK_DEBUG rx_main
 void rx_main()
 {
   // Config bits for RX MAC

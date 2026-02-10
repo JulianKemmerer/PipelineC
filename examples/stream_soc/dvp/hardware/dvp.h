@@ -14,7 +14,6 @@ typedef struct dvp_rgb565_decoder_t{
   uint16_t height;
   uint1_t frame_size_valid;
 } dvp_rgb565_decoder_t;
-#pragma FUNC_MARK_DEBUG dvp_rgb565_decoder
 dvp_rgb565_decoder_t dvp_rgb565_decoder(
   uint1_t data[8],
   uint1_t href,

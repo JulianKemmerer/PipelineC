@@ -10,7 +10,6 @@ GLOBAL_STREAM_FIFO(sccb_op_start_t, sccb_start_fifo, 16)
 GLOBAL_STREAM_FIFO(sccb_op_finish_t, sccb_finish_fifo, 16)
 
 MAIN_MHZ(cam_ctrl, CAM_SYS_CLK_MHZ)
-//#pragma FUNC_MARK_DEBUG cam_init_test
 void cam_ctrl(){
   sccb_ctrl_t ctrl_fsm = sccb_ctrl(
     sccb_start_fifo_out.data.id,

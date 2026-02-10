@@ -10,7 +10,6 @@ uint1_t cam_frame_size_valid;
 // Instance of dvp_rgb565_decoder source of stream of pixels
 #include "cdc.h"
 MAIN_MHZ(cam_pixel_test, CAM_PCLK_MHZ)
-//#pragma FUNC_MARK_DEBUG cam_pixel_test
 void cam_pixel_test(){
   // Wait for cam init done, a signal from SCCB clock domain
   uint1_t init_done = xil_cdc2_bit(cam_init_done);
