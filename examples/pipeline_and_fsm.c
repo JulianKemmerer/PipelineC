@@ -1,13 +1,9 @@
 #pragma PART "LFE5UM5G-85F-8BG756C"
 #include "uintN_t.h"
 #include "intN_t.h"
-#include "global_func_inst.h"
 
-// Make getting to autopipeline from stateful module easier
-// A pipeline my_func() and a stateful testbench() reading the inputs and outputs
-// Global instance wires with macros to do read and write makes this easy
-
-// The function inputs and outputs
+// Example function:
+//  inputs and outputs
 typedef struct my_func_in_t
 {
   int32_t x;
@@ -19,7 +15,7 @@ typedef struct my_func_out_t
   int32_t data;
   uint1_t valid;
 }my_func_out_t;
-// The work to pipeline out = f(in)
+//  work to pipeline out = f(in)
 my_func_out_t my_func(my_func_in_t input)
 {
   my_func_out_t output;
@@ -28,9 +24,35 @@ my_func_out_t my_func(my_func_in_t input)
   return output;
 }
 
-// Helper macros to make a globally visible and wired up instance of the pipeline
+// The global function instance header has macros for making 
+// global instances of a function (typically a pipeline)
+// with global connecting wires that make it easy to use from anywhere else in code
+#include "global_func_inst.h"
+
+// The 'function' variants of macros do not add any surrounding input+output registers
+// and thus when not autopipelined behave just like a normal function calls
+// in terms of 'executes now this cycle' combinatorial zero latency of input to output
 GLOBAL_FUNC_INST(my_inst, my_func_out_t, my_func, my_func_in_t)
+// Global variables like
+//  'my_inst_in' - the wire into the pipeline from user, and
+//  'my_inst_out' - the wire out of the pipeline to user
+
+// 'Pipeline' variants of macros add surrounding input+output registers
+// making the minimum latency 2 clock cycles.
+// These are typically used when autopipelining extra latency is expected.
 //GLOBAL_PIPELINE_INST(my_inst, my_func_out_t, my_func, my_func_in_t)
+
+// As manually coded above in my_func, it is typical to pass a 'valid' flag through pipelines
+// the '_VALID' labeled macros include this extra bit for you
+//GLOBAL_FUNC_INST_W_VALID_ID(my_inst, my_func_out_t, my_func, my_func_in_t)
+// Some macros even include a integer 'ID' value as well
+//GLOBAL_PIPELINE_INST_W_VALID_ID(my_inst, my_func_out_t, my_func, my_func_in_t)
+
+// Finally, not shown in testbench FSM here, but also typical:
+// the 'VALID_READY' variant of the macro includes a 'ready' feedback flow control bit.
+// see more at: https://github.com/JulianKemmerer/PipelineC/wiki/Streams-and-Handshakes .
+// To enable feedback ready stalling the pipeline an additional FIFO is included.
+//GLOBAL_VALID_READY_PIPELINE_INST(my_inst, my_func_out_t, my_func, my_func_in_t, FIFO_DEPTH)
 
 #pragma MAIN_MHZ testbench 200.0
 uint1_t testbench()
