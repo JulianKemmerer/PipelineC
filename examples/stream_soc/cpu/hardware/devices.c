@@ -55,9 +55,12 @@ void fft_dataflow()
   output_fifo_out_ready = sample_power_pipeline_in_ready;
 }
 
-// TODO USE CAMERA PIXELS INPUT TO CROP!
 #pragma MAIN video_dataflow
 void video_dataflow(){
+  // Camera video into crop
+  crop_video_in = cam_input_video_fifo_out;
+  cam_input_video_fifo_out_ready = crop_video_in_ready;
+
   // Crop output into scale input
   scale_video_in = crop_video_out;
   crop_video_out_ready = scale_video_in_ready;

@@ -1,4 +1,6 @@
 #include "dvp.h"
+#include "../../video/video_stream.h"
+#include "global_fifo.h"
 
 // TODO init done is input signal from CPU to pixel clock side
 uint1_t cam_init_done;
@@ -6,6 +8,9 @@ uint1_t cam_init_done;
 
 uint1_t cam_frame_size_valid;
 #pragma ASYNC_WIRE cam_frame_size_valid
+
+// FIFO of pixels to be read as output
+GLOBAL_STREAM_FIFO(video_t, cam_input_video_fifo, 1024) // TODO size?
 
 // Instance of dvp_rgb565_decoder source of stream of pixels
 #include "cdc.h"
@@ -38,4 +43,14 @@ void cam_pixel_test(){
 
   // Only using frame valid output for now...
   cam_frame_size_valid = decoder.frame_size_valid;
+
+  // Decoded video into FIFO
+  cam_input_video_fifo_in.valid = decoder.pixel_valid & decoder.frame_size_valid;
+  cam_input_video_fifo_in.data.data.a = 0;
+  cam_input_video_fifo_in.data.data.r = decoder.r << 3;
+  cam_input_video_fifo_in.data.data.g = decoder.g << 2;
+  cam_input_video_fifo_in.data.data.b = decoder.b << 3;
+  cam_input_video_fifo_in.data.eod[0] = decoder.x==(decoder.width-1);
+  cam_input_video_fifo_in.data.eod[1] = decoder.y==(decoder.height-1);
+  // no ready, just overflows
 }

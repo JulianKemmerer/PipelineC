@@ -46,7 +46,7 @@ void fb_pos_main()
   fb_pos_video_in_ready = decoded.ready_for_video_in;
 
   // Combine with postion params for final fb RAM addr
-  fb_pos_params_t fb_pos_params; // TEMP const
+  fb_pos_params_t fb_pos_params; // TEMP const TODO REMOVE
   fb_pos_params.xpos = 640/2;
   fb_pos_params.ypos = 480/2;
   fb_pos_addr_pipeline_in.data.p = decoded.video_out.data.data;
