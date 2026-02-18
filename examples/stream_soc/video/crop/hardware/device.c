@@ -81,32 +81,26 @@ crop2d_t crop2d(
 }
 
 // Globally visible video bus for SoC
-//stream(video_t) crop_video_in; // input
-//uint1_t crop_video_in_ready; // output
+stream(video_t) crop_video_in; // input
+uint1_t crop_video_in_ready; // output
 stream(video_t) crop_video_out; // output
 uint1_t crop_video_out_ready; // input
 
 #pragma MAIN crop_main
 void crop_main()
 {
-  // TEMP Test pattern
-  DECL_FEEDBACK_WIRE(uint1_t, ready_for_tp_vid)
-  stream(video_t) tp_vid = test_pattern(
-    ready_for_tp_vid
-  );  
-
   // Crop based on x,y positon
   crop2d_params_t params;
-  // TEMP const
+  // TEMP const TODO REMOVE
   params.top_left_x = 0;
   params.top_left_y = 0;
-  params.bot_right_x = TPW-1;
-  params.bot_right_y = TPH/2;
+  params.bot_right_x = 640/3;
+  params.bot_right_y = 480/3;
   crop2d_t crop = crop2d(
     params,
-    tp_vid,
+    crop_video_in,
     crop_video_out_ready
   );
-  ready_for_tp_vid = crop.ready_for_video_in;
+  crop_video_in_ready = crop.ready_for_video_in;
   crop_video_out = crop.video_out;
 }

@@ -123,6 +123,7 @@ uint1_t scale_video_in_ready; // output
 stream(video_t) scale_video_out; // output
 uint1_t scale_video_out_ready; // input
 
+// TODO REMOVE
 DECL_INPUT(uint4_t, scale_factor) // TEMP DEBUG
 
 #pragma MAIN scale_main
