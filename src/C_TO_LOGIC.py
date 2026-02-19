@@ -11291,10 +11291,8 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
             print("WARNING: Skipped struct def without alias:", struct_def.coord)
             continue
 
-        # casthelp(struct_def)
         struct_name = str(struct_def.name)
-        # print "struct_name",struct_name
-        parser_state.struct_to_field_type_dict[struct_name] = OrderedDict()
+        new_field_type_dict = OrderedDict()
         for child in struct_def.decls:
             # Assume type decl
             field_name = str(child.name)
@@ -11306,7 +11304,15 @@ def APPEND_STRUCT_FIELD_TYPE_DICT(c_file_ast, parser_state):
             else:
                 # Non array
                 type_name = str(child.children()[0][1].children()[0][1].names[0])
-            parser_state.struct_to_field_type_dict[struct_name][field_name] = type_name
+            new_field_type_dict[field_name] = type_name
+        if (struct_name in parser_state.struct_to_field_type_dict) and (
+            parser_state.struct_to_field_type_dict[struct_name] != new_field_type_dict
+        ):
+            raise Exception(
+                f"Duplicate mismatching {struct_name} struct definiton!",
+                struct_def.coord,
+            )
+        parser_state.struct_to_field_type_dict[struct_name] = new_field_type_dict
 
     return parser_state
 
@@ -11385,28 +11391,30 @@ def SKIP_PARSING_FUNC(func_name, parser_state):
 
 # This will likely be called multiple times when loading multiple C files
 def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
+    parse_func_body = parse_body
     # Each func def needs existing logic func name lookup
     # Read in file with C parser and get function def nodes
     func_defs = GET_C_AST_FUNC_DEFS(parser_state.c_file_ast)
     for func_def in func_defs:
-        # Warn about duplicate functions, if not overly false positive then make error
-        if func_def.decl.name in parser_state.FuncLogicLookupTable:
-            print(
-                "WARNING: Duplicate function definition found:",
-                func_def.decl.name,
-                "at:",
-                parser_state.FuncLogicLookupTable[func_def.decl.name].c_ast_node.coord,
-                "and again at:",
-                func_def.decl.coord,
-                ". Using second definition.",
-            )
         # Silently skip fsm clk funcs
-        parse_func_body = parse_body
         if (
             func_def.decl.name in parser_state.FuncLogicLookupTable
             and parser_state.FuncLogicLookupTable[func_def.decl.name].is_fsm_clk_func
         ):
             continue
+        # Warn about duplicate functions, if not overly false positive then make error
+        if func_def.decl.name in parser_state.FuncLogicLookupTable:
+            orig_func_def = parser_state.FuncLogicLookupTable[func_def.decl.name]
+            if str(orig_func_def.c_ast_node.coord) != str(func_def.decl.coord):
+                print(
+                    "WARNING: Duplicate function definition found:",
+                    func_def.decl.name,
+                    "at:",
+                    orig_func_def.c_ast_node.coord,
+                    "and again at:",
+                    func_def.decl.coord,
+                    ". Using second definition.",
+                )
         # Special overload funcs
         if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
             print(
