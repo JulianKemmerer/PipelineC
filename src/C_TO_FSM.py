@@ -1110,9 +1110,9 @@ typedef struct """
 
     text += """
   // Handshake+inputs registered
-  if( (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)) """
+  if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)"""
     if uses_io_func:
-        text += " | (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN) "
+        text += " | ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)"
     text += """)
   {
     // Special first state signals ready, waits for start
@@ -1205,9 +1205,9 @@ typedef struct """
   // Pass through to RETURN_REG in same clk cycle
   
   // Handshake+outputs registered
-  if( (ONE_HOT_CONST_EQ(FSM_STATE,RETURN_REG)) """
+  if(ONE_HOT_CONST_EQ(FSM_STATE,RETURN_REG)"""
     if uses_io_func:
-        text += " | (ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT)) "
+        text += " | ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT)"
     text += """)
   {
     // Special last state signals done, waits for ready
