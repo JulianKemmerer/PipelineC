@@ -917,11 +917,13 @@ typedef struct """
         + fsm_logic.func_name
         + """, 0)
   // State reg holding state to return to after certain func calls
-  // Starting set to 'invalid'=entry=[0]
+  // Starting set for entry going to first user state
   ONE_HOT_REG_DECL(FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
         + "_"
         + fsm_logic.func_name
-        + """, 0)
+        + """, FIRST_STATE_"""
+        + fsm_logic.func_name
+        + """)
   // Input regs
 """
     )
@@ -1124,48 +1126,22 @@ typedef struct """
     for input_port in fsm_logic.inputs:
         text += "      " + input_port + " = fsm_i." + input_port + ";\n"
 
-    # Go to first user state after getting inputs
-    if uses_io_func:
-        # Extra logic to detect 'return to arbitrary user location from entry'
-        text += (
-            """      // Go to signaled return-from-entry state if valid
-        if(ONE_HOT_CONST_EQ(FUNC_CALL_RETURN_FSM_STATE,ENTRY_REG))
-        {
-            // Invalid, default to first user state
-            if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_REG)){
-                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
-            + fsm_logic.first_user_state.name
-            + """, ENTRY_REG)
-            }else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_IN)){
-                ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
-            + fsm_logic.first_user_state.name
-            + """, ENTRY_RETURN_IN)
-            }
-        }
-        else
-        {
-            // Make indicated user transition from entry
-            ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
-            + "_"
-            + fsm_logic.func_name
-            + """)
-        }"""
-        )
-    else:
-        # Normal case
-        text += (
-            """      // Default to first user state
-      ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, """
-            + fsm_logic.first_user_state.name
-            + """, ENTRY_REG)"""
-        )
-
+    # Go to indicated return state after getting inputs
+    # which init starts as first user state
+    text += (
+        """      // Default to indicated return state (init for entry=first user state)
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+        + "_"
+        + fsm_logic.func_name
+        + """)"""
+    )
     text += """
     }
   }
-  // Pass through from ENTRY in same clk cycle
-"""
 
+  // Pass through from ENTRY in same clk cycle
+
+"""
     # List out all user states in parallel branch groups
     # Except for last state group of clk delay
     last_group = fsm_logic.state_groups[-1]
@@ -1220,24 +1196,57 @@ typedef struct """
             + FSM_EXT
             + """;"""
         )
-    text += (
-        """
+    text += """
     if(fsm_i.output_ready)
     {
-      // Go to signaled return state
-      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
-        + "_"
-        + fsm_logic.func_name
-        + """)
-"""
-    )
+      """
     if uses_io_func:
-        text += """      // Go to second part of io state\n"""
-        text += """      if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT))
-      {
+        # IO func
+        #   RETURN_REG to -> variable FUNC_CALL_RETURN_FSM_STATE
+        #    OR
+        #   ENTRY_RETURN_OUT -> const ENTRY_RETURN_IN
+        # Normal return
+        text += (
+            """if(ONE_HOT_CONST_EQ(FSM_STATE,RETURN_REG)){
+        // Go to signaled return state
+        ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+            + "_"
+            + fsm_logic.func_name
+            + """)
+        // Reset return state to first user state for potential restart from entry
+        ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, """
+            + fsm_logic.first_user_state.name
+            + """, NUM_STATES"""
+            + "_"
+            + fsm_logic.func_name
+            + ")\n"
+        )
+        # Output then input
+        text += """      }else if(ONE_HOT_CONST_EQ(FSM_STATE,ENTRY_RETURN_OUT)){
+        // Go to second part of io state
+        // ENTRY_RETURN_OUT -> ENTRY_RETURN_IN
         ONE_HOT_TRANS_NEXT_FROM(FSM_STATE, ENTRY_RETURN_IN, ENTRY_RETURN_OUT)
-      }
-"""
+      }\n"""
+    else:
+        # Normal RETURN_REG to -> variable FUNC_CALL_RETURN_FSM_STATE
+        text += (
+            """// Go to signaled return state
+      ONE_HOT_VAR_ASSIGN(FSM_STATE, FUNC_CALL_RETURN_FSM_STATE, NUM_STATES"""
+            + "_"
+            + fsm_logic.func_name
+            + """)"""
+        )
+        text += (
+            """     
+      // Reset return state to first user state for potential restart from entry
+      ONE_HOT_CONST_ASSIGN(FUNC_CALL_RETURN_FSM_STATE, """
+            + fsm_logic.first_user_state.name
+            + """, NUM_STATES"""
+            + "_"
+            + fsm_logic.func_name
+            + ")\n"
+        )
+
     text += """    }
   }
 """
