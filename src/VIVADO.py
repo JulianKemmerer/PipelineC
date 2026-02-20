@@ -561,6 +561,7 @@ def SYN_AND_REPORT_TIMING(
     total_latency=None,
     hash_ext=None,
     use_existing_log_file=True,
+    is_final_top=False,
 ):
     # Timing params for this logic
     timing_params = TimingParamsLookupTable[inst_name]

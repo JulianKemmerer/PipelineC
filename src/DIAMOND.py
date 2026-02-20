@@ -30,6 +30,7 @@ def SYN_AND_REPORT_TIMING(
     total_latency=None,
     hash_ext=None,
     use_existing_log_file=True,
+    is_final_top=False,
 ):
     multimain_timing_params = SYN.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable

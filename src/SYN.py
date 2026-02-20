@@ -36,6 +36,7 @@ SYN_TOOL = None  # Attempts to figure out from part number
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 WRITE_AXIS_XO_FILE = False
+PIN_CONSTRAINTS_FILE = None # Pin constraints file to use
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here

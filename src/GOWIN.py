@@ -429,6 +429,7 @@ def SYN_AND_REPORT_TIMING(
     total_latency=None,
     hash_ext=None,
     use_existing_log_file=True,
+    is_final_top=False,
 ):
     multimain_timing_params = SYN.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
@@ -439,6 +440,7 @@ def SYN_AND_REPORT_TIMING(
         total_latency,
         hash_ext,
         use_existing_log_file,
+        is_final_top,
     )
 
 
@@ -456,10 +458,11 @@ def SYN_AND_REPORT_TIMING_NEW(
     total_latency=None,
     hash_ext=None,
     use_existing_log_file=True,
+    is_final_top=False,
 ):
     # Which vhdl files?
     vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-        multimain_timing_params, parser_state, inst_name
+        multimain_timing_params, parser_state, inst_name, is_final_top
     )
 
     # Single instance
@@ -493,7 +496,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     log_to_read = log_path
 
     # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
+    if not is_final_top and os.path.exists(log_to_read) and use_existing_log_file:
         # print "SKIPPED:", syn_imp_bash_cmd
         print("Reading log", log_to_read)
         with open(log_to_read, "r") as f:
@@ -531,7 +534,7 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     # Which VHDL files?
     vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-        multimain_timing_params, parser_state, inst_name
+        multimain_timing_params, parser_state, inst_name, is_final_top
     )
 
     # Generate TCL file
@@ -560,6 +563,8 @@ def SYN_AND_REPORT_TIMING_NEW(
             vhdl_file_text = vhdl_file_text.strip()
             if vhdl_file_text != "":
                 f.write(f"add_file -type vhdl {vhdl_file_text}\n")
+        if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
+            f.write(f"add_file -type cst {SYN.PIN_CONSTRAINTS_FILE}\n")
         f.write(
             f"""
 add_file -type sdc {constraints_filepath}
@@ -567,7 +572,7 @@ set_option -output_base_name {top_entity_name}
 set_option -top_module {top_entity_name}
 set_option -vhdl_std vhd2008
 set_option -gen_text_timing_rpt 1
-run {"all" if DO_PNR == "all" else "syn"} 
+run {"all" if is_final_top else "syn"}
 """
         )
     syn_imp_bash_cmd = f"{GOWIN_PATH} {tcl_path}"
