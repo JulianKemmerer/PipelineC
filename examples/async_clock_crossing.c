@@ -22,13 +22,13 @@
 // Fifo depth=4
 //data_t fast_to_slow[4]; 
 //#include "clock_crossing/fast_to_slow.h" // Auto generated
-#include "clock_crossing.h"
-ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, fast_to_slow, DATAS_PER_ITER, 4)
+#include "global_fifo.h"
+GLOBAL_FIFO_WIDTH_DEPTH(data_t, fast_to_slow, DATAS_PER_ITER, 4)
 
 // Fifo depth=4
 //data_t slow_to_fast[4]; 
 //#include "clock_crossing/slow_to_fast.h" // Auto generated
-ASYNC_CLK_CROSSING_WIDTH_DEPTH(data_t, slow_to_fast, DATAS_PER_ITER, 4)
+GLOBAL_FIFO_WIDTH_DEPTH(data_t, slow_to_fast, DATAS_PER_ITER, 4)
 
 void fast() 
 {  
