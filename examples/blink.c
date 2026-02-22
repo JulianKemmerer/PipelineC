@@ -1,7 +1,8 @@
 #include "uintN_t.h"  // uintN_t types for any N
 
 // Install+configure synthesis tool then specify part here
-#pragma PART "LFE5U-85F-6BG381C"
+// Ex.
+//#pragma PART "LFE5U-85F-6BG381C"
 //#pragma PART "xc7a35ticsg324-1l"
 //#pragma PART "5CEBA4F23C8"
 
