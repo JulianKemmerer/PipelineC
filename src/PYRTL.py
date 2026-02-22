@@ -5,7 +5,7 @@ import OPEN_TOOLS
 import SYN
 import VHDL
 
-TECH_IN_NM = 45
+TECH_IN_NM = 65  # Set to roughly match latchup.app sky130 synth results...
 FF_OVERHEAD = 0
 
 
