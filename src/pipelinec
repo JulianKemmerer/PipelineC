@@ -152,6 +152,12 @@ parser.add_argument(
     help="Write a .tcl script to package output VHDL as a Vitis IP .xo file with an AXIS interface.",
     action="store_true",
 )
+parser.add_argument(
+    "--pins",
+    type=str,
+    default=None,
+    help="Specify a pin constraints file.",
+)
 args = parser.parse_args()
 
 # Combine certain args
@@ -163,6 +169,7 @@ if args.sim_comb:
 
 # Resolve C file arg
 c_file = os.path.abspath(args.c_file)
+pins_file = os.path.abspath(args.pins) if args.pins else None
 
 # Apply arguments to global modules
 
@@ -191,7 +198,8 @@ OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 SIM.SET_SIM_TOOL(args)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
-
+# Pin constraints file (if specified)
+SYN.PIN_CONSTRAINTS_FILE = pins_file
 
 # Ugh some python versions dont obey the coding comment at top of file?
 try:
@@ -259,6 +267,18 @@ if not args.no_synth:
         flush=True,
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+    if SYN.PIN_CONSTRAINTS_FILE:
+        print(
+            "================== Generating Bitstream ==================",
+            flush=True
+        )
+        SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
+            None,
+            None,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+            is_final_top=True,
+        )
 
     # Start simulation on final VHDL
     SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
