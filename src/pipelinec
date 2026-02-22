@@ -237,6 +237,17 @@ print(
 print("Writing output files before adding pipelining...", flush=True)
 C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 
+# If no synth tools installed, switch over to --comb --no_synth mode for user with warning...
+SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
+if SYN.SYN_TOOL is None:
+    warn = not args.no_synth or not args.comb
+    args.comb = True
+    args.no_synth = True
+    if warn:
+        print(
+            "WARNING: No synthesis tool install detected based on PART. Skipping synthesis and autopipelining."
+        )
+
 if args.comb:
     SYN.WRITE_FINAL_FILES(None, parser_state)
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
@@ -268,10 +279,7 @@ if not args.no_synth:
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
     if SYN.PIN_CONSTRAINTS_FILE:
-        print(
-            "================== Generating Bitstream ==================",
-            flush=True
-        )
+        print("================== Generating Bitstream ==================", flush=True)
         SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
             None,
             None,

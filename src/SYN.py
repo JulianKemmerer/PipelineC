@@ -122,19 +122,18 @@ def PART_SET_TOOL(part_str, allow_fail=False):
         # Try to guess synthesis tool based on part number
         # Hacky for now...
         if part_str is None:
-            if allow_fail:
-                return
+            # Try to default to part-less estimates from pyrtl?
+            if PYRTL.IS_INSTALLED():
+                SYN_TOOL = PYRTL
+                print("Defaulting to pyrtl based timing estimates...")
             else:
-                # Try to default to part-less estimates from pyrtl?
-                if PYRTL.IS_INSTALLED():
-                    SYN_TOOL = PYRTL
-                    print("Defaulting to pyrtl based timing estimates...")
-                else:
-                    print(
-                        "Need to set FPGA part somewhere in the code to continue with synthesis tool support!"
-                    )
-                    print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
-                    sys.exit(0)
+                if allow_fail:
+                    return
+                print(
+                    "Need to set FPGA part somewhere in the code to continue with synthesis tool support!"
+                )
+                print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
+                sys.exit(0)
         else:
             if part_str.lower().startswith("xc"):
                 SYN_TOOL = VIVADO
