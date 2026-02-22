@@ -36,7 +36,7 @@ SYN_TOOL = None  # Attempts to figure out from part number
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 DO_SYN_FAIL_SIM = False  # Start simulation if synthesis fails
 WRITE_AXIS_XO_FILE = False
-PIN_CONSTRAINTS_FILE = None # Pin constraints file to use
+PIN_CONSTRAINTS_FILE = None  # Pin constraints file to use
 
 # Welcome to the land of magic numbers
 #   "But I think its much worse than you feared" Modest Mouse - I'm Still Here
@@ -2854,11 +2854,11 @@ def SLICES_EQ(slices_a, slices_b, epsilon):
 
 # Wow this is hack AF
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):
-    if path_report.start_reg_name is None:
-        raise Exception("No start reg name in timing report!")
-    if path_report.end_reg_name is None:
-        raise Exception("No end reg name in timing report!")
     main_insts = set()
+    if path_report.start_reg_name is None:
+        return main_insts
+    if path_report.end_reg_name is None:
+        return main_insts
     all_main_insts = list(reversed(sorted(list(parser_state.main_mhz.keys()), key=len)))
     # Try to go off of just start and end registers being in single top level main
     start_reg_main = None
@@ -3882,14 +3882,27 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             # Oh boy old log files can still be used if target freq changes right?
             # Do a little hackery to get actual target freq right now, not from log
             # Could be a clock crossing too right?
+            all_main_insts = list(parser_state.main_mhz.keys())
             if len(parser_state.main_mhz) == 1:  # hacky work around for pyrtl really...
-                main_insts = set([list(parser_state.main_mhz.keys())[0]])
+                main_insts = set([all_main_insts[0]])
             else:
-                main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
-                    path_report,
-                    parser_state,
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                )
+                # More hacky pyrtl support
+                if path_report.start_reg_name is None:
+                    print(
+                        "WARNING: No start reg name in timing report! Assuming all clock domains had critical paths..."
+                    )
+                    main_insts = set(all_main_insts)
+                elif path_report.end_reg_name is None:
+                    print(
+                        "WARNING: No end reg name in timing report! Assuming all clock domains had critical paths..."
+                    )
+                    main_insts = set(all_main_insts)
+                else:
+                    main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
+                        path_report,
+                        parser_state,
+                        sweep_state.multimain_timing_params.TimingParamsLookupTable,
+                    )
             if len(main_insts) <= 0:
                 print(
                     "Path group:",
