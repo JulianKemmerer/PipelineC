@@ -4910,9 +4910,15 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 f"Function: {logic.func_name} cached path delay: {cached_path_delay:.3f} ns"
             )
             if cached_path_delay > 0.0 and logic.delay == 0:
-                print("Have timing path of", cached_path_delay, "ns")
-                print("...but recorded zero delay. Increase delay multiplier!")
-                sys.exit(-1)
+                print(
+                    "WARNING: Found cached",
+                    logic_func_name,
+                    "delay path of",
+                    cached_path_delay,
+                    "ns",
+                    "which is to small to represent. Increase delay multiplier?",
+                )
+                logic.delay = 1  # Set to smallest non zero for now?
         elif modeled_path_delay is not None:
             logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
             print(
@@ -4982,9 +4988,15 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 )
             # Sanity check multiplier is working
             if path_report.path_delay_ns > 0.0 and logic.delay == 0:
-                print("Have timing path of", path_report.path_delay_ns, "ns")
-                print("...but recorded zero delay. Increase delay multiplier!")
-                sys.exit(-1)
+                print(
+                    "WARNING: Found",
+                    logic_func_name,
+                    "delay path of",
+                    path_report.path_delay_ns,
+                    "ns",
+                    "which is to small to represent. Increase delay multiplier?",
+                )
+                logic.delay = 1  # Set to smallest non zero for now?
             # Make adjustment for 0 LLs to have 0 delay
             if (SYN_TOOL is VIVADO) and path_report.logic_levels == 0:
                 logic.delay = 0
