@@ -193,6 +193,9 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         # Write python file that does pyrtl stuff
         py_text = f"""
+import sys
+sys.setrecursionlimit(10000)
+
 import pyrtl
 pyrtl.reset_working_block()
 print("Opening .blif...", flush=True)
