@@ -5,8 +5,9 @@ import OPEN_TOOLS
 import SYN
 import VHDL
 
-TECH_IN_NM = 65  # Set to roughly match latchup.app sky130 synth results...
-FF_OVERHEAD = 0
+# Set to roughly match latchup.app sky130 synth results...
+TECH_IN_NM = 65  # Why does decreasing nm get lower fmax?
+FF_OVERHEAD = 0  # Set to zero since not using pyrtl max_length()
 
 
 def IS_INSTALLED():
@@ -246,7 +247,7 @@ export GHDL_PREFIX="""
             + vhdl_files_texts
             + """ -e """
             + top_entity_name
-            + """; synth -top """
+            + """; synth -flatten -top """
             + top_entity_name
             + """; write_blif """
             + top_entity_name
