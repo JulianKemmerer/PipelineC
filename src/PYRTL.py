@@ -6,7 +6,7 @@ import SYN
 import VHDL
 
 # Set to roughly match latchup.app sky130 synth results...
-TECH_IN_NM = 65  # Why does decreasing nm get lower fmax?
+TECH_IN_NM = 20  # Why does decreasing nm get lower fmax?
 FF_OVERHEAD = 0  # Set to zero since not using pyrtl max_length()
 
 
