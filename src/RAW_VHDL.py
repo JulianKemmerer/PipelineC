@@ -2645,38 +2645,27 @@ def GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
                 + """);
         -- Accum/output gets/is intermediate if not reset
         if(write_pipe.reset_and_read > 0) then
-          -- Reset the accumulated value to the input right ~increment/reset value
+          -- Reset the accumulated value to zeros for now
           write_pipe.accum("""
                 + str(bits_per_stage_dict[stage] - 1)
-                + """ downto 0) := unsigned(write_pipe.right_range_slv("""
-                + str(bits_per_stage_dict[stage] - 1)
-                + """ downto 0));
-          -- Read output is accumulated value from register
-          write_pipe.full_width_return_output("""
-                + str(up_bound)
-                + """ downto """
-                + str(low_bound)
-                + """) := read_raw_hdl_pipeline_regs(STAGE).accum("""
-                + str(bits_per_stage_dict[stage] - 1)
-                + """ downto 0);
+                + """ downto 0) := (others => '0');
         else
-          -- Not reset and read, use accumlation value, and that value is output
-          -- Accumulate
+          -- Not reset, accumulate
           write_pipe.accum("""
                 + str(bits_per_stage_dict[stage] - 1)
                 + """ downto 0) := unsigned(write_pipe.intermediate("""
                 + str(bits_per_stage_dict[stage] - 1)
-                + """ downto 0));
-          -- Assign output bits
-          -- Carry full_width_return_output(up_bound+1) will be overidden in next iteration and included as carry
-          write_pipe.full_width_return_output("""
+                + """ downto 0));   
+        end if;
+        -- Assign output bits
+        -- Carry full_width_return_output(up_bound+1) will be overidden in next iteration and included as carry
+        write_pipe.full_width_return_output("""
                 + str(up_bound + 1)
                 + """ downto """
                 + str(low_bound)
                 + """) := unsigned(write_pipe.intermediate("""
                 + str(bits_per_stage_dict[stage])
                 + """ downto 0));
-        end if;
       """
             )
 
