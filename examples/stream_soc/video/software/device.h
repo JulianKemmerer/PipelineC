@@ -88,17 +88,23 @@ void vid_fb_pos_adjust(uint32_t buttons){
 }
 
 void vid_pipeline_ctrl(){
+  // Detect rising edge of buttons // TODO debounce
+  static uint32_t buttons_reg = 0;
+  uint32_t buttons_rising = mm_regs->status.buttons & ~buttons_reg;
+  buttons_reg = mm_regs->status.buttons;
+
   // Is one of the buttons being pressed?
-  if(mm_regs->status.buttons > 0){
+  if(buttons_rising > 0){
     // What does button press mean
-    if(mm_regs->status.switches == 0b0001){
-      vid_crop_size_adjust(mm_regs->status.buttons);
-    }else if(mm_regs->status.switches == 0b0010){
-      vid_crop_pos_adjust(mm_regs->status.buttons);
-    }else if(mm_regs->status.switches == 0b0100){
-      vid_scale_adjust(mm_regs->status.buttons);
-    }else if(mm_regs->status.switches == 0b1000){
-      vid_fb_pos_adjust(mm_regs->status.buttons);
+    uint32_t switches = mm_regs->status.switches;
+    if(switches == 0b0001){
+      vid_crop_size_adjust(buttons_rising);
+    }else if(switches == 0b0010){
+      vid_crop_pos_adjust(buttons_rising);
+    }else if(switches == 0b0100){
+      vid_scale_adjust(buttons_rising);
+    }else if(switches == 0b1000){
+      vid_fb_pos_adjust(buttons_rising);
     }
   }
 }
@@ -106,9 +112,9 @@ void vid_pipeline_ctrl(){
 void vid_pipeline_init(){
   mm_regs->crop_params.top_left_x = 0;
   mm_regs->crop_params.top_left_y = 0;
-  mm_regs->crop_params.bot_right_x = 640/3;
-  mm_regs->crop_params.bot_right_y = 480/3;
+  mm_regs->crop_params.bot_right_x = (FRAME_WIDTH/2) - (FRAME_WIDTH/20);
+  mm_regs->crop_params.bot_right_y = (FRAME_HEIGHT/2) - (FRAME_HEIGHT/20);
   mm_regs->scale_params.scale = 1;
-  mm_regs->fb_pos_params.xpos = 640/2;
-  mm_regs->fb_pos_params.ypos = 480/2;
+  mm_regs->fb_pos_params.xpos = FRAME_WIDTH/2;
+  mm_regs->fb_pos_params.ypos = FRAME_HEIGHT/2;
 }
