@@ -2,10 +2,6 @@
 #include "stream/stream.h"
 #include "fifo.h"
 
-typedef struct scale2d_params_t{
-  uint4_t scale;
-}scale2d_params_t;
-
 // Define FIFO to instantiate later
 #define SCALE_MAX_IN_WIDTH 1024
 FIFO_FWFT(scale_line_fifo, video_t, SCALE_MAX_IN_WIDTH) 
@@ -122,16 +118,12 @@ stream(video_t) scale_video_in; // input
 uint1_t scale_video_in_ready; // output
 stream(video_t) scale_video_out; // output
 uint1_t scale_video_out_ready; // input
-
-// TODO REMOVE
-DECL_INPUT(uint4_t, scale_factor) // TEMP DEBUG
+scale2d_params_t scale_params;
 
 #pragma MAIN scale_main
 void scale_main(){
-  scale2d_params_t params;
-  params.scale = scale_factor; // TEMP DEBUG
   scale2d_t scale = scale2d(
-    params,
+    scale_params,
     scale_video_in,
     scale_video_out_ready
   );

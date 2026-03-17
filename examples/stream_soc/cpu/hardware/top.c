@@ -20,6 +20,10 @@
 // LEDs for demo
 #include "leds/leds_port.c"
 
+// Buttons and switches
+DECL_INPUT(uint4_t, sw)
+DECL_INPUT(uint4_t, btn)
+
 MAIN_MHZ(cpu_top, CPU_CLK_MHZ)
 void cpu_top(uint1_t areset) // TODO replace reset with global top level wire port
 {
@@ -30,7 +34,8 @@ void cpu_top(uint1_t areset) // TODO replace reset with global top level wire po
 
   // Instance of core
   my_mmio_in_t in;
-  in.status.button = 0; // TODO
+  in.status.switches = sw;
+  in.status.buttons = btn;
   in.status.cpu_clock = cpu_clock;
   riscv_out_t out = fsm_riscv(reset, in);
 

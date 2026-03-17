@@ -1,4 +1,4 @@
-#include "../../video_stream.h"
+#include "../../hardware/video_stream.h"
 
 // TEMP TEST PATTERN
 // instead of camera image...
@@ -34,13 +34,6 @@ stream(video_t) test_pattern(
   }
   return video_out;
 }
-
-typedef struct crop2d_params_t{
-  uint16_t top_left_x;
-  uint16_t top_left_y;
-  uint16_t bot_right_x;
-  uint16_t bot_right_y;
-}crop2d_params_t;
 
 typedef struct crop2d_t{
   stream(video_t) video_out;
@@ -85,19 +78,14 @@ stream(video_t) crop_video_in; // input
 uint1_t crop_video_in_ready; // output
 stream(video_t) crop_video_out; // output
 uint1_t crop_video_out_ready; // input
+crop2d_params_t crop_params;
 
 #pragma MAIN crop_main
 void crop_main()
 {
   // Crop based on x,y positon
-  crop2d_params_t params;
-  // TEMP const TODO REMOVE
-  params.top_left_x = 0;
-  params.top_left_y = 0;
-  params.bot_right_x = 640/3;
-  params.bot_right_y = 480/3;
   crop2d_t crop = crop2d(
-    params,
+    crop_params,
     crop_video_in,
     crop_video_out_ready
   );

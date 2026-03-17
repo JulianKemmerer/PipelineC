@@ -34,7 +34,8 @@ typedef struct mm_ctrl_regs_t{
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
 }mm_ctrl_regs_t;
 typedef struct mm_status_regs_t{ 
-  uint32_t button; // Only 4 bits used, see above note rounding to 32b
+  uint32_t switches; // Only 4 bits used, see above note rounding to 32b
+  uint32_t buttons; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
 }mm_status_regs_t;
 
@@ -47,6 +48,8 @@ typedef struct mm_regs_t{
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
 #include "mm_regs_t_bytes_t.h"
+#else
+_Static_assert(sizeof(mm_regs_t) % 4 == 0, "mm_regs_t is not aligned to 4 bytes");
 #endif
 #define MM_REGS_ADDR MEM_MAP_BASE_ADDR
 static volatile mm_regs_t* mm_regs = (mm_regs_t*)MM_REGS_ADDR;

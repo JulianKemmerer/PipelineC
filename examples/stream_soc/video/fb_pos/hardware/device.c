@@ -4,11 +4,6 @@
 #include "global_func_inst.h"
 #include "pixel_t_bytes_t.h"
 
-typedef struct fb_pos_params_t{
-  uint16_t xpos;
-  uint16_t ypos;
-}fb_pos_params_t;
-
 // Pipeline for position and address math
 typedef struct fb_pos_addr_req_t{
   pixel_t p;
@@ -33,6 +28,7 @@ GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_add
 // Globally visible video bus for SoC
 stream(video_t) fb_pos_video_in; // input
 uint1_t fb_pos_video_in_ready; // output
+fb_pos_params_t fb_pos_params;
 
 #pragma MAIN fb_pos_main
 void fb_pos_main()
@@ -46,9 +42,6 @@ void fb_pos_main()
   fb_pos_video_in_ready = decoded.ready_for_video_in;
 
   // Combine with postion params for final fb RAM addr
-  fb_pos_params_t fb_pos_params; // TEMP const TODO REMOVE
-  fb_pos_params.xpos = 640/2;
-  fb_pos_params.ypos = 480/2;
   fb_pos_addr_pipeline_in.data.p = decoded.video_out.data.data;
   fb_pos_addr_pipeline_in.data.xpos = decoded.dim[0];
   fb_pos_addr_pipeline_in.data.ypos = decoded.dim[1];

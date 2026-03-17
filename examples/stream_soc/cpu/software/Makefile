@@ -8,8 +8,10 @@
 # Ex. make hex CFLAGS="-I/media/1TB/Dropbox/PipelineC/git/PipelineC/include"
 CFLAGS = ""
 
+# -O3 ignores -mstrict-align?
+# -fpack-struct=1 instead of #pragma pack(1)? TODO FIX
 all : main.c bootstrap.S
-	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -march=rv32i -mabi=ilp32 -mstrict-align -nostartfiles -T link.ld $(CFLAGS)
+	riscv32-unknown-elf-gcc -O3 bootstrap.S main.c -lm -o main -fpack-struct=1 -Wpadded -Werror=padded -march=rv32i -mabi=ilp32 -mstrict-align -nostartfiles -T link.ld $(CFLAGS)
 	
 dump-elf: all
 	riscv32-unknown-elf-readelf -a main

@@ -1,5 +1,5 @@
 #include "dvp.h"
-#include "../../video/video_stream.h"
+#include "../../video/hardware/video_stream.h"
 #include "global_fifo.h"
 
 // TODO init done is input signal from CPU to pixel clock side
@@ -41,7 +41,7 @@ void cam_pixel_test(){
     init_done
   );
 
-  // Only using frame valid output for now...
+  // Frame size valid is status reg
   cam_frame_size_valid = decoder.frame_size_valid;
 
   // Decoded video into FIFO
