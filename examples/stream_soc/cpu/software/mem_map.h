@@ -27,7 +27,8 @@
 // easiest to write memory mapped objects for each storage type
 // since then only need to handle each storage type roughly once.
 
-// Not using attribute packed for now, so manually dont use ints smaller than 32b...
+// Cant rely on struct packing - produces misaligned accesses? See Makefile notes 
+// So manually dont use fields smaller than 32b for now...
 
 // Original regs for top IO, TODO make into modules
 typedef struct mm_ctrl_regs_t{ 
@@ -49,6 +50,7 @@ typedef struct mm_regs_t{
 #ifdef __PIPELINEC__
 #include "mm_regs_t_bytes_t.h"
 #else
+// Try to catch user using small field sizes, but not guarenteed to catch...
 _Static_assert(sizeof(mm_regs_t) % 4 == 0, "mm_regs_t is not aligned to 4 bytes");
 #endif
 #define MM_REGS_ADDR MEM_MAP_BASE_ADDR

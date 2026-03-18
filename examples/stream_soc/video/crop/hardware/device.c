@@ -40,7 +40,7 @@ typedef struct crop2d_t{
   uint1_t ready_for_video_in;
 }crop2d_t;
 crop2d_t crop2d(
-  crop2d_params_t params,
+  crop2d_params_t params_in,
   stream(video_t) video_in,
   uint1_t ready_for_video_out
 ){
@@ -52,13 +52,20 @@ crop2d_t crop2d(
     ready_for_decoded
   );
   o.ready_for_video_in = decoded.ready_for_video_in;
+  o.video_out = decoded.video_out;
+  o.video_out.valid = 0;
+  ready_for_decoded = ready_for_video_out;
+  // Reg for params, only take new input at decoded frame bounds (SOF)
+  static crop2d_params_t params_reg;
+  crop2d_params_t params = params_reg;
+  if(decoded.video_out.valid & ready_for_decoded & (decoded.dim[0]==0) & (decoded.dim[1]==0)){
+    params = params_in;
+  }
+  params_reg = params;
   // Filter out pixels outside crop
   // todo make pipeline out of filter function?
   // Quick easy comb logic enough?
   // Pass through default, invalidated
-  o.video_out = decoded.video_out;
-  o.video_out.valid = 0;
-  ready_for_decoded = ready_for_video_out;
   if(
     (decoded.dim[0] >= params.top_left_x) & 
     (decoded.dim[0] <= params.bot_right_x) &

@@ -22,7 +22,7 @@ typedef struct scale2d_t{
 }scale2d_t;
 scale2d_t scale2d(
   // Module inputs
-  scale2d_params_t params, // TODO HANDLE MID FRAME CHANGES!
+  scale2d_params_t params_in,
   stream(video_t) video_in,
   uint1_t ready_for_video_out
 ){
@@ -43,6 +43,10 @@ scale2d_t scale2d(
   static uint4_t width_counter;
   static uint4_t height_counter;
   static uint1_t is_last_input_line;
+  // Reg for params, only take new input at frame bounds (SOF)
+  static uint1_t starting_new_frame = 1;
+  static scale2d_params_t params_reg;
+  scale2d_params_t params = params_reg;
   // Output wires (default zeros)
   scale2d_t o;
   // Default no xfers in or out of fifo
@@ -55,16 +59,20 @@ scale2d_t scale2d(
     fifo_data_in = video_in.data;
     fifo_data_in_valid = video_in.valid;
     o.ready_for_video_in = fifo.data_in_ready;
-    // Until end of line goes into fifo
-    if(video_in.valid &
-       o.ready_for_video_in &
-       video_in.data.eod[0]
-    ){
-      // Then begin outputting duplicate pixels
-      state = OUTPUT_PIXELS;
-      width_counter = 0;
-      height_counter = 0;
-      is_last_input_line = video_in.data.eod[1];
+    if(video_in.valid & o.ready_for_video_in){
+      // Accept params at SOF
+      if(starting_new_frame){
+        params_reg = params_in;
+        starting_new_frame = 0;
+      }
+      // Until end of line goes into fifo
+      if(video_in.data.eod[0]){
+        // Then begin outputting duplicate pixels
+        state = OUTPUT_PIXELS;
+        width_counter = 0;
+        height_counter = 0;
+        is_last_input_line = video_in.data.eod[1];
+      }
     }
   }else{/*state==OUTPUT_PIXELS*/
     // Outputting pixel value from fifo read side
@@ -98,6 +106,8 @@ scale2d_t scale2d(
           if(height_counter==(params.scale-1)){
             // Next line
             state = LOAD_PIXELS;
+            // Was this last line EOF?
+            starting_new_frame = is_last_input_line;
           }else{
             // More repeats of current line
             height_counter += 1;

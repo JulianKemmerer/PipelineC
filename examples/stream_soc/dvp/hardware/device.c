@@ -53,4 +53,6 @@ void cam_pixel_test(){
   cam_input_video_fifo_in.data.eod[0] = decoder.x==(decoder.width-1);
   cam_input_video_fifo_in.data.eod[1] = decoder.y==(decoder.height-1);
   // no ready, just overflows
+  // dont want to drop EOD flags so upstream a better drop location
+  // is asserting false ready=1 always and dropping in a safe way
 }

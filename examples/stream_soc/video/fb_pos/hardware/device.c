@@ -47,7 +47,10 @@ void fb_pos_main()
   fb_pos_addr_pipeline_in.data.ypos = decoded.dim[1];
   fb_pos_addr_pipeline_in.data.fb_pos = fb_pos_params; // CSR 
   fb_pos_addr_pipeline_in.valid = decoded.video_out.valid;
-  ready_for_decoded = fb_pos_addr_pipeline_in_ready;
+  // This is an intentional allowed overflow point
+  // safely dropping indivudal pixels here at end of pipeline wont break frame sync midstream
+  //ready_for_decoded = fb_pos_addr_pipeline_in_ready;
+  ready_for_decoded = 1;
 
   // Stream pixels with address into ram
   uint8_t wr_bytes[4] = pixel_t_to_bytes(fb_pos_addr_pipeline_out.data.p);
