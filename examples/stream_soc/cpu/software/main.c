@@ -11,8 +11,8 @@
 #include "../../power/software/device.h"
 #include "../../frame_buffers/software/device.h"
 #include "../../cam/ov2640/software/device.h"
-#include "../../video/software/device.h"
 #include "../../gpu/software/device.h"
+#include "../../video/software/device.h"
 
 // Application software using devices, drawing waveform and spectrum:
 #include "../../fft/software/draw.h"
