@@ -26,7 +26,7 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins, volatile pixel_t
   }else{
     max_reset_counter += 1;
   }
-  for (size_t b = 0; b < N_DRAWN_BINS; b++)
+  for (size_t b = 1; b < N_DRAWN_BINS; b++) // WTF skip first bin ... causes entire screen glitches? WTF?
   {
     // min_bin_height is max near bin zero low freq, min near final bin high freq
     int min_bin_height = (height*(N_DRAWN_BINS-b))/(15*N_DRAWN_BINS); // (height/15) * ((N_DRAWN_BINS-b)/N_DRAWN_BINS);
