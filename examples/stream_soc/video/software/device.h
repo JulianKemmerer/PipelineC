@@ -13,32 +13,31 @@ void vid_crop_update_clear(crop2d_params_t old, crop2d_params_t new) {
     uint32_t fb_x  = mm_regs->fb_pos_params.xpos;
     uint32_t fb_y  = mm_regs->fb_pos_params.ypos;
 
-    // Both old and new output rects share the same fb_pos origin,
-    // so just take the larger of the two end extents
     uint32_t old_w = (old.bot_right_x - old.top_left_x) * scale;
     uint32_t old_h = (old.bot_right_y - old.top_left_y) * scale;
     uint32_t new_w = (new.bot_right_x - new.top_left_x) * scale;
     uint32_t new_h = (new.bot_right_y - new.top_left_y) * scale;
 
     drawRect(fb_x, fb_y,
-             fb_x + (old_w > new_w ? old_w : new_w) + 1,
-             fb_y + (old_h > new_h ? old_h : new_h) + 1,
+             fb_x + (old_w > new_w ? old_w : new_w) + scale,
+             fb_y + (old_h > new_h ? old_h : new_h) + scale,
              0, FB0);
 }
+
 void vid_scale_update_clear(scale2d_params_t old, scale2d_params_t new) {
     uint32_t crop_w = mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x;
     uint32_t crop_h = mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y;
     uint32_t fb_x   = mm_regs->fb_pos_params.xpos;
     uint32_t fb_y   = mm_regs->fb_pos_params.ypos;
 
-    // Same origin, larger scale produces larger rect, use that as the bound
     uint32_t max_scale = old.scale > new.scale ? old.scale : new.scale;
 
     drawRect(fb_x, fb_y,
-             fb_x + (crop_w * max_scale) + 1,
-             fb_y + (crop_h * max_scale) + 1,
+             fb_x + (crop_w * max_scale) + max_scale,
+             fb_y + (crop_h * max_scale) + max_scale,
              0, FB0);
 }
+
 void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
     uint32_t crop_w = mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x;
     uint32_t crop_h = mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y;
@@ -46,12 +45,10 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
     uint32_t out_w  = crop_w * scale;
     uint32_t out_h  = crop_h * scale;
 
-    // Rects are the same size but at different positions,
-    // bounding union spans from the lesser origin to the greater origin + size
     uint32_t start_x = old.xpos < new.xpos ? old.xpos : new.xpos;
     uint32_t start_y = old.ypos < new.ypos ? old.ypos : new.ypos;
-    uint32_t end_x   = (old.xpos > new.xpos ? old.xpos : new.xpos) + out_w + 1;
-    uint32_t end_y   = (old.ypos > new.ypos ? old.ypos : new.ypos) + out_h + 1;
+    uint32_t end_x   = (old.xpos > new.xpos ? old.xpos : new.xpos) + out_w + scale;
+    uint32_t end_y   = (old.ypos > new.ypos ? old.ypos : new.ypos) + out_h + scale;
 
     drawRect(start_x, start_y, end_x, end_y, 0, FB0);
 }
