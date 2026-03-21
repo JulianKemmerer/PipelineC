@@ -23,7 +23,8 @@ fb_pos_addr_t fb_pos_addr(fb_pos_addr_req_t req){
   o.addr = pos_to_addr(req.fb_pos.xpos + req.xpos, req.fb_pos.ypos + req.ypos);
   return o;
 }
-GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 16)
+// Extra larger to help avoid overflow
+GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 2048)
 
 // Globally visible video bus for SoC
 stream(video_t) fb_pos_video_in; // input
