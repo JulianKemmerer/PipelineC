@@ -40,8 +40,8 @@ scale2d_t scale2d(
 
   // FSM regs
   static scale_state_t state;
-  static uint4_t width_counter;
-  static uint4_t height_counter;
+  static uint8_t width_counter;
+  static uint8_t height_counter;
   static uint1_t is_last_input_line;
   // Reg for params, only take new input at frame bounds (SOF)
   static uint1_t starting_new_frame = 1;
