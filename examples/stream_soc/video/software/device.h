@@ -25,6 +25,9 @@ void vid_crop_update_clear(crop2d_params_t old, crop2d_params_t new) {
 }
 
 void vid_scale_update_clear(scale2d_params_t old, scale2d_params_t new) {
+    // Output size is constant by design (crop adjusts to compensate),
+    // old and new rects share the same origin and size.
+    // Use max_scale for robustness against integer rounding in crop adjustment.
     uint32_t crop_w = mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x;
     uint32_t crop_h = mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y;
     uint32_t fb_x   = mm_regs->fb_pos_params.xpos;
@@ -33,8 +36,8 @@ void vid_scale_update_clear(scale2d_params_t old, scale2d_params_t new) {
     uint32_t max_scale = old.scale > new.scale ? old.scale : new.scale;
 
     drawRect(fb_x, fb_y,
-             fb_x + (crop_w * max_scale) + max_scale,
-             fb_y + (crop_h * max_scale) + max_scale,
+             fb_x + crop_w * max_scale + max_scale,
+             fb_y + crop_h * max_scale + max_scale,
              0, FB0);
 }
 
@@ -121,10 +124,52 @@ void vid_crop_pos_adjust(uint32_t buttons){
 }
 void vid_scale_adjust(uint32_t buttons){
   if(buttons==BTN_U){
-    mm_regs->scale_params.scale += 1;
+    uint32_t old_scale = mm_regs->scale_params.scale;
+    uint32_t new_scale = old_scale + 1;
+
+    uint32_t crop_w = mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x;
+    uint32_t crop_h = mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y;
+    uint32_t center_x = mm_regs->crop_params.top_left_x + crop_w / 2;
+    uint32_t center_y = mm_regs->crop_params.top_left_y + crop_h / 2;
+
+    uint32_t new_crop_w = (crop_w * old_scale) / new_scale;
+    uint32_t new_crop_h = (crop_h * old_scale) / new_scale;
+
+    mm_regs->crop_params.top_left_x = center_x - new_crop_w / 2;
+    mm_regs->crop_params.top_left_y = center_y - new_crop_h / 2;
+    mm_regs->crop_params.bot_right_x = center_x + new_crop_w / 2;
+    mm_regs->crop_params.bot_right_y = center_y + new_crop_h / 2;
+    mm_regs->scale_params.scale = new_scale;
+
   } else if(buttons==BTN_D){
     if(mm_regs->scale_params.scale > 1){
-      mm_regs->scale_params.scale -= 1;
+      uint32_t old_scale = mm_regs->scale_params.scale;
+      uint32_t new_scale = old_scale - 1;
+
+      uint32_t crop_w = mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x;
+      uint32_t crop_h = mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y;
+      uint32_t center_x = mm_regs->crop_params.top_left_x + crop_w / 2;
+      uint32_t center_y = mm_regs->crop_params.top_left_y + crop_h / 2;
+
+      uint32_t new_crop_w = (crop_w * old_scale) / new_scale;
+      uint32_t new_crop_h = (crop_h * old_scale) / new_scale;
+
+      // Clamp to frame bounds on zoom out
+      uint32_t new_top_left_x = center_x - new_crop_w / 2;
+      uint32_t new_top_left_y = center_y - new_crop_h / 2;
+      uint32_t new_bot_right_x = center_x + new_crop_w / 2;
+      uint32_t new_bot_right_y = center_y + new_crop_h / 2;
+
+      if(new_top_left_x > FRAME_WIDTH)  new_top_left_x = 0;
+      if(new_top_left_y > FRAME_HEIGHT) new_top_left_y = 0;
+      if(new_bot_right_x > FRAME_WIDTH)  new_bot_right_x = FRAME_WIDTH;
+      if(new_bot_right_y > FRAME_HEIGHT) new_bot_right_y = FRAME_HEIGHT;
+
+      mm_regs->crop_params.top_left_x = new_top_left_x;
+      mm_regs->crop_params.top_left_y = new_top_left_y;
+      mm_regs->crop_params.bot_right_x = new_bot_right_x;
+      mm_regs->crop_params.bot_right_y = new_bot_right_y;
+      mm_regs->scale_params.scale = new_scale;
     }
   }
 }
