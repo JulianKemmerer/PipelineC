@@ -56,39 +56,35 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
     drawRect(start_x, start_y, end_x, end_y, 0, FB0);
 }
 
-// Inc or dec a x|width value based on fraction of current frame width
+// Inc or dec a x|width value based on fraction of frame width
+#define X_INC (FRAME_WIDTH / 20)
 void vid_x_inc(volatile uint32_t* value, int plus_minus){
-  uint16_t width = (mm_regs->crop_params.bot_right_x - mm_regs->crop_params.top_left_x + 1);
-  uint16_t inc = width / 15;
-  inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
-    if(*value > inc){
-      *value -= inc;
+    if(*value > X_INC){
+      *value -= X_INC;
     }else{
       *value = 0;
     }
   }else{
-    if(*value < (FRAME_WIDTH-inc)){
-      *value += inc;
+    if(*value < (FRAME_WIDTH-X_INC)){
+      *value += X_INC;
     }else{
       *value = FRAME_WIDTH-1;
     }
   }
 }
-// Inc or dec a y|height value based on fraction of current frame height
+// Inc or dec a y|height value based on fraction of frame height
+#define Y_INC (FRAME_HEIGHT / 20)
 void vid_y_inc(volatile uint32_t* value, int plus_minus){
-  uint16_t height = (mm_regs->crop_params.bot_right_y - mm_regs->crop_params.top_left_y + 1);
-  uint16_t inc = height / 15;
-  inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
-    if(*value > inc){
-      *value -= inc;
+    if(*value > Y_INC){
+      *value -= Y_INC;
     }else{
       *value = 0;
     }
   }else{
-    if(*value < (FRAME_HEIGHT-inc)){
-      *value += inc;
+    if(*value < (FRAME_HEIGHT-Y_INC)){
+      *value += Y_INC;
     }else{
       *value = FRAME_HEIGHT-1;
     }
@@ -222,11 +218,11 @@ void vid_pipeline_ctrl(){
 
 // Init ctrl regs
 void vid_pipeline_init(){
-  mm_regs->crop_params.top_left_x = 0;
-  mm_regs->crop_params.top_left_y = 0;
-  mm_regs->crop_params.bot_right_x = (FRAME_WIDTH/2) - (FRAME_WIDTH/20);
-  mm_regs->crop_params.bot_right_y = (FRAME_HEIGHT/2) - (FRAME_HEIGHT/20);
+  mm_regs->crop_params.top_left_x = X_INC;
+  mm_regs->crop_params.top_left_y = Y_INC;
+  mm_regs->crop_params.bot_right_x = FRAME_WIDTH-X_INC;
+  mm_regs->crop_params.bot_right_y = FRAME_HEIGHT-Y_INC;
   mm_regs->scale_params.scale = 1;
-  mm_regs->fb_pos_params.xpos = FRAME_WIDTH/2;
-  mm_regs->fb_pos_params.ypos = FRAME_HEIGHT/2;
+  mm_regs->fb_pos_params.xpos = X_INC;
+  mm_regs->fb_pos_params.ypos = Y_INC;
 }
