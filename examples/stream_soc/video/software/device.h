@@ -58,16 +58,17 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
 
 // Inc or dec a x|width value based on fraction of frame width
 #define X_INC (FRAME_WIDTH / 20)
-void vid_x_inc(volatile uint32_t* value, int plus_minus){
+void vid_x_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
+  inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
-    if(*value > X_INC){
-      *value -= X_INC;
+    if(*value > inc){
+      *value -= inc;
     }else{
       *value = 0;
     }
   }else{
-    if(*value < (FRAME_WIDTH-X_INC)){
-      *value += X_INC;
+    if(*value < (FRAME_WIDTH-inc)){
+      *value += inc;
     }else{
       *value = FRAME_WIDTH-1;
     }
@@ -75,16 +76,17 @@ void vid_x_inc(volatile uint32_t* value, int plus_minus){
 }
 // Inc or dec a y|height value based on fraction of frame height
 #define Y_INC (FRAME_HEIGHT / 20)
-void vid_y_inc(volatile uint32_t* value, int plus_minus){
+void vid_y_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
+  inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
-    if(*value > Y_INC){
-      *value -= Y_INC;
+    if(*value > inc){
+      *value -= inc;
     }else{
       *value = 0;
     }
   }else{
-    if(*value < (FRAME_HEIGHT-Y_INC)){
-      *value += Y_INC;
+    if(*value < (FRAME_HEIGHT-inc)){
+      *value += inc;
     }else{
       *value = FRAME_HEIGHT-1;
     }
@@ -93,29 +95,31 @@ void vid_y_inc(volatile uint32_t* value, int plus_minus){
 
 // Adjust params based on button press
 void vid_crop_size_adjust(uint32_t buttons){
+  uint32_t scale = mm_regs->scale_params.scale;
   if(buttons==BTN_U){
-    vid_y_inc(&(mm_regs->crop_params.bot_right_y), -1);
+    vid_y_inc(&(mm_regs->crop_params.bot_right_y), -1, Y_INC/scale);
   } else if(buttons==BTN_D){
-    vid_y_inc(&(mm_regs->crop_params.bot_right_y), 1);
+    vid_y_inc(&(mm_regs->crop_params.bot_right_y), 1, Y_INC/scale);
   } else if(buttons==BTN_L){
-    vid_x_inc(&(mm_regs->crop_params.bot_right_x), -1);
+    vid_x_inc(&(mm_regs->crop_params.bot_right_x), -1, X_INC/scale);
   } else if(buttons==BTN_R){
-    vid_x_inc(&(mm_regs->crop_params.bot_right_x), 1);
+    vid_x_inc(&(mm_regs->crop_params.bot_right_x), 1, X_INC/scale);
   }
 }
 void vid_crop_pos_adjust(uint32_t buttons){
+  uint32_t scale = mm_regs->scale_params.scale;
   if(buttons==BTN_U){
-    vid_y_inc(&(mm_regs->crop_params.top_left_y), -1);
-    vid_y_inc(&(mm_regs->crop_params.bot_right_y), -1);
+    vid_y_inc(&(mm_regs->crop_params.top_left_y), -1, Y_INC/scale);
+    vid_y_inc(&(mm_regs->crop_params.bot_right_y), -1, Y_INC/scale);
   } else if(buttons==BTN_D){
-    vid_y_inc(&(mm_regs->crop_params.top_left_y), 1);
-    vid_y_inc(&(mm_regs->crop_params.bot_right_y), 1);
+    vid_y_inc(&(mm_regs->crop_params.top_left_y), 1, Y_INC/scale);
+    vid_y_inc(&(mm_regs->crop_params.bot_right_y), 1, Y_INC/scale);
   } else if(buttons==BTN_L){
-    vid_x_inc(&(mm_regs->crop_params.top_left_x), -1);
-    vid_x_inc(&(mm_regs->crop_params.bot_right_x), -1);
+    vid_x_inc(&(mm_regs->crop_params.top_left_x), -1, X_INC/scale);
+    vid_x_inc(&(mm_regs->crop_params.bot_right_x), -1, X_INC/scale);
   } else if(buttons==BTN_R){
-    vid_x_inc(&(mm_regs->crop_params.top_left_x), 1);
-    vid_x_inc(&(mm_regs->crop_params.bot_right_x), 1);
+    vid_x_inc(&(mm_regs->crop_params.top_left_x), 1, X_INC/scale);
+    vid_x_inc(&(mm_regs->crop_params.bot_right_x), 1, X_INC/scale);
   }
 }
 void vid_scale_adjust(uint32_t buttons){
@@ -131,6 +135,7 @@ void vid_scale_adjust(uint32_t buttons){
     uint32_t new_crop_w = (crop_w * old_scale) / new_scale;
     uint32_t new_crop_h = (crop_h * old_scale) / new_scale;
 
+    mm_regs->scale_params.scale = 1; // For safety?
     mm_regs->crop_params.top_left_x = center_x - new_crop_w / 2;
     mm_regs->crop_params.top_left_y = center_y - new_crop_h / 2;
     mm_regs->crop_params.bot_right_x = center_x + new_crop_w / 2;
@@ -155,12 +160,14 @@ void vid_scale_adjust(uint32_t buttons){
       uint32_t new_top_left_y = center_y - new_crop_h / 2;
       uint32_t new_bot_right_x = center_x + new_crop_w / 2;
       uint32_t new_bot_right_y = center_y + new_crop_h / 2;
+      // underflow to negative check
+      if(new_top_left_x >= FRAME_WIDTH)  new_top_left_x = 0;
+      if(new_top_left_y >= FRAME_HEIGHT) new_top_left_y = 0;
+      // over max size check
+      if(new_bot_right_x >= FRAME_WIDTH)  new_bot_right_x = FRAME_WIDTH-1;
+      if(new_bot_right_y >= FRAME_HEIGHT) new_bot_right_y = FRAME_HEIGHT-1;
 
-      if(new_top_left_x > FRAME_WIDTH)  new_top_left_x = 0;
-      if(new_top_left_y > FRAME_HEIGHT) new_top_left_y = 0;
-      if(new_bot_right_x > FRAME_WIDTH)  new_bot_right_x = FRAME_WIDTH;
-      if(new_bot_right_y > FRAME_HEIGHT) new_bot_right_y = FRAME_HEIGHT;
-
+      mm_regs->scale_params.scale = 1; // For safety?
       mm_regs->crop_params.top_left_x = new_top_left_x;
       mm_regs->crop_params.top_left_y = new_top_left_y;
       mm_regs->crop_params.bot_right_x = new_bot_right_x;
@@ -171,13 +178,13 @@ void vid_scale_adjust(uint32_t buttons){
 }
 void vid_fb_pos_adjust(uint32_t buttons){
   if(buttons==BTN_U){
-    vid_y_inc(&(mm_regs->fb_pos_params.ypos), -1);
+    vid_y_inc(&(mm_regs->fb_pos_params.ypos), -1, Y_INC);
   } else if(buttons==BTN_D){
-    vid_y_inc(&(mm_regs->fb_pos_params.ypos), 1);
+    vid_y_inc(&(mm_regs->fb_pos_params.ypos), 1, Y_INC);
   } else if(buttons==BTN_L){
-    vid_x_inc(&(mm_regs->fb_pos_params.xpos), -1);
+    vid_x_inc(&(mm_regs->fb_pos_params.xpos), -1, X_INC);
   } else if(buttons==BTN_R){
-    vid_x_inc(&(mm_regs->fb_pos_params.xpos), 1);
+    vid_x_inc(&(mm_regs->fb_pos_params.xpos), 1, X_INC);
   }
 }
 
@@ -206,7 +213,7 @@ void vid_pipeline_ctrl(){
       scale2d_params_t old_scale = mm_regs->scale_params;
       vid_scale_adjust(buttons_rising);
       scale2d_params_t new_scale = mm_regs->scale_params;
-      vid_scale_update_clear(old_scale, new_scale);
+      //vid_scale_update_clear(old_scale, new_scale);
     }else if(switches == 0b1000){
       fb_pos_params_t old_fb_pos = mm_regs->fb_pos_params;
       vid_fb_pos_adjust(buttons_rising);
