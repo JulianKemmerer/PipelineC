@@ -57,7 +57,7 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
 }
 
 // Inc or dec a x|width value based on fraction of frame width
-#define X_INC (FRAME_WIDTH / 20)
+#define X_INC (FRAME_WIDTH / 30)
 void vid_x_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
@@ -75,7 +75,7 @@ void vid_x_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   }
 }
 // Inc or dec a y|height value based on fraction of frame height
-#define Y_INC (FRAME_HEIGHT / 20)
+#define Y_INC (FRAME_HEIGHT / 30)
 void vid_y_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
@@ -200,20 +200,20 @@ void vid_pipeline_ctrl(){
     // What does button press mean
     uint32_t switches = mm_regs->status.switches;
     if(switches == 0b0001){
-      crop2d_params_t old_crop = mm_regs->crop_params;
-      vid_crop_size_adjust(buttons_rising);
-      crop2d_params_t new_crop = mm_regs->crop_params;
-      vid_crop_update_clear(old_crop, new_crop);
+      scale2d_params_t old_scale = mm_regs->scale_params;
+      vid_scale_adjust(buttons_rising);
+      scale2d_params_t new_scale = mm_regs->scale_params;
+      vid_scale_update_clear(old_scale, new_scale);
     }else if(switches == 0b0010){
       crop2d_params_t old_crop = mm_regs->crop_params;
       vid_crop_pos_adjust(buttons_rising);
       crop2d_params_t new_crop = mm_regs->crop_params;
       vid_crop_update_clear(old_crop, new_crop);
     }else if(switches == 0b0100){
-      scale2d_params_t old_scale = mm_regs->scale_params;
-      vid_scale_adjust(buttons_rising);
-      scale2d_params_t new_scale = mm_regs->scale_params;
-      vid_scale_update_clear(old_scale, new_scale);
+      crop2d_params_t old_crop = mm_regs->crop_params;
+      vid_crop_size_adjust(buttons_rising);
+      crop2d_params_t new_crop = mm_regs->crop_params;
+      vid_crop_update_clear(old_crop, new_crop);
     }else if(switches == 0b1000){
       fb_pos_params_t old_fb_pos = mm_regs->fb_pos_params;
       vid_fb_pos_adjust(buttons_rising);

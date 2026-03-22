@@ -1,8 +1,12 @@
 #pragma once
 
-void drawRect(int start_x, int start_y, int end_x, int end_y, uint8_t color, volatile pixel_t* UNUSED_FB_TODO_REMOVE){
+void drawRect(uint32_t start_x, uint32_t start_y, uint32_t end_x, uint32_t end_y, uint8_t color, volatile pixel_t* UNUSED_FB_TODO_REMOVE){
   if(start_x==end_x) return; // Zero width
   if(start_y==end_y) return; // Zero height
+  if(start_x>FRAME_WIDTH) return; // Invalid // TODO >=
+  if(end_x>FRAME_WIDTH) return; // Invalid
+  if(start_y>FRAME_HEIGHT) return; // Invalid // TODO >=
+  if(end_y>FRAME_HEIGHT) return; // Invalid
   pixel_t p = {color, color, color, color};
   draw_rect_t cmd;
   cmd.color = p;
