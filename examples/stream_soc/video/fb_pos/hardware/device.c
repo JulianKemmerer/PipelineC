@@ -24,7 +24,7 @@ fb_pos_addr_t fb_pos_addr(fb_pos_addr_req_t req){
   return o;
 }
 // Extra larger to help avoid overflow
-GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 2048)
+GLOBAL_VALID_READY_PIPELINE_INST(fb_pos_addr_pipeline, fb_pos_addr_t, fb_pos_addr, fb_pos_addr_req_t, 16) // Drops from small fifo here look cool on screen
 
 // Globally visible video bus for SoC
 stream(video_t) fb_pos_video_in; // input
