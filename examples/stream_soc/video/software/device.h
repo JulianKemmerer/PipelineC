@@ -213,7 +213,7 @@ void vid_pipeline_ctrl(){
       scale2d_params_t old_scale = mm_regs->scale_params;
       vid_scale_adjust(buttons_rising);
       scale2d_params_t new_scale = mm_regs->scale_params;
-      //vid_scale_update_clear(old_scale, new_scale);
+      vid_scale_update_clear(old_scale, new_scale);
     }else if(switches == 0b1000){
       fb_pos_params_t old_fb_pos = mm_regs->fb_pos_params;
       vid_fb_pos_adjust(buttons_rising);
