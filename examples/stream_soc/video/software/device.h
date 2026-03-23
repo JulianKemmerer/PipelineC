@@ -57,7 +57,7 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
 }
 
 // Inc or dec a x|width value based on fraction of frame width
-#define X_INC (FRAME_WIDTH / 40)
+#define X_INC (FRAME_WIDTH / 50)
 void vid_x_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
@@ -75,7 +75,7 @@ void vid_x_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   }
 }
 // Inc or dec a y|height value based on fraction of frame height
-#define Y_INC (FRAME_HEIGHT / 40)
+#define Y_INC (FRAME_HEIGHT / 50)
 void vid_y_inc(volatile uint32_t* value, int plus_minus, uint32_t inc){
   inc = inc > 0 ? inc : 1;
   if(plus_minus==-1){
