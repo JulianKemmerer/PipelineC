@@ -130,13 +130,25 @@ stream(video_t) scale_video_out; // output
 uint1_t scale_video_out_ready; // input
 scale2d_params_t scale_params;
 
+// FIFO to avoid overflow due to scaling outputting more pixels than input
+GLOBAL_STREAM_FIFO(video_t, scale_fifo, 65536) // TODO down size
+
+DECL_OUTPUT(uint1_t, scale_overflow)
+
 #pragma MAIN scale_main
 void scale_main(){
+  scale_fifo_in = scale_video_in;
+  scale_video_in_ready = scale_fifo_in_ready;
+
   scale2d_t scale = scale2d(
     scale_params,
-    scale_video_in,
+    scale_fifo_out,
     scale_video_out_ready
   );
-  scale_video_in_ready = scale.ready_for_video_in;
+  scale_fifo_out_ready = scale.ready_for_video_in;
   scale_video_out = scale.video_out;
+
+  static uint1_t overflow_reg;
+  scale_overflow = overflow_reg;
+  overflow_reg |= scale_fifo_in.valid & ~scale_fifo_in_ready;
 }

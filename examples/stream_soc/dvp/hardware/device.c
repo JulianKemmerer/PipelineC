@@ -10,7 +10,7 @@ uint1_t cam_frame_size_valid;
 #pragma ASYNC_WIRE cam_frame_size_valid
 
 // FIFO of pixels to be read as output
-GLOBAL_STREAM_FIFO(video_t, cam_input_video_fifo, 1024) // TODO size?
+GLOBAL_STREAM_FIFO(video_t, cam_input_video_fifo, 16) // Can be small just for CDC
 
 // Instance of dvp_rgb565_decoder source of stream of pixels
 #include "cdc.h"
