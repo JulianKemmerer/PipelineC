@@ -83,7 +83,7 @@ void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i
   }else{
     max_reset_counter += 1;
   }
-  for (size_t i = 0; i < n_samples; i++)
+  for (size_t i = 1; i < n_samples; i++) // WTF skip bin ... causes screen moving dark line glitch? WTF?
   {
     fft_in_t sample;
     sample.real = ((i2s_input_samples[i].l >> (24-16)) + (i2s_input_samples[i].r >> (24-16))) >> 1;
