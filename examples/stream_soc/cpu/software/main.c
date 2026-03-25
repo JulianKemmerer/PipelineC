@@ -49,7 +49,7 @@ void main() {
       mm_regs->ctrl.led = (1<<0);
 
       // Time domain waveform across top two thirds of display
-      draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*2)/3, 4, samples_in_dram, n_samples, FB0);
+      draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*4)/6, 10, samples_in_dram, n_samples, FB0);
 
       // Enqueue the buffer to be used for future rx samples writes
       i2s_rx_enq_write(samples_in_dram, n_samples);

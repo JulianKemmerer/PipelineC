@@ -225,11 +225,11 @@ void vid_pipeline_ctrl(){
 
 // Init ctrl regs
 void vid_pipeline_init(){
-  mm_regs->crop_params.top_left_x = X_INC;
-  mm_regs->crop_params.top_left_y = Y_INC;
-  mm_regs->crop_params.bot_right_x = FRAME_WIDTH-X_INC;
-  mm_regs->crop_params.bot_right_y = FRAME_HEIGHT-Y_INC;
+  mm_regs->crop_params.top_left_x = 1;
+  mm_regs->crop_params.top_left_y = 1;
+  mm_regs->crop_params.bot_right_x = FRAME_WIDTH-2;
+  mm_regs->crop_params.bot_right_y = FRAME_HEIGHT-2;
   mm_regs->scale_params.scale = 1;
-  mm_regs->fb_pos_params.xpos = X_INC;
-  mm_regs->fb_pos_params.ypos = Y_INC;
+  mm_regs->fb_pos_params.xpos = 1;
+  mm_regs->fb_pos_params.ypos = 1;
 }

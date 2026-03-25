@@ -100,7 +100,7 @@ void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i
     ampl = ampl * 2; // Scale x2 since rarely near max vol?
     int y_val = y_mid - ampl; // y inverted 0,0 top left
     if(y_val < 0) y_val = 0;
-    if(y_val > height) y_val = height;
+    //if(y_val > height) y_val = height; // have room dont need to clip on bottom
     // Erase old line portion to black
     drawRect(x_start, last_y_value[i], x_end, last_y_value[i]+line_width, 0, FB);
     // Calc new line position and draw white
