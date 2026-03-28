@@ -131,7 +131,7 @@ uint1_t scale_video_out_ready; // input
 scale2d_params_t scale_params;
 
 // FIFO to avoid overflow due to scaling outputting more pixels than input
-GLOBAL_STREAM_FIFO(video_t, scale_fifo, 8*1024) // 4k shows overflow when scaled?
+GLOBAL_STREAM_FIFO(video_t, scale_fifo, 16*1024) // 4k shows overflow when scaled? 8k sometimes too?
 
 DECL_OUTPUT(uint1_t, scale_overflow)
 
