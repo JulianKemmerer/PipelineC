@@ -1,10 +1,14 @@
 // Top level of stream soc cpu
+#include "uintN_t.h"
+#include "stream/stream.h"
+DECL_STREAM_TYPE(uint32_t)
+#include "cdc.h" // CDC helpers for reset
 
-// CDC helpers for reset
-#include "cdc.h"
-
-// Top level configuration, IO etc
+// Board top level configuration, IO etc
 #include "top.h"
+
+// Memory map shared between software and hardware
+#include "../mem_map.h"
 
 // Devices attached to the CPU interconnected in a dataflow network
 #include "devices.c"
@@ -17,10 +21,10 @@
 
 // Wire up instance of fsm_riscv CPU
 
-// LEDs for demo
+// LEDs for demo // TODO make into device
 #include "leds/leds_port.c"
 
-// Buttons and switches
+// Buttons and switches // TODO make into device
 DECL_INPUT(uint4_t, sw)
 DECL_INPUT(uint4_t, btn)
 

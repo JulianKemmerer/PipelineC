@@ -32,7 +32,7 @@ hex: all
 	#cp *_mem_init.h ../hardware/
 	
 clean:
-	rm -f main text.bin data.bin text_mem_init.h data_mem_init.h
-	#rm -f ../hardware/text_mem_init.h ../hardware/data_mem_init.h
+	rm -f main text.bin data.bin
+	rm -f ../hardware/text_mem_init.h ../hardware/data_mem_init.h
 
 .PHONY: all sim dump-elf dump-code dump-comment hex clean

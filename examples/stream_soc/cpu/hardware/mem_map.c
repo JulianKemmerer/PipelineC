@@ -2,7 +2,7 @@
 #include "risc-v/mem_map.h"
 
 // Include memory map to implement in hardware
-#include "../software/mem_map.h"
+#include "../mem_map.h"
 
 // Define MMIO inputs and outputs
 typedef struct my_mmio_in_t{

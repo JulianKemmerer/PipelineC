@@ -1,6 +1,6 @@
 #include "ndarray.h"
 #include "stream/stream.h"
-#include "../software/types.h"
+#include "../types.h"
 
 //DECL_STREAM_TYPE(pixel_t)
 

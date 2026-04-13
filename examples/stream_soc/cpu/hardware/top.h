@@ -1,25 +1,8 @@
-#pragma PART "xc7a100tcsg324-1"
+// Board top level config
 
-#include "uintN_t.h"
-#include "stream/stream.h"
-DECL_STREAM_TYPE(uint32_t)
-
-// TODO move all module board and io to here via includes
-//  ETH io is board specific so can come from arty.h
-//    eth to i2s uses that
-//  Break apart board config .h and io.c for sccb vs dvp
-//  DDR io flatten to not use old struct with lots of vhdl in board.vhd
-
-// CPU CLK MHZ const
-#include "../../clock/software/clock.h"
-
-// Board config:
-// DVP board config
-#include "../../dvp/hardware/board_config.h"
-// I2S (unused since over ETH now)
-//#include "../../i2s/hardware/board_config.h"
-// VGA
-#include "../../vga/hardware/board_config.h"
+// Devices can configure board top level
+#include "devices_board_config.h"
 
 // The Arty base board config
+#pragma PART "xc7a100tcsg324-1" // TODO move into arty.h?
 #include "board/arty.h"

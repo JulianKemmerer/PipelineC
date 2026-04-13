@@ -208,7 +208,7 @@ void fft_ram_main(){
 GLOBAL_VALID_READY_PIPELINE_INST(fft_2pt_pipeline, fft_2pt_out_t, fft_2pt_w_omega_lut, fft_2pt_w_omega_lut_in_t, 16)
 
 // FFT speed measure connected to debug chipscope reg
-DEBUG_OUTPUT_REG_DECL(uint32_t, butterfly_cycles)
+//DEBUG_OUTPUT_REG_DECL(uint32_t, butterfly_cycles)
 
 // Didnt need to write fft_2pt_fsm as standalone function
 // could have put code directly in-line into MAIN func
@@ -425,7 +425,7 @@ fft_2pt_fsm_out_t fft_2pt_fsm(
         // Done write back, finishes FFT, unload result
         wr_req_iters = FFT_ITERS_NULL;
         state = UNLOAD_OUTPUTS;
-        butterfly_cycles = clock_counter - start_time;
+        //butterfly_cycles = clock_counter - start_time;
       }else{
         // More write reqs to make
         wr_req_iters = next_iters(wr_req_iters);

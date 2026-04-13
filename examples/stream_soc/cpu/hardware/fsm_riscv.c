@@ -10,13 +10,13 @@
 
 // Declare instruction and data memory with gcc compiled program
 // also includes memory mapped IO
-#include "../software/text_mem_init.h"
-#include "../software/data_mem_init.h"
+#include "text_mem_init.h"
+#include "data_mem_init.h"
 #define riscv_name fsm_riscv
-#define RISCV_IMEM_INIT         text_MEM_INIT // from software/
-#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE     // from software/
-#define RISCV_DMEM_INIT         data_MEM_INIT // from software/
-#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     // from software/
+#define RISCV_IMEM_INIT         text_MEM_INIT // from software
+#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE     // from software
+#define RISCV_DMEM_INIT         data_MEM_INIT // from software
+#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     // from software
 #define riscv_mem_map           my_mem_map_module
 #define riscv_mem_map_inputs_t  my_mmio_in_t
 #define riscv_mem_map_outputs_t my_mmio_out_t

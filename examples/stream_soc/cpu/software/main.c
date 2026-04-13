@@ -2,11 +2,12 @@
 #include <stdlib.h>
 //#pragma pack(1) // TODO FIX? move into pipelinec common place, check for non pack(1) and err
 #include "uintN_t.h"
-// Hardware memory map
-#include "mem_map.h"
+// Memory map shared between software and hardware
+#include "../mem_map.h"
 
 // Device specific functionality using memory map
 // TODO move into bottom of mem_map.h?
+#include "../../clock/software/device.h"
 #include "../../i2s/software/device.h"
 #include "../../power/software/device.h"
 #include "../../frame_buffers/software/device.h"

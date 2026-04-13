@@ -20,6 +20,8 @@ dvp_rgb565_decoder_t dvp_rgb565_decoder(
   uint1_t vsync,
   uint1_t vsync_pol,
   uint1_t cam_init_done
+  //,
+  //uint1_t ready_for_pixel_out, // TODO auto reset upon over flow
 ){
   dvp_rgb565_decoder_t o;
 

@@ -36,5 +36,5 @@ while len(four_bytes) == 4:
 s += "others => (others => '0')\\n\\\n"
 s += ')"\n'
 # s += f'#define MEM_INIT_SIZE {word_count*4}\n'
-with open(name + "_mem_init.h", "w") as of:
+with open("../hardware/" + name + "_mem_init.h", "w") as of:
     of.write(s)

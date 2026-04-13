@@ -1,0 +1,6 @@
+#include "../i2s/i2s_mm_regs.h"
+#include "../power/power_mm_regs.h"
+#include "../sccb/sccb_mm_regs.h"
+#include "../dvp/mm_regs.h"
+#include "../video/mm_regs.h"
+#include "../gpu/mm_regs.h"

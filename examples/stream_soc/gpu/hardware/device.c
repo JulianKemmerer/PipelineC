@@ -2,7 +2,7 @@
 #include "stream/stream.h"
 #include "global_func_inst.h"
 #include "pixel_t_bytes_t.h"
-#include "../types.h"
+#include "../mem_map.h"
 
 // FSM that reads from draw rect command fifo
 // and outputs pixels and write addresses to draw the rect into frame buffer

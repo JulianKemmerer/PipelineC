@@ -1,6 +1,6 @@
 #include "global_fifo.h"
 
-// Board top levle IO for PMOD
+// Board top level IO for PMOD
 
 #define CAM_SYS_CLK_MHZ 24 // TODO use VGA 25Mhz instead? or name with clock group to avoid confusion with pixel clock
 CLK_MHZ(cam_sys_clk, CAM_SYS_CLK_MHZ)
@@ -37,7 +37,7 @@ DECL_OUTPUT_REG(uint1_t, sccb_sio_d_tristate_enable)
 #endif
 
 // SCCB control module
-#include "../software/sccb_types.h"
+#include "../sccb_types.h"
 #include "sccb/sccb.h"
 
 // OV2640 init over SCCB bus
