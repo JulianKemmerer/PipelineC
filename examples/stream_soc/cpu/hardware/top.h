@@ -23,8 +23,3 @@ DECL_STREAM_TYPE(uint32_t)
 
 // The Arty base board config
 #include "board/arty.h"
-
-// Top level IO connections for configured board
-//#include "i2s/i2s_regs.c"
-#include "../../vga/hardware/io.c"
-#include "../../dvp/hardware/io.c"

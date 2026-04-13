@@ -2,6 +2,78 @@
 #include "../../video/hardware/video_stream.h"
 #include "global_fifo.h"
 
+// Board top level IO for PMOD
+
+#ifdef CAM_PIXEL_CLK_WIRE
+#define CAM_PCLK_MHZ 26.0 // TODO thought was 25? Is 24? but call 26 to avoid confusing with other clocks, use clock group names
+CLK_MHZ(cam_pixel_clk, CAM_PCLK_MHZ)
+GLOBAL_IN_WIRE_CONNECT(uint1_t, cam_pixel_clk, CAM_PIXEL_CLK_WIRE)
+MAIN_MHZ(cam_pixel_clk_connect, CAM_PCLK_MHZ) // TODO make all three macros into one?
+#else
+DECL_INPUT(uint1_t, cam_pixel_clk)
+#endif
+
+#ifdef CAM_HR_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_hr, CAM_HR_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_hr)
+#endif
+
+#ifdef CAM_VS_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_vs, CAM_VS_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_vs)
+#endif
+
+#ifdef CAM_D7_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d7, CAM_D7_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d7)
+#endif
+
+#ifdef CAM_D5_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d5, CAM_D5_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d5)
+#endif
+
+#ifdef CAM_D3_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d3, CAM_D3_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d3)
+#endif
+
+#ifdef CAM_D1_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d1, CAM_D1_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d1)
+#endif
+
+#ifdef CAM_D6_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d6, CAM_D6_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d6)
+#endif
+
+#ifdef CAM_D4_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d4, CAM_D4_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d4)
+#endif
+
+#ifdef CAM_D2_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d2, CAM_D2_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d2)
+#endif
+
+#ifdef CAM_D0_WIRE
+GLOBAL_IN_REG_WIRE_CONNECT(uint1_t, cam_d0, CAM_D0_WIRE)
+#else
+DECL_INPUT_REG(uint1_t, cam_d0)
+#endif
+
+
 // TODO init done is input signal from CPU to pixel clock side
 uint1_t cam_init_done;
 #pragma ASYNC_WIRE cam_init_done

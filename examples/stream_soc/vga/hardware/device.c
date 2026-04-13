@@ -1,6 +1,12 @@
 // VGA pmod stuff
+// Configure the VGA timing to use
+// 640x480 is a 25MHz pixel clock
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
+#include "vga/vga_timing.h"
+// board top level IO for PMOD
+#include "vga/vga_wires_4b.c"
+// config for helper async fifo
 #define VGA_ASYNC_FIFO_N_PIXELS 1
 #include "vga/vga_pmod_async_pixels_fifo.c" // Version that expects only x,y pixels, N at a time
 
