@@ -1,0 +1,1 @@
+#include "vga/pixel.h" // For pixel type

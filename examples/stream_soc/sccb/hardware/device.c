@@ -37,7 +37,7 @@ DECL_OUTPUT_REG(uint1_t, sccb_sio_d_tristate_enable)
 #endif
 
 // SCCB control module
-#include "../sccb_types.h"
+#include "../mem_map.h"
 #include "sccb/sccb.h"
 
 // OV2640 init over SCCB bus
