@@ -30,21 +30,12 @@
 // Cant rely on struct packing - produces misaligned accesses? See Makefile notes 
 // So manually dont use fields smaller than 32b for now...
 
-// Original regs for top IO, TODO make into modules
-/*typedef struct mm_ctrl_regs_t{ 
-  
-}mm_ctrl_regs_t;
-typedef struct mm_status_regs_t{ 
-
-}mm_status_regs_t;*/
-
 typedef struct mm_regs_t{
   uint32_t led; // Only 4 bits used, see above note rounding to 32b
   uint32_t switches; // Only 4 bits used, see above note rounding to 32b
   uint32_t buttons; // Only 4 bits used, see above note rounding to 32b
   uint32_t cpu_clock;
-  //mm_ctrl_regs_t ctrl;
-  //mm_status_regs_t status;
+  //^ TODO MAKE into device modules
   // Device registers
   #include "devices_mm_regs.h"
 }mm_regs_t;

@@ -5,12 +5,6 @@
 #include "../mem_map.h"
 
 // Define MMIO inputs and outputs
-/*typedef struct my_mmio_in_t{
-  mm_status_regs_t status;
-}my_mmio_in_t;
-typedef struct my_mmio_out_t{
-  mm_ctrl_regs_t ctrl;
-}my_mmio_out_t;*/
 // Define the hardware memory for those IO
 // See typedefs for valid and ready handshake used on input and output
 RISCV_DECL_MEM_MAP_MOD_OUT_T(mm_regs_t)
