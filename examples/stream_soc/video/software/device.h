@@ -192,13 +192,13 @@ void vid_fb_pos_adjust(uint32_t buttons){
 void vid_pipeline_ctrl(){
   // Detect rising edge of buttons // TODO debounce
   static uint32_t buttons_reg = 0;
-  uint32_t buttons_rising = mm_regs->status.buttons & ~buttons_reg;
-  buttons_reg = mm_regs->status.buttons;
+  uint32_t buttons_rising = mm_regs->buttons & ~buttons_reg;
+  buttons_reg = mm_regs->buttons;
 
   // Is one of the buttons being pressed?
   if(buttons_rising > 0){
     // What does button press mean
-    uint32_t switches = mm_regs->status.switches;
+    uint32_t switches = mm_regs->switches;
     if(switches == 0b0001){
       scale2d_params_t old_scale = mm_regs->scale_params;
       vid_scale_adjust(buttons_rising);

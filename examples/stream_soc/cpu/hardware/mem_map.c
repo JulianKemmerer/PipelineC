@@ -5,19 +5,19 @@
 #include "../mem_map.h"
 
 // Define MMIO inputs and outputs
-typedef struct my_mmio_in_t{
+/*typedef struct my_mmio_in_t{
   mm_status_regs_t status;
 }my_mmio_in_t;
 typedef struct my_mmio_out_t{
   mm_ctrl_regs_t ctrl;
-}my_mmio_out_t;
+}my_mmio_out_t;*/
 // Define the hardware memory for those IO
 // See typedefs for valid and ready handshake used on input and output
-RISCV_DECL_MEM_MAP_MOD_OUT_T(my_mmio_out_t)
-riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
-  RISCV_MEM_MAP_MOD_INPUTS(my_mmio_in_t)
+RISCV_DECL_MEM_MAP_MOD_OUT_T(mm_regs_t)
+riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
+  RISCV_MEM_MAP_MOD_INPUTS(mm_regs_t)
 ){
-  riscv_mem_map_mod_out_t(my_mmio_out_t) o;
+  riscv_mem_map_mod_out_t(mm_regs_t) o;
   
   // Two states like CPU, minimum 1 cycle for MMIO operations
   static uint1_t is_START_state_reg = 1; // Otherwise is END
@@ -64,12 +64,8 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   axi_rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
 
   // MM registers
-  static mm_regs_t mm_regs;
-  // Input status regs
-  mm_regs.status = inputs.status;
-  // Output ctrl regs
-  o.outputs.ctrl = mm_regs.ctrl;
-  // Other modules regs
+  mm_regs_t mm_regs = mm_regs_in;
+  // Device specfic use of those registers
   #include "devices_mm_regs.c"
 
   // Start MM operation
@@ -191,5 +187,6 @@ riscv_mem_map_mod_out_t(my_mmio_out_t) my_mem_map_module(
   mm_type_is_regs_reg = mm_type_is_regs;
   mmio_type_is_axi0_reg = mmio_type_is_axi0;
 
+  o.mm_regs_out = mm_regs;
   return o;
 }

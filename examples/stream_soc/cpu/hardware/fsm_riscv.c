@@ -18,8 +18,7 @@
 #define RISCV_DMEM_INIT         data_MEM_INIT // from software
 #define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE     // from software
 #define riscv_mem_map           my_mem_map_module
-#define riscv_mem_map_inputs_t  my_mmio_in_t
-#define riscv_mem_map_outputs_t my_mmio_out_t
+#define riscv_mem_map_regs_t    mm_regs_t
 #define RISCV_IMEM_1_CYCLE
 #define RISCV_DMEM_1_CYCLE
 // Multi cycle is not a pipeline
@@ -71,11 +70,11 @@ typedef struct riscv_out_t{
   uint1_t unknown_op;
   uint1_t mem_out_of_range;
   uint1_t pc_out_of_range;
-  riscv_mem_map_outputs_t mem_map_outputs;
+  riscv_mem_map_regs_t mm_regs_out;
 }riscv_out_t;
 riscv_out_t fsm_riscv(
   uint1_t reset,
-  riscv_mem_map_inputs_t mem_map_inputs
+  riscv_mem_map_regs_t mm_regs_in
 )
 {
   // Top level outputs
@@ -287,11 +286,11 @@ riscv_out_t fsm_riscv(
     mem_valid_in,// Valid pulse corresponding dmem inputs above
     1, // Always ready for output valid
     // Memory map inputs
-    mem_map_inputs
+    mm_regs_in
   );
   o.mem_out_of_range = dmem_out.mem_out_of_range; // debug
   // Outputs from memory map
-  o.mem_map_outputs = dmem_out.mem_map_outputs;
+  o.mm_regs_out = dmem_out.mm_regs_out;
   // Transition out of MEM_START depends on ready output from memory
   if(state==MEM_START){
     if(dmem_out.ready_for_inputs){

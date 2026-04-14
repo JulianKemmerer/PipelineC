@@ -8,7 +8,7 @@
 
 // Helper macro to rename wrapped user type
 #ifndef riscv_mmio_mod_out_t
-#define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_outputs_t)
+#define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_regs_t)
 #endif
 
 // Instruction and data memory initialized from gcc compile
@@ -182,8 +182,8 @@ typedef struct riscv_dmem_out_t
   uint1_t valid; // done aka rd_data valid
   uint1_t ready_for_inputs;
   uint1_t mem_out_of_range; // Exception, stop sim
-  #ifdef riscv_mem_map_outputs_t
-  riscv_mem_map_outputs_t mem_map_outputs;
+  #ifdef riscv_mem_map_regs_t
+  riscv_mem_map_regs_t mm_regs_out;
   #endif
 }riscv_dmem_out_t;
 #define riscv_dmem PPCAT(riscv_name,_dmem)
@@ -195,8 +195,8 @@ riscv_dmem_out_t riscv_dmem(
   uint1_t wr_byte_ens[4],
   uint1_t rd_byte_ens[4],
   uint1_t valid // aka start
-  #ifdef riscv_mem_map_inputs_t
-  , riscv_mem_map_inputs_t mem_map_inputs
+  #ifdef riscv_mem_map_regs_t
+  , riscv_mem_map_regs_t mm_regs_in;
   #endif
 ){
   riscv_dmem_out_t mem_out;
@@ -277,8 +277,8 @@ riscv_dmem_out_t riscv_dmem(
     rd_word_byte_ens,
     valid,
     1 // always ready for output in free flowing pipeline dmem
-    #ifdef riscv_mem_map_inputs_t
-    , mem_map_inputs
+    #ifdef riscv_mem_map_regs_t
+    , mm_regs_in
     #endif
   );
   if(is_mmio){
@@ -291,8 +291,8 @@ riscv_dmem_out_t riscv_dmem(
     }
   }
 
-  #ifdef riscv_mem_map_outputs_t
-  mem_out.mem_map_outputs = mem_map_out.outputs;
+  #ifdef riscv_mem_map_regs_t
+  mem_out.mm_regs_out = mem_map_out.mm_regs_out;
   #endif
   
   // Mem map write does not write actual RAM memory
@@ -358,8 +358,8 @@ riscv_dmem_out_t riscv_dmem(
   uint1_t rd_byte_ens_in[4],
   uint1_t valid_in, // aka start
   uint1_t ready_for_outputs
-  #ifdef riscv_mem_map_inputs_t
-  , riscv_mem_map_inputs_t mem_map_inputs
+  #ifdef riscv_mem_map_regs_t
+  , riscv_mem_map_regs_t mm_regs_in
   #endif
 ){
   riscv_dmem_out_t mem_out;
@@ -484,12 +484,12 @@ riscv_dmem_out_t riscv_dmem(
     rd_word_byte_ens,
     mmio_valid_in,
     ready_for_outputs & is_mmio // MMIO ready for outputs when this module is
-    #ifdef riscv_mem_map_inputs_t
-    , mem_map_inputs
+    #ifdef riscv_mem_map_regs_t
+    , mm_regs_in
     #endif
   );
-  #ifdef riscv_mem_map_outputs_t
-  mem_out.mem_map_outputs = mem_map_out.outputs;
+  #ifdef riscv_mem_map_regs_t
+  mem_out.mm_regs_out = mem_map_out.mm_regs_out;
   #endif
 
   // Start state transitions to end if selected memory accepted valid input as ready

@@ -37,18 +37,20 @@ void cpu_top(uint1_t areset) // TODO replace reset with global top level wire po
   //uint1_t reset = 0;
 
   // Instance of core
-  my_mmio_in_t in;
-  in.status.switches = sw;
-  in.status.buttons = btn;
-  in.status.cpu_clock = cpu_clock;
-  riscv_out_t out = fsm_riscv(reset, in);
+  static mm_regs_t mm_regs; // The registers to be memory mapped
+  mm_regs_t mm_regs_in = mm_regs; // TODO dont need, move input status assign to after instance
+  mm_regs_in.switches = sw;
+  mm_regs_in.buttons = btn;
+  mm_regs_in.cpu_clock = cpu_clock;
+  riscv_out_t out = fsm_riscv(reset, mm_regs_in);
+  mm_regs = out.mm_regs_out;
 
   // Output LEDs for hardware debug
   static uint1_t pc_out_of_range_reg;
   static uint1_t unknown_op_reg;
   static uint1_t mem_out_of_range_reg;
   leds = 0;
-  leds |= (uint4_t)out.mem_map_outputs.ctrl.led << 0;
+  leds |= (uint4_t)mm_regs.led << 0;
   leds |= (uint4_t)pc_out_of_range_reg << 1;
   leds |= (uint4_t)unknown_op_reg << 2;
   leds |= (uint4_t)mem_out_of_range_reg << 3;

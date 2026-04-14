@@ -13,26 +13,26 @@ typedef struct mem_map_out_t
 }mem_map_out_t;
 
 // Base struct builder helper with user types
-#define riscv_mem_map_mod_out_t(mem_map_outputs_t)\
-PPCAT(mem_map_outputs_t,_riscv_mem_map_mod_out_t)
+#define riscv_mem_map_mod_out_t(mem_map_regs_t)\
+PPCAT(mem_map_regs_t,_riscv_mem_map_mod_out_t)
 
-#define RISCV_DECL_MEM_MAP_MOD_OUT_T(mem_map_outputs_t)\
-typedef struct riscv_mem_map_mod_out_t(mem_map_outputs_t)\
+#define RISCV_DECL_MEM_MAP_MOD_OUT_T(mem_map_regs_t)\
+typedef struct riscv_mem_map_mod_out_t(mem_map_regs_t)\
 {\
   uint1_t addr_is_mapped;\
   uint32_t rd_data;\
   uint1_t valid;/*done, aka rd_data valid*/\
   uint1_t ready_for_inputs;\
-  mem_map_outputs_t outputs;\
-}riscv_mem_map_mod_out_t(mem_map_outputs_t);
+  mem_map_regs_t mm_regs_out;\
+}riscv_mem_map_mod_out_t(mem_map_regs_t);
 
-#define RISCV_MEM_MAP_MOD_INPUTS(mem_map_inputs_t)\
+#define RISCV_MEM_MAP_MOD_INPUTS(mem_map_regs_t)\
 uint32_t addr,\
 uint32_t wr_data, uint1_t wr_byte_ens[4],\
 uint1_t rd_byte_ens[4],\
 uint1_t valid,/*aka start*/\
 uint1_t ready_for_outputs,\
-mem_map_inputs_t inputs
+mem_map_regs_t mm_regs_in
 
 // Little macro for stream() like vars made out of mem map u32s
 #define MM_STREAM(type_t, name)\
