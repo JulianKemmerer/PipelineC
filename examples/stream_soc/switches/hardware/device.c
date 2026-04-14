@@ -1,0 +1,1 @@
+DECL_INPUT(uint4_t, sw)

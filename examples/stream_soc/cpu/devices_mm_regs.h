@@ -1,3 +1,7 @@
+#include "../clock/mm_regs.h"
+#include "../led/mm_regs.h"
+#include "../buttons/mm_regs.h"
+#include "../switches/mm_regs.h"
 #include "../i2s/i2s_mm_regs.h"
 #include "../power/power_mm_regs.h"
 #include "../sccb/sccb_mm_regs.h"

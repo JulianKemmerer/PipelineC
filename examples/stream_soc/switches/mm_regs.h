@@ -1,0 +1,1 @@
+uint32_t switches; // Only 4 bits used

@@ -21,13 +21,6 @@ DECL_STREAM_TYPE(uint32_t)
 
 // Wire up instance of fsm_riscv CPU
 
-// LEDs for demo // TODO make into device
-#include "leds/leds_port.c"
-
-// Buttons and switches // TODO make into device
-DECL_INPUT(uint4_t, sw)
-DECL_INPUT(uint4_t, btn)
-
 MAIN_MHZ(cpu_top, CPU_CLK_MHZ)
 void cpu_top(uint1_t areset) // TODO replace reset with global top level wire port
 {

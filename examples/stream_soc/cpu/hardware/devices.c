@@ -5,6 +5,11 @@
 // Simple clock for software wait()
 #include "../../clock/hardware/device.c"
 
+// GPIO
+#include "../../led/hardware/device.c"
+#include "../../buttons/hardware/device.c"
+#include "../../switches/hardware/device.c"
+
 // DDR memory controller IO and shared AXI bus
 #include "../../ddr/hardware/device.c"
 #include "../../shared_ddr/hardware/device.c"

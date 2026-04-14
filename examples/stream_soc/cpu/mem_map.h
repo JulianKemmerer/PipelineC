@@ -31,11 +31,6 @@
 // So manually dont use fields smaller than 32b for now...
 
 typedef struct mm_regs_t{
-  uint32_t led; // Only 4 bits used, see above note rounding to 32b
-  uint32_t switches; // Only 4 bits used, see above note rounding to 32b
-  uint32_t buttons; // Only 4 bits used, see above note rounding to 32b
-  uint32_t cpu_clock;
-  //^ TODO MAKE into device modules
   // Device registers
   #include "devices_mm_regs.h"
 }mm_regs_t;
