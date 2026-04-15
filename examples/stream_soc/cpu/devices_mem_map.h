@@ -1,8 +1,0 @@
-#include "../clock/mem_map.h"
-#include "../vga/mem_map.h"
-#include "../shared_ddr/mem_map.h"
-#include "../i2s/mem_map.h"
-#include "../power/mem_map.h"
-#include "../sccb/mem_map.h"
-#include "../video/mem_map.h"
-#include "../gpu/mem_map.h"

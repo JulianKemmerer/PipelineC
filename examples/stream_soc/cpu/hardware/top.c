@@ -7,17 +7,29 @@ DECL_STREAM_TYPE(uint32_t)
 // Board top level configuration, IO etc
 #include "top.h"
 
-// Memory map shared between software and hardware
-#include "../mem_map.h"
-
-// Devices attached to the CPU interconnected in a dataflow network
+// Devices attached to a CPU mem map module and interconnected in a dataflow network
 #include "devices.c"
 
-// Code implementing memory map for devices attached to the CPU
-#include "mem_map.c"
-
-// Base multi cycle FSM for this RISC-V CPU
-#include "fsm_riscv.c"
+// Declare configuration of basic multi-cycle FSM RISC-V core
+// Declare instruction and data memory with gcc compiled program
+// also includes memory mapped IO
+#include "text_mem_init.h" // from software make flow
+#include "data_mem_init.h" // from software make flow
+#define riscv_name fsm_riscv
+#define RISCV_IMEM_INIT         text_MEM_INIT
+#define RISCV_IMEM_SIZE_BYTES   IMEM_SIZE
+#define RISCV_DMEM_INIT         data_MEM_INIT
+#define RISCV_DMEM_SIZE_BYTES   DMEM_SIZE
+#define riscv_mem_map           my_mem_map_module
+#define riscv_mem_map_regs_t    mm_regs_t
+#define RISCV_IMEM_1_CYCLE
+#define RISCV_DMEM_1_CYCLE
+// Multi cycle is not a pipeline
+#define RISCV_IMEM_NO_AUTOPIPELINE
+#define RISCV_DMEM_NO_AUTOPIPELINE
+// Declare register file RAM
+#define RISCV_REGFILE_1_CYCLE
+#include "risc-v/fsm_riscv_decl.h"
 
 // Wire up instance of fsm_riscv CPU
 

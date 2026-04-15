@@ -10,8 +10,18 @@
 #include <stddef.h>
 #endif
 
-#include "risc-v/mem_map.h" // For mm_handshake_read, etc
-#include "devices_mem_map.h" // Types for device registers
+// For mm_handshake_read, etc
+#include "risc-v/mem_map.h" 
+
+// Types for device registers
+#include "../clock/mem_map.h"
+#include "../vga/mem_map.h"
+#include "../shared_ddr/mem_map.h"
+#include "../i2s/mem_map.h"
+#include "../power/mem_map.h"
+#include "../sccb/mem_map.h"
+#include "../video/mem_map.h"
+#include "../gpu/mem_map.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
@@ -32,7 +42,16 @@
 
 typedef struct mm_regs_t{
   // Device registers
-  #include "devices_mm_regs.h"
+  #include "../clock/mm_regs.h"
+  #include "../led/mm_regs.h"
+  #include "../buttons/mm_regs.h"
+  #include "../switches/mm_regs.h"
+  #include "../i2s/i2s_mm_regs.h"
+  #include "../power/power_mm_regs.h"
+  #include "../sccb/sccb_mm_regs.h"
+  #include "../dvp/mm_regs.h"
+  #include "../video/mm_regs.h"
+  #include "../gpu/mm_regs.h"
 }mm_regs_t;
 // To-from bytes conversion func
 #ifdef __PIPELINEC__
@@ -46,4 +65,7 @@ static volatile mm_regs_t* mm_regs = (mm_regs_t*)MM_REGS_ADDR;
 #define MM_REGS_END_ADDR (MM_REGS_ADDR+sizeof(mm_regs_t))
 
 // Device addresses
-#include "devices_mm_addrs.h"
+#include "../shared_ddr/mm_addrs.h"
+#include "../vga/mm_addrs.h"
+#include "../i2s/mm_addrs.h"
+#include "../power/mm_addrs.h"
