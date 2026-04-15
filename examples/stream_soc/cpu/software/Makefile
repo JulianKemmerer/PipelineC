@@ -6,7 +6,9 @@
 # -march=rv32im
 
 # Ex. make hex CFLAGS="-I/media/1TB/Dropbox/PipelineC/git/PipelineC/include"
-CFLAGS = ""
+PIPELINEC_REPO?=/media/1TB/Dropbox/PipelineC/git/PipelineC
+PIPELINEC_INCLUDE?=$(PIPELINEC_REPO)/include
+CFLAGS?=-I$(PIPELINEC_INCLUDE)
 
 # TODO fix struct alignment?
 # packing and or -O3? ignores -mstrict-align and causes misaligned access CPU fault...
@@ -26,9 +28,9 @@ dump-comment: all
 
 hex: all
 	riscv32-unknown-elf-objcopy -O binary main text.bin --only-section .text
-	./bin2vhdl.py text.bin
+	$(PIPELINEC_INCLUDE)/risc-v/bin2vhdl.py text.bin
 	riscv32-unknown-elf-objcopy -O binary main data.bin --only-section .data
-	./bin2vhdl.py data.bin
+	$(PIPELINEC_INCLUDE)/risc-v/bin2vhdl.py data.bin
 	#cp *_mem_init.h ../hardware/
 	
 clean:
