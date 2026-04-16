@@ -1,3 +1,7 @@
+#include "uintN_t.h"
+#include "stream/stream.h"
+DECL_STREAM_TYPE(uint32_t)
+
 // Helpers macros for building mmio modules
 #include "risc-v/mem_map.h"
 

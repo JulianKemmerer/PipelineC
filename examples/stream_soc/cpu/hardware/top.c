@@ -1,8 +1,7 @@
 // Top level of stream soc cpu
-#include "uintN_t.h"
-#include "stream/stream.h"
-DECL_STREAM_TYPE(uint32_t)
-#include "cdc.h" // CDC helpers for reset
+
+// CDC helpers for reset
+#include "cdc.h"
 
 // Board top level configuration, IO etc
 #include "top.h"
