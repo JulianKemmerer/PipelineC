@@ -11,6 +11,14 @@
 #define riscv_mmio_mod_out_t riscv_mem_map_mod_out_t(riscv_mem_map_regs_t)
 #endif
 
+#ifndef RISCV_MEM_MAP_ADDR_BIT_CHECK
+#define RISCV_MEM_MAP_ADDR_BIT_CHECK 31
+#endif
+#ifndef RISCV_DMEM_ADDR_BIT_CHECK
+#define RISCV_DMEM_ADDR_BIT_CHECK 30
+#endif
+
+
 // Instruction and data memory initialized from gcc compile
 
 // RAM with one read port for instructions
@@ -213,8 +221,8 @@ riscv_dmem_out_t riscv_dmem(
   // Account for data memory being mapped to upper physical addr range
   uint1_t is_dmem;
   uint1_t is_mmio;
-  is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
-  is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+  is_dmem = rw_addr(RISCV_DMEM_ADDR_BIT_CHECK);
+  is_mmio = rw_addr(RISCV_MEM_MAP_ADDR_BIT_CHECK);
   if((~is_dmem & ~is_mmio)&(word_wr_en|word_rd_en)){
     printf("Error: mem_out_of_range memory address=%d is not for dmem or mmio?\n", rw_addr);
     mem_out.mem_out_of_range = 1;
@@ -383,8 +391,8 @@ riscv_dmem_out_t riscv_dmem(
   if(valid_in){
     byte_mux_sel = rw_addr(1,0);
     rd_byte_ens = rd_byte_ens_in;
-    is_dmem = rw_addr(DMEM_ADDR_BIT_CHECK);
-    is_mmio = rw_addr(MEM_MAP_ADDR_BIT_CHECK);
+    is_dmem = rw_addr(RISCV_DMEM_ADDR_BIT_CHECK);
+    is_mmio = rw_addr(RISCV_MEM_MAP_ADDR_BIT_CHECK);
     if(~is_dmem & ~is_mmio){
       printf("Error: memory address=%d is not for dmem or mmio?\n", rw_addr);
       mem_out.mem_out_of_range = 1;
@@ -393,7 +401,7 @@ riscv_dmem_out_t riscv_dmem(
    
   // Account for data memory being mapped to upper physical addr range
   if(is_dmem){
-    rw_addr = rw_addr(DMEM_ADDR_BIT_CHECK-1, 0);
+    rw_addr = rw_addr(RISCV_DMEM_ADDR_BIT_CHECK-1, 0);
   }
   // Convert byte addresses to 4-byte word index
   uint32_t mem_rw_word_index = rw_addr >> 2;

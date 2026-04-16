@@ -61,7 +61,7 @@ typedef struct riscv_out_t{
   uint1_t pc_out_of_range;
   riscv_mem_map_regs_t mm_regs_out;
 }riscv_out_t;
-riscv_out_t fsm_riscv(
+riscv_out_t riscv_name(
   uint1_t reset,
   riscv_mem_map_regs_t mm_regs_in
 )
