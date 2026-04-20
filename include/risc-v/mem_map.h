@@ -6,11 +6,11 @@
 // TODO move mm handshake macros to riscv mem map helper header?
 
 // Base/default version without user types
-typedef struct mem_map_out_t
+/*typedef struct mem_map_out_t
 {
   uint1_t addr_is_mapped;
   uint32_t rd_data;
-}mem_map_out_t;
+}mem_map_out_t;*/
 
 // Base struct builder helper with user types
 #define riscv_mem_map_mod_out_t(mem_map_regs_t)\
