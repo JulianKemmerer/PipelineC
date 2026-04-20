@@ -18,7 +18,8 @@
 // Declare globally visible auto pipelines out of exe logic
 #include "global_func_inst.h"
 //  Global function has no built in delay, can 'return' in same cycle
-GLOBAL_FUNC_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t) 
+//GLOBAL_FUNC_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t)
+GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32i_pipeline, execute_t, execute_rv32i, execute_rv32i_in_t)
 #ifdef RV32_M
 //  Global pipeline has built in minimum 2 cycle delay for input and output regs
 GLOBAL_PIPELINE_INST_W_VALID_ID(execute_rv32_mul_pipeline, execute_t, execute_rv32_mul, execute_rv32_m_ext_in_t)
