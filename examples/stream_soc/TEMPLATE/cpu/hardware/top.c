@@ -11,7 +11,7 @@
 // also includes memory mapped IO
 #include "text_mem_init.h" // from software make flow
 #include "data_mem_init.h" // from software make flow
-#define riscv_name my_riscv_fsm
+#define riscv_name              my_riscv_fsm
 #define RISCV_IMEM_INIT         text_MEM_INIT
 #define RISCV_IMEM_SIZE_BYTES   MY_IMEM_SIZE
 #define RISCV_DMEM_INIT         data_MEM_INIT
