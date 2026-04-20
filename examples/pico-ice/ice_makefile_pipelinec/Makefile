@@ -22,6 +22,11 @@
 #    #   after the gateware is flashed to the pico-ice you can try uart echo demo in action (green led should be blinking all the time). If you are in linux use "screen /dev/ttyACM1 115200" 
 #    make clean all PIPELINEC_TOP_FILE=risc-v/risc-v_top.c PLL_CLK_MHZ=16.0
 #
+#    # StreamSoc RISC-V Demo, see stream_soc/cpu/hardware/top.c
+#    #   First run 'make hex' in ./stream_soc/cpu/software to build firmware for RISC-V CPU. This will be embedded into the risc-v cpu gateware
+#    #   Demo currently just blinks LED...
+#    make clean all PIPELINEC_TOP_FILE=stream_soc/cpu/hardware/top.c PLL_CLK_MHZ=16.0
+#
 #    # Program the FPGA. This applies to all the demos
 #    make prog_pico
 #

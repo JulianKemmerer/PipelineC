@@ -1,0 +1,1 @@
+uint32_t led; // Only 4 bits used
