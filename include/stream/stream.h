@@ -12,6 +12,10 @@ typedef struct stream(data_t){\
         uint1_t valid;\
 }stream(data_t);
 
+// Define some 'built in' stream types
+// For now just let this grow organically?
+DECL_STREAM_TYPE(uint32_t)
+
 // Macro for one item stream buffer
 // TODO this is old and not right remove?
 // At least fix to use static locals for regs...
