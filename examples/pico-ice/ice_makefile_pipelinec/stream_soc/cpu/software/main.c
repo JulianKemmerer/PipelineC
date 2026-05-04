@@ -10,7 +10,7 @@
 
 void main() {
   while(1){
-    my_mm_regs->led = ~my_mm_regs->led;
+    my_mm_regs->led_g = ~my_mm_regs->led_g;
     wait_ms(500);
   }
 }

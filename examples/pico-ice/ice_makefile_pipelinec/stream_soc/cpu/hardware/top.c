@@ -36,7 +36,7 @@ void cpu_top()
   static my_mm_regs_t my_mm_regs;  
 
   // Output 1b MMIO LED signal for green LED
-  led_g = my_mm_regs.led;
+  led_g = my_mm_regs.led_g;
   led_b = 1; // blue off
 
   // Red LED for hardware debug

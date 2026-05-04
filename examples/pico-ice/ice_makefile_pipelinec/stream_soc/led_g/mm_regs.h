@@ -1,0 +1,1 @@
+uint32_t led_g; // Only 1 bit used
