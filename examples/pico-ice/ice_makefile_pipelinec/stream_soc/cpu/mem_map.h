@@ -15,6 +15,7 @@
 
 // Types for device mem mappings
 #include "../clock/mem_map.h"
+#include "../axi_lite_demo/mem_map.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
@@ -53,7 +54,7 @@ _Static_assert(sizeof(my_mm_regs_t) % 4 == 0, "my_mm_regs_t is not aligned to 4 
 //#include "device/mm_addrs.h"
 
 
-#define N_MM_ENTRIES 4
+#define N_MM_ENTRIES 2 // 4
 //#define N_SHARED_AXI_ENTRIES 2
 
 typedef struct led_b_mm_regs_t{
@@ -90,13 +91,13 @@ typedef struct my_mm_entry_t{
 #define BTN_MM_ENTRY_INDEX 3 // TODO set_io -nowarn ICE_PB           10 # active-low
 const my_mm_entry_t MY_MM_ENTRIES[N_MM_ENTRIES] = {
   {.start_addr = 0x00, .end_addr = 0x10, .dev_type = REGS},       // 0
-  {.start_addr = 0x10, .end_addr = 0x20, .dev_type = SHARED_AXI}, // 1
-  {.start_addr = 0x20, .end_addr = 0x30, .dev_type = SHARED_AXI}, // 2
-  {.start_addr = 0x30, .end_addr = 0x40, .dev_type = SHARED_AXI}  // 3
+  {.start_addr = 0x10, .end_addr = 0x20, .dev_type = SHARED_AXI} // 1
+  //{.start_addr = 0x20, .end_addr = 0x30, .dev_type = SHARED_AXI}, // 2
+  //{.start_addr = 0x30, .end_addr = 0x40, .dev_type = SHARED_AXI}  // 3
 };
 static volatile my_mm_regs_t* my_mm_regs = (my_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr);
-static volatile uint32_t* my_axil_test_u32s = (uint32_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[AXIL_TEST_MM_ENTRY_INDEX].start_addr);
-static volatile led_b_mm_regs_t* my_led_b = (led_b_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[LED_B_MM_ENTRY_INDEX].start_addr);
-static volatile btn_mm_regs_t* my_btn = (btn_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[BTN_MM_ENTRY_INDEX].start_addr);
+static volatile axil_demo_regs_t* my_axil_test = (axil_demo_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[AXIL_TEST_MM_ENTRY_INDEX].start_addr);
+//static volatile led_b_mm_regs_t* my_led_b = (led_b_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[LED_B_MM_ENTRY_INDEX].start_addr);
+//static volatile btn_mm_regs_t* my_btn = (btn_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[BTN_MM_ENTRY_INDEX].start_addr);
 
 // TODO static assert end-start>sizeof

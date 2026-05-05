@@ -10,6 +10,8 @@
 #include "../../clock/hardware/device.c"
 // GPIO
 #include "../../led_g/hardware/device.c"
+// Shared AXI test module
+#include "../../axi_lite_demo/hardware/device.c"
 
 // MULTI CLOCK VERSION LAST, should see not meet timing first...
 /*typedef enum my_mm_state_t{
@@ -35,14 +37,8 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
   uint1_t is_START_state = is_START_state_reg;
   // START, END: 
   //  1 cycle for regs and BRAM (output registers), variable wait for AXI RAMs etc
-
-  // What kind of memory mapped storage?
-  //static uint1_t word_wr_en;
-  //static uint1_t word_rd_en;
-  
-  //USE WITH my_mm_entry_t and my_mm_entry_type_t and make loop over all entries (AXI unused, then add axi)
-  // 'is type' is register, set in START and held until end (based on addr only valid during input)
   //  TODO make decoding type / comparing addrs into separate state with regs etc?
+
   // Signals and default values for storage types
   uint1_t mm_regs_enabled;
   //  REGISTERS
@@ -57,18 +53,40 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
   // Device specfic use of those registers
   //#include "device/mm_regs.c"
 
+  // MM Shared AXI
+  axi_lite_demo_from_host = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
+  // AXI write addr + data setup
+  axi_write_req_t axi_wr_req;
+  axi_wr_req.awaddr = relative_addr;
+  axi_wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+  axi_wr_req.awsize = 2; // 2^2=4 bytes per transfer
+  axi_wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
+  axi_write_data_t axi_wr_data;
+  //  Which of 4 bytes are being written?
+  uint32_t i;
+  for(i=0; i<4; i+=1)
+  {
+    axi_wr_data.wdata[i] = wr_data >> (i*8);
+    axi_wr_data.wstrb[i] = wr_byte_ens[i];
+  }
+  // AXI read setup
+  axi_read_req_t axi_rd_req;
+  axi_rd_req.araddr = relative_addr;
+  axi_rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
+  axi_rd_req.arsize = 2; // 2^2=4 bytes per transfer
+  axi_rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
+
   // Start MM operation
   if(is_START_state_reg){
     // Wait for valid input start signal 
     if(valid){
       // Write or read helper flags
-      //word_wr_en = 0;
-      //word_rd_en = 0;
-      //uint32_t i;
-      //for(i=0;i<4;i+=1){
-      //  word_wr_en |= wr_byte_ens[i];
-      //  word_rd_en |= rd_byte_ens[i];
-      //}
+      uint1_t word_wr_en = 0;
+      uint1_t word_rd_en = 0;
+      for(uint32_t i=0;i<4;i+=1){
+        word_wr_en |= wr_byte_ens[i];
+        word_rd_en |= rd_byte_ens[i];
+      }
       // Starting what kind of operation?
       mm_type = UNMAPPED;
       entry_index = 0;
@@ -86,7 +104,38 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
       if(mm_type==REGS){
         // Regs always ready now
         o.ready_for_inputs = 1;
-        // Not needed during input cycles? o.addr_is_mapped = 1;
+      }else if(mm_type==SHARED_AXI){
+        // Start a write
+        if(word_wr_en){
+          // Invoke helper FSM
+          axi_shared_bus_t_write_start_logic_outputs_t write_start =  
+            axi_shared_bus_t_write_start_logic(
+              axi_wr_req,
+              axi_wr_data, 
+              1,
+              axi_lite_demo_to_host.write
+            ); 
+          axi_lite_demo_from_host.write = write_start.to_dev;
+          // Finally ready and done with inputs when start finished
+          if(write_start.done){ 
+            o.ready_for_inputs = 1;
+          }
+        }
+        // Start a read
+        if(word_rd_en){
+          // Invoke helper FSM
+          axi_shared_bus_t_read_start_logic_outputs_t read_start =  
+            axi_shared_bus_t_read_start_logic(
+              axi_rd_req,
+              1,
+              axi_lite_demo_to_host.read.req_ready
+            ); 
+          axi_lite_demo_from_host.read.req = read_start.req;
+          // Finally ready and done with inputs when start finished
+          if(read_start.done){ 
+            o.ready_for_inputs = 1;
+          }
+        }
       }
       // Goto end state once ready for input
       if(o.ready_for_inputs){
@@ -97,7 +146,7 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
-    STRUCT_MM_ENTRY_NEW(MY_MM_ENTRIES[0].start_addr, my_mm_regs_t, my_mm_regs, my_mm_regs, relative_addr, o.addr_is_mapped, regs_rd_data_out)
+    STRUCT_MM_ENTRY_NEW(MY_MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr, my_mm_regs_t, my_mm_regs, my_mm_regs, relative_addr, o.addr_is_mapped, regs_rd_data_out)
   }
 
   // End MMIO operation
@@ -107,6 +156,17 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
     if(mm_type_reg==REGS){
       o.rd_data = regs_rd_data_out_reg;
       o.valid = 1;
+    }else if(mm_type_reg==SHARED_AXI){
+      // Normal wait for mem to properly finish both reads or writes
+      // Signal ready for both read and write responses
+      // (only one in use)
+      axi_lite_demo_from_host.read.data_ready = ready_for_outputs;
+      axi_lite_demo_from_host.write.resp_ready = ready_for_outputs;
+      // Either write or read resp is valid done signal
+      o.valid = axi_lite_demo_to_host.read.data.valid | 
+                axi_lite_demo_to_host.write.resp.valid;
+      // Read data is 4 bytes into u32
+      o.rd_data = axi_read_to_data(axi_lite_demo_to_host.read.data.burst.data_resp.user);
     }
     // Start over when done
     if(o.valid & ready_for_outputs){
