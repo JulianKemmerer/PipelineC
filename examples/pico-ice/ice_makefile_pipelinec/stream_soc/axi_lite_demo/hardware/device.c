@@ -13,11 +13,11 @@
 
 typedef struct my_axil_dev_outputs_t{
   axi_shared_bus_t_dev_to_host_t to_host;
-  // TODO regs external output NEXT value
+  axil_demo_regs_t mm_regs_out;
 }my_axil_dev_outputs_t;
 my_axil_dev_outputs_t my_axil_dev(
-  axi_shared_bus_t_host_to_dev_t from_host
-  // TODO input next regs value
+  axi_shared_bus_t_host_to_dev_t from_host,
+  axil_demo_regs_t mm_regs_in
 ){
   my_axil_dev_outputs_t o;
 
@@ -62,11 +62,9 @@ my_axil_dev_outputs_t my_axil_dev(
     wr_data_valid = 0;
   }
 
-  // Some 32b words test...
-  static axil_demo_regs_t axil_demo_regs;
-
   /* Convert to bytes*/
-  axil_demo_regs_t_bytes_t byte_array = axil_demo_regs_t_to_bytes(axil_demo_regs);
+  axil_demo_regs_t mm_regs = mm_regs_in;
+  axil_demo_regs_t_bytes_t byte_array = axil_demo_regs_t_to_bytes(mm_regs);
 
   // Handle read request and response
   /* Assemble rd data bytes*/
@@ -88,10 +86,11 @@ my_axil_dev_outputs_t my_axil_dev(
       }
     }
     /* Convert back to type*/
-    axil_demo_regs = bytes_to_axil_demo_regs_t(byte_array);
+    mm_regs = bytes_to_axil_demo_regs_t(byte_array);
     wr_resp.user.bresp = 0; // No error
     wr_resp_valid = 1;
   }
+  o.mm_regs_out = mm_regs;
 
   // AR channel buffer input handshake
   o.to_host.read.req_ready = ~rd_req_valid;
@@ -125,9 +124,12 @@ axi_shared_bus_t_host_to_dev_t axi_lite_demo_from_host;
 #pragma MAIN axi_lite_demo_main
 void axi_lite_demo_main()
 {
+  // Some user axi lite memory mapped regs
+  static axil_demo_regs_t axil_demo_regs;
   // The device instance
-  my_axil_dev_outputs_t dev = my_axil_dev(axi_lite_demo_from_host);
+  my_axil_dev_outputs_t dev = my_axil_dev(axi_lite_demo_from_host, axil_demo_regs);
   axi_lite_demo_to_host = dev.to_host;
+  axil_demo_regs = dev.mm_regs_out;
 }
 
 /*
