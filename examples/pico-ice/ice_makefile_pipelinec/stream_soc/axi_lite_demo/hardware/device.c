@@ -13,9 +13,11 @@
 
 typedef struct my_axil_dev_outputs_t{
   axi_shared_bus_t_dev_to_host_t to_host;
+  // TODO regs external output NEXT value
 }my_axil_dev_outputs_t;
 my_axil_dev_outputs_t my_axil_dev(
   axi_shared_bus_t_host_to_dev_t from_host
+  // TODO input next regs value
 ){
   my_axil_dev_outputs_t o;
 
@@ -63,22 +65,30 @@ my_axil_dev_outputs_t my_axil_dev(
   // Some 32b words test...
   static axil_demo_regs_t axil_demo_regs;
 
+  /* Convert to bytes*/
+  axil_demo_regs_t_bytes_t byte_array = axil_demo_regs_t_to_bytes(axil_demo_regs);
+
   // Handle read request and response
-  uint30_t rd_req_word_addr = rd_req.user.araddr >> 2;
-  // Only LSBs of addr used
-  rd_data.user.rdata = axil_demo_regs.word_bytes[rd_req_word_addr];
+  /* Assemble rd data bytes*/
+  uint32_t byte_i;
+  uint8_t rd_bytes[4];
+  for(byte_i=0;byte_i<4;byte_i+=1){
+    // Only LSBs of addr used
+    rd_bytes[byte_i] = byte_array.data[rd_req.user.araddr+byte_i];
+  }
+  rd_data.user.rdata = rd_bytes;
   rd_data_valid = rd_req_valid;
 
   // Handle write request and response
-  uint30_t wr_req_word_addr = wr_req.user.awaddr >> 2;
   if(wr_req_valid & wr_data_valid){
-    for (uint32_t i = 0; i < 4; i+=1)
-    {
-      if(wr_data.user.wstrb[i]){
-        // Only LSBs of addr used
-        axil_demo_regs.word_bytes[wr_req_word_addr][i] = wr_data.user.wdata[i];
+    /* Drive write bytes*/
+    for(byte_i=0;byte_i<4;byte_i+=1){
+      if(wr_data.user.wstrb[byte_i]){
+        byte_array.data[wr_req.user.awaddr+byte_i] = wr_data.user.wdata[byte_i];
       }
     }
+    /* Convert back to type*/
+    axil_demo_regs = bytes_to_axil_demo_regs_t(byte_array);
     wr_resp.user.bresp = 0; // No error
     wr_resp_valid = 1;
   }
