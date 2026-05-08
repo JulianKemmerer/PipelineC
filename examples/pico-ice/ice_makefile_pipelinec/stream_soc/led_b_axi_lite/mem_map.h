@@ -1,5 +1,4 @@
 #pragma once
-#define AXIL_DEMO_NWORDS 4
 typedef struct led_b_mm_regs_t{
   uint32_t led_on;
 }led_b_mm_regs_t;
