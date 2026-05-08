@@ -1,7 +1,9 @@
-// CPU 1 host -> N devices addr decoder
-// device is at end of decoder
+// This example shows creating a basic AXI-Lite (S) device
+// the structure was later made into repeatable easy to use macro
+// as shown in the led_b_axi_lite device
 
-#include "axi/axi_shared_bus.h" // s 'axi_shared_bus_t' type things
+// 'axi_shared_bus_t' type things
+#include "axi/axi_shared_bus.h"
 // axi_shared_bus_t_dev_to_host_t // For wires from device (S) to host (M)
 // axi_shared_bus_t_host_to_dev_t // For wires from host (M) to device)
 //  ex.
@@ -9,6 +11,7 @@
 //  from_host.read.req.valid // AR channel valid
 //  o.to_host.read.req_ready // AR channel ready
 
+// User specific memory mapped type: axil_demo_regs_t
 #include "../mem_map.h"
 
 typedef struct my_axil_dev_outputs_t{

@@ -37,7 +37,6 @@ void cpu_top()
 
   // Output 1b MMIO LED signal for green LED
   led_g = my_mm_regs.led_g;
-  led_b = 1; // blue off
 
   // Red LED for hardware debug
   static uint1_t pc_out_of_range_reg;

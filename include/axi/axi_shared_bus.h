@@ -219,6 +219,115 @@ axi_shared_bus_dev_ctrl_t axi_shared_bus_dev_ctrl_pipelined(
   return o;
 }
 
+
+// Macro for declaring AXI memory mapped struct
+#define DECL_AXI_SHARED_BUS_CSR_DEV(mm_regs_t, name)\
+typedef struct PPCAT(name,_t){\
+  axi_shared_bus_t_dev_to_host_t to_host;\
+  mm_regs_t mm_regs_out;\
+}PPCAT(name,_t);\
+PPCAT(name,_t) name(\
+  axi_shared_bus_t_host_to_dev_t from_host,\
+  mm_regs_t mm_regs_in\
+){\
+  PPCAT(name,_t) o;\
+\
+  /* AR channel buffer regs */\
+  static axi_shared_bus_t_read_req_data_t rd_req;\
+  static uint1_t rd_req_valid;\
+\
+  /* AW channel buffer regs */\
+  static axi_shared_bus_t_write_req_data_t wr_req;\
+  static uint1_t wr_req_valid;\
+\
+  /* W channel buffer regs */\
+  static axi_shared_bus_t_write_data_word_t wr_data;\
+  static uint1_t wr_data_valid;\
+\
+  /* R channel buffer regs */\
+  static axi_shared_bus_t_read_data_resp_word_t rd_data;\
+  static uint1_t rd_data_valid;\
+\
+  /* B channel buffer regs */\
+  static axi_shared_bus_t_write_resp_data_t wr_resp;\
+  static uint1_t wr_resp_valid;\
+\
+  /* R channel buffer output handshake */\
+  o.to_host.read.data.burst.data_resp = rd_data;\
+  o.to_host.read.data.valid = rd_data_valid;\
+  if(o.to_host.read.data.valid & from_host.read.data_ready){\
+    rd_data_valid = 0;\
+    /* Also clears input side handshake */\
+    /* TODO get rid of comb logic between resp and req */\
+    rd_req_valid = 0;\
+  }\
+\
+  /* B channel buffer output handshake */\
+  o.to_host.write.resp.data = wr_resp;\
+  o.to_host.write.resp.valid = wr_resp_valid;\
+  if(o.to_host.write.resp.valid & from_host.write.resp_ready){\
+    wr_resp_valid = 0;\
+    /* Also clears input side handshake */\
+    /* TODO get rid of comb logic between resp and req */\
+    wr_req_valid = 0;\
+    wr_data_valid = 0;\
+  }\
+\
+  /* Convert to bytes*/\
+  mm_regs_t mm_regs = mm_regs_in;\
+  PPCAT(mm_regs_t,_bytes_t) byte_array = PPCAT(mm_regs_t,_to_bytes)(mm_regs);\
+\
+  /* Handle read request and response */\
+  /* Assemble rd data bytes*/\
+  uint32_t byte_i;\
+  uint8_t rd_bytes[4];\
+  for(byte_i=0;byte_i<4;byte_i+=1){\
+    /* Only LSBs of addr used */\
+    rd_bytes[byte_i] = byte_array.data[rd_req.user.araddr+byte_i];\
+  }\
+  rd_data.user.rdata = rd_bytes;\
+  rd_data_valid = rd_req_valid;\
+\
+  /* Handle write request and response */\
+  if(wr_req_valid & wr_data_valid){\
+    /* Drive write bytes*/\
+    for(byte_i=0;byte_i<4;byte_i+=1){\
+      if(wr_data.user.wstrb[byte_i]){\
+        byte_array.data[wr_req.user.awaddr+byte_i] = wr_data.user.wdata[byte_i];\
+      }\
+    }\
+    /* Convert back to type*/\
+    mm_regs = PPCAT(bytes_to_,mm_regs_t)(byte_array);\
+    wr_resp.user.bresp = 0; /* No error */\
+    wr_resp_valid = 1;\
+  }\
+  o.mm_regs_out = mm_regs;\
+\
+  /* AR channel buffer input handshake */\
+  o.to_host.read.req_ready = ~rd_req_valid;\
+  if(from_host.read.req.valid & o.to_host.read.req_ready){\
+    rd_req = from_host.read.req.data;\
+    rd_req_valid = 1;\
+  }\
+\
+  /* AW channel buffer input handshake */\
+  o.to_host.write.req_ready = ~wr_req_valid;\
+  if(from_host.write.req.valid & o.to_host.write.req_ready){\
+    wr_req = from_host.write.req.data;\
+    wr_req_valid = 1;\
+  }\
+  \
+  /* W channel buffer input handshake */\
+  o.to_host.write.data_ready = ~wr_data_valid;\
+  if(from_host.write.data.valid & o.to_host.write.data_ready){\
+    wr_data = from_host.write.data.burst.data_word;\
+    wr_data_valid = 1;\
+  }\
+\
+  return o;\
+}
+
+
 // Logic for read priority arbitration
 typedef struct rd_pri_port_arb_t{
   axi_shared_bus_t_dev_to_host_t to_other_host;

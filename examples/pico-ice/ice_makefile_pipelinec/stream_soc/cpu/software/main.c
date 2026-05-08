@@ -30,8 +30,11 @@ int axil_test(){
 }
 
 void main() {
+  my_mm_regs->led_g = 0;
+  my_led_b->led_on = 0;
   while(1){
     my_mm_regs->led_g = ~my_mm_regs->led_g;
+    my_led_b->led_on = ~my_led_b->led_on;
     wait_ms(1);
     if(!axil_test()) break;
   }
