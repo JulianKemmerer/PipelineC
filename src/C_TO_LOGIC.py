@@ -6494,7 +6494,6 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             lhs_wire = const_input_wires[0]
             rhs_wire = const_input_wires[1]
 
-            # Constant enums future me?
             # Get values from constants
             lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
                 lhs_wire, parser_state.existing_logic, parser_state
@@ -6502,26 +6501,53 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
                 rhs_wire, parser_state.existing_logic, parser_state
             )
+
             # Skip compund null wire optmizations for now
             if lhs_val_str == COMPOUND_NULL or rhs_val_str == COMPOUND_NULL:
                 return None
-            lhs_negated = lhs_val_str.startswith("-")
-            rhs_negated = rhs_val_str.startswith("-")
-            lhs_val_str_no_neg = lhs_val_str.strip("-")
-            rhs_val_str_no_neg = rhs_val_str.strip("-")
-            lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
-                lhs_val_str_no_neg, func_c_ast_node, lhs_negated
+
+            # Constant enums: future me - yes the future is now
+            lhs_is_enum = WIRE_IS_ENUM(
+                lhs_wire, parser_state.existing_logic, parser_state
             )
-            rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
-                rhs_val_str_no_neg, func_c_ast_node, rhs_negated
+            rhs_is_enum = WIRE_IS_ENUM(
+                rhs_wire, parser_state.existing_logic, parser_state
             )
+            if lhs_is_enum != rhs_is_enum:
+                raise Exception(
+                    f"Cannot constant reduce operation of enum and non enum types {func_c_ast_node.coord}"
+                )
+            if lhs_is_enum or rhs_is_enum:
+                lhs_enum_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
+                rhs_enum_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]
+                if lhs_enum_type != rhs_enum_type:
+                    raise Exception(
+                        f"Cannot constant reduce operation on enums of different types {func_c_ast_node.coord}"
+                    )
+                enum_type = lhs_enum_type
+                enum_int_type = parser_state.enum_info_dict[enum_type].int_c_type
+                lhs_val = parser_state.enum_info_dict[enum_type].id_to_int_val[
+                    lhs_val_str
+                ]
+                lhs_c_type = enum_int_type
+                rhs_val = parser_state.enum_info_dict[enum_type].id_to_int_val[
+                    rhs_val_str
+                ]
+                rhs_c_type = enum_int_type
+            else:
+                # Is non enum number like constant
+                lhs_negated = lhs_val_str.startswith("-")
+                rhs_negated = rhs_val_str.startswith("-")
+                lhs_val_str_no_neg = lhs_val_str.strip("-")
+                rhs_val_str_no_neg = rhs_val_str.strip("-")
+                lhs_val, lhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
+                    lhs_val_str_no_neg, func_c_ast_node, lhs_negated
+                )
+                rhs_val, rhs_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
+                    rhs_val_str_no_neg, func_c_ast_node, rhs_negated
+                )
             # print("lhs_val, lhs_c_type",lhs_val, lhs_c_type)
             # print("rhs_val, rhs_c_type",rhs_val, rhs_c_type)
-            """# Prefer exisitng type if set
-      if lhs_wire in parser_state.existing_logic.wire_to_c_type:
-        lhs_c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
-      if rhs_wire in parser_state.existing_logic.wire_to_c_type:
-        rhs_c_type = parser_state.existing_logic.wire_to_c_type[rhs_wire]"""
 
             # First check for integer arguments
             is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
