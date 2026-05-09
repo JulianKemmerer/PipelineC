@@ -65,14 +65,9 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
   #pragma FEEDBACK axi_host_to_devs
   for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
   {
-    if(axi_dev_to_entry_id[axi_dev_id]==AXIL_TEST_MM_ENTRY_INDEX){
-      axi_dev_to_hosts[axi_dev_id] = axi_lite_demo_to_host;
-      axi_lite_demo_from_host = axi_host_to_devs[axi_dev_id];
-    }
-    if(axi_dev_to_entry_id[axi_dev_id]==LED_B_MM_ENTRY_INDEX){
-      axi_dev_to_hosts[axi_dev_id] = led_b_axi_lite_to_host;
-      led_b_axi_lite_from_host = axi_host_to_devs[axi_dev_id];
-    }
+    // Device specific shared AXI bus connections // TODO make "device/mm_axi.c" to have user edit?
+    MM_SHARED_AXI_TO_FROM_HOST(AXIL_TEST_MM_ENTRY_INDEX, axi_lite_demo_to_host, axi_lite_demo_from_host)
+    MM_SHARED_AXI_TO_FROM_HOST(LED_B_MM_ENTRY_INDEX, led_b_axi_lite_to_host, led_b_axi_lite_from_host)
   }
   // Default no mem op
   for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)

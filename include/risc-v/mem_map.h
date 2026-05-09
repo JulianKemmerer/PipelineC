@@ -88,6 +88,13 @@ mm_regs->hs_name##_valid = 1;
 
 // Helper macros to reduce code in and around mem_map_module
 
+// Connect user shared axi busses // TODO include axi names dev to entry etc locals from user mm module?
+#define MM_SHARED_AXI_TO_FROM_HOST(MM_ENTRY_INDEX, to_host, from_host)\
+if(axi_dev_to_entry_id[axi_dev_id]==MM_ENTRY_INDEX){\
+  axi_dev_to_hosts[axi_dev_id] = to_host;\
+  from_host = axi_host_to_devs[axi_dev_id];\
+}
+
 // Map 4 byte array to a word index
 #define BYTES4_MM_WRITE_LOGIC(\
   WORD_INDEX, reg_bytes,\
