@@ -31,10 +31,15 @@
 // Registers are mapped differently than BRAM, different from AXI RAMs, etc
 // easiest to write memory mapped objects for each storage type
 // since then only need to handle each storage type roughly once.
+typedef enum my_mm_entry_type_t{
+  UNMAPPED,
+  REGS,
+  BRAM,
+  SHARED_AXI
+}my_mm_entry_type_t;
 
 // Cant rely on struct packing - produces misaligned accesses? See Makefile notes 
 // So manually dont use fields smaller than 32b for now...
-
 typedef struct my_mm_regs_t{
   // Device mem map registers
   #include "../clock/mm_regs.h"
@@ -48,41 +53,26 @@ typedef struct my_mm_regs_t{
 _Static_assert(sizeof(my_mm_regs_t) % 4 == 0, "my_mm_regs_t is not aligned to 4 bytes");
 #endif
 
-/*typedef struct btn_mm_regs_t{
-  uint32_t btn_pressed;
-}btn_mm_regs_t;*/
-
-// TRY SIMPLEST VERSION FIRST? start,end no type always regs...
-typedef enum my_mm_entry_type_t{
-  UNMAPPED,
-  REGS,
-  BRAM,
-  SHARED_AXI
-}my_mm_entry_type_t;
-
+// The global constant memory map
 typedef struct my_mm_entry_t{
   uint32_t start_addr;
   uint32_t end_addr;
   my_mm_entry_type_t dev_type;
 }my_mm_entry_t;
-
 // Relative to MY_MEM_MAP_BASE_ADDR
-#define N_MM_ENTRIES 3 // 4
+#define N_MM_ENTRIES 3
 #define REGS_MM_ENTRY_INDEX      0
 #define AXIL_TEST_MM_ENTRY_INDEX 1
 #define LED_B_MM_ENTRY_INDEX     2
-#define BTN_MM_ENTRY_INDEX       3 // TODO set_io -nowarn ICE_PB           10 # active-low
+#define N_SHARED_AXI_DEV 2
 const my_mm_entry_t MY_MM_ENTRIES[N_MM_ENTRIES] = {
   {.start_addr = 0x00, .end_addr = 0x10, .dev_type = REGS},       // 0
   {.start_addr = 0x10, .end_addr = 0x20, .dev_type = SHARED_AXI}, // 1
   {.start_addr = 0x20, .end_addr = 0x30, .dev_type = SHARED_AXI}  // 2
-  //{.start_addr = 0x30, .end_addr = 0x40, .dev_type = SHARED_AXI} // 3
 };
 static volatile my_mm_regs_t* my_mm_regs = (my_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr);
 static volatile axil_demo_regs_t* my_axil_test = (axil_demo_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[AXIL_TEST_MM_ENTRY_INDEX].start_addr);
 static volatile led_b_mm_regs_t* my_led_b = (led_b_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[LED_B_MM_ENTRY_INDEX].start_addr);
-//static volatile btn_mm_regs_t* my_btn = (btn_mm_regs_t*)(MY_MEM_MAP_BASE_ADDR + MY_MM_ENTRIES[BTN_MM_ENTRY_INDEX].start_addr);
-
 // TODO static assert end-start>sizeof
 
 // Device mem map address constants

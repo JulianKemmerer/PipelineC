@@ -15,13 +15,6 @@
 // AXI-Lite test module for blue LED control
 #include "../../led_b_axi_lite/hardware/device.c"
 
-// MULTI CLOCK VERSION LAST, should see not meet timing first...
-/*typedef enum my_mm_state_t{
-  DECODE_ADDR,
-  START_OP,
-  END_OP
-}my_mm_state_t; TODO USE WITH my_mm_entry_t and my_mm_entry_type_t*/
-
 // Define MMIO inputs and outputs
 // Define the hardware memory for those IO
 // See typedefs for valid and ready handshake used on input and output
@@ -42,25 +35,50 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
   //  TODO make decoding type / comparing addrs into separate state with regs etc?
 
   // Signals and default values for storage types
-  uint1_t mm_regs_enabled;
-  //  REGISTERS
   static my_mm_entry_type_t mm_type_reg;
   my_mm_entry_type_t mm_type = mm_type_reg;
   static uint32_t entry_index_reg;
   uint32_t entry_index = entry_index_reg;
+  
+  // REGISTERS
+  uint1_t mm_regs_enabled;
   static uint32_t regs_rd_data_out_reg;
   uint32_t regs_rd_data_out = regs_rd_data_out_reg;
-
-  // MM registers
   my_mm_regs_t my_mm_regs = mm_regs_in; // input 'current' value for user memory mapped regs
   // Device specfic use of those registers
   //#include "device/mm_regs.c"
 
-  // MM Shared AXI
-  // TODO make this cleaner and easier to scale?
+  // Shared AXI
+  // Should be compile time const to determine mm entry to axi dev mapping...
+  uint32_t axi_dev_to_entry_id[N_SHARED_AXI_DEV];
+  uint32_t axi_dev_id = 0;
+  for (uint32_t i = 0; i < N_MM_ENTRIES; i+=1)
+  {
+    if(MY_MM_ENTRIES[i].dev_type==SHARED_AXI){
+      axi_dev_to_entry_id[axi_dev_id] = i;
+      axi_dev_id += 1;
+    }
+  }
+  // Assign user wires to axi dev id based on entry index
+  axi_shared_bus_t_dev_to_host_t axi_dev_to_hosts[N_SHARED_AXI_DEV];
+  axi_shared_bus_t_host_to_dev_t axi_host_to_devs[N_SHARED_AXI_DEV];
+  #pragma FEEDBACK axi_host_to_devs
+  for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+  {
+    if(axi_dev_to_entry_id[axi_dev_id]==AXIL_TEST_MM_ENTRY_INDEX){
+      axi_dev_to_hosts[axi_dev_id] = axi_lite_demo_to_host;
+      axi_lite_demo_from_host = axi_host_to_devs[axi_dev_id];
+    }
+    if(axi_dev_to_entry_id[axi_dev_id]==LED_B_MM_ENTRY_INDEX){
+      axi_dev_to_hosts[axi_dev_id] = led_b_axi_lite_to_host;
+      led_b_axi_lite_from_host = axi_host_to_devs[axi_dev_id];
+    }
+  }
   // Default no mem op
-  axi_lite_demo_from_host = axi_shared_bus_t_HOST_TO_DEV_NULL; 
-  led_b_axi_lite_from_host = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+  {
+    axi_host_to_devs[axi_dev_id] = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  }
   // AXI write addr + data setup
   axi_write_req_t axi_wr_req;
   axi_wr_req.awaddr = relative_addr;
@@ -111,11 +129,15 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
         // Regs always ready now
         o.ready_for_inputs = 1;
       }else if(mm_type==SHARED_AXI){
-        // Which AXI dev to host bus to connect to?
+        // Select one of the axi dev to host wires to read
         axi_shared_bus_t_dev_to_host_t selected_dev_to_host;
-        if(entry_index==AXIL_TEST_MM_ENTRY_INDEX) selected_dev_to_host = axi_lite_demo_to_host;
-        if(entry_index==LED_B_MM_ENTRY_INDEX) selected_dev_to_host = led_b_axi_lite_to_host;
-        axi_shared_bus_t_host_to_dev_t selected_host_to_dev;
+        for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+        {
+          if(axi_dev_to_entry_id[axi_dev_id]==entry_index){
+            selected_dev_to_host = axi_dev_to_hosts[axi_dev_id];
+          }
+        }
+        axi_shared_bus_t_host_to_dev_t demuxed_host_to_dev;
         // Start a write
         if(word_wr_en){
           // Invoke helper FSM
@@ -126,7 +148,7 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
               1,
               axi_lite_demo_to_host.write
             ); 
-          selected_host_to_dev.write = write_start.to_dev;
+          demuxed_host_to_dev.write = write_start.to_dev;
           // Finally ready and done with inputs when start finished
           if(write_start.done){ 
             o.ready_for_inputs = 1;
@@ -141,15 +163,19 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
               1,
               axi_lite_demo_to_host.read.req_ready
             ); 
-          selected_host_to_dev.read.req = read_start.req;
+          demuxed_host_to_dev.read.req = read_start.req;
           // Finally ready and done with inputs when start finished
           if(read_start.done){ 
             o.ready_for_inputs = 1;
           }
         }
-        // Which AXI host to dev bus to connect to?
-        if(entry_index==AXIL_TEST_MM_ENTRY_INDEX) axi_lite_demo_from_host = selected_host_to_dev;
-        if(entry_index==LED_B_MM_ENTRY_INDEX) led_b_axi_lite_from_host = selected_host_to_dev;
+        // Select one of the axi host to devs wires to drive
+        for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+        {
+          if(axi_dev_to_entry_id[axi_dev_id]==entry_index){
+            axi_host_to_devs[axi_dev_id] = demuxed_host_to_dev;
+          }
+        }
       }
       // Goto end state once ready for input
       if(o.ready_for_inputs){
@@ -171,24 +197,32 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
       o.rd_data = regs_rd_data_out_reg;
       o.valid = 1;
     }else if(mm_type_reg==SHARED_AXI){
-      // Which AXI dev to host bus to connect to?
+      // Select one of the axi dev to host wires to read
       axi_shared_bus_t_dev_to_host_t selected_dev_to_host;
-      if(entry_index_reg==AXIL_TEST_MM_ENTRY_INDEX) selected_dev_to_host = axi_lite_demo_to_host;
-      if(entry_index_reg==LED_B_MM_ENTRY_INDEX) selected_dev_to_host = led_b_axi_lite_to_host;
-      axi_shared_bus_t_host_to_dev_t selected_host_to_dev;
+      for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+      {
+        if(axi_dev_to_entry_id[axi_dev_id]==entry_index_reg){
+          selected_dev_to_host = axi_dev_to_hosts[axi_dev_id];
+        }
+      }
+      axi_shared_bus_t_host_to_dev_t demuxed_host_to_dev;
       // Normal wait for mem to properly finish both reads or writes
       // Signal ready for both read and write responses
       // (only one in use)
-      selected_host_to_dev.read.data_ready = ready_for_outputs;
-      selected_host_to_dev.write.resp_ready = ready_for_outputs;
+      demuxed_host_to_dev.read.data_ready = ready_for_outputs;
+      demuxed_host_to_dev.write.resp_ready = ready_for_outputs;
       // Either write or read resp is valid done signal
       o.valid = selected_dev_to_host.read.data.valid | 
                 selected_dev_to_host.write.resp.valid;
       // Read data is 4 bytes into u32
       o.rd_data = axi_read_to_data(selected_dev_to_host.read.data.burst.data_resp.user);
-      // Which AXI host to dev bus to connect to?
-      if(entry_index_reg==AXIL_TEST_MM_ENTRY_INDEX) axi_lite_demo_from_host = selected_host_to_dev;
-      if(entry_index_reg==LED_B_MM_ENTRY_INDEX) led_b_axi_lite_from_host = selected_host_to_dev;
+      // Select one of the axi host to devs wires to drive
+      for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+      {
+        if(axi_dev_to_entry_id[axi_dev_id]==entry_index_reg){
+          axi_host_to_devs[axi_dev_id] = demuxed_host_to_dev;
+        }
+      }
     }
     // Start over when done
     if(o.valid & ready_for_outputs){
