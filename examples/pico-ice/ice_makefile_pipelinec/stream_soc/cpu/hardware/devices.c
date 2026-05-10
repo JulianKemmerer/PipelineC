@@ -141,7 +141,7 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
               axi_wr_req,
               axi_wr_data, 
               1,
-              axi_lite_demo_to_host.write
+              selected_dev_to_host.write
             ); 
           demuxed_host_to_dev.write = write_start.to_dev;
           // Finally ready and done with inputs when start finished
@@ -156,7 +156,7 @@ riscv_mem_map_mod_out_t(my_mm_regs_t) my_mm_module(
             axi_shared_bus_t_read_start_logic(
               axi_rd_req,
               1,
-              axi_lite_demo_to_host.read.req_ready
+              selected_dev_to_host.read.req_ready
             ); 
           demuxed_host_to_dev.read.req = read_start.req;
           // Finally ready and done with inputs when start finished
