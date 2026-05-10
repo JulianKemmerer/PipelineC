@@ -1,13 +1,5 @@
 #pragma once
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
-#define TILE_FACTOR 1
-#define TILE_FACTOR_LOG2 0
-#define NUM_X_TILES (FRAME_WIDTH/TILE_FACTOR)
-#define NUM_Y_TILES (FRAME_HEIGHT/TILE_FACTOR)
-#define BYTES_PER_PIXEL 4
-#define BYTES_PER_PIXEL_LOG2 2
-#define FB_SIZE ((NUM_X_TILES*NUM_Y_TILES)*BYTES_PER_PIXEL)
+#include "../mem_map.h"
 // Pixel x,y pos to pixel index in array
 uint32_t pos_to_pixel_index(uint16_t x, uint16_t y)
 {

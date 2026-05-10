@@ -1,5 +1,5 @@
 #pragma once
-#include "../../fft/software/fft_types.h"
+#include "../../fft/mem_map.h"
 #include "axi/axi_shared_bus.h"
 
 /*

@@ -21,7 +21,7 @@ void vid_crop_update_clear(crop2d_params_t old, crop2d_params_t new) {
     drawRect(fb_x, fb_y,
              fb_x + (old_w > new_w ? old_w : new_w) + scale,
              fb_y + (old_h > new_h ? old_h : new_h) + scale,
-             0, FB0);
+             0);
 }
 
 void vid_scale_update_clear(scale2d_params_t old, scale2d_params_t new) {
@@ -38,7 +38,7 @@ void vid_scale_update_clear(scale2d_params_t old, scale2d_params_t new) {
     drawRect(fb_x, fb_y,
              fb_x + crop_w * max_scale + max_scale,
              fb_y + crop_h * max_scale + max_scale,
-             0, FB0);
+             0);
 }
 
 void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
@@ -53,7 +53,7 @@ void vid_fb_pos_update_clear(fb_pos_params_t old, fb_pos_params_t new) {
     uint32_t end_x   = (old.xpos > new.xpos ? old.xpos : new.xpos) + out_w + scale;
     uint32_t end_y   = (old.ypos > new.ypos ? old.ypos : new.ypos) + out_h + scale;
 
-    drawRect(start_x, start_y, end_x, end_y, 0, FB0);
+    drawRect(start_x, start_y, end_x, end_y, 0);
 }
 
 // Inc or dec a x|width value based on fraction of frame width

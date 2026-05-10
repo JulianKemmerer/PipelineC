@@ -26,7 +26,7 @@ void main() {
   ov2640_cam_init();
 
   // Clear screen to black
-  drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, 0, FB0);
+  drawRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT, 0);
 
   // Configure chunks of I2S samples to read
   uint32_t i2s_addr = I2S_BUFFS_ADDR;
@@ -50,7 +50,7 @@ void main() {
       mm_regs->led = (1<<0);
 
       // Time domain waveform across top two thirds of display
-      draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*4)/6, 10, samples_in_dram, n_samples, FB0);
+      draw_waveform(FRAME_WIDTH, (FRAME_HEIGHT*4)/6, 10, samples_in_dram, n_samples);
 
       // Enqueue the buffer to be used for future rx samples writes
       i2s_rx_enq_write(samples_in_dram, n_samples);
@@ -64,7 +64,7 @@ void main() {
       mm_regs->led = (1<<1);
 
       // Screen coloring result
-      draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, power_out_in_dram, FB0);
+      draw_spectrum(FRAME_WIDTH, FRAME_HEIGHT, power_out_in_dram);
 
       // Confgure next power result output buffer at same place as current
       fft_config_power_result((fft_data_t*)power_out_in_dram, n_samples); // Or (fft_data_t*)POWER_OUT_ADDR)...

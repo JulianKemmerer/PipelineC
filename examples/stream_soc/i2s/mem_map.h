@@ -1,4 +1,5 @@
 #pragma once
+#include "i2s/i2s_32b.h"
 // Configure i2s_axi.c to use memory mapped addr offset in CPU's AXI0 region
 #define I2S_SAMPLES_ADDR (I2S_BUFFS_ADDR-MMIO_AXI0_ADDR)
 #define I2S_N_SAMPLES NFFT // Match FFT size

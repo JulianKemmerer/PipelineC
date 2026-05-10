@@ -57,33 +57,65 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
   RISCV_MEM_MAP_MOD_INPUTS(mm_regs_t)
 ){
   riscv_mem_map_mod_out_t(mm_regs_t) o;
+
+  // Adjust address for MEM_MAP_BASE_ADDR|MEM_MAP_ADDR_BIT_CHECK=31
+  uint31_t relative_addr = addr;
   
   // Two states like CPU, minimum 1 cycle for MMIO operations
   static uint1_t is_START_state_reg = 1; // Otherwise is END
   uint1_t is_START_state = is_START_state_reg;
   // START, END: 
   //  1 cycle for regs and BRAM (output registers), variable wait for AXI RAMs etc
-
-  // What kind of memory mapped storage?
-  static uint1_t word_wr_en;
-  static uint1_t word_rd_en;
-  // 'is type' is register, set in START and held until end (based on addr only valid during input)
   //  TODO make decoding type / comparing addrs into separate state with regs etc?
+
   // Signals and default values for storage types
-  //  REGISTERS
-  static uint1_t mm_type_is_regs_reg;
-  uint1_t mm_type_is_regs = mm_type_is_regs_reg;
-  uint1_t mm_regs_enabled; // Default no reg op
+  static mm_entry_type_t mm_type_reg;
+  mm_entry_type_t mm_type = mm_type_reg;
+  static uint32_t entry_index_reg;
+  uint32_t entry_index = entry_index_reg;
+  
+  // REGISTERS
+  uint1_t mm_regs_enabled;
   static uint32_t regs_rd_data_out_reg;
   uint32_t regs_rd_data_out = regs_rd_data_out_reg;
-  //  AXI RAMs // TODO MACROs to easily map multiple AXI buses? shared resource buses in general?
-  static uint1_t mmio_type_is_axi0_reg;
-  uint1_t mmio_type_is_axi0 = mmio_type_is_axi0_reg;
-  uint32_t axi0_addr = addr - MMIO_AXI0_ADDR; // Account for offset in memory
-  host_to_dev(axi_xil_mem, cpu) = axi_shared_bus_t_HOST_TO_DEV_NULL; // Default no mem op
+    // MM registers
+  mm_regs_t mm_regs = mm_regs_in; // input 'current' value for user memory mapped regs
+  // Device specfic use of those registers
+  #include "../../i2s/hardware/i2s_mm_regs.c"
+  #include "../../power/hardware/power_mm_regs.c"
+  #include "../../sccb/hardware/sccb_mm_regs.c"
+  #include "../../dvp/hardware/mm_regs.c"
+  #include "../../video/hardware/mm_regs.c"
+  #include "../../gpu/hardware/mm_regs.c"
+
+  // Shared AXI
+  // Should be compile time const to determine mm entry to axi dev mapping...
+  uint32_t axi_dev_to_entry_id[N_SHARED_AXI_DEV];
+  uint32_t axi_dev_id = 0;
+  for (uint32_t i = 0; i < N_MM_ENTRIES; i+=1)
+  {
+    if(MM_ENTRIES[i].dev_type==SHARED_AXI){
+      axi_dev_to_entry_id[axi_dev_id] = i;
+      axi_dev_id += 1;
+    }
+  }
+  // Assign user wires to axi dev id based on entry index
+  axi_shared_bus_t_dev_to_host_t axi_dev_to_hosts[N_SHARED_AXI_DEV];
+  axi_shared_bus_t_host_to_dev_t axi_host_to_devs[N_SHARED_AXI_DEV];
+  #pragma FEEDBACK axi_host_to_devs
+  for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+  {
+    // Device specific shared AXI bus connections // TODO make "device/mm_axi.c" to have user include instead?
+    MM_SHARED_AXI_TO_FROM_HOST(SHARED_AXI_DDR3_MM_ENTRY_INDEX, dev_to_host(axi_xil_mem, cpu), host_to_dev(axi_xil_mem, cpu))
+  }
+  // Default no mem op
+  for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+  {
+    axi_host_to_devs[axi_dev_id] = axi_shared_bus_t_HOST_TO_DEV_NULL;
+  }
   // AXI write addr + data setup
   axi_write_req_t axi_wr_req;
-  axi_wr_req.awaddr = axi0_addr;
+  axi_wr_req.awaddr = relative_addr;
   axi_wr_req.awlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
   axi_wr_req.awsize = 2; // 2^2=4 bytes per transfer
   axi_wr_req.awburst = BURST_FIXED; // Not a burst, single fixed address per transfer 
@@ -97,50 +129,50 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
   }
   // AXI read setup
   axi_read_req_t axi_rd_req;
-  axi_rd_req.araddr = axi0_addr;
+  axi_rd_req.araddr = relative_addr;
   axi_rd_req.arlen = 1-1; // size=1 minus 1: 1 transfer cycle (non-burst)
   axi_rd_req.arsize = 2; // 2^2=4 bytes per transfer
   axi_rd_req.arburst = BURST_FIXED; // Not a burst, single fixed address per transfer
-
-  // MM registers
-  mm_regs_t mm_regs = mm_regs_in; // input 'current' value for user memory mapped regs
-  // Device specfic use of those registers
-  #include "../../i2s/hardware/i2s_mm_regs.c"
-  #include "../../power/hardware/power_mm_regs.c"
-  #include "../../sccb/hardware/sccb_mm_regs.c"
-  #include "../../dvp/hardware/mm_regs.c"
-  #include "../../video/hardware/mm_regs.c"
-  #include "../../gpu/hardware/mm_regs.c"
 
   // Start MM operation
   if(is_START_state_reg){
     // Wait for valid input start signal 
     if(valid){
       // Write or read helper flags
-      word_wr_en = 0;
-      word_rd_en = 0;
-      uint32_t i;
-      for(i=0;i<4;i+=1){
+      uint1_t word_wr_en = 0;
+      uint1_t word_rd_en = 0;
+      for(uint32_t i=0;i<4;i+=1){
         word_wr_en |= wr_byte_ens[i];
         word_rd_en |= rd_byte_ens[i];
       }
-      // Starting regs operation?
+      // Starting what kind of operation?
+      mm_type = UNMAPPED;
+      entry_index = 0;
+      for (uint32_t i = 0; i < N_MM_ENTRIES; i+=1)
+      {
+        if(
+          (relative_addr >= MM_ENTRIES[i].start_addr) &
+          (relative_addr < MM_ENTRIES[i].end_addr)
+        ){
+          mm_type = MM_ENTRIES[i].dev_type;
+          entry_index = i;
+        }
+      }
       mm_regs_enabled = 1; // Dont need addr check, MM ENTRY includes
-      // Regs are contiguous so single check will work...
-      // 60MHz to check >=?
-      //mmio_type_is_axi0 = addr>=MMIO_AXI0_ADDR; // AXI0 assumed all upper
-      //mm_type_is_regs = ~mmio_type_is_axi0; // regs assumed all lower than AXI0
-      // 65+MHz for < ?
-      mm_type_is_regs = addr<MM_REGS_END_ADDR; // regs assumed all lower than AXI0
-      mmio_type_is_axi0 = ~mm_type_is_regs; // AXI0 assumed all upper
-      if(mm_type_is_regs){
+      if(mm_type==REGS){
         // Regs always ready now
         o.ready_for_inputs = 1;
-        // Not needed during input cycles? o.addr_is_mapped = 1;
-      }
-      if(mmio_type_is_axi0){ // TODO else if better?
+      }else if(mm_type==SHARED_AXI){
+        // Select one of the axi dev to host wires to read
+        axi_shared_bus_t_dev_to_host_t selected_dev_to_host;
+        for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+        {
+          if(axi_dev_to_entry_id[axi_dev_id]==entry_index){
+            selected_dev_to_host = axi_dev_to_hosts[axi_dev_id];
+          }
+        }
+        axi_shared_bus_t_host_to_dev_t demuxed_host_to_dev;
         // Start a write
-        // Not needed during input cycles? o.addr_is_mapped = 1;
         if(word_wr_en){
           // Invoke helper FSM
           axi_shared_bus_t_write_start_logic_outputs_t write_start =  
@@ -148,9 +180,9 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
               axi_wr_req,
               axi_wr_data, 
               1,
-              dev_to_host(axi_xil_mem, cpu).write
+              selected_dev_to_host.write
             ); 
-          host_to_dev(axi_xil_mem, cpu).write = write_start.to_dev;
+          demuxed_host_to_dev.write = write_start.to_dev;
           // Finally ready and done with inputs when start finished
           if(write_start.done){ 
             o.ready_for_inputs = 1;
@@ -163,12 +195,19 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
             axi_shared_bus_t_read_start_logic(
               axi_rd_req,
               1,
-              dev_to_host(axi_xil_mem, cpu).read.req_ready
+              selected_dev_to_host.read.req_ready
             ); 
-          host_to_dev(axi_xil_mem, cpu).read.req = read_start.req;
+          demuxed_host_to_dev.read.req = read_start.req;
           // Finally ready and done with inputs when start finished
           if(read_start.done){ 
             o.ready_for_inputs = 1;
+          }
+        }
+        // Select one of the axi host to devs wires to drive
+        for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+        {
+          if(axi_dev_to_entry_id[axi_dev_id]==entry_index){
+            axi_host_to_devs[axi_dev_id] = demuxed_host_to_dev;
           }
         }
       }
@@ -181,43 +220,43 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
 
   // Memory muxing/select logic for control and status registers
   if(mm_regs_enabled){
-    STRUCT_MM_ENTRY_NEW(MM_REGS_ADDR, mm_regs_t, mm_regs, mm_regs, addr, o.addr_is_mapped, regs_rd_data_out)
+    STRUCT_MM_ENTRY_NEW(MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr, mm_regs_t, mm_regs, mm_regs, relative_addr, o.addr_is_mapped, regs_rd_data_out)
   }
 
   // End MMIO operation
   if(~is_START_state_reg){
     o.addr_is_mapped = 1;
     // Ending regs operation
-    if(mm_type_is_regs_reg){
+    if(mm_type_reg==REGS){
       o.rd_data = regs_rd_data_out_reg;
       o.valid = 1;
-    }
-    // End AXI0 operation
-    #ifdef MMIO_AXI0_RAW_HAZZARD
-    // Hazzard doesnt wait for writes to finish. Ignores/drains responses
-    host_to_dev(axi_xil_mem, cpu).write.resp_ready = 1;
-    #endif
-    if(mmio_type_is_axi0_reg){ // TODO else if better?
-      #ifdef MMIO_AXI0_RAW_HAZZARD
-      if(word_wr_en){
-        // Hazzard dont wait for writes to finish (see ready=1 always above)
-        o.valid = 1;
-      }else{
-        // Regular read wait for valid response
-        host_to_dev(axi_xil_mem, cpu).read.data_ready = ready_for_outputs;
-        o.valid = dev_to_host(axi_xil_mem, cpu).read.data.valid;
+    }else if(mm_type_reg==SHARED_AXI){
+      // Select one of the axi dev to host wires to read
+      axi_shared_bus_t_dev_to_host_t selected_dev_to_host;
+      for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+      {
+        if(axi_dev_to_entry_id[axi_dev_id]==entry_index_reg){
+          selected_dev_to_host = axi_dev_to_hosts[axi_dev_id];
+        }
       }
-      #else // Normal wait for mem to properly finish both reads or writes
+      axi_shared_bus_t_host_to_dev_t demuxed_host_to_dev;
+      // Normal wait for mem to properly finish both reads or writes
       // Signal ready for both read and write responses
       // (only one in use)
-      host_to_dev(axi_xil_mem, cpu).read.data_ready = ready_for_outputs;
-      host_to_dev(axi_xil_mem, cpu).write.resp_ready = ready_for_outputs;
+      demuxed_host_to_dev.read.data_ready = ready_for_outputs;
+      demuxed_host_to_dev.write.resp_ready = ready_for_outputs;
       // Either write or read resp is valid done signal
-      o.valid = dev_to_host(axi_xil_mem, cpu).read.data.valid | 
-                dev_to_host(axi_xil_mem, cpu).write.resp.valid;
-      #endif
+      o.valid = selected_dev_to_host.read.data.valid | 
+                selected_dev_to_host.write.resp.valid;
       // Read data is 4 bytes into u32
-      o.rd_data = axi_read_to_data(dev_to_host(axi_xil_mem, cpu).read.data.burst.data_resp.user);
+      o.rd_data = axi_read_to_data(selected_dev_to_host.read.data.burst.data_resp.user);
+      // Select one of the axi host to devs wires to drive
+      for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)
+      {
+        if(axi_dev_to_entry_id[axi_dev_id]==entry_index_reg){
+          axi_host_to_devs[axi_dev_id] = demuxed_host_to_dev;
+        }
+      }
     }
     // Start over when done
     if(o.valid & ready_for_outputs){
@@ -227,9 +266,9 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
 
   // Other regs
   is_START_state_reg = is_START_state;
+  mm_type_reg = mm_type;
+  entry_index_reg = entry_index;
   regs_rd_data_out_reg = regs_rd_data_out;
-  mm_type_is_regs_reg = mm_type_is_regs;
-  mmio_type_is_axi0_reg = mmio_type_is_axi0;
 
   // output the 'next' value for user memory mapped regs
   o.mm_regs_out = mm_regs;

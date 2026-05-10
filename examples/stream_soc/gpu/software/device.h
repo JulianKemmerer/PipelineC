@@ -1,6 +1,6 @@
 #pragma once
 
-void drawRect(uint32_t start_x, uint32_t start_y, uint32_t end_x, uint32_t end_y, uint8_t color, volatile pixel_t* UNUSED_FB_TODO_REMOVE){
+void drawRect(uint32_t start_x, uint32_t start_y, uint32_t end_x, uint32_t end_y, uint8_t color){
   if(end_x>FRAME_WIDTH) end_x = FRAME_WIDTH;
   if(end_y>FRAME_HEIGHT) end_y = FRAME_HEIGHT;
   if(start_x==end_x) return; // Zero width

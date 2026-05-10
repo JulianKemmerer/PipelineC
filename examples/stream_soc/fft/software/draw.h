@@ -7,7 +7,7 @@
 // Real freq part of spectrum is NFFT/2
 // most of the time audio isnt in upper half, so /8 for looks
 #define N_DRAWN_BINS 213 // 213 ~= (NFFT/8) and is almost 640/3
-void draw_spectrum(int width, int height, fft_data_t* pwr_bins, volatile pixel_t* FB){
+void draw_spectrum(int width, int height, fft_data_t* pwr_bins){
   // Remember the power value from last time to make updates faster
   static int last_height[N_DRAWN_BINS] = {0};
   // How wide is each bin in pixels
@@ -56,13 +56,13 @@ void draw_spectrum(int width, int height, fft_data_t* pwr_bins, volatile pixel_t
       color = 0;
     }
     // Rect with proper y bounds
-    drawRect(x_start, y_start, x_end, y_end, color, FB);
+    drawRect(x_start, y_start, x_end, y_end, color);
     // Store power for next time
     last_height[b] = bin_height;
   }
 }
 // Waveform is n pixel wide rects to form line
-void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i2s_input_samples, int n_samples, volatile pixel_t* FB){
+void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i2s_input_samples, int n_samples){
   // line_width used in y height direction
   // How wide is each point forming line
   int point_width = width / n_samples;
@@ -102,9 +102,9 @@ void draw_waveform(int width, int height, int line_width, i2s_sample_in_mem_t* i
     if(y_val < 0) y_val = 0;
     //if(y_val > height) y_val = height; // have room dont need to clip on bottom
     // Erase old line portion to black
-    drawRect(x_start, last_y_value[i], x_end, last_y_value[i]+line_width, 0, FB);
+    drawRect(x_start, last_y_value[i], x_end, last_y_value[i]+line_width, 0);
     // Calc new line position and draw white
-    drawRect(x_start, y_val, x_end, y_val+line_width, 255, FB);
+    drawRect(x_start, y_val, x_end, y_val+line_width, 255);
     // Save y value for next time
     last_y_value[i] = y_val;
   }

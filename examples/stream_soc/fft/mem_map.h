@@ -1,6 +1,5 @@
 #pragma once
-
-#define NFFT 2048 // TODO move, not part of types?
+#define NFFT 2048
 
 // Select fft data type
 //#define FFT_TYPE_IS_FLOAT

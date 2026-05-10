@@ -17,7 +17,7 @@
 #define NFFT 2048
 #endif
 
-#include "fft_types.h"
+#include "../mem_map.h"
 
 #ifdef FFT_TYPE_IS_FLOAT
 // Complex exponential e ^ (2 * pi * i * x)
