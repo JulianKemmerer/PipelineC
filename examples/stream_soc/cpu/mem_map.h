@@ -10,21 +10,8 @@
 #include <stddef.h>
 #endif
 
-// For mm_handshake_read, etc
+// RISC-V memory mapping helpers
 #include "risc-v/mem_map.h" 
-
-// Types for device registers
-#include "../clock/mem_map.h"
-#include "../vga/mem_map.h"
-#include "../ddr/mem_map.h"
-#include "../shared_ddr/mem_map.h"
-#include "../frame_buffers/mem_map.h"
-#include "../i2s/mem_map.h"
-#include "../fft/mem_map.h"
-#include "../power/mem_map.h"
-#include "../sccb/mem_map.h"
-#include "../video/mem_map.h"
-#include "../gpu/mem_map.h"
 
 // Define bounds for IMEM, DMEM, and MMIO
 // Needs to match link.ld (TODO how to share variables?)
@@ -46,30 +33,6 @@ typedef enum mm_entry_type_t{
   SHARED_AXI
 }mm_entry_type_t;
 
-// Cant rely on struct packing - produces misaligned accesses? See Makefile notes 
-// So manually dont use fields smaller than 32b for now...
-
-typedef struct mm_regs_t{
-  // Device registers
-  #include "../clock/mm_regs.h"
-  #include "../led/mm_regs.h"
-  #include "../buttons/mm_regs.h"
-  #include "../switches/mm_regs.h"
-  #include "../i2s/i2s_mm_regs.h"
-  #include "../power/power_mm_regs.h"
-  #include "../sccb/sccb_mm_regs.h"
-  #include "../dvp/mm_regs.h"
-  #include "../video/mm_regs.h"
-  #include "../gpu/mm_regs.h"
-}mm_regs_t;
-// To-from bytes conversion func
-#ifdef __PIPELINEC__
-#include "mm_regs_t_bytes_t.h"
-#else
-// Try to catch user using small field sizes, but not guarenteed to catch...
-_Static_assert(sizeof(mm_regs_t) % 4 == 0, "mm_regs_t is not aligned to 4 bytes");
-#endif
-
 // The global constant memory map
 typedef struct mm_entry_t{
   uint32_t start_addr;
@@ -77,13 +40,15 @@ typedef struct mm_entry_t{
   mm_entry_type_t dev_type;
 }mm_entry_t;
 // Relative to MEM_MAP_BASE_ADDR
-#define N_MM_ENTRIES 2
+#define N_MM_ENTRIES 3
 #define SHARED_AXI_DDR3_MM_ENTRY_INDEX 0
 #define REGS_MM_ENTRY_INDEX            1
-#define N_SHARED_AXI_DEV 1
+#define BUTTONS_AXI_MM_ENTRY_INDEX     2
+#define N_SHARED_AXI_DEV 2
 static const mm_entry_t MM_ENTRIES[N_MM_ENTRIES] = {
   {.start_addr = 0x0,        .end_addr = 0x10000000, .dev_type = SHARED_AXI}, // 0
-  {.start_addr = 0x10000000, .end_addr = 0x10010000, .dev_type = REGS}        // 1
+  {.start_addr = 0x10000000, .end_addr = 0x10010000, .dev_type = REGS},       // 1
+  {.start_addr = 0x10010000, .end_addr = 0x10020000, .dev_type = SHARED_AXI}  // 2
 };
 #ifndef __PIPELINEC__
 /* TODO make static assert work
@@ -100,12 +65,51 @@ _Static_assert(
   "mm_regs_t region too small!"
 );*/
 #endif
-//static volatile uint8_t* AXI0 = (uint8_t*)(MEM_MAP_BASE_ADDR + MM_ENTRIES[SHARED_AXI_DDR3_MM_ENTRY_INDEX].start_addr);
-static volatile mm_regs_t* mm_regs = (mm_regs_t*)(MEM_MAP_BASE_ADDR + MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr);
+
+// Cant rely on struct packing - produces misaligned accesses? See Makefile notes 
+// So manually dont use fields smaller than 32b for now...
+
+// Types for device memory mappings
+#include "../clock/mem_map.h"
+#include "../vga/mem_map.h"
+#include "../ddr/mem_map.h"
+#include "../shared_ddr/mem_map.h"
+#include "../frame_buffers/mem_map.h"
+#include "../i2s/mem_map.h"
+#include "../fft/mem_map.h"
+#include "../power/mem_map.h"
+#include "../sccb/mem_map.h"
+#include "../video/mem_map.h"
+#include "../gpu/mem_map.h"
+
+// Memory mapped registers type
+typedef struct mm_regs_t{
+  // Device registers
+  #include "../clock/mm_regs.h"
+  #include "../led/mm_regs.h"
+  #include "../switches/mm_regs.h"
+  #include "../i2s/i2s_mm_regs.h"
+  #include "../power/power_mm_regs.h"
+  #include "../sccb/sccb_mm_regs.h"
+  #include "../dvp/mm_regs.h"
+  #include "../video/mm_regs.h"
+  #include "../gpu/mm_regs.h"
+}mm_regs_t;
+// To-from bytes conversion func
+#ifdef __PIPELINEC__
+#include "mm_regs_t_bytes_t.h"
+#else
+// Try to catch user using small field sizes, but not guarenteed to catch...
+_Static_assert(sizeof(mm_regs_t) % 4 == 0, "mm_regs_t is not aligned to 4 bytes");
+#endif
 
 // Device addresses
 
+// MM Regs
+static volatile mm_regs_t* mm_regs = (mm_regs_t*)(MEM_MAP_BASE_ADDR + MM_ENTRIES[REGS_MM_ENTRY_INDEX].start_addr);
+
 // Subdivide the shared axi DDR3 further for specific devices
+//static volatile uint8_t* AXI0 = (uint8_t*)(MEM_MAP_BASE_ADDR + MM_ENTRIES[SHARED_AXI_DDR3_MM_ENTRY_INDEX].start_addr);
 //#include "../shared_ddr/mm_addrs.h"
 #define MMIO_AXI0_ADDR MEM_MAP_BASE_ADDR
 #define MMIO_AXI0_SIZE 268435456 // XIL_MEM_SIZE 2^28 bytes , 256MB DDR3 = 28b address
@@ -131,3 +135,6 @@ _Static_assert(
   "Xil DDR3 mappings out of range!"
 );*/
 #endif
+
+// Buttons demo AXI-Lite device
+static volatile uint32_t* btn_mm_regs = (uint32_t*)(MEM_MAP_BASE_ADDR + MM_ENTRIES[BUTTONS_AXI_MM_ENTRY_INDEX].start_addr);

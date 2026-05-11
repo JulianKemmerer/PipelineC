@@ -1,1 +1,0 @@
-uint32_t buttons; // Only 4 bits used

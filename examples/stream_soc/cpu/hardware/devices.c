@@ -107,6 +107,7 @@ riscv_mem_map_mod_out_t(mm_regs_t) my_mem_map_module(
   {
     // Device specific shared AXI bus connections // TODO make "device/mm_axi.c" to have user include instead?
     MM_SHARED_AXI_TO_FROM_HOST(SHARED_AXI_DDR3_MM_ENTRY_INDEX, dev_to_host(axi_xil_mem, cpu), host_to_dev(axi_xil_mem, cpu))
+    MM_SHARED_AXI_TO_FROM_HOST(BUTTONS_AXI_MM_ENTRY_INDEX, buttons_axi_lite_to_host, buttons_axi_lite_from_host)
   }
   // Default no mem op
   for (uint32_t axi_dev_id = 0; axi_dev_id < N_SHARED_AXI_DEV; axi_dev_id+=1)

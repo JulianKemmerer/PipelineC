@@ -45,7 +45,6 @@ void cpu_top(uint1_t areset) // TODO replace reset with global top level wire po
   riscv_out_t out = fsm_riscv(reset, mm_regs);
   mm_regs = out.mm_regs_out;
   mm_regs.switches = sw;
-  mm_regs.buttons = btn;
   mm_regs.cpu_clock = cpu_clock;
 
   // Output LEDs for hardware debug

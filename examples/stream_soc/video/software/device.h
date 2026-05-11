@@ -192,8 +192,8 @@ void vid_fb_pos_adjust(uint32_t buttons){
 void vid_pipeline_ctrl(){
   // Detect rising edge of buttons // TODO debounce
   static uint32_t buttons_reg = 0;
-  uint32_t buttons_rising = mm_regs->buttons & ~buttons_reg;
-  buttons_reg = mm_regs->buttons;
+  uint32_t buttons_rising = *btn_mm_regs & ~buttons_reg;
+  buttons_reg = *btn_mm_regs;
 
   // Is one of the buttons being pressed?
   if(buttons_rising > 0){
