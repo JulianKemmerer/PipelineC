@@ -931,14 +931,16 @@ class FuncElaborator:
         """Write to a path: create mangled alias, record in env and metadata."""
         env_key = _ref_toks_to_env_key(ref_toks)
         base_var = ref_toks[0]
+        _, base_type = self.env[base_var]
+        lhs_type = _ref_toks_to_ctype(ref_toks, base_type, self.parser_state)
         alias_prefix = env_key.replace("[", "_").replace("]", "").replace(".", "_")
         alias = _alias(alias_prefix, self.src_file, node)
-        _add_wire(self.logic, alias, rhs_type)
+        _add_wire(self.logic, alias, lhs_type)
         _connect(self.logic, rhs_wire, alias)
         self.logic.wire_aliases_over_time.setdefault(base_var, []).append(alias)
         self.logic.alias_to_orig_var_name[alias] = base_var
         self.logic.alias_to_driven_ref_toks[alias] = ref_toks
-        self.env[env_key] = (alias, rhs_type)
+        self.env[env_key] = (alias, lhs_type)
 
     def _declare_var(self, var_name, typ, node):
         """First sight of a local variable: base wire driven by zeros, no alias."""
