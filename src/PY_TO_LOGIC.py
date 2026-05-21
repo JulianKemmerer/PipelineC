@@ -522,8 +522,9 @@ def _build_var_ref_rd_logic(
     else:
         # compound output: assemble scalar result wires into c_type via CONST_REF_RD.
         # current_wires[k] corresponds to output_leaf_paths[k] within c_type.
-        # Uses a synthetic dummy base "_var_ref_out" for the assembly ref_toks.
-        _DUMMY_OUT = "_var_ref_out"
+        # Uses a synthetic dummy base "var_ref_out" for the assembly ref_toks.
+        DUMMY_OUT = "var_ref_out"
+        logic.wire_to_c_type[DUMMY_OUT] = c_type
         input_ports = []
         covering_rts = []
         for k, (leaf_path, leaf_type, leaf_wire) in enumerate(
@@ -532,14 +533,14 @@ def _build_var_ref_rd_logic(
             input_ports.append((f"ref_toks_{k}", leaf_wire, leaf_type))
             covering_rts.append(leaf_path)  # e.g. ("_out", "dim", 0)
 
-        asm_func = _const_ref_rd_func_name(c_type, c_type, (_DUMMY_OUT,), covering_rts)
+        asm_func = _const_ref_rd_func_name(c_type, c_type, (DUMMY_OUT,), covering_rts)
         asm_inst = f"{asm_func}[assembly_{counter[0]}]"
         counter[0] += 1
         asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             logic, asm_inst, asm_func, input_ports, asm_output, c_type, None, None
         )
-        logic.ref_submodule_instance_to_ref_toks[asm_inst] = (_DUMMY_OUT,)
+        logic.ref_submodule_instance_to_ref_toks[asm_inst] = (DUMMY_OUT,)
         logic.ref_submodule_instance_to_input_port_driven_ref_toks[asm_inst] = (
             covering_rts
         )
