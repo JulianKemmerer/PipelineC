@@ -1,5 +1,7 @@
 import ast
 import hashlib
+import importlib.util
+import inspect
 import os
 
 import C_TO_LOGIC
@@ -28,6 +30,15 @@ BIN_OP_MAP = {
     ast.LtE: C_TO_LOGIC.BIN_OP_LTE_NAME,
     ast.Eq: C_TO_LOGIC.BIN_OP_EQ_NAME,
     ast.NotEq: C_TO_LOGIC.BIN_OP_NEQ_NAME,
+}
+
+# Augmented assignment operators for const_env updates (b += 1 etc.)
+AUG_OP_MAP = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div: lambda a, b: a // b,
+    ast.Mod: lambda a, b: a % b,
 }
 
 # ─────────────────────────────────────────────
@@ -168,6 +179,48 @@ def _largest_pow2_leq(n):
     """
     assert n >= 2
     return 1 << ((n - 1).bit_length() - 1)
+
+
+# ─────────────────────────────────────────────
+# Annotation evaluation
+# ─────────────────────────────────────────────
+
+
+def _annotation_to_ctype(ann, eval_ns=None):
+    """Convert Python AST annotation to C type string. Returns None if no annotation.
+    If eval_ns provided, evaluates the annotation expression against that namespace.
+    This handles: uint1_t[N], uint1_t[sum_widths(N,M)], point_t, etc.
+    """
+    if ann is None:
+        return None
+    # With eval_ns: evaluate the annotation expression as Python.
+    # _CType objects give their C type string via str(); class objects give __name__.
+    if eval_ns is not None:
+        try:
+            expr = ast.Expression(body=ann)
+            ast.fix_missing_locations(expr)
+            result = eval(compile(expr, "<annotation>", "eval"), eval_ns)
+            if isinstance(result, type):
+                return result.__name__
+            return str(result)
+        except Exception:
+            pass  # fall through to static handling
+    # Static fallback (no eval_ns or eval failed)
+    if isinstance(ann, ast.Name):
+        return ann.id
+    if isinstance(ann, ast.Attribute):
+        return ann.attr
+    if isinstance(ann, ast.Subscript):
+        base = _annotation_to_ctype(ann.value, eval_ns)
+        slc = ann.slice
+        if isinstance(slc, ast.Index):  # Python 3.8 compat
+            slc = slc.value
+        if isinstance(slc, ast.Constant):
+            return f"{base}[{slc.value}]"
+        raise NotImplementedError(
+            f"Non-constant subscript in annotation: {ast.dump(ann)}"
+        )
+    raise NotImplementedError(f"Unsupported type annotation: {ast.dump(ann)}")
 
 
 # ─────────────────────────────────────────────
@@ -434,22 +487,16 @@ def _build_var_ref_rd_logic(
     _add_wire(logic, C_TO_LOGIC.RETURN_WIRE_NAME, c_type)
 
     # ── output leaf info ──
-    # output_leaf_count is the number of scalar leaves in c_type.
-    # For scalar output: 1.  For compound output: number of leaves.
-    # This forms the innermost dimension of the intermediate.
     output_leaf_count, output_leaf_paths, output_leaf_types = _get_output_leaf_info(
         c_type, parser_state
     )
 
     # ── Step 1: extract concrete leaf wires via CONST_REF_RD ──
-    # All concrete leaves are in order: outermost var dim varies slowest,
-    # output type leaves vary fastest — matching interm[D0][D1]...[L] indexing.
     all_concrete_leaves = _get_var_ref_leaves(ref_toks, base_type, parser_state)
     counter = [0]
     leaf_wires = []
 
     for concrete_leaf in all_concrete_leaves:
-        # find which covering port covers this leaf (longest prefix match)
         covering_port = None
         for cov_ref_toks, (port_name, port_type) in covering_port_info.items():
             if (
@@ -462,11 +509,9 @@ def _build_var_ref_rd_logic(
             raise ElaborationError(f"No covering port for leaf {concrete_leaf}")
 
         cov_ref_toks, port_name, port_type = covering_port
-        # build ref_toks relative to the covering port (substitute port name as base)
         internal_ref_toks = (port_name,) + concrete_leaf[len(cov_ref_toks) :]
 
         if len(internal_ref_toks) == 1:
-            # covering port IS the leaf (e.g. scalar port exactly covers this element)
             leaf_wire = port_name
         else:
             leaf_wire = _emit_internal_const_ref_rd(
@@ -475,21 +520,6 @@ def _build_var_ref_rd_logic(
         leaf_wires.append(leaf_wire)
 
     # ── Step 2: mux tree per variable dimension ──
-    #
-    # Leaf ordering: position of leaf at (v0, v1, ..., vk, l):
-    #   v0*(stride0) + v1*(stride1) + ... + vk*(strideK) + l
-    # where stride_i = product(var_dim_sizes[i+1:]) * output_leaf_count
-    #
-    # For each dimension i with size Di:
-    #   stride    = product(later_var_dim_sizes) * output_leaf_count
-    #   n_groups  = stride
-    #   group g   = Di wires: current_wires[0*stride+g, 1*stride+g, ..., (Di-1)*stride+g]
-    #   leaf type = output_leaf_types[g % output_leaf_count]
-    #   result    = binary mux tree over those Di wires
-    #
-    # After processing dimension i: stride / Di wires remain.
-    # After all dimensions: output_leaf_count wires (one per output leaf position).
-
     var_dim_sizes = [d[0] for d in var_dim_ports]
     current_wires = leaf_wires
 
@@ -502,7 +532,6 @@ def _build_var_ref_rd_logic(
         n_groups = stride
         next_wires = []
         for group_idx in range(n_groups):
-            # leaf type for this group based on which output leaf slot it targets
             leaf_type_for_group = output_leaf_types[group_idx % output_leaf_count]
             group = [current_wires[k * stride + group_idx] for k in range(dim_size)]
             result = _build_binary_mux_tree(
@@ -517,12 +546,8 @@ def _build_var_ref_rd_logic(
 
     # ── Step 3: connect / assemble output ──
     if output_leaf_count == 1:
-        # scalar output: direct wire to return_output
         _connect(logic, current_wires[0], C_TO_LOGIC.RETURN_WIRE_NAME)
     else:
-        # compound output: assemble scalar result wires into c_type via CONST_REF_RD.
-        # current_wires[k] corresponds to output_leaf_paths[k] within c_type.
-        # Uses a synthetic dummy base "var_ref_out" for the assembly ref_toks.
         DUMMY_OUT = "var_ref_out"
         logic.wire_to_c_type[DUMMY_OUT] = c_type
         input_ports = []
@@ -531,7 +556,7 @@ def _build_var_ref_rd_logic(
             zip(output_leaf_paths, output_leaf_types, current_wires)
         ):
             input_ports.append((f"ref_toks_{k}", leaf_wire, leaf_type))
-            covering_rts.append(leaf_path)  # e.g. ("_out", "dim", 0)
+            covering_rts.append(leaf_path)
 
         asm_func = _const_ref_rd_func_name(c_type, c_type, (DUMMY_OUT,), covering_rts)
         asm_inst = f"{asm_func}[assembly_{counter[0]}]"
@@ -559,15 +584,37 @@ class ElaborationError(Exception):
 
 
 class FuncElaborator:
-    def __init__(self, func_def, parser_state, src_file):
+    def __init__(self, func_def, parser_state, src_file, module_globals=None):
         self.func_def = func_def
         self.func_name = func_def.name
         self.parser_state = parser_state
         self.src_file = src_file
+        # module_globals: live Python namespace from executing the design file.
+        # Provides N, M, sum_widths etc. for elaboration-time evaluation.
+        self.module_globals = module_globals or {}
         self.logic = C_TO_LOGIC.Logic()
         self.logic.func_name = self.func_name
-        # env: ref_toks env key string -> (wire, c_type)
+        # env: hardware wires — ref_toks env key string -> (wire_name, c_type_str)
         self.env = {}
+        # const_env: elaboration-time Python values — name -> plain Python value
+        # Untyped variables used as loop counters, index vars, etc. (never hardware wires)
+        self.const_env = {}
+
+    def _make_eval_ns(self):
+        """Merged namespace for eval(): module globals + current const_env."""
+        return {**self.module_globals, **self.const_env}
+
+    def _try_eval_const(self, node):
+        """Try to evaluate an AST expression as a plain Python elaboration-time value.
+        Returns the Python value if successful, None if it involves hardware wires
+        or fails for any reason.
+        """
+        try:
+            expr = ast.Expression(body=node)
+            ast.fix_missing_locations(expr)
+            return eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
+        except Exception:
+            return None
 
     def elaborate(self):
         self.logic.c_ast_node = pypeline_ast.Pypeline_ASTNode(
@@ -580,15 +627,17 @@ class FuncElaborator:
         return self.logic
 
     def _setup_inputs(self):
+        eval_ns = self._make_eval_ns()
         for arg in self.func_def.args.args:
             name = arg.arg
-            typ = _annotation_to_ctype(arg.annotation)
+            typ = _annotation_to_ctype(arg.annotation, eval_ns)
             self.logic.inputs.append(name)
             _add_wire(self.logic, name, typ)
             self.env[name] = (name, typ)
 
     def _setup_outputs(self):
-        ret_typ = _annotation_to_ctype(self.func_def.returns)
+        eval_ns = self._make_eval_ns()
+        ret_typ = _annotation_to_ctype(self.func_def.returns, eval_ns)
         self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_wire(self.logic, C_TO_LOGIC.RETURN_WIRE_NAME, ret_typ)
         self._return_type = ret_typ
@@ -602,11 +651,25 @@ class FuncElaborator:
             self._elab_ann_assign(stmt)
         elif isinstance(stmt, ast.Return):
             self._elab_return(stmt)
+        elif isinstance(stmt, ast.AugAssign):
+            self._elab_aug_assign(stmt)
+        elif isinstance(stmt, ast.For):
+            self._elab_for(stmt)
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 
     def _elab_assign(self, stmt):
         target = stmt.targets[0]
+        # For simple Name targets not already declared as hardware:
+        # try to evaluate RHS as a pure Python elaboration constant first.
+        if isinstance(target, ast.Name):
+            name = target.id
+            if name not in self.env:
+                const_val = self._try_eval_const(stmt.value)
+                if const_val is not None:
+                    self.const_env[name] = const_val
+                    return
+        # Hardware path
         rhs_wire, rhs_type = self._elab_expr(stmt.value)
         ref_toks = self._parse_ref_toks(target)
         base_var = ref_toks[0]
@@ -616,7 +679,7 @@ class FuncElaborator:
 
     def _elab_ann_assign(self, stmt):
         var_name = stmt.target.id
-        typ = _annotation_to_ctype(stmt.annotation)
+        typ = _annotation_to_ctype(stmt.annotation, self._make_eval_ns())
         self._declare_var(var_name, typ, stmt.target)
         if stmt.value is not None:
             rhs_wire, _ = self._elab_expr(stmt.value)
@@ -625,6 +688,57 @@ class FuncElaborator:
     def _elab_return(self, stmt):
         result_wire, _ = self._elab_expr(stmt.value)
         _connect(self.logic, result_wire, C_TO_LOGIC.RETURN_WIRE_NAME)
+
+    def _elab_aug_assign(self, stmt):
+        """b += 1  etc.
+        If target is in const_env: update the Python value directly.
+        Otherwise convert to hardware assign: b = b op rhs.
+        """
+        if not isinstance(stmt.target, ast.Name):
+            raise NotImplementedError(
+                f"AugAssign on non-Name targets not yet supported: {ast.dump(stmt)}"
+            )
+        name = stmt.target.id
+        if name in self.const_env:
+            rhs_val = self._try_eval_const(stmt.value)
+            if rhs_val is None:
+                raise ElaborationError(
+                    f"AugAssign on const_env var '{name}' with non-constant RHS"
+                )
+            op_fn = AUG_OP_MAP.get(type(stmt.op))
+            if op_fn is None:
+                raise NotImplementedError(
+                    f"AugAssign op not supported: {type(stmt.op)}"
+                )
+            self.const_env[name] = op_fn(self.const_env[name], rhs_val)
+        else:
+            # Hardware: synthesize as b = b op rhs
+            synth = ast.Assign(
+                targets=[stmt.target],
+                value=ast.BinOp(left=stmt.target, op=stmt.op, right=stmt.value),
+            )
+            ast.fix_missing_locations(synth)
+            self._elab_assign(synth)
+
+    def _elab_for(self, stmt):
+        """for i in range(...): ...
+        The iter must evaluate to a Python range (elaboration-time constant).
+        Loop variable stored in const_env at each iteration value.
+        """
+        iter_val = self._try_eval_const(stmt.iter)
+        if not isinstance(iter_val, range):
+            raise ElaborationError(
+                f"for loop iter must be a constant range(), got: {type(iter_val)} "
+                f"from {ast.dump(stmt.iter)}"
+            )
+        if not isinstance(stmt.target, ast.Name):
+            raise NotImplementedError("for loop target must be a simple name")
+        loop_var = stmt.target.id
+        for val in iter_val:
+            self.const_env[loop_var] = val
+            for s in stmt.body:
+                self._elab_stmt(s)
+        # leave loop_var at its last value (matches PipelineC behaviour)
 
     # ── expressions ──────────────────────────
 
@@ -648,10 +762,37 @@ class FuncElaborator:
 
     def _elab_name(self, expr):
         name = expr.id
-        wire, typ = self.env[name]
-        if _is_scalar(typ, self.parser_state):
-            return wire, typ
-        return self._read_ref((name,), typ, expr)
+        # 1. Hardware env
+        if name in self.env:
+            wire, typ = self.env[name]
+            if _is_scalar(typ, self.parser_state):
+                return wire, typ
+            return self._read_ref((name,), typ, expr)
+        # 2. Elaboration const_env — emit as CONST wire if used as hardware value
+        if name in self.const_env:
+            return self._elab_python_value(self.const_env[name], expr)
+        # 3. Module globals (N, M, etc.) — emit as CONST wire if used as hardware value
+        if name in self.module_globals:
+            val = self.module_globals[name]
+            if isinstance(val, (int, bool)):
+                return self._elab_python_value(val, expr)
+            raise ElaborationError(
+                f"Module global '{name}' ({type(val).__name__}) "
+                f"is not a hardware-usable value"
+            )
+        raise ElaborationError(f"Unknown name '{name}' in func '{self.func_name}'")
+
+    def _elab_python_value(self, val, ast_node):
+        """Emit a plain Python int/bool as a CONST wire in the hardware graph."""
+        if not isinstance(val, (int, bool)):
+            raise ElaborationError(
+                f"Cannot emit non-int Python value as hardware: {val!r}"
+            )
+        typ = _infer_const_ctype(val)
+        coord_str = _loc_str(self.src_file, ast_node)
+        const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{val}_{coord_str}"
+        _add_wire(self.logic, const_wire, typ)
+        return const_wire, typ
 
     def _elab_constant(self, expr):
         val = expr.value
@@ -762,7 +903,10 @@ class FuncElaborator:
     # ── compound type read / write ────────────
 
     def _parse_ref_toks(self, node):
-        """Parse AST node into ref_toks. Variable subscripts stored as AST expression tokens."""
+        """Parse AST node into ref_toks.
+        Constant subscript indices and const_env values -> int tokens.
+        Everything else -> AST node token (variable index -> VAR_REF path).
+        """
         if isinstance(node, ast.Name):
             return (node.id,)
         elif isinstance(node, ast.Attribute):
@@ -774,6 +918,10 @@ class FuncElaborator:
                 slc = slc.value
             if isinstance(slc, ast.Constant):
                 return parent + (slc.value,)
+            # Try to evaluate as elaboration-time constant (e.g. bits[b] where b in const_env)
+            const_val = self._try_eval_const(slc)
+            if const_val is not None and isinstance(const_val, int):
+                return parent + (const_val,)
             return parent + (slc,)  # variable index: store raw AST expression
         else:
             raise NotImplementedError(f"Cannot parse ref toks from: {ast.dump(node)}")
@@ -954,38 +1102,14 @@ class FuncElaborator:
 
 
 # ─────────────────────────────────────────────
-# Type annotation helper
-# ─────────────────────────────────────────────
-
-
-def _annotation_to_ctype(ann):
-    """Convert Python AST annotation to C type string. Returns None if no annotation."""
-    if ann is None:
-        return None
-    if isinstance(ann, ast.Name):
-        return ann.id
-    if isinstance(ann, ast.Attribute):
-        return ann.attr
-    if isinstance(ann, ast.Subscript):
-        base = _annotation_to_ctype(ann.value)
-        slc = ann.slice
-        if isinstance(slc, ast.Index):  # Python 3.8 compat
-            slc = slc.value
-        if isinstance(slc, ast.Constant):
-            return f"{base}[{slc.value}]"
-        raise NotImplementedError(
-            f"Non-constant subscript in annotation: {ast.dump(ann)}"
-        )
-    raise NotImplementedError(f"Unsupported type annotation: {ast.dump(ann)}")
-
-
-# ─────────────────────────────────────────────
 # Struct discovery
 # ─────────────────────────────────────────────
 
 
 def _discover_structs(tree, parser_state):
-    """Walk AST for NamedTuple subclasses, populate struct_to_field_type_dict."""
+    """Walk AST for NamedTuple subclasses, populate struct_to_field_type_dict.
+    Used as fallback when module execution is not available.
+    """
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
@@ -1002,6 +1126,29 @@ def _discover_structs(tree, parser_state):
                 fields[item.target.id] = _annotation_to_ctype(item.annotation)
         parser_state.struct_to_field_type_dict[node.name] = fields
         # print(f"  struct: {node.name} -> {fields}")
+
+
+def _discover_structs_from_module(module, parser_state):
+    """Inspect live module namespace for NamedTuple subclasses.
+    Handles structs produced by factory functions at module level —
+    not just static class definitions in the AST.
+    """
+    for name, obj in vars(module).items():
+        if name.startswith("_"):
+            continue
+        if not (
+            inspect.isclass(obj)
+            and issubclass(obj, tuple)
+            and hasattr(obj, "_fields")
+            and hasattr(obj, "__annotations__")
+        ):
+            continue
+        fields = {}
+        for field, annotation in obj.__annotations__.items():
+            # annotation may be a _CTypeMeta type or a plain string
+            fields[field] = str(annotation)
+        parser_state.struct_to_field_type_dict[name] = fields
+        # print(f"  struct: {name} -> {fields}")
 
 
 # ─────────────────────────────────────────────
@@ -1027,6 +1174,20 @@ def _walk_instances(prefix, logic, parser_state):
         _walk_instances(inst_key, inst_logic, parser_state)
 
 
+def _is_hardware_func(func_def):
+    """True if this function should be hardware-elaborated.
+    Pure Python elaboration-time helpers like sum_widths(n, m) have no type
+    annotations and should not be treated as hardware functions.
+    A function is hardware if it has a return annotation OR any typed argument.
+    """
+    if func_def.returns is not None:
+        return True
+    for arg in func_def.args.args:
+        if arg.annotation is not None:
+            return True
+    return False
+
+
 def _build_inst_lookup(parser_state):
     for main_name in parser_state.main_mhz:
         main_logic = parser_state.FuncLogicLookupTable[main_name]
@@ -1044,14 +1205,39 @@ def _build_inst_lookup(parser_state):
 
 def PARSE_FILE(py_file):
     print("PY_TO_LOGIC parsing:", py_file)
+
+    # ── Step 1: execute the design file as a Python module ──
+    # This runs all elaboration-time Python: type factory functions, constants,
+    # @MAIN registrations, struct definitions etc.
+    import pypeline
+
+    pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
+
+    spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module_globals = vars(module)
+    parser_state = C_TO_LOGIC.ParserState()
+
+    # ── Step 2: discover structs from live module namespace ──
+    # Handles both static class definitions and factory-generated types.
+    _discover_structs_from_module(module, parser_state)
+
+    # ── Step 3: collect MAINs from the pypeline registry ──
+    main_names = {f.__name__ for f in pypeline._main_registry}
+
+    # ── Step 4: AST parse for hardware elaboration ──
     with open(py_file, "r") as f:
         source = f.read()
     tree = ast.parse(source)
-    parser_state = C_TO_LOGIC.ParserState()
 
-    _discover_structs(tree, parser_state)
+    func_defs = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and _is_hardware_func(node)
+    ]
 
-    func_defs = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
     for node in func_defs:
         stub = C_TO_LOGIC.Logic()
         stub.func_name = node.name
@@ -1059,20 +1245,13 @@ def PARSE_FILE(py_file):
 
     for node in func_defs:
         print(f"  elaborating func: {node.name}")
-        elab = FuncElaborator(node, parser_state, py_file)
+        elab = FuncElaborator(node, parser_state, py_file, module_globals)
         logic = elab.elaborate()
         parser_state.FuncLogicLookupTable[node.name] = logic
-        if _has_main_decorator(node):
+        if node.name in main_names:
             parser_state.main_mhz[node.name] = None
             parser_state.main_syn_mhz[node.name] = None
             parser_state.main_clk_group[node.name] = None
 
     _build_inst_lookup(parser_state)
     return parser_state
-
-
-def _has_main_decorator(func_def):
-    for dec in func_def.decorator_list:
-        if isinstance(dec, ast.Name) and dec.id == "MAIN":
-            return True
-    return False
