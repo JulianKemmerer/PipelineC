@@ -1001,7 +1001,7 @@ def _discover_structs(tree, parser_state):
             if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
                 fields[item.target.id] = _annotation_to_ctype(item.annotation)
         parser_state.struct_to_field_type_dict[node.name] = fields
-        print(f"  struct: {node.name} -> {fields}")
+        # print(f"  struct: {node.name} -> {fields}")
 
 
 # ─────────────────────────────────────────────
@@ -1023,7 +1023,7 @@ def _walk_instances(prefix, logic, parser_state):
         parser_state.FuncToInstances.setdefault(inst_logic.func_name, set()).add(
             inst_key
         )
-        print(f"  inst: {inst_key} -> {inst_logic.func_name}")
+        # print(f"  inst: {inst_key} -> {inst_logic.func_name}")
         _walk_instances(inst_key, inst_logic, parser_state)
 
 
