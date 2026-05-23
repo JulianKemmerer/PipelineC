@@ -655,6 +655,8 @@ class FuncElaborator:
             self._elab_aug_assign(stmt)
         elif isinstance(stmt, ast.For):
             self._elab_for(stmt)
+        elif isinstance(stmt, ast.If):
+            self._elab_if(stmt)
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 
@@ -721,14 +723,14 @@ class FuncElaborator:
             self._elab_assign(synth)
 
     def _elab_for(self, stmt):
-        """for i in range(...): ...
-        The iter must evaluate to a Python range (elaboration-time constant).
+        """for i in range(...): ...  or  for f in some_tuple: ...
+        The iter must evaluate to a constant Python iterable at elaboration time.
         Loop variable stored in const_env at each iteration value.
         """
         iter_val = self._try_eval_const(stmt.iter)
-        if not isinstance(iter_val, range):
+        if not isinstance(iter_val, (range, tuple, list)):
             raise ElaborationError(
-                f"for loop iter must be a constant range(), got: {type(iter_val)} "
+                f"for loop iter must be a constant range/tuple/list, got: {type(iter_val)} "
                 f"from {ast.dump(stmt.iter)}"
             )
         if not isinstance(stmt.target, ast.Name):
@@ -739,6 +741,24 @@ class FuncElaborator:
             for s in stmt.body:
                 self._elab_stmt(s)
         # leave loop_var at its last value (matches PipelineC behaviour)
+
+    def _elab_if(self, stmt):
+        """if condition: ... else: ...
+        Compile-time constant condition: branch elimination.
+        Runtime hardware condition: TODO mux generation (not yet supported).
+        """
+        cond_val = self._try_eval_const(stmt.test)
+        if cond_val is not None:
+            # Elaboration-time branch elimination
+            branch = stmt.body if cond_val else stmt.orelse
+            for s in branch:
+                self._elab_stmt(s)
+            return
+        # Runtime condition — mux generation not yet implemented
+        raise NotImplementedError(
+            f"Runtime if conditions (hardware mux) not yet supported. "
+            f"Elaborate-time evaluation failed for: {ast.dump(stmt.test)}"
+        )
 
     # ── expressions ──────────────────────────
 
@@ -880,7 +900,13 @@ class FuncElaborator:
         callee_name = expr.func.id
         callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
         if callee_def is None:
-            raise NotImplementedError(f"Call to unknown function '{callee_name}'")
+            # Not found in elaborated functions — check if it's a live callable
+            # in module_globals (e.g. a closure returned by a factory function)
+            live_func = self.module_globals.get(callee_name)
+            if live_func is not None and callable(live_func):
+                callee_def = self._elaborate_live_func(callee_name, live_func)
+            else:
+                raise NotImplementedError(f"Call to unknown function '{callee_name}'")
         inst = _inst_name(callee_name, self.src_file, expr)
         ret_typ = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -900,6 +926,52 @@ class FuncElaborator:
         )
         return port_return, ret_typ
 
+    def _elaborate_live_func(self, module_level_name, func):
+        """Elaborate a live Python callable from module_globals.
+        Handles closures returned by factory functions — extracts closure variables
+        and merges them into the elaboration namespace so annotations like
+        uint1_t[LO_SIZE] resolve correctly.
+        Stores the result under module_level_name in FuncLogicLookupTable.
+        """
+        import inspect
+        import textwrap
+
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+
+        func_nodes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        if not func_nodes:
+            raise ElaborationError(
+                f"Could not find FunctionDef in source of '{module_level_name}'"
+            )
+        func_def = func_nodes[0]
+
+        # Extract closure variables (e.g. LO_SIZE=3, HI_SIZE=4, OUT_SIZE=7)
+        closure_ns = {}
+        if func.__code__.co_freevars and func.__closure__:
+            for var, cell in zip(func.__code__.co_freevars, func.__closure__):
+                try:
+                    closure_ns[var] = cell.cell_contents
+                except ValueError:
+                    pass
+
+        merged_globals = {**self.module_globals, **closure_ns}
+
+        # Register a stub first so recursive calls resolve
+        stub = C_TO_LOGIC.Logic()
+        stub.func_name = module_level_name
+        self.parser_state.FuncLogicLookupTable[module_level_name] = stub
+
+        # Elaborate with merged namespace
+        elab = FuncElaborator(
+            func_def, self.parser_state, self.src_file, merged_globals
+        )
+        logic = elab.elaborate()
+        # Use the module-level alias as func_name so LogicInstLookupTable is consistent
+        logic.func_name = module_level_name
+        self.parser_state.FuncLogicLookupTable[module_level_name] = logic
+        return logic
+
     # ── compound type read / write ────────────
 
     def _parse_ref_toks(self, node):
@@ -918,9 +990,10 @@ class FuncElaborator:
                 slc = slc.value
             if isinstance(slc, ast.Constant):
                 return parent + (slc.value,)
-            # Try to evaluate as elaboration-time constant (e.g. bits[b] where b in const_env)
+            # Try to evaluate as elaboration-time constant (e.g. bits[b] where b in const_env,
+            # or rv[f] where f is a string field name from _fields iteration)
             const_val = self._try_eval_const(slc)
-            if const_val is not None and isinstance(const_val, int):
+            if const_val is not None and isinstance(const_val, (int, str)):
                 return parent + (const_val,)
             return parent + (slc,)  # variable index: store raw AST expression
         else:
@@ -1232,9 +1305,12 @@ def PARSE_FILE(py_file):
         source = f.read()
     tree = ast.parse(source)
 
+    # Only collect top-level function definitions — not nested functions inside
+    # factory closures like make_concat. ast.walk descends into everything so
+    # we instead look only at direct children of the module body.
     func_defs = [
         node
-        for node in ast.walk(tree)
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and _is_hardware_func(node)
     ]
 

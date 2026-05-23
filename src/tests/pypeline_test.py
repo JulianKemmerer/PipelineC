@@ -1,75 +1,72 @@
-"""
-from pypeline import MAIN, uint32_t, uint1_t, float32_t
 from typing import NamedTuple
+from pypeline import MAIN, struct, uint1_t, uint32_t
 
-
-# ── elaboration-time type factory ──────────────────────────────
 
 def make_point_t(dim_type, dim_size, style="array"):
     if style == "array":
+
+        @struct
         class point_t(NamedTuple):
             dim: dim_type[dim_size]
+
+        point_t.style = "array"
+        point_t.dim_size = dim_size
+        point_t.dim_type = dim_type
         return point_t
     elif style == "fields":
-        field_names = [f"v{k}" for k in range(dim_size)]
-        return NamedTuple("point_t", [(name, dim_type) for name in field_names])
+        ...
 
-
-# ── concrete type produced at elaboration time ──────────────────
 
 point_t = make_point_t(uint32_t, 2, style="array")
-# point_t is now a real NamedTuple class with field: dim: uint32_t[2]
 
-
-# ── hardware functions ──────────────────────────────────────────
 
 def types_test_foo(point: point_t) -> point_t:
     rv: point_t
     if point_t.style == "array":
-        # Do something with dim field
-        for i in range(0, point_t.dim_size):
+        for i in range(point_t.dim_size):
             rv.dim[i] = point.dim[i]
-    else: # point_t.style == "fields"
-        # Do something with individual fields
-        # Loop over all fields in the name tuple
-        # (psuedo code)
-        for f in TODO:
-          rv[f] = point[f]
-
+    else:
+        for f in point_t._fields:
+            rv[f] = point[f]
     return rv
 
 
 @MAIN
-def types_test_main(point: point_t) -> point_t:#
+def types_test_main(point: point_t) -> point_t:
     return types_test_foo(point)
-"""
-
-# TODO NEED TO TEST calling concat from a MAIN with types inferred from MAIN fixed types
-
-from typing import NamedTuple
-
-from pypeline import MAIN, struct, uint1_t, uint32_t
 
 
 def sum_widths(n, m):
     return n + m
 
 
+def make_concat(LO_SIZE, HI_SIZE):
+    OUT_SIZE = sum_widths(LO_SIZE, HI_SIZE)  # arbitrary Python here
+
+    def concat(
+        bits_lo: uint1_t[LO_SIZE], bits_hi: uint1_t[HI_SIZE]
+    ) -> uint1_t[OUT_SIZE]:
+        bits: uint1_t[OUT_SIZE]
+        b = 0
+        for i in range(LO_SIZE):
+            bits[b] = bits_lo[i]
+            b = b + 1
+        for i in range(HI_SIZE):
+            bits[b] = bits_hi[i]
+            b = b + 1
+        return bits
+
+    return concat
+
+
 N = 3
 M = 4
+concat_N_M = make_concat(N, M)
 
 
 @MAIN
 def concat_main(bits_lo: uint1_t[N], bits_hi: uint1_t[M]) -> uint1_t[sum_widths(N, M)]:
-    bits: uint1_t[sum_widths(N, M)]
-    b = 0
-    for i in range(0, N):
-        bits[b] = bits_lo[i]
-        b = b + 1
-    for i in range(0, M):
-        bits[b] = bits_hi[i]
-        b = b + 1
-    return bits
+    return concat_N_M(bits_lo, bits_hi)
 
 
 @struct
@@ -114,13 +111,13 @@ def var2d_rd_main(
 
 
 @struct
-class point_t(NamedTuple):
+class point_xy_t(NamedTuple):
     x: uint32_t
     y: uint32_t
 
 
 @MAIN
-def main_const_ref_rd(my_points: point_t[10]) -> point_t[10]:
+def main_const_ref_rd(my_points: point_xy_t[10]) -> point_xy_t[10]:
     p0 = my_points[0]  # CONST_REF_RD(my_points) -> p0_alias
     # [0] never written, input wire fallback, need to extract [0] from full array
 
