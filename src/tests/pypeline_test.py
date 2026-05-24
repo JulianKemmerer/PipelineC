@@ -14,7 +14,7 @@ def make_point_t(dim_type, dim_size, style="array"):
         point_t.dim_type = dim_type
         return point_t
     elif style == "fields":
-        ...
+        pass  # TODO
 
 
 point_t = make_point_t(uint32_t, 2, style="array")
@@ -72,6 +72,46 @@ def concat_main(bits_lo: uint1_t[N], bits_hi: uint1_t[M]) -> uint1_t[sum_widths(
 @struct
 class point2d_t(NamedTuple):
     dim: uint32_t[2]
+
+
+@MAIN
+def var1d_struct_wr_main(
+    points: point2d_t[3], new_point: point2d_t, i: uint32_t
+) -> point2d_t[3]:
+    points[i] = new_point
+    return points
+
+
+@MAIN
+def var2d_wr_main(
+    points: point2d_t[3], test_u32: uint32_t, i: uint32_t, j: uint32_t
+) -> point2d_t[3]:
+    points[i].dim[j] = test_u32
+    return points
+
+
+@MAIN
+def var1d_array_wr_main(
+    points: point2d_t[3], new_dim: uint32_t[2], i: uint32_t
+) -> point2d_t[3]:
+    points[i].dim = new_dim
+    return points
+
+
+@MAIN
+def var1d_wr_main1(
+    points: point2d_t[3], test_u32: uint32_t, j: uint32_t
+) -> point2d_t[3]:
+    points[0].dim[j] = test_u32
+    return points
+
+
+@MAIN
+def var1d_wr_main2(
+    points: point2d_t[3], test_u32: uint32_t, i: uint32_t
+) -> point2d_t[3]:
+    points[i].dim[1] = test_u32
+    return points
 
 
 @MAIN
