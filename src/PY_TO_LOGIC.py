@@ -926,6 +926,102 @@ def _build_var_ref_assign_logic(
     return logic
 
 
+def _reduce_driven_ref_toks(driven, env, parser_state):
+    """Reduce a dict of key->(ref_toks, mux_type) to the minimal covering set.
+
+    Two passes, repeated until stable:
+      Pass 1 — Completeness: if ALL children of a concrete parent path are present,
+               replace them with the parent.
+               e.g. ("points",0), ("points",1), ("points",2) → ("points",) for size-3 array.
+               e.g. ("rv","x"), ("rv","y") → ("rv",) when rv is a 2-field struct.
+               Only applied when the parent path has no variable indices.
+               Iterated bottom-up until no further reductions are possible.
+
+      Pass 2 — Prefix coverage: remove any ref_toks A that is covered by a more
+               general ref_toks B (B is a shorter prefix of A, or same length with
+               B having wildcards where A has concrete values).
+               e.g. ("points", i_ast) covers ("points", 0, "dim", 1) → remove latter.
+
+    env: FuncElaborator.env (needed to resolve base variable types)
+    parser_state: needed for struct field and array dim lookups.
+    """
+    current = dict(driven)
+
+    # ── Pass 1: completeness reduction (bottom-up, iterate until stable) ──
+    changed = True
+    while changed:
+        changed = False
+        # Group entries by their immediate parent ref_toks (prefix without last token)
+        # Key: alias_prefix of parent ref_toks; Value: list of (key, ref_toks, mux_type)
+        by_parent: dict = {}
+        for key, (ref_toks, mux_type) in current.items():
+            if len(ref_toks) <= 1:
+                continue  # base variable itself — no parent to merge into
+            parent_ref_toks = ref_toks[:-1]
+            # Only handle concrete parent paths for now
+            # (variable-parent completeness reduction can be added later)
+            if _has_variable_index(parent_ref_toks):
+                continue
+            parent_key = _ref_toks_to_alias_prefix(parent_ref_toks)
+            by_parent.setdefault(parent_key, []).append((key, ref_toks, mux_type))
+
+        for parent_key, children in by_parent.items():
+            if not children:
+                continue
+            parent_ref_toks = children[0][1][:-1]
+            base_var = parent_ref_toks[0]
+            base_entry = env.get(base_var)
+            if base_entry is None:
+                continue
+            _, base_type = base_entry
+            parent_type = _ref_toks_to_ctype(parent_ref_toks, base_type, parser_state)
+
+            # Determine the expected set of last-token children
+            if _is_array(parent_type):
+                dim = _array_first_dim(parent_type)
+                expected_last = set(range(dim))
+            elif _is_struct(parent_type, parser_state):
+                fields = parser_state.struct_to_field_type_dict[parent_type]
+                expected_last = set(fields.keys())
+            else:
+                continue  # scalar parent — no children possible
+
+            # Collect last tokens actually present (concrete only)
+            present_last = set()
+            for _, ref_toks, _ in children:
+                last = ref_toks[-1]
+                if not _is_var_tok(last):
+                    present_last.add(last)
+
+            if present_last >= expected_last:
+                # All children accounted for — replace with parent
+                for child_key, _, _ in children:
+                    del current[child_key]
+                parent_mux_type = parent_type
+                current[parent_key] = (parent_ref_toks, parent_mux_type)
+                changed = True
+                break  # restart outer while loop with updated current
+
+    # ── Pass 2: prefix coverage reduction ──
+    # Remove ref_toks A if another ref_toks B is a strictly more general prefix of A.
+    keys = list(current.keys())
+    to_remove = set()
+    for i, ki in enumerate(keys):
+        rti, _ = current[ki]
+        for j, kj in enumerate(keys):
+            if i == j:
+                continue
+            rtj, _ = current[kj]
+            if _var_ref_toks_covers(rtj, rti):
+                rtj_more_general = len(rtj) < len(rti) or any(
+                    _is_var_tok(bv) and not _is_var_tok(av) for bv, av in zip(rtj, rti)
+                )
+                if rtj_more_general:
+                    to_remove.add(ki)
+                    break
+    return {k: v for k, v in current.items() if k not in to_remove}
+
+
 class ElaborationError(Exception):
     pass
 
@@ -1095,21 +1191,222 @@ class FuncElaborator:
 
     def _elab_if(self, stmt):
         """if condition: ... else: ...
-        Compile-time constant condition: branch elimination.
-        Runtime hardware condition: TODO mux generation (not yet supported).
+
+        Compile-time constant condition: branch elimination (existing).
+        Runtime hardware condition: snapshot/restore env + alias chains,
+        elaborate both branches, then emit one MUX per driven ref_toks pattern.
+
+        Key design:
+          - Both branches elaborate into the SAME self.logic (wires/submodules accumulate).
+            Only self.env and self.logic.wire_aliases_over_time are snapshot/restored.
+          - After both branches, for each unique driven (ref_toks, mux_type):
+              iftrue_wire  = read that coverage from env_true  / aliases_true
+              iffalse_wire = read that coverage from env_false / aliases_false
+              MUX(cond, iftrue, iffalse) → new alias inheriting the same ref_toks
+          - For variable ref_toks (e.g. from a VAR_REF_ASSIGN inside the if), the
+            coverage read enumerates all concrete positions and assembles them into
+            mux_type via CONST_REF_RD assembly (_assemble_var_ref_coverage).
         """
+        # ── Compile-time constant: branch elimination ──
         cond_val = self._try_eval_const(stmt.test)
         if cond_val is not None:
-            # Elaboration-time branch elimination
             branch = stmt.body if cond_val else stmt.orelse
             for s in branch:
                 self._elab_stmt(s)
             return
-        # Runtime condition — mux generation not yet implemented
-        raise NotImplementedError(
-            f"Runtime if conditions (hardware mux) not yet supported. "
-            f"Elaborate-time evaluation failed for: {ast.dump(stmt.test)}"
+
+        # ── Runtime condition ──
+        cond_wire, _ = self._elab_expr(stmt.test)
+
+        # Snapshot pre-if state (env and alias chains only; wires/instances accumulate)
+        env_snap = dict(self.env)
+        aliases_snap = {
+            k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+        }
+
+        # ── True branch ──
+        for s in stmt.body:
+            self._elab_stmt(s)
+        env_true = dict(self.env)
+        aliases_true = {
+            k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+        }
+
+        # ── Restore snapshot, then elaborate false branch ──
+        self.env = dict(env_snap)
+        self.logic.wire_aliases_over_time = {
+            k: list(v) for k, v in aliases_snap.items()
+        }
+        for s in stmt.orelse:
+            self._elab_stmt(s)
+        env_false = dict(self.env)
+        aliases_false = {
+            k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+        }
+
+        # ── Restore snapshot again (MUX outputs will extend from here) ──
+        self.env = dict(env_snap)
+        self.logic.wire_aliases_over_time = {
+            k: list(v) for k, v in aliases_snap.items()
+        }
+
+        # ── Collect driven ref_toks patterns from both branches ──
+        # Key: alias_prefix string (encodes ref_toks shape, VAR positions as "VAR")
+        # Value: (ref_toks, mux_type)
+        driven: dict = {}
+
+        def _collect_new(aliases_after, aliases_before):
+            for base_var, after_list in aliases_after.items():
+                # Skip variables first declared inside this if (not in pre-if env)
+                if base_var not in env_snap:
+                    continue
+                before_list = aliases_before.get(base_var, [])
+                for alias in after_list[len(before_list) :]:
+                    ref_toks = self.logic.alias_to_driven_ref_toks.get(alias)
+                    mux_type = self.logic.wire_to_c_type.get(alias)
+                    if ref_toks is None or mux_type is None:
+                        continue
+                    key = _ref_toks_to_alias_prefix(ref_toks)
+                    if key not in driven:
+                        driven[key] = (ref_toks, mux_type)
+
+        _collect_new(aliases_true, aliases_snap)
+        _collect_new(aliases_false, aliases_snap)
+
+        # ── Reduce to minimal covering set ──
+        # Pass 1: if all children of a parent are driven, replace with parent.
+        # Pass 2: remove ref_toks covered by a more general prefix in the set.
+        driven = _reduce_driven_ref_toks(driven, env_snap, self.parser_state)
+
+        # ── Emit one MUX per driven pattern ──
+        for key, (ref_toks, mux_type) in driven.items():
+            base_var = ref_toks[0]
+
+            # Produce iftrue wire from the true-branch state
+            true_wire = self._read_branch_coverage(
+                ref_toks, mux_type, env_true, aliases_true, stmt, "true"
+            )
+            # Produce iffalse wire from the false-branch state (= pre-if if no else)
+            false_wire = self._read_branch_coverage(
+                ref_toks, mux_type, env_false, aliases_false, stmt, "false"
+            )
+
+            # Emit MUX(cond, iftrue, iffalse)
+            mux_suffix = mux_type.replace("[", "_").replace("]", "")
+            mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+            # Include ref_toks key in tag so multiple MUXes from one if don't collide
+            mux_tag = f"{mux_func}_if_{key}"
+            mux_inst = _inst_name(mux_tag, self.src_file, stmt)
+            mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                mux_inst,
+                mux_func,
+                [
+                    ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                    ("iftrue", true_wire, mux_type),
+                    ("iffalse", false_wire, mux_type),
+                ],
+                mux_output,
+                mux_type,
+                stmt,
+                self.src_file,
+            )
+
+            # Record MUX output as a new alias, inheriting the driven ref_toks
+            mux_alias = _alias(f"{key}_if_mux", self.src_file, stmt)
+            _add_wire(self.logic, mux_alias, mux_type)
+            _connect(self.logic, mux_output, mux_alias)
+            self.logic.wire_aliases_over_time.setdefault(base_var, []).append(mux_alias)
+            self.logic.alias_to_orig_var_name[mux_alias] = base_var
+            self.logic.alias_to_driven_ref_toks[mux_alias] = ref_toks
+
+            # For concrete ref_toks, update env so future reads use the MUX output
+            if not _has_variable_index(ref_toks):
+                env_key = _ref_toks_to_env_key(ref_toks)
+                self.env[env_key] = (mux_alias, mux_type)
+
+    def _read_branch_coverage(
+        self, ref_toks, mux_type, env_branch, aliases_branch, ast_node, branch_tag
+    ):
+        """Read a wire of mux_type representing ref_toks coverage from a branch state.
+        Temporarily swaps env/aliases to the branch snapshot, reads, then restores.
+        branch_tag ("true"/"false") disambiguates assembly instance names.
+        """
+        saved_env = self.env
+        saved_aliases = self.logic.wire_aliases_over_time
+        self.env = env_branch
+        self.logic.wire_aliases_over_time = aliases_branch
+        try:
+            if not _has_variable_index(ref_toks):
+                wire, _ = self._read_ref(ref_toks, mux_type, ast_node)
+            else:
+                wire = self._assemble_var_ref_coverage(
+                    ref_toks, mux_type, ast_node, branch_tag
+                )
+        finally:
+            self.env = saved_env
+            self.logic.wire_aliases_over_time = saved_aliases
+        return wire
+
+    def _assemble_var_ref_coverage(self, ref_toks, mux_type, ast_node, branch_tag=""):
+        """Enumerate all concrete elem positions of variable ref_toks and assemble
+        into mux_type via CONST_REF_RD assembly.
+        Used to produce iftrue/iffalse MUX inputs for variable-indexed if-assignments.
+        The branch_tag disambiguates the assembly instance name between true/false reads.
+        """
+        base_var = ref_toks[0]
+        _, base_type = self.env[base_var]
+        all_positions, elem_c_type = _get_var_ref_elem_positions(
+            ref_toks, base_type, self.parser_state
         )
+
+        # Read each concrete position from current (branch) env/aliases
+        pos_wires = []
+        for pos in all_positions:
+            wire, _ = self._read_ref(pos, elem_c_type, ast_node)
+            pos_wires.append(wire)
+
+        if len(pos_wires) == 1:
+            return pos_wires[0]
+
+        # Assemble N elem wires into mux_type via CONST_REF_RD assembly.
+        # DUMMY_OUT is a pseudo-variable used only for the ref_toks structure
+        # passed to the backend. It must be in self.logic.wire_to_c_type so
+        # BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC can look up the base type.
+        # We add it to wire_to_c_type only (not wires) to avoid a spurious
+        # VHDL signal declaration. Name is unique per mux_type; no underscores
+        # at boundaries (VHDL identifiers cannot start/end with underscores).
+        mux_type_tag = mux_type.replace("[", "x").replace("]", "")
+        DUMMY_OUT = f"cov_assemble_{mux_type_tag}"
+        self.logic.wire_to_c_type[DUMMY_OUT] = mux_type
+
+        output_elem_paths = _get_elem_positions((DUMMY_OUT,), mux_type, elem_c_type)
+        input_ports = []
+        for k, (elem_path, elem_wire) in enumerate(zip(output_elem_paths, pos_wires)):
+            input_ports.append((f"ref_toks_{k}", elem_wire, elem_c_type))
+        ref_prefix = _ref_toks_to_alias_prefix(ref_toks)
+        asm_func = _const_ref_rd_func_name(
+            mux_type, mux_type, (DUMMY_OUT,), output_elem_paths
+        )
+        asm_tag = f"{asm_func}_if_cov_{ref_prefix}_{branch_tag}"
+        asm_inst = _inst_name(asm_tag, self.src_file, ast_node)
+        asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _add_submodule_instance(
+            self.logic,
+            asm_inst,
+            asm_func,
+            input_ports,
+            asm_output,
+            mux_type,
+            ast_node,
+            self.src_file,
+        )
+        self.logic.ref_submodule_instance_to_ref_toks[asm_inst] = (DUMMY_OUT,)
+        self.logic.ref_submodule_instance_to_input_port_driven_ref_toks[asm_inst] = (
+            output_elem_paths
+        )
+        return asm_output
 
     # ── expressions ──────────────────────────
 
@@ -1350,6 +1647,47 @@ class FuncElaborator:
         else:
             raise NotImplementedError(f"Cannot parse ref toks from: {ast.dump(node)}")
 
+    def _temporal_sort_covering_wires(self, covering_wires, base_var):
+        """Sort covering_wires into temporal order: oldest assignment first.
+
+        Algorithm (mirrors the user-facing description):
+          1. Walk wire_aliases_over_time[base_var] BACKWARDS (newest first),
+             collecting covering_wires entries as each alias's ref_toks is matched.
+          2. Any entries not matched by any alias (= input wire or early const) are
+             appended last (they will be FIRST after reversal = oldest).
+          3. Reverse the collected list → oldest first.
+
+        Both identity (is) and equality (==) are tried when matching, so the method
+        handles both variable aliases (same Python object) and concrete aliases
+        (new tuple created during env prefix search but same content).
+        """
+        aliases = self.logic.wire_aliases_over_time.get(base_var, [])
+
+        # Walk aliases newest-to-oldest, pull matching entries out of `remaining`
+        remaining = dict(covering_wires)
+        collected_newest_first = []
+
+        for alias in reversed(aliases):
+            alias_rt = self.logic.alias_to_driven_ref_toks.get(alias)
+            if alias_rt is None:
+                continue
+            # Find the covering_wires key that corresponds to this alias's ref_toks
+            found_key = None
+            for cov_rt in remaining:
+                if cov_rt is alias_rt or cov_rt == alias_rt:
+                    found_key = cov_rt
+                    break
+            if found_key is not None:
+                collected_newest_first.append((found_key, remaining.pop(found_key)))
+
+        # Anything left in remaining was never assigned (input wire / base fallback)
+        # — append now so it ends up FIRST after reversal
+        for cov_rt, val in remaining.items():
+            collected_newest_first.append((cov_rt, val))
+
+        # Reverse: input/oldest first, most-recent alias last
+        return dict(reversed(collected_newest_first))
+
     def _find_covering_wire(self, leaf_ref_toks):
         """Find most specific wire covering this concrete leaf path.
         Checks two sources, preferring the longest (most specific) prefix:
@@ -1417,6 +1755,7 @@ class FuncElaborator:
             wire, cov_ref_toks, cov_typ = self._find_covering_wire(leaf)
             if cov_ref_toks not in covering_wires:
                 covering_wires[cov_ref_toks] = (wire, cov_typ)
+        covering_wires = self._temporal_sort_covering_wires(covering_wires, ref_toks[0])
 
         if len(covering_wires) == 1:
             sole_ref_toks, (sole_wire, sole_typ) = next(iter(covering_wires.items()))
@@ -1484,6 +1823,7 @@ class FuncElaborator:
             wire, cov_ref_toks, cov_typ = self._find_covering_wire(leaf)
             if cov_ref_toks not in covering_wires:
                 covering_wires[cov_ref_toks] = (wire, cov_typ)
+        covering_wires = self._temporal_sort_covering_wires(covering_wires, base_var)
 
         # ── Variable dim info ──
         var_dim_info = []  # (dim_size, select_type, index_wire)
@@ -1573,6 +1913,7 @@ class FuncElaborator:
             wire, cov_ref_toks, cov_typ = self._find_covering_wire(leaf)
             if cov_ref_toks not in covering_wires:
                 covering_wires[cov_ref_toks] = (wire, cov_typ)
+        covering_wires = self._temporal_sort_covering_wires(covering_wires, base_var)
 
         # ── elaborate each variable index expression -> select wire ──
         var_dim_info = []  # (dim_size, select_type, index_wire)
