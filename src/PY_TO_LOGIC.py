@@ -1098,6 +1098,8 @@ class FuncElaborator:
             self._elab_aug_assign(stmt)
         elif isinstance(stmt, ast.For):
             self._elab_for(stmt)
+        elif isinstance(stmt, ast.While):
+            self._elab_while(stmt)
         elif isinstance(stmt, ast.If):
             self._elab_if(stmt)
         else:
@@ -1188,6 +1190,46 @@ class FuncElaborator:
             for s in stmt.body:
                 self._elab_stmt(s)
         # leave loop_var at its last value (matches PipelineC behaviour)
+
+    def _elab_while(self, stmt):
+        """while condition: body
+        Must be fully unrollable at elaboration time — the condition is evaluated
+        with _try_eval_const each iteration and must resolve to a Python bool.
+        Supports any body constructs: var ref assigns/reads, nested for/while,
+        hardware if/mux, aug-assigns, etc.
+
+        Loop-counter variables (i, b, etc.) live in const_env and are updated by
+        plain Python assignments inside the body (_elab_assign routes them there
+        when they don't exist in the hardware env).  Each unrolled iteration emits
+        its own unique hardware wires because:
+          - concrete-index writes include the index value in the alias name
+          - VAR_REF_ASSIGN func_name hashes covering_ref_toks, which change each
+            iteration as new aliases become covering inputs
+          - CONST_REF_RD reads include the concrete path in the func_name
+
+        A safety limit prevents infinite loops from hanging the compiler.
+        """
+        _MAX_UNROLL = 65536
+        iteration = 0
+        while True:
+            cond_val = self._try_eval_const(stmt.test)
+            if cond_val is None:
+                raise ElaborationError(
+                    f"while loop condition cannot be evaluated at elaboration time "
+                    f"(may reference hardware wires). "
+                    f"Condition: {ast.dump(stmt.test)}"
+                )
+            if not cond_val:
+                break
+            if iteration >= _MAX_UNROLL:
+                raise ElaborationError(
+                    f"while loop exceeded {_MAX_UNROLL} unroll iterations — "
+                    f"ensure the condition becomes False at elaboration time. "
+                    f"Condition: {ast.dump(stmt.test)}"
+                )
+            for s in stmt.body:
+                self._elab_stmt(s)
+            iteration += 1
 
     def _elab_if(self, stmt):
         """if condition: ... else: ...

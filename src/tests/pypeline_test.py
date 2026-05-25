@@ -70,6 +70,23 @@ def concat_main(bits_lo: uint1_t[N], bits_hi: uint1_t[M]) -> uint1_t[sum_widths(
     return concat_N_M(bits_lo, bits_hi)
 
 
+@MAIN
+def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
+    bits: uint1_t[11]
+    b = 0
+    i = 0
+    while i < 5:
+        bits[b] = bits_lo[i]
+        b = b + 1
+        i = i + 1
+    i = 0
+    while i < 6:
+        bits[b] = bits_hi[i]
+        b = b + 1
+        i = i + 1
+    return bits
+
+
 @struct
 class point2d_t(NamedTuple):
     dim: uint32_t[2]
