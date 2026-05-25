@@ -44,11 +44,11 @@ Design file (.py)
 ## `ParserState` — the Global Compiler Context
 
 ```python
-parser_state.FuncLogicLookupTable   # func_name -> Logic()  (function definitions)
-parser_state.LogicInstLookupTable   # inst_key  -> Logic()  (instantiated call sites)
-parser_state.FuncToInstances        # func_name -> {inst_keys}
+parser_state.FuncLogicLookupTable       # func_name -> Logic()  (function definitions)
+parser_state.LogicInstLookupTable       # inst_key  -> Logic()  (instantiated call sites)
+parser_state.FuncToInstances            # func_name -> {inst_keys}
 parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
-parser_state.main_mhz               # main_name -> clock MHz (None until synthesis)
+parser_state.main_mhz                   # main_name -> clock MHz (None until synthesis)
 ```
 
 `FuncLogicLookupTable` holds one `Logic()` per unique function definition.
@@ -66,12 +66,18 @@ and submodule instances.
 logic.func_name                      # string name
 logic.inputs                         # ordered list of input port names
 logic.outputs                        # ordered list of output port names
-logic.wires                          # set of all wire names
-logic.wire_to_c_type                 # wire_name -> C type string ("uint32_t", "point_t[3]", …)
+logic.wires                          # set of all wire names (becomes VHDL signals)
+logic.wire_to_c_type                 # wire_name -> C type string
 logic.wire_driven_by                 # wire_name -> driver_wire_name
 logic.wire_drives                    # driver_wire_name -> {wire_name, …}
 logic.submodule_instances            # inst_name -> func_name
 logic.submodule_instance_to_input_port_names  # inst_name -> [port_name, …]
+# Reference-token metadata (used by ref-read/assign submodules):
+logic.ref_submodule_instance_to_ref_toks
+logic.ref_submodule_instance_to_input_port_driven_ref_toks
+logic.wire_aliases_over_time         # base_var -> [alias_wire, …]  (oldest first)
+logic.alias_to_driven_ref_toks       # alias_wire -> ref_toks tuple
+logic.alias_to_orig_var_name         # alias_wire -> base_var name
 ```
 
 ### C Type Strings
@@ -90,11 +96,31 @@ Helper functions navigate these strings:
 
 ```python
 _is_array("uint32_t[4]")         # True
-_array_elem_type("uint32_t[4]")  # "uint32_t"
+_array_elem_type("uint32_t[4]")  # "uint32_t"   (strips outermost dimension)
 _array_first_dim("uint32_t[4]")  # 4
 _is_struct("point_t", ps)        # True if point_t in struct_to_field_type_dict
 _is_scalar("uint32_t", ps)       # True (not array, not struct)
 ```
+
+### Bit-Accurate Constant Inference
+
+When a plain Python integer literal appears in hardware context (e.g. `my_points[1].x = 1`),
+`_infer_const_ctype` automatically squeezes it into the minimum-width PipelineC integer type:
+
+```python
+_infer_const_ctype(0)    # "uint1_t"   (bool / 0–1)
+_infer_const_ctype(1)    # "uint1_t"
+_infer_const_ctype(5)    # "uint3_t"   (3 bits covers 0–7)
+_infer_const_ctype(255)  # "uint8_t"
+_infer_const_ctype(-1)   # "int1_t"
+_infer_const_ctype(-2)   # "int2_t"
+```
+
+The rule: non-negative values use `val.bit_length()` bits unsigned; negative values use
+`(-val - 1).bit_length() + 1` bits signed. A constant wire `CONST_1_myfile_py_l5_c12`
+of type `"uint1_t"` is added to the Logic() graph and connected to the appropriate port.
+This ensures the VHDL backend always sees correctly-sized constants with no implicit
+sign-extension or truncation surprises.
 
 ---
 
@@ -114,6 +140,46 @@ self.const_env      # name -> Python value (loop counters, elaboration constants
 `const_env` holds plain Python values used only at elaboration time — loop variables, index
 counters, etc. — that never become hardware wires.
 
+### `env` vs `const_env` Routing
+
+Every assignment in a hardware function body goes through `_elab_assign`, which applies
+this decision tree:
+
+```
+target is a simple Name AND not already in env?
+    │
+    ├─ _try_eval_const(RHS) succeeds (pure Python value)
+    │       └─ const_env[name] = value        ← elaboration-time only
+    │
+    └─ _try_eval_const(RHS) fails (references a hardware wire)
+            └─ emit hardware: create wire, connect, update env
+```
+
+This is why `b = 0` and `i = i + 1` inside a loop body update `const_env` rather than
+creating hardware wires: `0` and `i + 1` (where `i` is already in `const_env`) both
+evaluate successfully as plain Python. The moment the RHS touches a wire — reading a
+hardware-typed input or a previously elaborated expression — the `eval()` inside
+`_try_eval_const` raises a `NameError`, the const path fails, and hardware synthesis
+proceeds instead.
+
+### `_try_eval_const` — the Elaboration/Hardware Boundary
+
+```python
+def _try_eval_const(self, node):
+    expr = ast.Expression(body=node)
+    ast.fix_missing_locations(expr)
+    return eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
+```
+
+It compiles the AST node into a Python code object and runs it through Python's native
+`eval()` against `{**module_globals, **const_env}`. This namespace contains only plain
+Python values — integers, strings, ranges, type objects, helper functions — never hardware
+wire names. If the expression references anything that only exists as a string in `self.env`
+(e.g. a hardware input), `eval()` raises `NameError` and `_try_eval_const` returns `None`.
+
+This clean boundary means: if Python can compute it, it stays Python; if it requires knowing
+a hardware signal value at runtime, it becomes hardware.
+
 ### Annotation Evaluation
 
 Function signature annotations are evaluated against `{**module_globals, **const_env}`:
@@ -132,9 +198,9 @@ at elaboration time, producing concrete C type strings like `"uint1_t[3]"`.
 A call `foo(a, b)` in a hardware function body creates a submodule instance:
 
 ```
-inst_name = "foo[src_file_l10_c4]"    ← unique per call site (file + line + col)
-output_wire = inst_name + "____return_output"
-input_port_wire = inst_name + "____a"
+inst_name    = "foo[myfile_py_l10_c4]"          ← unique per call site (file+line+col)
+output_wire  = inst_name + "____return_output"
+port_wire_a  = inst_name + "____a"
 ```
 
 All instance wires are recorded in `logic.wire_to_c_type` and connected via
@@ -142,8 +208,14 @@ All instance wires are recorded in `logic.wire_to_c_type` and connected via
 to determine port names and the return type.
 
 **Binary ops, unary ops, MUX** are all represented as submodule instances with
-auto-generated built-in function names (`BIN_OP_LOGIC_NAME_PREFIX_plus_uint32_t`,
-`MUX_uint32_t`, etc.).
+auto-generated built-in function names:
+
+```
+BIN_OP_LOGIC_NAME_PREFIX_plus_uint32_t
+UNARY_OP_LOGIC_NAME_PREFIX_not_uint1_t
+MUX_uint32_t
+MUX_point2d_t          ← compound-type MUX is valid
+```
 
 ---
 
@@ -153,21 +225,25 @@ A *reference token tuple* (ref_toks) is the canonical way to describe a path int
 compound variable:
 
 ```python
-("points", 0, "dim", 1)   # points[0].dim[1]  — all concrete
-("points", i_ast, "dim")  # points[i].dim      — i is an ast.AST node (variable index)
+("points", 0, "dim", 1)    # points[0].dim[1]  — all concrete
+("points", i_ast, "dim")   # points[i].dim      — i is an ast.AST node (variable index)
 ```
 
-Tokens are either:
+Tokens are:
 - `int` — concrete array index
 - `str` — struct field name
-- `ast.AST` node — variable (hardware) index, acts as a wildcard in matching
+- `ast.AST` node — variable (hardware) index; acts as a wildcard in coverage matching
 
 ```python
-_is_var_tok(tok)          # True for ast.AST nodes
+_is_var_tok(tok)               # True for ast.AST nodes
 _has_variable_index(ref_toks)  # True if any token is an ast.AST
-_ref_toks_to_env_key(ref_toks)  # ("points",0,"dim",1) -> "points[0].dim[1]"
-_ref_toks_to_ctype(ref_toks, base_type, ps)  # type at the path end
+_ref_toks_to_env_key(ref_toks) # ("points",0,"dim",1) -> "points[0].dim[1]"
+_ref_toks_to_ctype(ref_toks, base_type, ps)  # C type at the path end
 ```
+
+`_parse_ref_toks(ast_node)` converts an AST expression to ref_toks: constant subscripts
+and `const_env` values become concrete `int`/`str` tokens; anything else becomes the raw
+AST sub-expression node, preserving variable indices for later wildcard matching.
 
 ---
 
@@ -179,126 +255,229 @@ wire. This models the sequential nature of assignments within combinational hard
 ```python
 # points[0].dim[1] = test_u32
 alias = "points_0_dim_1_myfile_py_l15_c4"
-logic.wire_aliases_over_time["points"].append(alias)
+logic.wire_aliases_over_time["points"].append(alias)   # oldest first
 logic.alias_to_driven_ref_toks[alias] = ("points", 0, "dim", 1)
 logic.alias_to_orig_var_name[alias]   = "points"
 self.env["points[0].dim[1]"]          = (alias, "uint32_t")
 ```
 
-`wire_aliases_over_time[base_var]` is an **ordered list** — oldest alias first, newest
-last — representing the variable's assignment history within the function.
+`wire_aliases_over_time[base_var]` is an **ordered list, oldest alias first, newest last**,
+representing the assignment history of that variable within the function. This temporal
+ordering is critical: it is the single source of truth for reconstructing partial writes
+when reading the variable back.
 
 ---
 
 ## Finding the Covering Wire
 
-`_find_covering_wire(leaf_ref_toks)` returns the most specific wire that covers a
-concrete leaf path. It checks two sources, preferring the **longest (most specific)
-prefix match**:
+`_find_covering_wire(leaf_ref_toks)` returns the most specific wire that covers a concrete
+leaf path. It checks two sources, preferring the **longest (most specific) prefix match**:
 
-1. **Concrete env** — string-keyed, longest prefix first
+1. **Concrete env** — walks from full path down to base name, first hit wins
 2. **Variable aliases** — walks `wire_aliases_over_time` in reverse (most recent first),
-   using `_var_ref_toks_covers` for wildcard matching
+   using `_var_ref_toks_covers` for wildcard matching (AST node positions match any concrete value)
 
 ```python
 def _var_ref_toks_covers(var_ref_toks, concrete_ref_toks):
-    # AST node positions in var_ref_toks act as wildcards
     # ("points", i_ast, "dim", 1) covers ("points", 0, "dim", 1) ✓
-    # ("points", i_ast, "dim", 1) covers ("points", 0, "dim", 0) ✗
+    # ("points", i_ast, "dim", 1) covers ("points", 0, "dim", 0) ✗  (1 ≠ 0 at pos 3)
+    # ("points",) covers any leaf under points                    ✓
 ```
 
 Concrete wins on equal-length ties.
 
-**Temporal sort**: covering wires for a CONST_REF_RD are ordered **oldest first** by
-walking `wire_aliases_over_time` backwards and reversing — this matches the VHDL backend's
-expectation that base assignments precede overrides.
+### Temporal Sort of Covering Wires
+
+When a CONST_REF_RD needs multiple covering wires, they must be presented to the VHDL
+backend in **oldest-first** order so that base assignments appear before partial overrides.
+The algorithm (`_temporal_sort_covering_wires`) achieves this in three steps:
+
+```
+1. Walk wire_aliases_over_time[base_var] BACKWARDS (newest alias first)
+2. For each alias whose ref_toks appears as a covering-wires key, collect it
+   (both identity check `is` and equality check `==` are tried, since
+    env-prefix tuples are new objects but variable-alias ref_toks are the
+    same Python object stored in alias_to_driven_ref_toks)
+3. Any covering entries not matched by any alias are the input wire / base
+   fallback — append them last
+4. Reverse the collected list → oldest first
+```
+
+Example for `return my_points` after writes to `[1].x`, `[1].y`, `[2]`, `[3]`, `[4]`:
+
+```
+Backwards walk collects: alias_4, alias_3, alias_2, alias_1y, alias_1x
+Remaining (no alias): ("my_points",)  ← original input wire
+After reverse:
+  ref_toks_0: my_points      (covers [0], [5..9]  — oldest, input wire)
+  ref_toks_1: alias_1x       (covers [1].x)
+  ref_toks_2: alias_1y       (covers [1].y)
+  ref_toks_3: alias_2        (covers [2])
+  ref_toks_4: alias_3        (covers [3])
+  ref_toks_5: alias_4        (covers [4])
+```
+
+The backend applies these in order: `base := ref_toks_0; base(1).x := ref_toks_1; …`
 
 ---
 
 ## CONST_REF_RD — Reading Compound Types
 
 Reading a compound value (struct, array) when it may have been partially written requires
-a `CONST_REF_RD` submodule:
+a `CONST_REF_RD` submodule. This is the mechanism behind `return points`, field reads like
+`p = my_struct.field`, and array element reads like `v = arr[2]` when `arr` was partially
+updated.
+
+**Process:**
+
+1. Enumerate all scalar leaf ref_toks of the target type (`_get_leaf_ref_toks`)
+2. For each leaf, call `_find_covering_wire` → `(wire, covering_ref_toks, type)`
+3. Collect unique covering wires and sort temporally (`_temporal_sort_covering_wires`)
+4. If a single covering wire already matches the exact target ref_toks: return it directly
+   (no submodule needed — the wire is already the right type)
+5. Otherwise emit a `CONST_REF_RD_<output_type>_<base_type>_<path>_<hash>` submodule
+
+**`return my_points` example** (after `my_points[1].x=1`, `my_points[2]=p0`, etc.):
 
 ```python
-# return points  — after my_points[1].x = 1, my_points[2] = p0, …
 CONST_REF_RD(
-    ref_toks_0=my_points,    # covers [0],[5..9] — original input, oldest
-    ref_toks_1=alias_1x,     # covers [1].x
-    ref_toks_2=alias_1y,     # covers [1].y
-    ref_toks_2=alias_2,      # covers [2]
+    ref_toks_0 = my_points_input,   # type: point_xy_t[10]  covers [0],[5..9]
+    ref_toks_1 = alias_1x,          # type: uint32_t         covers [1].x
+    ref_toks_2 = alias_1y,          # type: uint32_t         covers [1].y
+    ref_toks_3 = alias_2,           # type: point_xy_t       covers [2]
+    ref_toks_4 = alias_3,           # type: point_xy_t       covers [3]
+    ref_toks_5 = alias_4,           # type: point_xy_t       covers [4]
 ) -> point_xy_t[10]
 ```
 
-The process:
-1. Enumerate all scalar leaf ref_toks of the target type
-2. For each leaf, call `_find_covering_wire` → get `(wire, covering_ref_toks, type)`
-3. Collect unique covering wires, sorted temporally (oldest first)
-4. If a single wire already covers everything and matches the target ref_toks exactly:
-   return it directly (no CONST_REF_RD needed)
-5. Otherwise emit a `CONST_REF_RD` submodule instance
+The backend recognises the `CONST_REF_RD_` prefix and generates VHDL that starts from
+the base wire and applies each partial override in sequence.
 
-The backend recognises the `CONST_REF_RD_` prefix and generates the appropriate VHDL
-assignment sequence (base first, then overrides).
+**Variable alias as covering input:** if a covering wire came from a VAR_REF_ASSIGN alias
+(which has variable ref_toks like `("points", i_ast, "dim", 1)`), `_var_alias_internal_path`
+computes the correct CONST_REF_RD index path into that alias's output type. For example,
+alias type `uint32_t[3]` covering `("points", i_ast, "dim", 1)`, used to extract concrete
+leaf `("points", 0, "dim", 1)` → internal path `(0,)` → `CONST_REF_RD([0])` from
+`uint32_t[3]` → `uint32_t`.
 
 ---
 
 ## VAR_REF_RD — Variable-Index Reads
 
 Reading with a variable index (`points[i]`, `points[i].dim[j]`) requires a `VAR_REF_RD`
-submodule that implements a **binary mux tree**:
+submodule that selects one element from among all possible positions using a binary mux tree.
 
-```python
-# return points[i]  where i is a hardware wire
-VAR_REF_RD(
-    ref_toks_0=points,     # covering input (entire array)
-    var_dim_0=i_wire,      # select wire (uint2_t for 3 elements)
-) -> point2d_t
+**Call site** (`_emit_var_ref_rd`):
+1. Enumerate all concrete scalar leaves under the variable path (`_get_var_ref_leaves`)
+2. Find covering wires for each leaf and sort temporally
+3. Elaborate each variable index expression to get a select wire
+4. Build or reuse the `VAR_REF_RD_<output>_<base>_<path>_<hash>` Logic() in `FuncLogicLookupTable`
+5. Emit a submodule instance call
+
+**Standalone Logic() structure** (`_build_var_ref_rd_logic`):
+
+The Logic() definition is built once and reused for all call sites with the same signature.
+
+*Step 1 — Extract all concrete scalar leaf wires via CONST_REF_RD:*
+
+For `points[i]` with a 3-element array of `point2d_t` (each having 2 `uint32_t` fields),
+this extracts 6 scalar wires: `points[0].dim[0]`, `points[0].dim[1]`, `points[1].dim[0]`, …
+
+If any covering input is a variable alias (from a prior VAR_REF_ASSIGN), internal CONST_REF_RD
+submodules index into it using `_var_alias_internal_path`.
+
+*Step 2 — Trimmed binary mux tree per variable dimension:*
+
+For each variable dimension of size N, a mux tree reduces N leaf wires to 1 output.
+The tree uses `_largest_pow2_leq(N)` as the split point rather than padding to the next
+power of two:
+
+```
+N=3: split at 2 (largest pow2 ≤ 3)         N=100: split at 64
+     left subtree:  leaves[0..1]                  left subtree:  leaves[0..63]
+     right subtree: leaves[2]                      right subtree: leaves[64..99]
 ```
 
-**Internal Logic() structure:**
+This means a 100-element array uses a mux tree of depth log₂(64)=6 on the left plus a
+depth-6 tree on the right for 36 elements — **no dummy zero-padding hardware is ever
+synthesized**. A naïve power-of-two approach would pad to 128 elements, wasting 28 MUX
+levels on unreachable inputs.
 
-1. **Step 1** — CONST_REF_RD extracts every concrete scalar leaf from the covering inputs:
-   `points[0].dim[0]`, `points[0].dim[1]`, `points[1].dim[0]`, …
-2. **Step 2** — Binary mux tree per variable dimension. A trimmed binary tree (split at
-   largest power-of-two ≤ N) reduces `dim_size` leaves to 1, using bit extractions of
-   `var_dim_i` as the select signals.
-3. **Step 3** — If the output type is compound, assemble the scalar mux outputs back into
-   the output type via a CONST_REF_RD assembly.
+Each split uses a single-bit extraction from the select wire:
 
-The covering inputs may include **variable alias wires** (from prior VAR_REF_ASSIGNs).
-`_var_alias_internal_path` computes the correct CONST_REF_RD index path into an alias wire.
+```
+bit_pos = split.bit_length() - 1
+bit_func = "uint2_3_3_3"  ← extracts bits [bit_pos:bit_pos] from uint2_t select wire
+MUX(bit, right_subtree, left_subtree)   ← bit=1 → index ≥ split → right
+```
+
+*Step 3 — Assemble compound output:*
+
+If the output type is compound (e.g. `point2d_t`), the scalar outputs of the final mux tree
+are assembled back into the compound type via a CONST_REF_RD assembly submodule. If the
+output is scalar, it is connected directly.
 
 ---
 
 ## VAR_REF_ASSIGN — Variable-Index Writes
 
 Writing with a variable index (`points[i].dim[1] = val`) creates a `VAR_REF_ASSIGN`
-submodule and a **variable alias**:
+submodule and a **variable alias** with AST node ref_toks preserved.
 
-```python
-# points[i].dim[1] = test_u32
-VAR_REF_ASSIGN(
-    elem_val=test_u32,     # value to write
-    ref_toks_0=points,     # covering input (oldest covering wire)
-    var_dim_0=i_wire,      # variable index (uint2_t for 3 elements)
-) -> uint32_t[3]           # output type: scalar_type[var_dim_0][var_dim_1]...
+**Output type:** `elem_c_type[var_dim_0][var_dim_1]...` where `elem_c_type` is the type
+at the end of the ref_toks path. For `points[i].dim[1]` with `i` ranging over 3 elements:
+output type = `uint32_t[3]` (one slot per possible value of `i`).
+
+**Wire diagram for `points[i].dim[1] = val` (3-element array):**
+
+```
+Covering input
+  ref_toks_0: points  (point2d_t[3])
+      │
+      ├─ CONST_REF_RD → points[0].dim[1]  (uint32_t)  old_elem[0]
+      ├─ CONST_REF_RD → points[1].dim[1]  (uint32_t)  old_elem[1]
+      └─ CONST_REF_RD → points[2].dim[1]  (uint32_t)  old_elem[2]
+
+Variable index
+  var_dim_0: i  (uint2_t)
+      │
+      ├─ EQ(i, 0) ─────────────────────── cond[0]
+      ├─ EQ(i, 1) ─────────────────────── cond[1]
+      └─ EQ(i, 2) ─────────────────────── cond[2]
+
+For each slot k ∈ {0, 1, 2}:
+  MUX(cond[k], val, old_elem[k]) → updated_elem[k]   (MUX_uint32_t)
+
+CONST_REF_RD assembly:
+  (updated_elem[0], updated_elem[1], updated_elem[2]) → uint32_t[3]
+      │
+      └─ return_output  (uint32_t[3])
 ```
 
-**Output type formula:** `elem_c_type[var_dim_0][var_dim_1]...`
-where `elem_c_type` is the type at the end of the ref_toks path (may be compound).
+**Operates at elem level:** the MUX always works on `elem_c_type` (the type at the end of
+the ref_toks path), not on decomposed scalars. If `elem_c_type` is a struct or inner array,
+the MUX is a `MUX_my_struct_t` — compound-type MUXes are valid and produce correct VHDL.
 
-**Internal Logic() structure (operates at elem level, not scalar):**
+**Standalone Logic() construction** (`_build_var_ref_assign_logic`):
 
-1. **Step 1** — CONST_REF_RD extracts the old elem-typed value for each concrete position
-   (`points[0].dim[1]`, `points[1].dim[1]`, `points[2].dim[1]` → 3 × `uint32_t`)
-2. **Step 2** — For each concrete position `k`: emit `EQ(var_dim_0, k)` comparator(s),
-   AND them together for multi-dimensional cases, then `MUX(cond, elem_val, old_elem_k)`.
-   MUXes operate at elem_c_type level — compound types (structs, arrays) are valid.
-3. **Step 3** — Assemble updated elems into output_type via CONST_REF_RD assembly.
+*Step 1 — CONST_REF_RD extracts old elem-typed values* from the covering inputs for each
+concrete position. `_var_alias_internal_path` is used when a covering input is itself a
+variable alias.
 
-**The alias** records variable ref_toks (AST nodes intact) so that subsequent
-`_find_covering_wire` calls can wildcard-match it:
+*Step 2 — EQ comparators + AND tree + MUX per concrete position.* For multi-dimensional
+variable indices (e.g. `points[i].dim[j]`), comparators for each dimension are ANDed
+together before the MUX select.
+
+*Step 3 — CONST_REF_RD assembly* packs the updated elem wires into the output type. For
+`uint32_t[3]`, this emits a single assembly CONST_REF_RD mapping positions 0, 1, 2.
+
+**The assembly pseudo-variable:** the assembly CONST_REF_RD inside a standalone Logic()
+references an internal pseudo-wire (e.g. `"var_assign_out"`) as its base type anchor. This
+wire is registered in `logic.wire_to_c_type` of the standalone Logic() so the backend can
+look up the output type. It is not a real hardware signal — it carries no driver and does
+not appear in VHDL signal declarations.
+
+**The alias** records variable ref_toks with AST nodes intact:
 
 ```python
 logic.wire_aliases_over_time["points"].append(alias)
@@ -306,8 +485,9 @@ logic.alias_to_driven_ref_toks[alias] = ("points", i_ast, "dim", 1)  # AST node 
 logic.wire_to_c_type[alias] = "uint32_t[3]"
 ```
 
-Later reads (e.g. `return points`) discover this alias via `_var_ref_toks_covers` and
-use `_var_alias_internal_path` to compute the correct CONST_REF_RD index into it.
+This lets `_find_covering_wire` discover the alias later via `_var_ref_toks_covers`, and
+`_var_alias_internal_path` computes the correct index into the alias's output type when a
+subsequent CONST_REF_RD or VAR_REF_RD needs to extract a specific concrete element from it.
 
 ---
 
@@ -318,92 +498,137 @@ Compile-time constant conditions → branch elimination (no hardware emitted).
 Runtime hardware conditions → snapshot/restore + MUX per driven variable:
 
 ```
-1. Evaluate condition wire: cond_wire, _ = _elab_expr(stmt.test)
-2. Snapshot: env_snap, aliases_snap = copy of env and wire_aliases_over_time
+1. Evaluate condition:  cond_wire, _ = _elab_expr(stmt.test)
+2. Snapshot env and wire_aliases_over_time → env_snap, aliases_snap
 3. Elaborate true branch  → capture env_true, aliases_true
 4. Restore snapshot
-5. Elaborate false branch → capture env_false, aliases_false
+5. Elaborate false branch → capture env_false, aliases_false  (empty if no else)
 6. Restore snapshot
 7. Collect driven ref_toks from new aliases in both branches
-8. Reduce: _reduce_driven_ref_toks(driven, env_snap, parser_state)
+8. Reduce:  _reduce_driven_ref_toks(driven, env_snap, parser_state)
 9. For each reduced (ref_toks, mux_type):
-     true_wire  = _read_branch_coverage(ref_toks, mux_type, env_true,  aliases_true, ...)
-     false_wire = _read_branch_coverage(ref_toks, mux_type, env_false, aliases_false, ...)
-     emit MUX(cond, true_wire, false_wire) → mux_alias
+     true_wire  = _read_branch_coverage(env_true,  aliases_true,  ...)
+     false_wire = _read_branch_coverage(env_false, aliases_false, ...)
+     MUX(cond, true_wire, false_wire) → mux_alias
 ```
 
 Both branches elaborate **into the same `logic` object** — wires and submodule instances
-accumulate from both sides. Only `env` and `wire_aliases_over_time` are snapshot/restored,
-keeping the hardware graph additive.
+accumulate permanently. Only `env` and `wire_aliases_over_time` are snapshot/restored, so
+the hardware graph is additive across both branches while the alias view remains consistent.
 
-**Reduction** (`_reduce_driven_ref_toks`) eliminates redundant ref_toks patterns:
+### Reduction (`_reduce_driven_ref_toks`)
 
-- *Completeness*: if all children of a concrete parent are driven
-  (`("points",0)`, `("points",1)`, `("points",2)` for a size-3 array) → replace with
-  parent `("points",)`, emit one compound MUX of type `point2d_t[3]`
-- *Prefix coverage*: if ref_toks B is a more general prefix of ref_toks A (including
-  wildcard positions) → remove A, keep B
+Eliminates redundant patterns before emitting MUXes, in two passes:
 
-**Reading branch wires** for variable ref_toks uses `_assemble_var_ref_coverage`: enumerate
-concrete elem positions, read each from the branch env/aliases, assemble into `mux_type`
-via CONST_REF_RD. The MUX output alias inherits the driven ref_toks (AST nodes intact)
-so subsequent reads continue to work correctly.
+**Pass 1 — Completeness (bottom-up, iterated):** if all children of a concrete parent path
+are present, replace them with the parent and emit one compound MUX:
+
+```
+("points",0), ("points",1), ("points",2) for 3-element array
+    → ("points",)   with mux_type point2d_t[3]   (one MUX instead of three)
+```
+
+Iterated so that `dim[0]` + `dim[1]` → `dim` → `points[i].dim` → `points[i]` can chain.
+
+**Pass 2 — Prefix coverage:** if ref_toks B is a strictly more general prefix of ref_toks A
+(shorter, or same length with wildcards where A has concrete), remove A:
+
+```
+("points", i_ast) covers ("points", 0, "dim", 1) → remove the latter
+```
+
+### Reading Branch Wires for Variable Ref_Toks
+
+When a driven ref_toks contains variable indices (AST nodes), `_read_branch_coverage` calls
+`_assemble_var_ref_coverage` to produce a wire of `mux_type` from the branch's env/aliases:
+
+1. Temporarily swap `self.env` and `wire_aliases_over_time` to the branch snapshot
+2. Use `_get_var_ref_elem_positions` to enumerate all concrete elem positions
+3. Call `_read_ref` for each position — this naturally finds the right covering wire from
+   the branch state (the VAR_REF_ASSIGN alias in the true branch, or the original input in
+   the false/pre-if branch)
+4. Assemble the elem wires into `mux_type` via a CONST_REF_RD assembly submodule
+5. Restore `self.env` and `wire_aliases_over_time`
+
+**The assembly pseudo-variable (`DUMMY_OUT`):** the CONST_REF_RD assembly inside the
+caller's Logic() needs a type-anchor wire so the backend can look up the output type during
+VHDL generation. A pseudo-wire `"cov_assemble_<mux_type_tag>"` (e.g.
+`"cov_assemble_uint32_t_3"`) is registered in `self.logic.wire_to_c_type` with the
+`mux_type`. It is added to `wire_to_c_type` only — not to `logic.wires` — so no spurious
+VHDL signal is declared.
+
+**The MUX output alias** inherits the driven ref_toks with AST nodes intact, so any
+subsequent reads after the if statement correctly discover it via `_find_covering_wire`
+wildcard matching.
 
 ---
 
 ## For and While Loop Unrolling
 
 Both loop constructs are **fully unrolled at elaboration time**. The loop condition or
-iterable must be evaluable as a plain Python value via `_try_eval_const`.
+iterable must evaluate to a plain Python value via `_try_eval_const`. No hardware mux trees
+are generated for loop control; loops exist purely at elaboration time.
 
 ### For Loops
 
 ```python
-for i in range(LO_SIZE):
-    bits[b] = bits_lo[i]
+for i in range(LO_SIZE):   # range(3) evaluated by _try_eval_const
+    bits[b] = bits_lo[i]   # unrolled 3 times with concrete i=0,1,2
     b = b + 1
 ```
 
-`_try_eval_const(stmt.iter)` evaluates `range(LO_SIZE)` against `module_globals` +
-`const_env`. The loop variable `i` is stored in `const_env` at each iteration value.
-Body statements are elaborated once per iteration.
+The loop variable `i` is stored in `const_env` at each iteration. Body statements are
+elaborated once per value, producing distinct hardware for each unrolled copy.
 
 Supported iterables: `range(...)`, `tuple`, `list`. String field iteration
-(`for f in point_t._fields:`) also works — `f` becomes a string in `const_env`, and
-`rv[f]` resolves to a struct field access via `_parse_ref_toks`.
+(`for f in point_t._fields:`) works too — `f` becomes a string in `const_env` and
+subscript access `rv[f]` resolves to a struct field via `_parse_ref_toks`.
 
 ### While Loops
 
 ```python
 i = 0
-while i < LO_SIZE:
+while i < LO_SIZE:         # condition re-evaluated each iteration via _try_eval_const
     bits[b] = bits_lo[i]
     b = b + 1
-    i = i + 1
+    i = i + 1              # updates const_env["i"], not a hardware wire
 ```
 
-Each iteration: evaluate condition with `_try_eval_const`, elaborate body if true, repeat.
-Loop counter updates (`i = i + 1`) go through `_elab_assign` → the name is not in `env`
-(hardware), `_try_eval_const` succeeds → `const_env["i"]` is updated. A safety limit of
-65 536 iterations prevents non-terminating loops from hanging the compiler.
+Each iteration: evaluate condition, elaborate body if true, repeat. Loop counter updates
+(`i = i + 1`) route through `_elab_assign`: `i` is not in `env`, `_try_eval_const(i+1)`
+succeeds → `const_env["i"]` updated. A safety limit of 65 536 iterations prevents
+non-terminating loops from hanging the compiler.
 
-**Why naming stays unique across iterations:** concrete-index writes include the resolved
-index value in the alias name (`"bits_0_..."`, `"bits_1_..."`). VAR_REF_ASSIGN func_names
-hash the covering_ref_toks, which change each iteration as previous-iteration aliases become
-covering inputs. CONST_REF_RD func_names include the concrete access path.
+### Why Naming Stays Unique Across Iterations
+
+A concern when unrolling is that multiple iterations of the same source line might produce
+colliding wire/instance names. They don't, because:
+
+- **Concrete-index writes:** `bits[b] = bits_lo[i]` — the alias prefix includes `b`'s
+  resolved value (`"bits_0_..."`, `"bits_1_..."`), producing different alias names
+- **VAR_REF_ASSIGN:** the func_name hash includes the covering_ref_toks, which differ
+  across iterations as each iteration's output alias becomes the next iteration's covering
+  input — a chain of distinct hashes
+- **CONST_REF_RD reads:** the func_name includes the concrete access path (e.g. index 0 vs
+  index 1), giving different func_names → different inst_names
+
+All three cases produce unique identifiers automatically from the elaboration state, with no
+iteration counter needed.
 
 ---
 
 ## Closure Factory Pattern
 
 The closure factory pattern lets Python generate specialised hardware functions and types
-at elaboration time, with all sizing and structure resolved to concrete values.
+at elaboration time, with all sizing and structure resolved to concrete values before any
+hardware graph is built.
 
 ### Specialised Functions
 
 ```python
 def make_concat(LO_SIZE, HI_SIZE):
     OUT_SIZE = LO_SIZE + HI_SIZE
+
     def concat(bits_lo: uint1_t[LO_SIZE], bits_hi: uint1_t[HI_SIZE]) -> uint1_t[OUT_SIZE]:
         bits: uint1_t[OUT_SIZE]
         b = 0
@@ -412,19 +637,26 @@ def make_concat(LO_SIZE, HI_SIZE):
             b += 1
         ...
         return bits
+
     return concat
 
-concat_3_4 = make_concat(3, 4)   # ← module-level, discovered by elaborator
+concat_3_4 = make_concat(3, 4)   # module-level alias, discovered by elaborator
 ```
 
-When a call to `concat_3_4` is first encountered, `_elab_call` checks `module_globals`,
-finds a callable, and invokes `_elaborate_live_func`:
+When a call to `concat_3_4` is first encountered in a hardware function body, `_elab_call`
+finds it in `module_globals`, sees it is callable but not in `FuncLogicLookupTable`, and
+invokes `_elaborate_live_func`:
 
-1. `inspect.getsource` + `textwrap.dedent` to recover the inner function's source
-2. Extract closure variables from `func.__code__.co_freevars` / `func.__closure__`
-   (`LO_SIZE=3`, `HI_SIZE=4`, `OUT_SIZE=7`)
-3. Merge closure vars into `module_globals` → annotations like `uint1_t[LO_SIZE]` resolve
-4. Elaborate with a fresh `FuncElaborator`, store under the module-level alias name
+1. `inspect.getsource` + `textwrap.dedent` recovers the inner function's source text
+2. Closure variables are extracted from `func.__code__.co_freevars` / `func.__closure__`
+   — e.g. `{"LO_SIZE": 3, "HI_SIZE": 4, "OUT_SIZE": 7}`
+3. These are merged into `module_globals` → annotations like `uint1_t[LO_SIZE]` now resolve
+4. A fresh `FuncElaborator` elaborates the function and stores the result under the
+   module-level alias name (`"concat_3_4"`) in `FuncLogicLookupTable`
+
+Only top-level `def` statements are scanned by `ast.walk` on `tree.body`. Nested functions
+inside factory closures (like `def concat` inside `make_concat`) are deliberately excluded
+— they are elaborated on-demand through `_elaborate_live_func` when first called.
 
 ### Specialised Types
 
@@ -433,6 +665,8 @@ def make_point_t(dim_type, dim_size):
     @struct
     class point_t(NamedTuple):
         dim: dim_type[dim_size]
+    point_t.dim_type = dim_type
+    point_t.dim_size = dim_size
     return point_t
 
 point_t = make_point_t(uint32_t, 2)
@@ -442,20 +676,21 @@ point_t = make_point_t(uint32_t, 2)
 registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. The `@struct`
 decorator:
 
-1. Adds `__class_getitem__` so `point_t[10]` produces a `_CTypeMeta` array type
-2. Captures resolved C type strings for each field via `sys._getframe(1)`, stored in
-   `cls._pypeline_annotations` — this handles `from __future__ import annotations` and
-   factory closures where field annotations would otherwise be `ForwardRef` strings
+1. Adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point_t[10]")` — a
+   valid array C type object usable in further annotations
+2. Captures resolved C type strings via `sys._getframe(1)` while factory locals are still
+   in scope, handling `ForwardRef` strings that `from __future__ import annotations` creates.
+   These are stored in `cls._pypeline_annotations` and preferred by `_discover_structs_from_module`
 
 ### Conditional Type-Driven Code
 
 Because closure variables are real Python objects at elaboration time, hardware functions
-can branch on type properties:
+can branch on type properties — this is evaluated completely at elaboration time:
 
 ```python
 def types_test_foo(point: point_t) -> point_t:
     rv: point_t
-    if point_t.style == "array":        # evaluates at elaboration time → branch elimination
+    if point_t.style == "array":        # _try_eval_const → True or False → branch elimination
         for i in range(point_t.dim_size):
             rv.dim[i] = point.dim[i]
     else:
@@ -464,8 +699,7 @@ def types_test_foo(point: point_t) -> point_t:
     return rv
 ```
 
-`point_t.style` resolves via `_try_eval_const` → constant branch elimination → only the
-matching branch's hardware is emitted.
+Only the taken branch's hardware is emitted; the other branch produces no Logic() nodes.
 
 ---
 
@@ -483,9 +717,11 @@ The companion module provides the types and decorators used in design files:
 | `@MAIN` | Registers a function as a hardware entry point |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
 
-All types are declared as proper Python `class` statements (not variable assignments) so
-Pylance/pyright accepts them as valid type annotations. Adding `# pyright: reportInvalidTypeForm=none`
-to design files suppresses warnings for dynamically-produced types like factory structs.
+All types are declared as proper Python `class` statements with `_CTypeMeta` as metaclass
+(not variable assignments), so Pylance/pyright accepts them as valid type expressions.
+`__str__` and `__repr__` on the metaclass return the C type name string; `__getitem__`
+produces array types (`uint32_t[4]`). Adding `# pyright: reportInvalidTypeForm=none` to
+design files suppresses warnings for dynamically-produced types like factory structs.
 
 ---
 
@@ -494,23 +730,30 @@ to design files suppresses warnings for dynamically-produced types like factory 
 ```
 design.py
   │
-  ├─ exec_module()          Python runtime: factories, @MAIN, @struct, constants
+  ├─ exec_module()                      Python runtime: factories, @MAIN, @struct, constants
   │
-  ├─ _discover_structs_from_module()   Register struct field types
+  ├─ _discover_structs_from_module()    Register struct field types from live namespace
   │
-  ├─ ast.parse()            AST for hardware function bodies
+  ├─ ast.parse() on tree.body only      Top-level hardware functions, skip nested defs
   │
-  ├─ FuncElaborator ×N      One per top-level hardware function
-  │   ├─ _setup_inputs()    Add input wires to Logic() + env
-  │   ├─ _setup_outputs()   Add output wire to Logic()
-  │   └─ _elab_stmt() ×M   Recursively elaborate each statement:
-  │       ├─ _elab_assign / _elab_ann_assign
-  │       ├─ _elab_aug_assign
-  │       ├─ _elab_for / _elab_while   (unroll at elaboration time)
-  │       ├─ _elab_if                  (eliminate or emit MUX)
-  │       └─ _elab_return
+  ├─ FuncElaborator ×N                  One per top-level hardware function
+  │   ├─ _setup_inputs()                Add input wires → env
+  │   ├─ _setup_outputs()               Add return wire
+  │   └─ _elab_stmt() recursive:
+  │       ├─ _elab_assign               const_env or hardware wire routing
+  │       ├─ _elab_ann_assign           declare local variable wire
+  │       ├─ _elab_aug_assign           const_env update or hardware BinOp
+  │       ├─ _elab_for                  unroll over constant iterable
+  │       ├─ _elab_while                unroll while _try_eval_const(condition)
+  │       ├─ _elab_if                   eliminate (const) or snapshot+MUX (hardware)
+  │       └─ _elab_return               connect result wire
+  │           └─ _elab_expr:
+  │               ├─ _elab_constant     _infer_const_ctype → CONST wire
+  │               ├─ _elab_binop/unary  BIN_OP / UNARY_OP submodule instance
+  │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
+  │               └─ _elab_call         lookup FuncLogicLookupTable or _elaborate_live_func
   │
-  ├─ _build_inst_lookup()   Recursively populate LogicInstLookupTable
+  ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
   │
-  └─ ParserState → backend (VHDL generation)
+  └─ ParserState → VHDL backend
 ```
