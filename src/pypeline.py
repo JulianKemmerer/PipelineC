@@ -53,38 +53,48 @@ def _make_ctype(name: str):
     return _CTypeMeta(name, (object,), {"_ctype_name": name})
 
 
+def make_uint(width: int):
+    """Return the C unsigned integer type for the given bit width, e.g. make_uint(3) -> uint3_t."""
+    return _make_ctype(f"uint{width}_t")
+
+
+def make_int(width: int):
+    """Return the C signed integer type for the given bit width, e.g. make_int(8) -> int8_t."""
+    return _make_ctype(f"int{width}_t")
+
+
 # ── unsigned integer types ────────────────────
-uint1_t = _make_ctype("uint1_t")
-uint2_t = _make_ctype("uint2_t")
-uint3_t = _make_ctype("uint3_t")
-uint4_t = _make_ctype("uint4_t")
-uint5_t = _make_ctype("uint5_t")
-uint6_t = _make_ctype("uint6_t")
-uint7_t = _make_ctype("uint7_t")
-uint8_t = _make_ctype("uint8_t")
-uint9_t = _make_ctype("uint9_t")
-uint10_t = _make_ctype("uint10_t")
-uint11_t = _make_ctype("uint11_t")
-uint12_t = _make_ctype("uint12_t")
-uint13_t = _make_ctype("uint13_t")
-uint14_t = _make_ctype("uint14_t")
-uint15_t = _make_ctype("uint15_t")
-uint16_t = _make_ctype("uint16_t")
-uint24_t = _make_ctype("uint24_t")
-uint32_t = _make_ctype("uint32_t")
-uint33_t = _make_ctype("uint33_t")
-uint34_t = _make_ctype("uint34_t")
-uint48_t = _make_ctype("uint48_t")
-uint64_t = _make_ctype("uint64_t")
+uint1_t = make_uint(1)
+uint2_t = make_uint(2)
+uint3_t = make_uint(3)
+uint4_t = make_uint(4)
+uint5_t = make_uint(5)
+uint6_t = make_uint(6)
+uint7_t = make_uint(7)
+uint8_t = make_uint(8)
+uint9_t = make_uint(9)
+uint10_t = make_uint(10)
+uint11_t = make_uint(11)
+uint12_t = make_uint(12)
+uint13_t = make_uint(13)
+uint14_t = make_uint(14)
+uint15_t = make_uint(15)
+uint16_t = make_uint(16)
+uint24_t = make_uint(24)
+uint32_t = make_uint(32)
+uint33_t = make_uint(33)
+uint34_t = make_uint(34)
+uint48_t = make_uint(48)
+uint64_t = make_uint(64)
 
 # ── signed integer types ──────────────────────
-int1_t = _make_ctype("int1_t")
-int2_t = _make_ctype("int2_t")
-int4_t = _make_ctype("int4_t")
-int8_t = _make_ctype("int8_t")
-int16_t = _make_ctype("int16_t")
-int32_t = _make_ctype("int32_t")
-int64_t = _make_ctype("int64_t")
+int1_t = make_int(1)
+int2_t = make_int(2)
+int4_t = make_int(4)
+int8_t = make_int(8)
+int16_t = make_int(16)
+int32_t = make_int(32)
+int64_t = make_int(64)
 
 # ─────────────────────────────────────────────
 # NamedTuple with automatic subscript support
