@@ -1,18 +1,39 @@
 # pyright: reportInvalidTypeForm=none
 from typing import NamedTuple
-from pypeline import MAIN, Reg, struct, uint1_t, uint32_t, uint34_t, _RegType
+from pypeline import (
+    MAIN,
+    Reg,
+    struct,
+    uint1_t,
+    uint6_t,
+    uint32_t,
+    uint34_t,
+    _RegType,
+    register_operator,
+)
 
-# TODO operator overloading for shift operator
-#    want to implement variable shift in pypeline "software"
-# TODO variable vs const shifts - dont want to use pipelinec var shift c code gen
-#       DO WANT TO USE operator overloading
 # TODO aim for float e m t adder
 # TODO constant wires based reduction that interacts with graph submodule instances:
 #  ex. var ref assign/read into constant
 #  ex. shift by a uint6_t type wire driven by constant
-# @MAIN
-# def shift_var(v: uint32_t, amount: uint32_t) -> uint32_t:
-#    return v << amount
+#  ... some day might be helpful for making simulator?
+# TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+
+
+def make_shifter_SL(VALUE_TYPE, AMOUNT_TYPE):
+    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
+        return v + amount  # TODO: barrel-shifter body
+
+    return shifter_SL
+
+
+shl_uint32_uint6 = make_shifter_SL(uint32_t, uint6_t)
+register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
+
+
+@MAIN
+def shift_var(v: uint32_t, amount: uint6_t) -> uint32_t:
+    return v << amount
 
 
 def make_point_t(dim_type, dim_size, style="array"):

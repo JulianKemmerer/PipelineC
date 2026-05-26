@@ -86,12 +86,6 @@ int16_t = _make_ctype("int16_t")
 int32_t = _make_ctype("int32_t")
 int64_t = _make_ctype("int64_t")
 
-# ── float types ───────────────────────────────
-float16_t = _make_ctype("float16_t")
-float32_t = _make_ctype("float32_t")
-float64_t = _make_ctype("float64_t")
-
-
 # ─────────────────────────────────────────────
 # NamedTuple with automatic subscript support
 # ─────────────────────────────────────────────
@@ -167,6 +161,25 @@ def MAIN(func):
     """Marks a function as a top-level hardware process."""
     _main_registry.append(func)
     return func
+
+
+# ─────────────────────────────────────────────
+# Operator overloading registry
+# ─────────────────────────────────────────────
+
+_operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> module_level_name_str
+
+
+def register_operator(op: str, left_type, right_type, func_name: str) -> None:
+    """Register a hardware function as the implementation of a variable operator.
+
+    op:        "SL" (<<) or "SR" (>>)
+    left_type: C type of the left operand (e.g. uint32_t)
+    right_type: C type of the right operand / shift amount (e.g. uint6_t)
+    func_name: string name of a module-level callable in the design file
+               (the closure-factory result assigned to that name)
+    """
+    _operator_registry[(op, str(left_type), str(right_type))] = func_name
 
 
 # ─────────────────────────────────────────────

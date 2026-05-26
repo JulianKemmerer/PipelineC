@@ -1707,10 +1707,45 @@ class FuncElaborator:
                 )
                 return port_return, l_type
             else:
-                raise NotImplementedError(
-                    f"TODO: variable shift amount not yet implemented"
-                    f" (at {_loc_str(self.src_file, expr)})"
+                # Variable shift — look up user-registered operator implementation.
+                import pypeline as _pypeline
+
+                left_wire, l_type = self._elab_expr(expr.left)
+                right_wire, r_type = self._elab_expr(expr.right)
+                key = (op_name, l_type, r_type)
+                impl_name = _pypeline._operator_registry.get(key)
+                if impl_name is None:
+                    raise NotImplementedError(
+                        f"Variable shift ({l_type} {op_name} {r_type}) has no registered"
+                        f" implementation. Call register_operator('{op_name}', {l_type},"
+                        f" {r_type}, 'func_name') in your design file."
+                        f" (at {_loc_str(self.src_file, expr)})"
+                    )
+                callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
+                if callee_def is None:
+                    live_func = self.module_globals.get(impl_name)
+                    if live_func is None or not callable(live_func):
+                        raise NotImplementedError(
+                            f"Registered operator '{impl_name}' not found in module globals"
+                        )
+                    callee_def = self._elaborate_live_func(impl_name, live_func)
+                inst = _inst_name(impl_name, self.src_file, expr)
+                ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+                port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                input_ports = list(
+                    zip(callee_def.inputs, [left_wire, right_wire], [l_type, r_type])
                 )
+                _add_submodule_instance(
+                    self.logic,
+                    inst,
+                    impl_name,
+                    input_ports,
+                    port_return,
+                    ret_type,
+                    expr,
+                    self.src_file,
+                )
+                return port_return, ret_type
 
         left_wire, l_type = self._elab_expr(expr.left)
         right_wire, r_type = self._elab_expr(expr.right)
@@ -1831,6 +1866,22 @@ class FuncElaborator:
                     closure_ns[var] = cell.cell_contents
                 except ValueError:
                     pass
+
+        # Python only captures names as closure cells when they appear in the
+        # function *body*.  Names used only in annotations (e.g. VALUE_TYPE in
+        # `v: VALUE_TYPE`) are NOT captured as closure cells, but Python DOES
+        # evaluate them at definition time and store the result in __annotations__.
+        # Recover those type variables here so annotation resolution works.
+        ann_dict = getattr(func, "__annotations__", {})
+        for ast_arg in func_def.args.args:
+            if isinstance(ast_arg.annotation, ast.Name):
+                var_name = ast_arg.annotation.id
+                if var_name not in closure_ns and ast_arg.arg in ann_dict:
+                    closure_ns[var_name] = ann_dict[ast_arg.arg]
+        if func_def.returns is not None and isinstance(func_def.returns, ast.Name):
+            var_name = func_def.returns.id
+            if var_name not in closure_ns and "return" in ann_dict:
+                closure_ns[var_name] = ann_dict["return"]
 
         merged_globals = {**self.module_globals, **closure_ns}
 
