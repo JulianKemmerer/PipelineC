@@ -2,6 +2,18 @@
 from typing import NamedTuple
 from pypeline import MAIN, Reg, struct, uint1_t, uint32_t, uint34_t, _RegType
 
+# TODO operator overloading for shift operator
+#    want to implement variable shift in pypeline "software"
+# TODO variable vs const shifts - dont want to use pipelinec var shift c code gen
+#       DO WANT TO USE operator overloading
+# TODO aim for float e m t adder
+# TODO constant wires based reduction that interacts with graph submodule instances:
+#  ex. var ref assign/read into constant
+#  ex. shift by a uint6_t type wire driven by constant
+# @MAIN
+# def shift_var(v: uint32_t, amount: uint32_t) -> uint32_t:
+#    return v << amount
+
 
 def make_point_t(dim_type, dim_size, style="array"):
     if style == "array":
@@ -343,6 +355,31 @@ def main_const_ref_rd(my_points: point_xy_t[10]) -> point_xy_t[10]:
     #              alias_2,      <- covers [2]
     #              alias_3,      <- covers [3]
     #              alias_4)      <- covers [4]
+
+
+# TODO
+# @MAIN
+# def shift_const_wire(v: uint32_t) -> uint32_t:
+#    amount: uint32_t = 5
+#    return v << amount
+
+SHIFT_AMOUNT = 5
+
+
+@MAIN
+def shift_const_param(v: uint32_t) -> uint32_t:
+    return v << SHIFT_AMOUNT
+
+
+@MAIN
+def shift_const_local_param(v: uint32_t) -> uint32_t:
+    AMOUNT = 5
+    return v << AMOUNT
+
+
+@MAIN
+def shift_const(v: uint32_t) -> uint32_t:
+    return v << 5
 
 
 def foo(x: uint1_t) -> uint1_t:

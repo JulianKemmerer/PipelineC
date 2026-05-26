@@ -72,6 +72,8 @@ uint15_t = _make_ctype("uint15_t")
 uint16_t = _make_ctype("uint16_t")
 uint24_t = _make_ctype("uint24_t")
 uint32_t = _make_ctype("uint32_t")
+uint33_t = _make_ctype("uint33_t")
+uint34_t = _make_ctype("uint34_t")
 uint48_t = _make_ctype("uint48_t")
 uint64_t = _make_ctype("uint64_t")
 

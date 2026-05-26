@@ -1666,8 +1666,52 @@ class FuncElaborator:
         )
         return port_return, typ
 
+    def _try_resolve_int_constant(self, expr):
+        """Return the int value if expr is a compile-time integer constant, else None.
+        Covers ast.Constant literals and ast.Name references into const_env/module_globals."""
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, int):
+            return expr.value
+        if isinstance(expr, ast.Name):
+            name = expr.id
+            if name in self.const_env and isinstance(self.const_env[name], (int, bool)):
+                return int(self.const_env[name])
+            if name in self.module_globals and isinstance(
+                self.module_globals[name], (int, bool)
+            ):
+                return int(self.module_globals[name])
+        return None
+
     def _elab_binop(self, expr):
         op_name = BIN_OP_MAP[type(expr.op)]
+
+        # Shift ops: constant amount -> CONST_SL/SR_<n>_<type> built-in;
+        # variable amount is not yet supported.
+        if op_name in (C_TO_LOGIC.BIN_OP_SL_NAME, C_TO_LOGIC.BIN_OP_SR_NAME):
+            amount = self._try_resolve_int_constant(expr.right)
+            if amount is not None:
+                left_wire, l_type = self._elab_expr(expr.left)
+                amount_str = str(amount)
+                func_base_name = f"{C_TO_LOGIC.CONST_PREFIX}{op_name}_{amount_str}"
+                func_name = f"{func_base_name}_{l_type}"
+                inst = _inst_name(func_base_name, self.src_file, expr)
+                port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                _add_submodule_instance(
+                    self.logic,
+                    inst,
+                    func_name,
+                    [("x", left_wire, l_type)],
+                    port_return,
+                    l_type,
+                    expr,
+                    self.src_file,
+                )
+                return port_return, l_type
+            else:
+                raise NotImplementedError(
+                    f"TODO: variable shift amount not yet implemented"
+                    f" (at {_loc_str(self.src_file, expr)})"
+                )
+
         left_wire, l_type = self._elab_expr(expr.left)
         right_wire, r_type = self._elab_expr(expr.right)
 
@@ -1681,7 +1725,7 @@ class FuncElaborator:
                 op_name, eff_l_type, eff_r_type, result_signed
             )
         else:
-            # Bitwise (and/or/xor), shift, or non-integer types:
+            # Bitwise (and/or/xor) or non-integer types:
             # no sign promotion; output type matches left input.
             eff_l_type, eff_r_type = l_type, r_type
             out_type = l_type
