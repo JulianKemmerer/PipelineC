@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 from typing import NamedTuple
-from pypeline import MAIN, struct, uint1_t, uint32_t
+from pypeline import MAIN, Reg, struct, uint1_t, uint32_t, _RegType
 
 
 def make_point_t(dim_type, dim_size, style="array"):
@@ -71,6 +71,13 @@ def concat_main(bits_lo: uint1_t[N], bits_hi: uint1_t[M]) -> uint1_t[sum_widths(
 
 
 @MAIN
+def accumulator(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]  # register — persists between clock cycles, init=0
+    acc = acc + data_in  # read current value, compute next
+    return acc
+
+
+@MAIN
 def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
     bits: uint1_t[11]
     b = 0
@@ -85,6 +92,11 @@ def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
         b = b + 1
         i = i + 1
     return bits
+
+
+@MAIN
+def adder(l: uint32_t, r: uint32_t) -> uint32_t:
+    return l + r
 
 
 @struct

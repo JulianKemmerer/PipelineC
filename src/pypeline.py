@@ -165,3 +165,37 @@ def MAIN(func):
     """Marks a function as a top-level hardware process."""
     _main_registry.append(func)
     return func
+
+
+# ─────────────────────────────────────────────
+# Reg[T] — hardware state register annotation
+# ─────────────────────────────────────────────
+
+
+class _RegType:
+    """Produced by Reg[T]. Marks a variable as a hardware register (flip-flop)."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype  # a _CTypeMeta class or array ctype
+
+    def __str__(self):
+        return f"Reg[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _RegMeta(type):
+    def __getitem__(cls, inner_type):
+        return _RegType(inner_type)
+
+
+class Reg(metaclass=_RegMeta):
+    """Marks a local variable as a hardware state register (persistent between cycles).
+
+    Usage in hardware functions:
+        acc: Reg[uint32_t]      # register, initialized to 0 at power-on
+        acc = acc + data_in     # read current value; write sets next-cycle value
+    """
+
+    pass

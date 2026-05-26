@@ -3,9 +3,11 @@ import hashlib
 import importlib.util
 import inspect
 import os
+import re
 
 import C_TO_LOGIC
 import AST as pypeline_ast
+from pypeline import _RegType
 
 UNARY_OP_MAP = {
     ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
@@ -40,6 +42,18 @@ AUG_OP_MAP = {
     ast.Div: lambda a, b: a // b,
     ast.Mod: lambda a, b: a % b,
 }
+
+# Arithmetic ops where output width differs from inputs and sign promotion applies.
+# (Bitwise, shift, compare ops are handled separately.)
+_ARITH_OPS = frozenset(
+    {
+        C_TO_LOGIC.BIN_OP_PLUS_NAME,
+        C_TO_LOGIC.BIN_OP_MINUS_NAME,
+        C_TO_LOGIC.BIN_OP_MULT_NAME,
+        C_TO_LOGIC.BIN_OP_DIV_NAME,
+        C_TO_LOGIC.BIN_OP_MOD_NAME,
+    }
+)
 
 # ─────────────────────────────────────────────
 # Type system helpers
@@ -399,8 +413,82 @@ def _unary_func_name(op_name, typ):
     return f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_{typ}"
 
 
-def _bin_func_name(op_name, typ):
-    return f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_{typ}"
+def _bin_func_name(op_name, l_type, r_type):
+    return f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_{l_type}_{r_type}"
+
+
+# ─────────────────────────────────────────────
+# Integer type helpers for arithmetic promotion
+# ─────────────────────────────────────────────
+
+_INT_CTYPE_RE = re.compile(r"(u?)int(\d+)_t$")
+
+
+def _ctype_is_int(c_type):
+    """True if c_type is a plain integer type (uint/int)."""
+    return bool(_INT_CTYPE_RE.match(c_type))
+
+
+def _ctype_info(c_type):
+    """Parse integer C type string. Returns (is_signed, width).
+    e.g. 'uint32_t' -> (False, 32),  'int16_t' -> (True, 16)
+    """
+    m = _INT_CTYPE_RE.match(c_type)
+    if not m:
+        raise NotImplementedError(f"Cannot get integer type info from: {c_type!r}")
+    return (m.group(1) != "u", int(m.group(2)))  # (is_signed, width)
+
+
+def _int_ctype(is_signed, width):
+    """Build integer C type string. e.g. (True, 32) -> 'int32_t'"""
+    return f"{'int' if is_signed else 'uint'}{width}_t"
+
+
+def _arith_promote(l_type, r_type):
+    """Compute effective input types after sign promotion for arithmetic/compare ops.
+
+    If both types have the same signedness, they are returned unchanged.
+    If there is a mismatch, the unsigned operand gains +1 bit and becomes signed
+    so the VHDL backend can operate on matching-sign types:
+      e.g. (int32_t, uint32_t) -> (int32_t, int33_t, True)
+
+    Returns (eff_l_type, eff_r_type, result_is_signed).
+    For non-integer types, returns the inputs unchanged with result_is_signed=None.
+    """
+    if not (_ctype_is_int(l_type) and _ctype_is_int(r_type)):
+        return l_type, r_type, None
+    l_signed, l_w = _ctype_info(l_type)
+    r_signed, r_w = _ctype_info(r_type)
+    if l_signed == r_signed:
+        return l_type, r_type, l_signed
+    if l_signed:
+        return l_type, _int_ctype(True, r_w + 1), True  # promote r to signed
+    else:
+        return _int_ctype(True, l_w + 1), r_type, True  # promote l to signed
+
+
+def _arith_output_type(op_name, eff_l_type, eff_r_type, result_signed):
+    """Compute full-precision output type for an arithmetic op.
+
+    Rules (after sign promotion, so both effective types have same signedness):
+      add:  max(lw, rw) + 1  (one extra bit for carry)
+      sub:  max(lw, rw)      if unsigned  (borrow is discarded)
+            max(lw, rw) + 1  if signed    (sub of negative = add, needs extra bit)
+      mult: lw + rw          (full product width)
+      div, mod: max(lw, rw)  (output bounded by larger input)
+    """
+    _, l_w = _ctype_info(eff_l_type)
+    _, r_w = _ctype_info(eff_r_type)
+    max_w = max(l_w, r_w)
+    if op_name == C_TO_LOGIC.BIN_OP_PLUS_NAME:
+        out_w = max_w + 1
+    elif op_name == C_TO_LOGIC.BIN_OP_MINUS_NAME:
+        out_w = max_w if not result_signed else max_w + 1
+    elif op_name == C_TO_LOGIC.BIN_OP_MULT_NAME:
+        out_w = l_w + r_w
+    else:  # div, mod
+        out_w = max_w
+    return _int_ctype(result_signed, out_w)
 
 
 def _infer_const_ctype(val):
@@ -826,8 +914,8 @@ def _build_var_ref_assign_logic(
             )
             _add_wire(logic, const_name, dim_type)
 
-            # EQ: var_dim == concrete_val
-            eq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_EQ_NAME, dim_type)
+            # EQ: var_dim == concrete_val  (same-type comparison, no promotion)
+            eq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_EQ_NAME, dim_type, dim_type)
             eq_inst = f"{eq_func}[va_eq_{pos_key}_d{var_dim_i - 1}]"
             counter[0] += 1
             eq_wire = _port_wire(eq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -846,7 +934,9 @@ def _build_var_ref_assign_logic(
                 cond_wire = eq_wire
             else:
                 and_func = _bin_func_name(
-                    C_TO_LOGIC.BIN_OP_AND_NAME, C_TO_LOGIC.BOOL_C_TYPE
+                    C_TO_LOGIC.BIN_OP_AND_NAME,
+                    C_TO_LOGIC.BOOL_C_TYPE,
+                    C_TO_LOGIC.BOOL_C_TYPE,
                 )
                 and_inst = f"{and_func}[va_and_{pos_key}_d{var_dim_i - 1}]"
                 counter[0] += 1
@@ -1067,7 +1157,32 @@ class FuncElaborator:
         self._setup_outputs()
         for stmt in self.func_def.body:
             self._elab_stmt(stmt)
+        self._finalize_state_regs()
         return self.logic
+
+    def _finalize_state_regs(self):
+        """Drive each state register's base wire with its "next cycle" value.
+
+        Mirrors _elab_return: _read_ref follows the alias chain (emitting CONST_REF_RD
+        for compound types with partial writes) to produce the final covering wire, then
+        _connect drives the base register wire with it.
+
+        The apparent cycle (acc -> aliases -> acc) is broken by the VHDL backend at the
+        register boundary: acc reads from the flip-flop, its driver wire becomes REG_COMB.
+
+        If the register was never written, env[reg_name] still points to the base wire
+        itself, so final_wire == reg_name; we skip the connect (no wire_driven_by entry),
+        meaning the VHDL backend emits REG_COMB_x <= x (register holds its value).
+        """
+        for reg_name, var_info in self.logic.state_regs.items():
+            c_type = var_info.type_name
+            # _read_ref follows the alias chain from the current env state.
+            # For scalar regs this returns env[reg_name] directly (no ast_node used).
+            # For compound regs with partial writes it emits a CONST_REF_RD, using
+            # self.func_def as the ast_node for instance naming.
+            final_wire, _ = self._read_ref((reg_name,), c_type, self.func_def)
+            if final_wire != reg_name:
+                _connect(self.logic, final_wire, reg_name)
 
     def _setup_inputs(self):
         eval_ns = self._make_eval_ns()
@@ -1130,6 +1245,13 @@ class FuncElaborator:
 
     def _elab_ann_assign(self, stmt):
         var_name = stmt.target.id
+        # Detect Reg[T] annotation — hardware state register
+        ann_val = self._try_eval_const(stmt.annotation)
+        if isinstance(ann_val, _RegType):
+            inner_ctype = str(ann_val.inner_ctype)
+            self._declare_state_reg(var_name, inner_ctype, stmt.target)
+            return
+        # Normal local variable
         typ = _annotation_to_ctype(stmt.annotation, self._make_eval_ns())
         self._declare_var(var_name, typ, stmt.target)
         if stmt.value is not None:
@@ -1546,9 +1668,25 @@ class FuncElaborator:
 
     def _elab_binop(self, expr):
         op_name = BIN_OP_MAP[type(expr.op)]
-        left_wire, typ = self._elab_expr(expr.left)
-        right_wire, _ = self._elab_expr(expr.right)
-        func_name = _bin_func_name(op_name, typ)
+        left_wire, l_type = self._elab_expr(expr.left)
+        right_wire, r_type = self._elab_expr(expr.right)
+
+        if op_name in _ARITH_OPS and _ctype_is_int(l_type) and _ctype_is_int(r_type):
+            # Arithmetic ops: sign-promote inputs, compute full-precision output type.
+            # e.g. uint32_t + uint8_t  -> eff: u32, u8;  out: uint33_t
+            #      int32_t  + uint32_t -> eff: i32, i33; out: int34_t
+            # Truncation to the LHS variable type happens at the assignment alias.
+            eff_l_type, eff_r_type, result_signed = _arith_promote(l_type, r_type)
+            out_type = _arith_output_type(
+                op_name, eff_l_type, eff_r_type, result_signed
+            )
+        else:
+            # Bitwise (and/or/xor), shift, or non-integer types:
+            # no sign promotion; output type matches left input.
+            eff_l_type, eff_r_type = l_type, r_type
+            out_type = l_type
+
+        func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
         inst = _inst_name(
             f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr
         )
@@ -1557,19 +1695,24 @@ class FuncElaborator:
             self.logic,
             inst,
             func_name,
-            [("left", left_wire, typ), ("right", right_wire, typ)],
+            [("left", left_wire, eff_l_type), ("right", right_wire, eff_r_type)],
             port_return,
-            typ,
+            out_type,
             expr,
             self.src_file,
         )
-        return port_return, typ
+        return port_return, out_type
 
     def _elab_compare(self, expr):
         op_name = BIN_OP_MAP[type(expr.ops[0])]
-        left_wire, typ = self._elab_expr(expr.left)
-        right_wire, _ = self._elab_expr(expr.comparators[0])
-        func_name = _bin_func_name(op_name, typ)
+        left_wire, l_type = self._elab_expr(expr.left)
+        right_wire, r_type = self._elab_expr(expr.comparators[0])
+        # Sign-promote so the VHDL backend compares matching-sign types.
+        if _ctype_is_int(l_type) and _ctype_is_int(r_type):
+            eff_l_type, eff_r_type, _ = _arith_promote(l_type, r_type)
+        else:
+            eff_l_type, eff_r_type = l_type, r_type
+        func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
         inst = _inst_name(
             f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr
         )
@@ -1578,7 +1721,7 @@ class FuncElaborator:
             self.logic,
             inst,
             func_name,
-            [("left", left_wire, typ), ("right", right_wire, typ)],
+            [("left", left_wire, eff_l_type), ("right", right_wire, eff_r_type)],
             port_return,
             C_TO_LOGIC.BOOL_C_TYPE,
             expr,
@@ -2042,6 +2185,28 @@ class FuncElaborator:
         _add_wire(self.logic, zeros_wire, typ)
         _connect(self.logic, zeros_wire, var_name)
         self.env[var_name] = (var_name, typ)
+
+    def _declare_state_reg(self, var_name, c_type, node):
+        """Declare a hardware state register (Reg[T] annotation).
+
+        The base wire represents the register's current (start-of-cycle) value.
+        Unlike a local variable it has NO combinatorial driver — the VHDL backend
+        sources it from the persistent flip-flop signal. All writes via _write_ref
+        create aliases in wire_aliases_over_time; the final alias is the next-cycle
+        value (drives REG_COMB_<var_name> in the generated VHDL).
+        """
+        var_info = C_TO_LOGIC.VariableInfo()
+        var_info.name = var_name
+        var_info.type_name = c_type
+        var_info.resolved_const_str = "0"  # power-on reset value
+        var_info.is_volatile = False
+        var_info.is_static_local = True
+
+        self.logic.state_regs[var_name] = var_info
+        self.logic.uses_nonvolatile_state_regs = True
+
+        _add_wire(self.logic, var_name, c_type)
+        self.env[var_name] = (var_name, c_type)
 
 
 # ─────────────────────────────────────────────
