@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 from typing import NamedTuple
-from pypeline import MAIN, Reg, struct, uint1_t, uint32_t, _RegType
+from pypeline import MAIN, Reg, struct, uint1_t, uint32_t, uint34_t, _RegType
 
 
 def make_point_t(dim_type, dim_size, style="array"):
@@ -92,6 +92,11 @@ def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
         b = b + 1
         i = i + 1
     return bits
+
+
+@MAIN
+def adder_extra(a: uint32_t, b: uint32_t, c: uint32_t) -> uint34_t:
+    return (a + b) + c
 
 
 @MAIN
@@ -343,6 +348,11 @@ def main_const_ref_rd(my_points: point_xy_t[10]) -> point_xy_t[10]:
 def foo(x: uint1_t) -> uint1_t:
     y = ~x
     return y
+
+
+@MAIN
+def main_foo_foo_fooo(x: uint1_t) -> uint1_t:
+    return foo(foo(foo(x)))
 
 
 @MAIN
