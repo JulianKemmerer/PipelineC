@@ -80,6 +80,8 @@ uint13_t = make_uint(13)
 uint14_t = make_uint(14)
 uint15_t = make_uint(15)
 uint16_t = make_uint(16)
+uint17_t = make_uint(17)
+uint18_t = make_uint(18)
 uint24_t = make_uint(24)
 uint32_t = make_uint(32)
 uint33_t = make_uint(33)
@@ -224,3 +226,74 @@ class Reg(metaclass=_RegMeta):
     """
 
     pass
+
+
+# ─────────────────────────────────────────────
+# Bit manipulation primitives
+# (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)
+# ─────────────────────────────────────────────
+# Bit slice / select: use subscript syntax on integer wires
+#   y = x[15]       # single bit  → uint1_t
+#   z = x[15:0]     # range       → uint16_t
+# Bit concat: use tuple syntax on unsigned integer wires
+#   z = (a, b)      # a=upper, b=lower; chains for >2 elements
+
+
+def bit_dup(x, n):
+    """Replicate x n times: bit_dup(uint4_t, 4) → uint16_t."""
+    raise NotImplementedError("bit_dup is a PipelineC hardware primitive")
+
+
+def rotl(x, amount):
+    """Rotate x left by amount bits (constant)."""
+    raise NotImplementedError("rotl is a PipelineC hardware primitive")
+
+
+def rotr(x, amount):
+    """Rotate x right by amount bits (constant)."""
+    raise NotImplementedError("rotr is a PipelineC hardware primitive")
+
+
+def bswap(x):
+    """Reverse byte order of x."""
+    raise NotImplementedError("bswap is a PipelineC hardware primitive")
+
+
+def bit_assign(base, x, pos):
+    """Assign x into base at bit position pos (constant): base[pos+width-1:pos] = x."""
+    raise NotImplementedError("bit_assign is a PipelineC hardware primitive")
+
+
+def array_to_uint_be(arr):
+    """Pack array elements into a single uint, big-endian (element[0] at MSB)."""
+    raise NotImplementedError("array_to_uint_be is a PipelineC hardware primitive")
+
+
+def array_to_uint_le(arr):
+    """Pack array elements into a single uint, little-endian (element[0] at LSB)."""
+    raise NotImplementedError("array_to_uint_le is a PipelineC hardware primitive")
+
+
+def uint_to_array_be(x, elem_w):
+    """Split uint x into array of elem_w-bit elements, big-endian (MSB → element[0])."""
+    raise NotImplementedError("uint_to_array_be is a PipelineC hardware primitive")
+
+
+def uint_to_array_le(x, elem_w):
+    """Split uint x into array of elem_w-bit elements, little-endian (LSB → element[0])."""
+    raise NotImplementedError("uint_to_array_le is a PipelineC hardware primitive")
+
+
+BIT_MANIP_FUNC_NAMES = frozenset(
+    {
+        "bit_dup",
+        "rotl",
+        "rotr",
+        "bswap",
+        "bit_assign",
+        "array_to_uint_be",
+        "array_to_uint_le",
+        "uint_to_array_be",
+        "uint_to_array_le",
+    }
+)

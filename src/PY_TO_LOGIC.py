@@ -7,7 +7,7 @@ import re
 
 import C_TO_LOGIC
 import AST as pypeline_ast
-from pypeline import _RegType
+from pypeline import _RegType, BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES
 
 UNARY_OP_MAP = {
     ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
@@ -531,6 +531,33 @@ def _var_ref_rd_func_name(output_c_type, base_c_type, ref_toks, covering_ref_tok
     h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
+
+
+# ─────────────────────────────────────────────
+# Bit manipulation Logic() registration
+# ─────────────────────────────────────────────
+
+
+def _register_bit_manip_logic(
+    func_name, port_names, input_types, output_type, parser_state
+):
+    """Register a bit manipulation built-in in FuncLogicLookupTable.
+    Idempotent — no-op if func_name is already registered.
+    Marks the logic as is_vhdl_func=True and is_new_style_bit_manip=True.
+    Returns the registered Logic().
+    """
+    if func_name not in parser_state.FuncLogicLookupTable:
+        logic = C_TO_LOGIC.Logic()
+        logic.func_name = func_name
+        for port_name, c_type in zip(port_names, input_types):
+            logic.inputs.append(port_name)
+            logic.wire_to_c_type[port_name] = c_type
+        logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
+        logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME] = output_type
+        logic.is_vhdl_func = True
+        logic.is_new_style_bit_manip = True
+        parser_state.FuncLogicLookupTable[func_name] = logic
+    return parser_state.FuncLogicLookupTable[func_name]
 
 
 # ─────────────────────────────────────────────
@@ -1233,6 +1260,10 @@ class FuncElaborator:
                     return
         # Hardware path
         rhs_wire, rhs_type = self._elab_expr(stmt.value)
+        # x[15:0] = y — bit-slice assign on a scalar integer wire
+        if isinstance(target, ast.Subscript):
+            if self._try_elab_bit_slice_assign(target, rhs_wire, rhs_type, stmt):
+                return
         ref_toks = self._parse_ref_toks(target)
         base_var = ref_toks[0]
         # Variable indices on LHS → VAR_REF_ASSIGN
@@ -1587,7 +1618,13 @@ class FuncElaborator:
             return self._elab_compare(expr)
         elif isinstance(expr, ast.Call):
             return self._elab_call(expr)
+        elif isinstance(expr, ast.Tuple):
+            return self._elab_tuple_concat(expr)
         elif isinstance(expr, (ast.Subscript, ast.Attribute)):
+            if isinstance(expr, ast.Subscript):
+                result = self._try_elab_bit_slice(expr)
+                if result is not None:
+                    return result
             return self._elab_ref_read(expr)
         else:
             raise NotImplementedError(f"Unsupported expr: {ast.dump(expr)}")
@@ -1645,6 +1682,192 @@ class FuncElaborator:
         if _has_variable_index(ref_toks):
             return self._emit_var_ref_rd(ref_toks, c_type, expr)
         return self._read_ref(ref_toks, c_type, expr)
+
+    def _try_elab_bit_slice(self, expr):
+        """Attempt to elaborate x[bit] or x[high:low] as a bit-select/slice submodule.
+        Returns (wire, type) on success, None if the expression is not a bit slice
+        (falls through to _elab_ref_read for normal array/struct access).
+        Both the bit index and slice bounds must be compile-time constants.
+        """
+        base_node = expr.value
+        if not isinstance(base_node, ast.Name):
+            return None
+        base_name = base_node.id
+        if base_name not in self.env:
+            return None
+        base_wire, base_type = self.env[base_name]
+        if not _ctype_is_int(base_type):
+            return None
+
+        slc = expr.slice
+        if isinstance(slc, ast.Index):  # Python 3.8 compat
+            slc = slc.value
+
+        if isinstance(slc, ast.Constant) and isinstance(slc.value, int):
+            # x[15] — single bit select
+            high = low = slc.value
+        elif isinstance(slc, ast.Slice):
+            # x[15:0] — bit range; both bounds must be constants
+            if slc.lower is None or slc.upper is None:
+                raise ElaborationError(
+                    f"Bit slice on '{base_name}' requires both bounds: e.g. x[15:0]"
+                )
+            high_val = self._try_resolve_int_constant(slc.lower)
+            low_val = self._try_resolve_int_constant(slc.upper)
+            if high_val is None or low_val is None:
+                raise ElaborationError(
+                    f"Bit slice bounds on '{base_name}' must be compile-time constants"
+                )
+            high, low = max(high_val, low_val), min(high_val, low_val)
+        else:
+            # Variable index on a scalar int — not a valid bit slice
+            return None
+
+        _, width = _ctype_info(base_type)
+        if low < 0 or high >= width:
+            raise ElaborationError(
+                f"Bit index [{high}:{low}] out of range for {base_type} (width={width})"
+            )
+
+        prefix = base_type.replace("_t", "")
+        func_name = f"{prefix}_{high}_{low}"
+        out_type = f"uint{high - low + 1}_t"
+        _register_bit_manip_logic(
+            func_name, ["x"], [base_type], out_type, self.parser_state
+        )
+
+        inst = _inst_name(func_name, self.src_file, expr)
+        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_name,
+            [("x", base_wire, base_type)],
+            port_return,
+            out_type,
+            expr,
+            self.src_file,
+        )
+        return port_return, out_type
+
+    def _elab_tuple_concat(self, expr):
+        """Elaborate (a, b, ...) as a chain of bit-concat submodule instances.
+        All elements must be unsigned integer hardware wires. Chains left-associatively:
+        (a, b, c) → uint{wa+wb+wc}_t = uint{wa+wb}_uint{wc}(uint{wa}_uint{wb}(a, b), c)
+        """
+        if len(expr.elts) < 2:
+            raise ElaborationError("Tuple concat requires at least 2 elements")
+
+        acc_wire, acc_type = self._elab_expr(expr.elts[0])
+        if not _ctype_is_int(acc_type) or _ctype_info(acc_type)[0]:
+            raise ElaborationError(
+                f"Tuple concat element must be an unsigned integer type, got {acc_type!r}"
+            )
+
+        for elt in expr.elts[1:]:
+            elt_wire, elt_type = self._elab_expr(elt)
+            if not _ctype_is_int(elt_type) or _ctype_info(elt_type)[0]:
+                raise ElaborationError(
+                    f"Tuple concat element must be an unsigned integer type, got {elt_type!r}"
+                )
+            _, acc_w = _ctype_info(acc_type)
+            _, elt_w = _ctype_info(elt_type)
+            acc_prefix = acc_type.replace("_t", "")
+            elt_prefix = elt_type.replace("_t", "")
+            func_name = f"{acc_prefix}_{elt_prefix}"
+            out_type = f"uint{acc_w + elt_w}_t"
+            _register_bit_manip_logic(
+                func_name, ["x", "y"], [acc_type, elt_type], out_type, self.parser_state
+            )
+            inst = _inst_name(func_name, self.src_file, elt)
+            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                inst,
+                func_name,
+                [("x", acc_wire, acc_type), ("y", elt_wire, elt_type)],
+                port_return,
+                out_type,
+                elt,
+                self.src_file,
+            )
+            acc_wire, acc_type = port_return, out_type
+
+        return acc_wire, acc_type
+
+    def _try_elab_bit_slice_assign(self, target, rhs_wire, rhs_type, stmt):
+        """Handle x[15:0] = y — bit-slice assignment on a scalar integer wire.
+        Reads current wire for x, instantiates a bit_assign submodule, aliases x to result.
+        Returns True if handled, False if the target is not a bit-slice assign.
+        Both slice bounds must be compile-time constants.
+        """
+        base_node = target.value
+        if not isinstance(base_node, ast.Name):
+            return False
+        x_name = base_node.id
+        if x_name not in self.env:
+            return False
+        old_wire, base_type = self.env[x_name]
+        if not _ctype_is_int(base_type):
+            return False
+
+        slc = target.slice
+        if isinstance(slc, ast.Index):  # Python 3.8 compat
+            slc = slc.value
+
+        if not isinstance(slc, ast.Slice):
+            return False  # x[i] = y on an integer is not a slice assign
+
+        if slc.lower is None or slc.upper is None:
+            raise ElaborationError(
+                f"Bit-slice assign on '{x_name}' requires both bounds: e.g. x[15:0] = y"
+            )
+        high_val = self._try_resolve_int_constant(slc.lower)
+        low_val = self._try_resolve_int_constant(slc.upper)
+        if high_val is None or low_val is None:
+            raise ElaborationError(
+                f"Bit-slice assign bounds on '{x_name}' must be compile-time constants"
+            )
+        high, low = max(high_val, low_val), min(high_val, low_val)
+
+        _, base_w = _ctype_info(base_type)
+        if low < 0 or high >= base_w:
+            raise ElaborationError(
+                f"Bit-slice assign [{high}:{low}] out of range for {base_type} (width={base_w})"
+            )
+        expected_rhs_w = high - low + 1
+        if not _ctype_is_int(rhs_type):
+            raise ElaborationError(
+                f"Bit-slice assign RHS must be an integer type, got {rhs_type!r}"
+            )
+        _, rhs_w = _ctype_info(rhs_type)
+        if rhs_w != expected_rhs_w:
+            raise ElaborationError(
+                f"Bit-slice assign [{high}:{low}] expects {expected_rhs_w}-bit RHS, "
+                f"got {rhs_type!r} ({rhs_w} bits)"
+            )
+
+        base_prefix = base_type.replace("_t", "")
+        rhs_prefix = rhs_type.replace("_t", "")
+        func_name = f"{base_prefix}_{rhs_prefix}_{low}"
+        _register_bit_manip_logic(
+            func_name, ["inp", "x"], [base_type, rhs_type], base_type, self.parser_state
+        )
+
+        inst = _inst_name(func_name, self.src_file, target)
+        result_wire = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_name,
+            [("inp", old_wire, base_type), ("x", rhs_wire, rhs_type)],
+            result_wire,
+            base_type,
+            target,
+            self.src_file,
+        )
+        self._write_ref((x_name,), result_wire, base_type, stmt)
+        return True
 
     def _elab_unary(self, expr):
         op_name = UNARY_OP_MAP[type(expr.op)]
@@ -1810,6 +2033,8 @@ class FuncElaborator:
 
     def _elab_call(self, expr):
         callee_name = expr.func.id
+        if callee_name in _BIT_MANIP_FUNC_NAMES:
+            return self._elab_bit_manip_call(expr)
         callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
         if callee_def is None:
             # Not found in elaborated functions — check if it's a live callable
@@ -1837,6 +2062,163 @@ class FuncElaborator:
             self.src_file,
         )
         return port_return, ret_typ
+
+    def _elab_bit_manip_call(self, expr):
+        """Elaborate a call to a bit manipulation primitive function.
+        Builds the canonical C function name from argument types and constant parameters,
+        registers a Logic() for it, and adds a submodule instance.
+        """
+        callee_name = expr.func.id
+        args = expr.args
+
+        def _require_const(arg, label):
+            val = self._try_resolve_int_constant(arg)
+            if val is None:
+                raise ElaborationError(
+                    f"{callee_name}: '{label}' must be a compile-time constant"
+                )
+            return val
+
+        def _require_uint(wire, typ, label):
+            if not _ctype_is_int(typ):
+                raise ElaborationError(
+                    f"{callee_name}: '{label}' must be an integer type, got {typ!r}"
+                )
+            if _ctype_info(typ)[0]:
+                raise ElaborationError(
+                    f"{callee_name}: '{label}' must be unsigned, got {typ!r}"
+                )
+
+        def _require_int(wire, typ, label):
+            if not _ctype_is_int(typ):
+                raise ElaborationError(
+                    f"{callee_name}: '{label}' must be an integer type, got {typ!r}"
+                )
+
+        def _emit(func_name, port_names, in_types, out_type, port_wires):
+            _register_bit_manip_logic(
+                func_name, port_names, in_types, out_type, self.parser_state
+            )
+            inst = _inst_name(func_name, self.src_file, expr)
+            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            input_ports = list(zip(port_names, port_wires, in_types))
+            _add_submodule_instance(
+                self.logic,
+                inst,
+                func_name,
+                input_ports,
+                port_return,
+                out_type,
+                expr,
+                self.src_file,
+            )
+            return port_return, out_type
+
+        if callee_name == "bit_dup":
+            if len(args) != 2:
+                raise ElaborationError("bit_dup(x, n): requires exactly 2 arguments")
+            x_wire, x_type = self._elab_expr(args[0])
+            _require_uint(x_wire, x_type, "x")
+            n = _require_const(args[1], "n")
+            if n < 1:
+                raise ElaborationError(f"bit_dup: n must be ≥ 1, got {n}")
+            _, xw = _ctype_info(x_type)
+            prefix = x_type.replace("_t", "")
+            return _emit(f"{prefix}_{n}", ["x"], [x_type], f"uint{xw * n}_t", [x_wire])
+
+        elif callee_name == "rotl":
+            if len(args) != 2:
+                raise ElaborationError("rotl(x, n): requires exactly 2 arguments")
+            x_wire, x_type = self._elab_expr(args[0])
+            _require_uint(x_wire, x_type, "x")
+            n = _require_const(args[1], "n")
+            _, xw = _ctype_info(x_type)
+            return _emit(f"rotl{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire])
+
+        elif callee_name == "rotr":
+            if len(args) != 2:
+                raise ElaborationError("rotr(x, n): requires exactly 2 arguments")
+            x_wire, x_type = self._elab_expr(args[0])
+            _require_uint(x_wire, x_type, "x")
+            n = _require_const(args[1], "n")
+            _, xw = _ctype_info(x_type)
+            return _emit(f"rotr{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire])
+
+        elif callee_name == "bswap":
+            if len(args) != 1:
+                raise ElaborationError("bswap(x): requires exactly 1 argument")
+            x_wire, x_type = self._elab_expr(args[0])
+            _require_uint(x_wire, x_type, "x")
+            _, xw = _ctype_info(x_type)
+            return _emit(f"bswap_{xw}", ["x"], [x_type], f"uint{xw}_t", [x_wire])
+
+        elif callee_name == "bit_assign":
+            if len(args) != 3:
+                raise ElaborationError(
+                    "bit_assign(base, x, pos): requires exactly 3 arguments"
+                )
+            base_wire, base_type = self._elab_expr(args[0])
+            x_wire, x_type = self._elab_expr(args[1])
+            pos = _require_const(args[2], "pos")
+            _require_int(base_wire, base_type, "base")
+            _require_int(x_wire, x_type, "x")
+            base_prefix = base_type.replace("_t", "")
+            x_prefix = x_type.replace("_t", "")
+            func_name = f"{base_prefix}_{x_prefix}_{pos}"
+            return _emit(
+                func_name,
+                ["inp", "x"],
+                [base_type, x_type],
+                base_type,
+                [base_wire, x_wire],
+            )
+
+        elif callee_name in ("array_to_uint_be", "array_to_uint_le"):
+            if len(args) != 1:
+                raise ElaborationError(
+                    f"{callee_name}(arr): requires exactly 1 argument"
+                )
+            arr_wire, arr_type = self._elab_expr(args[0])
+            if not _is_array(arr_type):
+                raise ElaborationError(
+                    f"{callee_name}: argument must be an array type, got {arr_type!r}"
+                )
+            elem_type = _array_elem_type(arr_type)
+            n = _array_first_dim(arr_type)
+            if not _ctype_is_int(elem_type):
+                raise ElaborationError(
+                    f"{callee_name}: array element must be an integer type, got {elem_type!r}"
+                )
+            _, ew = _ctype_info(elem_type)
+            ep = elem_type.replace("_t", "")
+            endian = "be" if callee_name == "array_to_uint_be" else "le"
+            func_name = f"{ep}_array{n}_{endian}"
+            return _emit(func_name, ["x"], [arr_type], f"uint{ew * n}_t", [arr_wire])
+
+        elif callee_name in ("uint_to_array_be", "uint_to_array_le"):
+            if len(args) != 2:
+                raise ElaborationError(
+                    f"{callee_name}(x, elem_w): requires exactly 2 arguments"
+                )
+            x_wire, x_type = self._elab_expr(args[0])
+            _require_uint(x_wire, x_type, "x")
+            elem_w = _require_const(args[1], "elem_w")
+            if elem_w < 1:
+                raise ElaborationError(
+                    f"{callee_name}: elem_w must be ≥ 1, got {elem_w}"
+                )
+            _, total_w = _ctype_info(x_type)
+            if total_w % elem_w != 0:
+                raise ElaborationError(
+                    f"{callee_name}: elem_w={elem_w} does not divide total width {total_w} evenly"
+                )
+            n = total_w // elem_w
+            endian = "be" if callee_name == "uint_to_array_be" else "le"
+            func_name = f"uint{total_w}_{elem_w}_{endian}"
+            out_type = f"uint{elem_w}_t[{n}]"
+            return _emit(func_name, ["x"], [x_type], out_type, [x_wire])
+
+        raise NotImplementedError(f"Unknown bit manip function: {callee_name!r}")
 
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
