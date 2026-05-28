@@ -703,6 +703,135 @@ Only the taken branch's hardware is emitted; the other branch produces no Logic(
 
 ---
 
+## Registers (`Reg[T]`)
+
+A local variable annotated `Reg[T]` declares a hardware register — a value that persists
+across clock cycles and is initialised to zero at reset.
+
+```python
+@MAIN
+def accumulator(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]   # register, init=0
+    acc = acc + data_in  # read current value, compute next
+    return acc
+```
+
+Elaboration treats the annotation specially:
+
+- A register read wire `acc` (type `uint32_t`) is added as a pseudo-input so the body can
+  read its current value.
+- A register write wire is the wire driven by the assignment to `acc`; it becomes the D
+  input of a D-flip-flop in the generated VHDL.
+- The return value is the combinational output, distinct from the registered state.
+
+`Reg` is re-exported from `pypeline` as `_RegType`; `Reg[T]` uses `__class_getitem__` to
+produce a typed register descriptor that `_elab_ann_assign` recognises.
+
+---
+
+## Bit Manipulation Syntax
+
+Several subscript forms on scalar hardware types produce bit-level operations rather than
+array indexing. The elaborator detects these in `_elab_expr` / `_elab_assign` by checking
+that the base type is a scalar integer (not an array or struct).
+
+### Single-Bit Select
+
+```python
+bit: uint1_t = x[15]   # extract bit 15 of uint32_t → uint1_t
+```
+
+Elaborated as a `BIT_SELECT_<type>_<pos>` submodule instance.
+
+### Bit-Slice Read
+
+```python
+lo_half: uint16_t = x[15:0]   # extract bits [15:0] → uint16_t
+```
+
+The slice bounds are evaluated via `_try_eval_const` (must be constants at elaboration time).
+Elaborated as a `BIT_SLICE_<type>_<hi>_<lo>` submodule.
+
+### Bit-Slice Assignment
+
+```python
+x[15:0] = y   # write bits [15:0] of x with value y, leaving other bits unchanged
+```
+
+Creates a new alias wire for `x` via a `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` submodule that
+takes the old `x` wire and `y` and produces an updated value.
+
+### Tuple Concatenation
+
+A tuple literal whose elements are all hardware-typed values is treated as bit
+concatenation, **first element in the most-significant position**:
+
+```python
+out: uint64_t = (a, b)          # a:uint32_t ++ b:uint32_t → uint64_t
+out: uint64_t = (a, b, c)       # a:uint16_t ++ b:uint16_t ++ c:uint32_t → uint64_t
+```
+
+Elaborated as a chain of `TUPLE_CONCAT_<types>` submodule instances. The output width is
+the sum of all element widths; the return type must match exactly.
+
+---
+
+## Custom Operator Registration (`register_operator`)
+
+Hardware operators that are not built-in binops (e.g. shift, multiply with non-standard
+output width) are registered explicitly:
+
+```python
+def make_shifter_SL(VALUE_TYPE, AMOUNT_TYPE):
+    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
+        return v + amount  # placeholder body; real impl is a PipelineC primitive
+    return shifter_SL
+
+shl_uint32_uint6 = make_shifter_SL(uint32_t, uint6_t)
+register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
+```
+
+`register_operator(op_str, lhs_type, rhs_type, func_name)` binds the Python operator
+`<<` (mapped from `"SL"`) on `(uint32_t, uint6_t)` operands to the named function.  When
+`_elab_binop` encounters `v << amount` with those types it looks up the registered function
+name and elaborates the call as if `shl_uint32_uint6(v, amount)` had been written — a
+regular submodule instance in the Logic() graph.
+
+The `op_str` → Python operator mapping:
+
+| `op_str` | Python operator |
+|---|---|
+| `"SL"` | `<<` (shift left) |
+| `"SR"` | `>>` (shift right) |
+
+Operators not in the registry fall through to the standard `BIN_OP_LOGIC_NAME_PREFIX_<op>_<type>`
+submodule naming.
+
+---
+
+## Built-in Bit Manipulation Functions
+
+`pypeline` exports several bit-manipulation helpers that elaborate to dedicated submodule
+instances. All bounds / counts are evaluated at elaboration time via `_try_eval_const`.
+
+| Function | Signature | Description |
+|---|---|---|
+| `bit_dup(x, n)` | `(uintW_t, int) → uintW*n_t` | Replicate `x` exactly `n` times end-to-end |
+| `rotl(x, n)` | `(uintW_t, int) → uintW_t` | Rotate left by `n` bit positions |
+| `rotr(x, n)` | `(uintW_t, int) → uintW_t` | Rotate right by `n` bit positions |
+| `bswap(x)` | `(uintW_t,) → uintW_t` | Reverse byte order (W must be a multiple of 8) |
+| `bit_assign(base, val, offset)` | `(uintW_t, uintV_t, int) → uintW_t` | Overwrite bits `[offset+V-1:offset]` of `base` with `val` |
+| `array_to_uint_be(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, big-endian (arr[0] = MSB) |
+| `array_to_uint_le(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, little-endian (arr[0] = LSB) |
+| `uint_to_array_be(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, big-endian |
+| `uint_to_array_le(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, little-endian |
+
+Each function elaborates to a `BIT_MANIP_<func>_<types>` submodule instance in the
+Logic() graph. The output type is derived from the input widths and parameters at
+elaboration time.
+
+---
+
 ## pypeline.py — Runtime Support
 
 The companion module provides the types and decorators used in design files:
@@ -712,9 +841,14 @@ The companion module provides the types and decorators used in design files:
 | `uint1_t` … `uint64_t` | C integer types as real Python classes (`_CTypeMeta` metaclass) |
 | `int1_t` … `int64_t` | Signed integer types |
 | `float16_t`, `float32_t`, `float64_t` | Float types |
+| `make_uint(n)` | Dynamically creates `uintN_t` for arbitrary bit width `n` |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point |
+| `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
+| `register_operator` | Binds a Python operator (`<<`, `>>`, …) for a specific type pair to a named function |
+| `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (see section above) |
+| `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
 
 All types are declared as proper Python `class` statements with `_CTypeMeta` as metaclass
@@ -740,8 +874,8 @@ design.py
   │   ├─ _setup_inputs()                Add input wires → env
   │   ├─ _setup_outputs()               Add return wire
   │   └─ _elab_stmt() recursive:
-  │       ├─ _elab_assign               const_env or hardware wire routing
-  │       ├─ _elab_ann_assign           declare local variable wire
+  │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
+  │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output
   │       ├─ _elab_aug_assign           const_env update or hardware BinOp
   │       ├─ _elab_for                  unroll over constant iterable
   │       ├─ _elab_while                unroll while _try_eval_const(condition)
@@ -749,9 +883,13 @@ design.py
   │       └─ _elab_return               connect result wire
   │           └─ _elab_expr:
   │               ├─ _elab_constant     _infer_const_ctype → CONST wire
-  │               ├─ _elab_binop/unary  BIN_OP / UNARY_OP submodule instance
+  │               ├─ _elab_binop/unary  BIN_OP / UNARY_OP or registered operator submodule
   │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
+  │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
+  │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
+  │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
   │               └─ _elab_call         lookup FuncLogicLookupTable or _elaborate_live_func
+  │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint helpers → BIT_MANIP submodules
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
   │
