@@ -96,6 +96,7 @@ int4_t = make_int(4)
 int8_t = make_int(8)
 int16_t = make_int(16)
 int32_t = make_int(32)
+int33_t = make_int(33)
 int64_t = make_int(64)
 
 # ─────────────────────────────────────────────
@@ -183,7 +184,7 @@ _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> module_leve
 
 
 def register_operator(op: str, left_type, right_type, func_name: str) -> None:
-    """Register a hardware function as the implementation of a variable operator.
+    """Register a hardware function as the implementation of a variable binary operator.
 
     op:        "SL" (<<) or "SR" (>>)
     left_type: C type of the left operand (e.g. uint32_t)
@@ -192,6 +193,20 @@ def register_operator(op: str, left_type, right_type, func_name: str) -> None:
                (the closure-factory result assigned to that name)
     """
     _operator_registry[(op, str(left_type), str(right_type))] = func_name
+
+
+_unary_operator_registry: dict = {}  # (op_str, type_str) -> module_level_name_str
+
+
+def register_unary_operator(op: str, operand_type, func_name: str) -> None:
+    """Register a hardware function as the implementation of a unary operator.
+
+    op:           "NEGATE" (-) or "NOT" (~)
+    operand_type: C type of the operand (e.g. uint32_t)
+    func_name:    string name of a module-level callable in the design file
+                  (the closure-factory result assigned to that name)
+    """
+    _unary_operator_registry[(op, str(operand_type))] = func_name
 
 
 # ─────────────────────────────────────────────

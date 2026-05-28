@@ -12,9 +12,12 @@ from pypeline import (
     uint32_t,
     uint34_t,
     uint64_t,
+    int32_t,
+    int33_t,
     make_uint,
     _RegType,
     register_operator,
+    register_unary_operator,
     bit_dup,
     rotl,
     rotr,
@@ -26,15 +29,17 @@ from pypeline import (
     uint_to_array_le,
 )
 
-# TODO negate unary op works?
-#   Was part of software lib, need to generate invert and add 1 twos comp
 # TODO pypeline swlib like implementatons:
-#       count leading zeros w/ barrel shifter too, abs with shorthand?
+#       <<, >> operator overloads barrel shifter
+#       shorthand funcs clz,abs?
+#           count leading zeros
+#           absolute value
 # TODO Need struct and array init support for ex. basic point struct
 #       EXTRA struct init overload for float emt with float const
 # TODO float e m t is struct
 # TODO aim for float e m t adder
 # LONGER TERM?
+# TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
 # TODO printf for sim? is special func?
 # TODO constant wires based reduction that interacts with graph submodule instances:
@@ -58,6 +63,31 @@ register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
 @MAIN
 def shift_var(v: uint32_t, amount: uint6_t) -> uint32_t:
     return v << amount
+
+
+def make_negate(VALUE_TYPE, OUT_TYPE):
+    def negate(a: VALUE_TYPE) -> OUT_TYPE:
+        a_signed: OUT_TYPE = a
+        return ~a_signed + 1
+
+    return negate
+
+
+negate_uint32 = make_negate(uint32_t, int33_t)
+register_unary_operator("NEGATE", uint32_t, "negate_uint32")
+
+negate_int32 = make_negate(int32_t, int33_t)
+register_unary_operator("NEGATE", int32_t, "negate_int32")
+
+
+@MAIN
+def uint_negate_test(a: uint32_t) -> int33_t:
+    return -a
+
+
+@MAIN
+def int_negate_test(a: int32_t) -> int33_t:
+    return -a
 
 
 def make_point_t(dim_type, dim_size, style="array"):
@@ -425,6 +455,11 @@ def shift_const_local_param(v: uint32_t) -> uint32_t:
 @MAIN
 def shift_const(v: uint32_t) -> uint32_t:
     return v << 5
+
+
+@MAIN
+def uint_inv_test(a: uint32_t) -> uint32_t:
+    return ~a
 
 
 def foo(x: uint1_t) -> uint1_t:

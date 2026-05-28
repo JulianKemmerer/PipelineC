@@ -1872,6 +1872,36 @@ class FuncElaborator:
     def _elab_unary(self, expr):
         op_name = UNARY_OP_MAP[type(expr.op)]
         operand_wire, typ = self._elab_expr(expr.operand)
+
+        # Check for user-registered unary operator overload.
+        import pypeline as _pypeline
+
+        impl_name = _pypeline._unary_operator_registry.get((op_name, typ))
+        if impl_name is not None:
+            callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
+            if callee_def is None:
+                live_func = self.module_globals.get(impl_name)
+                if live_func is None or not callable(live_func):
+                    raise NotImplementedError(
+                        f"Registered unary operator '{impl_name}' not found in module globals"
+                    )
+                callee_def = self._elaborate_live_func(impl_name, live_func)
+            inst = _inst_name(impl_name, self.src_file, expr)
+            ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                inst,
+                impl_name,
+                [(callee_def.inputs[0], operand_wire, typ)],
+                port_return,
+                ret_type,
+                expr,
+                self.src_file,
+            )
+            return port_return, ret_type
+
+        # Built-in path.
         func_name = _unary_func_name(op_name, typ)
         inst = _inst_name(
             f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr

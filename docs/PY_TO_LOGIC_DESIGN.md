@@ -776,10 +776,14 @@ the sum of all element widths; the return type must match exactly.
 
 ---
 
-## Custom Operator Registration (`register_operator`)
+## Custom Operator Registration
 
-Hardware operators that are not built-in binops (e.g. shift, multiply with non-standard
-output width) are registered explicitly:
+Operators that are not built-in (e.g. variable shifts, or unary ops that need type-widening
+or a custom algorithm) are registered explicitly with a module-level function name. The
+elaborator checks the registry before the built-in path; registered implementations take
+full precedence.
+
+### Binary Operators (`register_operator`)
 
 ```python
 def make_shifter_SL(VALUE_TYPE, AMOUNT_TYPE):
@@ -797,15 +801,67 @@ register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
 name and elaborates the call as if `shl_uint32_uint6(v, amount)` had been written — a
 regular submodule instance in the Logic() graph.
 
-The `op_str` → Python operator mapping:
+The `op_str` → Python operator mapping for binary operators:
 
 | `op_str` | Python operator |
 |---|---|
 | `"SL"` | `<<` (shift left) |
 | `"SR"` | `>>` (shift right) |
 
-Operators not in the registry fall through to the standard `BIN_OP_LOGIC_NAME_PREFIX_<op>_<type>`
-submodule naming.
+Binary operators not in the registry fall through to the standard
+`BIN_OP_LOGIC_NAME_PREFIX_<op>_<type>` submodule naming.
+
+### Unary Operators (`register_unary_operator`)
+
+```python
+def make_negate(VALUE_TYPE, OUT_TYPE):
+    def negate(a: VALUE_TYPE) -> OUT_TYPE:
+        return ~a + 1          # two's complement: invert bits then add 1
+    return negate
+
+negate_uint32 = make_negate(uint32_t, int33_t)
+register_unary_operator("NEGATE", uint32_t, "negate_uint32")
+
+negate_int32 = make_negate(int32_t, int33_t)
+register_unary_operator("NEGATE", int32_t, "negate_int32")
+```
+
+`register_unary_operator(op_str, operand_type, func_name)` binds the Python unary operator
+`-` (mapped from `"NEGATE"`) on the given operand type to the named function.  When
+`_elab_unary` encounters `-a` with type `uint32_t` it elaborates the call as if
+`negate_uint32(a)` had been written — a regular submodule instance in the Logic() graph.
+The return type of the registered function defines the output wire type, allowing the
+overload to widen or change the type (here `uint32_t` → `int33_t`).
+
+The `op_str` → Python operator mapping for unary operators:
+
+| `op_str` | Python operator |
+|---|---|
+| `"NEGATE"` | `-` (arithmetic negation) |
+| `"NOT"` | `~` (bitwise invert) |
+
+Unary operators not in the registry fall through to the standard
+`UNARY_OP_LOGIC_NAME_PREFIX_<op>_<type>` built-in submodule naming, which preserves the
+operand type (same width, same signedness).
+
+**Overload lookup in `_elab_unary`:**
+
+```
+1. Decode op:            op_name = UNARY_OP_MAP[type(expr.op)]   e.g. "NEGATE"
+2. Elaborate operand:    operand_wire, typ = _elab_expr(expr.operand)
+3. Registry lookup:      impl_name = _unary_operator_registry.get((op_name, typ))
+4. If found:
+     a. Look up or elaborate the registered callable via FuncLogicLookupTable /
+        _elaborate_live_func (same mechanism as closure factory calls)
+     b. ret_type = callee_def.wire_to_c_type[RETURN_WIRE_NAME]
+     c. Emit submodule instance: (callee_def.inputs[0], operand_wire, typ) → ret_type
+     d. Return (port_return, ret_type)
+5. If not found:
+     Fall through to built-in UNARY_OP submodule, output type = typ
+```
+
+The registry stores `(op_str, type_str) → func_name_str` and is populated at module
+execution time (Layer 1), before any AST elaboration begins.
 
 ---
 
@@ -846,7 +902,8 @@ The companion module provides the types and decorators used in design files:
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
-| `register_operator` | Binds a Python operator (`<<`, `>>`, …) for a specific type pair to a named function |
+| `register_operator` | Binds a binary Python operator (`<<`, `>>`) for a specific (lhs, rhs) type pair to a named function |
+| `register_unary_operator` | Binds a unary Python operator (`-`, `~`) for a specific operand type to a named function; overload return type may differ from operand type |
 | `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (see section above) |
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
@@ -883,7 +940,8 @@ design.py
   │       └─ _elab_return               connect result wire
   │           └─ _elab_expr:
   │               ├─ _elab_constant     _infer_const_ctype → CONST wire
-  │               ├─ _elab_binop/unary  BIN_OP / UNARY_OP or registered operator submodule
+  │               ├─ _elab_binop        BIN_OP built-in or registered binary operator submodule
+  │               ├─ _elab_unary       registered unary overload (ret type from func) or UNARY_OP built-in
   │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
