@@ -44,6 +44,9 @@ class _CTypeMeta(type):
             return int(m.group(1))
         raise NotImplementedError(f"width not defined for '{cls._ctype_name}'")
 
+    def __len__(cls):
+        return cls.width
+
 
 def _make_ctype(name: str):
     """Create a C type as a real Python class.
@@ -181,10 +184,12 @@ def MAIN(func):
 # ─────────────────────────────────────────────
 
 _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> module_level_name_str
+_left_operator_registry: dict = {}  # (op_str, l_type_str) -> module_level_name_str
 
 
 def register_operator(op: str, left_type, right_type, func_name: str) -> None:
     """Register a hardware function as the implementation of a variable binary operator.
+    Matches on both left and right operand types (exact match).
 
     op:        "SL" (<<) or "SR" (>>)
     left_type: C type of the left operand (e.g. uint32_t)
@@ -193,6 +198,18 @@ def register_operator(op: str, left_type, right_type, func_name: str) -> None:
                (the closure-factory result assigned to that name)
     """
     _operator_registry[(op, str(left_type), str(right_type))] = func_name
+
+
+def register_left_operator(op: str, left_type, func_name: str) -> None:
+    """Register a hardware function as the implementation of a binary operator,
+    matching only on the left operand type. The right operand type is derived
+    from the registered function (e.g. shift amount derived from value width).
+
+    op:        "SL" (<<) or "SR" (>>)
+    left_type: C type of the left operand (e.g. uint32_t)
+    func_name: string name of a module-level callable in the design file
+    """
+    _left_operator_registry[(op, str(left_type))] = func_name
 
 
 _unary_operator_registry: dict = {}  # (op_str, type_str) -> module_level_name_str

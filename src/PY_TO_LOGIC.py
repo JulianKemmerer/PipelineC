@@ -589,6 +589,11 @@ def _add_submodule_instance(
     input_ports: list of (port_name, driver_wire, port_type)
     ast_node may be None for programmatically-built Logic() internals.
     """
+    if inst_name in logic.submodule_instances:
+        raise ElaborationError(
+            f"Duplicate submodule instance name '{inst_name}' in '{logic.func_name}'. "
+            f"Existing: {logic.submodule_instances[inst_name]}, new: {func_name}"
+        )
     logic.submodule_instances[inst_name] = func_name
     if ast_node is not None:
         logic.submodule_instance_to_c_ast_node[inst_name] = (
@@ -1159,6 +1164,14 @@ class FuncElaborator:
         # const_env: elaboration-time Python values — name -> plain Python value
         # Untyped variables used as loop counters, index vars, etc. (never hardware wires)
         self.const_env = {}
+        # loop_instance_prefix: prepended to every submodule instance name so that
+        # instances emitted inside unrolled loop iterations are uniquely named.
+        # Nested loops accumulate: "FOR_i_0_FOR_j_2_" etc.
+        self.loop_instance_prefix = ""
+
+    def _inst(self, op_full_name, node):
+        """Build a unique submodule instance name, prepending any active loop prefix."""
+        return self.loop_instance_prefix + _inst_name(op_full_name, self.src_file, node)
 
     def _make_eval_ns(self):
         """Merged namespace for eval(): module globals + current const_env."""
@@ -1338,10 +1351,13 @@ class FuncElaborator:
         if not isinstance(stmt.target, ast.Name):
             raise NotImplementedError("for loop target must be a simple name")
         loop_var = stmt.target.id
+        outer_prefix = self.loop_instance_prefix
         for val in iter_val:
             self.const_env[loop_var] = val
+            self.loop_instance_prefix = f"{outer_prefix}FOR_{loop_var}_{val}_"
             for s in stmt.body:
                 self._elab_stmt(s)
+        self.loop_instance_prefix = outer_prefix
         # leave loop_var at its last value (matches PipelineC behaviour)
 
     def _elab_while(self, stmt):
@@ -1364,6 +1380,7 @@ class FuncElaborator:
         """
         _MAX_UNROLL = 65536
         iteration = 0
+        outer_prefix = self.loop_instance_prefix
         while True:
             cond_val = self._try_eval_const(stmt.test)
             if cond_val is None:
@@ -1380,9 +1397,11 @@ class FuncElaborator:
                     f"ensure the condition becomes False at elaboration time. "
                     f"Condition: {ast.dump(stmt.test)}"
                 )
+            self.loop_instance_prefix = f"{outer_prefix}WHILE_{iteration}_"
             for s in stmt.body:
                 self._elab_stmt(s)
             iteration += 1
+        self.loop_instance_prefix = outer_prefix
 
     def _elab_if(self, stmt):
         """if condition: ... else: ...
@@ -1491,7 +1510,7 @@ class FuncElaborator:
             mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
             # Include ref_toks key in tag so multiple MUXes from one if don't collide
             mux_tag = f"{mux_func}_if_{key}"
-            mux_inst = _inst_name(mux_tag, self.src_file, stmt)
+            mux_inst = self._inst(mux_tag, stmt)
             mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
@@ -1585,7 +1604,7 @@ class FuncElaborator:
             mux_type, mux_type, (DUMMY_OUT,), output_elem_paths
         )
         asm_tag = f"{asm_func}_if_cov_{ref_prefix}_{branch_tag}"
-        asm_inst = _inst_name(asm_tag, self.src_file, ast_node)
+        asm_inst = self._inst(asm_tag, ast_node)
         asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -1704,9 +1723,16 @@ class FuncElaborator:
             slc = slc.value
 
         if isinstance(slc, ast.Constant) and isinstance(slc.value, int):
-            # x[15] — single bit select
+            # x[15] — single bit select (literal)
             high = low = slc.value
-        elif isinstance(slc, ast.Slice):
+        elif not isinstance(slc, ast.Slice):
+            # x[i] — single bit select where i is a const_env/globals name or expr
+            bit_val = self._try_resolve_int_constant(slc)
+            if bit_val is None:
+                # Variable index on a scalar int — not a valid bit slice
+                return None
+            high = low = bit_val
+        else:
             # x[15:0] — bit range; both bounds must be constants
             if slc.lower is None or slc.upper is None:
                 raise ElaborationError(
@@ -1719,9 +1745,6 @@ class FuncElaborator:
                     f"Bit slice bounds on '{base_name}' must be compile-time constants"
                 )
             high, low = max(high_val, low_val), min(high_val, low_val)
-        else:
-            # Variable index on a scalar int — not a valid bit slice
-            return None
 
         _, width = _ctype_info(base_type)
         if low < 0 or high >= width:
@@ -1736,7 +1759,7 @@ class FuncElaborator:
             func_name, ["x"], [base_type], out_type, self.parser_state
         )
 
-        inst = _inst_name(func_name, self.src_file, expr)
+        inst = self._inst(func_name, expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -1779,7 +1802,7 @@ class FuncElaborator:
             _register_bit_manip_logic(
                 func_name, ["x", "y"], [acc_type, elt_type], out_type, self.parser_state
             )
-            inst = _inst_name(func_name, self.src_file, elt)
+            inst = self._inst(func_name, elt)
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
@@ -1854,7 +1877,7 @@ class FuncElaborator:
             func_name, ["inp", "x"], [base_type, rhs_type], base_type, self.parser_state
         )
 
-        inst = _inst_name(func_name, self.src_file, target)
+        inst = self._inst(func_name, target)
         result_wire = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -1886,7 +1909,7 @@ class FuncElaborator:
                         f"Registered unary operator '{impl_name}' not found in module globals"
                     )
                 callee_def = self._elaborate_live_func(impl_name, live_func)
-            inst = _inst_name(impl_name, self.src_file, expr)
+            inst = self._inst(impl_name, expr)
             ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
@@ -1903,9 +1926,7 @@ class FuncElaborator:
 
         # Built-in path.
         func_name = _unary_func_name(op_name, typ)
-        inst = _inst_name(
-            f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr
-        )
+        inst = self._inst(f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -1921,7 +1942,8 @@ class FuncElaborator:
 
     def _try_resolve_int_constant(self, expr):
         """Return the int value if expr is a compile-time integer constant, else None.
-        Covers ast.Constant literals and ast.Name references into const_env/module_globals."""
+        Covers ast.Constant literals, ast.Name references into const_env/module_globals,
+        and arbitrary arithmetic expressions (e.g. 1 << i where i is in const_env)."""
         if isinstance(expr, ast.Constant) and isinstance(expr.value, int):
             return expr.value
         if isinstance(expr, ast.Name):
@@ -1932,6 +1954,9 @@ class FuncElaborator:
                 self.module_globals[name], (int, bool)
             ):
                 return int(self.module_globals[name])
+        val = self._try_eval_const(expr)
+        if isinstance(val, (int, bool)) and not isinstance(val, type):
+            return int(val)
         return None
 
     def _elab_binop(self, expr):
@@ -1946,7 +1971,7 @@ class FuncElaborator:
                 amount_str = str(amount)
                 func_base_name = f"{C_TO_LOGIC.CONST_PREFIX}{op_name}_{amount_str}"
                 func_name = f"{func_base_name}_{l_type}"
-                inst = _inst_name(func_base_name, self.src_file, expr)
+                inst = self._inst(func_base_name, expr)
                 port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
                 _add_submodule_instance(
                     self.logic,
@@ -1968,9 +1993,13 @@ class FuncElaborator:
                 key = (op_name, l_type, r_type)
                 impl_name = _pypeline._operator_registry.get(key)
                 if impl_name is None:
+                    # Fall back to left-only match (right type derived from left)
+                    impl_name = _pypeline._left_operator_registry.get((op_name, l_type))
+                if impl_name is None:
                     raise NotImplementedError(
                         f"Variable shift ({l_type} {op_name} {r_type}) has no registered"
-                        f" implementation. Call register_operator('{op_name}', {l_type},"
+                        f" implementation. Call register_left_operator('{op_name}', {l_type},"
+                        f" 'func_name') or register_operator('{op_name}', {l_type},"
                         f" {r_type}, 'func_name') in your design file."
                         f" (at {_loc_str(self.src_file, expr)})"
                     )
@@ -1982,7 +2011,7 @@ class FuncElaborator:
                             f"Registered operator '{impl_name}' not found in module globals"
                         )
                     callee_def = self._elaborate_live_func(impl_name, live_func)
-                inst = _inst_name(impl_name, self.src_file, expr)
+                inst = self._inst(impl_name, expr)
                 ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
                 port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
                 input_ports = list(
@@ -2019,9 +2048,7 @@ class FuncElaborator:
             out_type = l_type
 
         func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
-        inst = _inst_name(
-            f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr
-        )
+        inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -2045,9 +2072,7 @@ class FuncElaborator:
         else:
             eff_l_type, eff_r_type = l_type, r_type
         func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
-        inst = _inst_name(
-            f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", self.src_file, expr
-        )
+        inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -2074,7 +2099,7 @@ class FuncElaborator:
                 callee_def = self._elaborate_live_func(callee_name, live_func)
             else:
                 raise NotImplementedError(f"Call to unknown function '{callee_name}'")
-        inst = _inst_name(callee_name, self.src_file, expr)
+        inst = self._inst(callee_name, expr)
         ret_typ = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         input_ports = []
@@ -2129,7 +2154,7 @@ class FuncElaborator:
             _register_bit_manip_logic(
                 func_name, port_names, in_types, out_type, self.parser_state
             )
-            inst = _inst_name(func_name, self.src_file, expr)
+            inst = self._inst(func_name, expr)
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             input_ports = list(zip(port_names, port_wires, in_types))
             _add_submodule_instance(
@@ -2464,7 +2489,7 @@ class FuncElaborator:
         func_name = _const_ref_rd_func_name(
             c_type, base_type, ref_toks, covering_ref_toks_list
         )
-        inst_name = _inst_name(func_name, self.src_file, ast_node)
+        inst_name = self._inst(func_name, ast_node)
         input_ports = []
         input_port_driven_ref_toks = []
         for i, (cov_ref_toks, (cov_wire, cov_typ)) in enumerate(covering_wires.items()):
@@ -2562,7 +2587,7 @@ class FuncElaborator:
             input_ports.append((f"var_dim_{i}", index_wire, select_type))
 
         # ── Emit submodule instance ──
-        inst_name = _inst_name(func_name, self.src_file, ast_node)
+        inst_name = self._inst(func_name, ast_node)
         output_wire = _port_wire(inst_name, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
@@ -2650,7 +2675,7 @@ class FuncElaborator:
         for i, (dim_size, select_type, index_wire) in enumerate(var_dim_info):
             input_ports.append((f"var_dim_{i}", index_wire, select_type))
 
-        inst_name = _inst_name(func_name, self.src_file, ast_node)
+        inst_name = self._inst(func_name, ast_node)
         output_wire = _port_wire(inst_name, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,

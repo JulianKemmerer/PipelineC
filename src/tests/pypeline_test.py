@@ -16,7 +16,7 @@ from pypeline import (
     int33_t,
     make_uint,
     _RegType,
-    register_operator,
+    register_left_operator,
     register_unary_operator,
     bit_dup,
     rotl,
@@ -29,8 +29,7 @@ from pypeline import (
     uint_to_array_le,
 )
 
-# TODO pypeline swlib like implementatons:
-#       <<, >> operator overloads barrel shifter
+# TODO pypeline swlib like implementations:
 #       shorthand funcs clz,abs?
 #           count leading zeros
 #           absolute value
@@ -49,20 +48,53 @@ from pypeline import (
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
 
 
-def make_shifter_SL(VALUE_TYPE, AMOUNT_TYPE):
-    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
-        return v + amount  # TODO: barrel-shifter body
+def make_shifter_SL(VALUE_TYPE):
+    amount_bits = len(VALUE_TYPE).bit_length()
+    AMOUNT_TYPE = make_uint(amount_bits)
 
+    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
+        result: VALUE_TYPE = v
+        for i in range(amount_bits):
+            shifted: VALUE_TYPE = result << (1 << i)
+            if amount[i]:
+                result = shifted
+        return result
+
+    shifter_SL.amount_type = AMOUNT_TYPE
     return shifter_SL
 
 
-shl_uint32_uint6 = make_shifter_SL(uint32_t, uint6_t)
-register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
+def make_shifter_SR(VALUE_TYPE):
+    amount_bits = len(VALUE_TYPE).bit_length()
+    AMOUNT_TYPE = make_uint(amount_bits)
+
+    def shifter_SR(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
+        result: VALUE_TYPE = v
+        for i in range(amount_bits):
+            shifted: VALUE_TYPE = result >> (1 << i)
+            if amount[i]:
+                result = shifted
+        return result
+
+    shifter_SR.amount_type = AMOUNT_TYPE
+    return shifter_SR
+
+
+shl_uint32 = make_shifter_SL(uint32_t)
+register_left_operator("SL", uint32_t, "shl_uint32")
+
+shr_uint32 = make_shifter_SR(uint32_t)
+register_left_operator("SR", uint32_t, "shr_uint32")
 
 
 @MAIN
 def shift_var(v: uint32_t, amount: uint6_t) -> uint32_t:
     return v << amount
+
+
+@MAIN
+def shift_var_right(v: uint32_t, amount: uint6_t) -> uint32_t:
+    return v >> amount
 
 
 def make_negate(VALUE_TYPE, OUT_TYPE):
