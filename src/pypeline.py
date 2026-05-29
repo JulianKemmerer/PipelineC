@@ -66,6 +66,70 @@ def make_int(width: int):
     return _make_ctype(f"int{width}_t")
 
 
+def _float_to_fields(value, exponent_width, mantissa_width):
+    """Convert a Python float to an IEEE 754-like sign/exp/man dict at elaboration time."""
+    import struct as _struct
+
+    f = float(value)
+    if exponent_width == 8 and mantissa_width == 23:
+        bits = _struct.unpack(">I", _struct.pack(">f", f))[0]
+    elif exponent_width == 11 and mantissa_width == 52:
+        bits = _struct.unpack(">Q", _struct.pack(">d", f))[0]
+    else:
+        # General: rebase from FP64 representation
+        bits64 = _struct.unpack(">Q", _struct.pack(">d", f))[0]
+        sign = (bits64 >> 63) & 1
+        exp64 = (bits64 >> 52) & 0x7FF
+        man64 = bits64 & ((1 << 52) - 1)
+        bias64 = 1023
+        bias_t = (1 << (exponent_width - 1)) - 1
+        exp_max = (1 << exponent_width) - 1
+        if exp64 == 0x7FF:  # inf / nan
+            biased_exp = exp_max
+            man = man64 >> (52 - mantissa_width) if man64 else 0
+        elif exp64 == 0 and man64 == 0:  # zero
+            biased_exp = 0
+            man = 0
+        else:  # normal
+            true_exp = exp64 - bias64
+            biased_exp = true_exp + bias_t
+            biased_exp = max(1, min(exp_max - 1, biased_exp))
+            man = man64 >> (52 - mantissa_width)
+        return {"sign": sign, "exp": biased_exp, "man": man}
+    sign = (bits >> (exponent_width + mantissa_width)) & 1
+    exp = (bits >> mantissa_width) & ((1 << exponent_width) - 1)
+    man = bits & ((1 << mantissa_width) - 1)
+    return {"sign": sign, "exp": exp, "man": man}
+
+
+def make_float_t(exponent_width, mantissa_width):
+    """Create an IEEE 754-like floating-point struct type with variable field widths.
+
+    Fields: sign (uint1_t), exp (uintE_t), man (uintM_t).
+    The returned type has an .as_const(value) method for elaboration-time conversion
+    of a Python float into the dict initializer form.
+
+    Usage:
+        float32_t = make_float_t(8, 23)   # standard FP32
+        x: float32_t = float32_t.as_const(1.23)
+    """
+    exp_t = make_uint(exponent_width)
+    man_t = make_uint(mantissa_width)
+
+    @struct
+    class float_t(NamedTuple):
+        sign: uint1_t
+        exp: exp_t
+        man: man_t
+
+    float_t.as_const = staticmethod(
+        lambda value: _float_to_fields(value, exponent_width, mantissa_width)
+    )
+    float_t.exponent_width = exponent_width
+    float_t.mantissa_width = mantissa_width
+    return float_t
+
+
 # ── unsigned integer types ────────────────────
 uint1_t = make_uint(1)
 uint2_t = make_uint(2)

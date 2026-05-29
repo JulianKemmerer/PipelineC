@@ -15,6 +15,7 @@ from pypeline import (
     int32_t,
     int33_t,
     make_uint,
+    make_float_t,
     _RegType,
     register_left_operator,
     register_unary_operator,
@@ -30,8 +31,6 @@ from pypeline import (
 )
 
 
-#       EXTRA struct init overload for float emt with float const
-# TODO float e m t is struct
 # TODO aim for float e m t adder
 # LONGER TERM?
 # TODO all of old SW_LIB includes fabric multiply, div, etc
@@ -42,6 +41,38 @@ from pypeline import (
 #       ex. shift by a uint6_t type wire driven by constant
 #       ... some day might be helpful for making simulator?
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+# TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
+
+
+float32_t = make_float_t(8, 23)
+
+
+@MAIN
+def float32_const_init() -> float32_t:
+    x: float32_t = float32_t.as_const(1.5)
+    return x
+
+
+@MAIN
+def float32_const_neg() -> float32_t:
+    x: float32_t = float32_t.as_const(-1.0)
+    return x
+
+
+@struct
+class point_xy_t(NamedTuple):
+    x: uint32_t
+    y: uint32_t
+
+
+def make_point_xy_const(x, y):
+    return {"x": x, "y": y}
+
+
+@MAIN
+def point_init_from_func() -> point_xy_t:
+    p: point_xy_t = make_point_xy_const(3, 4)
+    return p
 
 
 @struct
@@ -203,15 +234,23 @@ def make_point_t(dim_type, dim_size, style="array"):
     if style == "array":
 
         @struct
-        class point_t(NamedTuple):
+        class point(NamedTuple):
             dim: dim_type[dim_size]
 
-        point_t.style = "array"
-        point_t.dim_size = dim_size
-        point_t.dim_type = dim_type
-        return point_t
+        point.style = "array"
+        point.dim_size = dim_size
+        point.dim_type = dim_type
+        return point
     elif style == "fields":
         pass  # TODO
+
+
+point_u8_t = make_point_t(uint8_t, 2, style="array")
+
+
+@MAIN
+def test_point_u8_t(point: point_u8_t) -> point_u8_t:
+    return point
 
 
 point_t = make_point_t(uint32_t, 2, style="array")
@@ -496,12 +535,6 @@ def var2d_rd_main(
 ) -> uint32_t:
     points[0].dim = test_u32_array
     return points[i].dim[j]
-
-
-@struct
-class point_xy_t(NamedTuple):
-    x: uint32_t
-    y: uint32_t
 
 
 @MAIN

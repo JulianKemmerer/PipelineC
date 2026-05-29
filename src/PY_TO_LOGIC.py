@@ -365,7 +365,7 @@ def _annotation_to_ctype(ann, eval_ns=None):
             ast.fix_missing_locations(expr)
             result = eval(compile(expr, "<annotation>", "eval"), eval_ns)
             if isinstance(result, type):
-                return result.__name__
+                return getattr(result, "_pypeline_ctype_name", result.__name__)
             return str(result)
         except Exception:
             pass  # fall through to static handling
@@ -1307,8 +1307,12 @@ class FuncElaborator:
             if isinstance(stmt.value, (ast.Dict, ast.List)):
                 self._elab_compound_init(var_name, stmt.value, stmt.value)
             else:
-                rhs_wire, _ = self._elab_expr(stmt.value)
-                self._write_ref((var_name,), rhs_wire, typ, stmt.value)
+                const_val = self._try_eval_const(stmt.value)
+                if isinstance(const_val, (dict, list, tuple)):
+                    self._elab_compound_init_from_pyval(var_name, const_val, stmt.value)
+                else:
+                    rhs_wire, _ = self._elab_expr(stmt.value)
+                    self._write_ref((var_name,), rhs_wire, typ, stmt.value)
 
     def _elab_compound_init(self, base_name, init_node, context_node, path_toks=()):
         if isinstance(init_node, ast.List):
@@ -1330,6 +1334,31 @@ class FuncElaborator:
                 )
         else:
             rhs_wire, rhs_type = self._elab_expr(init_node)
+            self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
+
+    def _elab_compound_init_from_pyval(
+        self, base_name, val, context_node, path_toks=()
+    ):
+        """Elaborate a compound init from a plain Python dict/list/tuple value.
+        Used when a function call returning a dict/list is used as a variable initializer,
+        e.g. x: point_t = make_point_const(3, 4) where make_point_const returns a dict.
+        """
+        if isinstance(val, dict):
+            for key, sub_val in val.items():
+                if not isinstance(key, (str, int)):
+                    raise ElaborationError(
+                        f"Compound init dict key must be str or int, got {type(key)}: {key!r}"
+                    )
+                self._elab_compound_init_from_pyval(
+                    base_name, sub_val, context_node, path_toks + (key,)
+                )
+        elif isinstance(val, (list, tuple)):
+            for i, sub_val in enumerate(val):
+                self._elab_compound_init_from_pyval(
+                    base_name, sub_val, context_node, path_toks + (i,)
+                )
+        else:
+            rhs_wire, rhs_type = self._elab_python_value(val, context_node)
             self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
 
     def _elab_return(self, stmt):
@@ -2818,6 +2847,7 @@ def _discover_structs_from_module(module, parser_state):
             # annotation may be a _CTypeMeta type or a plain string
             fields[field] = str(annotation)
         parser_state.struct_to_field_type_dict[name] = fields
+        obj._pypeline_ctype_name = name
         # print(f"  struct: {name} -> {fields}")
 
 

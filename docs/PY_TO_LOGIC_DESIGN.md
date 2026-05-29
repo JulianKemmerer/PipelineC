@@ -674,13 +674,32 @@ point_t = make_point_t(uint32_t, 2)
 
 `_discover_structs_from_module` walks the live module namespace after `exec_module` and
 registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. The `@struct`
-decorator:
+decorator adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point_t[10]")`
+— a valid array C type object usable in further annotations.
 
-1. Adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point_t[10]")` — a
-   valid array C type object usable in further annotations
-2. Captures resolved C type strings via `sys._getframe(1)` while factory locals are still
-   in scope, handling `ForwardRef` strings that `from __future__ import annotations` creates.
-   These are stored in `cls._pypeline_annotations` and preferred by `_discover_structs_from_module`
+**Factory struct naming (`_pypeline_ctype_name`):** When a factory produces a struct whose
+internal class name differs from the module-level variable name — for example:
+
+```python
+def make_float_t(E, M):
+    @struct
+    class float_t(NamedTuple):   # internal name: "float_t"
+        ...
+    return float_t
+
+float32_t = make_float_t(8, 23)  # module-level name: "float32_t"
+```
+
+`_annotation_to_ctype` resolves `float32_t` to the class object and returns
+`result.__name__` (`"float_t"`), while `_discover_structs_from_module` registers the
+struct under the module variable name (`"float32_t"`). These would diverge.
+
+The fix: `_discover_structs_from_module` stamps `obj._pypeline_ctype_name = name` (the
+module variable name) on every discovered struct, and `_annotation_to_ctype` reads
+`getattr(result, '_pypeline_ctype_name', result.__name__)`. Discovery always runs before
+annotation resolution, so the attribute is always present when needed. Existing code where
+class name matches module variable name is unaffected (the attribute is redundant but
+harmless).
 
 ### Conditional Type-Driven Code
 
@@ -768,6 +787,53 @@ explicitly. No new hardware primitives are introduced; the existing alias-tracki
 - Nesting is allowed: a dict value can itself be a dict or list for deeper paths.
 - Only valid in annotated assignment (`var: T = {...}`); the type annotation determines
   the base wire type declared by `_declare_var` before the init writes are applied.
+
+### Compound Init from Python Function Call
+
+Any **elaboration-time Python function** whose return value is a `dict`, `list`, or
+`tuple` can be used as a compound initializer. `_elab_ann_assign` tries
+`_try_eval_const` on the RHS before reaching `_elab_expr`; if a dict/list/tuple is
+returned it is handed to `_elab_compound_init_from_pyval` instead of synthesizing a
+hardware call:
+
+```python
+def make_point_const(x, y):        # plain Python, not a hardware function
+    return {"x": x, "y": y}
+
+def my_func(...) -> point_t:
+    p: point_t = make_point_const(3, 4)   # dict returned → compound init
+    return p
+```
+
+`_elab_compound_init_from_pyval` recursively walks the Python value (dict keys / list
+indices) and emits integer leaf constants via `_elab_python_value` + `_write_ref`.
+The result is identical to writing `p: point_t = {"x": 3, "y": 4}` — no new hardware
+primitives, same alias-tracking.
+
+**Leaf values must be plain Python `int` or `bool`.** Sub-dicts and sub-lists can be
+nested to arbitrary depth. Hardware wires cannot appear inside the returned value.
+
+### Float Type and `as_const`
+
+`pypeline.make_float_t(E, M)` uses this mechanism to let users initialize float struct
+variables from a Python float literal at elaboration time:
+
+```python
+float32_t = make_float_t(8, 23)   # standard FP32; fields: sign/exp/man
+
+def my_func(...) -> float32_t:
+    x: float32_t = float32_t.as_const(1.5)   # as_const returns a dict → compound init
+    return x
+```
+
+`float32_t.as_const(value)` is a plain Python staticmethod that converts a Python
+`float` to `{"sign": ..., "exp": ..., "man": ...}` at elaboration time (using
+`struct.pack` for FP32/FP64; a rebased FP64 approximation for other widths). The
+returned dict is then elaborated exactly as a literal `{"sign": 0, "exp": 127, "man": 0}`
+would be.
+
+Direct float-literal syntax (`x: float32_t = 1.5`) is **not** supported — the
+explicit `.as_const(...)` call is required.
 
 ---
 
@@ -940,6 +1006,7 @@ The companion module provides the types and decorators used in design files:
 | `int1_t` … `int64_t` | Signed integer types |
 | `float16_t`, `float32_t`, `float64_t` | Float types |
 | `make_uint(n)` | Dynamically creates `uintN_t` for arbitrary bit width `n` |
+| `make_float_t(E, M)` | Creates an IEEE 754-like struct type with `sign/exp/man` fields; `.as_const(v)` converts a Python float to the field dict at elaboration time |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point |
