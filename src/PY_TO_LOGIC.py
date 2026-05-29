@@ -365,7 +365,9 @@ def _annotation_to_ctype(ann, eval_ns=None):
             ast.fix_missing_locations(expr)
             result = eval(compile(expr, "<annotation>", "eval"), eval_ns)
             if isinstance(result, type):
-                return getattr(result, "_pypeline_ctype_name", result.__name__)
+                return getattr(result, "_pypeline_ctype_name", None) or getattr(
+                    result, "_pypeline_ctype_canonical", result.__name__
+                )
             return str(result)
         except Exception:
             pass  # fall through to static handling
@@ -2381,6 +2383,22 @@ class FuncElaborator:
 
         merged_globals = {**self.module_globals, **closure_ns}
 
+        # Register any struct types found in closure vars that were created inside
+        # a factory (not visible to _discover_structs_from_module). The @struct
+        # decorator already stamped _pypeline_ctype_name on them; we just need to
+        # ensure they appear in struct_to_field_type_dict.
+        for val in closure_ns.values():
+            if (
+                inspect.isclass(val)
+                and issubclass(val, tuple)
+                and hasattr(val, "_fields")
+                and hasattr(val, "_pypeline_ctype_name")
+            ):
+                c_name = val._pypeline_ctype_name
+                if c_name not in self.parser_state.struct_to_field_type_dict:
+                    fields = {f: str(a) for f, a in val.__annotations__.items()}
+                    self.parser_state.struct_to_field_type_dict[c_name] = fields
+
         # Register a stub first so recursive calls resolve
         stub = C_TO_LOGIC.Logic()
         stub.func_name = module_level_name
@@ -2831,6 +2849,8 @@ def _discover_structs_from_module(module, parser_state):
     """Inspect live module namespace for NamedTuple subclasses.
     Handles structs produced by factory functions at module level —
     not just static class definitions in the AST.
+    The canonical C type name is stamped by @struct at decoration time;
+    we use that name as the dict key rather than the Python variable name.
     """
     for name, obj in vars(module).items():
         if name.startswith("_"):
@@ -2846,9 +2866,10 @@ def _discover_structs_from_module(module, parser_state):
         for field, annotation in obj.__annotations__.items():
             # annotation may be a _CTypeMeta type or a plain string
             fields[field] = str(annotation)
-        parser_state.struct_to_field_type_dict[name] = fields
-        obj._pypeline_ctype_name = name
-        # print(f"  struct: {name} -> {fields}")
+        # Use the canonical name stamped by @struct (not the Python variable name)
+        c_name = getattr(obj, "_pypeline_ctype_name", name)
+        parser_state.struct_to_field_type_dict[c_name] = fields
+        # print(f"  struct: {c_name} -> {fields}")
 
 
 # ─────────────────────────────────────────────

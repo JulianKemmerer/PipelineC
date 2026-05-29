@@ -569,6 +569,53 @@ def main_const_ref_rd(my_points: point_xy_t[10]) -> point_xy_t[10]:
     #              alias_4)      <- covers [4]
 
 
+def make_pair_t(T):
+    @struct
+    class pair_t(NamedTuple):
+        a: T
+        b: T
+
+    return pair_t
+
+
+pair_u32_t = make_pair_t(uint32_t)
+pair_u32_t_dup = make_pair_t(uint32_t)  # same params — should share canonical name
+
+
+@MAIN
+def pair_passthrough(p: pair_u32_t) -> pair_u32_t:
+    return p
+
+
+@MAIN
+def pair_swap_fields(p: pair_u32_t) -> pair_u32_t:
+    rv: pair_u32_t = {"a": p.b, "b": p.a}
+    return rv
+
+
+@MAIN
+def pair_dup_passthrough(p: pair_u32_t_dup) -> pair_u32_t_dup:
+    return p
+
+
+def make_swap(T):
+    local_pair_t = make_pair_t(T)  # nested: local_pair_t not visible at module level
+
+    def swap(p: local_pair_t) -> local_pair_t:
+        rv: local_pair_t = {"a": p.b, "b": p.a}
+        return rv
+
+    return swap
+
+
+swap_u32 = make_swap(uint32_t)
+
+
+@MAIN
+def nested_factory_swap_test(p: pair_u32_t) -> pair_u32_t:
+    return swap_u32(p)
+
+
 # TODO
 # @MAIN
 # def shift_const_wire(v: uint32_t) -> uint32_t:

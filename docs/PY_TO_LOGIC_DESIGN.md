@@ -677,29 +677,71 @@ registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. The `@stru
 decorator adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point_t[10]")`
 — a valid array C type object usable in further annotations.
 
-**Factory struct naming (`_pypeline_ctype_name`):** When a factory produces a struct whose
-internal class name differs from the module-level variable name — for example:
+**Factory struct canonical naming (`_pypeline_ctype_name`):**
 
-```python
-def make_float_t(E, M):
-    @struct
-    class float_t(NamedTuple):   # internal name: "float_t"
-        ...
-    return float_t
+The `@struct` decorator immediately stamps a **canonical C type name** on the class that
+is derived entirely from the class name and field types, with no dependence on the Python
+variable name used at the call site. This allows structs created inside nested factories
+(where there is no module-level variable name) to have stable, unique names.
 
-float32_t = make_float_t(8, 23)  # module-level name: "float32_t"
+**Canonical name rule:**
+
+```
+<class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
 ```
 
-`_annotation_to_ctype` resolves `float32_t` to the class object and returns
-`result.__name__` (`"float_t"`), while `_discover_structs_from_module` registers the
-struct under the module variable name (`"float32_t"`). These would diverge.
+where mangling removes array brackets: `uint32_t[2]` → `uint32_t_2`.
 
-The fix: `_discover_structs_from_module` stamps `obj._pypeline_ctype_name = name` (the
-module variable name) on every discovered struct, and `_annotation_to_ctype` reads
-`getattr(result, '_pypeline_ctype_name', result.__name__)`. Discovery always runs before
-annotation resolution, so the attribute is always present when needed. Existing code where
-class name matches module variable name is unaffected (the attribute is redundant but
-harmless).
+Examples:
+
+```python
+@struct
+class point_t(NamedTuple):
+    dim: uint32_t[2]
+# _pypeline_ctype_name = "point_t_dim_uint32_t_2"
+
+@struct
+class float_t(NamedTuple):
+    sign: uint1_t
+    exp: uint8_t
+    man: uint23_t
+# _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
+```
+
+Two factory calls with the same parameters produce structs with the same canonical
+name and the same `struct_to_field_type_dict` entry — correct deduplication with no
+redundant generated types.
+
+**Nested factory structs:**
+
+A struct created inside a nested factory is never visible to `_discover_structs_from_module`
+(which only walks `vars(module)`). Because `@struct` stamps `_pypeline_ctype_name`
+immediately at decoration time, the struct already carries its canonical name when
+`_elaborate_live_func` finds it in a closure. `_elaborate_live_func` checks each closure
+variable: if a NamedTuple subclass with `_pypeline_ctype_name` is not yet in
+`struct_to_field_type_dict`, it is registered there before elaboration begins.
+
+```python
+def make_swap(T):
+    local_pair_t = make_pair_t(T)   # local — NOT in vars(module)
+
+    def swap(p: local_pair_t) -> local_pair_t:
+        rv: local_pair_t = {"a": p.b, "b": p.a}
+        return rv
+
+    return swap
+
+swap_u32 = make_swap(uint32_t)
+# When swap_u32 is first called:
+#   _elaborate_live_func sees local_pair_t in closure
+#   local_pair_t._pypeline_ctype_name already = "pair_t_a_uint32_t_b_uint32_t"
+#   registers it in struct_to_field_type_dict if not already there
+```
+
+`_annotation_to_ctype` reads `getattr(result, '_pypeline_ctype_name', ...)` which is
+always set by `@struct` before any annotation resolution occurs. `_struct_class_getitem`
+(which backs `point_t[10]` syntax) also uses `_pypeline_ctype_name` so that array types
+of factory structs carry the correct canonical base name.
 
 ### Conditional Type-Driven Code
 
@@ -1022,6 +1064,170 @@ All types are declared as proper Python `class` statements with `_CTypeMeta` as 
 `__str__` and `__repr__` on the metaclass return the C type name string; `__getitem__`
 produces array types (`uint32_t[4]`). Adding `# pyright: reportInvalidTypeForm=none` to
 design files suppresses warnings for dynamically-produced types like factory structs.
+
+---
+
+## Predicting C/VHDL Output Names
+
+Every identifier that appears in generated VHDL — struct type names, component entity
+names, signal names, port names, submodule instance names — follows deterministic rules
+that can be predicted directly from Python source. This section documents those rules.
+
+### Source Location String
+
+Many names embed the source location of the AST node that generated them:
+
+```
+<file_base>_l<line>_c<col>[_e<end_col>]
+```
+
+`file_base` is the source filename with `.` replaced by `_` (e.g. `pypeline_test_py`).
+`line` and `col` are 1-based line and 0-based column numbers. `end_col` is added when
+the node carries an `end_col_offset`.
+
+Example: a call at line 42, column 8 in `my_design.py`:
+```
+my_design_py_l42_c8
+```
+
+### Struct Type Names
+
+Every `@struct`-decorated class gets a canonical name stamped at decoration time:
+
+```
+<class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
+```
+
+Array brackets are mangled: `[` → `_`, `]` removed.
+
+```python
+@struct
+class point_t(NamedTuple):
+    x: uint32_t
+    y: uint32_t
+# C/VHDL type: point_t_x_uint32_t_y_uint32_t
+
+@struct
+class buf_t(NamedTuple):
+    data: uint8_t[64]
+# C/VHDL type: buf_t_data_uint8_t_64
+```
+
+This name is independent of what Python variable the factory result is assigned to.
+Two factory calls with identical field definitions produce the same canonical name and
+share one VHDL type declaration.
+
+Array types of a struct use the canonical name as the base:
+```
+point_t_x_uint32_t_y_uint32_t[10]   (C type string)
+point_t_x_uint32_t_y_uint32_t_10    (when mangled for use inside another name)
+```
+
+### Hardware Function Names
+
+Top-level `def` functions in the design file keep their Python name verbatim:
+```python
+def adder(l: uint32_t, r: uint32_t) -> uint32_t:  ...
+# FuncLogicLookupTable key and VHDL entity: "adder"
+```
+
+Factory-produced functions (closures from `make_*`) are stored under the Python alias
+name used at their call site (`concat_3_4 = make_concat(3, 4)` → stored as
+`"concat_3_4"`). The function name appears as the VHDL component entity name.
+
+### Submodule Instance Names
+
+Every call site in a hardware function body becomes a submodule instance:
+
+```
+<func_name>[<loc_str>]
+```
+
+Example: calling `adder(a, b)` at `my_design_py_l10_c4`:
+```
+adder[my_design_py_l10_c4]
+```
+
+Inside a for-loop body, iterations are distinguished by a prefix that accumulates
+the loop variable name and its current value:
+
+```
+FOR_<var>_<val>_<func_name>[<loc_str>]
+```
+
+Nested loops prefix left-to-right with the outermost loop first:
+```python
+for i in range(2):
+    for j in range(3):
+        foo(x)   # → FOR_i_0_FOR_j_0_foo[...], FOR_i_0_FOR_j_1_foo[...], ...
+```
+
+### Port Wire Names
+
+Input and output wires of a submodule instance use the `____` (four underscores) separator:
+
+```
+<inst_name>____<port_name>
+```
+
+The return value port is always named `return_output`:
+```
+adder[my_design_py_l10_c4]____return_output
+adder[my_design_py_l10_c4]____l
+adder[my_design_py_l10_c4]____r
+```
+
+### Alias Wire Names
+
+Every assignment to a hardware variable creates an alias wire:
+
+```
+<var_name>_<loc_str>
+```
+
+Example: `points[1].x = val` at `my_design_py_l20_c4`:
+```
+points_my_design_py_l20_c4
+```
+
+### Built-in Primitive Function Names
+
+These are generated automatically by the elaborator and appear as submodule func_names
+in `FuncLogicLookupTable` and as VHDL component entity names:
+
+| Kind | Pattern | Example |
+|---|---|---|
+| Binary op | `BIN_OP_<op>_<lhs_type>_<rhs_type>` | `BIN_OP_plus_uint32_t_uint32_t` |
+| Unary op | `UNARY_OP_<op>_<type>` | `UNARY_OP_not_uint1_t` |
+| MUX | `MUX_<type>` | `MUX_uint32_t`, `MUX_point_t_x_uint32_t_y_uint32_t` |
+| Const wire | `CONST_<val>_<file>_l<l>_c<c>` | `CONST_1_my_design_py_l5_c12` |
+| CONST_REF_RD | `CONST_REF_RD_<out_type>_<base_type>_<path_toks>_<hash>` | |
+| VAR_REF_RD | `VAR_REF_RD_<out_type>_<base_type>_<path_toks>_<hash>` | |
+| VAR_REF_ASSIGN | `VAR_REF_ASSIGN_<out_type>_<base_type>_<path_toks>_<hash>` | |
+| Bit manipulation | `BIT_MANIP_<func>_<types>` | `BIT_MANIP_bit_dup_uint4_t_4` |
+| Bit select | `BIT_SELECT_<type>_<pos>` | `BIT_SELECT_uint32_t_15` |
+| Bit slice | `BIT_SLICE_<type>_<hi>_<lo>` | `BIT_SLICE_uint32_t_15_0` |
+| Bit slice assign | `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` | |
+| Tuple concat | `TUPLE_CONCAT_<types>` | `TUPLE_CONCAT_uint32_t_uint32_t` |
+
+In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
+- Array brackets in type strings are replaced with `_`
+- Path token integers appear as `_<n>`, variable index positions as `_VAR`
+- A short MD5 hash suffix ensures uniqueness across different covering-input sets
+
+### Summary Table
+
+| Artifact | Rule |
+|---|---|
+| Struct C type | `<class_name>_<f1>_<t1_mangled>_...` (canonical, set by `@struct`) |
+| Array of struct | `<struct_canonical>[N]` in C type strings |
+| Top-level function | Python `def` name verbatim |
+| Factory function | Python alias name at call site |
+| Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<v>_<n>_` prefix per loop level) |
+| Port wire | `<inst>____<port>` (four underscores) |
+| Return port | `<inst>____return_output` |
+| Alias wire | `<var_name>_<loc_str>` |
+| Location string | `<file_base>_l<line>_c<col>[_e<end_col>]` |
 
 ---
 

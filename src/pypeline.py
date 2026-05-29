@@ -171,9 +171,15 @@ int64_t = make_int(64)
 # ─────────────────────────────────────────────
 
 
+def _mangle_type(s):
+    """Remove array brackets for VHDL-compatible name mangling: uint32_t[2] -> uint32_t_2."""
+    return s.replace("[", "_").replace("]", "")
+
+
 def _struct_class_getitem(cls, dim):
-    """Enables point_t[10] -> _make_ctype('point_t[10]')."""
-    return _make_ctype(f"{cls.__name__}[{dim}]")
+    """Enables point_t[10] -> _make_ctype('point_t[10]') using the canonical C type name."""
+    name = getattr(cls, "_pypeline_ctype_name", cls.__name__)
+    return _make_ctype(f"{name}[{dim}]")
 
 
 class _NamedTupleBase:
@@ -215,8 +221,11 @@ NamedTuple = typing.NamedTuple
 
 
 def struct(cls):
-    """Decorator that adds array subscript support to a NamedTuple class.
-    Enables: point_t[10] as a type annotation elsewhere.
+    """Decorator that adds array subscript support and stamps a canonical C type name.
+    The canonical name is derived from the class name and field types, making it
+    deterministic regardless of the Python variable name used at the call site.
+    This allows factory-produced structs nested inside other factories to get
+    unique, stable names without being visible at module level.
 
     Usage:
         @struct
@@ -224,9 +233,21 @@ def struct(cls):
             x: uint32_t
             y: uint32_t
 
-        # Now point_t[10] works as an annotation
+        # Now point_t[10] works as an annotation, and point_t._pypeline_ctype_name
+        # is set to "point_t_x_uint32_t_y_uint32_t"
     """
     cls.__class_getitem__ = classmethod(_struct_class_getitem)
+    parts = []
+    for field, ann in cls.__annotations__.items():
+        if isinstance(ann, type):
+            # Use canonical name for struct-typed fields if already computed
+            ann_str = getattr(ann, "_pypeline_ctype_name", ann.__name__)
+        else:
+            ann_str = str(ann)
+        parts.append(f"{field}_{_mangle_type(ann_str)}")
+    canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
+    cls._pypeline_ctype_canonical = canonical
+    cls._pypeline_ctype_name = canonical
     return cls
 
 
