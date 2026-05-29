@@ -29,7 +29,7 @@ from pypeline import (
     uint_to_array_le,
 )
 
-# TODO Need struct and array init support for ex. basic point struct
+
 #       EXTRA struct init overload for float emt with float const
 # TODO float e m t is struct
 # TODO aim for float e m t adder
@@ -42,6 +42,41 @@ from pypeline import (
 #       ex. shift by a uint6_t type wire driven by constant
 #       ... some day might be helpful for making simulator?
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+
+
+@struct
+class point2d_t(NamedTuple):
+    dim: uint32_t[2]
+
+
+@MAIN
+def struct_init_list_consts() -> point2d_t:
+    my_point: point2d_t = {"dim": [0, 1]}
+    return my_point
+
+
+@MAIN
+def struct_init_list_wires(v0: uint32_t, v1: uint32_t) -> point2d_t:
+    my_point: point2d_t = {"dim": [v0, v1]}
+    return my_point
+
+
+@MAIN
+def struct_init_dict_int_keys(v0: uint32_t, v1: uint32_t) -> point2d_t:
+    my_point: point2d_t = {"dim": {1: v1, 0: v0}}
+    return my_point
+
+
+@MAIN
+def array_init_list_consts() -> uint32_t[2]:
+    my_arr: uint32_t[2] = [42, 99]
+    return my_arr
+
+
+@MAIN
+def array_init_list_wires(v0: uint32_t, v1: uint32_t) -> uint32_t[2]:
+    my_arr: uint32_t[2] = [v0, v1]
+    return my_arr
 
 
 def make_clz(VALUE_TYPE):
@@ -263,11 +298,6 @@ def adder_extra(a: uint32_t, b: uint32_t, c: uint32_t) -> uint34_t:
 @MAIN
 def adder(l: uint32_t, r: uint32_t) -> uint32_t:
     return l + r
-
-
-@struct
-class point2d_t(NamedTuple):
-    dim: uint32_t[2]
 
 
 @MAIN

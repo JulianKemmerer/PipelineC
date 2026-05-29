@@ -729,6 +729,48 @@ produce a typed register descriptor that `_elab_ann_assign` recognises.
 
 ---
 
+## Compound Initializer Syntax
+
+A local variable of struct or array type can be initialized from a **dict or list literal**
+at declaration time. This is the Python equivalent of C aggregate initialization:
+
+```c
+// C:
+point2d_t my_point = { .dim = {[1]=1, [0]=0} };
+```
+
+```python
+# Python — equivalent forms:
+my_point: point2d_t = {"dim": [0, 1]}           # list for positional array init
+my_point: point2d_t = {"dim": {1: 1, 0: 0}}     # dict with int keys (C-style)
+my_arr:   uint32_t[2] = [v0, v1]                # bare list for an array variable
+```
+
+**Elaboration:** `_elab_ann_assign` detects an `ast.Dict` or `ast.List` RHS and calls
+`_elab_compound_init` instead of `_elab_expr`. The helper recursively walks the literal,
+accumulating a `path_toks` suffix, and calls `_elab_expr` + `_write_ref` at each leaf.
+
+```
+{"dim": [v0, v1]}  on  my_point: point2d_t
+  ├─ key "dim"     → path_toks = ("dim",)
+  ├─ index 0, v0   → _write_ref(("my_point","dim",0), v0_wire, ...)
+  └─ index 1, v1   → _write_ref(("my_point","dim",1), v1_wire, ...)
+```
+
+This is **pure elaboration sugar** — the result is identical to writing the assignments
+explicitly. No new hardware primitives are introduced; the existing alias-tracking in
+`wire_aliases_over_time` handles everything.
+
+**Rules:**
+- Dict keys must be compile-time constants (string for struct fields, `int` for array indices).
+- List elements map to indices 0, 1, 2, … in order.
+- Leaf values can be any hardware expression (constants, input wires, sub-expressions).
+- Nesting is allowed: a dict value can itself be a dict or list for deeper paths.
+- Only valid in annotated assignment (`var: T = {...}`); the type annotation determines
+  the base wire type declared by `_declare_var` before the init writes are applied.
+
+---
+
 ## Bit Manipulation Syntax
 
 Several subscript forms on scalar hardware types produce bit-level operations rather than
@@ -932,7 +974,7 @@ design.py
   │   ├─ _setup_outputs()               Add return wire
   │   └─ _elab_stmt() recursive:
   │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
-  │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output
+  │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output; dict/list RHS → _elab_compound_init
   │       ├─ _elab_aug_assign           const_env update or hardware BinOp
   │       ├─ _elab_for                  unroll over constant iterable
   │       ├─ _elab_while                unroll while _try_eval_const(condition)

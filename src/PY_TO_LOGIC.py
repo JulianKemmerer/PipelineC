@@ -1304,8 +1304,33 @@ class FuncElaborator:
         typ = _annotation_to_ctype(stmt.annotation, self._make_eval_ns())
         self._declare_var(var_name, typ, stmt.target)
         if stmt.value is not None:
-            rhs_wire, _ = self._elab_expr(stmt.value)
-            self._write_ref((var_name,), rhs_wire, typ, stmt.value)
+            if isinstance(stmt.value, (ast.Dict, ast.List)):
+                self._elab_compound_init(var_name, stmt.value, stmt.value)
+            else:
+                rhs_wire, _ = self._elab_expr(stmt.value)
+                self._write_ref((var_name,), rhs_wire, typ, stmt.value)
+
+    def _elab_compound_init(self, base_name, init_node, context_node, path_toks=()):
+        if isinstance(init_node, ast.List):
+            for i, elt in enumerate(init_node.elts):
+                self._elab_compound_init(base_name, elt, context_node, path_toks + (i,))
+        elif isinstance(init_node, ast.Dict):
+            for key_node, val_node in zip(init_node.keys, init_node.values):
+                key = self._try_eval_const(key_node)
+                if key is None:
+                    raise ElaborationError(
+                        f"Compound init dict key must be a constant, got: {ast.dump(key_node)}"
+                    )
+                if not isinstance(key, (str, int)):
+                    raise ElaborationError(
+                        f"Compound init dict key must be str or int, got: {type(key)}"
+                    )
+                self._elab_compound_init(
+                    base_name, val_node, context_node, path_toks + (key,)
+                )
+        else:
+            rhs_wire, rhs_type = self._elab_expr(init_node)
+            self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
 
     def _elab_return(self, stmt):
         result_wire, _ = self._elab_expr(stmt.value)
