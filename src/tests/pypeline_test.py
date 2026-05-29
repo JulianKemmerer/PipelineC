@@ -569,6 +569,62 @@ def main_const_ref_rd(my_points: point_xy_t[10]) -> point_xy_t[10]:
     #              alias_4)      <- covers [4]
 
 
+def make_adder(T):
+    def add(a: T, b: T) -> T:
+        return a + b
+
+    return add
+
+
+add_u32 = make_adder(uint32_t)
+add_u32_dup = make_adder(uint32_t)
+add_u8 = make_adder(uint8_t)
+
+
+@MAIN
+def adder_factory_test(a: uint32_t, b: uint32_t) -> uint32_t:
+    return add_u32(a, b)
+
+
+@MAIN
+def adder_factory_dedup_test(a: uint32_t, b: uint32_t) -> uint32_t:
+    return add_u32_dup(a, b)
+
+
+@MAIN
+def adder_factory_u8_test(a: uint8_t, b: uint8_t) -> uint8_t:
+    return add_u8(a, b)
+
+
+def make_sum3(T):
+    local_add = make_adder(T)
+
+    def sum3(a: T, b: T, c: T) -> T:
+        return local_add(local_add(a, b), c)
+
+    return sum3
+
+
+sum3_u32 = make_sum3(uint32_t)
+sum3_u32_dup = make_sum3(uint32_t)
+sum3_u8 = make_sum3(uint8_t)
+
+
+@MAIN
+def nested_func_factory_test(a: uint32_t, b: uint32_t, c: uint32_t) -> uint32_t:
+    return sum3_u32(a, b, c)
+
+
+@MAIN
+def nested_func_factory_dedup_test(a: uint32_t, b: uint32_t, c: uint32_t) -> uint32_t:
+    return sum3_u32_dup(a, b, c)
+
+
+@MAIN
+def nested_func_factory_u8_test(a: uint8_t, b: uint8_t, c: uint8_t) -> uint8_t:
+    return sum3_u8(a, b, c)
+
+
 def make_pair_t(T):
     @struct
     class pair_t(NamedTuple):

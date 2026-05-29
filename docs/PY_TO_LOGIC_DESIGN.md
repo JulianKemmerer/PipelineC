@@ -650,13 +650,72 @@ invokes `_elaborate_live_func`:
 1. `inspect.getsource` + `textwrap.dedent` recovers the inner function's source text
 2. Closure variables are extracted from `func.__code__.co_freevars` / `func.__closure__`
    — e.g. `{"LO_SIZE": 3, "HI_SIZE": 4, "OUT_SIZE": 7}`
-3. These are merged into `module_globals` → annotations like `uint1_t[LO_SIZE]` now resolve
-4. A fresh `FuncElaborator` elaborates the function and stores the result under the
-   module-level alias name (`"concat_3_4"`) in `FuncLogicLookupTable`
+3. Names used only in annotations (not body) are recovered from `func.__annotations__`
+   and merged into the closure namespace
+4. A **canonical name** is computed from the factory chain + all closure variables
+5. Dedup check: if the canonical name is already in `FuncLogicLookupTable`, return the
+   existing Logic() immediately — no re-elaboration
+6. Otherwise, a fresh `FuncElaborator` elaborates the function; the result is stored under
+   the canonical name in `FuncLogicLookupTable` with `logic.func_name = canonical`
+
+The Python alias (`"concat_3_4"`) is **not** stored in `FuncLogicLookupTable`. The dict
+only holds concrete functions that map to VHDL entities. The next time `concat_3_4` is
+encountered, `_elab_call` calls `_elaborate_live_func` again; the dedup check at step 5
+returns immediately.
+
+After finding the `callee_def`, `_elab_call` passes `callee_def.func_name` (the canonical
+name) — not the Python alias — to `_add_submodule_instance`, so all references in
+`submodule_instances` and VHDL output use the canonical name consistently.
+
+**Nested factory functions** — factory-produced functions whose result is local to another
+factory (never bound at module level) — work the same way. The closure of the outer
+function contains the inner callable; when its body is elaborated, `merged_globals`
+includes the closure var, `_elab_call` finds it as a callable, and `_elaborate_live_func`
+computes a canonical name for it:
+
+```python
+def make_sum3(T):
+    local_add = make_adder(T)   # local — never in module_globals
+
+    def sum3(a: T, b: T, c: T) -> T:
+        return local_add(local_add(a, b), c)
+
+    return sum3
+
+sum3_u32 = make_sum3(uint32_t)
+# local_add gets canonical "make_adder_T_uint32_t" regardless of which outer
+# factory created it — make_sum3(uint32_t) and make_sum3(uint8_t) produce
+# distinct "make_adder_T_uint32_t" and "make_adder_T_uint8_t" respectively
+```
 
 Only top-level `def` statements are scanned by `ast.walk` on `tree.body`. Nested functions
 inside factory closures (like `def concat` inside `make_concat`) are deliberately excluded
 — they are elaborated on-demand through `_elaborate_live_func` when first called.
+
+**Canonical function name format:**
+
+```
+<factory_prefix>_<var1>_<val1>_<var2>_<val2>_...
+```
+
+`factory_prefix` is `func.__qualname__` with the last `.<locals>.<funcname>` stripped and
+remaining `.<locals>.` replaced with `_`. Closure variables are sorted alphabetically.
+Values are: C type name for `_CTypeMeta` / `@struct` types (with brackets mangled to `_`),
+integer/bool values as their string representation. Non-C-type objects are skipped.
+
+```python
+# make_concat.<locals>.concat  with HI_SIZE=4, LO_SIZE=3, OUT_SIZE=7
+# → "make_concat_HI_SIZE_4_LO_SIZE_3_OUT_SIZE_7"
+
+# make_adder.<locals>.add  with T=uint32_t
+# → "make_adder_T_uint32_t"
+
+# make_negate.<locals>.negate  with VALUE_TYPE=uint32_t, OUT_TYPE=int33_t
+# → "make_negate_OUT_TYPE_int33_t_VALUE_TYPE_uint32_t"
+
+# make_outer.<locals>.make_inner.<locals>.inner  (deeply nested)  with T=uint8_t
+# → "make_outer_make_inner_T_uint8_t"
+```
 
 ### Specialised Types
 
@@ -1131,9 +1190,26 @@ def adder(l: uint32_t, r: uint32_t) -> uint32_t:  ...
 # FuncLogicLookupTable key and VHDL entity: "adder"
 ```
 
-Factory-produced functions (closures from `make_*`) are stored under the Python alias
-name used at their call site (`concat_3_4 = make_concat(3, 4)` → stored as
-`"concat_3_4"`). The function name appears as the VHDL component entity name.
+Factory-produced functions (closures) get a **canonical name** derived from the factory
+chain and all closure variable values. The Python alias (`concat_3_4`) is never the
+VHDL entity name:
+
+```python
+concat_3_4 = make_concat(3, 4)
+# VHDL entity: "make_concat_HI_SIZE_4_LO_SIZE_3_OUT_SIZE_7"
+
+clz_uint32 = make_clz(uint32_t)
+# VHDL entity: "make_clz_OUT_TYPE_uint6_t_VALUE_TYPE_uint32_t_n_bits_32"
+
+negate_uint32 = make_negate(uint32_t, int33_t)
+# VHDL entity: "make_negate_OUT_TYPE_int33_t_VALUE_TYPE_uint32_t"
+```
+
+The canonical name is independent of which Python variable the result is assigned to.
+Two aliases with identical factory + args produce the same canonical name and share a
+single VHDL entity. `FuncLogicLookupTable` stores only canonical names for factory
+closures; Python aliases are resolved on-demand via `_elaborate_live_func` which returns
+the existing Logic() when the canonical name is already present.
 
 ### Submodule Instance Names
 
@@ -1222,7 +1298,7 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 | Struct C type | `<class_name>_<f1>_<t1_mangled>_...` (canonical, set by `@struct`) |
 | Array of struct | `<struct_canonical>[N]` in C type strings |
 | Top-level function | Python `def` name verbatim |
-| Factory function | Python alias name at call site |
+| Factory function | `<factory_prefix>_<var>_<val>_...` (canonical, from qualname + closure vars) |
 | Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<v>_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |

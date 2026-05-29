@@ -394,6 +394,38 @@ def _annotation_to_ctype(ann, eval_ns=None):
 # ─────────────────────────────────────────────
 
 
+def _canonical_func_name(func, closure_ns):
+    """Return a canonical name for a factory-produced closure, or None for top-level functions.
+
+    Factory closures have '.<locals>.' in __qualname__. The canonical name is derived
+    from the factory chain (qualname minus the inner function name) plus all closure
+    variables that are types or plain ints/bools, sorted for determinism. This ensures
+    the same factory called with the same args always produces the same canonical name
+    regardless of what Python variable name the caller assigns the result to.
+    """
+    if ".<locals>." not in func.__qualname__:
+        return None
+    parts = func.__qualname__.split(".<locals>.")
+    factory_prefix = "_".join(parts[:-1])  # drop inner func name, keep factory chain
+    name_parts = []
+    for var_name in sorted(closure_ns.keys()):
+        val = closure_ns[var_name]
+        if isinstance(val, type):
+            if hasattr(val, "_pypeline_ctype_name"):
+                s = (
+                    val._pypeline_ctype_name
+                )  # @struct type: already canonical + mangled
+            else:
+                s = str(val)
+                if s.startswith("<"):
+                    continue  # plain Python class (not a C type), skip
+                s = s.replace("[", "_").replace("]", "")  # mangle brackets
+            name_parts.append(f"{var_name}_{s}")
+        elif isinstance(val, (int, bool)) and not isinstance(val, type):
+            name_parts.append(f"{var_name}_{val}")
+    return factory_prefix + ("_" + "_".join(name_parts) if name_parts else "")
+
+
 def _loc_str(src_file, node):
     file_base = os.path.basename(src_file).replace(".", "_")
     end = (
@@ -1976,7 +2008,7 @@ class FuncElaborator:
             _add_submodule_instance(
                 self.logic,
                 inst,
-                impl_name,
+                callee_def.func_name,  # canonical name, not registered alias
                 [(callee_def.inputs[0], operand_wire, typ)],
                 port_return,
                 ret_type,
@@ -2081,7 +2113,7 @@ class FuncElaborator:
                 _add_submodule_instance(
                     self.logic,
                     inst,
-                    impl_name,
+                    callee_def.func_name,  # canonical name, not registered alias
                     input_ports,
                     port_return,
                     ret_type,
@@ -2170,7 +2202,7 @@ class FuncElaborator:
         _add_submodule_instance(
             self.logic,
             inst,
-            callee_name,
+            callee_def.func_name,  # canonical name, not Python alias
             input_ports,
             port_return,
             ret_typ,
@@ -2381,6 +2413,18 @@ class FuncElaborator:
             if var_name not in closure_ns and "return" in ann_dict:
                 closure_ns[var_name] = ann_dict["return"]
 
+        # Canonical name: factory closures get a name derived from the factory chain
+        # + closure vars, so the same factory+args always maps to the same Logic().
+        # Top-level non-factory functions (no .<locals>. in qualname) keep their
+        # Python name and are not subject to deduplication here.
+        canonical = _canonical_func_name(func, closure_ns)
+        key = canonical if canonical is not None else module_level_name
+
+        if canonical is not None:
+            existing = self.parser_state.FuncLogicLookupTable.get(canonical)
+            if existing is not None:
+                return existing  # dedup: already elaborated, no alias stored
+
         merged_globals = {**self.module_globals, **closure_ns}
 
         # Register any struct types found in closure vars that were created inside
@@ -2399,19 +2443,18 @@ class FuncElaborator:
                     fields = {f: str(a) for f, a in val.__annotations__.items()}
                     self.parser_state.struct_to_field_type_dict[c_name] = fields
 
-        # Register a stub first so recursive calls resolve
+        # Register a stub under the canonical key so recursive calls resolve
         stub = C_TO_LOGIC.Logic()
-        stub.func_name = module_level_name
-        self.parser_state.FuncLogicLookupTable[module_level_name] = stub
+        stub.func_name = key
+        self.parser_state.FuncLogicLookupTable[key] = stub
 
         # Elaborate with merged namespace
         elab = FuncElaborator(
             func_def, self.parser_state, self.src_file, merged_globals
         )
         logic = elab.elaborate()
-        # Use the module-level alias as func_name so LogicInstLookupTable is consistent
-        logic.func_name = module_level_name
-        self.parser_state.FuncLogicLookupTable[module_level_name] = logic
+        logic.func_name = key
+        self.parser_state.FuncLogicLookupTable[key] = logic
         return logic
 
     # ── compound type read / write ────────────
