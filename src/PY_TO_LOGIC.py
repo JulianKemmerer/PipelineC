@@ -394,7 +394,12 @@ def _annotation_to_ctype(ann, eval_ns=None):
 
 def _loc_str(src_file, node):
     file_base = os.path.basename(src_file).replace(".", "_")
-    return f"{file_base}_l{node.lineno}_c{node.col_offset}"
+    end = (
+        f"_e{node.end_col_offset}"
+        if hasattr(node, "end_col_offset") and node.end_col_offset is not None
+        else ""
+    )
+    return f"{file_base}_l{node.lineno}_c{node.col_offset}{end}"
 
 
 def _inst_name(op_full_name, src_file, node):

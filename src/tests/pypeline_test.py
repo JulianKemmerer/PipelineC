@@ -29,10 +29,6 @@ from pypeline import (
     uint_to_array_le,
 )
 
-# TODO pypeline swlib like implementations:
-#       shorthand funcs clz,abs?
-#           count leading zeros
-#           absolute value
 # TODO Need struct and array init support for ex. basic point struct
 #       EXTRA struct init overload for float emt with float const
 # TODO float e m t is struct
@@ -46,6 +42,52 @@ from pypeline import (
 #       ex. shift by a uint6_t type wire driven by constant
 #       ... some day might be helpful for making simulator?
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+
+
+def make_clz(VALUE_TYPE):
+    n_bits = len(VALUE_TYPE)
+    OUT_TYPE = make_uint(n_bits.bit_length())
+
+    def clz(v: VALUE_TYPE) -> OUT_TYPE:
+        result: OUT_TYPE = n_bits
+        for i in range(n_bits):
+            if v[i]:
+                result = n_bits - 1 - i
+        return result
+
+    clz.out_type = OUT_TYPE
+    return clz
+
+
+clz_uint32 = make_clz(uint32_t)
+
+
+@MAIN
+def clz_uint32_test(a: uint32_t) -> uint6_t:
+    return clz_uint32(a)
+
+
+def make_abs(SIGNED_TYPE, OUT_TYPE):
+    n_bits = len(SIGNED_TYPE)
+
+    def abs_val(a: SIGNED_TYPE) -> OUT_TYPE:
+        sign: uint1_t = a[n_bits - 1]
+        result: OUT_TYPE
+        if sign:
+            result = -a
+        else:
+            result = a
+        return result
+
+    return abs_val
+
+
+abs_int32 = make_abs(int32_t, uint32_t)
+
+
+@MAIN
+def abs_int32_test(a: int32_t) -> uint32_t:
+    return abs_int32(a)
 
 
 def make_shifter_SL(VALUE_TYPE):
