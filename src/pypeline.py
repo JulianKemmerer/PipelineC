@@ -1,3 +1,4 @@
+# pyright: reportInvalidTypeForm=none
 """
 pypeline.py — runtime support for Pypeline hardware design files.
 

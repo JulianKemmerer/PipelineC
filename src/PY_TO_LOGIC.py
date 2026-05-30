@@ -455,11 +455,21 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
             else:
                 s = str(val)
                 if s.startswith("<"):
-                    continue  # plain Python class (not a C type), skip
+                    continue  # plain Python class without canonical C name, skip
                 s = s.replace("[", "_").replace("]", "")  # mangle brackets
             name_parts.append(f"{var_name}_{s}")
         elif isinstance(val, (int, bool)) and not isinstance(val, type):
             name_parts.append(f"{var_name}_{val}")
+        elif val is None:
+            name_parts.append(f"{var_name}_None")
+        elif callable(val):
+            continue  # local function objects — elaborated separately, not part of name
+        else:
+            raise ElaborationError(
+                f"Factory closure variable '{var_name}' has unsupported value "
+                f"{val!r} (type: {type(val).__name__}). "
+                f"Factory parameters must be C types, ints, bools, None, or callables."
+            )
     return factory_prefix + ("_" + "_".join(name_parts) if name_parts else "")
 
 

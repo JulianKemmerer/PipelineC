@@ -34,7 +34,7 @@ from pypeline import (
 
 # TODO Test functionaliaty of FP ADDER
 #     does it autopipeline (do test of just that inst)
-#     does it simulate right? fix shift amount, maybe use special wider shift amount overload
+#     does it simulate right?
 # LONGER TERM?
 # TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
@@ -144,35 +144,55 @@ def abs_int32_test(a: int32_t) -> uint32_t:
     return abs_int32(a)
 
 
-def make_shifter_SL(value_t):
-    amount_bits = len(value_t).bit_length()
-    amount_t = make_uint(amount_bits)
+def make_shifter_SL(value_t, amount_t=None):
+    n_bits = len(value_t)
+    narrow_bits = n_bits.bit_length()
+    narrow_t = make_uint(narrow_bits)
+    actual_amount_t = narrow_t if amount_t is None else amount_t
 
-    def shifter_SL(v: value_t, amount: amount_t) -> value_t:
+    def shifter_SL(v: value_t, amount: actual_amount_t) -> value_t:
+        effective: actual_amount_t
+        if amount_t is None or len(actual_amount_t) <= narrow_bits:
+            effective = amount
+        else:
+            if amount > n_bits:
+                effective = n_bits
+            else:
+                effective = amount
         result: value_t = v
-        for i in range(amount_bits):
+        for i in range(narrow_bits):
             shifted: value_t = result << (1 << i)
-            if amount[i]:
+            if effective[i]:
                 result = shifted
         return result
 
-    shifter_SL.amount_t = amount_t
+    shifter_SL.amount_t = actual_amount_t
     return shifter_SL
 
 
-def make_shifter_SR(value_t):
-    amount_bits = len(value_t).bit_length()
-    amount_t = make_uint(amount_bits)
+def make_shifter_SR(value_t, amount_t=None):
+    n_bits = len(value_t)
+    narrow_bits = n_bits.bit_length()
+    narrow_t = make_uint(narrow_bits)
+    actual_amount_t = narrow_t if amount_t is None else amount_t
 
-    def shifter_SR(v: value_t, amount: amount_t) -> value_t:
+    def shifter_SR(v: value_t, amount: actual_amount_t) -> value_t:
+        effective: actual_amount_t
+        if amount_t is None or len(actual_amount_t) <= narrow_bits:
+            effective = amount
+        else:
+            if amount > n_bits:
+                effective = n_bits
+            else:
+                effective = amount
         result: value_t = v
-        for i in range(amount_bits):
+        for i in range(narrow_bits):
             shifted: value_t = result >> (1 << i)
-            if amount[i]:
+            if effective[i]:
                 result = shifted
         return result
 
-    shifter_SR.amount_t = amount_t
+    shifter_SR.amount_t = actual_amount_t
     return shifter_SR
 
 
@@ -804,10 +824,8 @@ def float32_const_neg() -> float32_t:
 def make_float_adder(float_t):
     E = float_t.exponent_width
     M = float_t.mantissa_width
-    SHIFT_AMOUNT_BITS = (M + 2).bit_length()
 
     exp_t = make_uint(E)
-    shift_amount_t = make_uint(SHIFT_AMOUNT_BITS)
     man_t = make_uint(M)
     man_hidden_t = make_uint(M + 1)
     signed_man_t = make_int(M + 2)
@@ -818,8 +836,8 @@ def make_float_adder(float_t):
 
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
     negate_sum_man = make_negate(sum_man_t, abs_sum_t)
-    sr_signed = make_shifter_SR(signed_man_t)
-    sl_narrow = make_shifter_SL(narrow_t)
+    sr_signed = make_shifter_SR(signed_man_t, exp_t)
+    sl_narrow = make_shifter_SL(narrow_t, clz_out_t)
     clz_narrow = make_clz(narrow_t)
     abs_sum = make_abs(sum_man_t, abs_sum_t)
 
@@ -862,10 +880,9 @@ def make_float_adder(float_t):
         else:
             y_signed = y_man_h
 
-        # Step 4: align y via scoped SR
+        # Step 4: align y via scoped SR (diff may exceed narrow range; shifter clamps)
         diff: exp_t = x.exp - y.exp
-        diff_narrow: shift_amount_t = diff[SHIFT_AMOUNT_BITS - 1 : 0]
-        y_aligned: signed_man_t = y_signed >> diff_narrow
+        y_aligned: signed_man_t = y_signed >> diff
 
         # Step 5: sum int(M+3)
         sum_man: sum_man_t = x_signed + y_aligned
@@ -899,11 +916,12 @@ def make_float_adder(float_t):
         result: float_t = {"sign": sum_sign, "exp": result_exp, "man": result_man}
         return result
 
-    # Operator registrations scoped to float_add's elaboration only
+    # Operator registrations scoped to float_add's elaboration only.
+    # Use register_operator (exact lhs+rhs match) so the amount type is pinned.
     register_unary_operator("NEGATE", man_hidden_t, negate_man_h, scope=float_add)
     register_unary_operator("NEGATE", sum_man_t, negate_sum_man, scope=float_add)
-    register_left_operator("SR", signed_man_t, sr_signed, scope=float_add)
-    register_left_operator("SL", narrow_t, sl_narrow, scope=float_add)
+    register_operator("SR", signed_man_t, exp_t, sr_signed, scope=float_add)
+    register_operator("SL", narrow_t, clz_out_t, sl_narrow, scope=float_add)
 
     return float_add
 
