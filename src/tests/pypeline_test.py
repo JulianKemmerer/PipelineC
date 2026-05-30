@@ -98,146 +98,6 @@ def array_init_list_wires(v0: uint32_t, v1: uint32_t) -> uint32_t[2]:
     return my_arr
 
 
-def make_clz(value_t):
-    n_bits = len(value_t)
-    out_t = make_uint(n_bits.bit_length())
-
-    def clz(v: value_t) -> out_t:
-        result: out_t = n_bits
-        for i in range(n_bits):
-            if v[i]:
-                result = n_bits - 1 - i
-        return result
-
-    clz.out_t = out_t
-    return clz
-
-
-clz_uint32 = make_clz(uint32_t)
-
-
-@MAIN
-def clz_uint32_test(a: uint32_t) -> uint6_t:
-    return clz_uint32(a)
-
-
-def make_abs(in_t, out_t):
-    n_bits = len(in_t)
-
-    def abs_val(a: in_t) -> out_t:
-        sign: uint1_t = a[n_bits - 1]
-        result: out_t
-        if sign:
-            result = -a
-        else:
-            result = a
-        return result
-
-    return abs_val
-
-
-abs_int32 = make_abs(int32_t, uint32_t)
-
-
-@MAIN
-def abs_int32_test(a: int32_t) -> uint32_t:
-    return abs_int32(a)
-
-
-def make_shifter_SL(value_t, amount_t=None):
-    n_bits = len(value_t)
-    narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint(narrow_bits)
-    actual_amount_t = narrow_t if amount_t is None else amount_t
-
-    def shifter_SL(v: value_t, amount: actual_amount_t) -> value_t:
-        effective: actual_amount_t
-        if amount_t is None or len(actual_amount_t) <= narrow_bits:
-            effective = amount
-        else:
-            if amount > n_bits:
-                effective = n_bits
-            else:
-                effective = amount
-        result: value_t = v
-        for i in range(narrow_bits):
-            shifted: value_t = result << (1 << i)
-            if effective[i]:
-                result = shifted
-        return result
-
-    shifter_SL.amount_t = actual_amount_t
-    return shifter_SL
-
-
-def make_shifter_SR(value_t, amount_t=None):
-    n_bits = len(value_t)
-    narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint(narrow_bits)
-    actual_amount_t = narrow_t if amount_t is None else amount_t
-
-    def shifter_SR(v: value_t, amount: actual_amount_t) -> value_t:
-        effective: actual_amount_t
-        if amount_t is None or len(actual_amount_t) <= narrow_bits:
-            effective = amount
-        else:
-            if amount > n_bits:
-                effective = n_bits
-            else:
-                effective = amount
-        result: value_t = v
-        for i in range(narrow_bits):
-            shifted: value_t = result >> (1 << i)
-            if effective[i]:
-                result = shifted
-        return result
-
-    shifter_SR.amount_t = actual_amount_t
-    return shifter_SR
-
-
-shl_uint32 = make_shifter_SL(uint32_t)
-register_left_operator("SL", uint32_t, "shl_uint32")
-
-shr_uint32 = make_shifter_SR(uint32_t)
-register_left_operator("SR", uint32_t, "shr_uint32")
-
-
-@MAIN
-def shift_var(v: uint32_t, amount: uint6_t) -> uint32_t:
-    return v << amount
-
-
-@MAIN
-def shift_var_right(v: uint32_t, amount: uint6_t) -> uint32_t:
-    return v >> amount
-
-
-def make_negate(value_t, out_t):
-    def negate(a: value_t) -> out_t:
-        a_signed: out_t = a
-        return ~a_signed + 1
-
-    return negate
-
-
-negate_uint32 = make_negate(uint32_t, int33_t)
-register_unary_operator("NEGATE", uint32_t, "negate_uint32")
-
-negate_int32 = make_negate(int32_t, int33_t)
-register_unary_operator("NEGATE", int32_t, "negate_int32")
-
-
-@MAIN
-def uint_negate_test(a: uint32_t) -> int33_t:
-    return -a
-
-
-@MAIN
-def int_negate_test(a: int32_t) -> int33_t:
-    return -a
-
-
 def make_point_t(dim_t, DIM_SIZE, style="array"):
     if style == "array":
 
@@ -806,6 +666,146 @@ def test_uint_to_array_le(x: uint64_t) -> uint8_t[8]:
     return uint_to_array_le(x, 8)
 
 
+def make_negate(value_t, out_t):
+    def negate(a: value_t) -> out_t:
+        a_signed: out_t = a
+        return ~a_signed + 1
+
+    return negate
+
+
+negate_uint32 = make_negate(uint32_t, int33_t)
+register_unary_operator("NEGATE", uint32_t, "negate_uint32")
+
+negate_int32 = make_negate(int32_t, int33_t)
+register_unary_operator("NEGATE", int32_t, "negate_int32")
+
+
+@MAIN
+def uint_negate_test(a: uint32_t) -> int33_t:
+    return -a
+
+
+@MAIN
+def int_negate_test(a: int32_t) -> int33_t:
+    return -a
+
+
+def make_abs(in_t, out_t):
+    n_bits = len(in_t)
+
+    def abs_val(a: in_t) -> out_t:
+        sign: uint1_t = a[n_bits - 1]
+        result: out_t
+        if sign:
+            result = -a
+        else:
+            result = a
+        return result
+
+    return abs_val
+
+
+abs_int32 = make_abs(int32_t, uint32_t)
+
+
+@MAIN
+def abs_int32_test(a: int32_t) -> uint32_t:
+    return abs_int32(a)
+
+
+def make_shifter_SL(value_t, amount_t=None):
+    n_bits = len(value_t)
+    narrow_bits = n_bits.bit_length()
+    narrow_t = make_uint(narrow_bits)
+    actual_amount_t = narrow_t if amount_t is None else amount_t
+
+    def shifter_SL(v: value_t, amount: actual_amount_t) -> value_t:
+        effective: actual_amount_t
+        if amount_t is None or len(actual_amount_t) <= narrow_bits:
+            effective = amount
+        else:
+            if amount > n_bits:
+                effective = n_bits
+            else:
+                effective = amount
+        result: value_t = v
+        for i in range(narrow_bits):
+            shifted: value_t = result << (1 << i)
+            if effective[i]:
+                result = shifted
+        return result
+
+    shifter_SL.amount_t = actual_amount_t
+    return shifter_SL
+
+
+def make_shifter_SR(value_t, amount_t=None):
+    n_bits = len(value_t)
+    narrow_bits = n_bits.bit_length()
+    narrow_t = make_uint(narrow_bits)
+    actual_amount_t = narrow_t if amount_t is None else amount_t
+
+    def shifter_SR(v: value_t, amount: actual_amount_t) -> value_t:
+        effective: actual_amount_t
+        if amount_t is None or len(actual_amount_t) <= narrow_bits:
+            effective = amount
+        else:
+            if amount > n_bits:
+                effective = n_bits
+            else:
+                effective = amount
+        result: value_t = v
+        for i in range(narrow_bits):
+            shifted: value_t = result >> (1 << i)
+            if effective[i]:
+                result = shifted
+        return result
+
+    shifter_SR.amount_t = actual_amount_t
+    return shifter_SR
+
+
+shl_uint32 = make_shifter_SL(uint32_t)
+register_left_operator("SL", uint32_t, "shl_uint32")
+
+shr_uint32 = make_shifter_SR(uint32_t)
+register_left_operator("SR", uint32_t, "shr_uint32")
+
+
+@MAIN
+def shift_var(v: uint32_t, amount: uint6_t) -> uint32_t:
+    return v << amount
+
+
+@MAIN
+def shift_var_right(v: uint32_t, amount: uint6_t) -> uint32_t:
+    return v >> amount
+
+
+def make_clz(value_t):
+    n_bits = len(value_t)
+    out_t = make_uint(n_bits.bit_length())
+
+    def clz(v: value_t) -> out_t:
+        result: out_t = n_bits
+        for i in range(n_bits):
+            if v[i]:
+                result = n_bits - 1 - i
+        return result
+
+    clz.out_t = out_t
+    return clz
+
+
+clz_uint32 = make_clz(uint32_t)
+
+
+@MAIN
+def clz_uint32_test(a: uint32_t) -> uint6_t:
+    return clz_uint32(a)
+
+
 float32_t = make_float_t(8, 23)
 
 
@@ -824,7 +824,6 @@ def float32_const_neg() -> float32_t:
 def make_float_adder(float_t):
     E = float_t.exponent_width
     M = float_t.mantissa_width
-
     exp_t = make_uint(E)
     man_t = make_uint(M)
     man_hidden_t = make_uint(M + 1)
@@ -832,13 +831,12 @@ def make_float_adder(float_t):
     sum_man_t = make_int(M + 3)
     abs_sum_t = make_uint(M + 2)
     narrow_t = make_uint(M + 1)
-    clz_out_t = make_clz(narrow_t).out_t
-
+    clz_narrow = make_clz(narrow_t)
+    clz_out_t = clz_narrow.out_t
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
     negate_sum_man = make_negate(sum_man_t, abs_sum_t)
     sr_signed = make_shifter_SR(signed_man_t, exp_t)
     sl_narrow = make_shifter_SL(narrow_t, clz_out_t)
-    clz_narrow = make_clz(narrow_t)
     abs_sum = make_abs(sum_man_t, abs_sum_t)
 
     def float_add(left: float_t, right: float_t) -> float_t:
