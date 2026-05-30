@@ -394,27 +394,64 @@ def _annotation_to_ctype(ann, eval_ns=None):
 # ─────────────────────────────────────────────
 
 
-def _canonical_func_name(func, closure_ns):
+def _canonical_func_name(func, closure_ns, module_globals=None):
     """Return a canonical name for a factory-produced closure, or None for top-level functions.
 
-    Factory closures have '.<locals>.' in __qualname__. The canonical name is derived
-    from the factory chain (qualname minus the inner function name) plus all closure
-    variables that are types or plain ints/bools, sorted for determinism. This ensures
-    the same factory called with the same args always produces the same canonical name
-    regardless of what Python variable name the caller assigns the result to.
+    Factory closures have '.<locals>.' in __qualname__. The canonical name is:
+
+        <factory_prefix>_<param1>_<val1>_<param2>_<val2>_...
+
+    where <factory_prefix> is the qualname chain (definition hierarchy, not call site),
+    and only closure variables whose names match a factory parameter are included.
+
+    Three cases:
+      1. Factory not found in module_globals: fall back to all type/int closure vars.
+      2. Factory has 0 params: name is just the factory prefix (no suffix).
+      3. Factory has params but none are in the closure (e.g. T not captured in
+         make_swap because only a derived local was used): fall back to all type/int
+         closure vars so the name is still unique.
     """
     if ".<locals>." not in func.__qualname__:
         return None
     parts = func.__qualname__.split(".<locals>.")
     factory_prefix = "_".join(parts[:-1])  # drop inner func name, keep factory chain
+
+    # Collect parameter names from each factory in the qualname chain.
+    # None means "factory not found"; empty set means "0-param factory".
+    factory_param_names = None
+    if module_globals is not None:
+        outermost_func = module_globals.get(parts[0])
+        if callable(outermost_func) and hasattr(outermost_func, "__code__"):
+            n = outermost_func.__code__.co_argcount
+            factory_param_names = set(outermost_func.__code__.co_varnames[:n])
+            # Middle factories in the chain may be in the closure as callables.
+            for middle_name in parts[1:-1]:
+                middle_func = closure_ns.get(middle_name)
+                if callable(middle_func) and hasattr(middle_func, "__code__"):
+                    m = middle_func.__code__.co_argcount
+                    factory_param_names.update(middle_func.__code__.co_varnames[:m])
+
+    if factory_param_names is None:
+        # Factory not found — fall back to all type/int closure vars (legacy).
+        filtered_ns = closure_ns
+    elif factory_param_names:
+        # Factory has params — only include those present in the closure.
+        filtered_ns = {k: v for k, v in closure_ns.items() if k in factory_param_names}
+        if not filtered_ns:
+            # None of the factory params were captured (e.g. make_swap's T is only
+            # used to compute local_pair_t and never referenced in swap's body).
+            # Fall back to all closure vars so the name is still unique.
+            filtered_ns = closure_ns
+    else:
+        # 0-param factory — name is just the factory prefix, no suffix.
+        filtered_ns = {}
+
     name_parts = []
-    for var_name in sorted(closure_ns.keys()):
-        val = closure_ns[var_name]
+    for var_name in sorted(filtered_ns.keys()):
+        val = filtered_ns[var_name]
         if isinstance(val, type):
             if hasattr(val, "_pypeline_ctype_name"):
-                s = (
-                    val._pypeline_ctype_name
-                )  # @struct type: already canonical + mangled
+                s = val._pypeline_ctype_name  # @struct type: already canonical
             else:
                 s = str(val)
                 if s.startswith("<"):
@@ -1994,15 +2031,10 @@ class FuncElaborator:
 
         impl_name = _pypeline._unary_operator_registry.get((op_name, typ))
         if impl_name is not None:
-            callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
-            if callee_def is None:
-                live_func = self.module_globals.get(impl_name)
-                if live_func is None or not callable(live_func):
-                    raise NotImplementedError(
-                        f"Registered unary operator '{impl_name}' not found in module globals"
-                    )
-                callee_def = self._elaborate_live_func(impl_name, live_func)
-            inst = self._inst(impl_name, expr)
+            callee_def = self._resolve_registered_impl(impl_name, expr)
+            inst = self._inst(
+                impl_name if isinstance(impl_name, str) else impl_name.__name__, expr
+            )
             ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
@@ -2096,15 +2128,11 @@ class FuncElaborator:
                         f" {r_type}, 'func_name') in your design file."
                         f" (at {_loc_str(self.src_file, expr)})"
                     )
-                callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
-                if callee_def is None:
-                    live_func = self.module_globals.get(impl_name)
-                    if live_func is None or not callable(live_func):
-                        raise NotImplementedError(
-                            f"Registered operator '{impl_name}' not found in module globals"
-                        )
-                    callee_def = self._elaborate_live_func(impl_name, live_func)
-                inst = self._inst(impl_name, expr)
+                callee_def = self._resolve_registered_impl(impl_name, expr)
+                inst = self._inst(
+                    impl_name if isinstance(impl_name, str) else impl_name.__name__,
+                    expr,
+                )
                 ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
                 port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
                 input_ports = list(
@@ -2124,6 +2152,31 @@ class FuncElaborator:
 
         left_wire, l_type = self._elab_expr(expr.left)
         right_wire, r_type = self._elab_expr(expr.right)
+
+        # General registered operator check — covers any op (e.g. + on struct types).
+        import pypeline as _pypeline
+
+        _gen_impl = _pypeline._operator_registry.get((op_name, l_type, r_type))
+        if _gen_impl is None:
+            _gen_impl = _pypeline._left_operator_registry.get((op_name, l_type))
+        if _gen_impl is not None:
+            _callee = self._resolve_registered_impl(_gen_impl, expr)
+            _inst = self._inst(
+                _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
+            )
+            _ret_type = _callee.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+            _port_ret = _port_wire(_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                _inst,
+                _callee.func_name,
+                list(zip(_callee.inputs, [left_wire, right_wire], [l_type, r_type])),
+                _port_ret,
+                _ret_type,
+                expr,
+                self.src_file,
+            )
+            return _port_ret, _ret_type
 
         if op_name in _ARITH_OPS and _ctype_is_int(l_type) and _ctype_is_int(r_type):
             # Arithmetic ops: sign-promote inputs, compute full-precision output type.
@@ -2368,6 +2421,23 @@ class FuncElaborator:
 
         raise NotImplementedError(f"Unknown bit manip function: {callee_name!r}")
 
+    def _resolve_registered_impl(self, impl_name, expr):
+        """Resolve a registered operator impl (string name or callable) to a Logic().
+        String names are looked up in module_globals; callables are elaborated directly.
+        """
+        if callable(impl_name):
+            return self._elaborate_live_func(impl_name.__name__, impl_name)
+        callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
+        if callee_def is None:
+            live_func = self.module_globals.get(impl_name)
+            if live_func is None or not callable(live_func):
+                raise NotImplementedError(
+                    f"Registered operator '{impl_name}' not found in module globals"
+                    f" (at {_loc_str(self.src_file, expr)})"
+                )
+            callee_def = self._elaborate_live_func(impl_name, live_func)
+        return callee_def
+
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
         Handles closures returned by factory functions — extracts closure variables
@@ -2417,7 +2487,7 @@ class FuncElaborator:
         # + closure vars, so the same factory+args always maps to the same Logic().
         # Top-level non-factory functions (no .<locals>. in qualname) keep their
         # Python name and are not subject to deduplication here.
-        canonical = _canonical_func_name(func, closure_ns)
+        canonical = _canonical_func_name(func, closure_ns, self.module_globals)
         key = canonical if canonical is not None else module_level_name
 
         if canonical is not None:
@@ -2448,11 +2518,18 @@ class FuncElaborator:
         stub.func_name = key
         self.parser_state.FuncLogicLookupTable[key] = stub
 
-        # Elaborate with merged namespace
-        elab = FuncElaborator(
-            func_def, self.parser_state, self.src_file, merged_globals
-        )
-        logic = elab.elaborate()
+        # Elaborate with merged namespace; push/pop any operator registrations
+        # scoped to this function so nested callees inherit them.
+        import pypeline as _pypeline
+
+        saved = _pypeline._push_scoped_registrations(func)
+        try:
+            elab = FuncElaborator(
+                func_def, self.parser_state, self.src_file, merged_globals
+            )
+            logic = elab.elaborate()
+        finally:
+            _pypeline._pop_scoped_registrations(saved)
         logic.func_name = key
         self.parser_state.FuncLogicLookupTable[key] = logic
         return logic

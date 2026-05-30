@@ -268,47 +268,104 @@ def MAIN(func):
 # Operator overloading registry
 # ─────────────────────────────────────────────
 
-_operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> module_level_name_str
-_left_operator_registry: dict = {}  # (op_str, l_type_str) -> module_level_name_str
+
+def _ctype_str(t) -> str:
+    """Return the canonical C type name for a type object.
+    Works for _CTypeMeta integer types (uint32_t) and @struct NamedTuple types.
+    """
+    if hasattr(t, "_pypeline_ctype_name"):
+        return t._pypeline_ctype_name
+    return str(t)
 
 
-def register_operator(op: str, left_type, right_type, func_name: str) -> None:
+_operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> name_or_callable
+_left_operator_registry: dict = {}  # (op_str, l_type_str) -> name_or_callable
+_unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
+
+# Scoped registrations: active only while elaborating the keyed function.
+# id(func) -> {registry_key: name_or_callable}
+_scoped_operator_registry: dict = {}
+_scoped_left_operator_registry: dict = {}
+_scoped_unary_operator_registry: dict = {}
+
+
+def register_operator(op: str, left_type, right_type, func_name, scope=None) -> None:
     """Register a hardware function as the implementation of a variable binary operator.
     Matches on both left and right operand types (exact match).
 
     op:        "SL" (<<) or "SR" (>>)
     left_type: C type of the left operand (e.g. uint32_t)
     right_type: C type of the right operand / shift amount (e.g. uint6_t)
-    func_name: string name of a module-level callable in the design file
-               (the closure-factory result assigned to that name)
+    func_name: string name of a module-level callable, or a callable directly.
+    scope:     if provided, registration is active only while elaborating that callable.
     """
-    _operator_registry[(op, str(left_type), str(right_type))] = func_name
+    key = (op, _ctype_str(left_type), _ctype_str(right_type))
+    if scope is None:
+        _operator_registry[key] = func_name
+    else:
+        _scoped_operator_registry.setdefault(id(scope), {})[key] = func_name
 
 
-def register_left_operator(op: str, left_type, func_name: str) -> None:
+def register_left_operator(op: str, left_type, func_name, scope=None) -> None:
     """Register a hardware function as the implementation of a binary operator,
     matching only on the left operand type. The right operand type is derived
     from the registered function (e.g. shift amount derived from value width).
 
     op:        "SL" (<<) or "SR" (>>)
     left_type: C type of the left operand (e.g. uint32_t)
-    func_name: string name of a module-level callable in the design file
+    func_name: string name of a module-level callable, or a callable directly.
+    scope:     if provided, registration is active only while elaborating that callable.
     """
-    _left_operator_registry[(op, str(left_type))] = func_name
+    key = (op, _ctype_str(left_type))
+    if scope is None:
+        _left_operator_registry[key] = func_name
+    else:
+        _scoped_left_operator_registry.setdefault(id(scope), {})[key] = func_name
 
 
-_unary_operator_registry: dict = {}  # (op_str, type_str) -> module_level_name_str
-
-
-def register_unary_operator(op: str, operand_type, func_name: str) -> None:
+def register_unary_operator(op: str, operand_type, func_name, scope=None) -> None:
     """Register a hardware function as the implementation of a unary operator.
 
     op:           "NEGATE" (-) or "NOT" (~)
     operand_type: C type of the operand (e.g. uint32_t)
-    func_name:    string name of a module-level callable in the design file
-                  (the closure-factory result assigned to that name)
+    func_name:    string name of a module-level callable, or a callable directly.
+    scope:        if provided, registration is active only while elaborating that callable.
     """
-    _unary_operator_registry[(op, str(operand_type))] = func_name
+    key = (op, _ctype_str(operand_type))
+    if scope is None:
+        _unary_operator_registry[key] = func_name
+    else:
+        _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func_name
+
+
+def _push_scoped_registrations(func):
+    """Merge scoped operator registrations for *func* into the active global registries.
+    Returns a list of (registry, key, old_value) triples for restoring afterward.
+    Scoped entries from outer elaboration frames are already present in the global
+    registries, so inner callees automatically inherit them.
+    """
+    saved = []
+    func_id = id(func)
+    for key, val in _scoped_operator_registry.get(func_id, {}).items():
+        saved.append((_operator_registry, key, _operator_registry.get(key)))
+        _operator_registry[key] = val
+    for key, val in _scoped_left_operator_registry.get(func_id, {}).items():
+        saved.append((_left_operator_registry, key, _left_operator_registry.get(key)))
+        _left_operator_registry[key] = val
+    for key, val in _scoped_unary_operator_registry.get(func_id, {}).items():
+        saved.append((_unary_operator_registry, key, _unary_operator_registry.get(key)))
+        _unary_operator_registry[key] = val
+    return saved
+
+
+def _pop_scoped_registrations(saved):
+    """Restore registry entries to their pre-push state."""
+    _MISSING = object()
+    for registry, key, old_val in saved:
+        if old_val is None:
+            registry.pop(key, _MISSING)
+        else:
+            registry[key] = old_val
 
 
 # ─────────────────────────────────────────────

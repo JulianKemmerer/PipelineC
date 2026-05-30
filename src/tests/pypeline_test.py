@@ -15,8 +15,10 @@ from pypeline import (
     int32_t,
     int33_t,
     make_uint,
+    make_int,
     make_float_t,
     _RegType,
+    register_operator,
     register_left_operator,
     register_unary_operator,
     bit_dup,
@@ -30,8 +32,9 @@ from pypeline import (
     uint_to_array_le,
 )
 
-
-# TODO aim for float e m t adder
+# TODO Test functionaliaty of FP ADDER
+#     does it autopipeline (do test of just that inst)
+#     does it simulate right? fix shift amount, maybe use special wider shift amount overload
 # LONGER TERM?
 # TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
@@ -42,21 +45,6 @@ from pypeline import (
 #       ... some day might be helpful for making simulator?
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
 # TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
-
-
-float32_t = make_float_t(8, 23)
-
-
-@MAIN
-def float32_const_init() -> float32_t:
-    x: float32_t = float32_t.as_const(1.5)
-    return x
-
-
-@MAIN
-def float32_const_neg() -> float32_t:
-    x: float32_t = float32_t.as_const(-1.0)
-    return x
 
 
 @struct
@@ -110,18 +98,18 @@ def array_init_list_wires(v0: uint32_t, v1: uint32_t) -> uint32_t[2]:
     return my_arr
 
 
-def make_clz(VALUE_TYPE):
-    n_bits = len(VALUE_TYPE)
-    OUT_TYPE = make_uint(n_bits.bit_length())
+def make_clz(value_t):
+    n_bits = len(value_t)
+    out_t = make_uint(n_bits.bit_length())
 
-    def clz(v: VALUE_TYPE) -> OUT_TYPE:
-        result: OUT_TYPE = n_bits
+    def clz(v: value_t) -> out_t:
+        result: out_t = n_bits
         for i in range(n_bits):
             if v[i]:
                 result = n_bits - 1 - i
         return result
 
-    clz.out_type = OUT_TYPE
+    clz.out_t = out_t
     return clz
 
 
@@ -133,12 +121,12 @@ def clz_uint32_test(a: uint32_t) -> uint6_t:
     return clz_uint32(a)
 
 
-def make_abs(SIGNED_TYPE, OUT_TYPE):
-    n_bits = len(SIGNED_TYPE)
+def make_abs(in_t, out_t):
+    n_bits = len(in_t)
 
-    def abs_val(a: SIGNED_TYPE) -> OUT_TYPE:
+    def abs_val(a: in_t) -> out_t:
         sign: uint1_t = a[n_bits - 1]
-        result: OUT_TYPE
+        result: out_t
         if sign:
             result = -a
         else:
@@ -156,35 +144,35 @@ def abs_int32_test(a: int32_t) -> uint32_t:
     return abs_int32(a)
 
 
-def make_shifter_SL(VALUE_TYPE):
-    amount_bits = len(VALUE_TYPE).bit_length()
-    AMOUNT_TYPE = make_uint(amount_bits)
+def make_shifter_SL(value_t):
+    amount_bits = len(value_t).bit_length()
+    amount_t = make_uint(amount_bits)
 
-    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
-        result: VALUE_TYPE = v
+    def shifter_SL(v: value_t, amount: amount_t) -> value_t:
+        result: value_t = v
         for i in range(amount_bits):
-            shifted: VALUE_TYPE = result << (1 << i)
+            shifted: value_t = result << (1 << i)
             if amount[i]:
                 result = shifted
         return result
 
-    shifter_SL.amount_type = AMOUNT_TYPE
+    shifter_SL.amount_t = amount_t
     return shifter_SL
 
 
-def make_shifter_SR(VALUE_TYPE):
-    amount_bits = len(VALUE_TYPE).bit_length()
-    AMOUNT_TYPE = make_uint(amount_bits)
+def make_shifter_SR(value_t):
+    amount_bits = len(value_t).bit_length()
+    amount_t = make_uint(amount_bits)
 
-    def shifter_SR(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
-        result: VALUE_TYPE = v
+    def shifter_SR(v: value_t, amount: amount_t) -> value_t:
+        result: value_t = v
         for i in range(amount_bits):
-            shifted: VALUE_TYPE = result >> (1 << i)
+            shifted: value_t = result >> (1 << i)
             if amount[i]:
                 result = shifted
         return result
 
-    shifter_SR.amount_type = AMOUNT_TYPE
+    shifter_SR.amount_t = amount_t
     return shifter_SR
 
 
@@ -205,9 +193,9 @@ def shift_var_right(v: uint32_t, amount: uint6_t) -> uint32_t:
     return v >> amount
 
 
-def make_negate(VALUE_TYPE, OUT_TYPE):
-    def negate(a: VALUE_TYPE) -> OUT_TYPE:
-        a_signed: OUT_TYPE = a
+def make_negate(value_t, out_t):
+    def negate(a: value_t) -> out_t:
+        a_signed: out_t = a
         return ~a_signed + 1
 
     return negate
@@ -230,16 +218,16 @@ def int_negate_test(a: int32_t) -> int33_t:
     return -a
 
 
-def make_point_t(dim_type, dim_size, style="array"):
+def make_point_t(dim_t, DIM_SIZE, style="array"):
     if style == "array":
 
         @struct
         class point(NamedTuple):
-            dim: dim_type[dim_size]
+            dim: dim_t[DIM_SIZE]
 
         point.style = "array"
-        point.dim_size = dim_size
-        point.dim_type = dim_type
+        point.DIM_SIZE = DIM_SIZE
+        point.dim_t = dim_t
         return point
     elif style == "fields":
         pass  # TODO
@@ -259,7 +247,7 @@ point_t = make_point_t(uint32_t, 2, style="array")
 def types_test_foo(point: point_t) -> point_t:
     rv: point_t
     if point_t.style == "array":
-        for i in range(point_t.dim_size):
+        for i in range(point_t.DIM_SIZE):
             rv.dim[i] = point.dim[i]
     else:
         for f in point_t._fields:
@@ -274,35 +262,6 @@ def types_test_main(point: point_t) -> point_t:
 
 def sum_widths(n, m):
     return n + m
-
-
-def make_concat(LO_SIZE, HI_SIZE):
-    OUT_SIZE = sum_widths(LO_SIZE, HI_SIZE)  # arbitrary Python here
-
-    def concat(
-        bits_lo: uint1_t[LO_SIZE], bits_hi: uint1_t[HI_SIZE]
-    ) -> uint1_t[OUT_SIZE]:
-        bits: uint1_t[OUT_SIZE]
-        b = 0
-        for i in range(LO_SIZE):
-            bits[b] = bits_lo[i]
-            b = b + 1
-        for i in range(HI_SIZE):
-            bits[b] = bits_hi[i]
-            b = b + 1
-        return bits
-
-    return concat
-
-
-N = 3
-M = 4
-concat_N_M = make_concat(N, M)
-
-
-@MAIN
-def concat_main(bits_lo: uint1_t[N], bits_hi: uint1_t[M]) -> uint1_t[sum_widths(N, M)]:
-    return concat_N_M(bits_lo, bits_hi)
 
 
 @MAIN
@@ -672,6 +631,45 @@ def nested_factory_swap_test(p: pair_u32_t) -> pair_u32_t:
     return swap_u32(p)
 
 
+def make_double_inv(T):
+    """Outer factory containing a locally-defined inner factory.
+    double_inv(a) = ~~a = a (double bitwise NOT).
+
+    Canonical names:
+      inv       -> make_double_inv_make_inv_t_<type>  (definition path in prefix)
+      double_inv -> make_double_inv_T_<type>
+    """
+
+    def make_inv(
+        t,
+    ):  # locally defined — qualname: make_double_inv.<locals>.make_inv.<locals>.inv
+        def inv(a: t) -> t:
+            return ~a
+
+        return inv
+
+    local_inv = make_inv(T)
+
+    def double_inv(a: T) -> T:
+        return local_inv(local_inv(a))
+
+    return double_inv
+
+
+double_inv_u32 = make_double_inv(uint32_t)
+double_inv_u8 = make_double_inv(uint8_t)
+
+
+@MAIN
+def nested_factory_def_test(a: uint32_t) -> uint32_t:
+    return double_inv_u32(a)
+
+
+@MAIN
+def nested_factory_def_u8_test(a: uint8_t) -> uint8_t:
+    return double_inv_u8(a)
+
+
 # TODO
 # @MAIN
 # def shift_const_wire(v: uint32_t) -> uint32_t:
@@ -786,3 +784,134 @@ def test_uint_to_array_be(x: uint64_t) -> uint8_t[8]:
 @MAIN
 def test_uint_to_array_le(x: uint64_t) -> uint8_t[8]:
     return uint_to_array_le(x, 8)
+
+
+float32_t = make_float_t(8, 23)
+
+
+@MAIN
+def float32_const_init() -> float32_t:
+    x: float32_t = float32_t.as_const(1.5)
+    return x
+
+
+@MAIN
+def float32_const_neg() -> float32_t:
+    x: float32_t = float32_t.as_const(-1.0)
+    return x
+
+
+def make_float_adder(float_t):
+    E = float_t.exponent_width
+    M = float_t.mantissa_width
+    SHIFT_AMOUNT_BITS = (M + 2).bit_length()
+
+    exp_t = make_uint(E)
+    shift_amount_t = make_uint(SHIFT_AMOUNT_BITS)
+    man_t = make_uint(M)
+    man_hidden_t = make_uint(M + 1)
+    signed_man_t = make_int(M + 2)
+    sum_man_t = make_int(M + 3)
+    abs_sum_t = make_uint(M + 2)
+    narrow_t = make_uint(M + 1)
+    clz_out_t = make_clz(narrow_t).out_t
+
+    negate_man_h = make_negate(man_hidden_t, signed_man_t)
+    negate_sum_man = make_negate(sum_man_t, abs_sum_t)
+    sr_signed = make_shifter_SR(signed_man_t)
+    sl_narrow = make_shifter_SL(narrow_t)
+    clz_narrow = make_clz(narrow_t)
+    abs_sum = make_abs(sum_man_t, abs_sum_t)
+
+    def float_add(left: float_t, right: float_t) -> float_t:
+        # Step 1: x gets the larger exponent
+        x: float_t
+        y: float_t
+        if right.exp > left.exp:
+            x = right
+            y = left
+        else:
+            x = left
+            y = right
+
+        # Step 2: hidden bit via tuple concat uint(M+1)
+        x_hidden: uint1_t
+        if x.exp == 0:
+            x_hidden = 0
+        else:
+            x_hidden = 1
+        x_man_h: man_hidden_t = (x_hidden, x.man)
+
+        y_hidden: uint1_t
+        if y.exp == 0:
+            y_hidden = 0
+        else:
+            y_hidden = 1
+        y_man_h: man_hidden_t = (y_hidden, y.man)
+
+        # Step 3: sign-adjust int(M+2) via scoped NEGATE
+        x_signed: signed_man_t
+        if x.sign:
+            x_signed = -x_man_h
+        else:
+            x_signed = x_man_h
+
+        y_signed: signed_man_t
+        if y.sign:
+            y_signed = -y_man_h
+        else:
+            y_signed = y_man_h
+
+        # Step 4: align y via scoped SR
+        diff: exp_t = x.exp - y.exp
+        diff_narrow: shift_amount_t = diff[SHIFT_AMOUNT_BITS - 1 : 0]
+        y_aligned: signed_man_t = y_signed >> diff_narrow
+
+        # Step 5: sum int(M+3)
+        sum_man: sum_man_t = x_signed + y_aligned
+
+        # Step 6: sign and absolute value
+        sum_sign: uint1_t = sum_man[M + 2]
+        sum_abs: abs_sum_t = abs_sum(sum_man)
+
+        # Step 7: normalize (nested if-else, three cases)
+        sum_overflow: uint1_t = sum_abs[M + 1]
+        result_exp: exp_t
+        result_man: man_t
+        if sum_overflow:
+            # Case 1: carry out right shift, bump exponent
+            result_exp = x.exp + 1
+            result_man = sum_abs[M:1]
+        else:
+            if sum_abs == 0:
+                # Case 3: zero
+                result_exp = 0
+                result_man = 0
+            else:
+                # Case 2: normal remove leading zeros
+                sum_narrow: narrow_t = sum_abs[M:0]
+                lz: clz_out_t = clz_narrow(sum_narrow)
+                lz_wide: exp_t = lz
+                result_exp = x.exp - lz_wide
+                shifted: narrow_t = sum_narrow << lz
+                result_man = shifted[M - 1 : 0]
+
+        result: float_t = {"sign": sum_sign, "exp": result_exp, "man": result_man}
+        return result
+
+    # Operator registrations scoped to float_add's elaboration only
+    register_unary_operator("NEGATE", man_hidden_t, negate_man_h, scope=float_add)
+    register_unary_operator("NEGATE", sum_man_t, negate_sum_man, scope=float_add)
+    register_left_operator("SR", signed_man_t, sr_signed, scope=float_add)
+    register_left_operator("SL", narrow_t, sl_narrow, scope=float_add)
+
+    return float_add
+
+
+float_add_32 = make_float_adder(float32_t)
+register_operator("PLUS", float32_t, float32_t, float_add_32)
+
+
+@MAIN
+def float_add_32_main(left: float32_t, right: float32_t) -> float32_t:
+    return left + right

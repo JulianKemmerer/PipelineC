@@ -695,26 +695,55 @@ inside factory closures (like `def concat` inside `make_concat`) are deliberatel
 **Canonical function name format:**
 
 ```
-<factory_prefix>_<var1>_<val1>_<var2>_<val2>_...
+<factory_prefix>_<param1>_<val1>_<param2>_<val2>_...
 ```
 
-`factory_prefix` is `func.__qualname__` with the last `.<locals>.<funcname>` stripped and
-remaining `.<locals>.` replaced with `_`. Closure variables are sorted alphabetically.
+`factory_prefix` encodes the **definition hierarchy** (from `func.__qualname__`, not the
+call site): `func.__qualname__` with the last `.<locals>.<funcname>` stripped and remaining
+`.<locals>.` replaced with `_`. This means a module-level factory called from inside
+another factory still uses only its own name as the prefix.
+
+Only closure variables whose names match a **parameter of the enclosing factory function**
+are included (sorted alphabetically). The factory is looked up by name in `module_globals`;
+middle-chain factories (nested definitions) are looked up as callables in the closure.
+
+**Three cases for the suffix:**
+
+1. **Factory not found** in `module_globals` — fall back to all type/int-valued closure vars.
+2. **Factory has 0 parameters** — suffix is empty; name is just `factory_prefix`.
+3. **Factory has parameters** — only include those present in the closure. If *none* of the
+   factory's parameters appear in the closure (e.g. `T` in `make_swap` is used only to
+   compute `local_pair_t` and is never referenced inside `swap`), fall back to all type/int
+   closure vars so the name remains unique.
+
 Values are: C type name for `_CTypeMeta` / `@struct` types (with brackets mangled to `_`),
 integer/bool values as their string representation. Non-C-type objects are skipped.
 
 ```python
-# make_concat.<locals>.concat  with HI_SIZE=4, LO_SIZE=3, OUT_SIZE=7
-# → "make_concat_HI_SIZE_4_LO_SIZE_3_OUT_SIZE_7"
+# make_concat.<locals>.concat  factory params: LO_SIZE, HI_SIZE
+# → "make_concat_HI_SIZE_4_LO_SIZE_3"     (OUT_SIZE excluded — derived local)
 
-# make_adder.<locals>.add  with T=uint32_t
+# make_adder.<locals>.add  factory params: T  (recovered from annotations)
 # → "make_adder_T_uint32_t"
 
-# make_negate.<locals>.negate  with VALUE_TYPE=uint32_t, OUT_TYPE=int33_t
-# → "make_negate_OUT_TYPE_int33_t_VALUE_TYPE_uint32_t"
+# make_negate.<locals>.negate  factory params: value_t, out_t
+# → "make_negate_out_t_int33_t_value_t_uint32_t"
 
-# make_outer.<locals>.make_inner.<locals>.inner  (deeply nested)  with T=uint8_t
-# → "make_outer_make_inner_T_uint8_t"
+# make_float_adder.<locals>.float_add  factory params: float_t
+# → "make_float_adder_float_t_float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
+# (M, SHIFT_AMOUNT_BITS, exp_t, man_t, etc. are all derived locals — excluded)
+
+# make_clz called from inside make_float_adder: clz.__qualname__ = "make_clz.<locals>.clz"
+# → "make_clz_value_t_uint24_t"   (definition is at module level, call site irrelevant)
+
+# make_double_neg.<locals>.make_inv.<locals>.inv  factory params: t (from make_inv)
+# → "make_double_neg_make_inv_t_uint32_t"   (nested definition encoded in prefix)
+
+# make_swap.<locals>.swap  factory params: T, but T not captured in swap's closure
+# → fallback: "make_swap_local_pair_t_pair_t_a_uint32_t_b_uint32_t"
+
+# def make_singleton():  (0 params)
+# → "make_singleton"
 ```
 
 ### Specialised Types
@@ -987,90 +1016,106 @@ the sum of all element widths; the return type must match exactly.
 
 ## Custom Operator Registration
 
-Operators that are not built-in (e.g. variable shifts, or unary ops that need type-widening
-or a custom algorithm) are registered explicitly with a module-level function name. The
-elaborator checks the registry before the built-in path; registered implementations take
-full precedence.
+Any binary or unary Python operator can be overloaded for specific operand types by
+registering a hardware function. The elaborator checks the registry before the built-in
+path; registered implementations take full precedence.
 
-### Binary Operators (`register_operator`)
+### Three registration functions
 
-```python
-def make_shifter_SL(VALUE_TYPE, AMOUNT_TYPE):
-    def shifter_SL(v: VALUE_TYPE, amount: AMOUNT_TYPE) -> VALUE_TYPE:
-        return v + amount  # placeholder body; real impl is a PipelineC primitive
-    return shifter_SL
+| Function | Matches on | Use case |
+|---|---|---|
+| `register_operator(op, lhs, rhs, impl)` | exact `(lhs, rhs)` pair | variable shifts with a specific amount type; arithmetic on struct types |
+| `register_left_operator(op, lhs, impl)` | `lhs` only (rhs derived from impl's signature) | variable shifts where the amount width is inferred |
+| `register_unary_operator(op, operand, impl)` | operand type | unary negation, custom bitwise ops |
 
-shl_uint32_uint6 = make_shifter_SL(uint32_t, uint6_t)
-register_operator("SL", uint32_t, uint6_t, "shl_uint32_uint6")
-```
+All three accept either a **string name** (module-level callable) or a **callable directly**
+as `impl`. They also accept an optional `scope=<callable>` keyword argument for scoped
+registrations (see below).
 
-`register_operator(op_str, lhs_type, rhs_type, func_name)` binds the Python operator
-`<<` (mapped from `"SL"`) on `(uint32_t, uint6_t)` operands to the named function.  When
-`_elab_binop` encounters `v << amount` with those types it looks up the registered function
-name and elaborates the call as if `shl_uint32_uint6(v, amount)` had been written — a
-regular submodule instance in the Logic() graph.
-
-The `op_str` → Python operator mapping for binary operators:
+The `op_str` values map to Python operators:
 
 | `op_str` | Python operator |
 |---|---|
 | `"SL"` | `<<` (shift left) |
 | `"SR"` | `>>` (shift right) |
+| `"PLUS"` | `+` (addition) |
+| `"MINUS"` | `-` (subtraction) |
+| `"NEGATE"` | `-` (unary negation) |
 
-Binary operators not in the registry fall through to the standard
-`BIN_OP_LOGIC_NAME_PREFIX_<op>_<type>` submodule naming.
+### Binary operator lookup in `_elab_binop`
 
-### Unary Operators (`register_unary_operator`)
+For shift operators (`SL`/`SR`) the elaborator first tries a constant-amount fast path
+(`CONST_SL_<n>_<type>`). If the amount is a runtime signal:
+
+```
+1. lhs_wire, l_type = _elab_expr(left)
+   rhs_wire, r_type = _elab_expr(right)
+2. Exact match:  _operator_registry.get((op, l_type, r_type))
+3. Left match:   _left_operator_registry.get((op, l_type))
+4. If found: resolve impl (string → module_globals lookup, callable → _elaborate_live_func)
+            emit submodule instance
+5. If not found for a shift: raise NotImplementedError
+```
+
+For **all other binary operators** the same exact/left-match lookup runs after the operands
+are elaborated. This enables `+` on struct types (e.g. `float32_t + float32_t`) to dispatch
+to a registered implementation before falling through to the arithmetic built-in path:
 
 ```python
-def make_negate(VALUE_TYPE, OUT_TYPE):
-    def negate(a: VALUE_TYPE) -> OUT_TYPE:
-        return ~a + 1          # two's complement: invert bits then add 1
-    return negate
+float_add_32 = make_float_adder(float32_t)
+register_operator("PLUS", float32_t, float32_t, float_add_32)   # callable, not string
 
-negate_uint32 = make_negate(uint32_t, int33_t)
-register_unary_operator("NEGATE", uint32_t, "negate_uint32")
-
-negate_int32 = make_negate(int32_t, int33_t)
-register_unary_operator("NEGATE", int32_t, "negate_int32")
+@MAIN
+def add_floats(a: float32_t, b: float32_t) -> float32_t:
+    return a + b   # dispatches to float_add_32
 ```
 
-`register_unary_operator(op_str, operand_type, func_name)` binds the Python unary operator
-`-` (mapped from `"NEGATE"`) on the given operand type to the named function.  When
-`_elab_unary` encounters `-a` with type `uint32_t` it elaborates the call as if
-`negate_uint32(a)` had been written — a regular submodule instance in the Logic() graph.
-The return type of the registered function defines the output wire type, allowing the
-overload to widen or change the type (here `uint32_t` → `int33_t`).
-
-The `op_str` → Python operator mapping for unary operators:
-
-| `op_str` | Python operator |
-|---|---|
-| `"NEGATE"` | `-` (arithmetic negation) |
-| `"NOT"` | `~` (bitwise invert) |
-
-Unary operators not in the registry fall through to the standard
-`UNARY_OP_LOGIC_NAME_PREFIX_<op>_<type>` built-in submodule naming, which preserves the
-operand type (same width, same signedness).
-
-**Overload lookup in `_elab_unary`:**
+### Unary operator lookup in `_elab_unary`
 
 ```
-1. Decode op:            op_name = UNARY_OP_MAP[type(expr.op)]   e.g. "NEGATE"
-2. Elaborate operand:    operand_wire, typ = _elab_expr(expr.operand)
-3. Registry lookup:      impl_name = _unary_operator_registry.get((op_name, typ))
-4. If found:
-     a. Look up or elaborate the registered callable via FuncLogicLookupTable /
-        _elaborate_live_func (same mechanism as closure factory calls)
-     b. ret_type = callee_def.wire_to_c_type[RETURN_WIRE_NAME]
-     c. Emit submodule instance: (callee_def.inputs[0], operand_wire, typ) → ret_type
-     d. Return (port_return, ret_type)
-5. If not found:
-     Fall through to built-in UNARY_OP submodule, output type = typ
+1. op_name = UNARY_OP_MAP[type(expr.op)]   e.g. "NEGATE"
+2. operand_wire, typ = _elab_expr(expr.operand)
+3. impl = _unary_operator_registry.get((op_name, typ))
+4. If found: resolve impl, emit submodule instance; ret_type from callee return wire
+5. If not found: fall through to built-in UNARY_OP (output type = operand type)
 ```
 
-The registry stores `(op_str, type_str) → func_name_str` and is populated at module
-execution time (Layer 1), before any AST elaboration begins.
+### Scoped operator registrations
+
+Registrations made with `scope=<callable>` are **active only while that callable is being
+elaborated**. This lets a factory function install temporary operator overloads for the
+intermediate types it uses internally, without polluting the global registry:
+
+```python
+def make_float_adder(float_t):
+    man_hidden_t = make_uint(float_t.mantissa_width + 1)
+    signed_man_t = make_int(float_t.mantissa_width + 2)
+    negate_man_h = make_negate(man_hidden_t, signed_man_t)
+    sr_signed    = make_shifter_SR(signed_man_t)
+
+    def float_add(left: float_t, right: float_t) -> float_t:
+        x_signed = -x_man_h          # uses scoped NEGATE for man_hidden_t
+        y_aligned = y_signed >> diff  # uses scoped SR for signed_man_t
+        ...
+
+    register_unary_operator("NEGATE", man_hidden_t, negate_man_h, scope=float_add)
+    register_left_operator("SR", signed_man_t, sr_signed, scope=float_add)
+    return float_add
+```
+
+**Mechanism** (`pypeline.py` + `_elaborate_live_func`):
+
+- Global registries: `_operator_registry`, `_left_operator_registry`, `_unary_operator_registry` — keyed `(op, type_str)` → impl.
+- Scoped registries: `_scoped_operator_registry` etc. — keyed `id(scope_func)` → `{key: impl}`.
+- `_push_scoped_registrations(func)`: merges the scoped entries for `func` into the global registries, returning a list of `(registry, key, old_value)` triples.
+- `_pop_scoped_registrations(saved)`: restores the previous values from that list.
+- Called in `_elaborate_live_func` around `elab.elaborate()` in a `try/finally` block so scoped entries are always cleaned up.
+- Because the push happens **before** elaboration begins and stays in effect for the entire elaboration, nested callee closures (e.g. `abs_sum` called inside `float_add`) automatically inherit the scoped overloads.
+
+**Resolving `impl`** — `_resolve_registered_impl(impl_name, expr)`:
+
+- If `impl_name` is a **string**: look up in `parser_state.FuncLogicLookupTable`, else in `module_globals`, else raise.
+- If `impl_name` is a **callable**: call `_elaborate_live_func(impl_name.__name__, impl_name)` directly (used for scoped callables not at module level).
 
 ---
 
@@ -1112,8 +1157,12 @@ The companion module provides the types and decorators used in design files:
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
-| `register_operator` | Binds a binary Python operator (`<<`, `>>`) for a specific (lhs, rhs) type pair to a named function |
-| `register_unary_operator` | Binds a unary Python operator (`-`, `~`) for a specific operand type to a named function; overload return type may differ from operand type |
+| `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary Python operator on an exact `(lhs, rhs)` type pair; works for any op including `"PLUS"` on struct types |
+| `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary Python operator matching only on the left operand type |
+| `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary Python operator for a specific operand type; return type may differ from operand |
+| `_ctype_str(t)` | Returns the canonical C type name string for a type object (handles both `_CTypeMeta` and `@struct` NamedTuple types) |
+| `_push_scoped_registrations(func)` | Merges scoped operator entries for `func` into the global registries; returns a save-list for restoring |
+| `_pop_scoped_registrations(saved)` | Restores the global registries to the state before the corresponding push |
 | `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (see section above) |
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
