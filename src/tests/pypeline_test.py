@@ -33,12 +33,12 @@ from pypeline import (
 )
 
 
-# TODO import syntax, multiple files, std lib, etc
-#     organize tests into multiple files with imports and such
 # LOCAL FUNC DEFS:
 #     TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
 #     TODO printf for sim? is special func?
-#     TODO local FEEDBACK variables
+#     TODO local FEEDBACK variables - like Reg[T] syntax? Feedback[T] ?
+# TODO import syntax, multiple files, std lib, etc
+#     organize tests into multiple files with imports and such
 #     TODO stream(type_t) equivalent with valid flag
 #     TODO handshake(type) w/ valid+ feedback ready
 #         what can be done with feedback wires to automate connection handshakes with ready?
@@ -48,6 +48,7 @@ from pypeline import (
 #         ... some day might be helpful for making simulator?
 # GLOBAL NAMESPACE:
 #       TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+# TODO Simulator?
 # TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
 #       ex. float_var .to/from uint()
 # TODO all of old SW_LIB includes fabric multiply, div, etc
@@ -59,6 +60,25 @@ from pypeline import (
 class point_xy_t(NamedTuple):
     x: uint32_t
     y: uint32_t
+
+
+@MAIN
+def comp_null_test(sel: uint1_t) -> point_xy_t:
+    p: point_xy_t
+    if sel:
+        p.x = 1
+    else:
+        p.y = 1
+    return p
+
+
+@MAIN
+def void_ret_test2(sel: uint1_t):
+    p: point_xy_t
+    if sel:
+        p.x = 1
+    else:
+        p.y = 1
 
 
 def make_point_xy_const(x, y):

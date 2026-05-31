@@ -1322,9 +1322,10 @@ class FuncElaborator:
     def _setup_outputs(self):
         eval_ns = self._make_eval_ns()
         ret_typ = _annotation_to_ctype(self.func_def.returns, eval_ns)
-        self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
-        _add_wire(self.logic, C_TO_LOGIC.RETURN_WIRE_NAME, ret_typ)
         self._return_type = ret_typ
+        if ret_typ is not None:
+            self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_wire(self.logic, C_TO_LOGIC.RETURN_WIRE_NAME, ret_typ)
 
     # ── statements ───────────────────────────
 
@@ -1443,6 +1444,21 @@ class FuncElaborator:
             self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
 
     def _elab_return(self, stmt):
+        if self._return_type is None:
+            raise ElaborationError(
+                f"Function '{self.func_name}' has no return type annotation "
+                f"but contains a 'return' statement"
+            )
+        if stmt.value is None:
+            raise ElaborationError(
+                f"Function '{self.func_name}' has return type '{self._return_type}' "
+                f"but 'return' has no value"
+            )
+        if C_TO_LOGIC.RETURN_WIRE_NAME in self.logic.wire_driven_by:
+            raise ElaborationError(
+                f"Function '{self.func_name}' has multiple return statements; "
+                f"hardware functions must have exactly one"
+            )
         result_wire, _ = self._elab_expr(stmt.value)
         _connect(self.logic, result_wire, C_TO_LOGIC.RETURN_WIRE_NAME)
 

@@ -199,6 +199,22 @@ def concat(bits_lo: uint1_t[LO_SIZE], bits_hi: uint1_t[HI_SIZE]) -> uint1_t[OUT_
 `LO_SIZE`, `HI_SIZE`, `OUT_SIZE` are resolved from `module_globals` or closure variables
 at elaboration time, producing concrete C type strings like `"uint1_t[3]"`.
 
+### Return Type and Void Functions
+
+A function with no `->` return annotation is **void**. `_setup_outputs` checks the return
+annotation via `_annotation_to_ctype`; if the result is `None` (void), **no** `return_output`
+wire is added to `logic.outputs` or `logic.wires`. A void function's `Logic()` has an empty
+`outputs` list.
+
+`_elab_return` enforces three rules:
+
+1. **Void function with any `return` statement** — `ElaborationError`. Void functions must
+   have no `return` statement at all.
+2. **Non-void function with bare `return` (no value)** — `ElaborationError`.
+3. **Multiple `return` statements** — `ElaborationError`. Hardware functions must have
+   exactly one `return` statement; a second one would attempt to drive `return_output`
+   twice, which is detected by checking `RETURN_WIRE_NAME in logic.wire_driven_by`.
+
 ---
 
 ## Basic Function Calls — Submodule Instances
@@ -1395,7 +1411,7 @@ design.py
   │
   ├─ FuncElaborator ×N                  One per top-level hardware function
   │   ├─ _setup_inputs()                Add input wires → env
-  │   ├─ _setup_outputs()               Add return wire
+  │   ├─ _setup_outputs()               Add return_output wire only if return annotation present (void → no output)
   │   └─ _elab_stmt() recursive:
   │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
   │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output; dict/list RHS → _elab_compound_init
@@ -1403,7 +1419,7 @@ design.py
   │       ├─ _elab_for                  unroll over constant iterable
   │       ├─ _elab_while                unroll while _try_eval_const(condition)
   │       ├─ _elab_if                   eliminate (const) or snapshot+MUX (hardware)
-  │       └─ _elab_return               connect result wire
+  │       └─ _elab_return               error if void; error if bare return in non-void; error if already driven; connect result wire
   │           └─ _elab_expr:
   │               ├─ _elab_constant     _infer_const_ctype → CONST wire
   │               ├─ _elab_binop        BIN_OP built-in or registered binary operator submodule
