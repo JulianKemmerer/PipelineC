@@ -34,7 +34,6 @@ from pypeline import (
 
 
 # LOCAL FUNC DEFS:
-#     TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
 #     TODO printf for sim? is special func?
 #     TODO local FEEDBACK variables - like Reg[T] syntax? Feedback[T] ?
 # TODO import syntax, multiple files, std lib, etc
@@ -54,6 +53,21 @@ from pypeline import (
 # TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO support tuple=concat assignment
 #       ex. left: float32_t ; (left.sign, left.exp, left.man) = left_as_u32
+
+
+def accumulator(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]
+    acc = acc + data_in
+    return acc
+
+
+@MAIN
+def ce_accum_test(sel0: uint1_t, sel1: uint1_t, data_in: uint32_t) -> uint32_t:
+    rv: uint32_t
+    if sel0:
+        if sel1:
+            rv = accumulator(data_in)
+    return rv
 
 
 @struct
@@ -171,9 +185,9 @@ def sum_widths(n, m):
 
 
 @MAIN
-def accumulator(data_in: uint32_t) -> uint32_t:
-    acc: Reg[uint32_t]  # register — persists between clock cycles, init=0
-    acc = acc + data_in  # read current value, compute next
+def reg_test(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]
+    acc = acc + data_in
     return acc
 
 

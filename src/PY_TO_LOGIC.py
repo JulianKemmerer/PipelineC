@@ -1588,6 +1588,62 @@ class FuncElaborator:
         # ── Runtime condition ──
         cond_wire, _ = self._elab_expr(stmt.test)
 
+        # ── Clock-enable MUX wires for each branch ──
+        # true_ce  = MUX(cond, parent_ce, 0)  — active only when condition is true
+        # false_ce = MUX(cond, 0, parent_ce)  — active only when condition is false
+        # These are permanent additions to self.logic (wires/instances accumulate).
+        parent_ce_wire = self.logic.clock_enable_wires[-1]
+        zero_ce_wire, _ = self._elab_python_value(0, stmt)
+        mux_ce_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{C_TO_LOGIC.BOOL_C_TYPE}"
+
+        true_ce_inst = self._inst(f"TRUE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
+        true_ce_mux_out = _port_wire(true_ce_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        true_ce_wire = _alias(
+            f"{self.loop_instance_prefix}TRUE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}",
+            self.src_file,
+            stmt,
+        )
+        _add_submodule_instance(
+            self.logic,
+            true_ce_inst,
+            mux_ce_func,
+            [
+                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("iftrue", parent_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("iffalse", zero_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+            ],
+            true_ce_mux_out,
+            C_TO_LOGIC.BOOL_C_TYPE,
+            stmt,
+            self.src_file,
+        )
+        _add_wire(self.logic, true_ce_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, true_ce_mux_out, true_ce_wire)
+
+        false_ce_inst = self._inst(f"FALSE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
+        false_ce_mux_out = _port_wire(false_ce_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        false_ce_wire = _alias(
+            f"{self.loop_instance_prefix}FALSE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}",
+            self.src_file,
+            stmt,
+        )
+        _add_submodule_instance(
+            self.logic,
+            false_ce_inst,
+            mux_ce_func,
+            [
+                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("iftrue", zero_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("iffalse", parent_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+            ],
+            false_ce_mux_out,
+            C_TO_LOGIC.BOOL_C_TYPE,
+            stmt,
+            self.src_file,
+        )
+        _add_wire(self.logic, false_ce_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, false_ce_mux_out, false_ce_wire)
+
         # Snapshot pre-if state (env and alias chains only; wires/instances accumulate)
         env_snap = dict(self.env)
         aliases_snap = {
@@ -1595,8 +1651,10 @@ class FuncElaborator:
         }
 
         # ── True branch ──
+        self.logic.clock_enable_wires.append(true_ce_wire)
         for s in stmt.body:
             self._elab_stmt(s)
+        self.logic.clock_enable_wires.pop()
         env_true = dict(self.env)
         aliases_true = {
             k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
@@ -1607,8 +1665,10 @@ class FuncElaborator:
         self.logic.wire_aliases_over_time = {
             k: list(v) for k, v in aliases_snap.items()
         }
+        self.logic.clock_enable_wires.append(false_ce_wire)
         for s in stmt.orelse:
             self._elab_stmt(s)
+        self.logic.clock_enable_wires.pop()
         env_false = dict(self.env)
         aliases_false = {
             k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
@@ -2295,6 +2355,14 @@ class FuncElaborator:
         for arg_expr, port_name in zip(expr.args, callee_def.inputs):
             arg_wire, arg_typ = self._elab_expr(arg_expr)
             input_ports.append((port_name, arg_wire, arg_typ))
+        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(callee_def, self.parser_state):
+            input_ports.append(
+                (
+                    C_TO_LOGIC.CLOCK_ENABLE_NAME,
+                    self.logic.clock_enable_wires[-1],
+                    C_TO_LOGIC.BOOL_C_TYPE,
+                )
+            )
         _add_submodule_instance(
             self.logic,
             inst,

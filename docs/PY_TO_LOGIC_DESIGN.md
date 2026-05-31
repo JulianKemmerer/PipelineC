@@ -523,22 +523,54 @@ Runtime hardware conditions → snapshot/restore + MUX per driven variable:
 
 ```
 1. Evaluate condition:  cond_wire, _ = _elab_expr(stmt.test)
-2. Snapshot env and wire_aliases_over_time → env_snap, aliases_snap
-3. Elaborate true branch  → capture env_true, aliases_true
-4. Restore snapshot
-5. Elaborate false branch → capture env_false, aliases_false  (empty if no else)
-6. Restore snapshot
-7. Collect driven ref_toks from new aliases in both branches
-8. Reduce:  _reduce_driven_ref_toks(driven, env_snap, parser_state)
-9. For each reduced (ref_toks, mux_type):
-     true_wire  = _read_branch_coverage(env_true,  aliases_true,  ...)
-     false_wire = _read_branch_coverage(env_false, aliases_false, ...)
-     MUX(cond, true_wire, false_wire) → mux_alias
+2. Emit clock-enable MUX wires (permanent, see below)
+3. Snapshot env and wire_aliases_over_time → env_snap, aliases_snap
+4. Push true_ce_wire onto clock_enable_wires
+5. Elaborate true branch  → capture env_true, aliases_true
+6. Pop clock_enable_wires
+7. Restore snapshot
+8. Push false_ce_wire onto clock_enable_wires
+9. Elaborate false branch → capture env_false, aliases_false  (empty if no else)
+10. Pop clock_enable_wires
+11. Restore snapshot
+12. Collect driven ref_toks from new aliases in both branches
+13. Reduce:  _reduce_driven_ref_toks(driven, env_snap, parser_state)
+14. For each reduced (ref_toks, mux_type):
+      true_wire  = _read_branch_coverage(env_true,  aliases_true,  ...)
+      false_wire = _read_branch_coverage(env_false, aliases_false, ...)
+      MUX(cond, true_wire, false_wire) → mux_alias
 ```
 
 Both branches elaborate **into the same `logic` object** — wires and submodule instances
 accumulate permanently. Only `env` and `wire_aliases_over_time` are snapshot/restored, so
 the hardware graph is additive across both branches while the alias view remains consistent.
+
+### Clock Enable Propagation Through `if`
+
+Every `Logic()` starts with a `clock_enable_wires` list initialised to `["CLOCK_ENABLE"]`
+(the function's top-level CE input). This list acts as a stack: the last element is the
+**current CE wire** at any point during elaboration.
+
+When a runtime `if` is encountered, two permanent MUX instances are emitted before any
+branch is elaborated:
+
+```
+true_ce_wire  = MUX(cond, parent_ce, 0)   # CE passes through only when cond=1
+false_ce_wire = MUX(cond, 0, parent_ce)   # CE passes through only when cond=0
+```
+
+`parent_ce` is `clock_enable_wires[-1]` at the point the `if` is processed, so nesting
+works automatically: an `if` inside another `if` sees the outer branch's gated CE, not
+the top-level one.
+
+Each branch is elaborated with its CE wire pushed onto the stack and popped afterwards,
+so `clock_enable_wires[-1]` always reflects the correct gating context. The push/pop
+affects only the stack — the MUX instances and their output wires are permanent additions
+to `self.logic`.
+
+When a submodule call inside a branch needs a CE connection (see **Clock Enable and
+Function Calls** below), `clock_enable_wires[-1]` is already the branch-gated wire, so
+the correct gated CE is wired to the submodule's `CLOCK_ENABLE` port automatically.
 
 ### Reduction (`_reduce_driven_ref_toks`)
 
@@ -910,6 +942,42 @@ Elaboration treats the annotation specially:
 
 `Reg` is re-exported from `pypeline` as `_RegType`; `Reg[T]` uses `__class_getitem__` to
 produce a typed register descriptor that `_elab_ann_assign` recognises.
+
+### Clock Enable and Function Calls
+
+Any function whose `Logic()` contains registers — or calls functions that do, transitively
+— requires a `CLOCK_ENABLE` input port. `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` determines
+this recursively (with caching) by checking `logic.state_regs` and walking
+`submodule_instances`.
+
+When `_elab_call` elaborates a call site and the callee needs CE, the current CE wire
+(`logic.clock_enable_wires[-1]`) is appended to `input_ports` as the `CLOCK_ENABLE` port
+before passing to `_add_submodule_instance`. This produces a `inst____CLOCK_ENABLE` wire
+connected to the appropriate gated CE signal.
+
+**Example** — register inside a conditionally-called function:
+
+```python
+def accumulator(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]
+    acc = acc + data_in
+    return acc
+
+@MAIN
+def ce_accum_test(sel: uint1_t, data_in: uint32_t) -> uint32_t:
+    rv: uint32_t
+    if sel:
+        rv = accumulator(data_in)
+    return rv
+```
+
+Elaboration of `ce_accum_test`:
+
+1. `_elab_if` sees `if sel` → emits `true_ce = MUX(sel, CLOCK_ENABLE, 0)` and pushes it.
+2. Inside the true branch, `_elab_call` for `accumulator` runs.
+3. `LOGIC_NEEDS_CLOCK_ENABLE(accumulator_logic)` is True (it has `state_regs`).
+4. `clock_enable_wires[-1]` is `true_ce` → `accumulator[...]____CLOCK_ENABLE` is wired to `true_ce`.
+5. When `sel=0`, `true_ce=0` → `acc` does not update. When `sel=1`, `true_ce=CLOCK_ENABLE` → `acc` updates normally.
 
 ---
 
