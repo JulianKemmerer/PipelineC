@@ -33,18 +33,26 @@ from pypeline import (
 )
 
 
-# TODO Test functionaliaty of FP ADDER
-#     does it simulate right??
-# LONGER TERM?
-# TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
-# TODO printf for sim? is special func?
-# TODO constant wires based reduction that interacts with graph submodule instances:
-#       ex. var ref assign/read into constant
-#       ex. shift by a uint6_t type wire driven by constant
-#       ... some day might be helpful for making simulator?
-# TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
+# TODO import syntax, multiple files, std lib, etc
+#     organize tests into multiple files with imports and such
+# LOCAL FUNC DEFS:
+#     TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
+#     TODO printf for sim? is special func?
+#     TODO local FEEDBACK variables
+#     TODO stream(type_t) equivalent with valid flag
+#     TODO handshake(type) w/ valid+ feedback ready
+#         what can be done with feedback wires to automate connection handshakes with ready?
+#     TODO constant wires based reduction that interacts with graph submodule instances:
+#         ex. var ref assign/read into constant
+#         ex. shift by a uint6_t type wire driven by constant
+#         ... some day might be helpful for making simulator?
+# GLOBAL NAMESPACE:
+#       TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
 # TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
+#       ex. float_var .to/from uint()
 # TODO all of old SW_LIB includes fabric multiply, div, etc
+# TODO support tuple=concat assignment
+#       ex. left: float32_t ; (left.sign, left.exp, left.man) = left_as_u32
 
 
 @struct
@@ -925,5 +933,23 @@ register_operator("PLUS", float32_t, float32_t, float_add_32)
 
 
 @MAIN
-def float_add_32_main(left: float32_t, right: float32_t) -> float32_t:
-    return left + right
+def float_add_32_main(left_as_u32: uint32_t, right_as_u32: uint32_t) -> uint32_t:
+    # Un/pack float32_t from uint32_t bit representation (mostly for sim/top level ports)
+    E_LEN = len(float32_t.typeof("exp"))
+    M_LEN = len(float32_t.typeof("man"))
+    M_SLICE = slice(M_LEN - 1, 0)
+    E_SLICE = slice(E_LEN + M_LEN - 1, M_LEN)
+    S_BIT = E_LEN + M_LEN
+    left: float32_t = {
+        "sign": left_as_u32[S_BIT],
+        "man": left_as_u32[M_SLICE],
+        "exp": left_as_u32[E_SLICE],
+    }
+    right: float32_t = {
+        "sign": right_as_u32[S_BIT],
+        "man": right_as_u32[M_SLICE],
+        "exp": right_as_u32[E_SLICE],
+    }
+    result: float32_t = left + right
+    result_as_u32: uint32_t = (result.sign, result.exp, result.man)
+    return result_as_u32
