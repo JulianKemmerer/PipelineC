@@ -180,6 +180,14 @@ wire names. If the expression references anything that only exists as a string i
 This clean boundary means: if Python can compute it, it stays Python; if it requires knowing
 a hardware signal value at runtime, it becomes hardware.
 
+**`_elab_binop` constant short-circuit:** `_elab_binop` calls `_try_eval_const` on the
+entire BinOp expression before elaborating any operand. If the result is an `int` or `bool`
+(e.g. `n_bits - 1 - i` where `n_bits` is a closure variable and `i` is a for-loop counter
+— both in `_make_eval_ns()`), `_elab_python_value` is called directly and a CONST wire is
+emitted. This prevents spurious `BIN_OP_minus` submodule instances from appearing in the
+Logic() graph for expressions that are entirely compile-time constants, even when the LHS
+variable being assigned to is already a hardware wire in `self.env`.
+
 ### Annotation Evaluation
 
 Function signature annotations are evaluated against `{**module_globals, **const_env}`:
@@ -602,18 +610,29 @@ non-terminating loops from hanging the compiler.
 ### Why Naming Stays Unique Across Iterations
 
 A concern when unrolling is that multiple iterations of the same source line might produce
-colliding wire/instance names. They don't, because:
+colliding wire/instance names. The primary mechanism is `loop_instance_prefix`:
+
+**`loop_instance_prefix`** (the general solution) — `_elab_for` accumulates a string prefix
+like `"FOR_i_0_"` (or `"FOR_i_0_FOR_j_2_"` when nested) that is prepended to **every**
+alias wire name and submodule instance name emitted inside the loop body. This prefix is
+applied in three places:
+
+- `_write_ref` — all assignment aliases (`result`, `bits[0]`, struct fields, etc.)
+- `_elab_if` — MUX output aliases produced by if-statements inside the loop
+- `_emit_var_ref_assign` — VAR_REF_ASSIGN output aliases
+
+When `loop_instance_prefix` is `""` (outside any loop), the names are identical to before.
+
+**Additional natural uniqueness** for some patterns that also helps (but is not sufficient alone):
 
 - **Concrete-index writes:** `bits[b] = bits_lo[i]` — the alias prefix includes `b`'s
-  resolved value (`"bits_0_..."`, `"bits_1_..."`), producing different alias names
-- **VAR_REF_ASSIGN:** the func_name hash includes the covering_ref_toks, which differ
-  across iterations as each iteration's output alias becomes the next iteration's covering
-  input — a chain of distinct hashes
+  resolved value (`"bits_0_..."`, `"bits_1_..."`), producing different alias names even
+  before the loop prefix is applied
+- **VAR_REF_ASSIGN func_name hash:** includes the covering_ref_toks, which differ across
+  iterations as each iteration's output alias becomes the next iteration's covering input —
+  a chain of distinct hashes for the submodule definition (not the alias wire)
 - **CONST_REF_RD reads:** the func_name includes the concrete access path (e.g. index 0 vs
   index 1), giving different func_names → different inst_names
-
-All three cases produce unique identifiers automatically from the elaboration state, with no
-iteration counter needed.
 
 ---
 
@@ -1273,11 +1292,15 @@ Example: calling `adder(a, b)` at `my_design_py_l10_c4`:
 adder[my_design_py_l10_c4]
 ```
 
-Inside a for-loop body, iterations are distinguished by a prefix that accumulates
-the loop variable name and its current value:
+Inside a for-loop body, iterations are distinguished by `loop_instance_prefix`, which
+accumulates the loop variable name and its current value. This prefix is applied to
+**both submodule instance names and alias wire names**, ensuring every wire and instance
+produced inside an unrolled loop body is unique:
 
 ```
-FOR_<var>_<val>_<func_name>[<loc_str>]
+FOR_<var>_<val>_<func_name>[<loc_str>]    ← submodule instance
+FOR_<var>_<val>_<var_name>_<loc_str>      ← alias wire (_write_ref)
+FOR_<var>_<val>_<key>_if_mux_<loc_str>   ← MUX alias wire (_elab_if)
 ```
 
 Nested loops prefix left-to-right with the outermost loop first:
@@ -1285,6 +1308,7 @@ Nested loops prefix left-to-right with the outermost loop first:
 for i in range(2):
     for j in range(3):
         foo(x)   # → FOR_i_0_FOR_j_0_foo[...], FOR_i_0_FOR_j_1_foo[...], ...
+        result = val  # alias → FOR_i_0_FOR_j_0_result_..., FOR_i_0_FOR_j_1_result_..., ...
 ```
 
 ### Port Wire Names

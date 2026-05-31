@@ -1668,7 +1668,9 @@ class FuncElaborator:
             )
 
             # Record MUX output as a new alias, inheriting the driven ref_toks
-            mux_alias = _alias(f"{key}_if_mux", self.src_file, stmt)
+            mux_alias = _alias(
+                f"{self.loop_instance_prefix}{key}_if_mux", self.src_file, stmt
+            )
             _add_wire(self.logic, mux_alias, mux_type)
             _connect(self.logic, mux_output, mux_alias)
             self.logic.wire_aliases_over_time.setdefault(base_var, []).append(mux_alias)
@@ -2095,6 +2097,12 @@ class FuncElaborator:
         return None
 
     def _elab_binop(self, expr):
+        # If all operands are elaboration-time constants (e.g. n_bits - 1 - i where
+        # n_bits is a closure var and i is a loop counter), emit a CONST wire directly.
+        const_val = self._try_eval_const(expr)
+        if isinstance(const_val, (int, bool)) and not isinstance(const_val, type):
+            return self._elab_python_value(int(const_val), expr)
+
         op_name = BIN_OP_MAP[type(expr.op)]
 
         # Shift ops: constant amount -> CONST_SL/SR_<n>_<type> built-in;
@@ -2816,7 +2824,9 @@ class FuncElaborator:
         # We record alias_to_driven_ref_toks with the original ref_toks (AST nodes
         # intact) so _find_covering_wire can wildcard-match later reads against it.
         alias_prefix = _ref_toks_to_alias_prefix(ref_toks)
-        alias = _alias(alias_prefix, self.src_file, ast_node)
+        alias = _alias(
+            f"{self.loop_instance_prefix}{alias_prefix}", self.src_file, ast_node
+        )
         _add_wire(self.logic, alias, output_type)
         _connect(self.logic, output_wire, alias)
         self.logic.wire_aliases_over_time.setdefault(base_var, []).append(alias)
@@ -2907,7 +2917,9 @@ class FuncElaborator:
         _, base_type = self.env[base_var]
         lhs_type = _ref_toks_to_ctype(ref_toks, base_type, self.parser_state)
         alias_prefix = env_key.replace("[", "_").replace("]", "").replace(".", "_")
-        alias = _alias(alias_prefix, self.src_file, node)
+        alias = _alias(
+            f"{self.loop_instance_prefix}{alias_prefix}", self.src_file, node
+        )
         _add_wire(self.logic, alias, lhs_type)
         _connect(self.logic, rhs_wire, alias)
         self.logic.wire_aliases_over_time.setdefault(base_var, []).append(alias)
