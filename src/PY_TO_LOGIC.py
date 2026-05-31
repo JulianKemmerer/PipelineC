@@ -1871,9 +1871,18 @@ class FuncElaborator:
             # x[i] — single bit select where i is a const_env/globals name or expr
             bit_val = self._try_resolve_int_constant(slc)
             if bit_val is None:
-                # Variable index on a scalar int — not a valid bit slice
-                return None
-            high = low = bit_val
+                # Also handle slice objects in const_env, e.g. S = slice(hi, lo); x[S]
+                slice_val = self._try_eval_const(slc)
+                if not isinstance(slice_val, slice):
+                    return None
+                if slice_val.start is None or slice_val.stop is None:
+                    raise ElaborationError(
+                        f"Bit slice on '{base_name}' requires both bounds: e.g. slice(hi, lo)"
+                    )
+                high_val, low_val = int(slice_val.start), int(slice_val.stop)
+                high, low = max(high_val, low_val), min(high_val, low_val)
+            else:
+                high = low = bit_val
         else:
             # x[15:0] — bit range; both bounds must be constants
             if slc.lower is None or slc.upper is None:
