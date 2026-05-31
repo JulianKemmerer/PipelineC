@@ -46,6 +46,11 @@ class _CTypeMeta(type):
         raise NotImplementedError(f"width not defined for '{cls._ctype_name}'")
 
     def __len__(cls):
+        import re
+
+        m = re.search(r"\[(\d+)\]", cls._ctype_name)
+        if m:
+            return int(m.group(1))
         return cls.width
 
 
@@ -126,8 +131,6 @@ def make_float_t(exponent_width, mantissa_width):
     float_t.as_const = staticmethod(
         lambda value: _float_to_fields(value, exponent_width, mantissa_width)
     )
-    float_t.exponent_width = exponent_width
-    float_t.mantissa_width = mantissa_width
     return float_t
 
 
@@ -238,6 +241,11 @@ def struct(cls):
         # is set to "point_t_x_uint32_t_y_uint32_t"
     """
     cls.__class_getitem__ = classmethod(_struct_class_getitem)
+
+    def _typeof(cls, field_name):
+        return cls.__annotations__[field_name]
+
+    cls.typeof = classmethod(_typeof)
     parts = []
     for field, ann in cls.__annotations__.items():
         if isinstance(ann, type):

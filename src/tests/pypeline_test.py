@@ -32,11 +32,10 @@ from pypeline import (
     uint_to_array_le,
 )
 
+
 # TODO Test functionaliaty of FP ADDER
-#     does it autopipeline (do test of just that inst)
-#     does it simulate right?
+#     does it simulate right??
 # LONGER TERM?
-# TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO Submodule instances with registers inside need CLOCK_ENABLE + if() clock enable muxing
 # TODO printf for sim? is special func?
 # TODO constant wires based reduction that interacts with graph submodule instances:
@@ -45,6 +44,7 @@ from pypeline import (
 #       ... some day might be helpful for making simulator?
 # TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
 # TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
+# TODO all of old SW_LIB includes fabric multiply, div, etc
 
 
 @struct
@@ -106,8 +106,6 @@ def make_point_t(dim_t, DIM_SIZE, style="array"):
             dim: dim_t[DIM_SIZE]
 
         point.style = "array"
-        point.DIM_SIZE = DIM_SIZE
-        point.dim_t = dim_t
         return point
     elif style == "fields":
         pass  # TODO
@@ -127,7 +125,7 @@ point_t = make_point_t(uint32_t, 2, style="array")
 def types_test_foo(point: point_t) -> point_t:
     rv: point_t
     if point_t.style == "array":
-        for i in range(point_t.DIM_SIZE):
+        for i in range(len(point_t.typeof("dim"))):
             rv.dim[i] = point.dim[i]
     else:
         for f in point_t._fields:
@@ -822,15 +820,14 @@ def float32_const_neg() -> float32_t:
 
 
 def make_float_adder(float_t):
-    E = float_t.exponent_width
-    M = float_t.mantissa_width
-    exp_t = make_uint(E)
-    man_t = make_uint(M)
-    man_hidden_t = make_uint(M + 1)
-    signed_man_t = make_int(M + 2)
-    sum_man_t = make_int(M + 3)
-    abs_sum_t = make_uint(M + 2)
-    narrow_t = make_uint(M + 1)
+    exp_t = float_t.typeof("exp")
+    man_t = float_t.typeof("man")
+    M_LEN = len(man_t)
+    man_hidden_t = make_uint(M_LEN + 1)
+    signed_man_t = make_int(M_LEN + 2)
+    sum_man_t = make_int(M_LEN + 3)
+    abs_sum_t = make_uint(M_LEN + 2)
+    narrow_t = make_uint(M_LEN + 1)
     clz_narrow = make_clz(narrow_t)
     clz_out_t = clz_narrow.out_t
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
@@ -850,7 +847,7 @@ def make_float_adder(float_t):
             x = left
             y = right
 
-        # Step 2: hidden bit via tuple concat uint(M+1)
+        # Step 2: hidden bit via tuple concat uint(M_LEN+1)
         x_hidden: uint1_t
         if x.exp == 0:
             x_hidden = 0
@@ -865,7 +862,7 @@ def make_float_adder(float_t):
             y_hidden = 1
         y_man_h: man_hidden_t = (y_hidden, y.man)
 
-        # Step 3: sign-adjust int(M+2) via scoped NEGATE
+        # Step 3: sign-adjust int(M_LEN+2) via NEGATE
         x_signed: signed_man_t
         if x.sign:
             x_signed = -x_man_h
@@ -878,25 +875,25 @@ def make_float_adder(float_t):
         else:
             y_signed = y_man_h
 
-        # Step 4: align y via scoped SR (diff may exceed narrow range; shifter clamps)
+        # Step 4: align y via SR (diff may exceed narrow range; shifter clamps)
         diff: exp_t = x.exp - y.exp
         y_aligned: signed_man_t = y_signed >> diff
 
-        # Step 5: sum int(M+3)
+        # Step 5: sum int(M_LEN+3)
         sum_man: sum_man_t = x_signed + y_aligned
 
         # Step 6: sign and absolute value
-        sum_sign: uint1_t = sum_man[M + 2]
+        sum_sign: uint1_t = sum_man[M_LEN + 2]
         sum_abs: abs_sum_t = abs_sum(sum_man)
 
         # Step 7: normalize (nested if-else, three cases)
-        sum_overflow: uint1_t = sum_abs[M + 1]
+        sum_overflow: uint1_t = sum_abs[M_LEN + 1]
         result_exp: exp_t
         result_man: man_t
         if sum_overflow:
             # Case 1: carry out right shift, bump exponent
             result_exp = x.exp + 1
-            result_man = sum_abs[M:1]
+            result_man = sum_abs[M_LEN:1]
         else:
             if sum_abs == 0:
                 # Case 3: zero
@@ -904,18 +901,17 @@ def make_float_adder(float_t):
                 result_man = 0
             else:
                 # Case 2: normal remove leading zeros
-                sum_narrow: narrow_t = sum_abs[M:0]
+                sum_narrow: narrow_t = sum_abs[M_LEN:0]
                 lz: clz_out_t = clz_narrow(sum_narrow)
                 lz_wide: exp_t = lz
                 result_exp = x.exp - lz_wide
                 shifted: narrow_t = sum_narrow << lz
-                result_man = shifted[M - 1 : 0]
+                result_man = shifted[M_LEN - 1 : 0]
 
         result: float_t = {"sign": sum_sign, "exp": result_exp, "man": result_man}
         return result
 
     # Operator registrations scoped to float_add's elaboration only.
-    # Use register_operator (exact lhs+rhs match) so the amount type is pinned.
     register_unary_operator("NEGATE", man_hidden_t, negate_man_h, scope=float_add)
     register_unary_operator("NEGATE", sum_man_t, negate_sum_man, scope=float_add)
     register_operator("SR", signed_man_t, exp_t, sr_signed, scope=float_add)

@@ -1107,8 +1107,10 @@ intermediate types it uses internally, without polluting the global registry:
 
 ```python
 def make_float_adder(float_t):
-    man_hidden_t = make_uint(float_t.mantissa_width + 1)
-    signed_man_t = make_int(float_t.mantissa_width + 2)
+    man_t = float_t.typeof('man')
+    M_LEN = len(man_t)
+    man_hidden_t = make_uint(M_LEN + 1)
+    signed_man_t = make_int(M_LEN + 2)
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
     sr_signed    = make_shifter_SR(signed_man_t)
 
