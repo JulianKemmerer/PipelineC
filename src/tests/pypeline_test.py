@@ -1014,7 +1014,7 @@ def float_add_32_main(left_as_u32: uint32_t, right_as_u32: uint32_t) -> uint32_t
 def test_float_add_32():
     import struct as _struct
 
-    def fp32_sim(f):
+    def py_to_float32(f):
         bits = _struct.unpack(">I", _struct.pack(">f", float(f)))[0]
         return float32_t(
             sign=(bits >> 31) & 1,
@@ -1022,7 +1022,7 @@ def test_float_add_32():
             man=bits & 0x7FFFFF,
         )
 
-    def sim_to_float(r):
+    def float32_to_py(r):
         bits = (int(r.sign) << 31) | (int(r.exp) << 23) | int(r.man)
         return _struct.unpack(">f", _struct.pack(">I", bits))[0]
 
@@ -1035,8 +1035,8 @@ def test_float_add_32():
         (0.5, 0.5, 1.0),
     ]
     for a, b, expected in cases:
-        result = sim_call(float_add_32, fp32_sim(a), fp32_sim(b))
-        got = sim_to_float(result)
+        result = sim_call(float_add_32, py_to_float32(a), py_to_float32(b))
+        got = float32_to_py(result)
         assert got == expected, f"{a} + {b} = {got}, expected {expected}"
     print("test_float_add_32 passed")
 
@@ -1070,6 +1070,7 @@ def test_point_max():
     print("test_point_max passed")
 
 
+# cd /media/1TB/Dropbox/PipelineC/git/PipelineC/src && PYTHONPATH=/media/1TB/Dropbox/PipelineC/git/PipelineC/src python3 tests/pypeline_test.py 2>&1
 if __name__ == "__main__":
     test_float_add_32()
     test_point_max()
