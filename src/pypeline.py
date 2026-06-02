@@ -129,7 +129,7 @@ def make_float_t(exponent_width, mantissa_width):
         man: man_t
 
     float_t.as_const = staticmethod(
-        lambda value: _float_to_fields(value, exponent_width, mantissa_width)
+        lambda value: float_t(**_float_to_fields(value, exponent_width, mantissa_width))
     )
     return float_t
 
@@ -184,6 +184,124 @@ def _struct_class_getitem(cls, dim):
     """Enables point_t[10] -> _make_ctype('point_t[10]') using the canonical C type name."""
     name = getattr(cls, "_pypeline_ctype_name", cls.__name__)
     return _make_ctype(f"{name}[{dim}]")
+
+
+def _is_scalar_pypeline_int(ctype):
+    """True for scalar uint/int types; False for array types (uint32_t[N]) and structs."""
+    if not hasattr(ctype, "_ctype_name"):
+        return False
+    try:
+        _ = (
+            ctype.width
+        )  # raises NotImplementedError for arrays, AttributeError for structs
+        return True
+    except (NotImplementedError, AttributeError):
+        return False
+
+
+# ─────────────────────────────────────────────
+# SimVal — simulation-mode integer
+# Defined here (before @struct) so _typed_new can reference it.
+# Method bodies reference _unary_operator_registry etc. which are defined
+# later in this module; that is fine because methods are only called at runtime.
+# ─────────────────────────────────────────────
+
+
+class SimVal(int):
+    """Thin int subclass that carries a pypeline ctype and supports bit-slicing.
+
+    Used in simulation mode: struct constructors produce SimVal fields, and
+    arithmetic / operator-dispatch propagates type information through the call graph.
+    SimVal is a subclass of int, so it is transparent to the hardware elaborator.
+    """
+
+    def __new__(cls, value, ctype=None):
+        obj = int.__new__(cls, int(value))
+        object.__setattr__(obj, "_ctype", ctype)
+        return obj
+
+    def __getitem__(self, key):
+        """Bit slice: x[bit] → uint1 value, x[hi:lo] → (hi-lo+1)-bit value."""
+        if isinstance(key, int):
+            return SimVal((int(self) >> key) & 1)
+        hi, lo = key.start, key.stop  # hardware convention: x[hi:lo]
+        return SimVal((int(self) >> lo) & ((1 << (hi - lo + 1)) - 1))
+
+    def _dispatch_unary(self, op_name, fallback):
+        if self._ctype is not None:
+            fn = _unary_operator_registry.get((op_name, _ctype_str(self._ctype)))
+            if callable(fn):
+                result = fn(self)
+                if not isinstance(result, SimVal) or result._ctype is None:
+                    ret_t = getattr(
+                        getattr(fn, "__wrapped__", fn), "__annotations__", {}
+                    ).get("return")
+                    if ret_t is not None:
+                        return _sim_cast(result, ret_t)
+                return result
+        return SimVal(fallback)
+
+    def __neg__(self):
+        return self._dispatch_unary("NEGATE", -int(self))
+
+    def __invert__(self):
+        return self._dispatch_unary("NOT", ~int(self))
+
+    def _dispatch_binary(self, op_name, other, fallback_int):
+        if self._ctype is not None:
+            rc = getattr(other, "_ctype", None)
+            fn = rc and _operator_registry.get(
+                (op_name, _ctype_str(self._ctype), _ctype_str(rc))
+            )
+            fn = fn or _left_operator_registry.get((op_name, _ctype_str(self._ctype)))
+            if callable(fn):
+                result = fn(self, other)
+                if not isinstance(result, SimVal) or result._ctype is None:
+                    ret_t = getattr(
+                        getattr(fn, "__wrapped__", fn), "__annotations__", {}
+                    ).get("return")
+                    if ret_t is not None:
+                        return _sim_cast(result, ret_t)
+                return result
+        return SimVal(fallback_int)
+
+    def __rshift__(self, o):
+        return self._dispatch_binary("SR", o, int(self) >> int(o))
+
+    def __lshift__(self, o):
+        return self._dispatch_binary("SL", o, int(self) << int(o))
+
+    # Arithmetic preserves SimVal type; ctype is intentionally not propagated
+    # (use _sim_cast or @hw_func return-type casting to restore type info).
+    def __add__(self, o):
+        return SimVal(int(self) + int(o))
+
+    def __sub__(self, o):
+        return SimVal(int(self) - int(o))
+
+    def __mul__(self, o):
+        return SimVal(int(self) * int(o))
+
+    def __and__(self, o):
+        return SimVal(int(self) & int(o))
+
+    def __or__(self, o):
+        return SimVal(int(self) | int(o))
+
+    def __xor__(self, o):
+        return SimVal(int(self) ^ int(o))
+
+    def __radd__(self, o):
+        return SimVal(int(o) + int(self))
+
+    def __rsub__(self, o):
+        return SimVal(int(o) - int(self))
+
+    def __rlshift__(self, o):
+        return SimVal(int(o) << int(self))
+
+    def __rrshift__(self, o):
+        return SimVal(int(o) >> int(self))
 
 
 class _NamedTupleBase:
@@ -257,6 +375,30 @@ def struct(cls):
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
     cls._pypeline_ctype_canonical = canonical
     cls._pypeline_ctype_name = canonical
+
+    # Override __new__ so that scalar integer fields are auto-wrapped in SimVals.
+    # This makes float32_t(sign=0, exp=127, man=0) produce typed SimVal fields for
+    # simulation without requiring a separate constructor. SimVal subclasses int, so
+    # the hardware elaborator sees plain integers and is unaffected.
+    _orig_new = cls.__new__
+
+    def _typed_new(klass, *args, **kwargs):
+        if args and not kwargs:
+            kwargs = dict(zip(klass._fields, args))
+        typed = {}
+        for fname, v in kwargs.items():
+            ftype = klass.__annotations__.get(fname)
+            if (
+                ftype is not None
+                and isinstance(v, (int, SimVal))
+                and _is_scalar_pypeline_int(ftype)
+            ):
+                if not isinstance(v, SimVal) or v._ctype is None:
+                    v = SimVal(int(v), ctype=ftype)
+            typed[fname] = v
+        return _orig_new(klass, **typed)
+
+    cls.__new__ = staticmethod(_typed_new)
     return cls
 
 
@@ -268,9 +410,13 @@ _main_registry: list = []
 
 
 def MAIN(func):
-    """Marks a function as a top-level hardware process."""
-    _main_registry.append(func)
-    return func
+    """Marks a function as a top-level hardware process.
+    Implies @hw_func: inputs/outputs are type-cast for simulation and
+    the function can be passed to sim_call().
+    """
+    wrapped = _sim_type_wrap(func)
+    _main_registry.append(wrapped)
+    return wrapped
 
 
 # ─────────────────────────────────────────────
@@ -467,6 +613,31 @@ def uint_to_array_le(x, elem_w):
     raise NotImplementedError("uint_to_array_le is a PipelineC hardware primitive")
 
 
+def concat(*args):
+    """Bit concatenation for simulation: first arg = MSBits, last = LSBits.
+
+    Width of each argument is inferred from its SimVal ctype (via len(ctype)) or,
+    for plain Python ints, from max(1, val.bit_length()). The result is a SimVal
+    with ctype = make_uint(total_bits).
+
+    In hardware (PY_TO_LOGIC elaboration) this function is intercepted and treated
+    as variadic tuple concat — see the 'concat' branch in _elab_bit_manip_call.
+    """
+    widths = []
+    for a in args:
+        if isinstance(a, SimVal) and a._ctype is not None:
+            widths.append(len(a._ctype))
+        elif isinstance(a, int):
+            widths.append(max(1, int(a).bit_length()))
+        else:
+            raise TypeError(f"concat: cannot infer bit width for {a!r}")
+    total = sum(widths)
+    result = 0
+    for a, w in zip(args, widths):
+        result = (result << w) | (int(a) & ((1 << w) - 1))
+    return SimVal(result, ctype=make_uint(total))
+
+
 BIT_MANIP_FUNC_NAMES = frozenset(
     {
         "bit_dup",
@@ -478,5 +649,105 @@ BIT_MANIP_FUNC_NAMES = frozenset(
         "array_to_uint_le",
         "uint_to_array_be",
         "uint_to_array_le",
+        "concat",
     }
 )
+
+
+# ─────────────────────────────────────────────
+# Sim infrastructure: _sim_cast, _sim_type_wrap / hw_func, sim_call
+# ─────────────────────────────────────────────
+
+import functools as _functools
+import inspect as _inspect
+
+
+def _sim_cast(val, ctype):
+    """Cast a Python int/SimVal to a pypeline ctype: mask to n bits, handle signedness.
+
+    This is the sim equivalent of a hardware type assignment. It implements unsigned
+    wrap-on-overflow and signed two's complement masking.
+    """
+    n = len(ctype)  # uses _CTypeMeta.__len__ for bit width
+    mask = (1 << n) - 1
+    v = int(val) & mask
+    if str(ctype).startswith("int") and v >= (1 << (n - 1)):
+        v -= 1 << n  # sign-extend to Python negative
+    return SimVal(v, ctype=ctype)
+
+
+def _sim_type_wrap(fn):
+    """Wrap a pypeline hardware function for bit-accurate simulation.
+
+    On each call: casts positional arguments to their annotated input types,
+    pushes any scoped operator registrations, calls the original function, pops
+    registrations, then casts the return value to the annotated return type.
+
+    Transparent to the hardware elaborator: _elaborate_live_func uses
+    inspect.unwrap() to recover the original function for source analysis.
+    functools.wraps copies __annotations__ and merges __dict__ (preserving
+    custom attributes like .out_t and .amount_t set by factory functions).
+    """
+    ann = fn.__annotations__
+    try:
+        params = list(_inspect.signature(fn).parameters.keys())
+    except (ValueError, TypeError):
+        params = []
+    ret_t = ann.get("return")
+
+    @_functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        new_args = list(args)
+        for i, a in enumerate(args):
+            if i < len(params):
+                pt = ann.get(params[i])
+                if (
+                    pt is not None
+                    and isinstance(a, (int, SimVal))
+                    and _is_scalar_pypeline_int(pt)
+                ):
+                    new_args[i] = _sim_cast(a, pt)
+        saved = _push_scoped_registrations(fn)
+        try:
+            result = fn(*new_args, **kwargs)
+        finally:
+            _pop_scoped_registrations(saved)
+        if (
+            ret_t is not None
+            and isinstance(result, (int, SimVal))
+            and _is_scalar_pypeline_int(ret_t)
+        ):
+            result = _sim_cast(result, ret_t)
+        return result
+
+    return wrapper
+
+
+hw_func = _sim_type_wrap
+"""Decorator that marks an inner pypeline hardware function for bit-accurate simulation.
+Apply to inner function definitions inside make_* factory functions:
+
+    def make_negate(value_t, out_t):
+        @hw_func
+        def negate(a: value_t) -> out_t:
+            ...
+        return negate
+
+Transparent to the hardware elaborator (inspect.unwrap recovers the original).
+"""
+
+
+def sim_call(func, *args, **kwargs):
+    """Call a pypeline function in simulation mode with scoped operators active.
+
+    Pushes scoped operator registrations keyed on func's id before calling.
+    When @hw_func is applied to the function, scoped ops are registered under
+    id(wrapped_func), so func must be passed as-is (not unwrapped).
+    The @hw_func wrapper itself calls _push_scoped_registrations(original),
+    which is a no-op for the original, so there is no double-push conflict.
+    """
+    saved = _push_scoped_registrations(func)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        _pop_scoped_registrations(saved)

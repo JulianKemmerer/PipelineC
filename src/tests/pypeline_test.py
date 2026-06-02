@@ -30,29 +30,45 @@ from pypeline import (
     array_to_uint_le,
     uint_to_array_be,
     uint_to_array_le,
+    concat,
+    SimVal,
+    hw_func,
+    sim_call,
 )
 
-
-# LOCAL FUNC DEFS:
-#     TODO printf for sim? is special func?
-#     TODO local FEEDBACK variables - like Reg[T] syntax? Feedback[T] ?
-# TODO import syntax, multiple files, std lib, etc
-#     organize tests into multiple files with imports and such
-#     TODO stream(type_t) equivalent with valid flag
-#     TODO handshake(type) w/ valid+ feedback ready
-#         what can be done with feedback wires to automate connection handshakes with ready?
-#     TODO constant wires based reduction that interacts with graph submodule instances:
-#         ex. var ref assign/read into constant
-#         ex. shift by a uint6_t type wire driven by constant
-#         ... some day might be helpful for making simulator?
-# GLOBAL NAMESPACE:
-#       TODO global variable wires/fifos w/ #include style imports, start simple comb loop example
-# TODO Simulator?
-# TODO struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
-#       ex. float_var .to/from uint()
+"""
+TODO
+Dream is really some kind of software->hardware flow right?
+    Be able to run software like pypeline as software (No Reg, No Feedback)
+Feedback
+    like Reg[T] syntax? Feedback[T] ?
+Global wires Wire[T]
+    test connecting MAINs together
+Top level inputs and outputs global wires
+    InputWire InputReg options etc
+Import syntax, multiple files, std lib, etc
+    organize tests into multiple files with imports and such
+BACKLOG
+# Multiple clock domains
+# Global FIFOs 
+# TODO  aim for VGA simulation as demo?
+#      Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
+# TODO printf for sim? is special func?
+# TODO RAW VHDL
+# Do something nice with port/pin mappings for constraint gen
+# TODO unions? struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
+#       ex. float_var .to/from uint(), .bit_length(), .bits() for to from slv stuff
 # TODO all of old SW_LIB includes fabric multiply, div, etc
 # TODO support tuple=concat assignment
 #       ex. left: float32_t ; (left.sign, left.exp, left.man) = left_as_u32
+# TODO stream(type_t) equivalent with valid flag
+# TODO handshake(type) w/ valid+ feedback ready
+#         what can be done with feedback wires to automate connection handshakes with ready?
+# TODO constant wires based reduction that interacts with graph submodule instances:
+#         ex. var ref assign/read into constant
+#         ex. shift by a uint6_t type wire driven by constant
+#         ... some day might be helpful for making simulator?
+"""
 
 
 def accumulator(data_in: uint32_t) -> uint32_t:
@@ -96,7 +112,7 @@ def void_ret_test2(sel: uint1_t):
 
 
 def make_point_xy_const(x, y):
-    return {"x": x, "y": y}
+    return point_xy_t(x=x, y=y)
 
 
 @MAIN
@@ -112,19 +128,19 @@ class point2d_t(NamedTuple):
 
 @MAIN
 def struct_init_list_consts() -> point2d_t:
-    my_point: point2d_t = {"dim": [0, 1]}
+    my_point: point2d_t = point2d_t(dim=[0, 1])
     return my_point
 
 
 @MAIN
 def struct_init_list_wires(v0: uint32_t, v1: uint32_t) -> point2d_t:
-    my_point: point2d_t = {"dim": [v0, v1]}
+    my_point: point2d_t = point2d_t(dim=[v0, v1])
     return my_point
 
 
 @MAIN
 def struct_init_dict_int_keys(v0: uint32_t, v1: uint32_t) -> point2d_t:
-    my_point: point2d_t = {"dim": {1: v1, 0: v0}}
+    my_point: point2d_t = point2d_t(dim=[v0, v1])
     return my_point
 
 
@@ -524,7 +540,7 @@ def pair_passthrough(p: pair_u32_t) -> pair_u32_t:
 
 @MAIN
 def pair_swap_fields(p: pair_u32_t) -> pair_u32_t:
-    rv: pair_u32_t = {"a": p.b, "b": p.a}
+    rv: pair_u32_t = pair_u32_t(a=p.b, b=p.a)
     return rv
 
 
@@ -537,7 +553,7 @@ def make_swap(T):
     local_pair_t = make_pair_t(T)  # nested: local_pair_t not visible at module level
 
     def swap(p: local_pair_t) -> local_pair_t:
-        rv: local_pair_t = {"a": p.b, "b": p.a}
+        rv: local_pair_t = local_pair_t(a=p.b, b=p.a)
         return rv
 
     return swap
@@ -707,6 +723,7 @@ def test_uint_to_array_le(x: uint64_t) -> uint8_t[8]:
 
 
 def make_negate(value_t, out_t):
+    @hw_func
     def negate(a: value_t) -> out_t:
         a_signed: out_t = a
         return ~a_signed + 1
@@ -734,6 +751,7 @@ def int_negate_test(a: int32_t) -> int33_t:
 def make_abs(in_t, out_t):
     n_bits = len(in_t)
 
+    @hw_func
     def abs_val(a: in_t) -> out_t:
         sign: uint1_t = a[n_bits - 1]
         result: out_t
@@ -760,6 +778,7 @@ def make_shifter_SL(value_t, amount_t=None):
     narrow_t = make_uint(narrow_bits)
     actual_amount_t = narrow_t if amount_t is None else amount_t
 
+    @hw_func
     def shifter_SL(v: value_t, amount: actual_amount_t) -> value_t:
         effective: actual_amount_t
         if amount_t is None or len(actual_amount_t) <= narrow_bits:
@@ -786,6 +805,7 @@ def make_shifter_SR(value_t, amount_t=None):
     narrow_t = make_uint(narrow_bits)
     actual_amount_t = narrow_t if amount_t is None else amount_t
 
+    @hw_func
     def shifter_SR(v: value_t, amount: actual_amount_t) -> value_t:
         effective: actual_amount_t
         if amount_t is None or len(actual_amount_t) <= narrow_bits:
@@ -827,6 +847,7 @@ def make_clz(value_t):
     n_bits = len(value_t)
     out_t = make_uint(n_bits.bit_length())
 
+    @hw_func
     def clz(v: value_t) -> out_t:
         result: out_t = n_bits
         for i in range(n_bits):
@@ -878,6 +899,7 @@ def make_float_adder(float_t):
     sl_narrow = make_shifter_SL(narrow_t, clz_out_t)
     abs_sum = make_abs(sum_man_t, abs_sum_t)
 
+    @hw_func
     def float_add(left: float_t, right: float_t) -> float_t:
         # Step 1: x gets the larger exponent
         x: float_t
@@ -889,20 +911,20 @@ def make_float_adder(float_t):
             x = left
             y = right
 
-        # Step 2: hidden bit via tuple concat uint(M_LEN+1)
+        # Step 2: hidden bit via concat uint(M_LEN+1)
         x_hidden: uint1_t
         if x.exp == 0:
             x_hidden = 0
         else:
             x_hidden = 1
-        x_man_h: man_hidden_t = (x_hidden, x.man)
+        x_man_h: man_hidden_t = concat(x_hidden, x.man)
 
         y_hidden: uint1_t
         if y.exp == 0:
             y_hidden = 0
         else:
             y_hidden = 1
-        y_man_h: man_hidden_t = (y_hidden, y.man)
+        y_man_h: man_hidden_t = concat(y_hidden, y.man)
 
         # Step 3: sign-adjust int(M_LEN+2) via NEGATE
         x_signed: signed_man_t
@@ -950,7 +972,7 @@ def make_float_adder(float_t):
                 shifted: narrow_t = sum_narrow << lz
                 result_man = shifted[M_LEN - 1 : 0]
 
-        result: float_t = {"sign": sum_sign, "exp": result_exp, "man": result_man}
+        result: float_t = float_t(sign=sum_sign, exp=result_exp, man=result_man)
         return result
 
     # Operator registrations scoped to float_add's elaboration only.
@@ -974,16 +996,80 @@ def float_add_32_main(left_as_u32: uint32_t, right_as_u32: uint32_t) -> uint32_t
     M_SLICE = slice(M_LEN - 1, 0)
     E_SLICE = slice(E_LEN + M_LEN - 1, M_LEN)
     S_BIT = E_LEN + M_LEN
-    left: float32_t = {
-        "sign": left_as_u32[S_BIT],
-        "man": left_as_u32[M_SLICE],
-        "exp": left_as_u32[E_SLICE],
-    }
-    right: float32_t = {
-        "sign": right_as_u32[S_BIT],
-        "man": right_as_u32[M_SLICE],
-        "exp": right_as_u32[E_SLICE],
-    }
+    left: float32_t = float32_t(
+        sign=left_as_u32[S_BIT],
+        man=left_as_u32[M_SLICE],
+        exp=left_as_u32[E_SLICE],
+    )
+    right: float32_t = float32_t(
+        sign=right_as_u32[S_BIT],
+        man=right_as_u32[M_SLICE],
+        exp=right_as_u32[E_SLICE],
+    )
     result: float32_t = left + right
-    result_as_u32: uint32_t = (result.sign, result.exp, result.man)
+    result_as_u32: uint32_t = concat(result.sign, result.exp, result.man)
     return result_as_u32
+
+
+def test_float_add_32():
+    import struct as _struct
+
+    def fp32_sim(f):
+        bits = _struct.unpack(">I", _struct.pack(">f", float(f)))[0]
+        return float32_t(
+            sign=(bits >> 31) & 1,
+            exp=(bits >> 23) & 0xFF,
+            man=bits & 0x7FFFFF,
+        )
+
+    def sim_to_float(r):
+        bits = (int(r.sign) << 31) | (int(r.exp) << 23) | int(r.man)
+        return _struct.unpack(">f", _struct.pack(">I", bits))[0]
+
+    cases = [
+        (1.0, 2.0, 3.0),
+        (0.0, 0.0, 0.0),
+        (-1.0, 2.0, 1.0),
+        (1.5, 2.5, 4.0),
+        (-2.0, -2.0, -4.0),
+        (0.5, 0.5, 1.0),
+    ]
+    for a, b, expected in cases:
+        result = sim_call(float_add_32, fp32_sim(a), fp32_sim(b))
+        got = sim_to_float(result)
+        assert got == expected, f"{a} + {b} = {got}, expected {expected}"
+    print("test_float_add_32 passed")
+
+
+@MAIN
+def point_max(points: point2d_t[3]) -> uint32_t:
+    max_val: uint32_t = points[0].dim[0]
+    for i in range(3):
+        for j in range(2):
+            if points[i].dim[j] > max_val:
+                max_val = points[i].dim[j]
+    return max_val
+
+
+def test_point_max():
+    def make_points(*pairs):
+        return [point2d_t(dim=list(pair)) for pair in pairs]
+
+    cases = [
+        (make_points((1, 2), (3, 4), (5, 6)), 6),
+        (make_points((10, 0), (0, 10), (5, 5)), 10),
+        (make_points((0, 0), (0, 0), (0, 0)), 0),
+        (make_points((100, 50), (200, 10), (150, 75)), 200),
+        (make_points((7, 7), (7, 7), (7, 8)), 8),
+    ]
+    for points, expected in cases:
+        result = sim_call(point_max, points)
+        assert (
+            int(result) == expected
+        ), f"point_max(points) = {result}, expected {expected}"
+    print("test_point_max passed")
+
+
+if __name__ == "__main__":
+    test_float_add_32()
+    test_point_max()

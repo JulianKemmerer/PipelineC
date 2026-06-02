@@ -1388,6 +1388,20 @@ class FuncElaborator:
         if stmt.value is not None:
             if isinstance(stmt.value, (ast.Dict, ast.List)):
                 self._elab_compound_init(var_name, stmt.value, stmt.value)
+            elif isinstance(stmt.value, ast.Call):
+                callee = self._try_eval_const(stmt.value.func)
+                if callee is not None and hasattr(callee, "_fields"):
+                    # NamedTuple struct constructor: MyStruct(field=val, ...)
+                    self._elab_compound_init(var_name, stmt.value, stmt.value)
+                else:
+                    const_val = self._try_eval_const(stmt.value)
+                    if isinstance(const_val, (dict, list, tuple)):
+                        self._elab_compound_init_from_pyval(
+                            var_name, const_val, stmt.value
+                        )
+                    else:
+                        rhs_wire, _ = self._elab_expr(stmt.value)
+                        self._write_ref((var_name,), rhs_wire, typ, stmt.value)
             else:
                 const_val = self._try_eval_const(stmt.value)
                 if isinstance(const_val, (dict, list, tuple)):
@@ -1414,6 +1428,12 @@ class FuncElaborator:
                 self._elab_compound_init(
                     base_name, val_node, context_node, path_toks + (key,)
                 )
+        elif isinstance(init_node, ast.Call):
+            # NamedTuple struct constructor: MyStruct(field=val, ...)
+            for kw in init_node.keywords:
+                self._elab_compound_init(
+                    base_name, kw.value, context_node, path_toks + (kw.arg,)
+                )
         else:
             rhs_wire, rhs_type = self._elab_expr(init_node)
             self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
@@ -1435,10 +1455,17 @@ class FuncElaborator:
                     base_name, sub_val, context_node, path_toks + (key,)
                 )
         elif isinstance(val, (list, tuple)):
-            for i, sub_val in enumerate(val):
-                self._elab_compound_init_from_pyval(
-                    base_name, sub_val, context_node, path_toks + (i,)
-                )
+            if hasattr(val, "_fields"):
+                # NamedTuple: use field names as path tokens, not integer indices
+                for fname, sub_val in zip(val._fields, val):
+                    self._elab_compound_init_from_pyval(
+                        base_name, sub_val, context_node, path_toks + (fname,)
+                    )
+            else:
+                for i, sub_val in enumerate(val):
+                    self._elab_compound_init_from_pyval(
+                        base_name, sub_val, context_node, path_toks + (i,)
+                    )
         else:
             rhs_wire, rhs_type = self._elab_python_value(val, context_node)
             self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)
@@ -1459,8 +1486,21 @@ class FuncElaborator:
                 f"Function '{self.func_name}' has multiple return statements; "
                 f"hardware functions must have exactly one"
             )
+        RET = C_TO_LOGIC.RETURN_WIRE_NAME
+        if isinstance(stmt.value, (ast.Dict, ast.List)):
+            self._elab_compound_init(RET, stmt.value, stmt.value)
+            return
+        elif isinstance(stmt.value, ast.Call):
+            callee = self._try_eval_const(stmt.value.func)
+            if callee is not None and hasattr(callee, "_fields"):
+                self._elab_compound_init(RET, stmt.value, stmt.value)
+                return
+        const_val = self._try_eval_const(stmt.value)
+        if isinstance(const_val, (dict, list, tuple)):
+            self._elab_compound_init_from_pyval(RET, const_val, stmt.value)
+            return
         result_wire, _ = self._elab_expr(stmt.value)
-        _connect(self.logic, result_wire, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _connect(self.logic, result_wire, RET)
 
     def _elab_aug_assign(self, stmt):
         """b += 1  etc.
@@ -2426,7 +2466,16 @@ class FuncElaborator:
             )
             return port_return, out_type
 
-        if callee_name == "bit_dup":
+        if callee_name == "concat":
+            # Variadic bit concat: treat positional args as a tuple concat.
+            # out_t keyword arg (used by sim for width inference) is ignored here.
+            if len(args) < 2:
+                raise ElaborationError("concat(): requires at least 2 arguments")
+            synth = ast.Tuple(elts=list(args), ctx=ast.Load())
+            ast.fix_missing_locations(synth)
+            return self._elab_tuple_concat(synth)
+
+        elif callee_name == "bit_dup":
             if len(args) != 2:
                 raise ElaborationError("bit_dup(x, n): requires exactly 2 arguments")
             x_wire, x_type = self._elab_expr(args[0])
@@ -2559,7 +2608,10 @@ class FuncElaborator:
         import inspect
         import textwrap
 
-        source = textwrap.dedent(inspect.getsource(func))
+        # Strip any @hw_func / _sim_type_wrap wrapper so we analyse the original source.
+        func_for_source = inspect.unwrap(func)
+
+        source = textwrap.dedent(inspect.getsource(func_for_source))
         tree = ast.parse(source)
 
         func_nodes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
@@ -2571,8 +2623,10 @@ class FuncElaborator:
 
         # Extract closure variables (e.g. LO_SIZE=3, HI_SIZE=4, OUT_SIZE=7)
         closure_ns = {}
-        if func.__code__.co_freevars and func.__closure__:
-            for var, cell in zip(func.__code__.co_freevars, func.__closure__):
+        if func_for_source.__code__.co_freevars and func_for_source.__closure__:
+            for var, cell in zip(
+                func_for_source.__code__.co_freevars, func_for_source.__closure__
+            ):
                 try:
                     closure_ns[var] = cell.cell_contents
                 except ValueError:
@@ -2598,7 +2652,9 @@ class FuncElaborator:
         # + closure vars, so the same factory+args always maps to the same Logic().
         # Top-level non-factory functions (no .<locals>. in qualname) keep their
         # Python name and are not subject to deduplication here.
-        canonical = _canonical_func_name(func, closure_ns, self.module_globals)
+        canonical = _canonical_func_name(
+            func_for_source, closure_ns, self.module_globals
+        )
         key = canonical if canonical is not None else module_level_name
 
         if canonical is not None:

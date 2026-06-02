@@ -983,90 +983,107 @@ Elaboration of `ce_accum_test`:
 
 ## Compound Initializer Syntax
 
-A local variable of struct or array type can be initialized from a **dict or list literal**
-at declaration time. This is the Python equivalent of C aggregate initialization:
-
-```c
-// C:
-point2d_t my_point = { .dim = {[1]=1, [0]=0} };
-```
+A local variable of struct or array type can be initialized from a **NamedTuple
+constructor call or a list literal** at declaration time.
 
 ```python
-# Python — equivalent forms:
-my_point: point2d_t = {"dim": [0, 1]}           # list for positional array init
-my_point: point2d_t = {"dim": {1: 1, 0: 0}}     # dict with int keys (C-style)
-my_arr:   uint32_t[2] = [v0, v1]                # bare list for an array variable
+# Preferred form — NamedTuple constructor:
+my_point: point2d_t = point2d_t(dim=[0, 1])
+rv: pair_t = pair_t(a=p.b, b=p.a)
+
+# Array variable — list literal:
+my_arr: uint32_t[2] = [v0, v1]
+
+# Legacy dict form (still elaborated but prefer NamedTuple above):
+my_point: point2d_t = {"dim": [0, 1]}           # string-keyed dict
+my_point: point2d_t = {"dim": {1: 1, 0: 0}}     # int-keyed dict (C-style)
 ```
 
-**Elaboration:** `_elab_ann_assign` detects an `ast.Dict` or `ast.List` RHS and calls
-`_elab_compound_init` instead of `_elab_expr`. The helper recursively walks the literal,
-accumulating a `path_toks` suffix, and calls `_elab_expr` + `_write_ref` at each leaf.
+**Elaboration — NamedTuple constructor form:**
+
+`_elab_ann_assign` checks whether the RHS is an `ast.Call` whose callee evaluates
+(`_try_eval_const`) to a NamedTuple class (has `_fields`). If so, `_elab_compound_init`
+is called with the `ast.Call` node. The `ast.Call` branch in `_elab_compound_init` iterates
+over the keyword arguments and recurses with `path_toks + (kw.arg,)` for each field:
 
 ```
-{"dim": [v0, v1]}  on  my_point: point2d_t
-  ├─ key "dim"     → path_toks = ("dim",)
-  ├─ index 0, v0   → _write_ref(("my_point","dim",0), v0_wire, ...)
-  └─ index 1, v1   → _write_ref(("my_point","dim",1), v1_wire, ...)
+point2d_t(dim=[v0, v1])  on  my_point: point2d_t
+  ├─ kw "dim" → path_toks = ("dim",)
+  ├─ list index 0, v0 → _write_ref(("my_point","dim",0), v0_wire, ...)
+  └─ list index 1, v1 → _write_ref(("my_point","dim",1), v1_wire, ...)
 ```
+
+`_try_eval_const` resolves the callee name against `{**module_globals, **const_env}`,
+so struct types defined in factory closures (like `float_t` inside `make_float_adder`)
+are found correctly.
+
+**Elaboration — list / dict literal forms:**
+
+`_elab_ann_assign` also detects `ast.Dict` or `ast.List` RHS directly and routes to
+`_elab_compound_init`. `ast.Dict` keys must be compile-time string or int constants.
+`ast.List` elements map to indices 0, 1, 2, … in order.
+
+**`_elab_return` compound forms:**
+
+The same logic applies to `return` statements: `_elab_return` checks for
+`ast.Dict`/`ast.List` and NamedTuple constructor calls before the general `_elab_expr`
+path, routing them to `_elab_compound_init` with `RETURN_WIRE_NAME` as the base.
+
+**Rules (all forms):**
+- Leaf values can be any hardware expression (constants, input wires, sub-expressions).
+- Nesting is allowed to arbitrary depth (struct of arrays, array of structs, etc.).
+- Only valid in annotated assignment (`var: T = …`) or return statements; the declared type
+  determines the base wire type in `_declare_var` before init writes are applied.
 
 This is **pure elaboration sugar** — the result is identical to writing the assignments
-explicitly. No new hardware primitives are introduced; the existing alias-tracking in
-`wire_aliases_over_time` handles everything.
-
-**Rules:**
-- Dict keys must be compile-time constants (string for struct fields, `int` for array indices).
-- List elements map to indices 0, 1, 2, … in order.
-- Leaf values can be any hardware expression (constants, input wires, sub-expressions).
-- Nesting is allowed: a dict value can itself be a dict or list for deeper paths.
-- Only valid in annotated assignment (`var: T = {...}`); the type annotation determines
-  the base wire type declared by `_declare_var` before the init writes are applied.
+explicitly. No new hardware primitives are introduced.
 
 ### Compound Init from Python Function Call
 
 Any **elaboration-time Python function** whose return value is a `dict`, `list`, or
 `tuple` can be used as a compound initializer. `_elab_ann_assign` tries
 `_try_eval_const` on the RHS before reaching `_elab_expr`; if a dict/list/tuple is
-returned it is handed to `_elab_compound_init_from_pyval` instead of synthesizing a
-hardware call:
+returned it is handed to `_elab_compound_init_from_pyval`:
 
 ```python
 def make_point_const(x, y):        # plain Python, not a hardware function
-    return {"x": x, "y": y}
+    return point_xy_t(x=x, y=y)   # NamedTuple instance — treated as compound init
 
-def my_func(...) -> point_t:
-    p: point_t = make_point_const(3, 4)   # dict returned → compound init
+def my_func(...) -> point_xy_t:
+    p: point_xy_t = make_point_const(3, 4)   # NamedTuple instance → compound init
     return p
 ```
 
-`_elab_compound_init_from_pyval` recursively walks the Python value (dict keys / list
-indices) and emits integer leaf constants via `_elab_python_value` + `_write_ref`.
-The result is identical to writing `p: point_t = {"x": 3, "y": 4}` — no new hardware
-primitives, same alias-tracking.
+`_elab_compound_init_from_pyval` inspects the returned value:
+- **dict** — keys are string/int field or index names
+- **`list` / plain `tuple`** — elements map to indices 0, 1, 2, …
+- **NamedTuple** (has `_fields`) — field *names* are used as path tokens, matching the
+  NamedTuple constructor form. This is important: treating a NamedTuple as a plain tuple
+  would use integer indices and break struct field resolution.
 
-**Leaf values must be plain Python `int` or `bool`.** Sub-dicts and sub-lists can be
-nested to arbitrary depth. Hardware wires cannot appear inside the returned value.
+**Leaf values must be plain Python `int` or `bool`.** Hardware wires cannot appear
+inside the returned value.
 
 ### Float Type and `as_const`
 
-`pypeline.make_float_t(E, M)` uses this mechanism to let users initialize float struct
-variables from a Python float literal at elaboration time:
+`pypeline.make_float_t(E, M)` lets users initialize float struct variables from a Python
+float literal at elaboration time:
 
 ```python
 float32_t = make_float_t(8, 23)   # standard FP32; fields: sign/exp/man
 
 def my_func(...) -> float32_t:
-    x: float32_t = float32_t.as_const(1.5)   # as_const returns a dict → compound init
+    x: float32_t = float32_t.as_const(1.5)   # returns a float32_t NamedTuple → compound init
     return x
 ```
 
-`float32_t.as_const(value)` is a plain Python staticmethod that converts a Python
-`float` to `{"sign": ..., "exp": ..., "man": ...}` at elaboration time (using
-`struct.pack` for FP32/FP64; a rebased FP64 approximation for other widths). The
-returned dict is then elaborated exactly as a literal `{"sign": 0, "exp": 127, "man": 0}`
-would be.
+`float32_t.as_const(value)` is a plain Python staticmethod that converts a Python `float`
+to a `float32_t(sign=…, exp=…, man=…)` NamedTuple instance at elaboration time (using
+`struct.pack` for FP32/FP64; a rebased FP64 approximation for other widths). The result is
+handled by `_elab_compound_init_from_pyval` exactly as a hand-written NamedTuple instance.
 
 Direct float-literal syntax (`x: float32_t = 1.5`) is **not** supported — the
-explicit `.as_const(...)` call is required.
+explicit `.as_const(…)` call is required.
 
 ---
 
@@ -1102,18 +1119,30 @@ x[15:0] = y   # write bits [15:0] of x with value y, leaving other bits unchange
 Creates a new alias wire for `x` via a `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` submodule that
 takes the old `x` wire and `y` and produces an updated value.
 
-### Tuple Concatenation
+### Bit Concatenation — `concat()` and tuple literal
 
-A tuple literal whose elements are all hardware-typed values is treated as bit
-concatenation, **first element in the most-significant position**:
+Bit concatenation packs multiple unsigned integers end-to-end, **first argument in the
+most-significant position**. Two syntaxes are supported:
 
 ```python
-out: uint64_t = (a, b)          # a:uint32_t ++ b:uint32_t → uint64_t
-out: uint64_t = (a, b, c)       # a:uint16_t ++ b:uint16_t ++ c:uint32_t → uint64_t
+# concat() function — preferred (works in hardware and sim):
+out: uint64_t = concat(a, b)          # a:uint32_t ++ b:uint32_t → uint64_t
+out: uint64_t = concat(a, b, c)       # a:uint16_t ++ b:uint16_t ++ c:uint32_t → uint64_t
+
+# Tuple literal — hardware elaboration only (cannot run as Python):
+out: uint64_t = (a, b)
+out: uint64_t = (a, b, c)
 ```
 
-Elaborated as a chain of `TUPLE_CONCAT_<types>` submodule instances. The output width is
-the sum of all element widths; the return type must match exactly.
+Both forms elaborate identically: a chain of `TUPLE_CONCAT_<types>` submodule instances.
+The output width is the sum of all element widths.
+
+**`concat()` in hardware:** `concat` is in `BIT_MANIP_FUNC_NAMES`. The `concat` branch in
+`_elab_bit_manip_call` synthesizes a synthetic `ast.Tuple` from the positional arguments
+and delegates to `_elab_tuple_concat`. Any `out_t=` keyword argument (used by the
+simulation path for width inference) is ignored.
+
+**`concat()` in simulation:** see the Proto-Simulation section.
 
 ---
 
@@ -1247,6 +1276,254 @@ elaboration time.
 
 ---
 
+## Proto-Simulation — Running Pypeline Code as Python
+
+The simulation layer lets pypeline hardware functions execute as ordinary Python, enabling
+unit tests to run before hardware synthesis. Pure combinational functions (no `Reg[T]`)
+are the natural target; the design is extensible toward full simulation later.
+
+### The Gap Between Hardware and Python
+
+Hardware elaboration uses Python **as an elaboration language**: type annotations, closure
+variables, and loop counters are all Python values at compile time, but the function bodies
+themselves are compiled to Logic() graphs and never executed. Three specific constructs
+prevent naive direct execution:
+
+1. **Bit slicing `x[i]` / `x[hi:lo]`** — Python `int` has no `__getitem__`.
+2. **Bit concatenation `(a, b)`** — Python sees a plain tuple, not a bit-cat operation.
+3. **Arbitrary-width integer arithmetic** — pypeline integers have fixed widths (e.g.
+   `uint24_t`); Python ints are arbitrary precision, so overflow / sign wrapping is silent.
+
+### `SimVal` — Typed Simulation Integer
+
+`SimVal` is a thin subclass of Python `int` that adds:
+
+- **`__getitem__`** for hardware-style bit slicing:
+  - `v[i]` → bit `i` (single bit, value 0 or 1)
+  - `v[hi:lo]` → bits `hi` down to `lo` inclusive (hardware convention: high index first)
+- **Operator dispatch** for unary and binary operators whose type-specific implementations
+  are registered via `register_*_operator`:
+  - `__neg__` → looks up `"NEGATE"` for `self._ctype` in `_unary_operator_registry`
+  - `__rshift__` → looks up `"SR"` (exact `(lhs_type, rhs_type)` then left-only match)
+  - `__lshift__` → looks up `"SL"` in the same way
+  - Falls back to Python arithmetic if no registration is found
+- **Return-type casting** — when dispatch fires and the callee function has a `return`
+  annotation, the result is passed through `_sim_cast` to attach the correct `_ctype`
+- **Arithmetic passthrough** — `+`, `-`, `*`, `&`, `|`, `^`, `~` return new `SimVals`
+  (no `_ctype`, since the result type requires hardware promotion rules to determine)
+
+`SimVal` subclasses `int`, so it is **transparent to the hardware elaborator**: when it
+appears as a constant value during `_elab_compound_init_from_pyval`, it is seen as an
+ordinary Python int.
+
+### `_sim_cast(val, ctype)` — Type-Correct Masking
+
+Converts a Python int / `SimVal` to a `SimVal` with:
+- Value masked to `len(ctype)` bits (implements unsigned wrap-on-overflow)
+- Two's-complement sign extension for signed types (`int…_t`)
+- `_ctype` set to `ctype`
+
+This is the simulation equivalent of a hardware type assignment and is used in two places:
+1. By `hw_func` / `_sim_type_wrap` to cast function inputs and outputs.
+2. By `SimVal._dispatch_unary/binary` as a fallback when a dispatched function returns
+   an untyped value.
+
+### `@struct` — Auto-Typed Fields
+
+The `@struct` decorator overrides `__new__` on the NamedTuple class so that constructing
+any struct instance automatically wraps scalar integer fields in `SimVal`:
+
+```python
+float32_t(sign=0, exp=127, man=0)
+# → float32_t(sign=SimVal(0, uint1_t), exp=SimVal(127, uint8_t), man=SimVal(0, uint23_t))
+```
+
+Only scalar pypeline integer fields (those whose ctype passes `_is_scalar_pypeline_int`)
+are wrapped. Array and nested-struct fields are passed through unchanged.
+
+This means `left.exp` in `float_add` carries the correct `_ctype` (`uint8_t` for float32),
+so `concat(x_hidden, left.man)` can infer field widths without being told.
+
+**Hardware transparency:** `SimVal` subclasses `int`, so struct instances returned by
+`as_const` or any constant helper are seen as plain integers by `_elab_compound_init_from_pyval`.
+
+### `concat(*args)` — Simulation Bit Concatenation
+
+```python
+x_man_h: man_hidden_t = concat(x_hidden, x.man)
+```
+
+Width of each argument is inferred:
+- `SimVal` with `_ctype` → `len(_ctype)` bits
+- Plain Python `int` → `max(1, val.bit_length())` bits (mirrors hardware literal inference)
+
+The result is a `SimVal` with `_ctype = make_uint(total_bits)`. For float32 where
+`x.man` has ctype `uint23_t` and `x_hidden` is `0` or `1` (1-bit), the result has ctype
+`uint24_t`, which matches `man_hidden_t`. This ctype then enables operator dispatch
+(e.g. `-x_man_h` dispatches to the registered `negate_man_h`).
+
+In hardware, `concat` is handled by `_elab_bit_manip_call` → `_elab_tuple_concat` (see Bit
+Concatenation above). The `out_t=` keyword argument sometimes used in sim for clarity is
+simply ignored on the hardware path.
+
+### `@hw_func` / `_sim_type_wrap` — Per-Function Type Propagation
+
+The `@hw_func` decorator wraps a pypeline hardware function to propagate type information
+through the simulation call graph:
+
+1. **On entry:** each positional argument is cast to its annotated parameter type via
+   `_sim_cast` (scalar integer args only; array/struct args pass through).
+2. **Scoped operators:** `_push_scoped_registrations(original_fn)` is called, making any
+   operators registered with `scope=fn` temporarily active.
+3. **On exit:** the return value is cast to the annotated return type via `_sim_cast`
+   (if scalar integer).
+
+`functools.wraps` preserves `__name__`, `__annotations__`, and merges `__dict__`, so
+custom attributes like `clz.out_t` or `shifter_SL.amount_t` survive the wrapping.
+
+**Hardware transparency:** `_elaborate_live_func` calls `inspect.unwrap(func)` before
+`inspect.getsource` and closure extraction, so `@hw_func`-wrapped functions elaborate
+from the original source code, not the wrapper body.
+
+**Scoped operator key correctness:** scoped ops are registered with `scope=func` where
+`func` is the name at the point of the `register_*_operator` call. If `@hw_func` has
+already been applied, `func` is the wrapped version. `_elaborate_live_func` passes the
+original `func` argument (the wrapped version) to `_push_scoped_registrations`, so the
+correct `id` is used to look up the scoped registry.
+
+**Usage in factory functions:**
+
+```python
+def make_negate(value_t, out_t):
+    @hw_func
+    def negate(a: value_t) -> out_t:
+        a_signed: out_t = a
+        return ~a_signed + 1
+    return negate
+
+def make_clz(value_t):
+    n_bits = len(value_t)
+    out_t = make_uint(n_bits.bit_length())
+    @hw_func
+    def clz(v: value_t) -> out_t:
+        result: out_t = n_bits
+        for i in range(n_bits):
+            if v[i]:
+                result = n_bits - 1 - i
+        return result
+    clz.out_t = out_t    # preserved by functools.wraps
+    return clz
+```
+
+### `@MAIN` Implies `@hw_func`
+
+Because every `@MAIN` function is a top-level hardware entry point, `@MAIN` automatically
+applies `_sim_type_wrap` to the decorated function before registering it:
+
+```python
+def MAIN(func):
+    wrapped = _sim_type_wrap(func)
+    _main_registry.append(wrapped)
+    return wrapped
+```
+
+`_main_registry` stores the wrapped function; `{f.__name__}` for name lookup works
+because `functools.wraps` copies `__name__`. The hardware elaborator scans the source
+AST directly (not through the registry callable), so hardware generation is unaffected.
+
+### `sim_call(func, *args)` — Simulation Entry Point
+
+```python
+result = sim_call(float_add_32, fp32_sim(1.0), fp32_sim(2.0))
+```
+
+`sim_call` pushes scoped operator registrations keyed on `id(func)` before calling,
+then pops them in a `finally` block:
+
+```python
+def sim_call(func, *args, **kwargs):
+    saved = _push_scoped_registrations(func)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        _pop_scoped_registrations(saved)
+```
+
+**Key design choice:** `func` is used directly (not `inspect.unwrap`). When `@hw_func`
+is applied to `float_add`, the scoped operators are registered under `id(wrapped_float_add)`
+(since `scope=float_add` refers to the wrapped name). Using `func` as-is ensures the
+correct `id` is used. The `@hw_func` wrapper's own `_push_scoped_registrations(original)`
+call uses the original's `id`, which has no scoped ops — a deliberate no-op.
+
+If `@hw_func` is not applied to the target function, `func = original`, and
+`id(func) = id(original)` matches the scoped op key — also correct.
+
+### Writing a Sim Test
+
+```python
+def test_float_add_32():
+    import struct as _struct
+
+    def fp32_sim(f):
+        bits = _struct.unpack(">I", _struct.pack(">f", float(f)))[0]
+        return float32_t(           # @struct __new__ wraps fields in typed SimVals
+            sign=(bits >> 31) & 1,
+            exp=(bits >> 23) & 0xFF,
+            man=bits & 0x7FFFFF,
+        )
+
+    def sim_to_float(r):
+        bits = (int(r.sign) << 31) | (int(r.exp) << 23) | int(r.man)
+        return _struct.unpack(">f", _struct.pack(">I", bits))[0]
+
+    cases = [(1.0, 2.0, 3.0), (0.0, 0.0, 0.0), (-1.0, 2.0, 1.0), (1.5, 2.5, 4.0)]
+    for a, b, expected in cases:
+        result = sim_call(float_add_32, fp32_sim(a), fp32_sim(b))
+        assert sim_to_float(result) == expected
+
+if __name__ == "__main__":
+    test_float_add_32()
+```
+
+### Type Propagation Through the FP Adder Call Chain
+
+```
+sim_call(float_add_32, left, right)
+  │ _push_scoped_registrations(float_add_32)
+  │   → pushes NEGATE(uint24_t), NEGATE(int26_t), SR(int25_t, uint8_t), SL(uint24_t, uint5_t)
+  │
+  ├─ float_add(left, right)   [hw_func wrapper casts float_t args — no-op for struct inputs]
+  │   ├─ left.man → SimVal(man_val, uint23_t)       ← from @struct auto-wrap
+  │   ├─ concat(x_hidden, left.man)
+  │   │     width(x_hidden=1) + width(left.man=23) = 24 bits → SimVal(…, uint24_t)
+  │   ├─ -x_man_h   → dispatches to negate_man_h (NEGATE for uint24_t)
+  │   │     hw_func wrapper casts result → SimVal(…, int25_t)
+  │   ├─ y_signed >> diff   → dispatches to sr_signed (SR for int25_t × uint8_t)
+  │   │     hw_func wrapper casts result → SimVal(…, int25_t)
+  │   ├─ abs_sum(sum_man)   [hw_func wrapper casts sum_man → SimVal(…, int26_t)]
+  │   │   └─ -a  → dispatches to negate_sum_man (NEGATE for int26_t, scoped active)
+  │   └─ result: float_t = float_t(sign=…, exp=…, man=…)  → real float_t instance
+  │
+  └─ result is a float32_t NamedTuple (not a dict, thanks to NamedTuple constructor form)
+```
+
+### Limitations of the Current Proto-Sim
+
+- **Registers (`Reg[T]`)** — not simulated; functions with state registers will not execute
+  correctly as Python. The sim is designed for pure combinational functions only.
+- **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
+  `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
+  function call boundaries via `@hw_func`. Deep chains of arithmetic without function calls
+  will lose type info for operator dispatch; Python native operators serve as fallbacks.
+- **Annotated casts** — `a_signed: out_t = a` is ignored by Python (annotations are hints).
+  For widening/sign-extension this is harmless; truncating casts would require explicit
+  `_sim_cast(a, out_t)` if exact bit width matters.
+- **Unsigned overflow masking** — arithmetic on `SimVal` is Python arbitrary-precision;
+  wrap-on-overflow only occurs when a `@hw_func` boundary re-applies `_sim_cast`. For
+  typical hardware-range values this is not observable.
+
+---
+
 ## pypeline.py — Runtime Support
 
 The companion module provides the types and decorators used in design files:
@@ -1270,7 +1547,12 @@ The companion module provides the types and decorators used in design files:
 | `_pop_scoped_registrations(saved)` | Restores the global registries to the state before the corresponding push |
 | `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (see section above) |
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
+| `concat(*args)` | Bit concatenation — works in both hardware (→ `_elab_tuple_concat`) and simulation (→ `SimVal` with inferred width) |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
+| `SimVal` | Thin `int` subclass for simulation: bit-slice `__getitem__`, operator dispatch via registry, ctype-tracked (see Proto-Simulation section) |
+| `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement signedness |
+| `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting; transparent to hardware elaboration via `inspect.unwrap` |
+| `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 
 All types are declared as proper Python `class` statements with `_CTypeMeta` as metaclass
 (not variable assignments), so Pylance/pyright accepts them as valid type expressions.
@@ -1497,7 +1779,7 @@ design.py
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
   │               └─ _elab_call         lookup FuncLogicLookupTable or _elaborate_live_func
-  │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint helpers → BIT_MANIP submodules
+  │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
   │
