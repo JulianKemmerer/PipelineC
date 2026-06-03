@@ -3,6 +3,7 @@ from typing import NamedTuple
 from pypeline import (
     MAIN,
     Reg,
+    Feedback,
     struct,
     uint1_t,
     uint4_t,
@@ -38,23 +39,23 @@ from pypeline import (
 
 """
 TODO
-Dream is really some kind of software->hardware flow right?
-    Be able to run software like pypeline as software (No Reg, No Feedback)
-Feedback
-    like Reg[T] syntax? Feedback[T] ?
 Global wires Wire[T]
     test connecting MAINs together
 Top level inputs and outputs global wires
     InputWire InputReg options etc
 Import syntax, multiple files, std lib, etc
     organize tests into multiple files with imports and such
+Single clock domain simulator?
+    test regs,feedback,global wires
+Aim for VGA as demo on simulation+board?
+    Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
+Dream is really some kind of software->hardware flow right?
 BACKLOG
 # Multiple clock domains
 # Global FIFOs 
-# TODO  aim for VGA simulation as demo?
-#      Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
 # TODO printf for sim? is special func?
 # TODO RAW VHDL
+# Revisit register init values
 # Do something nice with port/pin mappings for constraint gen
 # TODO unions? struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
 #       ex. float_var .to/from uint(), .bit_length(), .bits() for to from slv stuff
@@ -69,6 +70,18 @@ BACKLOG
 #         ex. shift by a uint6_t type wire driven by constant
 #         ... some day might be helpful for making simulator?
 """
+
+
+@MAIN
+def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
+    # Declare feedback, is not zero initalized
+    f: Feedback[uint1_t]
+    # Use feedback before it has been assigned a value
+    # (typically would be zeros, but not for feedback)
+    rv: uint1_t = f | a
+    # Do the 'later' computation that needs to be fed back
+    f = ~b
+    return rv
 
 
 def accumulator(data_in: uint32_t) -> uint32_t:

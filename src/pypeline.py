@@ -557,6 +557,40 @@ class Reg(metaclass=_RegMeta):
     pass
 
 
+# Feedback[T] — combinatorial feedback wire annotation
+# ──────────────────────────────────────────────────────
+
+
+class _FeedbackType:
+    """Produced by Feedback[T]. Marks a variable as a combinatorial feedback wire."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype
+
+    def __str__(self):
+        return f"Feedback[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _FeedbackMeta(type):
+    def __getitem__(cls, inner_type):
+        return _FeedbackType(inner_type)
+
+
+class Feedback(metaclass=_FeedbackMeta):
+    """Marks a local variable as a combinatorial feedback wire.
+
+    Usage in hardware functions:
+        f: Feedback[uint1_t]   # declare feedback — NOT zero-initialised
+        rv = f | a             # use f before its driver is known
+        f = ~b                 # driver resolved; back-patched at end of elaboration
+    """
+
+    pass
+
+
 # ─────────────────────────────────────────────
 # Bit manipulation primitives
 # (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)

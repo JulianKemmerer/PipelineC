@@ -981,6 +981,51 @@ Elaboration of `ce_accum_test`:
 
 ---
 
+## Feedback Wires (`Feedback[T]`)
+
+A local variable annotated `Feedback[T]` declares a **combinatorial feedback wire** — a
+signal whose driver appears later in Python source order than its first use. This lets
+feedforward function bodies describe reverse-direction signals without reordering code.
+
+```python
+@MAIN
+def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
+    f: Feedback[uint1_t]   # declare feedback — NOT zero-initialised
+    rv: uint1_t = f | a    # read f before it is assigned (uses base wire)
+    f = ~b                 # driver of f resolved here
+    return rv
+```
+
+Elaboration treats the annotation specially:
+
+- A base wire `f` (type `uint1_t`) is added to the logic graph with **no driver** — unlike
+  a normal local variable there is no `COMPOUND_NULL` zero wire. Reads of `f` before the
+  assignment see this base wire directly.
+- `f` is added to `logic.feedback_vars` (a `set` of names on the `Logic()` object).
+- Assignments to `f` create alias wires in `wire_aliases_over_time` exactly as any other
+  variable assignment.
+- At the end of elaboration `_connect_final_state_wires` follows the alias chain and
+  connects the final alias back to the base wire (`wire_driven_by["f"] = final_alias`).
+  In generated VHDL, `f` is thus driven by `~b`; `rv <= f or a` reads the combinatorial
+  value of `f`. Concurrent signal assignment in VHDL means source order is irrelevant.
+
+Unlike `Reg[T]`:
+- No flip-flop is inferred — the wire is purely combinatorial within one clock cycle.
+- No zero-initialisation or power-on reset value.
+- No clock-enable implications; `logic.uses_nonvolatile_state_regs` is not set.
+
+Attempting to initialise a feedback wire at the declaration site is an error:
+
+```python
+f: Feedback[uint1_t] = x   # ElaborationError: Feedback wire 'f' cannot have an initializer
+```
+
+`Feedback` is exported from `pypeline` as `_FeedbackType`; `Feedback[T]` uses
+`__class_getitem__` to produce a typed descriptor that `_elab_ann_assign` recognises,
+mirroring the `Reg` / `_RegType` pattern exactly.
+
+---
+
 ## Compound Initializer Syntax
 
 A local variable of struct or array type can be initialized from a **NamedTuple
@@ -1511,6 +1556,9 @@ sim_call(float_add_32, left, right)
 
 - **Registers (`Reg[T]`)** — not simulated; functions with state registers will not execute
   correctly as Python. The sim is designed for pure combinational functions only.
+- **Feedback wires (`Feedback[T]`)** — not simulated; functions using feedback wires will
+  not execute correctly as Python. The wire is driven by an assignment that appears later
+  in source order, which has no meaning in sequential Python execution.
 - **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
   `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
   function call boundaries via `@hw_func`. Deep chains of arithmetic without function calls
@@ -1539,6 +1587,7 @@ The companion module provides the types and decorators used in design files:
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
+| `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` annotation declares a combinatorial feedback wire (no flip-flop, no zero-init) |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary Python operator on an exact `(lhs, rhs)` type pair; works for any op including `"PLUS"` on struct types |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary Python operator matching only on the left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary Python operator for a specific operand type; return type may differ from operand |

@@ -7,7 +7,11 @@ import re
 
 import C_TO_LOGIC
 import AST as pypeline_ast
-from pypeline import _RegType, BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES
+from pypeline import (
+    _RegType,
+    _FeedbackType,
+    BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
+)
 
 UNARY_OP_MAP = {
     ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
@@ -1283,32 +1287,31 @@ class FuncElaborator:
         self._setup_outputs()
         for stmt in self.func_def.body:
             self._elab_stmt(stmt)
-        self._finalize_state_regs()
+        self._connect_final_state_wires()
         return self.logic
 
-    def _finalize_state_regs(self):
-        """Drive each state register's base wire with its "next cycle" value.
+    def _connect_final_state_wires(self):
+        """Connect final alias wires for state registers and feedback wires.
 
-        Mirrors _elab_return: _read_ref follows the alias chain (emitting CONST_REF_RD
-        for compound types with partial writes) to produce the final covering wire, then
-        _connect drives the base register wire with it.
+        For state registers: final alias → base wire (VHDL backend treats as REG_COMB).
+        For feedback wires:  final alias → base wire (combinatorial same-cycle driver).
+        Both share the same alias-chain resolution via _read_ref.
 
-        The apparent cycle (acc -> aliases -> acc) is broken by the VHDL backend at the
-        register boundary: acc reads from the flip-flop, its driver wire becomes REG_COMB.
-
-        If the register was never written, env[reg_name] still points to the base wire
+        If a register was never written, env[reg_name] still points to the base wire
         itself, so final_wire == reg_name; we skip the connect (no wire_driven_by entry),
         meaning the VHDL backend emits REG_COMB_x <= x (register holds its value).
         """
         for reg_name, var_info in self.logic.state_regs.items():
             c_type = var_info.type_name
-            # _read_ref follows the alias chain from the current env state.
-            # For scalar regs this returns env[reg_name] directly (no ast_node used).
-            # For compound regs with partial writes it emits a CONST_REF_RD, using
-            # self.func_def as the ast_node for instance naming.
             final_wire, _ = self._read_ref((reg_name,), c_type, self.func_def)
             if final_wire != reg_name:
                 _connect(self.logic, final_wire, reg_name)
+
+        for fb_name in self.logic.feedback_vars:
+            c_type = self.logic.wire_to_c_type[fb_name]
+            final_wire, _ = self._read_ref((fb_name,), c_type, self.func_def)
+            if final_wire != fb_name:
+                _connect(self.logic, final_wire, fb_name)
 
     def _setup_inputs(self):
         eval_ns = self._make_eval_ns()
@@ -1381,6 +1384,14 @@ class FuncElaborator:
         if isinstance(ann_val, _RegType):
             inner_ctype = str(ann_val.inner_ctype)
             self._declare_state_reg(var_name, inner_ctype, stmt.target)
+            return
+        if isinstance(ann_val, _FeedbackType):
+            if stmt.value is not None:
+                raise ElaborationError(
+                    f"Feedback wire '{var_name}' cannot have an initializer", stmt
+                )
+            inner_ctype = str(ann_val.inner_ctype)
+            self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
         # Normal local variable
         typ = _annotation_to_ctype(stmt.annotation, self._make_eval_ns())
@@ -3107,6 +3118,18 @@ class FuncElaborator:
 
         _add_wire(self.logic, var_name, c_type)
         self.env[var_name] = (var_name, c_type)
+
+    def _declare_feedback_var(self, var_name, c_type, node):
+        """Declare a combinatorial feedback wire (Feedback[T] annotation).
+
+        Like a state register's read side: base wire has NO driver (no COMPOUND_NULL),
+        so reads before assignment reference the wire directly. The final alias is
+        connected back to the base wire by _connect_final_state_wires, making the
+        VHDL signal driven combinatorially by the last assignment.
+        """
+        _add_wire(self.logic, var_name, c_type)
+        self.env[var_name] = (var_name, c_type)
+        self.logic.feedback_vars.add(var_name)
 
 
 # ─────────────────────────────────────────────
