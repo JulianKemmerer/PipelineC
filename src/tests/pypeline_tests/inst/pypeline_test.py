@@ -40,8 +40,7 @@ from pypeline import (
 
 """
 TODO
-Top level inputs and outputs global wires
-    Just Input[T] for now, no input regs similar no global regs
+it seems like imported function definitions also need managling in a similar way?
 Import syntax, multiple files, std lib, etc
     organize tests into multiple files with imports and such
 Single clock domain simulator?
@@ -69,7 +68,7 @@ BACKLOG
 # TODO constant wires based reduction that interacts with graph submodule instances:
 #         ex. var ref assign/read into constant
 #         ex. shift by a uint6_t type wire driven by constant
-#         ... some day might be helpful for making simulator?
+#         ... some day might be helpful for making simulator
 """
 
 global_in: Input[uint1_t]
