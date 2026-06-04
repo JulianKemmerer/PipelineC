@@ -11,6 +11,8 @@ from pypeline import (
     _RegType,
     _FeedbackType,
     _WireType,
+    _InputType,
+    _OutputType,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
 )
 
@@ -1397,9 +1399,9 @@ class FuncElaborator:
             inner_ctype = str(ann_val.inner_ctype)
             self._declare_state_reg(var_name, inner_ctype, stmt.target)
             return
-        if isinstance(ann_val, _WireType):
+        if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
             raise ElaborationError(
-                f"Wire[T] can only be used for global declarations, "
+                f"Wire/Input/Output[T] can only be used for global declarations, "
                 f"not inside function '{self.func_name}'"
             )
         if isinstance(ann_val, _FeedbackType):
@@ -3186,6 +3188,11 @@ class FuncElaborator:
         Points logic.write_only_global_wires[name] to the same VariableInfo object
         as parser_state.global_vars[name].
         """
+        if name in self.parser_state.input_wires:
+            raise ElaborationError(
+                f"Global Input '{name}' is read-only and cannot be written "
+                f"in '{self.func_name}'"
+            )
         if name in self.logic.read_only_global_wires:
             raise ElaborationError(
                 f"Global wire '{name}' is already read in '{self.func_name}'; "
@@ -3271,16 +3278,26 @@ def _discover_global_wires(tree, module_globals, parser_state):
             )
         except Exception:
             continue
-        if not isinstance(ann_val, _WireType):
+        if isinstance(ann_val, _WireType):
+            kind = "Wire"
+        elif isinstance(ann_val, _InputType):
+            kind = "Input"
+        elif isinstance(ann_val, _OutputType):
+            kind = "Output"
+        else:
             continue
         if node.value is not None:
             raise ElaborationError(
-                f"Global Wire '{node.target.id}' cannot have an initializer"
+                f"Global {kind} '{node.target.id}' cannot have an initializer"
             )
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = node.target.id
         var_info.type_name = str(ann_val.inner_ctype)
         parser_state.global_vars[node.target.id] = var_info
+        if kind == "Input":
+            parser_state.input_wires.add(node.target.id)
+        elif kind == "Output":
+            parser_state.output_wires.add(node.target.id)
 
 
 # ─────────────────────────────────────────────
@@ -3396,28 +3413,37 @@ def PARSE_FILE(py_file):
 
     _build_inst_lookup(parser_state)
 
-    # ── Validate global Wire[T] single-writer / single-instance rules ──
+    # ── Validate global Wire[T] / Input[T] / Output[T] rules ──
     for wire_name in parser_state.global_vars:
-        # Exactly one function definition may write each global wire.
         writers = [
             fname
             for fname, logic in parser_state.FuncLogicLookupTable.items()
             if wire_name in logic.write_only_global_wires
         ]
-        if len(writers) != 1:
-            raise ElaborationError(
-                f"Global Wire '{wire_name}' must be written by exactly 1 function, "
-                f"got {len(writers)}: {writers}"
-            )
-        # That writing function must appear exactly once in the hierarchy so there
-        # is only ever a single hardware driver for the wire.
-        writer = writers[0]
-        instances = parser_state.FuncToInstances.get(writer, set())
-        if len(instances) != 1:
-            raise ElaborationError(
-                f"Global Wire '{wire_name}' is written by '{writer}', which has "
-                f"{len(instances)} instance(s) in the hierarchy (must be exactly 1): "
-                f"{instances}"
-            )
+        if wire_name in parser_state.input_wires:
+            # Input[T]: globally read-only — no function may write it.
+            # (_declare_global_write_wire already errors at elaboration time, but
+            # verify post-hoc for completeness.)
+            if len(writers) != 0:
+                raise ElaborationError(
+                    f"Global Input '{wire_name}' must not be written by any function, "
+                    f"got: {writers}"
+                )
+        else:
+            # Wire[T] and Output[T]: exactly one writer, exactly one instance.
+            kind = "Output" if wire_name in parser_state.output_wires else "Wire"
+            if len(writers) != 1:
+                raise ElaborationError(
+                    f"Global {kind} '{wire_name}' must be written by exactly 1 function, "
+                    f"got {len(writers)}: {writers}"
+                )
+            writer = writers[0]
+            instances = parser_state.FuncToInstances.get(writer, set())
+            if len(instances) != 1:
+                raise ElaborationError(
+                    f"Global {kind} '{wire_name}' is written by '{writer}', which has "
+                    f"{len(instances)} instance(s) in the hierarchy (must be exactly 1): "
+                    f"{instances}"
+                )
 
     return parser_state

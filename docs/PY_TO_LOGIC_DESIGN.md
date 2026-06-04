@@ -1125,6 +1125,72 @@ to produce a typed descriptor, mirroring the `Reg` / `Feedback` pattern exactly.
 
 ---
 
+## Global I/O (`Input[T]` / `Output[T]`)
+
+`Input[T]` and `Output[T]` are **module-level** annotations that declare top-level
+design I/O ports. They follow the same elaboration path as `Wire[T]` with two
+extra effects:
+
+- `Input` names are added to `parser_state.input_wires` (a set already defined on
+  `C_TO_LOGIC.ParserState`)
+- `Output` names are added to `parser_state.output_wires`
+
+```python
+global_in:  Input[uint1_t]
+global_out: Output[uint1_t]
+
+@MAIN
+def global_io_test():
+    global_out = ~global_in
+```
+
+### Discovery
+
+`_discover_global_wires` (called in `PARSE_FILE`) scans `tree.body` for top-level
+`AnnAssign` nodes whose annotation evaluates to `_InputType` or `_OutputType`. For
+each one a `VariableInfo` is created and stored in `parser_state.global_vars`, and
+the name is added to `parser_state.input_wires` or `parser_state.output_wires`.
+
+### Read side — `Input[T]`
+
+Identical to `Wire[T]` reads: lazy init via `_declare_global_read_wire`, which
+populates `logic.read_only_global_wires[name]` and adds the base wire with no driver.
+Any function may read an `Input[T]` wire.
+
+### Write side — `Output[T]`
+
+Identical to `Wire[T]` writes: lazy init via `_declare_global_write_wire`, which
+populates `logic.write_only_global_wires[name]` and adds the base wire with no driver.
+`_connect_final_state_wires` connects the final alias back to the base wire at the
+end of elaboration, exactly as for `Wire[T]`.
+
+### Constraints
+
+- `Input[T]` is **globally read-only**. Any attempt to write it causes an immediate
+  `ElaborationError` in `_declare_global_write_wire` (before `read_only_global_wires`
+  conflict check, keyed on `parser_state.input_wires`).
+- `Output[T]` requires exactly one writing function with exactly one hierarchy instance
+  — the same single-writer / single-instance rule as `Wire[T]`.
+- Neither `Input[T]` nor `Output[T]` may appear inside a function body — `ElaborationError`.
+- No initializer allowed at declaration — `ElaborationError`.
+
+### Implementation mapping
+
+| Concept | Storage |
+|---------|---------|
+| Discovery | `parser_state.global_vars[name]` → `VariableInfo` |
+| Port set | `parser_state.input_wires` (Input) or `parser_state.output_wires` (Output) |
+| Read registration | `logic.read_only_global_wires[name]` (same `VariableInfo`) |
+| Write registration | `logic.write_only_global_wires[name]` (same `VariableInfo`) |
+| Base wire | `logic.wires`, `logic.wire_to_c_type` (no driver) |
+| Alias chain | `logic.wire_aliases_over_time[name]` (Output only) |
+| Final connection | `_connect_final_state_wires` → `wire_driven_by[name] = final_alias` (Output) |
+
+`Input` and `Output` are exported from `pypeline` as `_InputType` / `_OutputType`;
+both use `__class_getitem__` to produce typed descriptors, mirroring `Wire` exactly.
+
+---
+
 ## Compound Initializer Syntax
 
 A local variable of struct or array type can be initialized from a **NamedTuple
@@ -1694,6 +1760,8 @@ The companion module provides the types and decorators used in design files:
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` annotation declares a combinatorial feedback wire (no flip-flop, no zero-init) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` annotation at **module level** declares a named combinatorial wire shared across functions (one writer, any number of readers) |
+| `Input` / `_InputType` | Top-level design input port; `Input[T]` at module level; any function may read, no function may write |
+| `Output` / `_OutputType` | Top-level design output port; `Output[T]` at module level; exactly one function (one instance) may write it |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary Python operator on an exact `(lhs, rhs)` type pair; works for any op including `"PLUS"` on struct types |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary Python operator matching only on the left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary Python operator for a specific operand type; return type may differ from operand |

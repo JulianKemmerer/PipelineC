@@ -5,6 +5,8 @@ from pypeline import (
     Reg,
     Feedback,
     Wire,
+    Input,
+    Output,
     struct,
     uint1_t,
     uint4_t,
@@ -38,8 +40,6 @@ from pypeline import (
 
 """
 TODO
-Global wires Wire[T]
-    test connecting MAINs together
 Top level inputs and outputs global wires
     Just Input[T] for now, no input regs similar no global regs
 Import syntax, multiple files, std lib, etc
@@ -71,6 +71,15 @@ BACKLOG
 #         ex. shift by a uint6_t type wire driven by constant
 #         ... some day might be helpful for making simulator?
 """
+
+global_in: Input[uint1_t]
+global_out: Output[uint1_t]
+
+
+@MAIN
+def global_io_test():
+    global_out = ~global_in
+
 
 main_a_in: Wire[uint1_t]  # input into main_a
 main_a_out: Wire[uint1_t]  # output from main_a

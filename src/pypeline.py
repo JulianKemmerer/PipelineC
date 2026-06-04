@@ -626,6 +626,72 @@ class Wire(metaclass=_WireMeta):
     pass
 
 
+# Input[T] / Output[T] — top-level module I/O port annotations
+# ──────────────────────────────────────────────────────────────
+
+
+class _InputType:
+    """Produced by Input[T]. Marks a module-level variable as a top-level design input."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype
+
+    def __str__(self):
+        return f"Input[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _InputMeta(type):
+    def __getitem__(cls, inner_type):
+        return _InputType(inner_type)
+
+
+class Input(metaclass=_InputMeta):
+    """Marks a module-level variable as a top-level design input port.
+
+    Usage at module level only:
+        my_in: Input[uint1_t]
+
+    Any number of functions may read it; no function may write it.
+    Input[T] inside a function body is an ElaborationError.
+    """
+
+    pass
+
+
+class _OutputType:
+    """Produced by Output[T]. Marks a module-level variable as a top-level design output."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype
+
+    def __str__(self):
+        return f"Output[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _OutputMeta(type):
+    def __getitem__(cls, inner_type):
+        return _OutputType(inner_type)
+
+
+class Output(metaclass=_OutputMeta):
+    """Marks a module-level variable as a top-level design output port.
+
+    Usage at module level only:
+        my_out: Output[uint1_t]
+
+    Exactly one function (with exactly one hierarchy instance) may write it.
+    Output[T] inside a function body is an ElaborationError.
+    """
+
+    pass
+
+
 # ─────────────────────────────────────────────
 # Bit manipulation primitives
 # (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)
