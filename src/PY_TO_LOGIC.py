@@ -10,6 +10,7 @@ import AST as pypeline_ast
 from pypeline import (
     _RegType,
     _FeedbackType,
+    _WireType,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
 )
 
@@ -1313,6 +1314,12 @@ class FuncElaborator:
             if final_wire != fb_name:
                 _connect(self.logic, final_wire, fb_name)
 
+        for wire_name, var_info in self.logic.write_only_global_wires.items():
+            c_type = var_info.type_name
+            final_wire, _ = self._read_ref((wire_name,), c_type, self.func_def)
+            if final_wire != wire_name:
+                _connect(self.logic, final_wire, wire_name)
+
     def _setup_inputs(self):
         eval_ns = self._make_eval_ns()
         for arg in self.func_def.args.args:
@@ -1354,9 +1361,10 @@ class FuncElaborator:
         target = stmt.targets[0]
         # For simple Name targets not already declared as hardware:
         # try to evaluate RHS as a pure Python elaboration constant first.
+        # Global wire names are never cached as elaboration constants — always hardware.
         if isinstance(target, ast.Name):
             name = target.id
-            if name not in self.env:
+            if name not in self.env and name not in self.parser_state.global_vars:
                 const_val = self._try_eval_const(stmt.value)
                 if const_val is not None:
                     self.const_env[name] = const_val
@@ -1371,9 +1379,13 @@ class FuncElaborator:
         base_var = ref_toks[0]
         # Variable indices on LHS → VAR_REF_ASSIGN
         if _has_variable_index(ref_toks):
+            if base_var not in self.env and base_var in self.parser_state.global_vars:
+                self._declare_global_write_wire(base_var)
             self._emit_var_ref_assign(ref_toks, rhs_wire, rhs_type, stmt.value)
             return
-        if len(ref_toks) == 1 and base_var not in self.env:
+        if base_var not in self.env and base_var in self.parser_state.global_vars:
+            self._declare_global_write_wire(base_var)
+        elif len(ref_toks) == 1 and base_var not in self.env:
             self._declare_var(base_var, rhs_type, target)
         self._write_ref(ref_toks, rhs_wire, rhs_type, stmt.value)
 
@@ -1385,6 +1397,11 @@ class FuncElaborator:
             inner_ctype = str(ann_val.inner_ctype)
             self._declare_state_reg(var_name, inner_ctype, stmt.target)
             return
+        if isinstance(ann_val, _WireType):
+            raise ElaborationError(
+                f"Wire[T] can only be used for global declarations, "
+                f"not inside function '{self.func_name}'"
+            )
         if isinstance(ann_val, _FeedbackType):
             if stmt.value is not None:
                 raise ElaborationError(
@@ -1937,6 +1954,13 @@ class FuncElaborator:
                 f"Module global '{name}' ({type(val).__name__}) "
                 f"is not a hardware-usable value"
             )
+        # 4. Global wire (Wire[T] declared at module level) — lazy read init
+        if name in self.parser_state.global_vars:
+            self._declare_global_read_wire(name)
+            wire, typ = self.env[name]
+            if _is_scalar(typ, self.parser_state):
+                return wire, typ
+            return self._read_ref((name,), typ, expr)
         raise ElaborationError(f"Unknown name '{name}' in func '{self.func_name}'")
 
     def _elab_python_value(self, val, ast_node):
@@ -1965,6 +1989,8 @@ class FuncElaborator:
         """Elaborate a subscript or attribute RHS. Routes to VAR or CONST path."""
         ref_toks = self._parse_ref_toks(expr)
         base_var = ref_toks[0]
+        if base_var not in self.env and base_var in self.parser_state.global_vars:
+            self._declare_global_read_wire(base_var)
         _, base_type = self.env[base_var]
         c_type = _ref_toks_to_ctype(ref_toks, base_type, self.parser_state)
         if _has_variable_index(ref_toks):
@@ -3131,6 +3157,47 @@ class FuncElaborator:
         self.env[var_name] = (var_name, c_type)
         self.logic.feedback_vars.add(var_name)
 
+    def _declare_global_read_wire(self, name):
+        """Lazily initialize a global Wire[T] as read-only for this function.
+
+        Behaves like a module input: base wire added with no driver, reads return
+        the base wire name directly. Errors if this function already writes the wire.
+        Points logic.read_only_global_wires[name] to the same VariableInfo object
+        as parser_state.global_vars[name].
+        """
+        if name in self.logic.write_only_global_wires:
+            raise ElaborationError(
+                f"Global wire '{name}' is already written in '{self.func_name}'; "
+                f"cannot also read it"
+            )
+        var_info = self.parser_state.global_vars[name]
+        c_type = var_info.type_name
+        self.logic.read_only_global_wires[name] = var_info
+        var_info.used_in_funcs.add(self.func_name)
+        _add_wire(self.logic, name, c_type)
+        self.env[name] = (name, c_type)
+
+    def _declare_global_write_wire(self, name):
+        """Lazily initialize a global Wire[T] as write-only for this function.
+
+        Base wire has NO driver — the final alias is connected back in
+        _connect_final_state_wires, exactly like Feedback[T]. Errors if this
+        function already reads the wire.
+        Points logic.write_only_global_wires[name] to the same VariableInfo object
+        as parser_state.global_vars[name].
+        """
+        if name in self.logic.read_only_global_wires:
+            raise ElaborationError(
+                f"Global wire '{name}' is already read in '{self.func_name}'; "
+                f"cannot also write it"
+            )
+        var_info = self.parser_state.global_vars[name]
+        c_type = var_info.type_name
+        self.logic.write_only_global_wires[name] = var_info
+        var_info.used_in_funcs.add(self.func_name)
+        _add_wire(self.logic, name, c_type)
+        self.env[name] = (name, c_type)
+
 
 # ─────────────────────────────────────────────
 # Struct discovery
@@ -3184,6 +3251,36 @@ def _discover_structs_from_module(module, parser_state):
         c_name = getattr(obj, "_pypeline_ctype_name", name)
         parser_state.struct_to_field_type_dict[c_name] = fields
         # print(f"  struct: {c_name} -> {fields}")
+
+
+def _discover_global_wires(tree, module_globals, parser_state):
+    """Scan top-level AnnAssign nodes for Wire[T] annotations.
+    Populates parser_state.global_vars with a VariableInfo per wire.
+    Errors if a Wire[T] declaration has an initializer.
+    """
+    eval_ns = {**module_globals}
+    for node in tree.body:
+        if not isinstance(node, ast.AnnAssign):
+            continue
+        if not isinstance(node.target, ast.Name):
+            continue
+        try:
+            ann_val = eval(
+                compile(ast.Expression(body=node.annotation), "<wire_ann>", "eval"),
+                eval_ns,
+            )
+        except Exception:
+            continue
+        if not isinstance(ann_val, _WireType):
+            continue
+        if node.value is not None:
+            raise ElaborationError(
+                f"Global Wire '{node.target.id}' cannot have an initializer"
+            )
+        var_info = C_TO_LOGIC.VariableInfo()
+        var_info.name = node.target.id
+        var_info.type_name = str(ann_val.inner_ctype)
+        parser_state.global_vars[node.target.id] = var_info
 
 
 # ─────────────────────────────────────────────
@@ -3267,13 +3364,19 @@ def PARSE_FILE(py_file):
         source = f.read()
     tree = ast.parse(source)
 
+    # ── Step 4.5: discover global Wire[T] declarations ──
+    # Scan top-level AnnAssign nodes for Wire[T] annotations.
+    # Populates parser_state.global_vars so FuncElaborator can resolve them.
+    _discover_global_wires(tree, module_globals, parser_state)
+
     # Only collect top-level function definitions — not nested functions inside
     # factory closures like make_concat. ast.walk descends into everything so
     # we instead look only at direct children of the module body.
     func_defs = [
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and _is_hardware_func(node)
+        if isinstance(node, ast.FunctionDef)
+        and (_is_hardware_func(node) or node.name in main_names)
     ]
 
     for node in func_defs:
@@ -3292,4 +3395,29 @@ def PARSE_FILE(py_file):
             parser_state.main_clk_group[node.name] = None
 
     _build_inst_lookup(parser_state)
+
+    # ── Validate global Wire[T] single-writer / single-instance rules ──
+    for wire_name in parser_state.global_vars:
+        # Exactly one function definition may write each global wire.
+        writers = [
+            fname
+            for fname, logic in parser_state.FuncLogicLookupTable.items()
+            if wire_name in logic.write_only_global_wires
+        ]
+        if len(writers) != 1:
+            raise ElaborationError(
+                f"Global Wire '{wire_name}' must be written by exactly 1 function, "
+                f"got {len(writers)}: {writers}"
+            )
+        # That writing function must appear exactly once in the hierarchy so there
+        # is only ever a single hardware driver for the wire.
+        writer = writers[0]
+        instances = parser_state.FuncToInstances.get(writer, set())
+        if len(instances) != 1:
+            raise ElaborationError(
+                f"Global Wire '{wire_name}' is written by '{writer}', which has "
+                f"{len(instances)} instance(s) in the hierarchy (must be exactly 1): "
+                f"{instances}"
+            )
+
     return parser_state

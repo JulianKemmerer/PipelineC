@@ -591,6 +591,41 @@ class Feedback(metaclass=_FeedbackMeta):
     pass
 
 
+# Wire[T] — global combinatorial wire annotation
+# ───────────────────────────────────────────────
+
+
+class _WireType:
+    """Produced by Wire[T]. Marks a module-level variable as a global combinatorial wire."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype
+
+    def __str__(self):
+        return f"Wire[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _WireMeta(type):
+    def __getitem__(cls, inner_type):
+        return _WireType(inner_type)
+
+
+class Wire(metaclass=_WireMeta):
+    """Marks a module-level variable as a global combinatorial wire.
+
+    Usage at module level only:
+        my_sig: Wire[uint1_t]   # global combinatorial wire
+
+    Exactly one function may write to it; any number of functions may read from it.
+    Wire[T] inside a function body is an ElaborationError.
+    """
+
+    pass
+
+
 # ─────────────────────────────────────────────
 # Bit manipulation primitives
 # (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)

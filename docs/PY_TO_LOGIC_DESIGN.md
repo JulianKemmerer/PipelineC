@@ -1026,6 +1026,105 @@ mirroring the `Reg` / `_RegType` pattern exactly.
 
 ---
 
+## Global Wires (`Wire[T]`)
+
+A **module-level** variable annotated `Wire[T]` declares a named combinatorial wire that
+is shared across multiple hardware functions. Unlike `Reg[T]` and `Feedback[T]`, `Wire[T]`
+is valid **only at module (global) scope** — using it inside a function body is an
+`ElaborationError`.
+
+```python
+main_a_in:  Wire[uint1_t]   # input into main_a
+main_a_out: Wire[uint1_t]   # output from main_a
+
+@MAIN
+def main_a():
+    main_a_out = ~main_a_in   # writes global; reads global
+
+main_b_in:  Wire[uint1_t]
+main_b_out: Wire[uint1_t]
+
+@MAIN
+def main_b():
+    main_b_out = ~main_b_in
+
+@MAIN
+def a_b_connect():
+    main_b_in  = main_a_out   # connect output of A into B
+    main_a_in  = main_b_out   # connect output of B into A
+```
+
+### Discovery
+
+`PARSE_FILE` scans `tree.body` for top-level `ast.AnnAssign` nodes whose annotation
+evaluates to `_WireType`. For each one a `C_TO_LOGIC.VariableInfo()` is created (with
+`name` and `type_name` set) and stored in `parser_state.global_vars[name]`. An
+initializer on the declaration is an `ElaborationError`.
+
+### Read side — behaves like a module input
+
+When a function **reads** a global wire (`main_a_in` on the RHS), the elaborator lazily
+initialises it on first use:
+
+- Checks that this function has not already written the same wire (error if so).
+- Stores `parser_state.global_vars[name]` into `logic.read_only_global_wires[name]`
+  (both point to the same `VariableInfo` object).
+- Adds the base wire to `logic.wires` / `logic.wire_to_c_type` with no driver.
+- Adds `env[name] = (name, c_type)`.
+
+Subsequent reads of the base name return the base wire directly, exactly like a module
+input. Partial-path reads (`wire.field`, `wire[i]`) are handled by `_elab_ref_read`,
+which calls the same lazy init if the base var is not yet in `env`.
+
+### Write side — behaves like a module output
+
+When a function **writes** a global wire (`main_a_out = ...` on the LHS), the elaborator
+lazily initialises it on first use:
+
+- Checks that this function has not already read the same wire (error if so).
+- Stores `parser_state.global_vars[name]` into `logic.write_only_global_wires[name]`.
+- Adds the base wire to `logic.wires` / `logic.wire_to_c_type` with **no driver**,
+  analogous to a module output port — the combinatorial driver is the final alias.
+- Adds `env[name] = (name, c_type)`.
+
+All writes create aliases in `wire_aliases_over_time` via `_write_ref`, as for any
+variable. At the end of elaboration `_connect_final_state_wires` follows the alias chain
+and connects the final alias back to the base wire (`wire_driven_by[name] = final_alias`).
+
+### Const-path bypass
+
+In `_elab_assign`, the early-return path that caches a pure-Python constant into
+`const_env` is **skipped** for global wire names. This prevents `main_a_out = 0` from
+being silently cached as an elaboration constant instead of driving the hardware wire.
+
+### Constraints
+
+- A function cannot both read and write the same global wire — `ElaborationError`.
+- `Wire[T]` inside a function body — `ElaborationError`.
+- `Wire[T]` with an initializer at declaration — `ElaborationError`.
+- After all functions are elaborated, each global wire must appear in exactly one
+  function's `write_only_global_wires`. Zero writers or multiple writers → `ElaborationError`.
+- The writing function must have exactly one instance in the fully-elaborated submodule
+  hierarchy (`FuncToInstances[writer]` must contain exactly one key). Multiple instances
+  would mean multiple hardware drivers for the same wire → `ElaborationError`.
+- Global wires can be read from any number of functions (including non-`@MAIN` functions).
+
+### Implementation mapping
+
+| Concept | Storage |
+|---------|---------|
+| Discovery | `parser_state.global_vars[name]` → `VariableInfo` |
+| Read registration | `logic.read_only_global_wires[name]` (same `VariableInfo`) |
+| Write registration | `logic.write_only_global_wires[name]` (same `VariableInfo`) |
+| Base wire | `logic.wires`, `logic.wire_to_c_type` (no driver) |
+| Alias chain | `logic.wire_aliases_over_time[name]` |
+| Final connection | `_connect_final_state_wires` → `wire_driven_by[name] = final_alias` |
+
+`Wire` is exported from `pypeline` as `_WireType`; `Wire[T]` uses `__class_getitem__`
+to produce a typed descriptor, mirroring the `Reg` / `Feedback` pattern exactly.
+
+---
+
 ## Compound Initializer Syntax
 
 A local variable of struct or array type can be initialized from a **NamedTuple
@@ -1559,6 +1658,12 @@ sim_call(float_add_32, left, right)
 - **Feedback wires (`Feedback[T]`)** — not simulated; functions using feedback wires will
   not execute correctly as Python. The wire is driven by an assignment that appears later
   in source order, which has no meaning in sequential Python execution.
+- **Global wires (`Wire[T]`)** — not simulated; `Wire[T]` declarations at module level
+  do not create Python variables (only `__annotations__` entries), so functions that
+  read or write global wires will raise `NameError` when executed as plain Python.
+- **Global variables** — no other form of module-level mutable state is supported.
+  Only `Wire[T]` annotations are valid as shared cross-function globals in the
+  hardware elaboration model.
 - **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
   `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
   function call boundaries via `@hw_func`. Deep chains of arithmetic without function calls
@@ -1588,6 +1693,7 @@ The companion module provides the types and decorators used in design files:
 | `@MAIN` | Registers a function as a hardware entry point |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` annotation declares a combinatorial feedback wire (no flip-flop, no zero-init) |
+| `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` annotation at **module level** declares a named combinatorial wire shared across functions (one writer, any number of readers) |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary Python operator on an exact `(lhs, rhs)` type pair; works for any op including `"PLUS"` on struct types |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary Python operator matching only on the left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary Python operator for a specific operand type; return type may differ from operand |

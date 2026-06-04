@@ -4,6 +4,7 @@ from pypeline import (
     MAIN,
     Reg,
     Feedback,
+    Wire,
     struct,
     uint1_t,
     uint4_t,
@@ -18,7 +19,6 @@ from pypeline import (
     make_uint,
     make_int,
     make_float_t,
-    _RegType,
     register_operator,
     register_left_operator,
     register_unary_operator,
@@ -32,7 +32,6 @@ from pypeline import (
     uint_to_array_be,
     uint_to_array_le,
     concat,
-    SimVal,
     hw_func,
     sim_call,
 )
@@ -42,17 +41,19 @@ TODO
 Global wires Wire[T]
     test connecting MAINs together
 Top level inputs and outputs global wires
-    InputWire InputReg options etc
+    Just Input[T] for now, no input regs similar no global regs
 Import syntax, multiple files, std lib, etc
     organize tests into multiple files with imports and such
 Single clock domain simulator?
-    test regs,feedback,global wires
+    one local func first: regs and feeback
+    then global wires
 Aim for VGA as demo on simulation+board?
     Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
 Dream is really some kind of software->hardware flow right?
 BACKLOG
 # Multiple clock domains
-# Global FIFOs 
+# CDC/Global FIFOS can be implemented by user since cdc
+#       allow overload of sync fifo by user func
 # TODO printf for sim? is special func?
 # TODO RAW VHDL
 # Revisit register init values
@@ -70,6 +71,32 @@ BACKLOG
 #         ex. shift by a uint6_t type wire driven by constant
 #         ... some day might be helpful for making simulator?
 """
+
+main_a_in: Wire[uint1_t]  # input into main_a
+main_a_out: Wire[uint1_t]  # output from main_a
+
+
+@MAIN
+def main_a():
+    main_a_out = ~main_a_in
+
+
+main_b_in: Wire[uint1_t]  # input into main_b
+main_b_out: Wire[uint1_t]  # output from main_b
+
+
+@MAIN
+def main_b():
+    main_b_out = ~main_b_in
+
+
+# Connect output of A into B
+# and output of B into A
+# (nevermind this is bad combinatorial loop in synthesis)
+@MAIN
+def a_b_connect():
+    main_b_in = main_a_out
+    main_a_in = main_b_out
 
 
 @MAIN
