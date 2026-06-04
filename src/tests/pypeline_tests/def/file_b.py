@@ -6,5 +6,5 @@ o: Wire[uint1_t]
 
 
 @MAIN
-def main_b():
+def main():
     o = ~i

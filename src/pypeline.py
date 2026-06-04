@@ -699,8 +699,6 @@ class Output(metaclass=_OutputMeta):
 # Bit slice / select: use subscript syntax on integer wires
 #   y = x[15]       # single bit  → uint1_t
 #   z = x[15:0]     # range       → uint16_t
-# Bit concat: use tuple syntax on unsigned integer wires
-#   z = (a, b)      # a=upper, b=lower; chains for >2 elements
 
 
 def bit_dup(x, n):

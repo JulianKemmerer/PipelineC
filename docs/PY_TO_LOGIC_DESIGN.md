@@ -1056,10 +1056,16 @@ def a_b_connect():
 
 ### Discovery
 
-`PARSE_FILE` scans `tree.body` for top-level `ast.AnnAssign` nodes whose annotation
-evaluates to `_WireType`. For each one a `C_TO_LOGIC.VariableInfo()` is created (with
-`name` and `type_name` set) and stored in `parser_state.global_vars[name]`. An
-initializer on the declaration is an `ElaborationError`.
+`_discover_global_wires(tree, module_globals, parser_state, name_prefix=None)` scans
+`tree.body` for top-level `ast.AnnAssign` nodes whose annotation evaluates to
+`_WireType`. For each one a `C_TO_LOGIC.VariableInfo()` is created (with `name` and
+`type_name` set) and stored in `parser_state.global_vars[reg_name]`, where
+`reg_name = f"{name_prefix}_{bare_name}"` if a prefix is given, else `bare_name`.
+An initializer on the declaration is an `ElaborationError`.
+
+For the top-level design file, `name_prefix=None` (names used verbatim). For imported
+sub-files, `name_prefix=actual_module_name` so all wires are registered under the
+module-prefixed hardware name. See **Multi-File Import Support** for details.
 
 ### Read side — behaves like a module input
 
@@ -1188,6 +1194,182 @@ end of elaboration, exactly as for `Wire[T]`.
 
 `Input` and `Output` are exported from `pypeline` as `_InputType` / `_OutputType`;
 both use `__class_getitem__` to produce typed descriptors, mirroring `Wire` exactly.
+
+---
+
+## Multi-File Import Support
+
+Multiple design files can be organized like C's `#include` by using Python's `import`
+statement. The top-level file imports sub-files, and the elaborator automatically
+discovers and mangles all names from the imported modules.
+
+**Only `import file_a` (qualified attribute access) is supported.**
+`from file_a import *` is intentionally excluded: inside a function body, bare-name
+assignments like `main_b_in = main_a_out` look like local Python variable creation to
+the runtime, which would silently break the proto-simulation layer.
+
+### Motivating example
+
+```python
+# file_a.py
+i: Wire[uint1_t]
+o: Wire[uint1_t]
+@MAIN
+def main():
+    o = ~i
+
+# file_b.py
+i: Wire[uint1_t]
+o: Wire[uint1_t]
+@MAIN
+def main():
+    o = ~i
+
+# top.py
+import file_a
+import file_b
+@MAIN
+def a_b_connect():
+    file_b.i = file_a.o   # write file_b_i, read file_a_o
+    file_a.i = file_b.o   # write file_a_i, read file_b_o
+```
+
+Both sub-files can independently name their wires `i`/`o` and their `@MAIN` function
+`main`. The elaborator produces `file_a_i`, `file_a_o`, `file_a_main`, `file_b_i`, etc.
+
+### Name mangling rule
+
+All names from an imported file are prefixed with the **actual module name** (not any
+local alias), using a single underscore:
+
+```
+hardware_name = {actual_module_name}_{bare_name}
+```
+
+- `import file_a` → prefix `file_a` for all wires and functions in that file
+- `import file_a as fa` → Python attribute access uses `fa`, but hardware name is still
+  `file_a_i` (not `fa_i`). This ensures that two files importing the same module under
+  different aliases still refer to the same hardware wire — preventing phantom
+  multiple-driver errors.
+
+The double-underscore `____` SUBMODULE_MARKER used in port wire names is left unchanged;
+the single-underscore prefix is distinct and does not conflict.
+
+### `PARSE_FILE` import pre-pass (`_process_imports`)
+
+Before elaborating any hardware functions, `PARSE_FILE` inserts the design file's
+directory into `sys.path` so that `import file_a` resolves relative to the design file.
+It then calls `_process_imports`, which scans `tree.body` for `ast.Import` nodes:
+
+For each imported module that is a local `.py` file:
+
+1. Records `local_alias → actual_module_name` in `parser_state.module_alias_to_actual`
+   (e.g. `'fa' → 'file_a'` for `import file_a as fa`).
+2. Calls `_discover_structs_from_module(sub_mod, parser_state)` to register struct types.
+3. Calls `_discover_global_wires(sub_tree, sub_globals, parser_state, name_prefix=actual_name)`
+   which registers every `Wire[T]` / `Input[T]` / `Output[T]` in the sub-file under the
+   mangled name (`file_a_i`, `file_a_o`) in `parser_state.global_vars`.
+4. Appends `(sub_file, sub_tree, sub_globals, actual_name)` to `files_to_elaborate`.
+
+Modules are processed once per file path; a second alias pointing to the same file only
+adds an entry to `module_alias_to_actual` without re-parsing.
+
+### Wire access in hardware function bodies
+
+**Qualified attribute access** (`file_a.o` in a function body):
+
+```
+ast.Attribute(value=ast.Name(id='file_a'), attr='o')
+```
+
+In `_elab_expr`, before reaching `_elab_ref_read`, the elaborator calls
+`_resolve_module_wire_name(base, attr)`:
+
+1. Checks that `base` (`'file_a'`) is a `types.ModuleType` in `module_globals`.
+2. Looks up `base` in `parser_state.module_alias_to_actual` to get the actual module
+   name (handles aliases: `fa → file_a`).
+3. Constructs `mangled = f"{actual}_{attr}"` and checks it is in `parser_state.global_vars`.
+4. If found: proceeds exactly like a single-file global wire read/write under the
+   mangled name (`'file_a_o'`). All lazy-init, alias-chain, and validation logic is
+   unchanged — the mangled name is treated as the canonical wire name throughout.
+
+In `_elab_assign`, the same check runs before `_parse_ref_toks` on the LHS target,
+intercepting `file_a.i = ...` writes.
+
+**Bare-name access inside sub-file functions** (`o = ~i` in `file_a.py`):
+
+Functions elaborated from a sub-file carry `module_prefix='file_a'` on the
+`FuncElaborator`. The helper `_resolve_global_wire(bare_name)` first checks
+`parser_state.global_vars[bare_name]` directly (for top-file names); if not found and
+`module_prefix` is set, it tries `f"{module_prefix}_{bare_name}"`. This means:
+
+- `i` in `file_a.main` → `_resolve_global_wire('i')` → `'file_a_i'` (found)
+- `o = ~i` is elaborated as a write to `'file_a_o'` and a read from `'file_a_i'`
+
+`_elab_name` (step 4 global wire path), `_elab_assign` (const-bypass check and
+ref_toks normalization), and `_elab_ref_read` (base-var normalization) all call
+`_resolve_global_wire` so that compound and indexed accesses also resolve correctly.
+
+### Function name mangling
+
+All hardware functions in sub-files — both `@MAIN` entry points and plain hardware
+helper functions (`def adder_extra(a: T, b: T) -> T`) — are elaborated under a
+module-prefixed name:
+
+```python
+hw_name = f"{mod_prefix}_{node.name}" if mod_prefix else node.name
+```
+
+This happens at three sites in `PARSE_FILE`:
+
+- **Stub registration** (step 6): `FuncLogicLookupTable[hw_name] = stub`
+- **Elaboration** (step 7): `FuncElaborator` is constructed with `module_prefix`; its
+  `__init__` computes `self.func_name = hw_name` so that `logic.func_name` and all
+  submodule reference strings use the mangled name automatically.
+- **`main_mhz` registration**: uses `hw_name` so the synthesiser sees `file_a_main` as
+  the MAIN entry point, not `main`.
+
+**Intra-sub-file calls**: when `file_a.main` calls `adder_extra(x, y)`, `_elab_call`
+first attempts `f"{module_prefix}_{callee_name}"` in `FuncLogicLookupTable` before
+falling through to `_elaborate_live_func`. This ensures the call site references the
+already-elaborated `file_a_adder_extra` entity rather than triggering a duplicate
+re-elaboration under the unmangled name.
+
+### Struct types — no mangling
+
+`@struct` stamps `_pypeline_ctype_name` from the class name and field types at
+decoration time. Two files defining `class point_t` with identical fields produce the
+same canonical name and share a single VHDL type — correct deduplication. Files defining
+`class point_t` with different field types produce different canonical names based on
+field content, so there is no collision without module prefixing.
+
+### Proto-simulation limitation
+
+Global wires in single-file designs already fail when executed as plain Python
+(`Wire[T]` creates no Python value — `NameError`). The multi-file form is consistent:
+`file_a.o` would raise `AttributeError` at runtime for the same reason. Both limitations
+are pre-existing and documented.
+
+### Constraints specific to multi-file imports
+
+- Only `import file_a` (qualified access) is supported; `from file_a import *` is not.
+- `import` aliases are resolved to the actual module name for hardware naming:
+  `import file_a as fa` → hardware prefix `file_a`, not `fa`.
+- Only `.py` source files are processed; `.so`, built-in, and package modules are skipped.
+- Each imported file is processed once even if imported under multiple aliases.
+- Recursive sub-file imports (`file_a.py` itself importing `file_c.py`) are not
+  automatically followed; only the top file's imports are scanned.
+
+### Implementation mapping
+
+| Concept | Storage / location |
+|---|---|
+| Alias → actual module name | `parser_state.module_alias_to_actual` (dict) |
+| Sub-file wire discovery | `_discover_global_wires(..., name_prefix=actual_name)` |
+| Module-attr wire lookup | `FuncElaborator._resolve_module_wire_name(base, attr)` |
+| Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
+| Sub-file function hw name | `f"{mod_prefix}_{node.name}"` in PARSE_FILE steps 6–7; `FuncElaborator.func_name` |
+| Intra-sub-file call resolution | `_elab_call` prefixed-name lookup before `_elaborate_live_func` |
 
 ---
 
@@ -1962,7 +2144,10 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 | Struct C type | `<class_name>_<f1>_<t1_mangled>_...` (canonical, set by `@struct`) |
 | Array of struct | `<struct_canonical>[N]` in C type strings |
 | Top-level function | Python `def` name verbatim |
+| Imported sub-file function | `<actual_module_name>_<func_name>` (e.g. `file_a_main`) |
 | Factory function | `<factory_prefix>_<var>_<val>_...` (canonical, from qualname + closure vars) |
+| Top-file global wire | bare Python name (`main_a_in`) |
+| Imported sub-file wire | `<actual_module_name>_<bare_name>` (e.g. `file_a_i`) |
 | Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<v>_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
@@ -1974,19 +2159,38 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 ## End-to-End Flow Summary
 
 ```
-design.py
+top.py  (single-file or multi-file entry point)
   │
-  ├─ exec_module()                      Python runtime: factories, @MAIN, @struct, constants
+  ├─ sys.path.insert(design_dir)        Allow 'import file_a' to resolve relative to top.py
   │
-  ├─ _discover_structs_from_module()    Register struct field types from live namespace
+  ├─ exec_module()                      Python runtime: 'import file_a' executes sub-files,
+  │                                     registers all @MAIN (top + sub-files), runs factories
   │
-  ├─ ast.parse() on tree.body only      Top-level hardware functions, skip nested defs
+  ├─ _discover_structs_from_module()    Register struct field types from top file namespace
   │
-  ├─ FuncElaborator ×N                  One per top-level hardware function
-  │   ├─ _setup_inputs()                Add input wires → env
-  │   ├─ _setup_outputs()               Add return_output wire only if return annotation present (void → no output)
+  ├─ ast.parse(top.py)
+  │
+  ├─ _discover_global_wires(top.py)     Bare names — no prefix
+  │
+  ├─ _process_imports()                 For each 'import file_a' / 'import file_a as fa':
+  │   ├─ record 'fa' → 'file_a' in parser_state.module_alias_to_actual
+  │   ├─ _discover_structs_from_module(file_a)
+  │   ├─ _discover_global_wires(file_a.py, name_prefix='file_a')
+  │   │     → registers 'file_a_i', 'file_a_o', … in parser_state.global_vars
+  │   └─ queue (file_a.py, sub_tree, vars(file_a), 'file_a') for elaboration
+  │
+  ├─ Collect all_func_defs from every queued file
+  │
+  ├─ Register stubs: FuncLogicLookupTable[hw_name] = stub
+  │   (hw_name = 'file_a_main' for sub-file, bare name for top-file)
+  │
+  ├─ FuncElaborator ×N  (all files; sub-file elaborators carry module_prefix='file_a')
+  │   ├─ _setup_inputs()
+  │   ├─ _setup_outputs()
   │   └─ _elab_stmt() recursive:
   │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
+  │       │   ├─ module-attr LHS        file_a.i = expr  →  _resolve_module_wire_name → 'file_a_i'
+  │       │   └─ bare-name LHS (sub)    i = expr  →  _resolve_global_wire('i') → 'file_a_i'
   │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output; dict/list RHS → _elab_compound_init
   │       ├─ _elab_aug_assign           const_env update or hardware BinOp
   │       ├─ _elab_for                  unroll over constant iterable
@@ -1996,12 +2200,16 @@ design.py
   │           └─ _elab_expr:
   │               ├─ _elab_constant     _infer_const_ctype → CONST wire
   │               ├─ _elab_binop        BIN_OP built-in or registered binary operator submodule
-  │               ├─ _elab_unary       registered unary overload (ret type from func) or UNARY_OP built-in
+  │               ├─ _elab_unary        registered unary overload (ret type from func) or UNARY_OP built-in
+  │               ├─ module-attr RHS    file_a.o  →  _resolve_module_wire_name → 'file_a_o'
   │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
+  │               │   └─ bare-name (sub)  _resolve_global_wire → prefixed name
+  │               ├─ _elab_name (step 4) _resolve_global_wire → direct or prefixed global wire
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
-  │               └─ _elab_call         lookup FuncLogicLookupTable or _elaborate_live_func
+  │               └─ _elab_call         try prefixed name first (sub-file intra-call),
+  │                                     then FuncLogicLookupTable, then _elaborate_live_func
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable

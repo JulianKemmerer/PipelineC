@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import os
 import re
+import types as _types
 
 import C_TO_LOGIC
 import AST as pypeline_ast
@@ -1242,14 +1243,23 @@ class ElaborationError(Exception):
 
 
 class FuncElaborator:
-    def __init__(self, func_def, parser_state, src_file, module_globals=None):
+    def __init__(
+        self, func_def, parser_state, src_file, module_globals=None, module_prefix=None
+    ):
         self.func_def = func_def
-        self.func_name = func_def.name
+        # Hardware function name: mangled with module prefix for sub-file functions
+        # so file_a.main and file_b.main both elaborate without collision.
+        self.func_name = (
+            f"{module_prefix}_{func_def.name}" if module_prefix else func_def.name
+        )
         self.parser_state = parser_state
         self.src_file = src_file
         # module_globals: live Python namespace from executing the design file.
         # Provides N, M, sum_widths etc. for elaboration-time evaluation.
         self.module_globals = module_globals or {}
+        # module_prefix: set to the import name (e.g. 'file_a') for functions defined in
+        # an imported sub-file. Bare wire names and func names are mangled with this prefix.
+        self.module_prefix = module_prefix
         self.logic = C_TO_LOGIC.Logic()
         self.logic.func_name = self.func_name
         # env: hardware wires — ref_toks env key string -> (wire_name, c_type_str)
@@ -1269,6 +1279,35 @@ class FuncElaborator:
     def _make_eval_ns(self):
         """Merged namespace for eval(): module globals + current const_env."""
         return {**self.module_globals, **self.const_env}
+
+    def _resolve_global_wire(self, bare_name):
+        """Return the global_vars key for bare_name.
+        Returns bare_name if found directly; returns module-prefixed variant if
+        this elaborator has a module_prefix (sub-file context); returns None if not found.
+        """
+        if bare_name in self.parser_state.global_vars:
+            return bare_name
+        if self.module_prefix:
+            mangled = f"{self.module_prefix}_{bare_name}"
+            if mangled in self.parser_state.global_vars:
+                return mangled
+        return None
+
+    def _resolve_module_wire_name(self, base_name, attr_name):
+        """If base_name is a module alias in module_globals and attr_name is a known
+        wire on that module, return the mangled hardware wire name. Else return None.
+        Used to handle 'file_a.main_a_out' style attribute access on imported modules.
+        """
+        if base_name not in self.module_globals:
+            return None
+        if not isinstance(self.module_globals[base_name], _types.ModuleType):
+            return None
+        aliases = getattr(self.parser_state, "module_alias_to_actual", {})
+        actual = aliases.get(base_name, base_name)
+        mangled = f"{actual}_{attr_name}"
+        if mangled in self.parser_state.global_vars:
+            return mangled
+        return None
 
     def _try_eval_const(self, node):
         """Try to evaluate an AST expression as a plain Python elaboration-time value.
@@ -1366,7 +1405,7 @@ class FuncElaborator:
         # Global wire names are never cached as elaboration constants — always hardware.
         if isinstance(target, ast.Name):
             name = target.id
-            if name not in self.env and name not in self.parser_state.global_vars:
+            if name not in self.env and self._resolve_global_wire(name) is None:
                 const_val = self._try_eval_const(stmt.value)
                 if const_val is not None:
                     self.const_env[name] = const_val
@@ -1377,8 +1416,22 @@ class FuncElaborator:
         if isinstance(target, ast.Subscript):
             if self._try_elab_bit_slice_assign(target, rhs_wire, rhs_type, stmt):
                 return
+        # Module-qualified global wire write: file_a.main_a_in = expr
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            mangled = self._resolve_module_wire_name(target.value.id, target.attr)
+            if mangled is not None:
+                if mangled not in self.env:
+                    self._declare_global_write_wire(mangled)
+                self._write_ref((mangled,), rhs_wire, rhs_type, stmt.value)
+                return
         ref_toks = self._parse_ref_toks(target)
         base_var = ref_toks[0]
+        # Normalize bare base_var for sub-file functions (e.g. 'main_a_out' -> 'file_a_main_a_out')
+        if isinstance(base_var, str):
+            global_key = self._resolve_global_wire(base_var)
+            if global_key and global_key != base_var:
+                ref_toks = (global_key,) + ref_toks[1:]
+                base_var = global_key
         # Variable indices on LHS → VAR_REF_ASSIGN
         if _has_variable_index(ref_toks):
             if base_var not in self.env and base_var in self.parser_state.global_vars:
@@ -1932,6 +1985,16 @@ class FuncElaborator:
                 result = self._try_elab_bit_slice(expr)
                 if result is not None:
                     return result
+            # Module-qualified global wire read: file_a.main_a_out
+            if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+                mangled = self._resolve_module_wire_name(expr.value.id, expr.attr)
+                if mangled is not None:
+                    if mangled not in self.env:
+                        self._declare_global_read_wire(mangled)
+                    wire, typ = self.env[mangled]
+                    if _is_scalar(typ, self.parser_state):
+                        return wire, typ
+                    return self._read_ref((mangled,), typ, expr)
             return self._elab_ref_read(expr)
         else:
             raise NotImplementedError(f"Unsupported expr: {ast.dump(expr)}")
@@ -1957,12 +2020,15 @@ class FuncElaborator:
                 f"is not a hardware-usable value"
             )
         # 4. Global wire (Wire[T] declared at module level) — lazy read init
-        if name in self.parser_state.global_vars:
-            self._declare_global_read_wire(name)
-            wire, typ = self.env[name]
+        # _resolve_global_wire handles both direct names and module-prefixed names
+        # for sub-file functions (e.g. bare 'main_a_in' -> 'file_a_main_a_in').
+        global_key = self._resolve_global_wire(name)
+        if global_key is not None:
+            self._declare_global_read_wire(global_key)
+            wire, typ = self.env[global_key]
             if _is_scalar(typ, self.parser_state):
                 return wire, typ
-            return self._read_ref((name,), typ, expr)
+            return self._read_ref((global_key,), typ, expr)
         raise ElaborationError(f"Unknown name '{name}' in func '{self.func_name}'")
 
     def _elab_python_value(self, val, ast_node):
@@ -1991,6 +2057,12 @@ class FuncElaborator:
         """Elaborate a subscript or attribute RHS. Routes to VAR or CONST path."""
         ref_toks = self._parse_ref_toks(expr)
         base_var = ref_toks[0]
+        # Normalize bare base_var for sub-file functions (e.g. 'arr' -> 'file_a_arr')
+        if isinstance(base_var, str):
+            global_key = self._resolve_global_wire(base_var)
+            if global_key and global_key != base_var:
+                ref_toks = (global_key,) + ref_toks[1:]
+                base_var = global_key
         if base_var not in self.env and base_var in self.parser_state.global_vars:
             self._declare_global_read_wire(base_var)
         _, base_type = self.env[base_var]
@@ -2419,6 +2491,14 @@ class FuncElaborator:
         if callee_name in _BIT_MANIP_FUNC_NAMES:
             return self._elab_bit_manip_call(expr)
         callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
+        if callee_def is None and self.module_prefix:
+            # For sub-file functions, helper functions in the same file are pre-elaborated
+            # under a module-prefixed name (file_a_adder_extra). Try that before live-func.
+            prefixed = f"{self.module_prefix}_{callee_name}"
+            prefixed_def = self.parser_state.FuncLogicLookupTable.get(prefixed)
+            if prefixed_def is not None:
+                callee_def = prefixed_def
+                callee_name = prefixed
         if callee_def is None:
             # Not found in elaborated functions — check if it's a live callable
             # in module_globals (e.g. a closure returned by a factory function)
@@ -3260,10 +3340,13 @@ def _discover_structs_from_module(module, parser_state):
         # print(f"  struct: {c_name} -> {fields}")
 
 
-def _discover_global_wires(tree, module_globals, parser_state):
+def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None):
     """Scan top-level AnnAssign nodes for Wire[T] annotations.
     Populates parser_state.global_vars with a VariableInfo per wire.
     Errors if a Wire[T] declaration has an initializer.
+
+    name_prefix: if given, registers wires as "{name_prefix}_{bare_name}" to allow
+    multiple imported design files to share the same parser_state without collisions.
     """
     eval_ns = {**module_globals}
     for node in tree.body:
@@ -3290,14 +3373,16 @@ def _discover_global_wires(tree, module_globals, parser_state):
             raise ElaborationError(
                 f"Global {kind} '{node.target.id}' cannot have an initializer"
             )
+        bare_name = node.target.id
+        reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
         var_info = C_TO_LOGIC.VariableInfo()
-        var_info.name = node.target.id
+        var_info.name = reg_name
         var_info.type_name = str(ann_val.inner_ctype)
-        parser_state.global_vars[node.target.id] = var_info
+        parser_state.global_vars[reg_name] = var_info
         if kind == "Input":
-            parser_state.input_wires.add(node.target.id)
+            parser_state.input_wires.add(reg_name)
         elif kind == "Output":
-            parser_state.output_wires.add(node.target.id)
+            parser_state.output_wires.add(reg_name)
 
 
 # ─────────────────────────────────────────────
@@ -3352,15 +3437,82 @@ def _build_inst_lookup(parser_state):
 # ─────────────────────────────────────────────
 
 
+def _process_imports(tree, module_globals, parser_state, files_to_elaborate):
+    """Scan top-level ast.Import nodes in tree.body.
+
+    For each imported module that resolves to a local .py file:
+    - Registers Wire[T]/Input[T]/Output[T] declarations in parser_state.global_vars
+      under a module-prefixed name ({actual_module_name}_{bare_wire_name}).
+    - Records local_alias -> actual_module_name in parser_state.module_alias_to_actual
+      so the elaborator can resolve 'fa.main_a_out' -> 'file_a_main_a_out'.
+    - Appends (file_path, sub_tree, sub_globals, module_prefix) to files_to_elaborate
+      so those files' hardware functions are also elaborated.
+
+    Only processes each file once (tracked by processed_files set).
+    Skips built-in modules, .so extensions, and any file already in files_to_elaborate.
+    """
+    processed_files = {entry[0] for entry in files_to_elaborate}
+    for node in tree.body:
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            local_name = alias.asname or alias.name
+            if local_name not in module_globals:
+                continue
+            sub_mod = module_globals[local_name]
+            if not isinstance(sub_mod, _types.ModuleType):
+                continue
+            sub_file = getattr(sub_mod, "__file__", None)
+            if not sub_file:
+                continue
+            # Resolve .pyc -> .py
+            if not sub_file.endswith(".py"):
+                try:
+                    sub_file = importlib.util.source_from_cache(sub_file)
+                except Exception:
+                    continue
+            if not os.path.isfile(sub_file):
+                continue
+            if sub_file in processed_files:
+                # Already queued (e.g. imported under two aliases) — still record alias
+                actual_name = alias.name.replace(".", "_")
+                parser_state.module_alias_to_actual[local_name] = actual_name
+                continue
+            processed_files.add(sub_file)
+
+            actual_name = alias.name.replace(".", "_")
+            parser_state.module_alias_to_actual[local_name] = actual_name
+
+            sub_globals = vars(sub_mod)
+            with open(sub_file, "r") as fh:
+                sub_src = fh.read()
+            sub_tree = ast.parse(sub_src)
+
+            _discover_structs_from_module(sub_mod, parser_state)
+            _discover_global_wires(
+                sub_tree, sub_globals, parser_state, name_prefix=actual_name
+            )
+            files_to_elaborate.append((sub_file, sub_tree, sub_globals, actual_name))
+
+
 def PARSE_FILE(py_file):
     print("PY_TO_LOGIC parsing:", py_file)
 
     # ── Step 1: execute the design file as a Python module ──
     # This runs all elaboration-time Python: type factory functions, constants,
     # @MAIN registrations, struct definitions etc.
+    # Imported sub-files (import file_a) are executed automatically by Python
+    # and their @MAIN functions are registered in pypeline._main_registry too.
     import pypeline
 
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
+
+    # Make imports relative to the design file's directory work (e.g. 'import file_a')
+    import sys
+
+    design_dir = os.path.dirname(os.path.abspath(py_file))
+    if design_dir not in sys.path:
+        sys.path.insert(0, design_dir)
 
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)
@@ -3368,9 +3520,9 @@ def PARSE_FILE(py_file):
 
     module_globals = vars(module)
     parser_state = C_TO_LOGIC.ParserState()
+    parser_state.module_alias_to_actual = {}  # local alias -> actual module name
 
     # ── Step 2: discover structs from live module namespace ──
-    # Handles both static class definitions and factory-generated types.
     _discover_structs_from_module(module, parser_state)
 
     # ── Step 3: collect MAINs from the pypeline registry ──
@@ -3381,35 +3533,49 @@ def PARSE_FILE(py_file):
         source = f.read()
     tree = ast.parse(source)
 
-    # ── Step 4.5: discover global Wire[T] declarations ──
-    # Scan top-level AnnAssign nodes for Wire[T] annotations.
-    # Populates parser_state.global_vars so FuncElaborator can resolve them.
+    # ── Step 4.5: discover global Wire[T] declarations (top file, no prefix) ──
     _discover_global_wires(tree, module_globals, parser_state)
 
-    # Only collect top-level function definitions — not nested functions inside
-    # factory closures like make_concat. ast.walk descends into everything so
-    # we instead look only at direct children of the module body.
-    func_defs = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and (_is_hardware_func(node) or node.name in main_names)
-    ]
+    # ── Step 4.6: process imports — discover wires and functions from sub-files ──
+    # files_to_elaborate: list of (file_path, ast_tree, file_module_globals, module_prefix)
+    # module_prefix is None for the top file, 'file_a' etc. for imported sub-files.
+    files_to_elaborate = [(py_file, tree, module_globals, None)]
+    _process_imports(tree, module_globals, parser_state, files_to_elaborate)
 
-    for node in func_defs:
-        stub = C_TO_LOGIC.Logic()
-        stub.func_name = node.name
-        parser_state.FuncLogicLookupTable[node.name] = stub
+    # ── Step 5: collect top-level hardware function defs from all files ──
+    # Only top-level defs (direct children of module body); nested factory closures
+    # are elaborated on-demand by _elaborate_live_func.
+    all_func_defs = []  # (ast.FunctionDef, file_path, file_module_globals, module_prefix)
+    for file_path, ftree, fglobals, mod_prefix in files_to_elaborate:
+        for node in ftree.body:
+            if isinstance(node, ast.FunctionDef) and (
+                _is_hardware_func(node) or node.name in main_names
+            ):
+                all_func_defs.append((node, file_path, fglobals, mod_prefix))
 
-    for node in func_defs:
-        print(f"  elaborating func: {node.name}")
-        elab = FuncElaborator(node, parser_state, py_file, module_globals)
+    # ── Step 6: register stubs first so cross-file forward references resolve ──
+    # hw_name is module-prefixed for sub-file functions (file_a_main, file_b_main)
+    # so two imported files can both define a function named 'main' without collision.
+    for node, _fp, _fg, mod_prefix in all_func_defs:
+        hw_name = f"{mod_prefix}_{node.name}" if mod_prefix else node.name
+        if hw_name not in parser_state.FuncLogicLookupTable:
+            stub = C_TO_LOGIC.Logic()
+            stub.func_name = hw_name
+            parser_state.FuncLogicLookupTable[hw_name] = stub
+
+    # ── Step 7: elaborate all functions ──
+    for node, file_path, fglobals, mod_prefix in all_func_defs:
+        hw_name = f"{mod_prefix}_{node.name}" if mod_prefix else node.name
+        print(f"  elaborating func: {hw_name}")
+        elab = FuncElaborator(
+            node, parser_state, file_path, fglobals, module_prefix=mod_prefix
+        )
         logic = elab.elaborate()
-        parser_state.FuncLogicLookupTable[node.name] = logic
+        parser_state.FuncLogicLookupTable[hw_name] = logic
         if node.name in main_names:
-            parser_state.main_mhz[node.name] = None
-            parser_state.main_syn_mhz[node.name] = None
-            parser_state.main_clk_group[node.name] = None
+            parser_state.main_mhz[hw_name] = None
+            parser_state.main_syn_mhz[hw_name] = None
+            parser_state.main_clk_group[hw_name] = None
 
     _build_inst_lookup(parser_state)
 
