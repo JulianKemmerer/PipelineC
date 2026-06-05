@@ -444,53 +444,53 @@ _scoped_left_operator_registry: dict = {}
 _scoped_unary_operator_registry: dict = {}
 
 
-def register_operator(op: str, left_type, right_type, func_name, scope=None) -> None:
+def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
     """Register a hardware function as the implementation of a variable binary operator.
     Matches on both left and right operand types (exact match).
 
-    op:        "SL" (<<) or "SR" (>>)
-    left_type: C type of the left operand (e.g. uint32_t)
+    op:         "SL" (<<) or "SR" (>>)
+    left_type:  C type of the left operand (e.g. uint32_t)
     right_type: C type of the right operand / shift amount (e.g. uint6_t)
-    func_name: string name of a module-level callable, or a callable directly.
-    scope:     if provided, registration is active only while elaborating that callable.
+    func:       callable hardware function object.
+    scope:      if provided, registration is active only while elaborating that callable.
     """
     key = (op, _ctype_str(left_type), _ctype_str(right_type))
     if scope is None:
-        _operator_registry[key] = func_name
+        _operator_registry[key] = func
     else:
-        _scoped_operator_registry.setdefault(id(scope), {})[key] = func_name
+        _scoped_operator_registry.setdefault(id(scope), {})[key] = func
 
 
-def register_left_operator(op: str, left_type, func_name, scope=None) -> None:
+def register_left_operator(op: str, left_type, func, scope=None) -> None:
     """Register a hardware function as the implementation of a binary operator,
     matching only on the left operand type. The right operand type is derived
     from the registered function (e.g. shift amount derived from value width).
 
     op:        "SL" (<<) or "SR" (>>)
     left_type: C type of the left operand (e.g. uint32_t)
-    func_name: string name of a module-level callable, or a callable directly.
+    func:      callable hardware function object.
     scope:     if provided, registration is active only while elaborating that callable.
     """
     key = (op, _ctype_str(left_type))
     if scope is None:
-        _left_operator_registry[key] = func_name
+        _left_operator_registry[key] = func
     else:
-        _scoped_left_operator_registry.setdefault(id(scope), {})[key] = func_name
+        _scoped_left_operator_registry.setdefault(id(scope), {})[key] = func
 
 
-def register_unary_operator(op: str, operand_type, func_name, scope=None) -> None:
+def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
     """Register a hardware function as the implementation of a unary operator.
 
     op:           "NEGATE" (-) or "NOT" (~)
     operand_type: C type of the operand (e.g. uint32_t)
-    func_name:    string name of a module-level callable, or a callable directly.
+    func:         callable hardware function object.
     scope:        if provided, registration is active only while elaborating that callable.
     """
     key = (op, _ctype_str(operand_type))
     if scope is None:
-        _unary_operator_registry[key] = func_name
+        _unary_operator_registry[key] = func
     else:
-        _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func_name
+        _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func
 
 
 def _push_scoped_registrations(func):

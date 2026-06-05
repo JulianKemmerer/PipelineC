@@ -1259,7 +1259,8 @@ the single-underscore prefix is distinct and does not conflict.
 
 Before elaborating any hardware functions, `PARSE_FILE` inserts the design file's
 directory into `sys.path` so that `import file_a` resolves relative to the design file.
-It then calls `_process_imports`, which scans `tree.body` for `ast.Import` nodes:
+It then calls `_process_imports(tree, module_globals, parser_state, files_to_elaborate, top_file)`,
+which scans `tree.body` for `ast.Import` nodes:
 
 For each imported module that is a local `.py` file:
 
@@ -1272,7 +1273,25 @@ For each imported module that is a local `.py` file:
 4. Appends `(sub_file, sub_tree, sub_globals, actual_name)` to `files_to_elaborate`.
 
 Modules are processed once per file path; a second alias pointing to the same file only
-adds an entry to `module_alias_to_actual` without re-parsing.
+adds an entry to `module_alias_to_actual` without re-parsing. The `top_file` path is
+passed to seed `processed_files` so the top file can never be added as its own sub-file.
+
+### Elaboration ordering — sub-files first
+
+`files_to_elaborate` is built with sub-files listed **before** the top file:
+
+```python
+files_to_elaborate = []
+_process_imports(...)          # appends sub-files
+files_to_elaborate.append(top) # top file last
+```
+
+This guarantees that all sub-file functions are fully elaborated before the top file's
+elaboration begins. If the top file calls a sub-file function
+(`rv = pypeline_tests.accumulator(data_in)`), the callee is already complete in
+`FuncLogicLookupTable` — no stub lookup race. The stubs registered in step 6 still
+exist as forward references for recursive calls within a single file; they are never
+hit cross-file as long as this ordering is maintained.
 
 ### Wire access in hardware function bodies
 
@@ -1335,6 +1354,57 @@ falling through to `_elaborate_live_func`. This ensures the call site references
 already-elaborated `file_a_adder_extra` entity rather than triggering a duplicate
 re-elaboration under the unmangled name.
 
+### Cross-file function calls
+
+The top file (or any file with `module_prefix=None`) can call a function from an
+imported sub-module using **attribute call syntax**:
+
+```python
+rv = pypeline_tests.accumulator(data_in)   # ast.Call with ast.Attribute func
+```
+
+The AST for such a call has `expr.func` as `ast.Attribute` rather than `ast.Name`.
+`_elab_call` detects this at the top of the function:
+
+1. Verifies the base (`'pypeline_tests'`) is a `types.ModuleType` in `module_globals`.
+2. Fetches the callable via `getattr(base_obj, attr_name)`.
+3. Computes `callee_name = f"{actual_module}_{attr_name}"` (e.g. `'pypeline_tests_accumulator'`).
+4. Looks up `callee_name` in `FuncLogicLookupTable` — because sub-files are elaborated
+   first, this is always a fully-elaborated Logic(), never a stub.
+5. If not found (factory closure not yet elaborated): falls through to
+   `_elaborate_live_func(callee_name, live_func)`.
+
+The remainder of the call elaboration (port wiring, submodule instance creation) is
+identical to the simple-name path.
+
+This same mechanism handles calling factory-closure results from imported modules:
+
+```python
+result = pypeline_tests.abs_int32(a)   # make_abs(int32_t, uint32_t) result
+```
+
+`abs_int32` is a closure (not a top-level `def`), so it is not pre-elaborated in step 6.
+`_elaborate_live_func` handles it on first call; the canonical name from `_canonical_func_name`
+(e.g. `make_abs_IN_T_int32_t_OUT_T_uint32_t`) is used for deduplication.
+
+### Module-level constants from imported files
+
+Constants defined in a sub-file (e.g. `SHIFT_AMOUNT = 5` in `pypeline_tests.py`) are
+**not** directly accessible in hardware function bodies of the top file. The elaborator
+resolves bare names against `module_globals` of the top file; a bare `SHIFT_AMOUNT` is
+not there, and `pypeline_tests.SHIFT_AMOUNT` in a hardware body is an `ast.Attribute`
+that `_resolve_module_wire_name` rejects (not a wire).
+
+The correct pattern is to copy the constant at module level in the top file:
+
+```python
+import pypeline_tests
+SHIFT_AMOUNT = pypeline_tests.SHIFT_AMOUNT   # now in module_globals as a plain int
+```
+
+Inside hardware function bodies, `SHIFT_AMOUNT` is then resolved via `module_globals`
+as an elaboration-time constant (integer), not a hardware wire.
+
 ### Struct types — no mangling
 
 `@struct` stamps `_pypeline_ctype_name` from the class name and field types at
@@ -1370,6 +1440,9 @@ are pre-existing and documented.
 | Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
 | Sub-file function hw name | `f"{mod_prefix}_{node.name}"` in PARSE_FILE steps 6–7; `FuncElaborator.func_name` |
 | Intra-sub-file call resolution | `_elab_call` prefixed-name lookup before `_elaborate_live_func` |
+| Cross-file function call | `_elab_call` `ast.Attribute` branch → `getattr` + `FuncLogicLookupTable` lookup |
+| Elaboration order | Sub-files first in `files_to_elaborate`; top file appended last |
+| Module constants in top file | `CONST = imported_mod.CONST` at module level copies into `module_globals` |
 
 ---
 
@@ -2172,14 +2245,15 @@ top.py  (single-file or multi-file entry point)
   │
   ├─ _discover_global_wires(top.py)     Bare names — no prefix
   │
-  ├─ _process_imports()                 For each 'import file_a' / 'import file_a as fa':
+  ├─ _process_imports(top_file=top.py)  For each 'import file_a' / 'import file_a as fa':
   │   ├─ record 'fa' → 'file_a' in parser_state.module_alias_to_actual
   │   ├─ _discover_structs_from_module(file_a)
   │   ├─ _discover_global_wires(file_a.py, name_prefix='file_a')
   │   │     → registers 'file_a_i', 'file_a_o', … in parser_state.global_vars
   │   └─ queue (file_a.py, sub_tree, vars(file_a), 'file_a') for elaboration
+  ├─ files_to_elaborate.append(top.py)  ← top file queued LAST
   │
-  ├─ Collect all_func_defs from every queued file
+  ├─ Collect all_func_defs from every queued file (sub-files first, top file last)
   │
   ├─ Register stubs: FuncLogicLookupTable[hw_name] = stub
   │   (hw_name = 'file_a_main' for sub-file, bare name for top-file)
@@ -2208,8 +2282,9 @@ top.py  (single-file or multi-file entry point)
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
-  │               └─ _elab_call         try prefixed name first (sub-file intra-call),
-  │                                     then FuncLogicLookupTable, then _elaborate_live_func
+  │               └─ _elab_call         ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
+  │                                   ast.Attribute: module-qualified call (mod.func(args)) →
+  │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable

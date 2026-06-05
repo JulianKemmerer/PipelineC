@@ -2487,26 +2487,54 @@ class FuncElaborator:
         return port_return, C_TO_LOGIC.BOOL_C_TYPE
 
     def _elab_call(self, expr):
-        callee_name = expr.func.id
-        if callee_name in _BIT_MANIP_FUNC_NAMES:
-            return self._elab_bit_manip_call(expr)
-        callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
-        if callee_def is None and self.module_prefix:
-            # For sub-file functions, helper functions in the same file are pre-elaborated
-            # under a module-prefixed name (file_a_adder_extra). Try that before live-func.
-            prefixed = f"{self.module_prefix}_{callee_name}"
-            prefixed_def = self.parser_state.FuncLogicLookupTable.get(prefixed)
-            if prefixed_def is not None:
-                callee_def = prefixed_def
-                callee_name = prefixed
-        if callee_def is None:
-            # Not found in elaborated functions — check if it's a live callable
-            # in module_globals (e.g. a closure returned by a factory function)
-            live_func = self.module_globals.get(callee_name)
-            if live_func is not None and callable(live_func):
+        # ── Resolve callee ──────────────────────────────────────────────────────
+        if isinstance(expr.func, ast.Attribute):
+            # Module-qualified call: pypeline_tests.abs_int32(a)
+            if not isinstance(expr.func.value, ast.Name):
+                raise NotImplementedError(
+                    f"Unsupported call form: {ast.dump(expr.func)}"
+                )
+            base_name = expr.func.value.id
+            attr_name = expr.func.attr
+            base_obj = self.module_globals.get(base_name)
+            if not isinstance(base_obj, _types.ModuleType):
+                raise NotImplementedError(
+                    f"'{base_name}' is not a module in call '{base_name}.{attr_name}'"
+                )
+            live_func = getattr(base_obj, attr_name, None)
+            if not callable(live_func):
+                raise NotImplementedError(
+                    f"Call to unknown function '{base_name}.{attr_name}'"
+                )
+            aliases = getattr(self.parser_state, "module_alias_to_actual", {})
+            actual = aliases.get(base_name, base_name)
+            callee_name = f"{actual}_{attr_name}"
+            # Check if already pre-elaborated (top-level def from sub-file)
+            callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
+            if callee_def is None:
                 callee_def = self._elaborate_live_func(callee_name, live_func)
-            else:
-                raise NotImplementedError(f"Call to unknown function '{callee_name}'")
+        else:
+            # Simple name call: abs_int32(a)
+            callee_name = expr.func.id
+            if callee_name in _BIT_MANIP_FUNC_NAMES:
+                return self._elab_bit_manip_call(expr)
+            callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
+            if callee_def is None and self.module_prefix:
+                # For sub-file functions, helpers are pre-elaborated under a prefixed name.
+                prefixed = f"{self.module_prefix}_{callee_name}"
+                prefixed_def = self.parser_state.FuncLogicLookupTable.get(prefixed)
+                if prefixed_def is not None:
+                    callee_def = prefixed_def
+                    callee_name = prefixed
+            if callee_def is None:
+                # Not in table — check if it's a live callable (factory closure etc.)
+                live_func = self.module_globals.get(callee_name)
+                if live_func is not None and callable(live_func):
+                    callee_def = self._elaborate_live_func(callee_name, live_func)
+                else:
+                    raise NotImplementedError(
+                        f"Call to unknown function '{callee_name}'"
+                    )
         inst = self._inst(callee_name, expr)
         ret_typ = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -2700,22 +2728,17 @@ class FuncElaborator:
 
         raise NotImplementedError(f"Unknown bit manip function: {callee_name!r}")
 
-    def _resolve_registered_impl(self, impl_name, expr):
-        """Resolve a registered operator impl (string name or callable) to a Logic().
-        String names are looked up in module_globals; callables are elaborated directly.
+    def _resolve_registered_impl(self, func, expr):
+        """Resolve a registered operator impl callable to a Logic().
+        The impl must be a callable hardware function object — pass the function
+        directly to register_*_operator rather than using a string name.
         """
-        if callable(impl_name):
-            return self._elaborate_live_func(impl_name.__name__, impl_name)
-        callee_def = self.parser_state.FuncLogicLookupTable.get(impl_name)
-        if callee_def is None:
-            live_func = self.module_globals.get(impl_name)
-            if live_func is None or not callable(live_func):
-                raise NotImplementedError(
-                    f"Registered operator '{impl_name}' not found in module globals"
-                    f" (at {_loc_str(self.src_file, expr)})"
-                )
-            callee_def = self._elaborate_live_func(impl_name, live_func)
-        return callee_def
+        if not callable(func):
+            raise NotImplementedError(
+                f"Registered operator impl {func!r} is not callable"
+                f" (at {_loc_str(self.src_file, expr)})"
+            )
+        return self._elaborate_live_func(func.__name__, func)
 
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
@@ -3437,7 +3460,9 @@ def _build_inst_lookup(parser_state):
 # ─────────────────────────────────────────────
 
 
-def _process_imports(tree, module_globals, parser_state, files_to_elaborate):
+def _process_imports(
+    tree, module_globals, parser_state, files_to_elaborate, top_file=None
+):
     """Scan top-level ast.Import nodes in tree.body.
 
     For each imported module that resolves to a local .py file:
@@ -3452,6 +3477,8 @@ def _process_imports(tree, module_globals, parser_state, files_to_elaborate):
     Skips built-in modules, .so extensions, and any file already in files_to_elaborate.
     """
     processed_files = {entry[0] for entry in files_to_elaborate}
+    if top_file:
+        processed_files.add(os.path.abspath(top_file))
     for node in tree.body:
         if not isinstance(node, ast.Import):
             continue
@@ -3539,8 +3566,13 @@ def PARSE_FILE(py_file):
     # ── Step 4.6: process imports — discover wires and functions from sub-files ──
     # files_to_elaborate: list of (file_path, ast_tree, file_module_globals, module_prefix)
     # module_prefix is None for the top file, 'file_a' etc. for imported sub-files.
-    files_to_elaborate = [(py_file, tree, module_globals, None)]
-    _process_imports(tree, module_globals, parser_state, files_to_elaborate)
+    # Sub-files are listed BEFORE the top file so their functions are fully elaborated
+    # before the top file's functions run and try to call them.
+    files_to_elaborate = []
+    _process_imports(
+        tree, module_globals, parser_state, files_to_elaborate, top_file=py_file
+    )
+    files_to_elaborate.append((py_file, tree, module_globals, None))  # top file last
 
     # ── Step 5: collect top-level hardware function defs from all files ──
     # Only top-level defs (direct children of module body); nested factory closures
