@@ -38,6 +38,7 @@ from pypeline import (
 )
 
 
+@hw_func
 def accumulator(data_in: uint32_t) -> uint32_t:
     acc: Reg[uint32_t]
     acc = acc + data_in

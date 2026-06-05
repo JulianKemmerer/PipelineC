@@ -793,6 +793,147 @@ BIT_MANIP_FUNC_NAMES = frozenset(
 
 import functools as _functools
 import inspect as _inspect
+import sys as _sys
+import dis as _dis
+import ast as _ast
+import textwrap as _textwrap
+
+
+# ─────────────────────────────────────────────
+# Sim register state: instance path tracking and per-instance register storage
+# ─────────────────────────────────────────────
+
+# Stack of (func_qualname, call_loc) entries tracking the current simulation
+# instance path. call_loc = (filename, lineno, col_offset, end_col_offset),
+# mirroring the hardware elaborator's _loc_str(src_file, node) convention.
+_sim_inst_stack = []
+
+# Register state keyed by instance path tuple.
+# _sim_reg_state[inst_path][reg_name] = current integer value (0 = reset default).
+_sim_reg_state = {}
+
+
+def _sim_current_inst_path():
+    """Return the current simulation instance path as an immutable tuple."""
+    return tuple(_sim_inst_stack)
+
+
+def _sim_reg_read(inst_path, reg_name):
+    """Return the current register value for this instance (0 if never written)."""
+    return _sim_reg_state.get(inst_path, {}).get(reg_name, 0)
+
+
+def _sim_reg_write(inst_path, reg_name, value):
+    """Update the register value for this instance."""
+    _sim_reg_state.setdefault(inst_path, {})[reg_name] = int(value)
+
+
+def sim_reset():
+    """Clear all simulated register state, resetting all flip-flops to 0."""
+    _sim_reg_state.clear()
+
+
+def _build_reg_sim_func(fn):
+    """Build a simulation-mode function body for fn that manages Reg[T] state.
+
+    Scans the function body's AST for `var: Reg[T]` annotation-only statements.
+    Returns None if none are found or if source extraction fails.
+
+    When registers are found, transforms each declaration into a read from
+    _sim_reg_state at function entry and writes the final value back via
+    try/finally so all return paths (including exceptions) are covered:
+
+        __ip__ = _sim_current_inst_path()
+        <reg> = _sim_reg_read(__ip__, "<reg>")   ← one per register
+        try:
+            <original body minus Reg[T] AnnAssigns>
+        finally:
+            _sim_reg_write(__ip__, "<reg>", <reg>)  ← one per register
+
+    Note: local variable annotations (var: T inside a function body) are NOT
+    stored in fn.__annotations__ by Python, so registers must be discovered
+    by evaluating the AnnAssign annotation nodes against the function's globals.
+    """
+    orig_fn = _inspect.unwrap(fn)
+    try:
+        src = _textwrap.dedent(_inspect.getsource(orig_fn))
+    except (OSError, TypeError):
+        return None
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError:
+        return None
+
+    func_def = next((n for n in tree.body if isinstance(n, _ast.FunctionDef)), None)
+    if func_def is None:
+        return None
+
+    # Discover register variable names by evaluating each annotation-only
+    # AnnAssign against the function's globals.
+    reg_names = []
+    for stmt in func_def.body:
+        if not (
+            isinstance(stmt, _ast.AnnAssign)
+            and isinstance(stmt.target, _ast.Name)
+            and stmt.value is None
+        ):
+            continue
+        try:
+            ann_val = eval(
+                compile(_ast.Expression(body=stmt.annotation), "<ann>", "eval"),
+                fn.__globals__,
+            )
+        except Exception:
+            continue
+        if isinstance(ann_val, _RegType):
+            reg_names.append(stmt.target.id)
+
+    if not reg_names:
+        return None
+
+    new_stmts = [_ast.parse("__ip__ = _sim_current_inst_path()").body[0]]
+    for name in reg_names:
+        new_stmts.append(
+            _ast.parse(f'{name} = _sim_reg_read(__ip__, "{name}")').body[0]
+        )
+
+    orig_body = [
+        stmt
+        for stmt in func_def.body
+        if not (
+            isinstance(stmt, _ast.AnnAssign)
+            and isinstance(stmt.target, _ast.Name)
+            and stmt.target.id in reg_names
+            and stmt.value is None
+        )
+    ]
+
+    finally_stmts = [
+        _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
+        for name in reg_names
+    ]
+
+    func_def.body = new_stmts + [
+        _ast.Try(body=orig_body, handlers=[], orelse=[], finalbody=finally_stmts)
+    ]
+    func_def.decorator_list = []  # strip decorators to avoid re-wrapping on exec
+
+    _ast.fix_missing_locations(tree)
+
+    src_file = getattr(getattr(orig_fn, "__code__", None), "co_filename", "<sim_reg>")
+    try:
+        code = compile(tree, src_file, "exec")
+    except Exception:
+        return None
+
+    new_globals = dict(fn.__globals__)
+    new_globals.update(
+        _sim_current_inst_path=_sim_current_inst_path,
+        _sim_reg_read=_sim_reg_read,
+        _sim_reg_write=_sim_reg_write,
+    )
+    exec(code, new_globals)  # noqa: S102
+    return new_globals.get(orig_fn.__name__)
 
 
 def _sim_cast(val, ctype):
@@ -812,9 +953,11 @@ def _sim_cast(val, ctype):
 def _sim_type_wrap(fn):
     """Wrap a pypeline hardware function for bit-accurate simulation.
 
-    On each call: casts positional arguments to their annotated input types,
-    pushes any scoped operator registrations, calls the original function, pops
-    registrations, then casts the return value to the annotated return type.
+    On each call: records the call-site location for register instance identity,
+    casts positional arguments to their annotated input types, pushes any scoped
+    operator registrations, calls the original function (or a register-aware
+    simulation body for Reg[T] functions), pops registrations, then casts the
+    return value to the annotated return type.
 
     Transparent to the hardware elaborator: _elaborate_live_func uses
     inspect.unwrap() to recover the original function for source analysis.
@@ -828,30 +971,56 @@ def _sim_type_wrap(fn):
         params = []
     ret_t = ann.get("return")
 
+    # Scan source for Reg[T] local annotations and build register-aware sim body.
+    # Done once at decoration time; returns None when no registers are present.
+    sim_body_fn = _build_reg_sim_func(fn)
+
     @_functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        new_args = list(args)
-        for i, a in enumerate(args):
-            if i < len(params):
-                pt = ann.get(params[i])
-                if (
-                    pt is not None
-                    and isinstance(a, (int, SimVal))
-                    and _is_scalar_pypeline_int(pt)
-                ):
-                    new_args[i] = _sim_cast(a, pt)
-        saved = _push_scoped_registrations(fn)
+        # Capture call-site (filename, lineno, col, end_col) from caller's frame.
+        # This mirrors the hardware elaborator's _loc_str instance-naming convention
+        # and uniquely identifies which hardware instance is being simulated.
+        caller_f = _sys._getframe(1)
+        filename = caller_f.f_code.co_filename
+        lineno = caller_f.f_lineno
+        col, end_col = None, None
+        if hasattr(caller_f.f_code, "co_positions"):
+            lasti = caller_f.f_lasti
+            instr_idx = lasti // 2
+            positions = list(caller_f.f_code.co_positions())
+            if 0 <= instr_idx < len(positions):
+                pos = positions[instr_idx]
+                if pos[2] is not None:
+                    col, end_col = pos[2], pos[3]
+        _sim_inst_stack.append((fn.__qualname__, (filename, lineno, col, end_col)))
         try:
-            result = fn(*new_args, **kwargs)
+            new_args = list(args)
+            for i, a in enumerate(args):
+                if i < len(params):
+                    pt = ann.get(params[i])
+                    if (
+                        pt is not None
+                        and isinstance(a, (int, SimVal))
+                        and _is_scalar_pypeline_int(pt)
+                    ):
+                        new_args[i] = _sim_cast(a, pt)
+            saved = _push_scoped_registrations(fn)
+            try:
+                if sim_body_fn is not None:
+                    result = sim_body_fn(*new_args, **kwargs)
+                else:
+                    result = fn(*new_args, **kwargs)
+            finally:
+                _pop_scoped_registrations(saved)
+            if (
+                ret_t is not None
+                and isinstance(result, (int, SimVal))
+                and _is_scalar_pypeline_int(ret_t)
+            ):
+                result = _sim_cast(result, ret_t)
+            return result
         finally:
-            _pop_scoped_registrations(saved)
-        if (
-            ret_t is not None
-            and isinstance(result, (int, SimVal))
-            and _is_scalar_pypeline_int(ret_t)
-        ):
-            result = _sim_cast(result, ret_t)
-        return result
+            _sim_inst_stack.pop()
 
     return wrapper
 

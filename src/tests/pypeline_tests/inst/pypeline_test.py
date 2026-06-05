@@ -14,6 +14,8 @@ from pypeline import (
     uint8_t,
     uint32_t,
     uint34_t,
+    hw_func,
+    sim_reset,
     sim_call,
 )
 
@@ -26,14 +28,16 @@ import pypeline_tests
 """
 TODO
 Single clock domain simulator?
-    one local func first: regs then feeback
+    want to output waveform files
+    one local func first: regs 
+        then feedback(test not fully/at all driven feedback and output wires)
     then global wires
 Aim for VGA as demo on simulation+board?
     Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
 Dream is really some kind of software->hardware flow right?
 BACKLOG
 # Multiple clock domains
-# CDC/Global FIFOS can be implemented by user since cdc
+# CDC/Global FIFOS CANT be implemented by user since cdc
 #       allow overload of sync fifo by user func
 # TODO printf for sim? is special func?
 # TODO RAW VHDL
@@ -52,6 +56,28 @@ BACKLOG
 #         ex. shift by a uint6_t type wire driven by constant
 #         ... some day might be helpful for making simulator
 """
+
+
+@MAIN
+def regs_multi_inst(sel: uint1_t, data_in: uint32_t) -> uint32_t:
+    rv: uint32_t
+    if sel:
+        rv = pypeline_tests.accumulator(data_in)  # instance1
+    else:
+        rv = pypeline_tests.accumulator(data_in)  # instance0
+    return rv
+
+
+def test_regs_multi_inst():
+    sim_reset()
+    assert sim_call(regs_multi_inst, sel=1, data_in=1) == 1  # instance1 acc: 0→1
+    assert sim_call(regs_multi_inst, sel=0, data_in=1) == 1  # instance0 acc: 0→1
+    assert sim_call(regs_multi_inst, sel=1, data_in=1) == 2  # instance1 acc: 1→2
+    print("test_regs_multi_inst PASS")
+
+
+if __name__ == "__main__":
+    test_regs_multi_inst()
 
 
 @MAIN

@@ -1836,11 +1836,16 @@ simply ignored on the hardware path.
 The `@hw_func` decorator wraps a pypeline hardware function to propagate type information
 through the simulation call graph:
 
-1. **On entry:** each positional argument is cast to its annotated parameter type via
+1. **Instance path:** pushes `(func_qualname, call_loc)` onto `_sim_inst_stack` before
+   the call and pops it in a `finally` block after. `call_loc = (filename, lineno,
+   col_offset, end_col_offset)` is captured from the caller's frame via `sys._getframe(1)`,
+   mirroring the hardware elaborator's `_loc_str` instance-naming convention. This enables
+   multi-instance register simulation (see **`Reg[T]` Simulation** below).
+2. **On entry:** each positional argument is cast to its annotated parameter type via
    `_sim_cast` (scalar integer args only; array/struct args pass through).
-2. **Scoped operators:** `_push_scoped_registrations(original_fn)` is called, making any
+3. **Scoped operators:** `_push_scoped_registrations(original_fn)` is called, making any
    operators registered with `scope=fn` temporarily active.
-3. **On exit:** the return value is cast to the annotated return type via `_sim_cast`
+4. **On exit:** the return value is cast to the annotated return type via `_sim_cast`
    (if scalar integer).
 
 `functools.wraps` preserves `__name__`, `__annotations__`, and merges `__dict__`, so
@@ -1972,10 +1977,162 @@ sim_call(float_add_32, left, right)
   └─ result is a float32_t NamedTuple (not a dict, thanks to NamedTuple constructor form)
 ```
 
+### `Reg[T]` Simulation — Stateful Registers Across Clock Cycles
+
+Functions that contain `Reg[T]` state registers can be simulated. Two problems must be
+solved:
+
+**Problem 1 — local annotation creates no Python variable.**
+`acc: Reg[uint32_t]` inside a function body is a Python annotation-only statement; it
+does not create a local variable. Python's `fn.__annotations__` does NOT include local
+variable annotations (only parameter and return annotations). Any subsequent read of
+`acc` raises `NameError`.
+
+**Problem 2 — same function, multiple hardware instances.**
+In hardware, each call site of `accum_func` is a distinct flip-flop instance. In the
+example below, lines 71 and 73 are two separate instances with independent `acc`
+registers. The simulator must route reads and writes to the correct per-instance copy.
+
+Both problems are solved by **`_build_reg_sim_func`** (called once at `@hw_func`/`@MAIN`
+decoration time) combined with the **instance path stack** maintained in `_sim_type_wrap`.
+
+#### Instance Path Stack
+
+`_sim_inst_stack` is a module-level list. Each `@hw_func`/`@MAIN` wrapper pushes
+`(func_qualname, (filename, lineno, col_offset, end_col_offset))` before calling the
+function body and pops it in `finally`. The `call_loc` tuple is read from the
+**caller's** frame (`sys._getframe(1)`) so that two calls to the same function at
+different source lines produce different entries, exactly as the hardware elaborator
+produces distinct instance names from `_loc_str`.
+
+`_sim_current_inst_path()` returns `tuple(_sim_inst_stack)` — an immutable snapshot
+used as the dict key for register state.
+
+#### Per-Instance Register State
+
+```python
+_sim_reg_state: dict[tuple, dict[str, int]]
+# _sim_reg_state[inst_path][reg_name] = current integer value (0 = power-on reset)
+```
+
+Two helpers manage it:
+
+```python
+def _sim_reg_read(inst_path, reg_name): ...   # returns 0 if never written
+def _sim_reg_write(inst_path, reg_name, value): ...
+```
+
+`sim_reset()` clears `_sim_reg_state` entirely, equivalent to a hardware power-on reset.
+Call it at the start of each independent sim test.
+
+#### `_build_reg_sim_func` — AST Transformation at Decoration Time
+
+When `@hw_func` is applied to a function, `_sim_type_wrap` calls `_build_reg_sim_func(fn)`.
+This function:
+
+1. Retrieves source via `inspect.getsource(inspect.unwrap(fn))` + `textwrap.dedent`.
+2. Parses the source with `ast.parse` and finds the top-level `FunctionDef`.
+3. **Discovers registers** by evaluating each annotation-only `AnnAssign` node in the
+   function body against `fn.__globals__` — the only way to detect `_RegType` instances
+   without running the hardware elaborator (because Python never stores local variable
+   annotations in `__annotations__`).
+4. If no `_RegType` annotations are found, returns `None` (no transformation needed).
+5. Otherwise builds a **transformed function body**:
+
+```python
+# generated at decoration time — not user-written:
+def accum_func(data_in: uint32_t) -> uint32_t:
+    __ip__ = _sim_current_inst_path()
+    acc    = _sim_reg_read(__ip__, "acc")   # ← reads current-cycle value for this instance
+    try:
+        # original body with Reg[T] AnnAssign nodes removed:
+        acc = acc + data_in
+        return acc
+    finally:
+        _sim_reg_write(__ip__, "acc", acc)  # ← writes next-cycle value for this instance
+```
+
+The `try/finally` pattern handles all return paths (including multiple `return`
+statements and exceptions). Python's `finally` executes with `acc` at its **final
+local value** before the frame is torn down, so the written-back value is always correct.
+
+Decorator nodes are stripped before `compile`/`exec` to prevent re-wrapping. The
+compiled function's `__globals__` is a copy of `fn.__globals__` augmented with the three
+sim helpers, so all user-defined types and constants remain in scope.
+
+The transformation is done **once at decoration time** and the result is captured in
+`wrapper`'s closure as `sim_body_fn`. Subsequent calls invoke `sim_body_fn` instead of
+the original `fn`.
+
+This mechanism is transparent to the hardware elaborator: `_elaborate_live_func` calls
+`inspect.unwrap(fn)` to recover the original, unmodified function object.
+
+#### Multi-Instance Trace
+
+```python
+@hw_func
+def accum_func(data_in: uint32_t) -> uint32_t:
+    acc: Reg[uint32_t]
+    acc = acc + data_in
+    return acc
+
+@MAIN
+def regs_multi_inst(sel: uint1_t, data_in: uint32_t) -> uint32_t:
+    rv: uint32_t
+    if sel:
+        rv = accum_func(data_in)  # line 71 → instance1
+    else:
+        rv = accum_func(data_in)  # line 73 → instance0
+    return rv
+```
+
+```
+sim_reset()
+
+sim_call(regs_multi_inst, sel=1, data_in=1)
+  regs_multi_inst wrapper → push ("regs_multi_inst", (test.py, sim_call_line, …))
+    sel=1 → if branch at line 71
+    accum_func wrapper → push ("accum_func", (test.py, 71, col, end_col))
+      inst_path = (("regs_multi_inst", …), ("accum_func", (test.py, 71, …)))
+      acc = _sim_reg_read(inst_path, "acc") → 0   (first call, reset value)
+      acc = 0 + 1 = 1
+      finally: _sim_reg_write(inst_path, "acc", 1)
+    accum_func wrapper → pop; return 1
+  → rv = 1; result = 1  ✓
+
+sim_call(regs_multi_inst, sel=0, data_in=1)
+    sel=0 → else branch at line 73
+    accum_func wrapper → push ("accum_func", (test.py, 73, …))   ← different line!
+      inst_path ends in (test.py, 73, …) — distinct from instance1
+      acc = _sim_reg_read(inst_path, "acc") → 0   (instance0, first call)
+      acc = 0 + 1 = 1
+      finally: _sim_reg_write(inst_path, "acc", 1)
+    → result = 1  ✓
+
+sim_call(regs_multi_inst, sel=1, data_in=1)
+    accum_func wrapper → push ("accum_func", (test.py, 71, …))
+      acc = _sim_reg_read(inst_path, "acc") → 1   (instance1 saved from first call)
+      acc = 1 + 1 = 2
+      finally: _sim_reg_write(inst_path, "acc", 2)
+    → result = 2  ✓
+```
+
+**`@hw_func` requirement:** functions with `Reg[T]` annotations must be decorated with
+`@hw_func` (or be a `@MAIN` function) for register simulation to work. This is already
+the intended pattern — `@hw_func` marks any hardware-typed helper function.
+
+**`col_offset` / `end_col_offset`:** available on Python 3.11+ via
+`frame.f_code.co_positions()`. On earlier Python versions the tuple falls back to
+`(filename, lineno, None, None)`, which is still sufficient to distinguish call sites
+since two calls to the same function on the same line would be unusual.
+
+---
+
 ### Limitations of the Current Proto-Sim
 
-- **Registers (`Reg[T]`)** — not simulated; functions with state registers will not execute
-  correctly as Python. The sim is designed for pure combinational functions only.
+- **Registers (`Reg[T]`)** — supported; see `Reg[T]` Simulation section above.
+  Functions with `Reg[T]` must carry `@hw_func` (or `@MAIN`) for the simulation
+  infrastructure to engage.
 - **Feedback wires (`Feedback[T]`)** — not simulated; functions using feedback wires will
   not execute correctly as Python. The wire is driven by an assignment that appears later
   in source order, which has no meaning in sequential Python execution.
@@ -2029,8 +2186,11 @@ The companion module provides the types and decorators used in design files:
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
 | `SimVal` | Thin `int` subclass for simulation: bit-slice `__getitem__`, operator dispatch via registry, ctype-tracked (see Proto-Simulation section) |
 | `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement signedness |
-| `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting; transparent to hardware elaboration via `inspect.unwrap` |
+| `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting and register state management; transparent to hardware elaboration via `inspect.unwrap` |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
+| `sim_reset()` | Clear all simulated register state (`_sim_reg_state`), equivalent to hardware power-on reset; call at the start of each independent sim test |
+| `_sim_inst_stack` | Module-level list tracking the current simulation instance path; each `@hw_func`/`@MAIN` wrapper pushes/pops `(func_qualname, call_loc)` |
+| `_sim_reg_state` | Module-level dict `inst_path → {reg_name: value}`; holds persistent register values across `sim_call` invocations |
 
 All types are declared as proper Python `class` statements with `_CTypeMeta` as metaclass
 (not variable assignments), so Pylance/pyright accepts them as valid type expressions.
