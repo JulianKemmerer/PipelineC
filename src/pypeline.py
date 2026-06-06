@@ -812,6 +812,10 @@ _sim_inst_stack = []
 # _sim_reg_state[inst_path][reg_name] = current integer value (0 = reset default).
 _sim_reg_state = {}
 
+# Maximum convergence iterations for Feedback[T] simulation.
+# Combinatorial feedback must reach a fixed point in far fewer iterations than this.
+_SIM_FEEDBACK_MAX_ITER = 1000
+
 
 def _sim_current_inst_path():
     """Return the current simulation instance path as an immutable tuple."""
@@ -834,25 +838,51 @@ def sim_reset():
 
 
 def _build_reg_sim_func(fn):
-    """Build a simulation-mode function body for fn that manages Reg[T] state.
+    """Build a simulation-mode function body for fn that manages Reg[T] and Feedback[T].
 
-    Scans the function body's AST for `var: Reg[T]` annotation-only statements.
-    Returns None if none are found or if source extraction fails.
+    Scans the function body's AST for `var: Reg[T]` and `var: Feedback[T]`
+    annotation-only statements. Returns None if neither are found or if source
+    extraction fails.
 
-    When registers are found, transforms each declaration into a read from
-    _sim_reg_state at function entry and writes the final value back via
-    try/finally so all return paths (including exceptions) are covered:
+    Unified transformation — each section is emitted only when the corresponding
+    collection is non-empty:
 
+        # only when reg_names non-empty:
         __ip__ = _sim_current_inst_path()
-        <reg> = _sim_reg_read(__ip__, "<reg>")   ← one per register
-        try:
-            <original body minus Reg[T] AnnAssigns>
-        finally:
-            _sim_reg_write(__ip__, "<reg>", <reg>)  ← one per register
+        <reg> = _sim_reg_read(__ip__, "<reg>")   # per register
+        <__reg_init_reg> = <reg>                 # snapshot for convergence reset
+
+        # only when feedback_names non-empty:
+        <fb> = 0                                 # per feedback var, zero-init
+        __fb_iters = 0
+
+        # try/finally wraps the while when reg_names non-empty; bare while otherwise:
+        [try:]
+            while True:
+                # only when feedback_names non-empty:
+                __fb_iters += 1
+                if __fb_iters > _SIM_FEEDBACK_MAX_ITER: raise RuntimeError(...)
+                # only when BOTH reg and feedback non-empty:
+                <reg> = <__reg_init_reg>         # reset reg to initial each pass
+                # only when feedback_names non-empty:
+                <__fb_snap_fb> = <fb>            # snapshot per feedback var
+                <original body minus stripped AnnAssigns>
+                # when feedback_names non-empty — convergence check:
+                if <fb> == <__fb_snap_fb> [and ...]: break
+                # when feedback_names IS empty — always run body once:
+                break
+        [finally:]
+            # only when reg_names non-empty:
+            _sim_reg_write(__ip__, "<reg>", <reg>)  # per register
+
+    When feedback_names is empty the while degenerates to a single pass
+    (unconditional break) — equivalent to the former plain try/finally.
+    Registers held at their initial read values across all convergence
+    iterations so that feedback resolves combinatorially before any state commit.
 
     Note: local variable annotations (var: T inside a function body) are NOT
-    stored in fn.__annotations__ by Python, so registers must be discovered
-    by evaluating the AnnAssign annotation nodes against the function's globals.
+    stored in fn.__annotations__ by Python, so annotations must be discovered
+    by evaluating the AnnAssign nodes against the function's globals.
     """
     orig_fn = _inspect.unwrap(fn)
     try:
@@ -868,9 +898,10 @@ def _build_reg_sim_func(fn):
     if func_def is None:
         return None
 
-    # Discover register variable names by evaluating each annotation-only
-    # AnnAssign against the function's globals.
+    # Discover register and feedback variable names by evaluating each
+    # annotation-only AnnAssign against the function's globals.
     reg_names = []
+    feedback_names = []
     for stmt in func_def.body:
         if not (
             isinstance(stmt, _ast.AnnAssign)
@@ -887,35 +918,113 @@ def _build_reg_sim_func(fn):
             continue
         if isinstance(ann_val, _RegType):
             reg_names.append(stmt.target.id)
+        elif isinstance(ann_val, _FeedbackType):
+            feedback_names.append(stmt.target.id)
 
-    if not reg_names:
+    if not reg_names and not feedback_names:
         return None
 
-    new_stmts = [_ast.parse("__ip__ = _sim_current_inst_path()").body[0]]
-    for name in reg_names:
-        new_stmts.append(
-            _ast.parse(f'{name} = _sim_reg_read(__ip__, "{name}")').body[0]
-        )
-
+    # Strip both Reg[T] and Feedback[T] annotation-only statements from the body.
+    stripped = set(reg_names) | set(feedback_names)
     orig_body = [
         stmt
         for stmt in func_def.body
         if not (
             isinstance(stmt, _ast.AnnAssign)
             and isinstance(stmt.target, _ast.Name)
-            and stmt.target.id in reg_names
+            and stmt.target.id in stripped
             and stmt.value is None
         )
     ]
 
-    finally_stmts = [
-        _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
-        for name in reg_names
-    ]
+    # --- Build transformed function body ---
 
-    func_def.body = new_stmts + [
-        _ast.Try(body=orig_body, handlers=[], orelse=[], finalbody=finally_stmts)
-    ]
+    new_stmts = []
+
+    # Register reads and initial-value snapshots (only when reg_names non-empty).
+    if reg_names:
+        new_stmts.append(_ast.parse("__ip__ = _sim_current_inst_path()").body[0])
+        for name in reg_names:
+            new_stmts.append(
+                _ast.parse(f'{name} = _sim_reg_read(__ip__, "{name}")').body[0]
+            )
+            new_stmts.append(_ast.parse(f"__reg_init_{name} = {name}").body[0])
+
+    # Feedback zero-init and iteration counter (only when feedback_names non-empty).
+    if feedback_names:
+        for name in feedback_names:
+            new_stmts.append(_ast.parse(f"{name} = 0").body[0])
+        new_stmts.append(_ast.parse("__fb_iters = 0").body[0])
+
+    # When feedback is present, the return statement must live OUTSIDE the
+    # convergence loop so that the loop can iterate to a fixed point before
+    # returning.  Hardware functions have exactly one return (the final
+    # top-level statement); extract it here.
+    if feedback_names and orig_body and isinstance(orig_body[-1], _ast.Return):
+        loop_stmts = orig_body[:-1]
+        trailing_return = orig_body[-1]
+    else:
+        loop_stmts = orig_body
+        trailing_return = None
+
+    # Build the while loop body.
+    loop_body = []
+
+    if feedback_names:
+        # Safety iteration limit check.
+        loop_body.append(_ast.parse("__fb_iters += 1").body[0])
+        fn_name = orig_fn.__name__
+        loop_body.append(
+            _ast.parse(
+                f"if __fb_iters > _SIM_FEEDBACK_MAX_ITER: "
+                f"raise RuntimeError(\"Feedback[T] sim: convergence failed in '{fn_name}'\")"
+            ).body[0]
+        )
+        # Reset registers to their initial values at the start of each iteration
+        # so they act as constant inputs throughout combinatorial convergence.
+        if reg_names:
+            for name in reg_names:
+                loop_body.append(_ast.parse(f"{name} = __reg_init_{name}").body[0])
+        # Snapshot all feedback variables before running the body this pass.
+        for name in feedback_names:
+            loop_body.append(_ast.parse(f"__fb_snap_{name} = {name}").body[0])
+
+    # Original function body (both Reg[T] and Feedback[T] AnnAssigns removed;
+    # trailing return extracted above when feedback is present).
+    loop_body.extend(loop_stmts)
+
+    # Convergence check (feedback present) or unconditional single-pass break.
+    if feedback_names:
+        conditions = " and ".join(
+            f"{name} == __fb_snap_{name}" for name in feedback_names
+        )
+        loop_body.append(_ast.parse(f"if {conditions}: break").body[0])
+    else:
+        loop_body.append(_ast.parse("break").body[0])
+
+    while_loop = _ast.While(
+        test=_ast.Constant(value=True),
+        body=loop_body,
+        orelse=[],
+    )
+
+    # Wrap in try/finally for register commits (only when reg_names non-empty).
+    if reg_names:
+        finally_stmts = [
+            _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
+            for name in reg_names
+        ]
+        new_stmts.append(
+            _ast.Try(body=[while_loop], handlers=[], orelse=[], finalbody=finally_stmts)
+        )
+    else:
+        new_stmts.append(while_loop)
+
+    # Emit the trailing return after the loop/try block (feedback case only).
+    if trailing_return is not None:
+        new_stmts.append(trailing_return)
+
+    func_def.body = new_stmts
     func_def.decorator_list = []  # strip decorators to avoid re-wrapping on exec
 
     _ast.fix_missing_locations(tree)
@@ -931,6 +1040,7 @@ def _build_reg_sim_func(fn):
         _sim_current_inst_path=_sim_current_inst_path,
         _sim_reg_read=_sim_reg_read,
         _sim_reg_write=_sim_reg_write,
+        _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
     )
     exec(code, new_globals)  # noqa: S102
     return new_globals.get(orig_fn.__name__)

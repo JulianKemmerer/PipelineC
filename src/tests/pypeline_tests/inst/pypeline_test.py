@@ -28,7 +28,7 @@ import pypeline_tests
 """
 TODO
 Single clock domain simulator?
-    want to output waveform files
+    want to output waveform files? is that useful if names dont match exactly with elaborator?
     one local func first: regs 
         then feedback(test not fully/at all driven feedback and output wires)
     then global wires
@@ -82,14 +82,65 @@ if __name__ == "__main__":
 
 @MAIN
 def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
-    # Declare feedback, is not zero initalized
+    # Declare feedback, is not zero initalized in hardware
+    # (is zero initialized for simulation evaluation)
     f: Feedback[uint1_t]
     # Use feedback before it has been assigned a value
-    # (typically would be zeros, but not for feedback)
+    # (typically would be zeros for hw elab, but not for feedback)
+    # (is zero for simulation first pass of evaluation before feedback)
     rv: uint1_t = f | a
     # Do the 'later' computation that needs to be fed back
     f = ~b
     return rv
+
+
+def sim_feedback_test():
+    sim_reset()
+    # b=0 → f=~0=1, rv=1|a
+    assert sim_call(feedback_test, a=0, b=0) == 1
+    assert sim_call(feedback_test, a=1, b=0) == 1
+    # b=1 → f=~1=0, rv=0|a
+    assert sim_call(feedback_test, a=0, b=1) == 0
+    assert sim_call(feedback_test, a=1, b=1) == 1
+    print("sim_feedback_test PASS")
+
+
+if __name__ == "__main__":
+    sim_feedback_test()
+
+
+@MAIN
+def fb_reg_accumulate(load: uint1_t, data: uint8_t) -> uint8_t:
+    acc: Reg[uint8_t]  # accumulates across calls
+    f: Feedback[uint1_t]  # 1 when acc is odd (LSB of acc)
+    # use feedback before it is driven
+    out: uint8_t = acc + f
+    # feedback driver: LSB of the initial acc value for this cycle
+    f = acc & 1
+    # conditionally load a new value or accumulate
+    if load:
+        acc = data
+    else:
+        acc = out
+    return out
+
+
+def sim_fb_reg_accumulate_test():
+    sim_reset()
+    # load=1, data=3: acc_init=0, f=0&1=0 (converges immediately),
+    #   out=0+0=0, acc committed=3, return 0
+    assert sim_call(fb_reg_accumulate, load=1, data=3) == 0
+    # load=0: acc_init=3, f=3&1=1 (needs 2 passes to converge),
+    #   out=3+1=4, acc committed=4, return 4
+    assert sim_call(fb_reg_accumulate, load=0, data=0) == 4
+    # load=0: acc_init=4, f=4&1=0 (converges immediately),
+    #   out=4+0=4, acc committed=4, return 4
+    assert sim_call(fb_reg_accumulate, load=0, data=0) == 4
+    print("sim_fb_reg_accumulate_test PASS")
+
+
+if __name__ == "__main__":
+    sim_fb_reg_accumulate_test()
 
 
 @MAIN

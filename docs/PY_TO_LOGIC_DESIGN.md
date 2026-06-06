@@ -2128,14 +2128,121 @@ since two calls to the same function on the same line would be unusual.
 
 ---
 
+### `Feedback[T]` Simulation — Combinatorial Convergence
+
+Functions that contain `Feedback[T]` wires can be simulated. In hardware, the feedback wire
+creates a combinatorial loop that the synthesiser resolves concurrently; in Python's sequential
+execution, reading `f` before `f = ~b` would raise `NameError`. The solution mirrors real
+hardware behaviour: iterate the function body until the feedback value stabilises.
+
+**Two problems** (same as `Reg[T]`):
+
+1. **`NameError` before assignment** — `f: Feedback[uint1_t]` is an annotation-only statement
+   and creates no local variable. Any read of `f` before `f = ~b` raises `NameError`.
+2. **Combinatorial convergence** — in hardware, feedback wires have no meaningful initial
+   state within a clock cycle; the stable combinatorial value emerges iteratively.
+
+Both are solved by **`_build_reg_sim_func`** (which now handles both `Reg[T]` and
+`Feedback[T]`) combined with `_sim_type_wrap`.
+
+#### Transformation
+
+`_build_reg_sim_func` detects `Feedback[T]` annotation-only statements the same way it
+detects `Reg[T]` — by evaluating each `AnnAssign` annotation against `fn.__globals__`
+and checking `isinstance(ann_val, _FeedbackType)`.
+
+The transformed function wraps the original body in a convergence loop:
+
+```python
+# generated at decoration time:
+def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
+    f = 0              # ← zero-initialise each feedback var
+    __fb_iters = 0
+    while True:
+        __fb_iters += 1
+        if __fb_iters > _SIM_FEEDBACK_MAX_ITER:
+            raise RuntimeError("Feedback[T] sim: convergence failed in 'feedback_test'")
+        __fb_snap_f = f    # ← snapshot before this pass
+        # original body with Feedback[T] AnnAssign and trailing return removed:
+        rv = f | a
+        f = ~b
+        if f == __fb_snap_f:   # ← all feedback vars must match snapshot
+            break
+    return rv          # ← trailing return moved outside the loop
+```
+
+The `return` statement is extracted from the end of the original body and placed after the
+convergence loop. Hardware functions have exactly one `return` as their final top-level
+statement, so this extraction is always safe.
+
+#### Convergence trace for `feedback_test(a=0, b=0)`
+
+```
+Pass 1: f=0 (init)
+  rv = 0 | SimVal(0, uint1_t) = 0
+  f  = ~SimVal(0, uint1_t)    = SimVal(-1)    ← Python arbitrary-precision ~0
+  f(-1) ≠ snap(0) → re-run
+
+Pass 2: f=SimVal(-1)
+  rv = SimVal(-1) | SimVal(0, uint1_t) = SimVal(-1)
+  f  = ~SimVal(0, uint1_t)              = SimVal(-1)
+  f(-1) == snap(-1) → converged; break
+
+@MAIN boundary: _sim_cast(-1, uint1_t) → SimVal(1, uint1_t)   ← mask to 1 bit
+assert result == 1  ✓
+```
+
+Note: Python's `~` on unmasked ints gives `-1` for `~0`, not `1`. Convergence still works
+because the same computation produces the same value in both iterations. The `_sim_cast` at
+the `@MAIN` boundary correctly masks the final result.
+
+#### Interaction with `Reg[T]`
+
+When a function contains both `Reg[T]` and `Feedback[T]`, the unified transformation handles
+both. Registers are reset to their initial (pre-loop) values at the start of every convergence
+iteration, so they act as constant combinatorial inputs throughout — matching hardware
+semantics where combinatorial feedback resolves before the clock edge latches any state.
+
+```python
+# generated at decoration time (feedback + register):
+def fb_reg_accumulate(load: uint1_t, data: uint8_t) -> uint8_t:
+    __ip__ = _sim_current_inst_path()
+    acc = _sim_reg_read(__ip__, "acc")   # ← read register once
+    __reg_init_acc = acc                 # ← snapshot for per-iteration reset
+    f = 0                                # ← zero-init feedback
+    __fb_iters = 0
+    try:
+        while True:
+            __fb_iters += 1
+            if __fb_iters > _SIM_FEEDBACK_MAX_ITER: raise RuntimeError(...)
+            acc = __reg_init_acc         # ← reset reg to initial each pass
+            __fb_snap_f = f
+            # original body:
+            out = acc + f
+            f = acc & 1
+            acc = data if load else out
+            if f == __fb_snap_f: break
+    finally:
+        _sim_reg_write(__ip__, "acc", acc)   # ← commit register after convergence
+    return out
+```
+
+`_SIM_FEEDBACK_MAX_ITER = 1000` is the safety limit; valid combinatorial feedback converges
+in very few iterations (typically 1–2).
+
+**`@hw_func` requirement:** functions with `Feedback[T]` annotations must be decorated with
+`@hw_func` (or be a `@MAIN` function) for the simulation infrastructure to engage.
+
+---
+
 ### Limitations of the Current Proto-Sim
 
 - **Registers (`Reg[T]`)** — supported; see `Reg[T]` Simulation section above.
   Functions with `Reg[T]` must carry `@hw_func` (or `@MAIN`) for the simulation
   infrastructure to engage.
-- **Feedback wires (`Feedback[T]`)** — not simulated; functions using feedback wires will
-  not execute correctly as Python. The wire is driven by an assignment that appears later
-  in source order, which has no meaning in sequential Python execution.
+- **Feedback wires (`Feedback[T]`)** — supported via iterative convergence loop; see
+  `Feedback[T]` Simulation section below. Functions with `Feedback[T]` must carry
+  `@hw_func` (or `@MAIN`) for the simulation infrastructure to engage.
 - **Global wires (`Wire[T]`)** — not simulated; `Wire[T]` declarations at module level
   do not create Python variables (only `__annotations__` entries), so functions that
   read or write global wires will raise `NameError` when executed as plain Python.
