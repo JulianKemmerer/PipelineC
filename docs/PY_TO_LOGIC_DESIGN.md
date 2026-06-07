@@ -2032,12 +2032,17 @@ This function:
 
 1. Retrieves source via `inspect.getsource(inspect.unwrap(fn))` + `textwrap.dedent`.
 2. Parses the source with `ast.parse` and finds the top-level `FunctionDef`.
-3. **Discovers registers** by evaluating each annotation-only `AnnAssign` node in the
-   function body against `fn.__globals__` — the only way to detect `_RegType` instances
-   without running the hardware elaborator (because Python never stores local variable
-   annotations in `__annotations__`).
-4. If no `_RegType` annotations are found, returns `None` (no transformation needed).
-5. Otherwise builds a **transformed function body**:
+3. **Rewrites global wire accesses** — scans `fn.__globals__['__annotations__']` for
+   `Wire[T]`/`Input[T]`/`Output[T]` names and applies `_GlobalWireRewriter` to the
+   function body AST. This replaces all reads of those names with `_sim_wire_read(name)`
+   calls and all assignments to them with `_sim_wire_write(name, value)` calls.
+4. **Discovers registers and feedback wires** by evaluating each annotation-only `AnnAssign`
+   node in the (now wire-rewritten) body against `fn.__globals__` — the only way to detect
+   `_RegType`/`_FeedbackType` instances without running the hardware elaborator (because
+   Python never stores local variable annotations in `__annotations__`).
+5. If no `_RegType`, `_FeedbackType`, or global wire names are found, returns `None`
+   (no transformation needed).
+6. Otherwise builds a **transformed function body**:
 
 ```python
 # generated at decoration time — not user-written:
@@ -2235,30 +2240,221 @@ in very few iterations (typically 1–2).
 
 ---
 
+### `Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation — Multi-MAIN Convergence
+
+Global wire simulation requires running multiple `@MAIN` functions together, not just calling
+a single function with `sim_call`. A dedicated CLI tool `pypeline_sim.py` handles this.
+
+#### The Core Problem
+
+`Wire[T]` declarations at module level only create `__annotations__` entries — no Python
+variable is created. Inside a `@MAIN` function, `main_a_out = r` would silently create a
+local variable, and `r = ~main_a_in` would raise `NameError`. The sim must intercept both
+reads and writes at every point they occur in the function body, including deep in the call
+hierarchy.
+
+#### `_GlobalWireRewriter` — AST Transformation at Decoration Time
+
+`_build_reg_sim_func` is extended to discover global wire names from the function's defining
+module (`fn.__globals__['__annotations__']`) and apply a `_GlobalWireRewriter` NodeTransformer
+to the parsed function body AST **before** the `Reg[T]`/`Feedback[T]` transformations run.
+
+`_GlobalWireRewriter` rewrites:
+
+| Original AST | Transformed AST |
+|---|---|
+| `Name(id='wire', ctx=Load)` | `_sim_wire_read('wire')` |
+| `wire = expr` (Assign) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
+| `wire: T = expr` (AnnAssign with value) | `_sim_wire_write('wire', expr)` |
+
+Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes
+with `value=None` and are left untouched.
+
+The transformed globals dict passed to `exec` includes `_sim_wire_read` and `_sim_wire_write`
+alongside the existing `_sim_reg_read`, `_sim_reg_write`, and `_SIM_FEEDBACK_MAX_ITER`.
+
+This transformation is transparent to the hardware elaborator: `_elaborate_live_func` calls
+`inspect.unwrap(fn)` to recover the original unmodified source.
+
+**Single-file constraint:** `fn.__globals__['__annotations__']` reflects the module where
+`fn` is defined. For designs that import submodule functions from other files, those functions'
+`__globals__` will not contain the top-level module's wire declarations. Multi-file global
+wire simulation is not yet supported.
+
+#### Global Wire State
+
+```python
+_sim_wire_state: dict[str, int]
+# wire name (not instance path) → current integer value
+```
+
+Wire names are singletons — they are not keyed by instance path. Reads and writes use the
+bare wire name as declared at module level.
+
+```python
+def _sim_wire_read(name: str) -> int:   # returns 0 if wire not yet driven
+def _sim_wire_write(name: str, value) -> None:
+```
+
+`sim_reset()` clears both `_sim_reg_state` and `_sim_wire_state`.
+
+#### `pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation
+
+`pypeline_sim.py` is a CLI tool for running multi-MAIN designs:
+
+```
+pypeline_sim.py <design_file.py> --run <N>
+```
+
+It imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populating
+`_main_registry`), discovers global wires from module `__annotations__`, and runs N clock
+cycles.
+
+**Per clock cycle:**
+
+1. Register writes are switched to buffered mode (`_sim_reg_begin_buffer`).
+2. `_sim_converging = True`; the delta-cycle convergence queue runs.
+3. `_sim_converging = False`; all MAINs run once more — the **final pass** — where
+   `@sim_output` functions fire and any plain `print()` or side-effect code executes with
+   the correct converged wire values.
+4. Buffered register writes flush to `_sim_reg_state` (`_sim_reg_flush_buffer`) — the
+   simulated clock edge; all flip-flops update simultaneously.
+
+#### Delta-Cycle Convergence (Queue-Based)
+
+Each convergence iteration uses a queue rather than round-robin to avoid unnecessary
+re-executions. This mirrors VHDL delta-cycle / Verilog event-driven simulation.
+
+```
+queue = all MAINs          ← start of each cycle
+wire_readers = {}          ← persistent across cycles; built lazily
+
+while queue not empty:
+    main = dequeue()
+    snapshot wire state
+    set _sim_current_main = main
+    sim_call(main)          ← _sim_wire_read records main as reader of each wire it reads
+    _sim_current_main = None
+
+    for each wire whose value changed:
+        for each MAIN that has read that wire (from wire_readers):
+            if not already queued: enqueue it
+```
+
+`_sim_wire_readers: dict[str, set]` is populated lazily as MAINs run. After the first
+clock cycle, the dependency graph is fully built and only affected MAINs are re-queued in
+subsequent cycles. The queue is empty when no wire changed — the global fixed point.
+
+A safety limit of 10 000 total MAIN executions per cycle guards against combinatorial
+loops; the error message lists the wires still changing.
+
+#### Register Commit Timing Across MAINs
+
+Registers must not commit until all MAINs have converged globally — just as hardware
+flip-flops all latch simultaneously at the clock edge. Two mechanisms ensure this:
+
+1. **Buffered writes:** `_sim_reg_write` checks `_sim_reg_write_buffer`. When buffering
+   is active, writes accumulate in the buffer dict instead of updating `_sim_reg_state`.
+   Each MAIN re-run during convergence overwrites its own buffer entries (correct — the
+   final re-run with stable inputs produces the right next-cycle value).
+
+2. **Simultaneous flush:** after the final pass, `_sim_reg_flush_buffer` copies all
+   buffered entries to `_sim_reg_state` in one operation.
+
+#### `@sim_output` — Controlled Side Effects
+
+Functions decorated with `@sim_output` are called normally during the final pass but are
+no-ops (returning `SimVal(0)`) during convergence iterations. This prevents `print`,
+file writes, matplotlib updates, etc. from firing multiple times with intermediate wire values.
+
+```python
+@sim_output
+def my_output(data):
+    print(f"output: {data}")
+    plt.update(data)
+
+@MAIN
+def main_a():
+    r: Reg[uint1_t]
+    main_a_out = r
+    r = ~main_a_in
+    my_output(r)    # skipped during convergence; fires once per cycle in final pass
+```
+
+Plain Python functions without `@sim_output` execute during every convergence iteration —
+the correct default for pure helper functions (e.g. `c = compute_constant()`). The
+`_sim_converging` flag is exposed for opt-in guards if needed.
+
+#### Example — Cross-Connected NOT Registers
+
+```python
+main_a_in:  Wire[uint1_t]
+main_a_out: Wire[uint1_t]
+@MAIN
+def main_a():
+    r: Reg[uint1_t]
+    main_a_out = r
+    r = ~main_a_in
+
+main_b_in:  Wire[uint1_t]
+main_b_out: Wire[uint1_t]
+@MAIN
+def main_b():
+    r: Reg[uint1_t]
+    main_b_out = r
+    r = ~main_b_in
+
+@MAIN
+def a_b_connect():
+    main_b_in = main_a_out
+    main_a_in = main_b_out
+```
+
+Cycle 0 trace (all state 0):
+```
+queue: [main_a, main_b, a_b_connect]
+
+main_a: main_a_out=0 (r_a=0); new r_a=~0=-1 → buffer
+main_b: main_b_out=0 (r_b=0); new r_b=~0=-1 → buffer
+a_b_connect: main_b_in=0 (unchanged), main_a_in=0 (unchanged) → no re-queues
+
+Fixed point. Final pass: sim_print fires with r=0 for both MAINs.
+Register flush: r_a=-1 (uint1_t=1), r_b=-1 (uint1_t=1).
+```
+
+Subsequent cycles toggle both registers between 0 and -1 (uint1_t 0 and 1).
+
+---
+
 ### Limitations of the Current Proto-Sim
 
 - **Registers (`Reg[T]`)** — supported; see `Reg[T]` Simulation section above.
   Functions with `Reg[T]` must carry `@hw_func` (or `@MAIN`) for the simulation
   infrastructure to engage.
 - **Feedback wires (`Feedback[T]`)** — supported via iterative convergence loop; see
-  `Feedback[T]` Simulation section below. Functions with `Feedback[T]` must carry
+  `Feedback[T]` Simulation section above. Functions with `Feedback[T]` must carry
   `@hw_func` (or `@MAIN`) for the simulation infrastructure to engage.
-- **Global wires (`Wire[T]`)** — not simulated; `Wire[T]` declarations at module level
-  do not create Python variables (only `__annotations__` entries), so functions that
-  read or write global wires will raise `NameError` when executed as plain Python.
+- **Global wires (`Wire[T]`, `Input[T]`, `Output[T]`)** — supported via
+  `pypeline_sim.py`; see `Wire[T]` Global Wire Simulation section above. Single-file
+  designs only; multi-file global wire sim is not yet supported.
 - **Global variables** — no other form of module-level mutable state is supported.
-  Only `Wire[T]` annotations are valid as shared cross-function globals in the
-  hardware elaboration model.
+  Only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as shared cross-function
+  globals in the hardware elaboration model.
 - **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
   `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
-  function call boundaries via `@hw_func`. Deep chains of arithmetic without function calls
-  will lose type info for operator dispatch; Python native operators serve as fallbacks.
+  function call boundaries via `@hw_func`. Values flowing through global wires are stored
+  as plain `int` (no `_ctype`) — `_sim_wire_read` returns `int`, not `SimVal`. Type
+  masking for wire values occurs at `@hw_func` input/output boundaries, not inside
+  function bodies. For example, `uint1_t` wires may hold `-1` (Python `~0`) rather than
+  `1` as an intermediate value; the final result at `@MAIN` boundaries is correctly masked.
 - **Annotated casts** — `a_signed: out_t = a` is ignored by Python (annotations are hints).
   For widening/sign-extension this is harmless; truncating casts would require explicit
   `_sim_cast(a, out_t)` if exact bit width matters.
 - **Unsigned overflow masking** — arithmetic on `SimVal` is Python arbitrary-precision;
   wrap-on-overflow only occurs when a `@hw_func` boundary re-applies `_sim_cast`. For
   typical hardware-range values this is not observable.
+- **`Input[T]` wires** — initialized to zero and not externally driven during sim.
+  Setting `Input[T]` values before each cycle is not yet supported by `pypeline_sim.py`.
 
 ---
 
@@ -2275,7 +2471,8 @@ The companion module provides the types and decorators used in design files:
 | `make_float_t(E, M)` | Creates an IEEE 754-like struct type with `sign/exp/man` fields; `.as_const(v)` converts a Python float to the field dict at elaboration time |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
-| `@MAIN` | Registers a function as a hardware entry point |
+| `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
+| `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes, executes normally in the final post-convergence pass each cycle |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` annotation declares a combinatorial feedback wire (no flip-flop, no zero-init) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` annotation at **module level** declares a named combinatorial wire shared across functions (one writer, any number of readers) |
@@ -2295,9 +2492,17 @@ The companion module provides the types and decorators used in design files:
 | `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement signedness |
 | `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting and register state management; transparent to hardware elaboration via `inspect.unwrap` |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
-| `sim_reset()` | Clear all simulated register state (`_sim_reg_state`), equivalent to hardware power-on reset; call at the start of each independent sim test |
+| `sim_reset()` | Clear all simulated register state (`_sim_reg_state`) and global wire state (`_sim_wire_state`), equivalent to hardware power-on reset |
+| `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
 | `_sim_inst_stack` | Module-level list tracking the current simulation instance path; each `@hw_func`/`@MAIN` wrapper pushes/pops `(func_qualname, call_loc)` |
 | `_sim_reg_state` | Module-level dict `inst_path → {reg_name: value}`; holds persistent register values across `sim_call` invocations |
+| `_sim_wire_state` | Module-level dict `wire_name → int`; holds current global wire values; keyed by name only (not instance path) |
+| `_sim_wire_readers` | Module-level dict `wire_name → set of MAIN fn`; records which MAINs have read each wire; used by `pypeline_sim.py` convergence queue |
+| `_sim_converging` | Module-level bool; `True` during delta-cycle convergence passes; checked by `@sim_output` wrappers |
+| `_sim_current_main` | Module-level variable; set to the MAIN function currently executing during convergence; enables `_sim_wire_read` to record reader dependencies |
+| `_sim_reg_begin_buffer()` | Switch register writes to buffered mode; used by `pypeline_sim.py` at the start of each clock cycle |
+| `_sim_reg_flush_buffer()` | Commit all buffered register writes to `_sim_reg_state` atomically; the simulated clock edge |
+| `_main_registry` | Module-level list of all `@MAIN`-decorated (wrapped) functions in decoration order |
 
 All types are declared as proper Python `class` statements with `_CTypeMeta` as metaclass
 (not variable assignments), so Pylance/pyright accepts them as valid type expressions.

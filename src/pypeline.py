@@ -419,6 +419,26 @@ def MAIN(func):
     return wrapped
 
 
+def sim_output(fn):
+    """Mark a function as simulation output-only.
+
+    Calls to @sim_output functions are skipped (return SimVal(0)) during
+    delta-cycle convergence passes and execute normally in the final
+    post-convergence pass each clock cycle. Use this for side effects such
+    as print, file writes, or live display updates that should fire exactly
+    once per cycle with the correct converged wire values.
+    """
+
+    @_functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if _sim_converging:
+            return SimVal(0)
+        return fn(*args, **kwargs)
+
+    wrapper._is_sim_output = True
+    return wrapper
+
+
 # ─────────────────────────────────────────────
 # Operator overloading registry
 # ─────────────────────────────────────────────
@@ -816,6 +836,13 @@ _sim_reg_state = {}
 # Combinatorial feedback must reach a fixed point in far fewer iterations than this.
 _SIM_FEEDBACK_MAX_ITER = 1000
 
+# Global wire simulation state.
+_sim_wire_state: dict = {}  # wire name → current int value
+_sim_converging: bool = False  # True during delta-cycle convergence passes
+_sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
+_sim_current_main = None  # MAIN fn currently executing (for reader tracking)
+_sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
+
 
 def _sim_current_inst_path():
     """Return the current simulation instance path as an immutable tuple."""
@@ -828,13 +855,118 @@ def _sim_reg_read(inst_path, reg_name):
 
 
 def _sim_reg_write(inst_path, reg_name, value):
-    """Update the register value for this instance."""
-    _sim_reg_state.setdefault(inst_path, {})[reg_name] = int(value)
+    """Update the register value, routing to buffer if buffering is active."""
+    if _sim_reg_write_buffer is not None:
+        _sim_reg_write_buffer.setdefault(inst_path, {})[reg_name] = int(value)
+    else:
+        _sim_reg_state.setdefault(inst_path, {})[reg_name] = int(value)
+
+
+def _sim_wire_read(name: str):
+    """Return the current global wire value (0 if not yet driven).
+    Records the calling MAIN as a reader of this wire for dependency tracking.
+    """
+    if _sim_current_main is not None:
+        _sim_wire_readers.setdefault(name, set()).add(_sim_current_main)
+    return _sim_wire_state.get(name, 0)
+
+
+def _sim_wire_write(name: str, value) -> None:
+    """Set the current global wire value."""
+    _sim_wire_state[name] = int(value)
 
 
 def sim_reset():
-    """Clear all simulated register state, resetting all flip-flops to 0."""
+    """Clear all simulated register and wire state."""
     _sim_reg_state.clear()
+    _sim_wire_state.clear()
+
+
+def _sim_reg_begin_buffer():
+    """Switch register writes into buffered mode; writes accumulate until flush."""
+    global _sim_reg_write_buffer
+    _sim_reg_write_buffer = {}
+
+
+def _sim_reg_flush_buffer():
+    """Commit buffered register writes to _sim_reg_state and exit buffer mode."""
+    global _sim_reg_write_buffer
+    if _sim_reg_write_buffer:
+        for inst_path, regs in _sim_reg_write_buffer.items():
+            _sim_reg_state.setdefault(inst_path, {}).update(regs)
+    _sim_reg_write_buffer = None
+
+
+def sim_wire_reset():
+    """Clear all global wire simulation state."""
+    _sim_wire_state.clear()
+
+
+class _GlobalWireRewriter(_ast.NodeTransformer):
+    """AST transformer that rewrites global wire reads/writes in hw_func bodies.
+
+    Replaces:
+      - Name(id='wire', ctx=Load)  →  _sim_wire_read('wire')
+      - wire = expr                →  _sim_wire_write('wire', expr)   (Expr stmt)
+      - wire: T = expr             →  _sim_wire_write('wire', expr)   (AnnAssign with value)
+    """
+
+    def __init__(self, wire_names):
+        self._wire_names = frozenset(wire_names)
+
+    def visit_Name(self, node):
+        if node.id in self._wire_names and isinstance(node.ctx, _ast.Load):
+            return _ast.copy_location(
+                _ast.Call(
+                    func=_ast.Name(id="_sim_wire_read", ctx=_ast.Load()),
+                    args=[_ast.Constant(value=node.id)],
+                    keywords=[],
+                ),
+                node,
+            )
+        return node
+
+    def visit_Assign(self, node):
+        node = self.generic_visit(node)  # transform RHS and any non-wire targets
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], _ast.Name)
+            and node.targets[0].id in self._wire_names
+        ):
+            wire_name = node.targets[0].id
+            return _ast.copy_location(
+                _ast.Expr(
+                    value=_ast.Call(
+                        func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
+                        args=[_ast.Constant(value=wire_name), node.value],
+                        keywords=[],
+                    )
+                ),
+                node,
+            )
+        return node
+
+    def visit_AnnAssign(self, node):
+        # Annotated assignment with a value inside a function body, e.g. x: T = expr.
+        # Module-level wire declarations (no value) are untouched.
+        node = self.generic_visit(node)
+        if (
+            isinstance(node.target, _ast.Name)
+            and node.target.id in self._wire_names
+            and node.value is not None
+        ):
+            wire_name = node.target.id
+            return _ast.copy_location(
+                _ast.Expr(
+                    value=_ast.Call(
+                        func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
+                        args=[_ast.Constant(value=wire_name), node.value],
+                        keywords=[],
+                    )
+                ),
+                node,
+            )
+        return node
 
 
 def _build_reg_sim_func(fn):
@@ -898,6 +1030,17 @@ def _build_reg_sim_func(fn):
     if func_def is None:
         return None
 
+    # Discover global wire names from the function's defining module and rewrite
+    # all reads/writes in the function body to go through _sim_wire_read/write.
+    global_wire_names = {
+        name
+        for name, ann in fn.__globals__.get("__annotations__", {}).items()
+        if isinstance(ann, (_WireType, _InputType, _OutputType))
+    }
+    if global_wire_names:
+        _GlobalWireRewriter(global_wire_names).visit(func_def)
+        _ast.fix_missing_locations(func_def)
+
     # Discover register and feedback variable names by evaluating each
     # annotation-only AnnAssign against the function's globals.
     reg_names = []
@@ -921,7 +1064,7 @@ def _build_reg_sim_func(fn):
         elif isinstance(ann_val, _FeedbackType):
             feedback_names.append(stmt.target.id)
 
-    if not reg_names and not feedback_names:
+    if not reg_names and not feedback_names and not global_wire_names:
         return None
 
     # Strip both Reg[T] and Feedback[T] annotation-only statements from the body.
@@ -1041,6 +1184,8 @@ def _build_reg_sim_func(fn):
         _sim_reg_read=_sim_reg_read,
         _sim_reg_write=_sim_reg_write,
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
+        _sim_wire_read=_sim_wire_read,
+        _sim_wire_write=_sim_wire_write,
     )
     exec(code, new_globals)  # noqa: S102
     return new_globals.get(orig_fn.__name__)
