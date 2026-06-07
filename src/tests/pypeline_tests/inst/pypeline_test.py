@@ -25,49 +25,6 @@ sys.path.insert(
 )
 import pypeline_tests
 
-"""
-TODO
-Single clock domain simulator?
-    want to output waveform files? is that useful if names dont match exactly with elaborator?
-    one local func first: regs 
-        then feedback(test not fully/at all driven feedback and output wires)
-    then global wires
-    pypeline_sim.py could provide a mechanism to set their value before each cycle (a future enhancement)
-        how to set Input[T] sim values?
-    ~0 is prints as -1, need hw func like sim cast for print args
-    Fix name conflict with locals and wires?
-    Wire names must not collide with local variables
-    The _GlobalWireRewriter rewrites ALL Name loads matching a wire name inside the function body
-      — including names used as local variables that happen to share a name with a global wire.
-        This is actually correct by design (same as how PY_TO_LOGIC.py treats them), 
-        but if a user accidentally shadows a wire name with a local variable, behavior will be surprising. 
-        No special handling needed — it matches elaboration semantics.
-    Multi-file sim support is future work; 
-Aim for VGA as demo on simulation+board?
-    Sphery ... or similar chasing the beam VGA with auto pipeline is good demo?
-Dream is really some kind of software->hardware flow right?
-BACKLOG
-# Multiple clock domains
-# CDC/Global FIFOS CANT be implemented by user since cdc
-#       allow overload of sync fifo by user func
-# TODO printf for sim? is special func?
-# TODO RAW VHDL
-# Revisit register init values
-# Do something nice with port/pin mappings for constraint gen
-# TODO unions? struct methods, only void return for now? struct.thing(a,b,c) to struct = struct_t_thing(struct,a,b,c)
-#       ex. float_var .to/from uint(), .bit_length(), .bits() for to from slv stuff
-# TODO all of old SW_LIB includes fabric multiply, div, etc
-# TODO support tuple=concat assignment
-#       ex. left: float32_t ; (left.sign, left.exp, left.man) = left_as_u32
-# TODO stream(type_t) equivalent with valid flag
-# TODO handshake(type) w/ valid+ feedback ready
-#         what can be done with feedback wires to automate connection handshakes with ready?
-# TODO constant wires based reduction that interacts with graph submodule instances:
-#         ex. var ref assign/read into constant
-#         ex. shift by a uint6_t type wire driven by constant
-#         ... some day might be helpful for making simulator
-"""
-
 
 @MAIN
 def regs_multi_inst(sel: uint1_t, data_in: uint32_t) -> uint32_t:
