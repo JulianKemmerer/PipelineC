@@ -817,6 +817,7 @@ import sys as _sys
 import dis as _dis
 import ast as _ast
 import textwrap as _textwrap
+import types as _types
 
 
 # ─────────────────────────────────────────────
@@ -872,8 +873,8 @@ def _sim_wire_read(name: str):
 
 
 def _sim_wire_write(name: str, value) -> None:
-    """Set the current global wire value."""
-    _sim_wire_state[name] = int(value)
+    """Set the current global wire value (struct types preserved, not converted to int)."""
+    _sim_wire_state[name] = value
 
 
 def sim_reset():
@@ -906,13 +907,18 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
     """AST transformer that rewrites global wire reads/writes in hw_func bodies.
 
     Replaces:
-      - Name(id='wire', ctx=Load)  →  _sim_wire_read('wire')
-      - wire = expr                →  _sim_wire_write('wire', expr)   (Expr stmt)
-      - wire: T = expr             →  _sim_wire_write('wire', expr)   (AnnAssign with value)
+      - Name(id='wire', ctx=Load)      →  _sim_wire_read('wire')
+      - wire = expr                    →  _sim_wire_write('wire', expr)   (Expr stmt)
+      - wire: T = expr                 →  _sim_wire_write('wire', expr)   (AnnAssign with value)
+      - module.wire  (Load)            →  _sim_wire_read('wire')          (cross-module read)
+      - module.wire = expr             →  _sim_wire_write('wire', expr)   (cross-module write)
+
+    module_wire_attrs: {(alias_name, attr_name): sim_key} for wires in imported modules.
     """
 
-    def __init__(self, wire_names):
+    def __init__(self, wire_names, module_wire_attrs=None):
         self._wire_names = frozenset(wire_names)
+        self._module_wire_attrs = module_wire_attrs or {}
 
     def visit_Name(self, node):
         if node.id in self._wire_names and isinstance(node.ctx, _ast.Load):
@@ -925,6 +931,23 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                 node,
             )
         return node
+
+    def visit_Attribute(self, node):
+        if (
+            isinstance(node.value, _ast.Name)
+            and isinstance(node.ctx, _ast.Load)
+            and (node.value.id, node.attr) in self._module_wire_attrs
+        ):
+            wire_name = self._module_wire_attrs[(node.value.id, node.attr)]
+            return _ast.copy_location(
+                _ast.Call(
+                    func=_ast.Name(id="_sim_wire_read", ctx=_ast.Load()),
+                    args=[_ast.Constant(value=wire_name)],
+                    keywords=[],
+                ),
+                node,
+            )
+        return self.generic_visit(node)
 
     def visit_Assign(self, node):
         node = self.generic_visit(node)  # transform RHS and any non-wire targets
@@ -944,6 +967,26 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                 ),
                 node,
             )
+        # Cross-module write: module_alias.wire_name = expr
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], _ast.Attribute)
+            and isinstance(node.targets[0].value, _ast.Name)
+        ):
+            target = node.targets[0]
+            key = (target.value.id, target.attr)
+            if key in self._module_wire_attrs:
+                wire_name = self._module_wire_attrs[key]
+                return _ast.copy_location(
+                    _ast.Expr(
+                        value=_ast.Call(
+                            func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
+                            args=[_ast.Constant(value=wire_name), node.value],
+                            keywords=[],
+                        )
+                    ),
+                    node,
+                )
         return node
 
     def visit_AnnAssign(self, node):
@@ -1030,6 +1073,17 @@ def _build_reg_sim_func(fn):
     if func_def is None:
         return None
 
+    # Build eval namespace: globals + closure variables (for closures like make_vga_timing).
+    # Closure variables (e.g. h_uint, V_MAX) appear in Reg[T] annotations and body
+    # expressions but are not in fn.__globals__ — they live in fn.__closure__.
+    _eval_ns = dict(fn.__globals__)
+    if fn.__code__.co_freevars and fn.__closure__:
+        for _cv, _cell in zip(fn.__code__.co_freevars, fn.__closure__):
+            try:
+                _eval_ns[_cv] = _cell.cell_contents
+            except ValueError:
+                pass
+
     # Discover global wire names from the function's defining module and rewrite
     # all reads/writes in the function body to go through _sim_wire_read/write.
     global_wire_names = {
@@ -1037,12 +1091,22 @@ def _build_reg_sim_func(fn):
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
         if isinstance(ann, (_WireType, _InputType, _OutputType))
     }
-    if global_wire_names:
-        _GlobalWireRewriter(global_wire_names).visit(func_def)
+    # Also build a map for cross-module wire access (module_alias.wire_name).
+    # Scans all module objects in fn.__globals__ for wire annotations.
+    module_wire_attrs = {}
+    for _alias, _obj in fn.__globals__.items():
+        if not isinstance(_obj, _types.ModuleType):
+            continue
+        for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
+            if isinstance(_ann, (_WireType, _InputType, _OutputType)):
+                module_wire_attrs[(_alias, _wname)] = _wname
+    if global_wire_names or module_wire_attrs:
+        _GlobalWireRewriter(global_wire_names, module_wire_attrs).visit(func_def)
         _ast.fix_missing_locations(func_def)
 
     # Discover register and feedback variable names by evaluating each
-    # annotation-only AnnAssign against the function's globals.
+    # annotation-only AnnAssign against the function's eval namespace
+    # (globals + closure vars so closures like vga_timing work correctly).
     reg_names = []
     feedback_names = []
     for stmt in func_def.body:
@@ -1055,7 +1119,7 @@ def _build_reg_sim_func(fn):
         try:
             ann_val = eval(
                 compile(_ast.Expression(body=stmt.annotation), "<ann>", "eval"),
-                fn.__globals__,
+                _eval_ns,
             )
         except Exception:
             continue
@@ -1064,7 +1128,12 @@ def _build_reg_sim_func(fn):
         elif isinstance(ann_val, _FeedbackType):
             feedback_names.append(stmt.target.id)
 
-    if not reg_names and not feedback_names and not global_wire_names:
+    if (
+        not reg_names
+        and not feedback_names
+        and not global_wire_names
+        and not module_wire_attrs
+    ):
         return None
 
     # Strip both Reg[T] and Feedback[T] annotation-only statements from the body.
@@ -1178,7 +1247,7 @@ def _build_reg_sim_func(fn):
     except Exception:
         return None
 
-    new_globals = dict(fn.__globals__)
+    new_globals = _eval_ns.copy()  # includes globals + closure vars
     new_globals.update(
         _sim_current_inst_path=_sim_current_inst_path,
         _sim_reg_read=_sim_reg_read,

@@ -2427,9 +2427,16 @@ to the parsed function body AST **before** the `Reg[T]`/`Feedback[T]` transforma
 | `Name(id='wire', ctx=Load)` | `_sim_wire_read('wire')` |
 | `wire = expr` (Assign) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
 | `wire: T = expr` (AnnAssign with value) | `_sim_wire_write('wire', expr)` |
+| `module_alias.wire` (Attribute, Load) | `_sim_wire_read('wire')` |
+| `module_alias.wire = expr` (Attribute, Store) | `_sim_wire_write('wire', expr)` |
 
 Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes
 with `value=None` and are left untouched.
+
+For cross-module wire access (`board_vga.vga_pmod = ...`), `_build_reg_sim_func` also scans
+all module objects in `fn.__globals__` for `Wire[T]`/`Input[T]`/`Output[T]` annotations and
+builds a `module_wire_attrs` dict `{(alias_name, attr_name): bare_wire_name}`. This is passed
+to `_GlobalWireRewriter` alongside the bare `global_wire_names` set.
 
 The transformed globals dict passed to `exec` includes `_sim_wire_read` and `_sim_wire_write`
 alongside the existing `_sim_reg_read`, `_sim_reg_write`, and `_SIM_FEEDBACK_MAX_ITER`.
@@ -2437,10 +2444,12 @@ alongside the existing `_sim_reg_read`, `_sim_reg_write`, and `_SIM_FEEDBACK_MAX
 This transformation is transparent to the hardware elaborator: `_elaborate_live_func` calls
 `inspect.unwrap(fn)` to recover the original unmodified source.
 
-**Single-file constraint:** `fn.__globals__['__annotations__']` reflects the module where
-`fn` is defined. For designs that import submodule functions from other files, those functions'
-`__globals__` will not contain the top-level module's wire declarations. Multi-file global
-wire simulation is not yet supported.
+**Closure variable support:** `_build_reg_sim_func` builds `_eval_ns` from `fn.__globals__`
+plus any closure variables (`fn.__code__.co_freevars` / `fn.__closure__`). This enables
+`@hw_func`-decorated closures like `vga_timing` (returned by `make_vga_timing`) to have their
+`Reg[T]` annotations evaluated correctly (e.g. `Reg[h_uint]` where `h_uint` is a free variable).
+The same `_eval_ns` is used as the base for `new_globals` so that closure-captured constants
+(`FRAME_WIDTH`, `H_MAX`, etc.) are accessible in the generated sim body.
 
 #### Global Wire State
 
@@ -2453,8 +2462,8 @@ Wire names are singletons — they are not keyed by instance path. Reads and wri
 bare wire name as declared at module level.
 
 ```python
-def _sim_wire_read(name: str) -> int:   # returns 0 if wire not yet driven
-def _sim_wire_write(name: str, value) -> None:
+def _sim_wire_read(name: str)       # returns 0 if wire not yet driven; records reader dependency
+def _sim_wire_write(name: str, value) -> None:  # stores value as-is (struct types preserved)
 ```
 
 `sim_reset()` clears both `_sim_reg_state` and `_sim_wire_state`.
@@ -2468,8 +2477,8 @@ pypeline_sim.py <design_file.py> --run <N>
 ```
 
 It imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populating
-`_main_registry`), discovers global wires from module `__annotations__`, and runs N clock
-cycles.
+`_main_registry`), discovers global wires from module `__annotations__` (recursively scanning
+imported sub-modules), and runs N clock cycles. Multi-file designs are supported.
 
 **Per clock cycle:**
 
@@ -2596,18 +2605,24 @@ Subsequent cycles toggle both registers between 0 and -1 (uint1_t 0 and 1).
   `Feedback[T]` Simulation section above. Functions with `Feedback[T]` must carry
   `@hw_func` (or `@MAIN`) for the simulation infrastructure to engage.
 - **Global wires (`Wire[T]`, `Input[T]`, `Output[T]`)** — supported via
-  `pypeline_sim.py`; see `Wire[T]` Global Wire Simulation section above. Single-file
-  designs only; multi-file global wire sim is not yet supported.
+  `pypeline_sim.py`; see `Wire[T]` Global Wire Simulation section above. Multi-file
+  designs supported: `_discover_wire_names` recursively scans imported sub-modules;
+  cross-module wire writes (`module_alias.wire = expr`) are rewritten at decoration
+  time via the Attribute-aware `_GlobalWireRewriter`. Wire sim-keys are bare names
+  (no module prefix); unique wire names across sub-modules are assumed. Closures
+  returned by factory functions (e.g. `make_vga_timing`) require `@hw_func` decoration
+  and now correctly resolve free-variable type annotations (`Reg[h_uint]`) and access
+  closure-captured constants in the generated sim body.
 - **Global variables** — no other form of module-level mutable state is supported.
   Only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as shared cross-function
   globals in the hardware elaboration model.
 - **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
   `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
-  function call boundaries via `@hw_func`. Values flowing through global wires are stored
-  as plain `int` (no `_ctype`) — `_sim_wire_read` returns `int`, not `SimVal`. Type
-  masking for wire values occurs at `@hw_func` input/output boundaries, not inside
-  function bodies. For example, `uint1_t` wires may hold `-1` (Python `~0`) rather than
-  `1` as an intermediate value; the final result at `@MAIN` boundaries is correctly masked.
+  function call boundaries via `@hw_func`. Wire values are stored as-is (`_sim_wire_write`
+  preserves struct instances; scalar wires hold `SimVal` or `int`). Type masking for wire
+  values occurs at `@hw_func` input/output boundaries. For example, `uint1_t` wires may
+  hold `-1` (Python `~0`) rather than `1` as an intermediate value; the final result at
+  `@MAIN` boundaries is correctly masked.
 - **Annotated casts** — `a_signed: out_t = a` is ignored by Python (annotations are hints).
   For widening/sign-extension this is harmless; truncating casts would require explicit
   `_sim_cast(a, out_t)` if exact bit width matters.

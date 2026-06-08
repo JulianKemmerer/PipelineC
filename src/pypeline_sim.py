@@ -16,8 +16,13 @@ Each clock cycle:
 
 Global wires persist their values across cycles; registers commit at end of each.
 
-Limitation: only single-file designs are supported. Global wires must be declared
-in the same file as the @MAIN functions that read/write them.
+Multi-file designs are supported: @MAIN functions and Wire[T]/Input[T]/Output[T]
+declarations in imported sub-modules are discovered automatically.
+
+Limitation: Wire[T] sim keys are bare attribute names (no module prefix). Two
+imported sub-modules that both declare a Wire[T] with the same name would silently
+share the same sim state entry. Input[T]/Output[T] are safe since the elaborator
+also requires those names to be globally unique. See the plan doc for a long-term fix.
 """
 
 import argparse
@@ -35,12 +40,12 @@ import pypeline
 def run_sim(design_file: str, num_cycles: int) -> None:
     module = _import_design(design_file)
 
-    wire_names = _discover_wire_names(module)
+    wire_info = _discover_wire_names(module)
 
-    # Reset and initialise all wire and register state to zero.
+    # Reset and initialise all wire and register state.
     pypeline.sim_reset()
-    for name in wire_names:
-        pypeline._sim_wire_state[name] = 0
+    for name, inner_ctype in wire_info:
+        pypeline._sim_wire_state[name] = _make_sim_zero(inner_ctype)
     pypeline._sim_wire_readers.clear()
 
     mains = list(pypeline._main_registry)
@@ -111,14 +116,49 @@ def _convergence_loop(mains: list, cycle: int) -> None:
 
 
 def _discover_wire_names(module) -> list:
-    """Return names of all Wire[T]/Input[T]/Output[T] annotations in the module."""
-    result = []
-    for name, ann in getattr(module, "__annotations__", {}).items():
-        if isinstance(
-            ann, (pypeline._WireType, pypeline._InputType, pypeline._OutputType)
-        ):
-            result.append(name)
+    """Return (name, inner_ctype) for all Wire/Input/Output in module and imported sub-modules."""
+    import types
+
+    seen_ids: set = set()
+    result: list = []
+    result_names: set = set()
+
+    def _scan(mod):
+        if id(mod) in seen_ids:
+            return
+        seen_ids.add(id(mod))
+        for name, ann in getattr(mod, "__annotations__", {}).items():
+            if (
+                isinstance(
+                    ann, (pypeline._WireType, pypeline._InputType, pypeline._OutputType)
+                )
+                and name not in result_names
+            ):
+                result.append((name, ann.inner_ctype))
+                result_names.add(name)
+        for attr in vars(mod).values():
+            if isinstance(attr, types.ModuleType) and any(
+                isinstance(
+                    a, (pypeline._WireType, pypeline._InputType, pypeline._OutputType)
+                )
+                for a in getattr(attr, "__annotations__", {}).values()
+            ):
+                _scan(attr)
+
+    _scan(module)
     return result
+
+
+def _make_sim_zero(ctype):
+    """Return a simulation zero-value for the given pypeline ctype.
+
+    For struct types (NamedTuple subclasses with _fields), returns a struct instance
+    with all fields recursively zeroed. For scalar types, returns plain int 0 which
+    the struct @typed_new constructor will wrap in a SimVal with the correct ctype.
+    """
+    if hasattr(ctype, "_fields"):
+        return ctype(*(_make_sim_zero(ctype.__annotations__[f]) for f in ctype._fields))
+    return 0
 
 
 def _import_design(path: str):
