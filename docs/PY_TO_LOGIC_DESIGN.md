@@ -1,5 +1,82 @@
 # PY_TO_LOGIC — Design Document
 
+## Table of Contents
+
+**Architecture & Overview**
+- [Overview](#overview)
+- [Execution Model: Two Layers](#execution-model-two-layers)
+- [End-to-End Flow Summary](#end-to-end-flow-summary)
+
+**Core Data Structures**
+- [`ParserState` — the Global Compiler Context](#parserstate--the-global-compiler-context)
+- [The `Logic()` Object](#the-logic-object)
+  - [C Type Strings](#c-type-strings)
+  - [Bit-Accurate Constant Inference](#bit-accurate-constant-inference)
+- [`FuncElaborator` — per-Function Elaboration State](#funcelaborator--per-function-elaboration-state)
+  - [`env` vs `const_env` Routing](#env-vs-const_env-routing)
+  - [`_try_eval_const` — the Elaboration/Hardware Boundary](#_try_eval_const--the-elaborationhardware-boundary)
+  - [Annotation Evaluation](#annotation-evaluation)
+  - [Return Type and Void Functions](#return-type-and-void-functions)
+
+**Elaboration Mechanics**
+- [Basic Function Calls — Submodule Instances](#basic-function-calls--submodule-instances)
+- [Reference Tokens — the Core Addressing System](#reference-tokens--the-core-addressing-system)
+- [Alias Tracking — Assignments Over Time](#alias-tracking--assignments-over-time)
+- [Finding the Covering Wire](#finding-the-covering-wire)
+  - [Temporal Sort of Covering Wires](#temporal-sort-of-covering-wires)
+- [CONST\_REF\_RD — Reading Compound Types](#const_ref_rd--reading-compound-types)
+- [VAR\_REF\_RD — Variable-Index Reads](#var_ref_rd--variable-index-reads)
+- [VAR\_REF\_ASSIGN — Variable-Index Writes](#var_ref_assign--variable-index-writes)
+- [`if` Statements — Hardware MUX Generation](#if-statements--hardware-mux-generation)
+  - [Clock Enable Propagation Through `if`](#clock-enable-propagation-through-if)
+  - [Reduction (`_reduce_driven_ref_toks`)](#reduction-_reduce_driven_ref_toks)
+  - [Reading Branch Wires for Variable Ref\_Toks](#reading-branch-wires-for-variable-ref_toks)
+- [For and While Loop Unrolling](#for-and-while-loop-unrolling)
+  - [For Loops](#for-loops)
+  - [While Loops](#while-loops)
+  - [Why Naming Stays Unique Across Iterations](#why-naming-stays-unique-across-iterations)
+- [Closure Factory Pattern](#closure-factory-pattern)
+  - [Specialised Functions](#specialised-functions)
+  - [Specialised Types](#specialised-types)
+  - [Conditional Type-Driven Code](#conditional-type-driven-code)
+
+**Special Signal Declarations**
+- [Registers (`Reg[T]`)](#registers-regt)
+  - [Clock Enable and Function Calls](#clock-enable-and-function-calls)
+- [Feedback Wires (`Feedback[T]`)](#feedback-wires-feedbackt)
+- [Global Wires (`Wire[T]`)](#global-wires-wiret)
+- [Global I/O (`Input[T]` / `Output[T]`)](#global-io-inputt--outputt)
+
+**Multi-File Support**
+- [Multi-File Import Support](#multi-file-import-support)
+  - [Name Mangling Rule](#name-mangling-rule)
+  - [`PARSE_FILE` Import Pre-Pass (`_process_imports`)](#parse_file-import-pre-pass-_process_imports)
+  - [Wire Access in Hardware Function Bodies](#wire-access-in-hardware-function-bodies)
+  - [Function Name Mangling](#function-name-mangling)
+  - [Cross-File Function Calls](#cross-file-function-calls)
+
+**Syntax Extensions**
+- [Compound Initializer Syntax](#compound-initializer-syntax)
+- [Bit Manipulation Syntax](#bit-manipulation-syntax)
+- [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
+- [Custom Operator Registration](#custom-operator-registration)
+
+**Simulation**
+- [Proto-Simulation — Running Pypeline Code as Python](#proto-simulation--running-pypeline-code-as-python)
+  - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
+  - [`@hw_func` / `_sim_type_wrap` — Per-Function Type Propagation](#hw_func--_sim_type_wrap--per-function-type-propagation)
+  - [`@MAIN` Implies `@hw_func`](#main-implies-hw_func)
+  - [`Reg[T]` Simulation — Stateful Registers Across Clock Cycles](#regt-simulation--stateful-registers-across-clock-cycles)
+  - [`Feedback[T]` Simulation — Combinatorial Convergence](#feedbackt-simulation--combinatorial-convergence)
+  - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation--multi-main-convergence)
+  - [Limitations of the Current Proto-Sim](#limitations-of-the-current-proto-sim)
+
+**Reference**
+- [pypeline.py — Runtime Support](#pypeline-py--runtime-support)
+- [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
+
+---
+
 ## Overview
 
 `PY_TO_LOGIC.py` is the Python frontend for the PipelineC hardware compiler. It translates
@@ -1611,6 +1688,29 @@ simulation path for width inference) is ignored.
 
 ---
 
+## Built-in Bit Manipulation Functions
+
+`pypeline` exports several bit-manipulation helpers that elaborate to dedicated submodule
+instances. All bounds / counts are evaluated at elaboration time via `_try_eval_const`.
+
+| Function | Signature | Description |
+|---|---|---|
+| `bit_dup(x, n)` | `(uintW_t, int) → uintW*n_t` | Replicate `x` exactly `n` times end-to-end |
+| `rotl(x, n)` | `(uintW_t, int) → uintW_t` | Rotate left by `n` bit positions |
+| `rotr(x, n)` | `(uintW_t, int) → uintW_t` | Rotate right by `n` bit positions |
+| `bswap(x)` | `(uintW_t,) → uintW_t` | Reverse byte order (W must be a multiple of 8) |
+| `bit_assign(base, val, offset)` | `(uintW_t, uintV_t, int) → uintW_t` | Overwrite bits `[offset+V-1:offset]` of `base` with `val` |
+| `array_to_uint_be(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, big-endian (arr[0] = MSB) |
+| `array_to_uint_le(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, little-endian (arr[0] = LSB) |
+| `uint_to_array_be(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, big-endian |
+| `uint_to_array_le(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, little-endian |
+
+Each function elaborates to a `BIT_MANIP_<func>_<types>` submodule instance in the
+Logic() graph. The output type is derived from the input widths and parameters at
+elaboration time.
+
+---
+
 ## Custom Operator Registration
 
 Any binary or unary Python operator can be overloaded for specific operand types by
@@ -1715,29 +1815,6 @@ def make_float_adder(float_t):
 
 - If `impl_name` is a **string**: look up in `parser_state.FuncLogicLookupTable`, else in `module_globals`, else raise.
 - If `impl_name` is a **callable**: call `_elaborate_live_func(impl_name.__name__, impl_name)` directly (used for scoped callables not at module level).
-
----
-
-## Built-in Bit Manipulation Functions
-
-`pypeline` exports several bit-manipulation helpers that elaborate to dedicated submodule
-instances. All bounds / counts are evaluated at elaboration time via `_try_eval_const`.
-
-| Function | Signature | Description |
-|---|---|---|
-| `bit_dup(x, n)` | `(uintW_t, int) → uintW*n_t` | Replicate `x` exactly `n` times end-to-end |
-| `rotl(x, n)` | `(uintW_t, int) → uintW_t` | Rotate left by `n` bit positions |
-| `rotr(x, n)` | `(uintW_t, int) → uintW_t` | Rotate right by `n` bit positions |
-| `bswap(x)` | `(uintW_t,) → uintW_t` | Reverse byte order (W must be a multiple of 8) |
-| `bit_assign(base, val, offset)` | `(uintW_t, uintV_t, int) → uintW_t` | Overwrite bits `[offset+V-1:offset]` of `base` with `val` |
-| `array_to_uint_be(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, big-endian (arr[0] = MSB) |
-| `array_to_uint_le(arr)` | `(uintE_t[N],) → uintE*N_t` | Pack byte array → integer, little-endian (arr[0] = LSB) |
-| `uint_to_array_be(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, big-endian |
-| `uint_to_array_le(x, n)` | `(uintW_t, int) → uint(W/n)_t[n]` | Unpack integer → array of `n` elements, little-endian |
-
-Each function elaborates to a `BIT_MANIP_<func>_<types>` submodule instance in the
-Logic() graph. The output type is derived from the input widths and parameters at
-elaboration time.
 
 ---
 
@@ -2675,7 +2752,6 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 | Bit select | `BIT_SELECT_<type>_<pos>` | `BIT_SELECT_uint32_t_15` |
 | Bit slice | `BIT_SLICE_<type>_<hi>_<lo>` | `BIT_SLICE_uint32_t_15_0` |
 | Bit slice assign | `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` | |
-| Tuple concat | `TUPLE_CONCAT_<types>` | `TUPLE_CONCAT_uint32_t_uint32_t` |
 
 In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 - Array brackets in type strings are replaced with `_`
