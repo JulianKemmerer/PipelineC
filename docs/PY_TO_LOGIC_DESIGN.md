@@ -57,6 +57,7 @@
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
+- [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
 - [Custom Operator Registration](#custom-operator-registration)
@@ -797,6 +798,7 @@ invokes `_elaborate_live_func`:
 3. Names used only in annotations (not body) are recovered from `func.__annotations__`
    and merged into the closure namespace
 4. A **canonical name** is computed from the factory chain + all closure variables
+   (or a hash when factory params aren't in the closure — see Canonical function name format)
 5. Dedup check: if the canonical name is already in `FuncLogicLookupTable`, return the
    existing Logic() immediately — no re-elaboration
 6. Otherwise, a fresh `FuncElaborator` elaborates the function; the result is stored under
@@ -810,6 +812,19 @@ returns immediately.
 After finding the `callee_def`, `_elab_call` passes `callee_def.func_name` (the canonical
 name) — not the Python alias — to `_add_submodule_instance`, so all references in
 `submodule_instances` and VHDL output use the canonical name consistently.
+
+**Closure globals merge:** when elaborating a closure function, the namespace used for
+`_try_eval_const` and annotation resolution is built as:
+
+```
+merged_globals = {**func.__globals__, **self.module_globals, **closure_ns}
+```
+
+Priority: `closure_ns` > `self.module_globals` > `func.__globals__`. The lowest-priority
+`func.__globals__` captures types imported at the top of the closure's source file (e.g.
+`vga_pos_t` imported in `vga/timing.py`) that are not present in the calling module's
+globals. The struct-scan pass that registers closure structs in
+`parser_state.struct_to_field_type_dict` also inspects `func.__globals__` for struct types.
 
 **Nested factory functions** — factory-produced functions whose result is local to another
 factory (never bound at module level) — work the same way. The closure of the outer
@@ -855,10 +870,13 @@ middle-chain factories (nested definitions) are looked up as callables in the cl
 
 1. **Factory not found** in `module_globals` — fall back to all type/int-valued closure vars.
 2. **Factory has 0 parameters** — suffix is empty; name is just `factory_prefix`.
-3. **Factory has parameters** — only include those present in the closure. If *none* of the
-   factory's parameters appear in the closure (e.g. `T` in `make_swap` is used only to
-   compute `local_pair_t` and is never referenced inside `swap`), fall back to all type/int
-   closure vars so the name remains unique.
+3. **Factory has parameters, but none appear in the closure** — this happens when the factory
+   computes derived locals from its parameters (e.g. `make_vga_timing` expands `spec` into
+   integer constants `FRAME_WIDTH`, `H_SYNC_START`, etc.; none of those match the parameter
+   name `spec`). In this case, all closure vars are **hashed** (SHA-256, first 8 hex chars)
+   and the factory parameter names are used as the descriptor: `<param_names>_<hash8>`.
+   Example: `make_vga_timing_spec_a1b2c3d4`. This avoids the 300+ character names that
+   would result from listing all derived closure vars, which can exceed OS path limits.
 
 Values are: C type name for `_CTypeMeta` / `@struct` types (with brackets mangled to `_`),
 integer/bool values as their string representation. Non-C-type objects are skipped.
@@ -884,7 +902,11 @@ integer/bool values as their string representation. Non-C-type objects are skipp
 # → "make_double_neg_make_inv_t_uint32_t"   (nested definition encoded in prefix)
 
 # make_swap.<locals>.swap  factory params: T, but T not captured in swap's closure
-# → fallback: "make_swap_local_pair_t_pair_t_a_uint32_t_b_uint32_t"
+# → hashed fallback: "make_swap_T_<hash8>"   (all closure vars hashed; "T" is the param name)
+
+# make_vga_timing.<locals>.vga_timing  factory params: spec (VgaTimingSpec)
+# spec not in closure (expanded into FRAME_WIDTH, H_SYNC_START, etc.)
+# → hashed fallback: "make_vga_timing_spec_a1b2c3d4"
 
 # def make_singleton():  (0 params)
 # → "make_singleton"
@@ -905,7 +927,10 @@ point_t = make_point_t(uint32_t, 2)
 ```
 
 `_discover_structs_from_module` walks the live module namespace after `exec_module` and
-registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. The `@struct`
+registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. Registration is
+handled by `_register_struct_recursive`, which recursively registers nested struct field
+types (e.g. `vga_pos_t` inside `vga_timing_signals_t`) so that the backend can look up
+every field type at any depth. The `@struct`
 decorator adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point_t[10]")`
 — a valid array C type object usable in further annotations.
 
@@ -1227,6 +1252,20 @@ def global_io_test():
     global_out = ~global_in
 ```
 
+### I/O Port Names Have No Module Prefix
+
+`Input[T]` and `Output[T]` are **boundary ports** — globally unique by definition, like
+an FPGA pin or top-level VHDL entity port. They are stored in `parser_state.global_vars`
+under their **bare name only**, with no module prefix. This contrasts with `Wire[T]`,
+which gets the `{module_prefix}_{bare_name}` namespace-isolating prefix.
+
+This means `ja_0: Output[uint1_t]` declared in `board/arty/vga_pmod_ja_jb.py` appears in
+the VHDL entity as port `ja_0`, matching `board.vhd` exactly with no modifications.
+
+A uniqueness check is enforced: if a bare I/O name is already registered in
+`parser_state.global_vars`, `ElaborationError` is raised. This prevents accidental
+shadowing between files.
+
 ### Discovery
 
 `_discover_global_wires` (called in `PARSE_FILE`) scans `tree.body` for top-level
@@ -1320,10 +1359,15 @@ All names from an imported file are prefixed with the **actual module name** (no
 local alias), using a single underscore:
 
 ```
-hardware_name = {actual_module_name}_{bare_name}
+hardware_name = {actual_module_name}_{bare_name}   ← Wire[T] only
 ```
 
-- `import file_a` → prefix `file_a` for all wires and functions in that file
+**Exception — `Input[T]` / `Output[T]`:** I/O port names are globally unique boundary
+signals and are stored without any module prefix (see **Global I/O** section). This lets
+board-specific I/O names appear verbatim in the VHDL entity, matching constraint files
+exactly.
+
+- `import file_a` → prefix `file_a` for Wire names; I/O names stay bare
 - `import file_a as fa` → Python attribute access uses `fa`, but hardware name is still
   `file_a_i` (not `fa_i`). This ensures that two files importing the same module under
   different aliases still refer to the same hardware wire — preventing phantom
@@ -1385,9 +1429,10 @@ In `_elab_expr`, before reaching `_elab_ref_read`, the elaborator calls
 2. Looks up `base` in `parser_state.module_alias_to_actual` to get the actual module
    name (handles aliases: `fa → file_a`).
 3. Constructs `mangled = f"{actual}_{attr}"` and checks it is in `parser_state.global_vars`.
-4. If found: proceeds exactly like a single-file global wire read/write under the
-   mangled name (`'file_a_o'`). All lazy-init, alias-chain, and validation logic is
-   unchanged — the mangled name is treated as the canonical wire name throughout.
+4. If not found, checks the **bare `attr` name** as a fallback — I/O ports are registered
+   without module prefix, so `board_vga.ja_0` resolves to bare `"ja_0"`.
+5. If found: proceeds exactly like a single-file global wire read/write under the
+   resolved name. All lazy-init, alias-chain, and validation logic is unchanged.
 
 In `_elab_assign`, the same check runs before `_parse_ref_toks` on the LHS target,
 intercepting `file_a.i = ...` writes.
@@ -1526,12 +1571,16 @@ are pre-existing and documented.
 ## Compound Initializer Syntax
 
 A local variable of struct or array type can be initialized from a **NamedTuple
-constructor call or a list literal** at declaration time.
+constructor call or a list literal** at declaration time (annotated assignment) or in a
+plain assignment after the variable is already declared.
 
 ```python
-# Preferred form — NamedTuple constructor:
+# Preferred form — NamedTuple constructor at declaration:
 my_point: point2d_t = point2d_t(dim=[0, 1])
 rv: pair_t = pair_t(a=p.b, b=p.a)
+
+# Plain assignment (no annotation) — also supported:
+pmod_a_wire = pmod8_t(p1=x, p2=y, p3=z, p4=w, p5=a, p6=b, p7=c, p8=d)
 
 # Array variable — list literal:
 my_arr: uint32_t[2] = [v0, v1]
@@ -1571,11 +1620,18 @@ The same logic applies to `return` statements: `_elab_return` checks for
 `ast.Dict`/`ast.List` and NamedTuple constructor calls before the general `_elab_expr`
 path, routing them to `_elab_compound_init` with `RETURN_WIRE_NAME` as the base.
 
+After `_elab_compound_init` writes each sub-field alias (e.g. `return_output.r`,
+`return_output.g`), `_connect_compound_return` is called to assemble the full struct.
+It calls `_read_ref(("return_output",), return_type, ...)`, which finds each sub-field
+via the concrete `env` entries and emits a `CONST_REF_RD` assembly submodule. The output
+wire of that submodule is then connected to `return_output`, giving the VHDL backend a
+visible driver for the return port.
+
 **Rules (all forms):**
 - Leaf values can be any hardware expression (constants, input wires, sub-expressions).
 - Nesting is allowed to arbitrary depth (struct of arrays, array of structs, etc.).
-- Only valid in annotated assignment (`var: T = …`) or return statements; the declared type
-  determines the base wire type in `_declare_var` before init writes are applied.
+- Applies to annotated assignment (`var: T = …`), plain assignment (`x = MyStruct(...)`),
+  and return statements.
 
 This is **pure elaboration sugar** — the result is identical to writing the assignments
 explicitly. No new hardware primitives are introduced.
@@ -1629,6 +1685,31 @@ explicit `.as_const(…)` call is required.
 
 ---
 
+## Ternary (IfExp) Assignment
+
+Python's ternary `x = body if test else orelse` is supported in hardware assignments.
+
+```python
+out_r: uint4_t = r if sig.active else uint4_t(0)
+```
+
+**Elaboration:** `_elab_assign` detects `ast.IfExp` on the RHS and transforms it into a
+synthetic `ast.If` statement:
+
+```
+x = body if test else orelse
+    → if test:
+          x = body
+      else:
+          x = orelse
+```
+
+This reuses the full `_elab_if` MUX machinery, including clock-enable propagation and
+temporal sorting of covering wires. If the condition evaluates to a compile-time constant
+via `_try_eval_const`, the unused branch is eliminated entirely.
+
+---
+
 ## Bit Manipulation Syntax
 
 Several subscript forms on scalar hardware types produce bit-level operations rather than
@@ -1646,11 +1727,14 @@ Elaborated as a `BIT_SELECT_<type>_<pos>` submodule instance.
 ### Bit-Slice Read
 
 ```python
-lo_half: uint16_t = x[15:0]   # extract bits [15:0] → uint16_t
+lo_half: uint16_t = x[15:0]          # bare name — extract bits [15:0] → uint16_t
+r_hi: uint4_t     = sig.pos.x[7:4]   # struct field access — also supported
 ```
 
 The slice bounds are evaluated via `_try_eval_const` (must be constants at elaboration time).
-Elaborated as a `BIT_SLICE_<type>_<hi>_<lo>` submodule.
+Both bare names (`x[hi:lo]`) and attribute-chain expressions (`s.field[hi:lo]`) are handled
+by `_try_bit_slice`: the base is elaborated first to obtain its wire and scalar type, then
+the slice submodule is emitted. Elaborated as a `BIT_SLICE_<type>_<hi>_<lo>` submodule.
 
 ### Bit-Slice Assignment
 
@@ -2766,9 +2850,11 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 | Array of struct | `<struct_canonical>[N]` in C type strings |
 | Top-level function | Python `def` name verbatim |
 | Imported sub-file function | `<actual_module_name>_<func_name>` (e.g. `file_a_main`) |
-| Factory function | `<factory_prefix>_<var>_<val>_...` (canonical, from qualname + closure vars) |
-| Top-file global wire | bare Python name (`main_a_in`) |
-| Imported sub-file wire | `<actual_module_name>_<bare_name>` (e.g. `file_a_i`) |
+| Factory function (params in closure) | `<factory_prefix>_<param>_<val>_...` (canonical, from qualname + closure vars) |
+| Factory function (params NOT in closure) | `<factory_prefix>_<param_names>_<hash8>` (closure vars hashed; e.g. `make_vga_timing_spec_a1b2c3d4`) |
+| Top-file global Wire | bare Python name (`main_a_in`) |
+| Imported sub-file Wire | `<actual_module_name>_<bare_name>` (e.g. `file_a_i`) |
+| Input[T] / Output[T] (any file) | **bare Python name** — no module prefix (globally unique I/O ports) |
 | Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<v>_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
@@ -2811,7 +2897,9 @@ top.py  (single-file or multi-file entry point)
   │   ├─ _setup_outputs()
   │   └─ _elab_stmt() recursive:
   │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
-  │       │   ├─ module-attr LHS        file_a.i = expr  →  _resolve_module_wire_name → 'file_a_i'
+  │       │   ├─ IfExp RHS              x = body if test else orelse  →  synthetic ast.If  →  _elab_if MUX
+  │       │   ├─ struct constructor RHS x = MyStruct(...)  →  _elab_compound_init (no annotation needed)
+  │       │   ├─ module-attr LHS        file_a.i = expr  →  _resolve_module_wire_name → 'file_a_i' (or bare name for I/O)
   │       │   └─ bare-name LHS (sub)    i = expr  →  _resolve_global_wire('i') → 'file_a_i'
   │       ├─ _elab_ann_assign           declare local variable wire; Reg[T] → register input/output; dict/list RHS → _elab_compound_init
   │       ├─ _elab_aug_assign           const_env update or hardware BinOp
@@ -2819,6 +2907,7 @@ top.py  (single-file or multi-file entry point)
   │       ├─ _elab_while                unroll while _try_eval_const(condition)
   │       ├─ _elab_if                   eliminate (const) or snapshot+MUX (hardware)
   │       └─ _elab_return               error if void; error if bare return in non-void; error if already driven; connect result wire
+  │           ├─ compound form          _elab_compound_init writes sub-field aliases; _connect_compound_return assembles via CONST_REF_RD → drives return_output
   │           └─ _elab_expr:
   │               ├─ _elab_constant     _infer_const_ctype → CONST wire
   │               ├─ _elab_binop        BIN_OP built-in or registered binary operator submodule
@@ -2828,7 +2917,7 @@ top.py  (single-file or multi-file entry point)
   │               │   └─ bare-name (sub)  _resolve_global_wire → prefixed name
   │               ├─ _elab_name (step 4) _resolve_global_wire → direct or prefixed global wire
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
-  │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo])
+  │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
   │               └─ _elab_call         ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
   │                                   ast.Attribute: module-qualified call (mod.func(args)) →

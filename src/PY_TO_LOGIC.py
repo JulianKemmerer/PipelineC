@@ -358,6 +358,20 @@ def _var_ref_assign_func_name(output_type, base_type, ref_toks, covering_ref_tok
 # ─────────────────────────────────────────────
 
 
+def _inner_ctype_to_str(inner_ctype):
+    """Convert a Reg/Wire/Input/Output inner type to its C-type name string.
+    _CTypeMeta types (make_uint, etc.) have __str__ returning the C name.
+    @struct NamedTuple types are plain Python classes — use _pypeline_ctype_name.
+    """
+    if isinstance(inner_ctype, type):
+        return (
+            getattr(inner_ctype, "_pypeline_ctype_name", None)
+            or getattr(inner_ctype, "_pypeline_ctype_canonical", None)
+            or str(inner_ctype)
+        )
+    return str(inner_ctype)
+
+
 def _annotation_to_ctype(ann, eval_ns=None):
     """Convert Python AST annotation to C type string. Returns None if no annotation.
     If eval_ns provided, evaluates the annotation expression against that namespace.
@@ -446,10 +460,17 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
         # Factory has params — only include those present in the closure.
         filtered_ns = {k: v for k, v in closure_ns.items() if k in factory_param_names}
         if not filtered_ns:
-            # None of the factory params were captured (e.g. make_swap's T is only
-            # used to compute local_pair_t and never referenced in swap's body).
-            # Fall back to all closure vars so the name is still unique.
-            filtered_ns = closure_ns
+            # None of the factory params were captured (the factory derived locals
+            # from them instead, e.g. make_vga_timing expands spec into constants).
+            # Hash all closure vars to produce a short unique suffix, and use the
+            # factory param names to describe what was hashed.
+            # e.g. make_vga_timing(spec=VGA_640_480) → make_vga_timing_spec_a1b2c3d4
+            closure_repr = repr(
+                sorted((k, repr(v)) for k, v in closure_ns.items())
+            ).encode()
+            h = hashlib.sha256(closure_repr).hexdigest()[:8]
+            param_suffix = "_".join(sorted(factory_param_names))
+            return factory_prefix + "_" + param_suffix + "_" + h
     else:
         # 0-param factory — name is just the factory prefix, no suffix.
         filtered_ns = {}
@@ -1307,6 +1328,9 @@ class FuncElaborator:
         mangled = f"{actual}_{attr_name}"
         if mangled in self.parser_state.global_vars:
             return mangled
+        # I/O wires have no module prefix — also check the bare attr name
+        if attr_name in self.parser_state.global_vars:
+            return attr_name
         return None
 
     def _try_eval_const(self, node):
@@ -1377,6 +1401,10 @@ class FuncElaborator:
         if ret_typ is not None:
             self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_wire(self.logic, C_TO_LOGIC.RETURN_WIRE_NAME, ret_typ)
+            self.env[C_TO_LOGIC.RETURN_WIRE_NAME] = (
+                C_TO_LOGIC.RETURN_WIRE_NAME,
+                ret_typ,
+            )
 
     # ── statements ───────────────────────────
 
@@ -1395,11 +1423,39 @@ class FuncElaborator:
             self._elab_while(stmt)
         elif isinstance(stmt, ast.If):
             self._elab_if(stmt)
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            pass  # docstring or bare string expression — skip
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 
     def _elab_assign(self, stmt):
         target = stmt.targets[0]
+        # IfExp (ternary) on RHS — transform to synthetic if/else statement.
+        # x = body if test else orelse  →  if test: x = body; else: x = orelse
+        # This reuses all existing if/else MUX machinery and handles type widening.
+        if isinstance(stmt.value, ast.IfExp):
+            cond_val = self._try_eval_const(stmt.value.test)
+            if cond_val is not None:
+                # Compile-time constant condition: reduce to one branch
+                chosen = stmt.value.body if cond_val else stmt.value.orelse
+                chosen_stmt = ast.Assign(targets=stmt.targets, value=chosen)
+                ast.copy_location(chosen_stmt, stmt)
+                ast.fix_missing_locations(chosen_stmt)
+                self._elab_assign(chosen_stmt)
+            else:
+                true_stmt = ast.Assign(targets=stmt.targets, value=stmt.value.body)
+                false_stmt = ast.Assign(targets=stmt.targets, value=stmt.value.orelse)
+                ast.copy_location(true_stmt, stmt)
+                ast.copy_location(false_stmt, stmt)
+                synthetic_if = ast.If(
+                    test=stmt.value.test,
+                    body=[true_stmt],
+                    orelse=[false_stmt],
+                )
+                ast.copy_location(synthetic_if, stmt)
+                ast.fix_missing_locations(synthetic_if)
+                self._elab_if(synthetic_if)
+            return
         # For simple Name targets not already declared as hardware:
         # try to evaluate RHS as a pure Python elaboration constant first.
         # Global wire names are never cached as elaboration constants — always hardware.
@@ -1410,6 +1466,26 @@ class FuncElaborator:
                 if const_val is not None:
                     self.const_env[name] = const_val
                     return
+        # Struct compound init on plain assignment: x = MyStruct(field=val, ...)
+        # Mirrors the same check in _elab_ann_assign for annotated assignments.
+        if isinstance(stmt.value, ast.Call) and isinstance(target, ast.Name):
+            callee = self._try_eval_const(stmt.value.func)
+            if callee is not None and hasattr(callee, "_fields"):
+                name = target.id
+                global_key = self._resolve_global_wire(name)
+                if global_key is not None:
+                    if global_key not in self.env:
+                        self._declare_global_write_wire(global_key)
+                    self._elab_compound_init(global_key, stmt.value, stmt.value)
+                elif name in self.env:
+                    self._elab_compound_init(name, stmt.value, stmt.value)
+                else:
+                    struct_ctype = (
+                        getattr(callee, "_pypeline_ctype_name", None) or callee.__name__
+                    )
+                    self._declare_var(name, struct_ctype, target)
+                    self._elab_compound_init(name, stmt.value, stmt.value)
+                return
         # Hardware path
         rhs_wire, rhs_type = self._elab_expr(stmt.value)
         # x[15:0] = y — bit-slice assign on a scalar integer wire
@@ -1449,7 +1525,7 @@ class FuncElaborator:
         # Detect Reg[T] annotation — hardware state register
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
-            inner_ctype = str(ann_val.inner_ctype)
+            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
             self._declare_state_reg(var_name, inner_ctype, stmt.target)
             return
         if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
@@ -1462,7 +1538,7 @@ class FuncElaborator:
                 raise ElaborationError(
                     f"Feedback wire '{var_name}' cannot have an initializer", stmt
                 )
-            inner_ctype = str(ann_val.inner_ctype)
+            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
             self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
         # Normal local variable
@@ -1572,18 +1648,31 @@ class FuncElaborator:
         RET = C_TO_LOGIC.RETURN_WIRE_NAME
         if isinstance(stmt.value, (ast.Dict, ast.List)):
             self._elab_compound_init(RET, stmt.value, stmt.value)
+            self._connect_compound_return(RET, stmt.value)
             return
         elif isinstance(stmt.value, ast.Call):
             callee = self._try_eval_const(stmt.value.func)
             if callee is not None and hasattr(callee, "_fields"):
                 self._elab_compound_init(RET, stmt.value, stmt.value)
+                self._connect_compound_return(RET, stmt.value)
                 return
         const_val = self._try_eval_const(stmt.value)
         if isinstance(const_val, (dict, list, tuple)):
             self._elab_compound_init_from_pyval(RET, const_val, stmt.value)
+            self._connect_compound_return(RET, stmt.value)
             return
         result_wire, _ = self._elab_expr(stmt.value)
         _connect(self.logic, result_wire, RET)
+
+    def _connect_compound_return(self, ret_wire_name, ast_node):
+        """After _elab_compound_init writes sub-field aliases for the return wire,
+        call _read_ref to emit the CONST_REF_RD assembly submodule and connect
+        its output to the return_output port so the VHDL backend sees a driver."""
+        assembled_wire, _ = self._read_ref(
+            (ret_wire_name,), self._return_type, ast_node
+        )
+        if assembled_wire != ret_wire_name:
+            _connect(self.logic, assembled_wire, ret_wire_name)
 
     def _elab_aug_assign(self, stmt):
         """b += 1  etc.
@@ -2076,14 +2165,24 @@ class FuncElaborator:
         Returns (wire, type) on success, None if the expression is not a bit slice
         (falls through to _elab_ref_read for normal array/struct access).
         Both the bit index and slice bounds must be compile-time constants.
+        Supports bare names (x[bit]) and struct-field access (s.field[bit]).
         """
         base_node = expr.value
-        if not isinstance(base_node, ast.Name):
+        if isinstance(base_node, ast.Name):
+            base_name = base_node.id
+            if base_name not in self.env:
+                return None
+            base_wire, base_type = self.env[base_name]
+            base_desc = base_name
+        elif isinstance(base_node, ast.Attribute):
+            # struct.field[bit] — elaborate the field access to get wire + type
+            try:
+                base_wire, base_type = self._elab_expr(base_node)
+            except Exception:
+                return None
+            base_desc = ast.unparse(base_node) if hasattr(ast, "unparse") else "expr"
+        else:
             return None
-        base_name = base_node.id
-        if base_name not in self.env:
-            return None
-        base_wire, base_type = self.env[base_name]
         if not _ctype_is_int(base_type):
             return None
 
@@ -2104,7 +2203,7 @@ class FuncElaborator:
                     return None
                 if slice_val.start is None or slice_val.stop is None:
                     raise ElaborationError(
-                        f"Bit slice on '{base_name}' requires both bounds: e.g. slice(hi, lo)"
+                        f"Bit slice on '{base_desc}' requires both bounds: e.g. slice(hi, lo)"
                     )
                 high_val, low_val = int(slice_val.start), int(slice_val.stop)
                 high, low = max(high_val, low_val), min(high_val, low_val)
@@ -2114,13 +2213,13 @@ class FuncElaborator:
             # x[15:0] — bit range; both bounds must be constants
             if slc.lower is None or slc.upper is None:
                 raise ElaborationError(
-                    f"Bit slice on '{base_name}' requires both bounds: e.g. x[15:0]"
+                    f"Bit slice on '{base_desc}' requires both bounds: e.g. x[15:0]"
                 )
             high_val = self._try_resolve_int_constant(slc.lower)
             low_val = self._try_resolve_int_constant(slc.upper)
             if high_val is None or low_val is None:
                 raise ElaborationError(
-                    f"Bit slice bounds on '{base_name}' must be compile-time constants"
+                    f"Bit slice bounds on '{base_desc}' must be compile-time constants"
                 )
             high, low = max(high_val, low_val), min(high_val, low_val)
 
@@ -2804,13 +2903,22 @@ class FuncElaborator:
             if existing is not None:
                 return existing  # dedup: already elaborated, no alias stored
 
-        merged_globals = {**self.module_globals, **closure_ns}
+        # Include the defining module's globals so that names imported at the top of
+        # the closure's source file (e.g. vga_pos_t imported in vga/timing.py) are
+        # accessible when evaluating AST names during elaboration.
+        # Priority: closure_ns > self.module_globals > func's own module globals.
+        import types as _types_mod
+
+        func_own_globals = (
+            func.__globals__ if isinstance(func, _types_mod.FunctionType) else {}
+        )
+        merged_globals = {**func_own_globals, **self.module_globals, **closure_ns}
 
         # Register any struct types found in closure vars that were created inside
         # a factory (not visible to _discover_structs_from_module). The @struct
         # decorator already stamped _pypeline_ctype_name on them; we just need to
         # ensure they appear in struct_to_field_type_dict.
-        for val in closure_ns.values():
+        for val in list(closure_ns.values()) + list(func_own_globals.values()):
             if (
                 inspect.isclass(val)
                 and issubclass(val, tuple)
@@ -3336,30 +3444,49 @@ def _discover_structs(tree, parser_state):
         # print(f"  struct: {node.name} -> {fields}")
 
 
+def _register_struct_recursive(obj, parser_state, visited=None):
+    """Register a NamedTuple struct class and any struct-typed fields, recursively.
+    Uses canonical _pypeline_ctype_name as the dict key.
+    """
+    if visited is None:
+        visited = set()
+    if not (
+        inspect.isclass(obj)
+        and issubclass(obj, tuple)
+        and hasattr(obj, "_fields")
+        and hasattr(obj, "__annotations__")
+    ):
+        return
+    c_name = getattr(obj, "_pypeline_ctype_name", obj.__name__)
+    if c_name in visited:
+        return
+    visited.add(c_name)
+    fields = {}
+    for field, annotation in obj.__annotations__.items():
+        fields[field] = (
+            _inner_ctype_to_str(annotation)
+            if isinstance(annotation, type)
+            else str(annotation)
+        )
+        # Recursively register struct-typed fields (e.g. vga_pos_t inside vga_timing_signals_t)
+        if isinstance(annotation, type):
+            _register_struct_recursive(annotation, parser_state, visited)
+    parser_state.struct_to_field_type_dict[c_name] = fields
+
+
 def _discover_structs_from_module(module, parser_state):
     """Inspect live module namespace for NamedTuple subclasses.
     Handles structs produced by factory functions at module level —
     not just static class definitions in the AST.
     The canonical C type name is stamped by @struct at decoration time;
     we use that name as the dict key rather than the Python variable name.
+    Recursively registers nested struct field types.
     """
+    visited = set()
     for name, obj in vars(module).items():
         if name.startswith("_"):
             continue
-        if not (
-            inspect.isclass(obj)
-            and issubclass(obj, tuple)
-            and hasattr(obj, "_fields")
-            and hasattr(obj, "__annotations__")
-        ):
-            continue
-        fields = {}
-        for field, annotation in obj.__annotations__.items():
-            # annotation may be a _CTypeMeta type or a plain string
-            fields[field] = str(annotation)
-        # Use the canonical name stamped by @struct (not the Python variable name)
-        c_name = getattr(obj, "_pypeline_ctype_name", name)
-        parser_state.struct_to_field_type_dict[c_name] = fields
+        _register_struct_recursive(obj, parser_state, visited)
         # print(f"  struct: {c_name} -> {fields}")
 
 
@@ -3397,10 +3524,20 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 f"Global {kind} '{node.target.id}' cannot have an initializer"
             )
         bare_name = node.target.id
-        reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
+        # I/O ports are boundary signals — globally unique, no module prefix.
+        # Wire[T] gets the namespace-isolating prefix to avoid collisions.
+        if kind in ("Input", "Output"):
+            reg_name = bare_name
+            if reg_name in parser_state.global_vars:
+                raise ElaborationError(
+                    f"Duplicate I/O port name '{bare_name}' — "
+                    f"Input/Output names must be globally unique across all imported files"
+                )
+        else:
+            reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = reg_name
-        var_info.type_name = str(ann_val.inner_ctype)
+        var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype)
         parser_state.global_vars[reg_name] = var_info
         if kind == "Input":
             parser_state.input_wires.add(reg_name)
