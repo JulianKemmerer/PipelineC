@@ -53,6 +53,10 @@ def run_sim(design_file: str, num_cycles: int) -> None:
         print("No @MAIN functions found in design — nothing to simulate.")
         return
 
+    # Activate simulation mode so @hw_func wrappers use sim bodies instead of
+    # falling through to raw functions (which the elaborator relies on for its
+    # exception-based hardware-function detection via _try_eval_const).
+    pypeline._sim_active = True
     for cycle in range(num_cycles):
         _run_clock_cycle(mains, cycle)
 

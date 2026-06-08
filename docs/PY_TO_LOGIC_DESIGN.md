@@ -2014,7 +2014,41 @@ custom attributes like `clz.out_t` or `shifter_SL.amount_t` survive the wrapping
 
 **Hardware transparency:** `_elaborate_live_func` calls `inspect.unwrap(func)` before
 `inspect.getsource` and closure extraction, so `@hw_func`-wrapped functions elaborate
-from the original source code, not the wrapper body.
+from the original source code, not the wrapper body. The merged namespace for elaboration
+also uses `func_for_source.__globals__` (the unwrapped function's globals, e.g.
+`vga/timing.py`'s imports) rather than `func.__globals__` (the wrapper function's globals,
+which are `pypeline.py`'s imports). This matters when `@hw_func` is applied to a closure
+defined in a sub-module — without it, types imported at the top of the closure's source
+file (e.g. `vga_pos_t`) would be missing from the elaboration namespace.
+
+**`_sim_active` guard — elaborator-probing protection:**
+
+The `@hw_func` wrapper has this guard at its start:
+
+```python
+if not _sim_active:
+    return fn(*args, **kwargs)
+```
+
+`_sim_active` is `False` by default in `pypeline.py`. `pypeline_sim.py` sets
+`pypeline._sim_active = True` before the first clock cycle. The hardware elaborator
+(`pipelinec`) is a separate process that never sets this flag.
+
+This is needed because `_elab_assign` calls `_try_eval_const(stmt.value)` on every
+assignment RHS to test whether the RHS is a plain Python constant. `_try_eval_const`
+evaluates the expression in `{**module_globals, **const_env}` — which includes live
+callables like `vga_timing`. If the wrapper is active and `_sim_active` is not guarded:
+
+- The elaborator calls `vga_timing()` via `_try_eval_const`
+- The `@hw_func` wrapper runs the simulation body → returns a concrete `vga_timing_signals_t`
+- `_try_eval_const` returns non-`None` → the result is stored in `const_env`
+- Later, `sig` (= the constant) is used in `test_pattern(sig)` → elaboration error:
+  *"Cannot emit non-int Python value as hardware"*
+
+With the `_sim_active` guard, calling `vga_timing()` outside of simulation falls through
+to the raw closure, which raises `UnboundLocalError` on its unbound `Reg[T]` variables.
+`_try_eval_const` catches that exception, returns `None`, and the elaborator uses the
+hardware path (`_elaborate_live_func`) correctly.
 
 **Scoped operator key correctness:** scoped ops are registered with `scope=func` where
 `func` is the name at the point of the `register_*_operator` call. If `@hw_func` has
@@ -2451,6 +2485,12 @@ plus any closure variables (`fn.__code__.co_freevars` / `fn.__closure__`). This 
 The same `_eval_ns` is used as the base for `new_globals` so that closure-captured constants
 (`FRAME_WIDTH`, `H_MAX`, etc.) are accessible in the generated sim body.
 
+The `@hw_func` wrapper on such closures is transparent to the hardware elaborator via two
+mechanisms: (1) the `_sim_active` guard prevents the sim body from running when the elaborator
+probes the function via `_try_eval_const`; (2) `_elaborate_live_func` uses `func_for_source.__globals__`
+(the unwrapped original's imports) not `func.__globals__` (the wrapper's imports in `pypeline.py`).
+See `@hw_func / _sim_type_wrap` section for details.
+
 #### Global Wire State
 
 ```python
@@ -2609,10 +2649,13 @@ Subsequent cycles toggle both registers between 0 and -1 (uint1_t 0 and 1).
   designs supported: `_discover_wire_names` recursively scans imported sub-modules;
   cross-module wire writes (`module_alias.wire = expr`) are rewritten at decoration
   time via the Attribute-aware `_GlobalWireRewriter`. Wire sim-keys are bare names
-  (no module prefix); unique wire names across sub-modules are assumed. Closures
-  returned by factory functions (e.g. `make_vga_timing`) require `@hw_func` decoration
-  and now correctly resolve free-variable type annotations (`Reg[h_uint]`) and access
-  closure-captured constants in the generated sim body.
+  (no module prefix); unique wire names across sub-modules are assumed.
+- **Closures returned by factory functions** (e.g. `vga_timing = make_vga_timing(spec)`)
+  — add `@hw_func` to the inner closure definition. `_build_reg_sim_func` now resolves
+  `Reg[T]` annotations and body references that use closure-captured variables (via
+  `fn.__code__.co_freevars` / `fn.__closure__`). The `@hw_func` wrapper is transparent
+  to the elaborator via the `_sim_active` guard (see `@hw_func` section above) and the
+  `func_for_source.__globals__` fix in `_elaborate_live_func`.
 - **Global variables** — no other form of module-level mutable state is supported.
   Only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as shared cross-function
   globals in the hardware elaboration model.

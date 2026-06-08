@@ -843,6 +843,7 @@ _sim_converging: bool = False  # True during delta-cycle convergence passes
 _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
+_sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
 
 
 def _sim_current_inst_path():
@@ -1301,6 +1302,14 @@ def _sim_type_wrap(fn):
 
     @_functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        # When not in an active simulation run, call the raw original function.
+        # This preserves the elaborator's exception-based hardware-function detection:
+        # PY_TO_LOGIC._try_eval_const calls callable hardware closures to test whether
+        # they return a plain Python constant; if the raw closure raises (e.g.
+        # UnboundLocalError from Reg[T] vars), _try_eval_const returns None and the
+        # elaborator uses the hardware elaboration path instead.
+        if not _sim_active:
+            return fn(*args, **kwargs)
         # Capture call-site (filename, lineno, col, end_col) from caller's frame.
         # This mirrors the hardware elaborator's _loc_str instance-naming convention
         # and uniquely identifies which hardware instance is being simulated.

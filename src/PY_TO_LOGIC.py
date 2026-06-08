@@ -2909,8 +2909,12 @@ class FuncElaborator:
         # Priority: closure_ns > self.module_globals > func's own module globals.
         import types as _types_mod
 
+        # Use func_for_source (the unwrapped original) not func (which may be a
+        # @hw_func wrapper whose __globals__ are pypeline.py, not the design module).
         func_own_globals = (
-            func.__globals__ if isinstance(func, _types_mod.FunctionType) else {}
+            func_for_source.__globals__
+            if isinstance(func_for_source, _types_mod.FunctionType)
+            else {}
         )
         merged_globals = {**func_own_globals, **self.module_globals, **closure_ns}
 
