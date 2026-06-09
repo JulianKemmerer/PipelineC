@@ -3,6 +3,8 @@ set -e
 reset
 cd /media/1TB/Dropbox/PipelineC/git/PipelineC
 
+rm -rf ~/pypelinec_output/*; ./src/pipelinec ./examples/pypeline/vga_test_pattern.py --out_dir ~/pypelinec_output --comb
+
 python3 ./src/pypeline_sim.py ./src/tests/pypeline_tests/inst/global_wires_sim_test.py --run 10
 
 python3 ./src/tests/pypeline_tests/inst/float32_add_test.py
