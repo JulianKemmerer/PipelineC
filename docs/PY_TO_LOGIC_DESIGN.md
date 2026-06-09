@@ -2613,6 +2613,46 @@ Plain Python functions without `@sim_output` execute during every convergence it
 the correct default for pure helper functions (e.g. `c = compute_constant()`). The
 `_sim_converging` flag is exposed for opt-in guards if needed.
 
+#### `@sim_output` in Hardware Elaboration — `_elab_stmt` Skip
+
+A `@sim_output` call appearing as a bare expression statement in a `@MAIN` body must be
+invisible to the hardware elaborator (`PY_TO_LOGIC`). The elaborator normally raises
+`NotImplementedError` for any `ast.Expr` statement that is not a bare string constant.
+A dedicated guard in `FuncElaborator._elab_stmt` handles this:
+
+```python
+elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+    callee = self._try_eval_const(stmt.value.func)
+    if getattr(callee, "_is_sim_output", False):
+        pass  # @sim_output call — sim-only side effect, skip in hardware
+    else:
+        raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
+```
+
+`_try_eval_const` evaluates the callee expression against `{**module_globals, **const_env}`.
+If it resolves to a Python callable with `_is_sim_output = True` (the attribute set by the
+`@sim_output` decorator), the statement is silently skipped. This lets simulation-only
+calls like `capture_pixel(sig, px)` live in `@MAIN` bodies without any conditional guard:
+
+```python
+@MAIN
+def vga_test_pattern():
+    sig = vga_timing()
+    px  = test_pattern(sig)
+    board_vga.vga_pmod = px
+    capture_pixel(sig, px)   # @sim_output — skipped by pipelinec, fires in pypeline_sim.py
+```
+
+**Constraints:**
+- Only bare function-call expression statements are checked (`ast.Expr` with `ast.Call`).
+  Assignment targets (`px = capture_pixel(...)`) are not affected.
+- The callee must be resolvable via `_try_eval_const` (i.e. it must be a plain name or
+  attribute accessible in `module_globals`). If it cannot be resolved, `_try_eval_const`
+  returns `None`, `getattr(None, "_is_sim_output", False)` is `False`, and the
+  `NotImplementedError` fires as before.
+- The skip is entirely at elaboration time — no hardware node, wire, or submodule instance
+  is emitted for the skipped call.
+
 #### Example — Cross-Connected NOT Registers
 
 ```python

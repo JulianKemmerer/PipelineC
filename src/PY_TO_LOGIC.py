@@ -1425,6 +1425,12 @@ class FuncElaborator:
             self._elab_if(stmt)
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
             pass  # docstring or bare string expression — skip
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            callee = self._try_eval_const(stmt.value.func)
+            if getattr(callee, "_is_sim_output", False):
+                pass  # @sim_output call — sim-only side effect, skip in hardware
+            else:
+                raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 
