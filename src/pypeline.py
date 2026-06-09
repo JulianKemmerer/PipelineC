@@ -403,20 +403,57 @@ def struct(cls):
 
 
 # ─────────────────────────────────────────────
-# MAIN decorator
+# MAIN decorator and pragma registries
 # ─────────────────────────────────────────────
 
 _main_registry: list = []
+_main_mhz_registry: dict = {}  # func.__name__ → float mhz
+_part_registry: "str | None" = None
 
 
-def MAIN(func):
-    """Marks a function as a top-level hardware process.
-    Implies @hw_func: inputs/outputs are type-cast for simulation and
-    the function can be passed to sim_call().
+def PART(part_string: str):
+    """Set the global FPGA target part (equivalent to #pragma PART "...").
+
+    Call once at module level, e.g.::
+
+        PART("xc7a35ticsg324-1l")
     """
+    global _part_registry
+    _part_registry = part_string
+
+
+def _register_main(func, mhz):
+    if mhz is not None:
+        _main_mhz_registry[func.__name__] = float(mhz)
     wrapped = _sim_type_wrap(func)
     _main_registry.append(wrapped)
     return wrapped
+
+
+def MAIN(func_or_mhz=None, *, mhz=None):
+    """Marks a function as a top-level hardware process.
+
+    Supports three forms::
+
+        @MAIN                  # no clock constraint
+        @MAIN(100.0)           # positional MHz
+        @MAIN(mhz=100.0)       # keyword MHz
+
+    Implies @hw_func: inputs/outputs are type-cast for simulation and
+    the function can be passed to sim_call().
+    """
+    if callable(func_or_mhz):
+        # Used as bare @MAIN with no arguments
+        return _register_main(func_or_mhz, mhz=None)
+    else:
+        # Used as @MAIN(100.0) or @MAIN(mhz=100.0)
+        if func_or_mhz is not None:
+            mhz = float(func_or_mhz)
+
+        def decorator(func):
+            return _register_main(func, mhz=mhz)
+
+        return decorator
 
 
 def sim_output(fn):

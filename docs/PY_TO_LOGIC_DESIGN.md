@@ -55,6 +55,12 @@
   - [Function Name Mangling](#function-name-mangling)
   - [Cross-File Function Calls](#cross-file-function-calls)
 
+**Pypeline Pragmas**
+- [Pypeline Pragmas (`PART` / `MAIN_MHZ`)](#pypeline-pragmas-part--main_mhz)
+  - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
+  - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
+  - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
+
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
@@ -126,7 +132,8 @@ parser_state.FuncLogicLookupTable       # func_name -> Logic()  (function defini
 parser_state.LogicInstLookupTable       # inst_key  -> Logic()  (instantiated call sites)
 parser_state.FuncToInstances            # func_name -> {inst_keys}
 parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
-parser_state.main_mhz                   # main_name -> clock MHz (None until synthesis)
+parser_state.part                       # FPGA part string or None (set by PART(...) pragma)
+parser_state.main_mhz                   # main_name -> float MHz or None (set by @MAIN(mhz=...) + inference)
 ```
 
 `FuncLogicLookupTable` holds one `Logic()` per unique function definition.
@@ -1902,6 +1909,86 @@ def make_float_adder(float_t):
 
 ---
 
+## Pypeline Pragmas (`PART` / `MAIN_MHZ`)
+
+Pypeline provides Python equivalents for the two most common PipelineC C pragmas:
+
+```c
+// PipelineC C syntax
+#pragma PART "xc7a35ticsg324-1l"
+#pragma MAIN_MHZ my_main 100.0
+void my_main() { ... }
+```
+
+```python
+# pypeline Python syntax
+PART("xc7a35ticsg324-1l")
+
+@MAIN(100.0)
+def my_main(): ...
+```
+
+### `PART(...)` — FPGA Target Device
+
+```python
+PART("xc7a35ticsg324-1l")
+```
+
+Called once at module level (usually near the top of the design file). Sets the global
+`_part_registry` string in `pypeline.py`.
+
+`PY_TO_LOGIC.PARSE_FILE` reads `pypeline._part_registry` after executing the module and
+writes it to `parser_state.part`. This value is forwarded to the synthesis backend
+(Vivado or PYRTL); when `None` the tool chain defaults to a software timing estimator.
+
+### `@MAIN(mhz)` — Clock Frequency Constraint
+
+```python
+@MAIN(25.0)         # positional
+@MAIN(mhz=25.0)     # keyword
+@MAIN               # no constraint (same as before)
+def my_main(): ...
+```
+
+When an MHz value is provided, `_register_main` records it in `pypeline._main_mhz_registry`
+keyed by the function's Python name. `PARSE_FILE` reads this registry and stores the value
+in `parser_state.main_mhz[hw_name]` and `parser_state.main_syn_mhz[hw_name]` for every
+function found in `main_names`.
+
+`hw_name` is the module-prefixed form (`file_a_main` for imported sub-files, bare name
+for the top file), so the synthesiser sees consistent naming regardless of how the MAIN
+is reached.
+
+### Clock Domain Inference (`INFER_CLOCK_DOMAINS`)
+
+Most designs import a board support file whose functions are also `@MAIN` entry points (e.g.
+`board_vga.vga_to_pmod8`). Those functions carry `main_mhz = None` because the user only
+annotates their own top-level MAIN. The inference step propagates the user's MHz to all
+other MAINs that share a global wire with a known-MHz MAIN.
+
+The logic lives in `C_TO_LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state)`:
+
+- Iterates `parser_state.global_vars`; for each shared global, finds all MAINs that use
+  it via `global_var_state_reg_info.used_in_funcs` → `RECURSIVE_FIND_MAIN_FUNCS`.
+- If any one MAIN has a non-None MHz, propagates it to the others (same clock group).
+- A second pass handles C-style clock-crossing variables (`_WRITE`/`_READ` pairs) via
+  `var_to_rw_main_funcs`; these are empty for the Python path.
+- Repeats until no further propagation occurs (fixed-point loop).
+
+This function was **extracted from `GET_CLK_CROSSING_INFO`** (which previously embedded
+the same loop but was only called on the C code path) so it can be reused by both paths.
+
+`PARSE_FILE` calls it with empty dicts after registering all MAINs:
+
+```python
+C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+```
+
+`GET_CLK_CROSSING_INFO` (C path only) calls it with the populated dicts from its regex
+search of `preprocessed_c_text`.
+
+---
+
 ## Proto-Simulation — Running Pypeline Code as Python
 
 The simulation layer lets pypeline hardware functions execute as ordinary Python, enabling
@@ -2089,10 +2176,34 @@ def make_clz(value_t):
 ### `@MAIN` Implies `@hw_func`
 
 Because every `@MAIN` function is a top-level hardware entry point, `@MAIN` automatically
-applies `_sim_type_wrap` to the decorated function before registering it:
+applies `_sim_type_wrap` to the decorated function before registering it.
+
+`@MAIN` supports three calling forms, all of which are simulation-transparent:
 
 ```python
-def MAIN(func):
+@MAIN               # no clock constraint
+@MAIN(100.0)        # positional MHz
+@MAIN(mhz=100.0)    # keyword MHz
+def my_main(): ...
+```
+
+The implementation dispatches on whether the first argument is callable (bare `@MAIN`) or
+numeric (`@MAIN(mhz)`):
+
+```python
+def MAIN(func_or_mhz=None, *, mhz=None):
+    if callable(func_or_mhz):
+        return _register_main(func_or_mhz, mhz=None)
+    else:
+        if func_or_mhz is not None:
+            mhz = float(func_or_mhz)
+        def decorator(func):
+            return _register_main(func, mhz=mhz)
+        return decorator
+
+def _register_main(func, mhz):
+    if mhz is not None:
+        _main_mhz_registry[func.__name__] = float(mhz)
     wrapped = _sim_type_wrap(func)
     _main_registry.append(wrapped)
     return wrapped
@@ -2101,6 +2212,9 @@ def MAIN(func):
 `_main_registry` stores the wrapped function; `{f.__name__}` for name lookup works
 because `functools.wraps` copies `__name__`. The hardware elaborator scans the source
 AST directly (not through the registry callable), so hardware generation is unaffected.
+
+`_main_mhz_registry` maps `func.__name__` → MHz and is read by `PY_TO_LOGIC.PARSE_FILE`
+when populating `parser_state.main_mhz`; it is unused during simulation.
 
 ### `sim_call(func, *args)` — Simulation Entry Point
 
@@ -2987,7 +3101,9 @@ top.py  (single-file or multi-file entry point)
   ├─ sys.path.insert(design_dir)        Allow 'import file_a' to resolve relative to top.py
   │
   ├─ exec_module()                      Python runtime: 'import file_a' executes sub-files,
-  │                                     registers all @MAIN (top + sub-files), runs factories
+  │                                     registers all @MAIN (top + sub-files), runs factories,
+  │                                     records PART(...) → _part_registry,
+  │                                     records @MAIN(mhz) → _main_mhz_registry
   │
   ├─ _discover_structs_from_module()    Register struct field types from top file namespace
   │
@@ -3041,6 +3157,13 @@ top.py  (single-file or multi-file entry point)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
+  │
+  ├─ Apply pypeline pragmas:
+  │   ├─ parser_state.part ← pypeline._part_registry   (from PART(...))
+  │   └─ parser_state.main_mhz[hw_name] ← _main_mhz_registry.get(func_name)  (from @MAIN(mhz))
+  │
+  ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+  │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
   │
   └─ ParserState → VHDL backend
 ```

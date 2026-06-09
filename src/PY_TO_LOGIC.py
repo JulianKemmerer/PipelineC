@@ -3680,6 +3680,8 @@ def PARSE_FILE(py_file):
     import pypeline
 
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
+    pypeline._main_mhz_registry.clear()
+    pypeline._part_registry = None
 
     # Make imports relative to the design file's directory work (e.g. 'import file_a')
     import sys
@@ -3695,6 +3697,10 @@ def PARSE_FILE(py_file):
     module_globals = vars(module)
     parser_state = C_TO_LOGIC.ParserState()
     parser_state.module_alias_to_actual = {}  # local alias -> actual module name
+
+    # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
+    if pypeline._part_registry is not None:
+        parser_state.part = pypeline._part_registry
 
     # ── Step 2: discover structs from live module namespace ──
     _discover_structs_from_module(module, parser_state)
@@ -3752,11 +3758,15 @@ def PARSE_FILE(py_file):
         logic = elab.elaborate()
         parser_state.FuncLogicLookupTable[hw_name] = logic
         if node.name in main_names:
-            parser_state.main_mhz[hw_name] = None
-            parser_state.main_syn_mhz[hw_name] = None
+            mhz = pypeline._main_mhz_registry.get(node.name)
+            parser_state.main_mhz[hw_name] = mhz
+            parser_state.main_syn_mhz[hw_name] = mhz
             parser_state.main_clk_group[hw_name] = None
 
     _build_inst_lookup(parser_state)
+
+    # ── Propagate MHz across MAINs sharing global wires ──
+    C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 
     # ── Validate global Wire[T] / Input[T] / Output[T] rules ──
     for wire_name in parser_state.global_vars:
