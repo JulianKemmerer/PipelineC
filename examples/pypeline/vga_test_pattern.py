@@ -28,6 +28,8 @@ from vga.timing import make_vga_timing, VGA_640_480
 
 vga_timing = make_vga_timing(VGA_640_480)  # ← swap spec for different resolution
 
+PART("xc7a35ticsg324-1l")
+
 # ── Sim-only display state (plain Python; harmless at import / compile time) ─
 _img_data = None  # H×W×3 uint8 numpy array, lazily created
 _ax_img = None  # matplotlib AxesImage handle
@@ -101,7 +103,7 @@ def _show_final():
         plt.show()
 
 
-@MAIN
+@MAIN(25.0)
 def vga_test_pattern():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()
