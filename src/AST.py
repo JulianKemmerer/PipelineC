@@ -1,111 +1,39 @@
-# Thanks Claude
 import hashlib
 import os
-import ast as python_ast
-
-# pycparser imported lazily / optionally since not needed for Pypeline frontend
-try:
-    from pycparser import c_ast
-
-    HAS_PYCPARSER = True
-except ImportError:
-    HAS_PYCPARSER = False
-
-import C_TO_LOGIC
-
-# ─────────────────────────────────────────────
-# Base class
-# ─────────────────────────────────────────────
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
-class ASTNode:
-    """Frontend-agnostic wrapper around a raw AST node.
-    Each frontend subclass implements the interface methods
-    so that elaboration code (AST_TO_LOGIC.py someday) never
-    needs to know which frontend produced the node.
+@dataclass(eq=False)
+class ASTMeta:
+    """Frontend-agnostic source location metadata stored on Logic objects.
+
+    Both the C (pycparser) and Pypeline (python ast) frontends populate this.
+    coord_str() and location_text() derive uniform strings from the raw fields
+    so formatting is defined once regardless of which frontend produced the node.
     """
 
-    def __init__(self, node, src_file):
-        self.node = node  # raw frontend AST node
-        self.src_file = src_file
+    src_file: str  # full source file path
+    line: int  # 1-based line number
+    col: int  # 0-based column offset
+    end_col: Optional[int]  # end column if available (Python AST), else None
+    hash_suffix: str = ""  # md5 fragment for C-frontend uniqueness; "" for Pypeline
+    raw: Any = None  # original node — escape hatch for C-only deep navigation
 
-    '''
-    def get_input_names(self, parser_state):
-        """Return ordered list of input port names for this node.
-        e.g. ["expr"] for unary op, ["left", "right"] for binary op,
-        or the callee's input list for a function call.
-        """
-        raise NotImplementedError
-    '''
+    def coord_str(self) -> str:
+        """Wire-name-safe location tag, e.g. 'myfile_py_l5_c12_a1b2c3d4'"""
+        base = os.path.basename(self.src_file).replace(".", "_")
+        end = f"_e{self.end_col}" if self.end_col is not None else ""
+        return f"{base}_l{self.line}_c{self.col}{end}{self.hash_suffix}"
 
+    def location_text(self) -> str:
+        """Human-readable for error messages, e.g. 'myfile.py:5:12'"""
+        return f"{self.src_file}:{self.line}:{self.col}"
 
-# ─────────────────────────────────────────────
-# PipelineC frontend (pycparser)
-# ─────────────────────────────────────────────
+    def __eq__(self, other):
+        if not isinstance(other, ASTMeta):
+            return NotImplemented
+        return self.coord_str() == other.coord_str()
 
-
-class PipelineC_ASTNode(ASTNode):
-    """Wraps a pycparser c_ast node from the C frontend."""
-
-    """
-    def get_input_names(self, parser_state):
-        node = self.node
-
-        if not HAS_PYCPARSER:
-            raise RuntimeError("pycparser not available")
-
-        # pycparser: children() returns [(name, child), ...]
-        # for unary/binary ops and function calls the child names
-        # are the port names directly
-        input_names = []
-        for child in node.children():
-            name = child[0]
-            input_names.append(name)
-        return input_names
-    """
-    pass
-
-
-# ─────────────────────────────────────────────
-# Pypeline frontend (python ast)
-# ─────────────────────────────────────────────
-
-
-class Pypeline_ASTNode(ASTNode):
-    """Wraps a python ast node from the Pypeline frontend."""
-
-    """
-    def get_input_names(self, parser_state):
-        node = self.node
-
-        if isinstance(node, python_ast.UnaryOp):
-            # ~x, -x, not x  ->  single input port named "expr"
-            return ["expr"]
-
-        elif isinstance(node, (python_ast.BinOp, python_ast.Compare)):
-            # a + b, a > b etc  ->  two input ports named "left", "right"
-            return ["left", "right"]
-
-        elif isinstance(node, python_ast.Call):
-            # user function call: input names come from the callee's Logic()
-            callee_name  = node.func.id
-            callee_logic = parser_state.FuncLogicLookupTable[callee_name]
-            return list(callee_logic.inputs)
-
-        else:
-            raise NotImplementedError(
-                f"Pypeline_ASTNode.get_input_names: unsupported node type {type(node)}"
-            )
-    """
-
-    def coord_str(self):
-        node = self.node
-        loc_str = f"l{node.lineno}_c{node.col_offset}"
-        return loc_str
-
-    def coord_file_str(self):
-        file_base = os.path.basename(self.src_file).replace(".", "_")
-        return f"{file_base}_{self.coord_str()}"
-
-    # def op_str(self):
-    #    node = self.node
+    def __hash__(self):
+        return hash(self.coord_str())

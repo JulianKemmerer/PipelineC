@@ -8,6 +8,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import C_TO_LOGIC
+import PY_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 
@@ -224,11 +225,12 @@ print(
     flush=True,
 )
 # Do parsing
-print("Parsing:", c_file, flush=True)
-parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-# CLANG_TO_LOGIC.PARSE_FILE(c_file)
-# print("TEMP END")
-# sys.exit(0)
+print("Parsing file:", c_file, flush=True)
+if c_file.endswith(".c"):
+    parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
+elif c_file.endswith(".py"):
+    parser_state = PY_TO_LOGIC.PARSE_FILE(c_file)
+
 
 print(
     "================== Writing Resulting Logic to File ================================",

@@ -85,12 +85,7 @@ def GET_RAW_HDL_WIRES_DECL_TEXT(inst_name, logic, parser_state, timing_params):
         )
         return wires_decl_text
     else:
-        print(
-            "GET_RAW_HDL_WIRES_DECL_TEXT for",
-            logic.func_name,
-            "?",
-            logic.c_ast_node.coord,
-        )
+        print("GET_RAW_HDL_WIRES_DECL_TEXT for", logic.func_name, "?")
         sys.exit(-1)
 
 
@@ -593,11 +588,18 @@ def GET_RAM_RF_LOGIC_TEXT(Logic, parser_state, TimingParamsLookupTable, sp_dp, c
 def GET_UNARY_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     logic, LogicInstLookupTable, timing_params, parser_state
 ):
-    if str(logic.c_ast_node.op) == "!" or str(logic.c_ast_node.op) == "~":
+    if logic.func_name.startswith(
+        C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.UNARY_OP_NOT_NAME + "_"
+    ):
         return GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, LogicInstLookupTable, timing_params, parser_state
         )
-    elif str(logic.c_ast_node.op) == "-":
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+        + "_"
+        + C_TO_LOGIC.UNARY_OP_NEGATE_NAME
+        + "_"
+    ):
         return (
             GET_UNARY_OP_NEGATE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
                 logic, LogicInstLookupTable, timing_params, parser_state
@@ -615,50 +617,83 @@ def GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     logic, parser_state, timing_params
 ):
     LogicInstLookupTable = parser_state.LogicInstLookupTable
-    if str(logic.c_ast_node.op) == ">" or str(logic.c_ast_node.op) == ">=":
-        return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
-            logic, parser_state, timing_params, str(logic.c_ast_node.op)
-        )
-    if str(logic.c_ast_node.op) == "<" or str(logic.c_ast_node.op) == "<=":
-        return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
-            logic, parser_state, timing_params, str(logic.c_ast_node.op)
-        )
-    elif str(logic.c_ast_node.op) == "*":
-        return GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
-            logic, parser_state, timing_params
-        )
-    elif str(logic.c_ast_node.op) == "+":
-        return GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
-            logic, parser_state, timing_params
-        )
-    elif str(logic.c_ast_node.op) == "-":
-        return GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
-            logic, parser_state, timing_params
-        )
-    elif str(logic.c_ast_node.op) == "==" or str(logic.c_ast_node.op) == "!=":
+    bin_op_eq = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_EQ_NAME + "_"
+    )
+    bin_op_neq = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_NEQ_NAME + "_"
+    )
+    bin_op_gt = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME + "_"
+    )
+    bin_op_gte = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME + "_"
+    )
+    bin_op_lt = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME + "_"
+    )
+    bin_op_lte = logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME + "_"
+    )
+    if bin_op_eq or bin_op_neq:
         return GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic,
             LogicInstLookupTable,
             timing_params,
             parser_state,
-            str(logic.c_ast_node.op),
+            "==" if bin_op_eq else "!=",
         )
-    elif str(logic.c_ast_node.op) == "&" or str(logic.c_ast_node.op) == "&&":
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_AND_NAME + "_"
+    ):
         return GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, LogicInstLookupTable, timing_params, parser_state
         )
-    elif str(logic.c_ast_node.op) == "|" or str(logic.c_ast_node.op) == "||":
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME + "_"
+    ):
+        return GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            logic, parser_state, timing_params
+        )
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME + "_"
+    ):
+        return GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            logic, parser_state, timing_params
+        )
+    elif bin_op_gt or bin_op_gte:
+        return GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            logic, parser_state, timing_params, ">" if bin_op_gt else ">="
+        )
+    elif bin_op_lt or bin_op_lte:
+        return GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            logic, parser_state, timing_params, "<" if bin_op_lt else "<="
+        )
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_OR_NAME + "_"
+    ):
         return GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, LogicInstLookupTable, timing_params, parser_state
         )
-    elif str(logic.c_ast_node.op) == "^":
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_XOR_NAME + "_"
+    ):
         return GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            logic, parser_state, timing_params
+        )
+    elif logic.func_name.startswith(
+        C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX
+        + "_"
+        + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME
+        + "_"
+    ):
+        return GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             logic, parser_state, timing_params
         )
     else:
         print(
             "GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT for",
-            str(logic.c_ast_node.op),
+            logic.func_name,
         )
         sys.exit(-1)
 
@@ -774,7 +809,9 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # print orig_var_name
     # sys.exit(-1)
 
-    # print "container_logic.wire_to_c_type",container_logic.wire_to_c_type
+    # print("local_inst_name",local_inst_name)
+    # print("container_logic.func_name", container_logic.func_name)
+    # print("container_logic.wire_to_c_type",container_logic.wire_to_c_type)
     # BAH fuck is this normal? ha yes, doing for var ref rd too
     base_c_type = container_logic.wire_to_c_type[orig_var_name]
     base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(
@@ -822,13 +859,14 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
         driven_ref_toks = driven_ref_toks_list[driven_ref_toks_i]
         driven_ref_toks_i += 1
         var_ref_toks = not C_TO_LOGIC.C_AST_REF_TOKS_ARE_CONST(driven_ref_toks)
+        driven_ref_toks_c_type = logic.wire_to_c_type[input_port]
 
         # Read just the variable indicies from the right side
         # Get ref tok index of variable indicies
         var_ref_tok_indicies = []
         for ref_tok_i in range(0, len(driven_ref_toks)):
             driven_ref_tok = driven_ref_toks[ref_tok_i]
-            if isinstance(driven_ref_tok, c_ast.Node):
+            if not C_TO_LOGIC.C_AST_REF_TOK_IS_CONST(driven_ref_tok):
                 var_ref_tok_indicies.append(ref_tok_i)
 
         expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(
@@ -843,7 +881,12 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
                 elif type(ref_tok) is str:
                     vhdl_ref_str += "." + ref_tok
                 else:
-                    print("Only constant references here!", c_ast_ref.coord)
+                    print(
+                        "Only constant references here!",
+                        ref_tok,
+                        "from",
+                        driven_ref_toks,
+                    )
                     sys.exit(-1)
 
             # Var ref needs to read input port differently than const
@@ -851,8 +894,10 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             if var_ref_toks:
                 # Index into RHS
                 # Uses that array struct thing?
-                # Need to have ".data"?
-                expr += ".data"
+                # Hacky struct type needs .data
+                if SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_ref_toks_c_type, parser_state):
+                    # Need to have ".data"?
+                    expr += ".data"
                 for var_ref_tok_index in var_ref_tok_indicies:
                     val = expanded_ref_toks[var_ref_tok_index]
                     expr += "(" + str(val) + ")"
@@ -899,6 +944,7 @@ def GET_UNARY_OP_NEGATE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
 ):
     # ONLY FLOATS FOR NOW FOR NOW
     input_type = logic.wire_to_c_type[logic.inputs[0]]
+    assert "float" in input_type
     input_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_type, parser_state)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
@@ -3821,6 +3867,15 @@ def GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             return GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
                 logic, timing_params, parser_state
             )
+        # unsigned to array # uint64_8_be
+        elif (
+            "int" in toks[0]
+            and (toks[2] == "be" or toks[2] == "le")
+            and toks[1].isdigit()
+        ):
+            return GET_UNSIGNED_TO_ARRAY_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
+                logic, parser_state, timing_params
+            )
         else:
             print(
                 "1GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT for ",
@@ -4357,6 +4412,50 @@ def GET_ARRAY_TO_UNSIGNED_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     text = text.strip("&")
     text += ";\n"
     text += "return return_output;"
+
+    return wires_decl_text, text
+
+
+def GET_UNSIGNED_TO_ARRAY_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
+    logic, parser_state, timing_params
+):
+    x_type = logic.wire_to_c_type[logic.inputs[0]]
+    x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
+    out_c_type = logic.wire_to_c_type[logic.outputs[0]]
+    out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_c_type, parser_state)
+    # Should be array
+    elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(out_c_type)
+    dim = dims[0]
+
+    wires_decl_text = (
+        """
+  --variable x : """
+        + x_vhdl_type
+        + """;
+  variable return_output : """
+        + out_vhdl_type
+        + """;
+  constant ELEM_WIDTH : integer := return_output(0)'length;
+"""
+    )
+
+    # must always be zero clock
+    if len(timing_params._slices) > 0:
+        print("Cannot do unsigned to array in multiple clocks!?")
+        sys.exit(-1)
+
+    if logic.func_name.endswith("_le"):
+        text = """for i in 0 to return_output'length-1 loop
+ return_output(i) := x((i+1)*ELEM_WIDTH-1 downto i*ELEM_WIDTH);
+end loop;
+return return_output;
+"""
+    else:
+        text = """for i in 0 to return_output'length-1 loop
+ return_output(i) := x((return_output'length - i)*ELEM_WIDTH-1 downto (return_output'length - i - 1)*ELEM_WIDTH);
+end loop;
+return return_output;
+"""
 
     return wires_decl_text, text
 

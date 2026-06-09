@@ -1060,16 +1060,19 @@ class PipelineMap:
                 outputs_text += f"<{output_port}> {output_port}" + " |"
             outputs_text = outputs_text.strip("|")
             func_name_text = sub_func_name
-            c_ast_node_coord = self.logic.submodule_instance_to_c_ast_node[
-                sub_inst
-            ].coord
-            location_text = (  # str(os.path.basename(c_ast_node_coord.file)) + r'\n' +
-                "line "
-                + str(c_ast_node_coord.line)
-                + " "
-                + "col. "
-                + str(c_ast_node_coord.column)
-            )
+            if sub_inst in self.logic.submodule_instance_to_ast_meta:
+                location_text = self.logic.submodule_instance_to_ast_meta[
+                    sub_inst
+                ].coord_str()
+                # location_text = (  # str(os.path.basename(c_ast_node_coord.file)) + r'\n' +
+                #    "line "
+                #    + str(c_ast_node_coord.line)
+                #    + " "
+                #    + "col. "
+                #    + str(c_ast_node_coord.column)
+                # )
+            else:
+                location_text = "internal"
             avg_bit_width = get_avg_bit_width(sub_inst, self.logic, parser_state)
             width = 1
             height = 1
@@ -4631,7 +4634,7 @@ def ESTIMATE_MAX_THROUGHPUT(mhz_range, mhz_to_latency):
 
 
 def GET_OUTPUT_DIRECTORY(Logic):
-    if Logic.is_c_built_in:
+    if Logic.is_c_built_in or Logic.ast_meta is None:
         output_directory = (
             SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
         )
@@ -4657,7 +4660,8 @@ def GET_OUTPUT_DIRECTORY(Logic):
         )
     else:
         # Use source file if not built in?
-        src_file = str(Logic.c_ast_node.coord.file)
+        # print("Logic.func_name", Logic.func_name)
+        src_file = Logic.ast_meta.src_file
         # # hacky catch files from same dir as script?
         # ex src file = /media/1TB/Dropbox/PipelineC/git/PipelineC/src/../axis.h
         repo_dir = REPO_ABS_DIR()

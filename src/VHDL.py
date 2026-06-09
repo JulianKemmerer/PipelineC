@@ -4589,7 +4589,7 @@ def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookup
     if sub_func_name != C_TO_LOGIC.VHDL_FUNC_NAME:
         print("Bad vhdl text sub func name")
         sys.exit(-1)
-    c_ast_node = Logic.submodule_instance_to_c_ast_node[sub_inst_name]
+    c_ast_node = Logic.submodule_instance_to_ast_meta[sub_inst_name].raw
     text = c_ast_node.args.exprs[0].value.strip('"')[:]
     # hacky replace two chars \n with single char '\n'
     text = text.replace("\\" + "n", "\n")

@@ -1539,12 +1539,40 @@ def IS_AUTO_GENERATED(logic):
 def IS_BIT_MANIP(logic):
     if logic.is_new_style_bit_manip:
         return True
-    # ~ old style based on hack file gen in this sw lib
-    rv = (
-        str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE)
-        and not logic.is_c_built_in
-    )
-    return rv
+    name = logic.func_name
+    _BIT_MANIP_PATTERNS = [
+        # Bit select: uint32_15_0, int8_3_3, float_3_2, float_8_23_t_15_0
+        r"uint[0-9]+_[0-9]+_[0-9]+",
+        r"int[0-9]+_[0-9]+_[0-9]+",
+        r"float_[0-9]+_[0-9]+",
+        r"float_[0-9]+_[0-9]+_t_[0-9]+_[0-9]+",
+        # Bit concat: uint32_uint32, int16_uint8
+        r"u?int[0-9]+_u?int[0-9]+",
+        # Const bit assign: uint64_uint16_2 (must come before bit_dup to avoid ambiguity)
+        r"u?int[0-9]+_uint[0-9]+_[0-9]+",
+        # Bit dup: uint4_4
+        r"u?int[0-9]+_[0-9]+",
+        # Rotate: rotl64_7, rotr32_3
+        r"rotl[0-9]+_[0-9]+",
+        r"rotr[0-9]+_[0-9]+",
+        # Byte swap: bswap_32
+        r"bswap_[0-9]+",
+        # Array to uint: uint8_array8_be, uint8_array8_le
+        r"uint[0-9]+_array[0-9]+_(?:be|le)",
+        # Uint to array: uint64_8_be, uint64_8_le
+        r"uint[0-9]+_[0-9]+_(?:be|le)",
+    ]
+    for pattern in _BIT_MANIP_PATTERNS:
+        if re.fullmatch(pattern, name):
+            return True
+    # old style: defined in the bit manip header file
+    # if not logic.is_new_style_bit_manip and hasattr(logic, "c_ast_node") and logic.c_ast_node is not None:
+    #    rv = (
+    #        str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MANIP_HEADER_FILE)
+    #        and not logic.is_c_built_in
+    #    )
+    #    return rv
+    return False
 
 
 def IS_MEM(logic):
@@ -1553,7 +1581,8 @@ def IS_MEM(logic):
     if logic.is_new_style_bit_manip:
         return False
     rv = (
-        str(logic.c_ast_node.coord).split(":")[0].endswith(MEM_HEADER_FILE)
+        logic.ast_meta is not None
+        and logic.ast_meta.src_file.endswith(MEM_HEADER_FILE)
         and not logic.is_c_built_in
     )
     return rv
@@ -1561,7 +1590,8 @@ def IS_MEM(logic):
 
 def IS_BIT_MATH(logic):
     rv = (
-        str(logic.c_ast_node.coord).split(":")[0].endswith(BIT_MATH_HEADER_FILE)
+        logic.ast_meta is not None
+        and logic.ast_meta.src_file.endswith(BIT_MATH_HEADER_FILE)
         and not logic.is_c_built_in
     )
     return rv
@@ -4157,7 +4187,7 @@ def GET_VAR_REF_RD_C_CODE(
         # Loop over ref toks and insert variable ref values
         var_dim_i = 0
         for ref_tok in ref_toks[1:]:  # Skip base var name
-            if isinstance(ref_tok, c_ast.Node):
+            if not C_TO_LOGIC.C_AST_REF_TOK_IS_CONST(ref_tok):
                 text += "[" + str(indices[var_dim_i]) + "]"
                 var_dim_i += 1
             elif type(ref_tok) is int:

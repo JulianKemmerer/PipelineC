@@ -711,8 +711,12 @@ def _add_submodule_instance(
         )
     logic.submodule_instances[inst_name] = func_name
     if ast_node is not None:
-        logic.submodule_instance_to_c_ast_node[inst_name] = (
-            pypeline_ast.Pypeline_ASTNode(ast_node, src_file)
+        logic.submodule_instance_to_ast_meta[inst_name] = pypeline_ast.ASTMeta(
+            src_file=src_file,
+            line=ast_node.lineno,
+            col=ast_node.col_offset,
+            end_col=getattr(ast_node, "end_col_offset", None),
+            raw=ast_node,
         )
     logic.submodule_instance_to_input_port_names[inst_name] = [
         p[0] for p in input_ports
@@ -1346,8 +1350,12 @@ class FuncElaborator:
             return None
 
     def elaborate(self):
-        self.logic.c_ast_node = pypeline_ast.Pypeline_ASTNode(
-            self.func_def, self.src_file
+        self.logic.ast_meta = pypeline_ast.ASTMeta(
+            src_file=self.src_file,
+            line=self.func_def.lineno,
+            col=self.func_def.col_offset,
+            end_col=getattr(self.func_def, "end_col_offset", None),
+            raw=self.func_def,
         )
         self._setup_inputs()
         self._setup_outputs()
@@ -3340,7 +3348,14 @@ class FuncElaborator:
         """First sight of a local variable: base wire driven by zeros, no alias."""
         _add_wire(self.logic, var_name, typ)
         zeros_wire = C_TO_LOGIC.BUILD_CONST_WIRE(
-            C_TO_LOGIC.COMPOUND_NULL, pypeline_ast.Pypeline_ASTNode(node, self.src_file)
+            C_TO_LOGIC.COMPOUND_NULL,
+            pypeline_ast.ASTMeta(
+                src_file=self.src_file,
+                line=node.lineno,
+                col=node.col_offset,
+                end_col=getattr(node, "end_col_offset", None),
+                raw=node,
+            ),
         )
         _add_wire(self.logic, zeros_wire, typ)
         _connect(self.logic, zeros_wire, var_name)
