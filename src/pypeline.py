@@ -1380,9 +1380,18 @@ def sim_call(func, *args, **kwargs):
     id(wrapped_func), so func must be passed as-is (not unwrapped).
     The @hw_func wrapper itself calls _push_scoped_registrations(original),
     which is a no-op for the original, so there is no double-push conflict.
+
+    Also activates _sim_active for the duration of the call so that @hw_func
+    wrappers run their sim bodies (Reg[T] handling) rather than falling through
+    to the raw function. The raw-function fallback exists only for the elaborator's
+    _try_eval_const probe, which calls functions directly without sim_call.
     """
+    global _sim_active
+    prev_active = _sim_active
+    _sim_active = True
     saved = _push_scoped_registrations(func)
     try:
         return func(*args, **kwargs)
     finally:
         _pop_scoped_registrations(saved)
+        _sim_active = prev_active

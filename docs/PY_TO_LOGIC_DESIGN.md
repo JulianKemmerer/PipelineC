@@ -2030,14 +2030,20 @@ if not _sim_active:
     return fn(*args, **kwargs)
 ```
 
-`_sim_active` is `False` by default in `pypeline.py`. `pypeline_sim.py` sets
-`pypeline._sim_active = True` before the first clock cycle. The hardware elaborator
-(`pipelinec`) is a separate process that never sets this flag.
+`_sim_active` is `False` by default in `pypeline.py`. It is set to `True` in two places:
 
-This is needed because `_elab_assign` calls `_try_eval_const(stmt.value)` on every
+- `pypeline_sim.py` sets `pypeline._sim_active = True` before the first clock cycle of
+  a multi-MAIN simulation run.
+- `sim_call` sets `_sim_active = True` for the duration of each call (see below). This
+  covers direct unit tests that call `sim_call` without going through `pypeline_sim.py`.
+
+The hardware elaborator (`pipelinec`) is a separate process that never calls `sim_call`
+and never sets this flag — it probes functions directly.
+
+This guard is needed because `_elab_assign` calls `_try_eval_const(stmt.value)` on every
 assignment RHS to test whether the RHS is a plain Python constant. `_try_eval_const`
 evaluates the expression in `{**module_globals, **const_env}` — which includes live
-callables like `vga_timing`. If the wrapper is active and `_sim_active` is not guarded:
+callables like `vga_timing`. If the wrapper were always active:
 
 - The elaborator calls `vga_timing()` via `_try_eval_const`
 - The `@hw_func` wrapper runs the simulation body → returns a concrete `vga_timing_signals_t`
@@ -2102,17 +2108,29 @@ AST directly (not through the registry callable), so hardware generation is unaf
 result = sim_call(float_add_32, fp32_sim(1.0), fp32_sim(2.0))
 ```
 
-`sim_call` pushes scoped operator registrations keyed on `id(func)` before calling,
-then pops them in a `finally` block:
+`sim_call` activates `_sim_active`, pushes scoped operator registrations keyed on
+`id(func)` before calling, then restores both in a `finally` block:
 
 ```python
 def sim_call(func, *args, **kwargs):
+    global _sim_active
+    prev_active = _sim_active
+    _sim_active = True
     saved = _push_scoped_registrations(func)
     try:
         return func(*args, **kwargs)
     finally:
         _pop_scoped_registrations(saved)
+        _sim_active = prev_active
 ```
+
+**`_sim_active` in `sim_call`:** Setting `_sim_active = True` here ensures that direct
+unit tests (which call `sim_call` without going through `pypeline_sim.py`) also get the
+sim bodies for `@hw_func`-wrapped functions with `Reg[T]` variables. Without this,
+calling a `@hw_func`-wrapped function like `accumulator(data_in)` — which has
+`acc: Reg[uint32_t]` — would fall through to the raw function, raising
+`UnboundLocalError: local variable 'acc' referenced before assignment`. The elaborator is
+never affected because it calls functions directly without `sim_call`.
 
 **Key design choice:** `func` is used directly (not `inspect.unwrap`). When `@hw_func`
 is applied to `float_add`, the scoped operators are registered under `id(wrapped_float_add)`
