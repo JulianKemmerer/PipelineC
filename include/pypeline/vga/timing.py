@@ -19,7 +19,7 @@ class VgaTimingSpec:
     pixel_clk_mhz: float
 
 
-VGA_640_480 = VgaTimingSpec(640, 480, 16, 96, 800, 10, 2, 525, 0, 0, 25.175)
+VGA_640_480 = VgaTimingSpec(640, 480, 16, 96, 800, 10, 2, 525, 0, 0, 25.0)
 VGA_800_600 = VgaTimingSpec(800, 600, 40, 128, 1056, 1, 4, 628, 1, 1, 40.0)
 VGA_1280_720 = VgaTimingSpec(1280, 720, 110, 40, 1650, 5, 5, 750, 1, 1, 74.25)
 
@@ -78,4 +78,5 @@ def make_vga_timing(spec: VgaTimingSpec):
 
         return rv
 
+    vga_timing.pixel_clk_mhz = spec.pixel_clk_mhz
     return vga_timing
