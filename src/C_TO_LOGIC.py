@@ -1556,11 +1556,8 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
 
     # Ports and types are specific to the submodule instance
     # Get data from c ast node
-    if submodule_inst in containing_func_logic.submodule_instance_to_c_ast_node:
-        c_ast_node = containing_func_logic.submodule_instance_to_c_ast_node[
-            submodule_inst
-        ]
-        submodule_logic.c_ast_node = c_ast_node
+    c_ast_node = containing_func_logic.submodule_instance_to_c_ast_node[submodule_inst]
+    submodule_logic.c_ast_node = c_ast_node
 
     # It looks like the c parser doesnt let you look up type from name...
     # Probably would be complicated
@@ -1577,9 +1574,10 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
         ]
         submodule_logic.inputs += input_names
     else:
-        raise Exception(f"Cannot find submodule input port names! {submodule_inst}")
-        # input_names = c_ast_node.get_input_names(parser_state)
-        # submodule_logic.inputs += input_names
+        for child in c_ast_node.children():
+            name = child[0]
+            input_names.append(name)
+            submodule_logic.inputs.append(name)
 
     # Try to get input type from port name in container logic
     # Fall back on type of driving wires
@@ -1657,10 +1655,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     if submodule_logic_name.startswith(
         CAST_FUNC_NAME_PREFIX
     ) and VHDL.C_TYPES_ARE_INTEGERS(input_types + [c_type]):
-        submodule_logic.is_vhdl_func = True
-
-    # Bit manip is VHDL func too
-    if SW_LIB.IS_BIT_MANIP(submodule_logic):
         submodule_logic.is_vhdl_func = True
 
     # Also do submodule instances for built in logic that is not raw VHDL
@@ -2139,26 +2133,24 @@ def ORIG_VAR_NAME_TO_MOST_RECENT_ALIAS(orig_var_name, existing_logic):
         return orig_var_name
 
 
-def C_AST_REF_TOK_IS_CONST(ref_tok):
-    # Constant array ref
-    if type(ref_tok) is int:
-        return True
-    # Sanity check
-    elif (type(ref_tok) is str) and (ref_tok == "*"):
-        print("Using string variable ref tok when not aware, fix.")
-        sys.exit(-1)
-    # ID or struct ref
-    elif type(ref_tok) is str:
-        return True
-    # Must be variable array ref
-    else:
-        return False
-
-
 def C_AST_REF_TOKS_ARE_CONST(ref_toks):
     for ref_tok in ref_toks:
-        if not C_AST_REF_TOK_IS_CONST(ref_tok):
+        # Constant array ref
+        if type(ref_tok) is int:
+            pass
+        # Sanity check
+        elif (type(ref_tok) is str) and (ref_tok == "*"):
+            print("Using string variable ref tok when not aware, fix.")
+            sys.exit(-1)
+        # ID or struct ref
+        elif type(ref_tok) is str:
+            pass
+        # Variable array ref
+        elif isinstance(ref_tok, c_ast.Node):
             return False
+        else:
+            print("Whats this ref eh yo?", ref_tok, c_ast_node.coord)
+            sys.exit(-1)
     return True
 
 
@@ -2182,7 +2174,7 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
                 # Struct ref
                 id_str += "." + ref_tok
         # Variable array ref
-        elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+        elif isinstance(ref_tok, c_ast.Node):
             id_str += "[*]"
         else:
             print("Whats this ref eh?", ref_tok, c_ast_node.coord)
@@ -2267,7 +2259,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
         # print "curr_ref_toks",curr_ref_toks
         last_index = len(curr_ref_toks) - 1
         last_tok = curr_ref_toks[last_index]
-        if not C_AST_REF_TOK_IS_CONST(last_tok):
+        if isinstance(last_tok, c_ast.Node):
             # is variable array dim
             # Pop off this last entry
             curr_ref_toks = curr_ref_toks[:last_index]
@@ -2491,7 +2483,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
             # Start a new return set()
             new_ref_toks_set = set()
             # Is this orig ref tok variable?
-            if not C_AST_REF_TOK_IS_CONST(orig_ref_tok):
+            if isinstance(orig_ref_tok, c_ast.Node):
                 # Variable
                 # What dimension is this variable
                 # Sanity check
@@ -2603,7 +2595,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
                 func_name += "_" + str(ref_tok)
             elif type(ref_tok) is str:
                 func_name += "_" + ref_tok
-            elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+            elif isinstance(ref_tok, c_ast.Node):
                 func_name += "_" + "VAR"
             else:
                 print("What is lhs ref tok?", ref_tok)
@@ -2616,7 +2608,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
                     func_name += "_" + str(ref_tok)
                 elif type(ref_tok) == str:
                     func_name += "_" + ref_tok
-                elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+                elif isinstance(ref_tok, c_ast.Node):
                     func_name += "_" + "VAR"
                 else:
                     print("What is lhs ref tok?", ref_tok)
@@ -2630,7 +2622,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
                     input_ref_toks_str += "_INT_" + str(ref_tok)
                 elif type(ref_tok) is str:
                     input_ref_toks_str += "_STR_" + ref_tok
-                elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+                elif isinstance(ref_tok, c_ast.Node):
                     input_ref_toks_str += "_" + "VAR"
                 else:
                     print("What is ref tok bleh????", ref_tok)
@@ -2740,7 +2732,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
             ref_tok_index = var_dim_ref_tok_indices[var_dim_i]
             ref_tok_c_ast_node = lhs_ref_toks[ref_tok_index]
             # Sanity check
-            if C_AST_REF_TOK_IS_CONST(ref_tok_c_ast_node):
+            if not isinstance(ref_tok_c_ast_node, c_ast.Node):
                 print("Not a variable ref tok?", ref_tok_c_ast_node)
                 sys.exit(-1)
 
@@ -3008,7 +3000,7 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
     while len(curr_ref_toks) >= 2:
         last_index = len(curr_ref_toks) - 1
         last_tok = curr_ref_toks[last_index]
-        if last_tok == "*" or not C_AST_REF_TOK_IS_CONST(last_tok):
+        if last_tok == "*" or isinstance(last_tok, c_ast.Node):
             # is variable array dim
             # Pop off this last entry
             curr_ref_toks = curr_ref_toks[:last_index]
@@ -3051,7 +3043,7 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
         # Start a new return list
         new_ref_toks_set = set()
         # Is this orig ref tok variable?
-        if orig_ref_tok == "*" or not C_AST_REF_TOK_IS_CONST(orig_ref_tok):
+        if orig_ref_tok == "*" or isinstance(orig_ref_tok, c_ast.Node):
             # Variable
             # What dimension is this variable
             # Sanity check
@@ -3362,7 +3354,7 @@ def TRIM_VAR_REF_TOKS(ref_toks):
     # Remove last variable tok since
     # Ex. (a,1,c) covers same as (a,1,c,*)
     last_ref_tok = ref_toks[len(ref_toks) - 1]
-    while not C_AST_REF_TOK_IS_CONST(last_ref_tok):
+    while isinstance(last_ref_tok, c_ast.Node):
         ref_toks = ref_toks[0 : len(ref_toks) - 1]
         last_ref_tok = ref_toks[len(ref_toks) - 1]
 
@@ -3430,17 +3422,14 @@ def REF_TOKS_COVERED_BY(ref_toks, covering_ref_toks, parser_state):
                     break
                 # Variable c ast nodes only match one way
                 # * covers digit but digit doesnt cover *
-                elif (
-                    not C_AST_REF_TOK_IS_CONST(covering_ref_tok)
-                    and type(ref_tok) is int
-                ):
+                elif isinstance(covering_ref_tok, c_ast.Node) and type(ref_tok) is int:
                     pass
-                elif not C_AST_REF_TOK_IS_CONST(covering_ref_tok) and ref_tok.isdigit():
+                elif isinstance(covering_ref_tok, c_ast.Node) and ref_tok.isdigit():
                     pass
                 # * covers others *
-                elif not C_AST_REF_TOK_IS_CONST(
-                    covering_ref_tok
-                ) and not C_AST_REF_TOK_IS_CONST(ref_tok):
+                elif isinstance(covering_ref_tok, c_ast.Node) and isinstance(
+                    ref_tok, c_ast.Node
+                ):
                     pass
                 else:
                     rv = False
@@ -4015,7 +4004,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
             ref_toks_str += "_INT_" + str(ref_tok)
         elif type(ref_tok) is str:
             ref_toks_str += "_STR_" + ref_tok
-        elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+        elif isinstance(ref_tok, c_ast.Node):
             ref_toks_str += "_" + "VAR"
         else:
             print("What is ref tok bleh?sdsd???", ref_tok)
@@ -4108,7 +4097,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
                 # Go to next tok
                 remaining_toks = remaining_toks[1:]
                 current_c_type = field_type_dict[next_tok]
-            elif not C_AST_REF_TOK_IS_CONST(next_tok):
+            elif isinstance(next_tok, c_ast.Node):
                 # Variable array ref
                 # Sanity check
                 if not C_TYPE_IS_ARRAY(current_c_type):
@@ -4413,7 +4402,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
                 func_name += "_" + str(ref_tok)
             elif type(ref_tok) is str:
                 func_name += "_" + ref_tok
-            elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+            elif isinstance(ref_tok, c_ast.Node):
                 func_name += "_" + "VAR"
             else:
                 print("What is ref tok?", ref_tok)
@@ -4449,7 +4438,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
                     func_name += "_" + str(ref_tok)
                 elif type(ref_tok) == str:
                     func_name += "_" + ref_tok
-                elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+                elif isinstance(ref_tok, c_ast.Node):
                     func_name += "_" + "VAR"
                 else:
                     print("What is ref tok bleh?", ref_tok)
@@ -4466,7 +4455,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
                     input_ref_toks_str += "_INT_" + str(ref_tok)
                 elif type(ref_tok) is str:
                     input_ref_toks_str += "_STR_" + ref_tok
-                elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+                elif isinstance(ref_tok, c_ast.Node):
                     input_ref_toks_str += "_" + "VAR"
                 else:
                     print("What is ref tok bleh????", ref_tok)
@@ -4552,7 +4541,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
             var_dim_iter_type = var_dim_iter_types[var_dim_i]
             ref_tok_c_ast_node = ref_toks[ref_tok_index]
             # Sanity check
-            if C_AST_REF_TOK_IS_CONST(ref_tok_c_ast_node):
+            if not isinstance(ref_tok_c_ast_node, c_ast.Node):
                 print("Not a variable ref tok?2", ref_tok_c_ast_node)
                 sys.exit(-1)
 
@@ -4838,7 +4827,7 @@ def BUILD_CONST_WIRE(value_str, c_ast_node, is_negated=False):
     rv = CONST_PREFIX
     if is_negated:
         rv += "-"
-    rv += value_str + "_" + c_ast_node.coord_str()
+    rv += value_str + "_" + C_AST_NODE_COORD_STR(c_ast_node)
     return rv
 
 
@@ -5651,7 +5640,7 @@ def C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_ref):
             else:
                 # Struct ref
                 rv += "_" + ref_tok
-        elif not C_AST_REF_TOK_IS_CONST(ref_tok):
+        elif isinstance(ref_tok, c_ast.Node):
             rv += "_" + "VAR"
         else:
             print("What kind of ref is this?", ref_toks, c_ast_ref.coord)
@@ -10308,10 +10297,6 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
     multimain_timing_params.TimingParamsLookupTable = (
         ZeroAddedClocksTimingParamsLookupTable
     )
-    # Write dir first if needed
-    output_directory = SYN.SYN_OUTPUT_DIRECTORY
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
     # Write report of floating point module use - hi Victor!
     WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
     # Integers too..
@@ -10715,16 +10700,108 @@ class ClkCrossVarInfo:
         self.is_part_of_arb_handshake = False
 
 
-def INFER_CLOCK_DOMAINS(
-    var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state
-):
-    """Propagate known MHz/group values to MAINs sharing globals or clock-crossing vars.
+def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
+    # Regex search c_text for pair of write and read funcs
+    write_func_calls = []
+    r = f"\w+" + "_WRITE" + f"\s?\("
+    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    r = f"\w+" + "_WRITE_[0-9]+" + f"\s?\("
+    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    write_func_names = []
+    for write_func_call in write_func_calls:
+        write_func_names.append(write_func_call.strip("(").strip())
+    read_func_calls = []
+    r = f"\w+" + "_READ" + f"\s?\("
+    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    r = f"\w+" + "_READ_[0-9]+" + f"\s?\("
+    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    read_func_names = []
+    for read_func_call in read_func_calls:
+        read_func_names.append(read_func_call.strip("(").strip())
 
-    Pass empty dicts for all three var_to_* arguments when called from the Python path
-    (no C-style clock-crossing variables exist there).
-    Returns var_to_rw_mhz_groups dict (needed by GET_CLK_CROSSING_INFO for object construction).
-    """
+    # Find pairs that are global or volatile global vars
+    var_to_read_func = {}
+    var_to_write_func = {}
+    all_var_names = set()
+    for func_name in write_func_names + read_func_names:
+        if "_WRITE" in func_name:
+            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
+            all_var_names.add(var_name)
+            var_to_write_func[var_name] = func_name
+        if "_READ" in func_name:
+            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
+            all_var_names.add(var_name)
+            var_to_read_func[var_name] = func_name
+    var_names = []
+    for var_name in all_var_names:
+        if var_name in parser_state.global_vars:
+            # if var_name not in var_to_write_func:
+            #  print("WARNING: Missing clock cross write function for clock crossing named:",var_name)
+            #  #sys.exit(-1)
+            # Make up a read func if needed (unconnected output)
+            if var_name not in var_to_read_func:
+                var_to_read_func[var_name] = var_to_write_func[var_name].replace(
+                    "_WRITE", "_READ"
+                )
+            var_names.append(var_name)
+
+    # Find and read and write main funcs
+    # print("var_names",var_names)
+    # print("var_to_read_func",var_to_read_func)
+    # print("var_to_write_func",var_to_write_func)
+    var_to_rw_main_funcs = {}  # ([read,mains],[write,mains])
+    for var_name in var_names:
+        var_to_rw_main_funcs[var_name] = (set(), set())
+        read_func_name = None
+        if var_name in var_to_read_func:
+            read_func_name = var_to_read_func[var_name]
+        write_func_name = None
+        if var_name in var_to_write_func:
+            write_func_name = var_to_write_func[var_name]
+        read_containing_funcs = set()
+        write_containing_funcs = set()
+        read_main_funcs = set()
+        write_main_funcs = set()
+        # Search for what container funcs call this read and write funcs
+        for func_name in parser_state.func_name_to_calls:
+            # Skip looking inside funcitons that have a _FSM copy
+            fsm_dup_func = func_name + C_TO_FSM.FSM_EXT
+            if (
+                func_name != fsm_dup_func
+                and fsm_dup_func in parser_state.func_name_to_calls
+            ):
+                continue
+            called_funcs = parser_state.func_name_to_calls[func_name]
+            # Read
+            if read_func_name in called_funcs:
+                read_containing_funcs.add(func_name)
+                read_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
+                    func_name,
+                    parser_state.func_name_to_calls,
+                    parser_state.func_names_to_called_from,
+                    list(parser_state.main_mhz.keys()),
+                )
+
+            # Write
+            if write_func_name in called_funcs:
+                write_containing_funcs.add(func_name)
+                write_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
+                    func_name,
+                    parser_state.func_name_to_calls,
+                    parser_state.func_names_to_called_from,
+                    list(parser_state.main_mhz.keys()),
+                )
+
+        # Final check per clock cross var
+        # if len(write_main_funcs) == 0:
+        #  print("WARNING: Problem finding write side main functions for",var_name)
+        #  #print("Missing or incorrect #pragma MAIN_MHZ ?")
+        #  #sys.exit(-1)
+        var_to_rw_main_funcs[var_name] = (read_main_funcs, write_main_funcs)
+
+    # Do infer loop slow thing for now
     inferring = True
+    # the single mhz,group read+write side data
     var_to_rw_mhz_groups = {}
     while inferring:
         inferring = False
@@ -10842,6 +10919,7 @@ def INFER_CLOCK_DOMAINS(
             else:
                 read_mhz = None
                 read_group = None
+            # print("var_name",var_name, "read_mhz", read_mhz, "read_main_funcs",read_main_funcs,"write_mhz",write_mhz, "write_main_funcs",write_main_funcs)
             # Infer from each side if not marked async
             if var_name not in parser_state.async_wires:
                 for read_main_func in read_main_funcs:
@@ -10903,116 +10981,12 @@ def INFER_CLOCK_DOMAINS(
                         ):
                             parser_state.main_syn_mhz[write_main_func] = write_mhz
                         inferring = True
+            # Finally record mhz,group if set
+            # if write_mhz is not None: # OK to have disconnected read side, read_mhz is not None and
             var_to_rw_mhz_groups[var_name] = (
                 (read_mhz, read_group),
                 (write_mhz, write_group),
             )
-
-    return var_to_rw_mhz_groups
-
-
-def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
-    # Regex search c_text for pair of write and read funcs
-    write_func_calls = []
-    r = f"\w+" + "_WRITE" + f"\s?\("
-    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = f"\w+" + "_WRITE_[0-9]+" + f"\s?\("
-    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    write_func_names = []
-    for write_func_call in write_func_calls:
-        write_func_names.append(write_func_call.strip("(").strip())
-    read_func_calls = []
-    r = f"\w+" + "_READ" + f"\s?\("
-    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = f"\w+" + "_READ_[0-9]+" + f"\s?\("
-    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    read_func_names = []
-    for read_func_call in read_func_calls:
-        read_func_names.append(read_func_call.strip("(").strip())
-
-    # Find pairs that are global or volatile global vars
-    var_to_read_func = {}
-    var_to_write_func = {}
-    all_var_names = set()
-    for func_name in write_func_names + read_func_names:
-        if "_WRITE" in func_name:
-            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
-            all_var_names.add(var_name)
-            var_to_write_func[var_name] = func_name
-        if "_READ" in func_name:
-            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
-            all_var_names.add(var_name)
-            var_to_read_func[var_name] = func_name
-    var_names = []
-    for var_name in all_var_names:
-        if var_name in parser_state.global_vars:
-            # if var_name not in var_to_write_func:
-            #  print("WARNING: Missing clock cross write function for clock crossing named:",var_name)
-            #  #sys.exit(-1)
-            # Make up a read func if needed (unconnected output)
-            if var_name not in var_to_read_func:
-                var_to_read_func[var_name] = var_to_write_func[var_name].replace(
-                    "_WRITE", "_READ"
-                )
-            var_names.append(var_name)
-
-    # Find and read and write main funcs
-    # print("var_names",var_names)
-    # print("var_to_read_func",var_to_read_func)
-    # print("var_to_write_func",var_to_write_func)
-    var_to_rw_main_funcs = {}  # ([read,mains],[write,mains])
-    for var_name in var_names:
-        var_to_rw_main_funcs[var_name] = (set(), set())
-        read_func_name = None
-        if var_name in var_to_read_func:
-            read_func_name = var_to_read_func[var_name]
-        write_func_name = None
-        if var_name in var_to_write_func:
-            write_func_name = var_to_write_func[var_name]
-        read_containing_funcs = set()
-        write_containing_funcs = set()
-        read_main_funcs = set()
-        write_main_funcs = set()
-        # Search for what container funcs call this read and write funcs
-        for func_name in parser_state.func_name_to_calls:
-            # Skip looking inside funcitons that have a _FSM copy
-            fsm_dup_func = func_name + C_TO_FSM.FSM_EXT
-            if (
-                func_name != fsm_dup_func
-                and fsm_dup_func in parser_state.func_name_to_calls
-            ):
-                continue
-            called_funcs = parser_state.func_name_to_calls[func_name]
-            # Read
-            if read_func_name in called_funcs:
-                read_containing_funcs.add(func_name)
-                read_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
-                    func_name,
-                    parser_state.func_name_to_calls,
-                    parser_state.func_names_to_called_from,
-                    list(parser_state.main_mhz.keys()),
-                )
-
-            # Write
-            if write_func_name in called_funcs:
-                write_containing_funcs.add(func_name)
-                write_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
-                    func_name,
-                    parser_state.func_name_to_calls,
-                    parser_state.func_names_to_called_from,
-                    list(parser_state.main_mhz.keys()),
-                )
-
-        # Final check per clock cross var
-        # if len(write_main_funcs) == 0:
-        #  print("WARNING: Problem finding write side main functions for",var_name)
-        #  #print("Missing or incorrect #pragma MAIN_MHZ ?")
-        #  #sys.exit(-1)
-        var_to_rw_main_funcs[var_name] = (read_main_funcs, write_main_funcs)
-
-    var_to_rw_mhz_groups = INFER_CLOCK_DOMAINS(
-        var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state
-    )
 
     # Then loop to construct each clock crossings info
     # print("Clocks done: parser_state.main_mhz",parser_state.main_mhz)
