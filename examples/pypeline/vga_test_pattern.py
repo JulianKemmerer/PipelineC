@@ -1,4 +1,14 @@
 # pyright: reportInvalidTypeForm=none
+"""VGA test pattern — hardware design + simulation display.
+
+Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
+Simulation: run with pypeline_sim.py for a live matplotlib display.
+
+    python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
+
+One frame = 800 x 525 = 420 000 cycles (640x480 @ 25.175 MHz pixel clock).
+"""
+
 import sys, os
 
 sys.path.insert(
@@ -16,7 +26,6 @@ import board.arty.vga_pmod_ja_jb as board_vga  # ← swap for different board/co
 from vga.types import vga_timing_signals_t, vga_12bpp_t
 from vga.timing import make_vga_timing, VGA_640_480
 
-uint4_t = make_uint(4)
 vga_timing = make_vga_timing(VGA_640_480)  # ← swap spec for different resolution
 
 # ── Sim-only display state (plain Python; harmless at import / compile time) ─
@@ -43,6 +52,13 @@ def test_pattern(sig: vga_timing_signals_t) -> vga_12bpp_t:
 
 @sim_output
 def capture_pixel(sig, px):
+    """Accumulate pixels into a numpy image and refresh the display each scan line.
+
+    Lazily initialises the matplotlib figure on first call.  4-bit colour channels
+    are expanded to 8-bit by replicating the nibble: v → (v << 4) | v.
+    Called once per cycle in the final pass; skipped during convergence.
+    Invisible to the hardware elaborator (pipelinec) via the @sim_output guard.
+    """
     global _img_data, _ax_img, _fig, _ax
     if _fig is None:
         import matplotlib.pyplot as plt
@@ -87,6 +103,7 @@ def _show_final():
 
 @MAIN
 def vga_test_pattern():
+    """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()
     px = test_pattern(sig)
     board_vga.vga_pmod = px
