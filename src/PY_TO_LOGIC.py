@@ -1998,7 +1998,9 @@ class FuncElaborator:
         self.logic.wire_aliases_over_time = aliases_branch
         try:
             if not _has_variable_index(ref_toks):
-                wire, _ = self._read_ref(ref_toks, mux_type, ast_node)
+                wire, _ = self._read_ref(
+                    ref_toks, mux_type, ast_node, branch_tag=branch_tag
+                )
             else:
                 wire = self._assemble_var_ref_coverage(
                     ref_toks, mux_type, ast_node, branch_tag
@@ -3111,7 +3113,7 @@ class FuncElaborator:
         _, wire, covering_ref_toks, typ = winner
         return wire, covering_ref_toks, typ
 
-    def _read_ref(self, ref_toks, c_type, ast_node):
+    def _read_ref(self, ref_toks, c_type, ast_node, branch_tag=""):
         """Read from a concrete (non-variable) path. Returns (wire, c_type)."""
         if _is_scalar(c_type, self.parser_state):
             env_key = _ref_toks_to_env_key(ref_toks)
@@ -3121,7 +3123,11 @@ class FuncElaborator:
             if covering_ref_toks == ref_toks:
                 return wire, covering_typ
             return self._emit_const_ref_rd(
-                ref_toks, c_type, {covering_ref_toks: (wire, covering_typ)}, ast_node
+                ref_toks,
+                c_type,
+                {covering_ref_toks: (wire, covering_typ)},
+                ast_node,
+                branch_tag,
             )
 
         # compound: enumerate leaves to catch partial writes
@@ -3138,9 +3144,13 @@ class FuncElaborator:
             if sole_ref_toks == ref_toks:
                 return sole_wire, sole_typ
 
-        return self._emit_const_ref_rd(ref_toks, c_type, covering_wires, ast_node)
+        return self._emit_const_ref_rd(
+            ref_toks, c_type, covering_wires, ast_node, branch_tag
+        )
 
-    def _emit_const_ref_rd(self, ref_toks, c_type, covering_wires, ast_node):
+    def _emit_const_ref_rd(
+        self, ref_toks, c_type, covering_wires, ast_node, branch_tag=""
+    ):
         """Emit a CONST_REF_RD submodule instance in the calling function's Logic()."""
         base_var = ref_toks[0]
         _, base_type = self.env[base_var]
@@ -3148,7 +3158,8 @@ class FuncElaborator:
         func_name = _const_ref_rd_func_name(
             c_type, base_type, ref_toks, covering_ref_toks_list
         )
-        inst_name = self._inst(func_name, ast_node)
+        inst_tag = f"{func_name}_{branch_tag}" if branch_tag else func_name
+        inst_name = self._inst(inst_tag, ast_node)
         input_ports = []
         input_port_driven_ref_toks = []
         for i, (cov_ref_toks, (cov_wire, cov_typ)) in enumerate(covering_wires.items()):

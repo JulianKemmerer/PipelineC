@@ -30,7 +30,7 @@
 - [`if` Statements — Hardware MUX Generation](#if-statements--hardware-mux-generation)
   - [Clock Enable Propagation Through `if`](#clock-enable-propagation-through-if)
   - [Reduction (`_reduce_driven_ref_toks`)](#reduction-_reduce_driven_ref_toks)
-  - [Reading Branch Wires for Variable Ref\_Toks](#reading-branch-wires-for-variable-ref_toks)
+  - [Reading Branch Wires](#reading-branch-wires)
 - [For and While Loop Unrolling](#for-and-while-loop-unrolling)
   - [For Loops](#for-loops)
   - [While Loops](#while-loops)
@@ -446,7 +446,11 @@ updated.
 3. Collect unique covering wires and sort temporally (`_temporal_sort_covering_wires`)
 4. If a single covering wire already matches the exact target ref_toks: return it directly
    (no submodule needed — the wire is already the right type)
-5. Otherwise emit a `CONST_REF_RD_<output_type>_<base_type>_<path>_<hash>` submodule
+5. Otherwise emit a `CONST_REF_RD_<output_type>_<base_type>_<path>_<hash>` submodule.
+   When called from branch coverage (`_read_branch_coverage`), a `branch_tag` (`"true"` or
+   `"false"`) is forwarded through `_read_ref` → `_emit_const_ref_rd` and appended to the
+   instance tag (`"{func_name}_{branch_tag}"`). This prevents a collision when both branches
+   read the same compound variable through the same covering wires and the same AST node.
 
 **`return my_points` example** (after `my_points[1].x=1`, `my_points[2]=p0`, etc.):
 
@@ -680,9 +684,17 @@ Iterated so that `dim[0]` + `dim[1]` → `dim` → `points[i].dim` → `points[i
 ("points", i_ast) covers ("points", 0, "dim", 1) → remove the latter
 ```
 
-### Reading Branch Wires for Variable Ref_Toks
+### Reading Branch Wires
 
-When a driven ref_toks contains variable indices (AST nodes), `_read_branch_coverage` calls
+`_read_branch_coverage` temporarily swaps `self.env` / `wire_aliases_over_time` to the
+branch snapshot, reads the required wire, then restores the originals. It handles two cases:
+
+**Concrete ref_toks (no variable indices):** calls `_read_ref(ref_toks, mux_type, ast_node,
+branch_tag=branch_tag)`. `_read_ref` forwards the tag to `_emit_const_ref_rd`, which appends
+it to the instance tag so the true-branch and false-branch CONST_REF_RD instances get
+distinct names even when the covering wires are identical (see **CONST_REF_RD** above).
+
+**Variable ref_toks (contains AST nodes):** `_read_branch_coverage` calls
 `_assemble_var_ref_coverage` to produce a wire of `mux_type` from the branch's env/aliases:
 
 1. Temporarily swap `self.env` and `wire_aliases_over_time` to the branch snapshot
