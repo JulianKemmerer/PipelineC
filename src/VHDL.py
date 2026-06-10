@@ -2076,6 +2076,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(
     # IS RAW VHDL
     if (
         logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME
+        or SW_LIB.IS_BIT_MANIP_NAME(logic_func_name)
         or logic_func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)
         or logic_func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME)
         or logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_")

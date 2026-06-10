@@ -9567,7 +9567,8 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         new_sub_inst_name = None
         c_ast_metas = set()
         for sub_inst in dup_insts:
-            c_ast_metas.add(func_logic.submodule_instance_to_ast_meta[sub_inst])
+            if sub_inst in func_logic.submodule_instance_to_ast_meta:
+                c_ast_metas.add(func_logic.submodule_instance_to_ast_meta[sub_inst])
         # Same c ast node or not, need to keep prepend id text
         # Create hash based on all inst names
         dup_inst_name_hash = (
@@ -9593,11 +9594,17 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
                 last_ast_meta = ast_meta
             # new_sub_inst_name = sub_func_logic.func_name + file_coord_strs + dup_postpend_text
             file_coord_strs = "_".join(file_lines)
+            if file_coord_strs != "":
+                file_coord_strs = "_" + file_coord_strs
+            src_file_str = "internal"
+            if last_ast_meta and last_ast_meta.src_file:
+                src_file_str = os.path.basename(last_ast_meta.src_file).replace(
+                    ".", "_"
+                )
             new_sub_inst_name = (
                 sub_func_logic.func_name
                 + "_"
-                + os.path.basename(last_ast_meta.src_file).replace(".", "_")
-                + "_"
+                + src_file_str
                 + file_coord_strs
                 + dup_postpend_text
             )

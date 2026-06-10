@@ -1539,7 +1539,10 @@ def IS_AUTO_GENERATED(logic):
 def IS_BIT_MANIP(logic):
     if logic.is_new_style_bit_manip:
         return True
-    name = logic.func_name
+    return IS_BIT_MANIP_NAME(logic.func_name)
+
+
+def IS_BIT_MANIP_NAME(name):
     _BIT_MANIP_PATTERNS = [
         # Bit select: uint32_15_0, int8_3_3, float_3_2, float_8_23_t_15_0
         r"uint[0-9]+_[0-9]+_[0-9]+",
