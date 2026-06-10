@@ -1400,6 +1400,7 @@ class FuncElaborator:
             typ = _annotation_to_ctype(arg.annotation, eval_ns)
             self.logic.inputs.append(name)
             _add_wire(self.logic, name, typ)
+            self.logic.variable_names.add(name)
             self.env[name] = (name, typ)
 
     def _setup_outputs(self):
@@ -3347,6 +3348,7 @@ class FuncElaborator:
     def _declare_var(self, var_name, typ, node):
         """First sight of a local variable: base wire driven by zeros, no alias."""
         _add_wire(self.logic, var_name, typ)
+        self.logic.variable_names.add(var_name)
         zeros_wire = C_TO_LOGIC.BUILD_CONST_WIRE(
             C_TO_LOGIC.COMPOUND_NULL,
             pypeline_ast.ASTMeta(
@@ -3381,6 +3383,7 @@ class FuncElaborator:
         self.logic.uses_nonvolatile_state_regs = True
 
         _add_wire(self.logic, var_name, c_type)
+        self.logic.variable_names.add(var_name)
         self.env[var_name] = (var_name, c_type)
 
     def _declare_feedback_var(self, var_name, c_type, node):
@@ -3392,6 +3395,7 @@ class FuncElaborator:
         VHDL signal driven combinatorially by the last assignment.
         """
         _add_wire(self.logic, var_name, c_type)
+        self.logic.variable_names.add(var_name)
         self.env[var_name] = (var_name, c_type)
         self.logic.feedback_vars.add(var_name)
 
@@ -3779,6 +3783,15 @@ def PARSE_FILE(py_file):
             parser_state.main_clk_group[hw_name] = None
 
     _build_inst_lookup(parser_state)
+
+    # Trim logic (currently PipelineC backend has bug that needs this)
+    if C_TO_LOGIC.TRIM_COLLAPSE_LOGIC:
+        print("Doing simple logic trimming/collapsing...", flush=True)
+        for main_func in list(parser_state.main_mhz.keys()):
+            main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+            parser_state = C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
+                main_func_logic, parser_state
+            )
 
     # ── Propagate MHz across MAINs sharing global wires ──
     C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)

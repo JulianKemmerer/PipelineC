@@ -151,6 +151,7 @@ and submodule instances.
 logic.func_name                      # string name
 logic.inputs                         # ordered list of input port names
 logic.outputs                        # ordered list of output port names
+logic.variable_names                 # set of user-introduced hardware variable base names
 logic.wires                          # set of all wire names (becomes VHDL signals)
 logic.wire_to_c_type                 # wire_name -> C type string
 logic.wire_driven_by                 # wire_name -> driver_wire_name
