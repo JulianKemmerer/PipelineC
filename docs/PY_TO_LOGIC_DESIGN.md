@@ -2339,15 +2339,25 @@ used as the dict key for register state.
 #### Per-Instance Register State
 
 ```python
-_sim_reg_state: dict[tuple, dict[str, int]]
-# _sim_reg_state[inst_path][reg_name] = current integer value (0 = power-on reset)
+_sim_reg_state: dict[tuple, dict[str, object]]
+# _sim_reg_state[inst_path][reg_name] = current value
+# (int 0 for scalars, zero-initialised struct/array for compound types)
 ```
 
-Two helpers manage it:
+Three helpers manage it:
 
 ```python
-def _sim_reg_read(inst_path, reg_name): ...   # returns 0 if never written
+def _make_sim_zero(ctype): ...
+# Returns 0 for scalar types; recursively constructs a zero-initialised
+# NamedTuple instance for @struct types (mirrors pypeline_sim._make_sim_zero).
+
+def _sim_reg_read(inst_path, reg_name, default=0): ...
+# Returns the stored value, or `default` if the register has never been written.
+# _build_reg_sim_func passes a type-appropriate zero (from _make_sim_zero) so
+# compound registers return a zero struct rather than integer 0.
+
 def _sim_reg_write(inst_path, reg_name, value): ...
+# Stores value as-is — struct/array instances are preserved without int() coercion.
 ```
 
 `sim_reset()` clears `_sim_reg_state` entirely, equivalent to a hardware power-on reset.
@@ -2376,7 +2386,7 @@ This function:
 # generated at decoration time — not user-written:
 def accum_func(data_in: uint32_t) -> uint32_t:
     __ip__ = _sim_current_inst_path()
-    acc    = _sim_reg_read(__ip__, "acc")   # ← reads current-cycle value for this instance
+    acc    = _sim_reg_read(__ip__, "acc", __reg_zero_acc__)   # ← type-appropriate reset default
     try:
         # original body with Reg[T] AnnAssign nodes removed:
         acc = acc + data_in
@@ -2389,9 +2399,19 @@ The `try/finally` pattern handles all return paths (including multiple `return`
 statements and exceptions). Python's `finally` executes with `acc` at its **final
 local value** before the frame is torn down, so the written-back value is always correct.
 
+`__reg_zero_acc__` is injected into the generated function's `__globals__` at decoration
+time as `_make_sim_zero(ann_val.inner_ctype)`. For scalar types (e.g. `uint32_t`) this is
+plain `0`; for compound types (e.g. `Reg[vga_12bpp_t]`) this is a zero-initialised struct
+instance. This means accessing fields like `vga_pmod_reg.r[0]` on an uninitialised register
+works correctly — the register already holds a proper struct rather than integer `0`.
+
+Values are stored as-is by `_sim_reg_write` (no `int()` coercion), so struct values
+survive write-back across clock cycles.
+
 Decorator nodes are stripped before `compile`/`exec` to prevent re-wrapping. The
-compiled function's `__globals__` is a copy of `fn.__globals__` augmented with the three
-sim helpers, so all user-defined types and constants remain in scope.
+compiled function's `__globals__` is a copy of `fn.__globals__` augmented with the sim
+helpers and per-register zero defaults, so all user-defined types and constants remain
+in scope.
 
 The transformation is done **once at decoration time** and the result is captured in
 `wrapper`'s closure as `sim_body_fn`. Subsequent calls invoke `sim_body_fn` instead of

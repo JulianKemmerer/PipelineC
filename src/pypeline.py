@@ -888,17 +888,24 @@ def _sim_current_inst_path():
     return tuple(_sim_inst_stack)
 
 
-def _sim_reg_read(inst_path, reg_name):
-    """Return the current register value for this instance (0 if never written)."""
-    return _sim_reg_state.get(inst_path, {}).get(reg_name, 0)
+def _make_sim_zero(ctype):
+    """Return a zero-initialized simulation value for the given pypeline ctype."""
+    if hasattr(ctype, "_fields"):
+        return ctype(*(_make_sim_zero(ctype.__annotations__[f]) for f in ctype._fields))
+    return 0
+
+
+def _sim_reg_read(inst_path, reg_name, default=0):
+    """Return the current register value for this instance (default if never written)."""
+    return _sim_reg_state.get(inst_path, {}).get(reg_name, default)
 
 
 def _sim_reg_write(inst_path, reg_name, value):
     """Update the register value, routing to buffer if buffering is active."""
     if _sim_reg_write_buffer is not None:
-        _sim_reg_write_buffer.setdefault(inst_path, {})[reg_name] = int(value)
+        _sim_reg_write_buffer.setdefault(inst_path, {})[reg_name] = value
     else:
-        _sim_reg_state.setdefault(inst_path, {})[reg_name] = int(value)
+        _sim_reg_state.setdefault(inst_path, {})[reg_name] = value
 
 
 def _sim_wire_read(name: str):
@@ -1146,6 +1153,7 @@ def _build_reg_sim_func(fn):
     # annotation-only AnnAssign against the function's eval namespace
     # (globals + closure vars so closures like vga_timing work correctly).
     reg_names = []
+    reg_zeros = {}  # name → zero default value, computed once at decoration time
     feedback_names = []
     for stmt in func_def.body:
         if not (
@@ -1163,6 +1171,7 @@ def _build_reg_sim_func(fn):
             continue
         if isinstance(ann_val, _RegType):
             reg_names.append(stmt.target.id)
+            reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
         elif isinstance(ann_val, _FeedbackType):
             feedback_names.append(stmt.target.id)
 
@@ -1196,7 +1205,9 @@ def _build_reg_sim_func(fn):
         new_stmts.append(_ast.parse("__ip__ = _sim_current_inst_path()").body[0])
         for name in reg_names:
             new_stmts.append(
-                _ast.parse(f'{name} = _sim_reg_read(__ip__, "{name}")').body[0]
+                _ast.parse(
+                    f'{name} = _sim_reg_read(__ip__, "{name}", __reg_zero_{name}__)'
+                ).body[0]
             )
             new_stmts.append(_ast.parse(f"__reg_init_{name} = {name}").body[0])
 
@@ -1294,6 +1305,8 @@ def _build_reg_sim_func(fn):
         _sim_wire_read=_sim_wire_read,
         _sim_wire_write=_sim_wire_write,
     )
+    for _name, _zero in reg_zeros.items():
+        new_globals[f"__reg_zero_{_name}__"] = _zero
     exec(code, new_globals)  # noqa: S102
     return new_globals.get(orig_fn.__name__)
 
