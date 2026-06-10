@@ -40,29 +40,31 @@ jb_4: Output[uint1_t]
 jb_5: Output[uint1_t]
 
 
-# ── Layer A: vga_12bpp_t → typed PMOD struct pair ─────────────────────────────
+# ── Layer A: vga_12bpp_t → typed PMOD struct pair - includes output register ─────────────────────────────
 @MAIN
 def vga_to_pmod8():
+    vga_pmod_reg: Reg[vga_12bpp_t]
     pmod_a_wire = pmod8_t(
-        p1=vga_pmod.r[0],
-        p2=vga_pmod.r[1],
-        p3=vga_pmod.r[2],
-        p4=vga_pmod.r[3],
-        p5=vga_pmod.b[0],
-        p6=vga_pmod.b[1],
-        p7=vga_pmod.b[2],
-        p8=vga_pmod.b[3],
+        p1=vga_pmod_reg.r[0],
+        p2=vga_pmod_reg.r[1],
+        p3=vga_pmod_reg.r[2],
+        p4=vga_pmod_reg.r[3],
+        p5=vga_pmod_reg.b[0],
+        p6=vga_pmod_reg.b[1],
+        p7=vga_pmod_reg.b[2],
+        p8=vga_pmod_reg.b[3],
     )
     pmod_b_wire = pmod8_t(
-        p1=vga_pmod.g[0],
-        p2=vga_pmod.g[1],
-        p3=vga_pmod.g[2],
-        p4=vga_pmod.g[3],
-        p5=vga_pmod.hs,
-        p6=vga_pmod.vs,
+        p1=vga_pmod_reg.g[0],
+        p2=vga_pmod_reg.g[1],
+        p3=vga_pmod_reg.g[2],
+        p4=vga_pmod_reg.g[3],
+        p5=vga_pmod_reg.hs,
+        p6=vga_pmod_reg.vs,
         p7=0,
         p8=0,
     )
+    vga_pmod_reg = vga_pmod
 
 
 # ── Layer B: typed PMOD struct pair → individual board pins ──────────────────
