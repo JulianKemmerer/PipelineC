@@ -2084,6 +2084,8 @@ class FuncElaborator:
             return self._elab_call(expr)
         elif isinstance(expr, ast.Tuple):
             return self._elab_tuple_concat(expr)
+        elif isinstance(expr, ast.BoolOp):
+            return self._elab_bool_op(expr)
         elif isinstance(expr, (ast.Subscript, ast.Attribute)):
             if isinstance(expr, ast.Subscript):
                 result = self._try_elab_bit_slice(expr)
@@ -2445,6 +2447,30 @@ class FuncElaborator:
         if isinstance(val, (int, bool)) and not isinstance(val, type):
             return int(val)
         return None
+
+    def _elab_bool_op(self, expr):
+        """x and y  →  (x != 0) & (y != 0);  x or y  →  (x != 0) | (y != 0)."""
+        const_val = self._try_eval_const(expr)
+        if isinstance(const_val, (int, bool)) and not isinstance(const_val, type):
+            return self._elab_python_value(int(const_val), expr)
+
+        bin_op = ast.BitAnd() if isinstance(expr.op, ast.And) else ast.BitOr()
+
+        def wrap_neq0(node):
+            n = ast.Compare(
+                left=node, ops=[ast.NotEq()], comparators=[ast.Constant(value=0)]
+            )
+            ast.copy_location(n, node)
+            ast.fix_missing_locations(n)
+            return n
+
+        synth = wrap_neq0(expr.values[0])
+        for v in expr.values[1:]:
+            rhs = wrap_neq0(v)
+            synth = ast.BinOp(left=synth, op=bin_op, right=rhs)
+            ast.copy_location(synth, v)
+            ast.fix_missing_locations(synth)
+        return self._elab_expr(synth)
 
     def _elab_binop(self, expr):
         # If all operands are elaboration-time constants (e.g. n_bits - 1 - i where

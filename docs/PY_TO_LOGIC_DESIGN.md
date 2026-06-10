@@ -64,6 +64,7 @@
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
+- [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
 - [Custom Operator Registration](#custom-operator-registration)
@@ -1715,6 +1716,57 @@ x = body if test else orelse
 This reuses the full `_elab_if` MUX machinery, including clock-enable propagation and
 temporal sorting of covering wires. If the condition evaluates to a compile-time constant
 via `_try_eval_const`, the unused branch is eliminated entirely.
+
+---
+
+## Boolean Operators (`and` / `or`)
+
+Python's `and` / `or` keywords produce `ast.BoolOp` nodes and map to bitwise AND / OR
+of boolean predicates:
+
+```python
+x and y   →   (x != 0) & (y != 0)   # result type: uint1_t
+x or y    →   (x != 0) | (y != 0)
+
+# Three-operand form — left-folds:
+a and b and c   →   ((a != 0) & (b != 0)) & (c != 0)
+```
+
+**Elaboration** (`_elab_bool_op`):
+
+1. **Constant folding first** — `_try_eval_const` is called on the entire `BoolOp` node.
+   If the whole expression is a compile-time constant (all operands in `const_env`), a
+   CONST wire is emitted directly and no hardware is produced.
+
+2. **AST rewrite** — each operand is wrapped in a synthetic `ast.Compare` node (`!= 0`)
+   and the operands are left-folded into a chain of `ast.BinOp` nodes using `ast.BitAnd`
+   or `ast.BitOr`. Source locations are preserved with `ast.copy_location` so that every
+   synthetic node inherits the position of its original operand, avoiding duplicate instance
+   names when the same source line contains multiple `and`/`or` operands.
+
+3. **Delegation** — the rewritten `ast.BinOp` tree is passed back to `_elab_expr`, which
+   dispatches through the normal `_elab_binop` / compare paths. No new hardware primitives
+   are introduced — the result is the usual combination of `BIN_OP_NEQ` and `BIN_OP_AND`
+   or `BIN_OP_OR` submodule instances.
+
+**Why `!= 0` per operand:** hardware types are arbitrary-width integers, not Python bools.
+Wrapping each operand in `!= 0` normalizes any non-zero value to `uint1_t(1)` before the
+bitwise combination, matching Python's truthiness semantics.
+
+**Example:**
+
+```python
+if (t < 2048) and not (d < 2):   # ast.BoolOp(And, [Compare, UnaryOp])
+    ...
+```
+
+Elaborated as:
+
+```
+(t < 2048) != 0   →   BIN_OP_NEQ_uint1_t   →   tmp0 : uint1_t
+(not (d < 2)) != 0   →   BIN_OP_NEQ_uint1_t   →   tmp1 : uint1_t
+tmp0 & tmp1   →   BIN_OP_AND_uint1_t   →   cond : uint1_t
+```
 
 ---
 
