@@ -381,12 +381,11 @@ when reading the variable back.
 
 ## Finding the Covering Wire
 
-`_find_covering_wire(leaf_ref_toks)` returns the most specific wire that covers a concrete
-leaf path. It checks two sources, preferring the **longest (most specific) prefix match**:
-
-1. **Concrete env** — walks from full path down to base name, first hit wins
-2. **Variable aliases** — walks `wire_aliases_over_time` in reverse (most recent first),
-   using `_var_ref_toks_covers` for wildcard matching (AST node positions match any concrete value)
+`_find_covering_wire(leaf_ref_toks)` returns the most recent wire that covers a concrete
+leaf path. It walks `wire_aliases_over_time[base_var]` in **reverse chronological order**
+(newest alias first), using `_var_ref_toks_covers` for both concrete and variable aliases.
+The first covering alias wins. If no alias covers the path, `self.env[base_var]` provides
+the original input/declaration wire as a fallback.
 
 ```python
 def _var_ref_toks_covers(var_ref_toks, concrete_ref_toks):
@@ -395,7 +394,11 @@ def _var_ref_toks_covers(var_ref_toks, concrete_ref_toks):
     # ("points",) covers any leaf under points                    ✓
 ```
 
-Concrete wins on equal-length ties.
+This guarantees **strict temporal correctness**: a later full assignment like
+`out_state = state` (ref_toks `("out_state",)`) always shadows an earlier partial write
+like `out_state.sB = 0` (ref_toks `("out_state", "sB")`), because the full-assignment
+alias sits later in `wire_aliases_over_time` and is therefore encountered first in the
+reverse walk.
 
 ### Temporal Sort of Covering Wires
 
@@ -406,9 +409,7 @@ The algorithm (`_temporal_sort_covering_wires`) achieves this in three steps:
 ```
 1. Walk wire_aliases_over_time[base_var] BACKWARDS (newest alias first)
 2. For each alias whose ref_toks appears as a covering-wires key, collect it
-   (both identity check `is` and equality check `==` are tried, since
-    env-prefix tuples are new objects but variable-alias ref_toks are the
-    same Python object stored in alias_to_driven_ref_toks)
+   (both identity check `is` and equality check `==` are tried)
 3. Any covering entries not matched by any alias are the input wire / base
    fallback — append them last
 4. Reverse the collected list → oldest first

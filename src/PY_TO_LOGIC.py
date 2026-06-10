@@ -3067,51 +3067,31 @@ class FuncElaborator:
         return dict(reversed(collected_newest_first))
 
     def _find_covering_wire(self, leaf_ref_toks):
-        """Find most specific wire covering this concrete leaf path.
-        Checks two sources, preferring the longest (most specific) prefix:
-          1. Concrete env entries (string-keyed, no AST nodes)
-          2. Variable aliases (via wire_aliases_over_time + alias_to_driven_ref_toks,
-             using wildcard matching for AST node positions)
+        """Find most recent wire covering this leaf path.
+        Walks wire_aliases_over_time backwards to guarantee perfect temporal order.
         Returns (wire, covering_ref_toks, c_type).
         """
         base_var = leaf_ref_toks[0]
 
-        # ── 1. Best concrete env match (longest prefix first) ──
-        best_concrete = None
-        for length in range(len(leaf_ref_toks), 0, -1):
-            prefix = leaf_ref_toks[:length]
-            env_key = _ref_toks_to_env_key(prefix)
-            if env_key in self.env:
-                wire, typ = self.env[env_key]
-                best_concrete = (length, wire, prefix, typ)
-                break
-
-        # ── 2. Best variable alias match (most recent first, then by length) ──
-        best_var = None
+        # Walk ALL aliases newest-to-oldest, regardless of concrete vs variable
         for alias in reversed(self.logic.wire_aliases_over_time.get(base_var, [])):
             alias_ref_toks = self.logic.alias_to_driven_ref_toks.get(alias)
-            if alias_ref_toks is None or not _has_variable_index(alias_ref_toks):
-                continue  # concrete aliases already handled above via env
-            if not _var_ref_toks_covers(alias_ref_toks, leaf_ref_toks):
-                continue
-            alias_type = self.logic.wire_to_c_type[alias]
-            length = len(alias_ref_toks)
-            # Most recent alias wins among same length; otherwise prefer longer
-            if best_var is None or length > best_var[0]:
-                best_var = (length, alias, alias_ref_toks, alias_type)
+            if alias_ref_toks is None:
+                raise ElaborationError(
+                    f"No ref toks found for alias {alias} in func '{self.func_name}'"
+                )
+            if _var_ref_toks_covers(alias_ref_toks, leaf_ref_toks):
+                alias_type = self.logic.wire_to_c_type[alias]
+                return alias, alias_ref_toks, alias_type
 
-        # ── 3. Pick the more specific (longer) match; concrete wins on ties ──
-        if best_concrete and best_var:
-            winner = best_concrete if best_concrete[0] >= best_var[0] else best_var
-        else:
-            winner = best_concrete or best_var
+        # Fallback: base variable before any aliases were created (input wire / initial decl)
+        if base_var in self.env:
+            wire, typ = self.env[base_var]
+            return wire, (base_var,), typ
 
-        if winner is None:
-            raise ElaborationError(
-                f"No covering wire found for {leaf_ref_toks} in func '{self.func_name}'"
-            )
-        _, wire, covering_ref_toks, typ = winner
-        return wire, covering_ref_toks, typ
+        raise ElaborationError(
+            f"No covering wire found for {leaf_ref_toks} in func '{self.func_name}'"
+        )
 
     def _read_ref(self, ref_toks, c_type, ast_node, branch_tag=""):
         """Read from a concrete (non-variable) path. Returns (wire, c_type)."""
