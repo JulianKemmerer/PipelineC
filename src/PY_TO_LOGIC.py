@@ -2430,6 +2430,11 @@ class FuncElaborator:
             return port_return, ret_type
 
         # Built-in path.
+        # NEGATE on integers widens by 1 bit and makes signed (matches C_TO_LOGIC:8243-8249).
+        ret_type = typ
+        if op_name == C_TO_LOGIC.UNARY_OP_NEGATE_NAME and _ctype_is_int(typ):
+            _, width = _ctype_info(typ)
+            ret_type = _int_ctype(True, width + 1)
         func_name = _unary_func_name(op_name, typ)
         inst = self._inst(f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -2439,11 +2444,11 @@ class FuncElaborator:
             func_name,
             [("expr", operand_wire, typ)],
             port_return,
-            typ,
+            ret_type,
             expr,
             self.src_file,
         )
-        return port_return, typ
+        return port_return, ret_type
 
     def _try_resolve_int_constant(self, expr):
         """Return the int value if expr is a compile-time integer constant, else None.

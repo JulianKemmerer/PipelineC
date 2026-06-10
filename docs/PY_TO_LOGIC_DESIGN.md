@@ -1943,7 +1943,11 @@ def add_floats(a: float32_t, b: float32_t) -> float32_t:
 2. operand_wire, typ = _elab_expr(expr.operand)
 3. impl = _unary_operator_registry.get((op_name, typ))
 4. If found: resolve impl, emit submodule instance; ret_type from callee return wire
-5. If not found: fall through to built-in UNARY_OP (output type = operand type)
+5. If not found: fall through to built-in UNARY_OP
+      - `NOT` / `~`: output type = operand type
+      - `NEGATE` on integers: output type = `int(width+1)_t` (signed, one bit wider)
+      - `NEGATE` on floats: output type = operand type
+      - Function name always encodes the **input** type (e.g. `UNARY_OP_NEGATE_uint8_t`)
 ```
 
 ### Scoped operator registrations
