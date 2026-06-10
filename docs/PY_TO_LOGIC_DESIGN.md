@@ -1604,6 +1604,9 @@ rv: pair_t = pair_t(a=p.b, b=p.a)
 # Plain assignment (no annotation) — also supported:
 pmod_a_wire = pmod8_t(p1=x, p2=y, p3=z, p4=w, p5=a, p6=b, p7=c, p8=d)
 
+# Module-qualified global wire target — also supported:
+board_vga.vga_pmod = vga_12bpp_t(r=px.r[7:4], g=px.g[7:4], b=px.b[7:4], hs=px.hs, vs=px.vs)
+
 # Array variable — list literal:
 my_arr: uint32_t[2] = [v0, v1]
 
@@ -1649,11 +1652,20 @@ via the concrete `env` entries and emits a `CONST_REF_RD` assembly submodule. Th
 wire of that submodule is then connected to `return_output`, giving the VHDL backend a
 visible driver for the return port.
 
+**Elaboration — module-qualified global wire target:**
+
+`_elab_assign` also handles struct constructor calls when the LHS is a module-qualified
+global wire (`board_vga.vga_pmod = vga_12bpp_t(...)`). The target is an `ast.Attribute`
+node; `_resolve_module_wire_name` mangles it to the hardware wire name, the wire is
+declared if needed, and `_elab_compound_init` is called with the `ast.Call` node —
+identical to the `ast.Name` plain-assignment path.
+
 **Rules (all forms):**
 - Leaf values can be any hardware expression (constants, input wires, sub-expressions).
 - Nesting is allowed to arbitrary depth (struct of arrays, array of structs, etc.).
 - Applies to annotated assignment (`var: T = …`), plain assignment (`x = MyStruct(...)`),
-  and return statements.
+  module-qualified global wire assignment (`mod.wire = MyStruct(...)`), and return
+  statements.
 
 This is **pure elaboration sugar** — the result is identical to writing the assignments
 explicitly. No new hardware primitives are introduced.

@@ -1501,6 +1501,20 @@ class FuncElaborator:
                     self._declare_var(name, struct_ctype, target)
                     self._elab_compound_init(name, stmt.value, stmt.value)
                 return
+        # Struct compound init on module-qualified global wire: board_vga.vga_pmod = MyStruct(...)
+        if (
+            isinstance(stmt.value, ast.Call)
+            and isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+        ):
+            callee = self._try_eval_const(stmt.value.func)
+            if callee is not None and hasattr(callee, "_fields"):
+                mangled = self._resolve_module_wire_name(target.value.id, target.attr)
+                if mangled is not None:
+                    if mangled not in self.env:
+                        self._declare_global_write_wire(mangled)
+                    self._elab_compound_init(mangled, stmt.value, stmt.value)
+                    return
         # Hardware path
         rhs_wire, rhs_type = self._elab_expr(stmt.value)
         # x[15:0] = y — bit-slice assign on a scalar integer wire
