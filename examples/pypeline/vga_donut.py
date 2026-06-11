@@ -1,10 +1,10 @@
 # pyright: reportInvalidTypeForm=none
-"""VGA test pattern — hardware design + simulation display.
+"""VGA — hardware design + simulation display.
 
 Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
 Simulation: run with pypeline_sim.py for a live matplotlib display.
 
-    python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
+    python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run 420000
 
 One frame = 800 x 525 = 420 000 cycles (640x480 @ 25 MHz pixel clock).
 """

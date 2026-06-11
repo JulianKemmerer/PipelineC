@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import os
 import re
+import sys
 import types as _types
 
 import C_TO_LOGIC
@@ -26,7 +27,7 @@ UNARY_OP_MAP = {
 BIN_OP_MAP = {
     ast.Add: C_TO_LOGIC.BIN_OP_PLUS_NAME,
     ast.Sub: C_TO_LOGIC.BIN_OP_MINUS_NAME,
-    ast.Mult: C_TO_LOGIC.BIN_OP_MULT_NAME,
+    ast.Mult: C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
     ast.Div: C_TO_LOGIC.BIN_OP_DIV_NAME,
     ast.Mod: C_TO_LOGIC.BIN_OP_MOD_NAME,
     ast.LShift: C_TO_LOGIC.BIN_OP_SL_NAME,
@@ -58,6 +59,7 @@ _ARITH_OPS = frozenset(
         C_TO_LOGIC.BIN_OP_PLUS_NAME,
         C_TO_LOGIC.BIN_OP_MINUS_NAME,
         C_TO_LOGIC.BIN_OP_MULT_NAME,
+        C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
         C_TO_LOGIC.BIN_OP_DIV_NAME,
         C_TO_LOGIC.BIN_OP_MOD_NAME,
     }
@@ -538,6 +540,145 @@ def _bin_func_name(op_name, l_type, r_type):
 
 _INT_CTYPE_RE = re.compile(r"(u?)int(\d+)_t$")
 
+# ─────────────────────────────────────────────
+# VHDL identifier safety
+# ─────────────────────────────────────────────
+
+_VHDL_RESERVED_WORDS = frozenset(
+    {
+        "abs",
+        "access",
+        "after",
+        "alias",
+        "all",
+        "and",
+        "architecture",
+        "array",
+        "assert",
+        "attribute",
+        "begin",
+        "block",
+        "body",
+        "buffer",
+        "bus",
+        "case",
+        "component",
+        "configuration",
+        "constant",
+        "context",
+        "disconnect",
+        "downto",
+        "else",
+        "elsif",
+        "end",
+        "entity",
+        "exit",
+        "file",
+        "for",
+        "force",
+        "function",
+        "generate",
+        "generic",
+        "group",
+        "guarded",
+        "if",
+        "impure",
+        "in",
+        "inertial",
+        "inout",
+        "is",
+        "label",
+        "library",
+        "linkage",
+        "literal",
+        "loop",
+        "map",
+        "mod",
+        "nand",
+        "new",
+        "next",
+        "nor",
+        "not",
+        "null",
+        "of",
+        "on",
+        "open",
+        "or",
+        "others",
+        "out",
+        "package",
+        "parameter",
+        "port",
+        "postponed",
+        "procedure",
+        "process",
+        "property",
+        "pure",
+        "range",
+        "record",
+        "register",
+        "reject",
+        "release",
+        "rem",
+        "report",
+        "restrict",
+        "return",
+        "rol",
+        "ror",
+        "select",
+        "sequence",
+        "severity",
+        "signal",
+        "shared",
+        "sla",
+        "sll",
+        "sra",
+        "srl",
+        "strong",
+        "subtype",
+        "then",
+        "to",
+        "transport",
+        "type",
+        "unaffected",
+        "units",
+        "until",
+        "use",
+        "variable",
+        "vmode",
+        "vprop",
+        "vunit",
+        "wait",
+        "when",
+        "while",
+        "with",
+        "xnor",
+        "xor",
+    }
+)
+
+_CONSEC_UNDERSCORES_RE = re.compile(r"_{2,}")
+
+
+def _sanitize_vhdl_name(name: str) -> str:
+    """Mangle a Python identifier so it is a legal VHDL basic identifier.
+
+    Rules (applied in order):
+    1. Strip leading underscores; prepend 'v' if any were removed.
+    2. Strip trailing underscores.
+    3. Replace runs of 2+ consecutive underscores with a single '_'.
+    4. If the result is a VHDL reserved word (case-insensitive), append '_v'.
+    5. If empty after all stripping, return 'v'.
+    """
+    result = name.lstrip("_")
+    if len(result) < len(name):
+        result = "v_" + result if result else "v"
+    result = result.rstrip("_") or "v"
+    result = _CONSEC_UNDERSCORES_RE.sub("_", result)
+    if result.lower() in _VHDL_RESERVED_WORDS:
+        result = result + "_v"
+    return result
+
 
 def _ctype_is_int(c_type):
     """True if c_type is a plain integer type (uint/int)."""
@@ -599,7 +740,9 @@ def _arith_output_type(op_name, eff_l_type, eff_r_type, result_signed):
         out_w = max_w + 1
     elif op_name == C_TO_LOGIC.BIN_OP_MINUS_NAME:
         out_w = max_w if not result_signed else max_w + 1
-    elif op_name == C_TO_LOGIC.BIN_OP_MULT_NAME:
+    elif (op_name == C_TO_LOGIC.BIN_OP_MULT_NAME) or (
+        op_name == C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME
+    ):
         out_w = l_w + r_w
     else:  # div, mod
         out_w = max_w
@@ -1296,6 +1439,9 @@ class FuncElaborator:
         # instances emitted inside unrolled loop iterations are uniquely named.
         # Nested loops accumulate: "FOR_i_0_FOR_j_2_" etc.
         self.loop_instance_prefix = ""
+        # VHDL name-safety tracking (populated by _hw_name)
+        self._vhdl_names_lower: dict = {}  # safe_name.lower() -> safe_name
+        self._mangled_names: set = set()  # python names that have triggered a warning
 
     def _inst(self, op_full_name, node):
         """Build a unique submodule instance name, prepending any active loop prefix."""
@@ -1304,6 +1450,36 @@ class FuncElaborator:
     def _make_eval_ns(self):
         """Merged namespace for eval(): module globals + current const_env."""
         return {**self.module_globals, **self.const_env}
+
+    def _hw_name(self, python_name: str) -> str:
+        """Translate a Python variable name to its VHDL-safe wire name.
+
+        Called at declaration points (function params, annotated assigns, implicit
+        assigns, _parse_ref_toks base names).
+        - Mangles leading/trailing underscores, double-underscores, reserved words.
+        - Emits a stderr warning (once per name per function) when mangling occurs.
+        - Raises ElaborationError if two distinct Python names mangle to the same
+          lowercase identifier (VHDL identifiers are case-insensitive).
+        """
+        safe = _sanitize_vhdl_name(python_name)
+        if safe != python_name and python_name not in self._mangled_names:
+            self._mangled_names.add(python_name)
+            print(
+                f"PY_TO_LOGIC warning: in '{self.func_name}': "
+                f"variable '{python_name}' is not a legal VHDL identifier; "
+                f"auto-mangled to '{safe}'",
+                file=sys.stderr,
+            )
+        safe_lower = safe.lower()
+        existing = self._vhdl_names_lower.get(safe_lower)
+        if existing is not None and existing != safe:
+            raise ElaborationError(
+                f"In '{self.func_name}': variable '{python_name}' maps to '{safe}' "
+                f"which conflicts with existing wire '{existing}' "
+                f"(VHDL identifiers are case-insensitive)"
+            )
+        self._vhdl_names_lower[safe_lower] = safe
+        return safe
 
     def _resolve_global_wire(self, bare_name):
         """Return the global_vars key for bare_name.
@@ -1396,7 +1572,7 @@ class FuncElaborator:
     def _setup_inputs(self):
         eval_ns = self._make_eval_ns()
         for arg in self.func_def.args.args:
-            name = arg.arg
+            name = self._hw_name(arg.arg)
             typ = _annotation_to_ctype(arg.annotation, eval_ns)
             self.logic.inputs.append(name)
             _add_wire(self.logic, name, typ)
@@ -1475,31 +1651,39 @@ class FuncElaborator:
         # try to evaluate RHS as a pure Python elaboration constant first.
         # Global wire names are never cached as elaboration constants — always hardware.
         if isinstance(target, ast.Name):
-            name = target.id
-            if name not in self.env and self._resolve_global_wire(name) is None:
+            python_name = target.id
+            hw_name = _sanitize_vhdl_name(python_name)  # for env check only
+            if (
+                hw_name not in self.env
+                and self._resolve_global_wire(python_name) is None
+            ):
                 const_val = self._try_eval_const(stmt.value)
                 if const_val is not None:
-                    self.const_env[name] = const_val
+                    self.const_env[python_name] = (
+                        const_val  # const_env uses Python names
+                    )
                     return
         # Struct compound init on plain assignment: x = MyStruct(field=val, ...)
         # Mirrors the same check in _elab_ann_assign for annotated assignments.
         if isinstance(stmt.value, ast.Call) and isinstance(target, ast.Name):
             callee = self._try_eval_const(stmt.value.func)
             if callee is not None and hasattr(callee, "_fields"):
-                name = target.id
-                global_key = self._resolve_global_wire(name)
+                python_name = target.id
+                hw_name = _sanitize_vhdl_name(python_name)
+                global_key = self._resolve_global_wire(python_name)
                 if global_key is not None:
                     if global_key not in self.env:
                         self._declare_global_write_wire(global_key)
                     self._elab_compound_init(global_key, stmt.value, stmt.value)
-                elif name in self.env:
-                    self._elab_compound_init(name, stmt.value, stmt.value)
+                elif hw_name in self.env:
+                    self._elab_compound_init(hw_name, stmt.value, stmt.value)
                 else:
                     struct_ctype = (
                         getattr(callee, "_pypeline_ctype_name", None) or callee.__name__
                     )
-                    self._declare_var(name, struct_ctype, target)
-                    self._elab_compound_init(name, stmt.value, stmt.value)
+                    hw_name = self._hw_name(python_name)
+                    self._declare_var(hw_name, struct_ctype, target)
+                    self._elab_compound_init(hw_name, stmt.value, stmt.value)
                 return
         # Struct compound init on module-qualified global wire: board_vga.vga_pmod = MyStruct(...)
         if (
@@ -1546,11 +1730,15 @@ class FuncElaborator:
         if base_var not in self.env and base_var in self.parser_state.global_vars:
             self._declare_global_write_wire(base_var)
         elif len(ref_toks) == 1 and base_var not in self.env:
+            base_var = self._hw_name(
+                base_var
+            )  # register in _vhdl_names_lower; base_var already sanitized by _parse_ref_toks
+            ref_toks = (base_var,)
             self._declare_var(base_var, rhs_type, target)
         self._write_ref(ref_toks, rhs_wire, rhs_type, stmt.value)
 
     def _elab_ann_assign(self, stmt):
-        var_name = stmt.target.id
+        var_name = self._hw_name(stmt.target.id)
         # Detect Reg[T] annotation — hardware state register
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
@@ -1748,10 +1936,11 @@ class FuncElaborator:
         if not isinstance(stmt.target, ast.Name):
             raise NotImplementedError("for loop target must be a simple name")
         loop_var = stmt.target.id
+        safe_loop_var = _sanitize_vhdl_name(loop_var)  # for wire/inst prefix only
         outer_prefix = self.loop_instance_prefix
         for val in iter_val:
-            self.const_env[loop_var] = val
-            self.loop_instance_prefix = f"{outer_prefix}FOR_{loop_var}_{val}_"
+            self.const_env[loop_var] = val  # const_env uses raw Python name for eval
+            self.loop_instance_prefix = f"{outer_prefix}FOR_{safe_loop_var}_{val}_"
             for s in stmt.body:
                 self._elab_stmt(s)
         self.loop_instance_prefix = outer_prefix
@@ -2122,36 +2311,39 @@ class FuncElaborator:
             raise NotImplementedError(f"Unsupported expr: {ast.dump(expr)}")
 
     def _elab_name(self, expr):
-        name = expr.id
-        # 1. Hardware env
-        if name in self.env:
-            wire, typ = self.env[name]
+        python_name = expr.id
+        hw_name = _sanitize_vhdl_name(python_name)  # VHDL-safe name for env lookup
+        # 1. Hardware env (keyed by sanitized name)
+        if hw_name in self.env:
+            wire, typ = self.env[hw_name]
             if _is_scalar(typ, self.parser_state):
                 return wire, typ
-            return self._read_ref((name,), typ, expr)
-        # 2. Elaboration const_env — emit as CONST wire if used as hardware value
-        if name in self.const_env:
-            return self._elab_python_value(self.const_env[name], expr)
+            return self._read_ref((hw_name,), typ, expr)
+        # 2. Elaboration const_env — Python name (const_env uses original Python names)
+        if python_name in self.const_env:
+            return self._elab_python_value(self.const_env[python_name], expr)
         # 3. Module globals (N, M, etc.) — emit as CONST wire if used as hardware value
-        if name in self.module_globals:
-            val = self.module_globals[name]
+        if python_name in self.module_globals:
+            val = self.module_globals[python_name]
             if isinstance(val, (int, bool)):
                 return self._elab_python_value(val, expr)
             raise ElaborationError(
-                f"Module global '{name}' ({type(val).__name__}) "
+                f"Module global '{python_name}' ({type(val).__name__}) "
                 f"is not a hardware-usable value"
             )
         # 4. Global wire (Wire[T] declared at module level) — lazy read init
         # _resolve_global_wire handles both direct names and module-prefixed names
         # for sub-file functions (e.g. bare 'main_a_in' -> 'file_a_main_a_in').
-        global_key = self._resolve_global_wire(name)
+        global_key = self._resolve_global_wire(python_name)
         if global_key is not None:
             self._declare_global_read_wire(global_key)
             wire, typ = self.env[global_key]
             if _is_scalar(typ, self.parser_state):
                 return wire, typ
             return self._read_ref((global_key,), typ, expr)
-        raise ElaborationError(f"Unknown name '{name}' in func '{self.func_name}'")
+        raise ElaborationError(
+            f"Unknown name '{python_name}' in func '{self.func_name}'"
+        )
 
     def _elab_python_value(self, val, ast_node):
         """Emit a plain Python int/bool as a CONST wire in the hardware graph."""
@@ -2202,7 +2394,7 @@ class FuncElaborator:
         """
         base_node = expr.value
         if isinstance(base_node, ast.Name):
-            base_name = base_node.id
+            base_name = _sanitize_vhdl_name(base_node.id)
             if base_name not in self.env:
                 return None
             base_wire, base_type = self.env[base_name]
@@ -2337,7 +2529,7 @@ class FuncElaborator:
         base_node = target.value
         if not isinstance(base_node, ast.Name):
             return False
-        x_name = base_node.id
+        x_name = _sanitize_vhdl_name(base_node.id)
         if x_name not in self.env:
             return False
         old_wire, base_type = self.env[x_name]
@@ -3025,7 +3217,7 @@ class FuncElaborator:
         Everything else -> AST node token (variable index -> VAR_REF path).
         """
         if isinstance(node, ast.Name):
-            return (node.id,)
+            return (self._hw_name(node.id),)
         elif isinstance(node, ast.Attribute):
             return self._parse_ref_toks(node.value) + (node.attr,)
         elif isinstance(node, ast.Subscript):
@@ -3589,6 +3781,22 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 f"Global {kind} '{node.target.id}' cannot have an initializer"
             )
         bare_name = node.target.id
+        safe_name = _sanitize_vhdl_name(bare_name)
+        if safe_name != bare_name:
+            if kind in ("Input", "Output"):
+                raise ElaborationError(
+                    f"Global {kind} name '{bare_name}' is not a valid VHDL identifier. "
+                    f"Rename to '{safe_name}' — VHDL identifiers may not start or end "
+                    f"with underscores, contain consecutive underscores, or be reserved "
+                    f"words. Input/Output names must match constraint files exactly."
+                )
+            else:
+                print(
+                    f"PY_TO_LOGIC warning: global Wire '{bare_name}' is not a legal "
+                    f"VHDL identifier; auto-mangled to '{safe_name}'",
+                    file=sys.stderr,
+                )
+                bare_name = safe_name
         # I/O ports are boundary signals — globally unique, no module prefix.
         # Wire[T] gets the namespace-isolating prefix to avoid collisions.
         if kind in ("Input", "Output"):

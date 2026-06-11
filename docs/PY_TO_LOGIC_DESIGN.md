@@ -82,6 +82,7 @@
 **Reference**
 - [pypeline.py — Runtime Support](#pypeline-py--runtime-support)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
+  - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 
 ---
 
@@ -3109,10 +3110,18 @@ accumulates the loop variable name and its current value. This prefix is applied
 produced inside an unrolled loop body is unique:
 
 ```
-FOR_<var>_<val>_<func_name>[<loc_str>]    ← submodule instance
-FOR_<var>_<val>_<var_name>_<loc_str>      ← alias wire (_write_ref)
-FOR_<var>_<val>_<key>_if_mux_<loc_str>   ← MUX alias wire (_elab_if)
+FOR_<safe_var>_<val>_<func_name>[<loc_str>]    ← submodule instance
+FOR_<safe_var>_<val>_<var_name>_<loc_str>      ← alias wire (_write_ref)
+FOR_<safe_var>_<val>_<key>_if_mux_<loc_str>   ← MUX alias wire (_elab_if)
 ```
+
+`<safe_var>` is the loop variable name after VHDL sanitization (see
+[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization)). The loop
+variable is also stored in `const_env` under its raw Python name so that elaboration-time
+`eval()` still resolves it correctly.
+
+`while` loop prefixes use only an integer iteration counter (`WHILE_<n>_`) and are always
+VHDL-safe.
 
 Nested loops prefix left-to-right with the outermost loop first:
 ```python
@@ -3174,6 +3183,46 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 - Path token integers appear as `_<n>`, variable index positions as `_VAR`
 - A short MD5 hash suffix ensures uniqueness across different covering-input sets
 
+### VHDL Identifier Safety — Name Sanitization
+
+VHDL basic identifiers are more restrictive than Python identifiers:
+
+- No leading underscores (`_foo` is illegal)
+- No trailing underscores (`foo_` is illegal)
+- No consecutive underscores (`foo__bar` is illegal)
+- Case-insensitive (`foo` and `FOO` are the same identifier)
+- Reserved words cannot be used as identifiers (`signal`, `process`, `begin`, etc.)
+
+`_sanitize_vhdl_name(name)` transforms a Python name into a legal VHDL identifier:
+
+1. Strip leading underscores; prepend `v_` if any were removed (e.g. `_foo` → `v_foo`, `__init__` → `v_init`).
+2. Strip trailing underscores (e.g. `foo_` → `foo`, `class_` → `class`).
+3. Replace runs of 2+ consecutive underscores with a single `_` (e.g. `foo__bar` → `foo_bar`).
+4. If the result is a VHDL-93/2008 reserved word (case-insensitive), append `_v` (e.g. `signal` → `signal_v`).
+5. If empty after all stripping (e.g. `_`), return `v`.
+
+**Where sanitization is applied:**
+
+- **Function parameters** (`_setup_inputs`): `arg.arg` is passed through `_hw_name`.
+- **Annotated local variables** (`_elab_ann_assign`): `stmt.target.id` is passed through `_hw_name`.
+- **Implicit local declarations** (`_elab_assign`): `base_var` from `_parse_ref_toks` is registered via `_hw_name`.
+- **All path reads/writes** (`_parse_ref_toks`): the base `ast.Name.id` is passed through `_hw_name`.
+- **Bare name reads** (`_elab_name`): sanitized before `env` lookup.
+- **Bit-slice reads/assigns** (`_try_elab_bit_slice`, `_try_elab_bit_slice_assign`): base name sanitized before `env` lookup.
+- **For-loop prefix** (`_elab_for`): loop variable sanitized for the `loop_instance_prefix` string (but kept raw in `const_env` so elaboration-time `eval()` still resolves it).
+- **Global `Wire[T]`** (`_discover_global_wires`): auto-mangled with a stderr warning (internal wires have no constraint-file dependency).
+- **Global `Input[T]` / `Output[T]`** (`_discover_global_wires`): **`ElaborationError`** — these names appear in VHDL entity ports that must match XDC/SDC constraint files exactly; silent renaming would break synthesis.
+
+**Case-insensitivity collision detection:**
+
+`FuncElaborator._hw_name` maintains a per-function `_vhdl_names_lower` dict (lowercase safe name → safe name). If two distinct Python names sanitize to identifiers that differ only in case, an `ElaborationError` is raised.
+
+**`const_env` is exempt:**
+
+Loop counters and elaboration-time constants stored in `const_env` use raw Python names. They feed `_try_eval_const`'s `eval()` namespace, where the Python source spelling must match. These names never become VHDL signals.
+
+---
+
 ### Summary Table
 
 | Artifact | Rule |
@@ -3184,13 +3233,14 @@ In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 | Imported sub-file function | `<actual_module_name>_<func_name>` (e.g. `file_a_main`) |
 | Factory function (params in closure) | `<factory_prefix>_<param>_<val>_...` (canonical, from qualname + closure vars) |
 | Factory function (params NOT in closure) | `<factory_prefix>_<param_names>_<hash8>` (closure vars hashed; e.g. `make_vga_timing_spec_a1b2c3d4`) |
-| Top-file global Wire | bare Python name (`main_a_in`) |
-| Imported sub-file Wire | `<actual_module_name>_<bare_name>` (e.g. `file_a_i`) |
-| Input[T] / Output[T] (any file) | **bare Python name** — no module prefix (globally unique I/O ports) |
-| Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<v>_<n>_` prefix per loop level) |
+| Top-file global Wire | sanitized Python name (auto-mangled if illegal; see VHDL Identifier Safety) |
+| Imported sub-file Wire | `<actual_module_name>_<safe_bare_name>` |
+| Input[T] / Output[T] (any file) | **bare Python name** — no module prefix; must be a legal VHDL identifier (error if not) |
+| Local variable / function parameter | sanitized Python name (`_hw_name`) |
+| Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<safe_v>_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
-| Alias wire | `<var_name>_<loc_str>` |
+| Alias wire | `<safe_var_name>_<loc_str>` |
 | Location string | `<file_base>_l<line>_c<col>[_e<end_col>]` |
 
 ---

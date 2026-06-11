@@ -3,6 +3,8 @@ set -e
 reset
 cd /media/1TB/Dropbox/PipelineC/git/PipelineC
 
+rm -rf ~/pypelinec_output/*; ./src/pipelinec ./examples/pypeline/vga_donut.py --out_dir ~/pypelinec_output --comb
+
 rm -rf ~/pypelinec_output/*; ./src/pipelinec ./examples/pypeline/vga_test_pattern.py --out_dir ~/pypelinec_output --comb
 
 python3 ./src/pypeline_sim.py ./src/tests/pypeline_tests/inst/global_wires_sim_test.py --run 10
@@ -13,11 +15,11 @@ rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/flo
 python3 ./src/tests/pypeline_tests/inst/pypeline_test.py
 rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/pypeline_test.py --out_dir ~/pypelinec_output --comb
 
-rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/old_sw_lib_ops.py --out_dir ~/pypelinec_output --comb
+rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/if_test.py --out_dir ~/pypelinec_output --comb
 
 rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/var_ref_test.py --out_dir ~/pypelinec_output --comb
 
-rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/if_test.py --out_dir ~/pypelinec_output --comb
+rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/old_sw_lib_ops.py --out_dir ~/pypelinec_output --comb
 
 rm -rf ~/pypelinec_output/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/global_wires_test.py --out_dir ~/pypelinec_output --comb --no_synth
 
