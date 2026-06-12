@@ -1,12 +1,15 @@
 # pyright: reportInvalidTypeForm=none
-"""VGA — hardware design + simulation display.
+"""VGA donut — hardware design + simulation display.
 
 Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
 Simulation: run with pypeline_sim.py for a live matplotlib display.
 
-    python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run 420000
+    python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run <cycles>
 
-One frame = 800 x 525 = 420 000 cycles (640x480 @ 25 MHz pixel clock).
+Cycles per frame by resolution:
+    640×480   (VGA_640_480)  : 800  × 525  =   420 000
+    1280×720  (VGA_1280_720) : 1650 × 750  = 1 237 500
+    1920×1080 (VGA_1920_1080): 2200 × 1125 = 2 475 000
 """
 
 import sys, os
@@ -22,35 +25,67 @@ sys.path.insert(
 from pypeline import *
 
 # Board info:
-import board.arty.part35t  # sets PART pragma for this board
-import board.arty.vga_pmod_ja_jb as board_vga  # swap for different board/connector
-# import board.arty.vga_pmod_jc_jd  as board_vga
-# import board.pico_ice.vga_pmod01  as board_vga
+import board.arty.part35t  # sets PART pragma for this board  (swap to part100t for A7-100T)
+
+# import board.arty.part100t
+import board.arty.vga_pmod_ja_jb as board_vga
 
 # VGA info:
 from vga.types import vga_timing_signals_t, vga_12bpp_t
-from vga.timing import make_vga_timing, VGA_640_480
+from vga.timing import (
+    make_vga_timing,
+    VGA_640_480,
+    VGA_800_600,
+    VGA_1280_720,
+    VGA_1920_1080,
+)
 
-vga_timing = make_vga_timing(VGA_640_480)  # swap spec for different resolution
+# ── CONFIG ──────────────────────────────────────────────────────────────────
+RESOLUTION = VGA_640_480  # swap: VGA_800_600 | VGA_1280_720 | VGA_1920_1080
+COORD_WIDTH = 16  # screen-coordinate integer width (16 sufficient for any res)
+CALC_WIDTH = 16  # internal CORDIC math width; increase for smoother shading:
+#   16 = original (may have overflow artifacts)
+#   20-24 = noticeably smoother, moderate resource cost
+#   32 = clean shading, ~4x more DSPs/LUTs
+NCORDIC = 6  # CORDIC iterations per call  (6 = original; 8+ = smoother)
+NITERS = 16  # ray-march steps             (16 = original; 24+ = smoother)
+TORUS_R1I = 256  # tube radius x 256
+TORUS_R2I = 512  # ring radius x 256
+CORDIC_DZ = 5  # ray-sphere offset
+SCALE = 2  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
+DONUT_BOUND = 500  # render bounding box half-size in scaled-coordinate units
+BOUNCE = True  # True = emit bounce-animation hardware
+BOUNCE_SPEED_X = 3  # pixels per frame (horizontal)
+BOUNCE_SPEED_Y = 2  # pixels per frame (vertical)
+DITHER = True  # Bayer ordered dither: smooth 4-bit PMOD output
 
+# ── Derived elaboration-time values ──────────────────────────────────────────
+FRAME_WIDTH = RESOLUTION.frame_width
+FRAME_HEIGHT = RESOLUTION.frame_height
+DONUT_PX = DONUT_BOUND // SCALE  # donut half-size in pixels
+BOUNCE_MAX_X = FRAME_WIDTH // 2 - DONUT_PX
+BOUNCE_MAX_Y = FRAME_HEIGHT // 2 - DONUT_PX
+# lz magnitude ~5960 max with default trig-state scale; >>5 -> 0-186, fits uint8_t.
+# Holds for any CALC_WIDTH since lz is geometric (torus-space distance), not register-width scaled.
+LZ_SHIFT = 5
+
+# ── Hardware types ────────────────────────────────────────────────────────────
+coord_t = make_int(COORD_WIDTH)
+calc_t = make_int(CALC_WIDTH)
+
+vga_timing = make_vga_timing(RESOLUTION)
 DISPLAY_8BIT = False  # False = match 4-bit PMOD output; True = smooth 8-bit sim display
 
-# ── Sim-only display state (plain Python) ─
-img_data = None  # H×W×3 uint8 numpy array, lazily created
-ax_img = None  # matplotlib AxesImage handle
+# ── Sim-only display state (plain Python) ────────────────────────────────────
+img_data = None
+ax_img = None
 fig = None
 ax = None
 
 
-@sim_output  # @sim_output — skipped by pipelinec, runs in sim
+@sim_output
 def capture_pixel(sig, px):
-    """Accumulate pixels into a numpy image and refresh the display each scan line.
-
-    Lazily initialises the matplotlib figure on first call.  4-bit colour channels
-    are expanded to 8-bit by replicating the nibble: v → (v << 4) | v.
-    Called once per cycle in the final pass; skipped during convergence.
-    Invisible to the hardware elaborator (pipelinec) via the @sim_output guard.
-    """
+    """Accumulate pixels into a numpy image; refresh display each scan line."""
     global img_data, ax_img, fig, ax
     if fig is None:
         import matplotlib.pyplot as plt
@@ -59,7 +94,7 @@ def capture_pixel(sig, px):
         plt.ion()
         fig, ax = plt.subplots(figsize=(8, 6))
         img_data = np.zeros(
-            (VGA_640_480.frame_height, VGA_640_480.frame_width, 3), dtype="uint8"
+            (RESOLUTION.frame_height, RESOLUTION.frame_width, 3), dtype="uint8"
         )
         ax_img = ax.imshow(img_data, vmin=0, vmax=255)
         ax.axis("off")
@@ -68,48 +103,36 @@ def capture_pixel(sig, px):
         fig.canvas.flush_events()
     if int(sig.active):
         x, y = int(sig.pos.x), int(sig.pos.y)
-        if 0 <= x < VGA_640_480.frame_width and 0 <= y < VGA_640_480.frame_height:
+        if 0 <= x < RESOLUTION.frame_width and 0 <= y < RESOLUTION.frame_height:
             if DISPLAY_8BIT:
-                img_data[y, x, 0] = (
-                    int(px.r) & 0xFF
-                )  # & 0xFF matches hardware uint8_t truncation
+                img_data[y, x, 0] = int(px.r) & 0xFF
                 img_data[y, x, 1] = int(px.g) & 0xFF
                 img_data[y, x, 2] = int(px.b) & 0xFF
             else:
-                # Clamp to uint8 then take upper 4 bits (simulates 4-bit PMOD output)
                 v = (int(px.r) & 0xFF) >> 4
                 img_data[y, x, 0] = (v << 4) | v
                 v = (int(px.g) & 0xFF) >> 4
                 img_data[y, x, 1] = (v << 4) | v
                 v = (int(px.b) & 0xFF) >> 4
                 img_data[y, x, 2] = (v << 4) | v
-    if (
-        int(sig.pos.y) > 0 and int(sig.pos.x) == 0
-    ):  # start of new scan line = previous line just finished
+    if int(sig.pos.y) > 0 and int(sig.pos.x) == 0:
         print("line done.", x, y, px.r, px.g, px.b)
-        ax_img.set_data(img_data)
-        fig.canvas.flush_events()
+    ax_img.set_data(img_data)
+    fig.canvas.flush_events()
 
 
 @atexit.register
-def _show_final():
+def show_final():
     if fig is not None:
         import matplotlib.pyplot as plt
 
         plt.ioff()
-        ax.set_title("VGA Test Pattern — done")
+        ax.set_title("VGA Donut — done")
         plt.show()
 
 
-# Donut from PipelineC: https://github.com/JulianKemmerer/PipelineC-Graphics/blob/main/donut.cpp
-
-FRAME_WIDTH = VGA_640_480.frame_width  # 640
-FRAME_HEIGHT = VGA_640_480.frame_height  # 480
-NCORDIC = 6
-NITERS = 16
-CORDIC_DZ = 5  # ray-sphere offset
-CORDIC_R1I = 256  # r1=1, scaled x256
-CORDIC_R2I = 512  # r2=2, scaled x256
+# ── Donut raymarcher ─────────────────────────────────────────────────────────
+# Ported from: https://github.com/JulianKemmerer/PipelineC-Graphics/blob/main/donut.cpp
 
 
 @struct
@@ -123,8 +146,8 @@ class sim_px_t(NamedTuple):
 
 @struct
 class pair_t(NamedTuple):
-    a: int16_t
-    b: int16_t
+    a: calc_t
+    b: calc_t
 
 
 @struct
@@ -137,100 +160,108 @@ class full_state_t(NamedTuple):
     cAsB: int16_t
     sAcB: int16_t
     cAcB: int16_t
-    # Derived per-frame increment values (= trig >> 8, computed pre-rotation)
+    # Derived per-frame increment values (trig >> 8, computed pre-rotation)
     yincC: int16_t
     yincS: int16_t
     xincX: int16_t
     xincY: int16_t
     xincZ: int16_t
+    # Donut screen-centre in pixel coordinates (FRAME_WIDTH//2, FRAME_HEIGHT//2 = centred)
+    pos_x: int16_t
+    pos_y: int16_t
 
 
-@hw_func
-def length_cordic(x: int16_t, y: int16_t, x2: int16_t, y2: int16_t) -> pair_t:
-    cx: int16_t
-    cx2: int16_t
-    if x < 0:
-        cx = -x
-        cx2 = -x2
-    else:
-        cx = x
-        cx2 = x2
-    cy: int16_t = y
-    cy2: int16_t = y2
-    for i in range(NCORDIC):
-        t: int16_t = cx
-        t2: int16_t = cx2
-        if cy < 0:
-            cx = cx - (cy >> i)
-            cy = cy + (t >> i)
-            cx2 = cx2 - (cy2 >> i)
-            cy2 = cy2 + (t2 >> i)
+def make_length_cordic(c_t, ncordic):
+    @hw_func
+    def length_cordic(x: c_t, y: c_t, x2: c_t, y2: c_t) -> pair_t:
+        cx: c_t
+        cx2: c_t
+        if x < 0:
+            cx = -x
+            cx2 = -x2
         else:
-            cx = cx + (cy >> i)
-            cy = cy - (t >> i)
-            cx2 = cx2 + (cy2 >> i)
-            cy2 = cy2 - (t2 >> i)
-    ra: int16_t = (cx >> 1) + (cx >> 3) - (cx >> 6)
-    rb: int16_t = (
-        (cx2 >> 1) + (cx2 >> 3) - (cx >> 6)
-    )  # last term cx not cx2 (matches C)
-    return pair_t(a=ra, b=rb)
+            cx = x
+            cx2 = x2
+        cy: c_t = y
+        cy2: c_t = y2
+        for i in range(ncordic):
+            t: c_t = cx
+            t2: c_t = cx2
+            if cy < 0:
+                cx = cx - (cy >> i)
+                cy = cy + (t >> i)
+                cx2 = cx2 - (cy2 >> i)
+                cy2 = cy2 + (t2 >> i)
+            else:
+                cx = cx + (cy >> i)
+                cy = cy - (t >> i)
+                cx2 = cx2 + (cy2 >> i)
+                cy2 = cy2 - (t2 >> i)
+        ra: c_t = (cx >> 1) + (cx >> 3) - (cx >> 6)
+        rb: c_t = (
+            (cx2 >> 1) + (cx2 >> 3) - (cx >> 6)
+        )  # last term cx not cx2 (matches C)
+        return pair_t(a=ra, b=rb)
+
+    return length_cordic
 
 
-@hw_func
-def donut(i: int16_t, j: int16_t, state: full_state_t) -> int16_t:
-    t: int16_t = 512
+def make_donut(c_t, co_t, lc_fn, niters, r1i, r2i, scale):
+    @hw_func
+    def donut(cx: co_t, cy: co_t, state: full_state_t) -> c_t:
+        # cx/cy are pixel offsets from donut centre; scale converts to internal coordinate space
+        i: c_t = cx * scale
+        j: c_t = cy * scale
+        t: c_t = 512
+        vxi14: c_t = i * state.xincX - (state.cB + state.sB)
+        vyi14: c_t = (j * state.yincC + state.sAsB - state.sAcB) - i * state.xincY
+        vzi14: c_t = (j * state.yincS - state.cAsB + state.cAcB) + i * state.xincZ
+        p0x: c_t = state.sB * CORDIC_DZ >> 6
+        p0y: c_t = state.sAcB * CORDIC_DZ >> 6
+        p0z: c_t = -state.cAcB * CORDIC_DZ >> 6
+        px: c_t = p0x + (vxi14 >> 5)
+        py: c_t = p0y + (vyi14 >> 5)
+        pz: c_t = p0z + (vzi14 >> 5)
+        lx0: c_t = state.sB >> 2
+        ly0: c_t = state.sAcB - state.cA >> 2
+        lz0: c_t = -state.cAcB - state.sA >> 2
+        d: c_t = 0
+        lz: c_t = 0
+        for iter in range(niters):
+            lx: c_t = lx0
+            ly: c_t = ly0
+            lz = lz0
+            lc0: pair_t = lc_fn(px, py, lx, ly)
+            t0: c_t = lc0.a
+            lx = lc0.b
+            t1: c_t = t0 - r2i
+            lc1: pair_t = lc_fn(pz, t1, lz, lx)
+            t2: c_t = lc1.a
+            lz = lc1.b
+            d = t2 - r1i
+            t = t + d
+            if (t < 2048) and not (d < 2):
+                px = px + (d * vxi14 >> 14)
+                py = py + (d * vyi14 >> 14)
+                pz = pz + (d * vzi14 >> 14)
+        result: c_t = lz
+        if d > 2:
+            result = -1
+        return result
 
-    vxi14: int16_t = i * state.xincX - (state.cB + state.sB)
-    vyi14: int16_t = (j * state.yincC + state.sAsB - state.sAcB) - i * state.xincY
-    vzi14: int16_t = (j * state.yincS - state.cAsB + state.cAcB) + i * state.xincZ
+    return donut
 
-    p0x: int16_t = state.sB * CORDIC_DZ >> 6
-    p0y: int16_t = state.sAcB * CORDIC_DZ >> 6
-    p0z: int16_t = -state.cAcB * CORDIC_DZ >> 6
-    px: int16_t = p0x + (vxi14 >> 5)
-    py: int16_t = p0y + (vyi14 >> 5)
-    pz: int16_t = p0z + (vzi14 >> 5)
 
-    lx0: int16_t = state.sB >> 2
-    ly0: int16_t = state.sAcB - state.cA >> 2  # (sAcB - cA) >> 2
-    lz0: int16_t = -state.cAcB - state.sA >> 2  # (-cAcB - sA) >> 2
-
-    d: int16_t = 0
-    lz: int16_t = 0
-
-    for _iter in range(NITERS):
-        lx: int16_t = lx0
-        ly: int16_t = ly0
-        lz = lz0
-
-        lc0: pair_t = length_cordic(px, py, lx, ly)
-        t0: int16_t = lc0.a
-        lx = lc0.b
-
-        t1: int16_t = t0 - CORDIC_R2I
-        lc1: pair_t = length_cordic(pz, t1, lz, lx)
-        t2: int16_t = lc1.a
-        lz = lc1.b
-
-        d = t2 - CORDIC_R1I
-        t = t + d
-
-        if (t < 2048) and not (d < 2):
-            px = px + (d * vxi14 >> 14)
-            py = py + (d * vyi14 >> 14)
-            pz = pz + (d * vzi14 >> 14)
-
-    result: int16_t = lz
-    if d > 2:
-        result = -1
-    return result
+length_cordic = make_length_cordic(calc_t, NCORDIC)
+donut = make_donut(calc_t, coord_t, length_cordic, NITERS, TORUS_R1I, TORUS_R2I, SCALE)
 
 
 @hw_func
 def full_update(sig: vga_timing_signals_t) -> full_state_t:
     state: Reg[full_state_t]
     initialized: Reg[uint1_t]
+    bounce_vel_x: Reg[int16_t]
+    bounce_vel_y: Reg[int16_t]
 
     out_state: full_state_t = full_state_t(
         sB=state.sB,
@@ -246,11 +277,12 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
         xincX=state.cB >> 8,
         xincY=state.sAsB >> 8,
         xincZ=state.cAsB >> 8,
+        pos_x=state.pos_x,
+        pos_y=state.pos_y,
     )
 
     if sig.end_of_frame:
-        # Magic-circle DDA rotation (14-bit precision)
-        # R(s, x, y): x = x-(y>>s); y = y+(x>>s)  — second line uses updated x
+        # Magic-circle DDA rotation: R(s, x, y): x = x-(y>>s); y = y+(x>>s)
         # Pass 1: R(5,...) — cA axis
         new_cA: int16_t = state.cA - (state.sA >> 5)
         new_sA: int16_t = state.sA + (new_cA >> 5)
@@ -265,6 +297,25 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
         new_cAsB2: int16_t = new_cAsB + (new_cAcB2 >> 6)
         new_sAcB2: int16_t = new_sAcB - (new_sAsB >> 6)
         new_sAsB2: int16_t = new_sAsB + (new_sAcB2 >> 6)
+
+        new_pos_x: int16_t = state.pos_x
+        new_pos_y: int16_t = state.pos_y
+        if BOUNCE:
+            new_pos_x = state.pos_x + bounce_vel_x
+            new_pos_y = state.pos_y + bounce_vel_y
+            new_vel_x: int16_t = bounce_vel_x
+            new_vel_y: int16_t = bounce_vel_y
+            if (new_pos_x > FRAME_WIDTH // 2 + BOUNCE_MAX_X) or (
+                new_pos_x < FRAME_WIDTH // 2 - BOUNCE_MAX_X
+            ):
+                new_vel_x = -bounce_vel_x
+            if (new_pos_y > FRAME_HEIGHT // 2 + BOUNCE_MAX_Y) or (
+                new_pos_y < FRAME_HEIGHT // 2 - BOUNCE_MAX_Y
+            ):
+                new_vel_y = -bounce_vel_y
+            bounce_vel_x = new_vel_x
+            bounce_vel_y = new_vel_y
+
         state = full_state_t(
             sB=new_sB,
             cB=new_cB,
@@ -279,6 +330,8 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
             xincX=state.cB >> 8,
             xincY=state.sAsB >> 8,
             xincZ=state.cAsB >> 8,
+            pos_x=new_pos_x,
+            pos_y=new_pos_y,
         )
 
     # Power-on init — overrides zero-init from Reg[T] (last-write wins)
@@ -298,37 +351,72 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
             xincX=64,
             xincY=0,
             xincZ=0,
+            pos_x=FRAME_WIDTH // 2,
+            pos_y=FRAME_HEIGHT // 2,
         )
+        if BOUNCE:
+            bounce_vel_x = BOUNCE_SPEED_X
+            bounce_vel_y = BOUNCE_SPEED_Y
         out_state = state
 
     return out_state
 
 
+def dither4(v: uint8_t, x: uint12_t, y: uint12_t) -> uint4_t:
+    # 4x4 Bayer ordered dither matrix (thresholds 0-15), row-major flattened
+    bayer: uint4_t[16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]  # type: ignore[name-defined]
+    thresh: uint4_t = 0
+    for row in range(4):
+        for col in range(4):
+            if (y[1:0] == row) and (x[1:0] == col):
+                thresh = bayer[row * 4 + col]
+    q4: uint4_t = v[7:4]
+    frac: uint4_t = v[3:0]
+    result: uint4_t = q4
+    if (frac > thresh) and (q4 < 15):
+        result = q4 + 1
+    return result
+
+
 @hw_func
 def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
-    cx: int16_t = (sig.pos.x << 1) - (FRAME_WIDTH + 1)
-    cy: int16_t = (FRAME_HEIGHT + 1) - (sig.pos.y << 1)
+    # Cast uint12 pos to int16 FIRST — prevents unsigned arithmetic wrap in hardware.
+    # Without this, for y > FRAME_HEIGHT/2 the subtraction wraps to large positive, clipping
+    # those rows black (the "bottom half missing" hardware bug).
+    px_s: int16_t = sig.pos.x
+    py_s: int16_t = sig.pos.y
+    cx: coord_t = px_s - state.pos_x  # pixel offset from donut centre, rightward +
+    cy: coord_t = state.pos_y - py_s  # pixel offset from donut centre, upward +
 
     r: uint8_t = 0
     g: uint8_t = 0
     b: uint8_t = 0
 
-    if (cx > 0) and (cx < 500) and (cy < 180) and (cy > -180):
-        lz: int16_t = donut(cx, cy, state)
-        if lz > 0:
-            r = lz >> 5  # 8-bit; same shift as original C uint8_t, lz_max~5960 -> 0-186
-            g = lz >> 6  # 8-bit; lz_max~5960 -> 0-93; both safe from uint8 wraparound
+    if (cx > -DONUT_PX) and (cx < DONUT_PX) and (cy > -DONUT_PX) and (cy < DONUT_PX):
+        lz_raw: calc_t = donut(cx, cy, state)
+        if lz_raw > 0:
+            lz: uint8_t = lz_raw >> LZ_SHIFT
+            r = lz
+            g = lz >> 1
 
     return sim_px_t(r=r, g=g, b=b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz)
+@MAIN(vga_timing.pixel_clk_mhz + 5.0)
 def vga_donut():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()
-    state = full_update(sig)  # updates once per frame
+    state = full_update(sig)
     px = render_pixel(sig, state)
-    board_vga.vga_pmod = vga_12bpp_t(
-        r=px.r[7:4], g=px.g[7:4], b=px.b[7:4], hs=px.hs, vs=px.vs
-    )
+
+    if DITHER:
+        r4: uint4_t = dither4(px.r, sig.pos.x, sig.pos.y)
+        g4: uint4_t = dither4(px.g, sig.pos.x, sig.pos.y)
+        b4: uint4_t = dither4(px.b, sig.pos.x, sig.pos.y)
+    else:
+        r4: uint4_t = px.r[7:4]
+        g4: uint4_t = px.g[7:4]
+        b4: uint4_t = px.b[7:4]
+
+    board_vga.vga_pmod = vga_12bpp_t(r=r4, g=g4, b=b4, hs=px.hs, vs=px.vs)
     capture_pixel(sig, px)
