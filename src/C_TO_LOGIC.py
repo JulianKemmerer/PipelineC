@@ -9577,9 +9577,15 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         dup_postpend_text = "_DUPLICATE_" + dup_inst_name_hash
         if len(c_ast_metas) == 1:  # TODO what does this look like otherwise?
             the_ast_meta = list(c_ast_metas)[0]
-            the_c_ast_node = the_ast_meta.raw  # raw pycparser node for C-specific calls
+            the_c_ast_node = (
+                the_ast_meta.raw
+            )  # raw pycparser node for C-specific calls below
+            # Use coord_str() directly — raw node may be a Python AST node (Pypeline)
             new_sub_inst_name = (
-                BUILD_INST_NAME("", sub_func_logic.func_name, the_c_ast_node)
+                sub_func_logic.func_name
+                + "["
+                + the_ast_meta.coord_str()
+                + "]"
                 + dup_postpend_text
             )
         else:
