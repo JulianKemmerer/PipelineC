@@ -86,7 +86,7 @@ def capture_pixel(sig, px):
     if (
         int(sig.pos.y) > 0 and int(sig.pos.x) == 0
     ):  # start of new scan line = previous line just finished
-        print("line done.", px.r, px.g, px.b)
+        print("line done.", x, y, px.r, px.g, px.b)
         ax_img.set_data(img_data)
         fig.canvas.flush_events()
 
@@ -145,6 +145,7 @@ class full_state_t(NamedTuple):
     xincZ: int16_t
 
 
+@hw_func
 def length_cordic(x: int16_t, y: int16_t, x2: int16_t, y2: int16_t) -> pair_t:
     cx: int16_t
     cx2: int16_t
@@ -176,6 +177,7 @@ def length_cordic(x: int16_t, y: int16_t, x2: int16_t, y2: int16_t) -> pair_t:
     return pair_t(a=ra, b=rb)
 
 
+@hw_func
 def donut(i: int16_t, j: int16_t, state: full_state_t) -> int16_t:
     t: int16_t = 512
 
@@ -302,6 +304,7 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
     return out_state
 
 
+@hw_func
 def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     cx: int16_t = (sig.pos.x << 1) - (FRAME_WIDTH + 1)
     cy: int16_t = (FRAME_HEIGHT + 1) - (sig.pos.y << 1)
@@ -319,7 +322,7 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     return sim_px_t(r=r, g=g, b=b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz)
+@MAIN(vga_timing.pixel_clk_mhz + 5.0)
 def vga_donut():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()
