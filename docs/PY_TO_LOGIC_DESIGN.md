@@ -74,6 +74,7 @@
   - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
   - [`@hw_func` / `_sim_type_wrap` — Per-Function Type Propagation](#hw_func--_sim_type_wrap--per-function-type-propagation)
   - [`@MAIN` Implies `@hw_func`](#main-implies-hw_func)
+  - [Bit-Accurate Arithmetic — `SIM_STRICT_ARITH` and `_TypedAnnAssignRewriter`](#bit-accurate-arithmetic--sim_strict_arith-and-_typedannassignrewriter)
   - [`Reg[T]` Simulation — Stateful Registers Across Clock Cycles](#regt-simulation--stateful-registers-across-clock-cycles)
   - [`Feedback[T]` Simulation — Combinatorial Convergence](#feedbackt-simulation--combinatorial-convergence)
   - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation--multi-main-convergence)
@@ -2089,6 +2090,12 @@ prevent naive direct execution:
 2. **Bit concatenation `(a, b)`** — Python sees a plain tuple, not a bit-cat operation.
 3. **Arbitrary-width integer arithmetic** — pypeline integers have fixed widths (e.g.
    `uint24_t`); Python ints are arbitrary precision, so overflow / sign wrapping is silent.
+   Two mechanisms close this gap: `SIM_STRICT_ARITH` applies hardware promotion rules to
+   `SimVal` arithmetic when both operands carry a known `_ctype`, and `_TypedAnnAssignRewriter`
+   applies `_sim_cast` at every typed local assignment inside `@hw_func` bodies — both
+   annotated assignments (`var: T = expr`) and plain re-assignments (`var = expr`) where
+   `var` was previously declared with a scalar integer annotation (see Bit-Accurate
+   Arithmetic section below).
 
 ### `SimVal` — Typed Simulation Integer
 
@@ -2105,8 +2112,12 @@ prevent naive direct execution:
   - Falls back to Python arithmetic if no registration is found
 - **Return-type casting** — when dispatch fires and the callee function has a `return`
   annotation, the result is passed through `_sim_cast` to attach the correct `_ctype`
-- **Arithmetic passthrough** — `+`, `-`, `*`, `&`, `|`, `^`, `~` return new `SimVals`
-  (no `_ctype`, since the result type requires hardware promotion rules to determine)
+- **Hardware-accurate arithmetic** — when `SIM_STRICT_ARITH = True` (default), `+`, `-`,
+  and `*` apply `_arith_promote` + `_arith_output_ctype` when **both** operands carry a
+  known `_ctype`, then return `_sim_cast(result, promoted_type)` — a new `SimVal` with
+  the hardware output ctype. If either operand lacks a `_ctype` (plain int literal, shift
+  result, etc.) the result falls back to a bare `SimVal` with no `_ctype`. Bitwise ops
+  (`&`, `|`, `^`, `~`) always return bare `SimVal` (no `_ctype`).
 
 `SimVal` subclasses `int`, so it is **transparent to the hardware elaborator**: when it
 appears as a constant value during `_elab_compound_init_from_pyval`, it is seen as an
@@ -2119,10 +2130,14 @@ Converts a Python int / `SimVal` to a `SimVal` with:
 - Two's-complement sign extension for signed types (`int…_t`)
 - `_ctype` set to `ctype`
 
-This is the simulation equivalent of a hardware type assignment and is used in two places:
-1. By `hw_func` / `_sim_type_wrap` to cast function inputs and outputs.
+This is the simulation equivalent of a hardware type assignment and is used in three places:
+1. By `hw_func` / `_sim_type_wrap` to cast function inputs and outputs at call boundaries.
 2. By `SimVal._dispatch_unary/binary` as a fallback when a dispatched function returns
    an untyped value.
+3. By `_TypedAnnAssignRewriter` (applied by `_build_reg_sim_func`) to truncate typed local
+   variable assignments inside `@hw_func` bodies — both annotated assignments
+   (`var: T = expr`) and plain re-assignments (`var = expr`) to variables previously
+   declared with a scalar integer annotation.
 
 ### `@struct` — Auto-Typed Fields
 
@@ -2387,6 +2402,126 @@ sim_call(float_add_32, left, right)
   └─ result is a float32_t NamedTuple (not a dict, thanks to NamedTuple constructor form)
 ```
 
+---
+
+### Bit-Accurate Arithmetic — `SIM_STRICT_ARITH` and `_TypedAnnAssignRewriter`
+
+Python's arbitrary-precision integers cause two classes of hardware divergence:
+
+1. **Arithmetic overflow** — `int16_t(20000) + int16_t(20000)` produces `40000` in Python
+   but wraps to `-25536` on hardware (int17_t intermediate, truncated to int16_t).
+2. **Typed-assignment truncation** — `vxi14: int16_t = big_expr` is a no-op Python type
+   hint; hardware truncates `big_expr` to 16 bits at that assignment point.
+
+Two complementary mechanisms close these gaps, both controlled by a module-level flag.
+
+#### `SIM_STRICT_ARITH` — Typed Arithmetic Promotion
+
+When `SIM_STRICT_ARITH = True` (the default), `SimVal.__add__`, `__sub__`, and `__mul__`
+apply hardware type-promotion rules before returning, provided **both** operands carry a
+known `_ctype`:
+
+```python
+# int16_t + int16_t: same sign, max+1 → int17_t
+SimVal(20000, ctype=int16_t) + SimVal(20000, ctype=int16_t)
+# → _arith_promote("int16_t", "int16_t") → same sign, no promotion needed
+# → _arith_output_ctype("add", int16_t, int16_t, signed=True) → int17_t
+# → _sim_cast(40000, int17_t) → SimVal(40000, ctype=int17_t)
+
+# int16_t * int16_t: lw+rw → int32_t
+SimVal(-25536, ctype=int16_t) * SimVal(-25536, ctype=int16_t)
+# → _arith_output_ctype("mul", int16_t, int16_t, signed=True) → int32_t
+# → _sim_cast(652_087_296, int32_t) → SimVal(652_087_296, ctype=int32_t)
+```
+
+The promotion helpers — `_arith_promote(l_type, r_type)` and
+`_arith_output_ctype(op, eff_l, eff_r, result_signed)` — are defined in `pypeline.py`
+(not `PY_TO_LOGIC.py`) so they are shared by both the simulation layer and the hardware
+elaborator. `PY_TO_LOGIC` imports them directly:
+
+```python
+from pypeline import _arith_promote, _arith_output_ctype, ...
+```
+
+**When `SIM_STRICT_ARITH` doesn't fire:** if either operand has no `_ctype` (e.g.
+a plain Python int literal like `CORDIC_R1I = 256`, a value returned by a shift, or any
+`__radd__` / `__rsub__` invocation where the left operand is a plain int), the arithmetic
+falls back to an untyped `SimVal` with no `_ctype`. The next binary operation with a typed
+`SimVal` will also fall back. Chain integrity therefore requires typed operands on both
+sides; `@hw_func` input casts (step 2 of the call boundary) and `_TypedAnnAssignRewriter`
+(see below) are the primary ways to re-inject ctypes into the chain.
+
+Set `pypeline.SIM_STRICT_ARITH = False` to disable and restore Python-precision arithmetic
+(useful for performance testing or when the divergence does not affect the feature under test).
+
+#### `_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment
+
+`_TypedAnnAssignRewriter` is an `ast.NodeTransformer` applied by `_build_reg_sim_func`
+to the function body AST (step 4 of the `_build_reg_sim_func` sequence). It applies two
+complementary rewrite rules to mirror how hardware types work:
+
+**Rule 1 — annotated assignment** (`AnnAssign` with a value):
+`var: scalar_int_type = expr` → `var = _sim_cast(expr, T)`
+
+**Rule 2 — plain re-assignment to a previously-declared typed variable**
+(`Assign` node where the target was declared with a scalar integer annotation earlier in
+the same function):
+`var = expr` → `var = _sim_cast(expr, T)` using the already-declared type
+
+Rule 2 matches hardware semantics exactly: a signal's type is fixed at declaration; every
+subsequent write truncates to that type regardless of whether the Python source carries a
+repeat annotation. Bare declarations (`var: T` with no RHS) record the type without
+generating any assignment, so they trigger Rule 2 for all later `var = expr` statements.
+
+```python
+# Original source:
+def donut(i: int16_t, j: int16_t, state: full_state_t) -> int16_t:
+    t: int16_t = 512        # AnnAssign → Rule 1: records t → int16_t, wraps in _sim_cast
+    d: int16_t = 0          # Rule 1: records d → int16_t
+    for _iter in range(NITERS):
+        t2: int16_t = lc1.a # Rule 1: inner loop AnnAssign — also rewritten
+        d = t2 - CORDIC_R1I # plain Assign — Rule 2 fires (d was declared int16_t above)
+        t = t + d           # plain Assign — Rule 2 fires (t declared above)
+
+# After _TypedAnnAssignRewriter:
+def donut(i: int16_t, j: int16_t, state: full_state_t) -> int16_t:
+    t  = _sim_cast(512, __sim_ann_2_4__)
+    d  = _sim_cast(0,   __sim_ann_3_4__)
+    for _iter in range(NITERS):
+        t2 = _sim_cast(lc1.a,            __sim_ann_8_8__)
+        d  = _sim_cast(t2 - CORDIC_R1I,  __sim_ann_9_8__)   # ← Rule 2
+        t  = _sim_cast(t + d,            __sim_ann_10_8__)   # ← Rule 2
+```
+
+The rewriter traverses the **entire function body recursively**, so annotations and
+re-assignments inside `for` loops and `if` branches are handled in document order.
+`_declared_types` is populated as the tree is walked top-to-bottom, so a declaration
+always precedes any use in well-structured hardware code.
+
+`__sim_ann_{lineno}_{col_offset}__` is a unique name per rewrite site; the ctype object is
+injected into the compiled function's `__globals__` at decoration time.
+
+**What is NOT rewritten:**
+- Non-scalar types: structs, arrays, `Reg[T]`, `Feedback[T]`, `Wire[T]`
+- Tuple-unpack or subscript targets: `a, b = f()`, `buf[i] = x`
+- Global wire `AnnAssign` nodes — already converted to `Expr(Call)` by `_GlobalWireRewriter`
+  in step 3, so they are invisible to `_TypedAnnAssignRewriter` in step 4
+- Bare `var: T` declarations themselves (no RHS to wrap) — but they DO register `var`
+  for Rule 2 so that subsequent `var = expr` statements are rewritten
+
+**`@hw_func` is required.** The rewriter is part of `_build_reg_sim_func`, which only
+runs at `@hw_func` (or `@MAIN`) decoration time. Inner hardware functions must carry
+`@hw_func` to opt in.
+
+**Combined effect.** With both `SIM_STRICT_ARITH` and `_TypedAnnAssignRewriter` active,
+the simulation accurately models hardware at every typed arithmetic operation AND every
+typed variable assignment — including loop-body re-assignments that lack an explicit type
+annotation. The two are complementary: the rewriter ensures intermediate values get ctypes
+at assignment points, which in turn enables `SIM_STRICT_ARITH` to fire correctly on the
+next arithmetic operation.
+
+---
+
 ### `Reg[T]` Simulation — Stateful Registers Across Clock Cycles
 
 Functions that contain `Reg[T]` state registers can be simulated. Two problems must be
@@ -2456,13 +2591,24 @@ This function:
    `Wire[T]`/`Input[T]`/`Output[T]` names and applies `_GlobalWireRewriter` to the
    function body AST. This replaces all reads of those names with `_sim_wire_read(name)`
    calls and all assignments to them with `_sim_wire_write(name, value)` calls.
-4. **Discovers registers and feedback wires** by evaluating each annotation-only `AnnAssign`
-   node in the (now wire-rewritten) body against `fn.__globals__` — the only way to detect
+4. **Rewrites typed local variable assignments** — applies `_TypedAnnAssignRewriter` to
+   the (now wire-rewritten) AST. Two rewrite rules fire: (a) every `var: scalar_int_t = expr`
+   (`AnnAssign` with value) is converted to `var = _sim_cast(expr, T)`; (b) every plain
+   `var = expr` (`Assign` node) where `var` was previously declared with a scalar integer
+   annotation is also converted to `var = _sim_cast(expr, T)` using the declared type.
+   Rule (b) covers loop-body re-assignments like `t = t + d` where `t: int16_t` was declared
+   earlier — matching hardware where a signal's type is fixed at declaration and every write
+   truncates. Bare declarations (`var: T` with no RHS) register `var`'s type for Rule (b)
+   without generating an assignment. Wire `AnnAssign` nodes have already been replaced by
+   plain calls in step 3, so this pass sees only non-wire annotations. Non-scalar types
+   (`Reg[T]`, `Feedback[T]`, `Wire[T]`, structs) are left untouched.
+5. **Discovers registers and feedback wires** by evaluating each annotation-only `AnnAssign`
+   node in the (now rewritten) body against `fn.__globals__` — the only way to detect
    `_RegType`/`_FeedbackType` instances without running the hardware elaborator (because
    Python never stores local variable annotations in `__annotations__`).
-5. If no `_RegType`, `_FeedbackType`, or global wire names are found, returns `None`
-   (no transformation needed).
-6. Otherwise builds a **transformed function body**:
+6. If no `_RegType`, `_FeedbackType`, global wire names, or typed local annotation rewrites
+   are found, returns `None` (no transformation needed).
+7. Otherwise builds a **transformed function body**:
 
 ```python
 # generated at decoration time — not user-written:
@@ -2470,8 +2616,11 @@ def accum_func(data_in: uint32_t) -> uint32_t:
     __ip__ = _sim_current_inst_path()
     acc    = _sim_reg_read(__ip__, "acc", __reg_zero_acc__)   # ← type-appropriate reset default
     try:
-        # original body with Reg[T] AnnAssign nodes removed:
-        acc = acc + data_in
+        # original body with Reg[T] AnnAssign nodes removed and typed annotations rewritten:
+        result: uint32_t = acc + data_in      # original source
+        # ↓ after _TypedAnnAssignRewriter (uint32_t is a scalar pypeline int):
+        result = _sim_cast(acc + data_in, __sim_ann_7_8__)  # truncates to hardware width
+        acc = result
         return acc
     finally:
         _sim_reg_write(__ip__, "acc", acc)  # ← writes next-cycle value for this instance
@@ -2494,6 +2643,52 @@ Decorator nodes are stripped before `compile`/`exec` to prevent re-wrapping. The
 compiled function's `__globals__` is a copy of `fn.__globals__` augmented with the sim
 helpers and per-register zero defaults, so all user-defined types and constants remain
 in scope.
+
+**Closure variable caveat — annotation-only names.** When a function is defined inside a
+factory (the [Closure Factory Pattern](#closure-factory-pattern)), the outer factory's type
+parameters are available in the inner function's scope as free variables.  Python only places
+a name in `fn.__code__.co_freevars` (and therefore in `fn.__closure__`) if it appears in the
+*body* of the function — annotation-only uses (i.e. the name appears only in `def f(a: T)`
+or in a type hint like `a: T` with no RHS) are not counted.
+
+Example:
+
+```python
+def make_negate(value_t, out_t):
+    @hw_func
+    def negate(a: value_t) -> out_t:
+        a_signed: out_t = a   # out_t used in body → captured in co_freevars
+        return ~a_signed + 1
+    return negate
+```
+
+Here `out_t` appears in the body so Python captures it; `value_t` appears only in the
+parameter annotation `a: value_t` and is **not** captured.  When `_build_reg_sim_func`
+builds `new_globals` from `fn.__globals__` plus `fn.__closure__`, `value_t` is absent.
+The subsequent `exec` then fails with `NameError: name 'value_t' is not defined` when
+Python re-evaluates the `def negate(a: value_t)` statement inside the compiled code.
+
+**Fix:** immediately before `exec`, `_build_reg_sim_func` cross-references each AST
+parameter annotation `Name` node against `orig_fn.__annotations__` (which holds
+already-evaluated type objects keyed by parameter name):
+
+```python
+_sig_anns = getattr(orig_fn, "__annotations__", {})
+for _arg in func_def.args.args:
+    if _arg.annotation and isinstance(_arg.annotation, _ast.Name):
+        _type_name = _arg.annotation.id
+        if _type_name not in new_globals and _arg.arg in _sig_anns:
+            new_globals[_type_name] = _sig_anns[_arg.arg]
+if func_def.returns and isinstance(func_def.returns, _ast.Name):
+    _ret_name = func_def.returns.id
+    if _ret_name not in new_globals and "return" in _sig_anns:
+        new_globals[_ret_name] = _sig_anns["return"]
+```
+
+This is safe because `orig_fn.__annotations__` always contains already-evaluated objects —
+it is the standard Python mechanism for storing resolved annotations — so no `eval` is needed
+and no `NameError` can arise from this step itself.  Only names absent from `new_globals`
+are injected, so names that *are* in the closure are not shadowed.
 
 The transformation is done **once at decoration time** and the result is captured in
 `wrapper`'s closure as `sim_body_fn`. Subsequent calls invoke `sim_body_fn` instead of
@@ -2934,19 +3129,11 @@ Subsequent cycles toggle both registers between 0 and -1 (uint1_t 0 and 1).
 - **Global variables** — no other form of module-level mutable state is supported.
   Only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as shared cross-function
   globals in the hardware elaboration model.
-- **Arithmetic type propagation** — intermediate arithmetic results (`+`, `-`, etc.) on
-  `SimVal` produce new `SimVal`s without `_ctype`. Type information is re-attached at
-  function call boundaries via `@hw_func`. Wire values are stored as-is (`_sim_wire_write`
-  preserves struct instances; scalar wires hold `SimVal` or `int`). Type masking for wire
-  values occurs at `@hw_func` input/output boundaries. For example, `uint1_t` wires may
-  hold `-1` (Python `~0`) rather than `1` as an intermediate value; the final result at
-  `@MAIN` boundaries is correctly masked.
-- **Annotated casts** — `a_signed: out_t = a` is ignored by Python (annotations are hints).
-  For widening/sign-extension this is harmless; truncating casts would require explicit
-  `_sim_cast(a, out_t)` if exact bit width matters.
-- **Unsigned overflow masking** — arithmetic on `SimVal` is Python arbitrary-precision;
-  wrap-on-overflow only occurs when a `@hw_func` boundary re-applies `_sim_cast`. For
-  typical hardware-range values this is not observable.
+- **Bit-accurate arithmetic** — `SIM_STRICT_ARITH = True` (default) and
+  `_TypedAnnAssignRewriter` together make simulation hardware-accurate for functions
+  decorated with `@hw_func` or `@MAIN`. See the Bit-Accurate Arithmetic section for full
+  detail on promotion rules, ctype-chain limitations (plain int operands, shifts), and
+  the opt-in `@hw_func` requirement for inner functions.
 - **`Input[T]` wires** — initialized to zero and not externally driven during sim.
   Setting `Input[T]` values before each cycle is not yet supported by `pypeline_sim.py`.
 

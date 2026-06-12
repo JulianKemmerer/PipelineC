@@ -322,7 +322,7 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     return sim_px_t(r=r, g=g, b=b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz + 5.0)
+@MAIN(vga_timing.pixel_clk_mhz)
 def vga_donut():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()

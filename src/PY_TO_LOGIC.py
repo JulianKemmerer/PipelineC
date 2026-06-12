@@ -16,6 +16,12 @@ from pypeline import (
     _InputType,
     _OutputType,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
+    _INT_CTYPE_RE,
+    _ctype_is_int,
+    _ctype_info,
+    _int_ctype,
+    _arith_promote,
+    _arith_output_ctype,
 )
 
 UNARY_OP_MAP = {
@@ -535,12 +541,6 @@ def _bin_func_name(op_name, l_type, r_type):
 
 
 # ─────────────────────────────────────────────
-# Integer type helpers for arithmetic promotion
-# ─────────────────────────────────────────────
-
-_INT_CTYPE_RE = re.compile(r"(u?)int(\d+)_t$")
-
-# ─────────────────────────────────────────────
 # VHDL identifier safety
 # ─────────────────────────────────────────────
 
@@ -680,73 +680,24 @@ def _sanitize_vhdl_name(name: str) -> str:
     return result
 
 
-def _ctype_is_int(c_type):
-    """True if c_type is a plain integer type (uint/int)."""
-    return bool(_INT_CTYPE_RE.match(c_type))
-
-
-def _ctype_info(c_type):
-    """Parse integer C type string. Returns (is_signed, width).
-    e.g. 'uint32_t' -> (False, 32),  'int16_t' -> (True, 16)
-    """
-    m = _INT_CTYPE_RE.match(c_type)
-    if not m:
-        raise NotImplementedError(f"Cannot get integer type info from: {c_type!r}")
-    return (m.group(1) != "u", int(m.group(2)))  # (is_signed, width)
-
-
-def _int_ctype(is_signed, width):
-    """Build integer C type string. e.g. (True, 32) -> 'int32_t'"""
-    return f"{'int' if is_signed else 'uint'}{width}_t"
-
-
-def _arith_promote(l_type, r_type):
-    """Compute effective input types after sign promotion for arithmetic/compare ops.
-
-    If both types have the same signedness, they are returned unchanged.
-    If there is a mismatch, the unsigned operand gains +1 bit and becomes signed
-    so the VHDL backend can operate on matching-sign types:
-      e.g. (int32_t, uint32_t) -> (int32_t, int33_t, True)
-
-    Returns (eff_l_type, eff_r_type, result_is_signed).
-    For non-integer types, returns the inputs unchanged with result_is_signed=None.
-    """
-    if not (_ctype_is_int(l_type) and _ctype_is_int(r_type)):
-        return l_type, r_type, None
-    l_signed, l_w = _ctype_info(l_type)
-    r_signed, r_w = _ctype_info(r_type)
-    if l_signed == r_signed:
-        return l_type, r_type, l_signed
-    if l_signed:
-        return l_type, _int_ctype(True, r_w + 1), True  # promote r to signed
-    else:
-        return _int_ctype(True, l_w + 1), r_type, True  # promote l to signed
+_HW_OP_TO_ARITH_OP = {
+    C_TO_LOGIC.BIN_OP_PLUS_NAME: "add",
+    C_TO_LOGIC.BIN_OP_MINUS_NAME: "sub",
+    C_TO_LOGIC.BIN_OP_MULT_NAME: "mul",
+    C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME: "mul",
+}
 
 
 def _arith_output_type(op_name, eff_l_type, eff_r_type, result_signed):
-    """Compute full-precision output type for an arithmetic op.
-
-    Rules (after sign promotion, so both effective types have same signedness):
-      add:  max(lw, rw) + 1  (one extra bit for carry)
-      sub:  max(lw, rw)      if unsigned  (borrow is discarded)
-            max(lw, rw) + 1  if signed    (sub of negative = add, needs extra bit)
-      mult: lw + rw          (full product width)
-      div, mod: max(lw, rw)  (output bounded by larger input)
-    """
-    _, l_w = _ctype_info(eff_l_type)
-    _, r_w = _ctype_info(eff_r_type)
-    max_w = max(l_w, r_w)
-    if op_name == C_TO_LOGIC.BIN_OP_PLUS_NAME:
-        out_w = max_w + 1
-    elif op_name == C_TO_LOGIC.BIN_OP_MINUS_NAME:
-        out_w = max_w if not result_signed else max_w + 1
-    elif (op_name == C_TO_LOGIC.BIN_OP_MULT_NAME) or (
-        op_name == C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME
-    ):
-        out_w = l_w + r_w
-    else:  # div, mod
-        out_w = max_w
-    return _int_ctype(result_signed, out_w)
+    """C type string for full-precision arithmetic output. Delegates to pypeline."""
+    return str(
+        _arith_output_ctype(
+            _HW_OP_TO_ARITH_OP.get(op_name, "div"),
+            eff_l_type,
+            eff_r_type,
+            result_signed,
+        )
+    )
 
 
 def _infer_const_ctype(val):

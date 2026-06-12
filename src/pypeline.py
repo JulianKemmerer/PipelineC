@@ -171,6 +171,99 @@ int33_t = make_int(33)
 int64_t = make_int(64)
 
 # ─────────────────────────────────────────────
+# C-type-string helpers (shared with PY_TO_LOGIC)
+# ─────────────────────────────────────────────
+import re as _re_ctype
+
+_INT_CTYPE_RE = _re_ctype.compile(r"(u?)int(\d+)_t$")
+
+
+def _ctype_is_int(c_type: str) -> bool:
+    """True if c_type is a plain integer type (uint/int)."""
+    return bool(_INT_CTYPE_RE.match(c_type))
+
+
+def _infer_literal_ctype(val: int):
+    """Minimum C type string for a plain Python int, matching PY_TO_LOGIC._infer_const_ctype.
+
+    Used by SimVal arithmetic to infer the hardware type of integer literals that carry
+    no SimVal ctype, so that mixed SimVal/literal operations apply the same unsigned
+    wrapping that PY_TO_LOGIC produces in hardware.
+    Returns None for non-integers or booleans (handled separately by hardware elaborator).
+    """
+    if not isinstance(val, int) or isinstance(val, bool):
+        return None
+    if val in (0, 1):
+        return "uint1_t"
+    if val > 1:
+        return f"uint{val.bit_length()}_t"
+    bits = max(1, (-val - 1).bit_length() + 1)
+    return f"int{bits}_t"
+
+
+def _ctype_info(c_type: str):
+    """Parse integer C type string. Returns (is_signed, width).
+    e.g. 'uint32_t' -> (False, 32),  'int16_t' -> (True, 16)
+    """
+    m = _INT_CTYPE_RE.match(c_type)
+    if not m:
+        raise NotImplementedError(f"Cannot get integer type info from: {c_type!r}")
+    return (m.group(1) != "u", int(m.group(2)))
+
+
+def _int_ctype(is_signed: bool, width: int) -> str:
+    """Build integer C type string. e.g. (True, 32) -> 'int32_t'"""
+    return f"{'int' if is_signed else 'uint'}{width}_t"
+
+
+def _arith_promote(l_type: str, r_type: str):
+    """Compute effective input types after sign promotion for arithmetic/compare ops.
+
+    If both types have the same signedness, they are returned unchanged.
+    If there is a mismatch, the unsigned operand gains +1 bit and becomes signed
+    so the VHDL backend can operate on matching-sign types:
+      e.g. (int32_t, uint32_t) -> (int32_t, int33_t, True)
+
+    Returns (eff_l_type, eff_r_type, result_is_signed).
+    For non-integer types, returns the inputs unchanged with result_is_signed=None.
+    """
+    if not (_ctype_is_int(l_type) and _ctype_is_int(r_type)):
+        return l_type, r_type, None
+    l_signed, l_w = _ctype_info(l_type)
+    r_signed, r_w = _ctype_info(r_type)
+    if l_signed == r_signed:
+        return l_type, r_type, l_signed
+    if l_signed:
+        return l_type, _int_ctype(True, r_w + 1), True  # promote r to signed
+    return _int_ctype(True, l_w + 1), r_type, True  # promote l to signed
+
+
+def _arith_output_ctype(op: str, eff_l_type: str, eff_r_type: str, result_signed: bool):
+    """Full-precision output ctype OBJECT for an arithmetic op (after sign promotion).
+
+    op: "add" | "sub" | "mul" | "div" | "mod"
+    Returns a _CTypeMeta ctype object (e.g. make_int(17)).
+    Width rules:
+      add  -> max(lw, rw) + 1
+      sub  -> max+1 (signed), max (unsigned)
+      mul  -> lw + rw
+      div/mod -> max(lw, rw)
+    """
+    _, l_w = _ctype_info(eff_l_type)
+    _, r_w = _ctype_info(eff_r_type)
+    max_w = max(l_w, r_w)
+    if op == "add":
+        out_w = max_w + 1
+    elif op == "sub":
+        out_w = (max_w + 1) if result_signed else max_w
+    elif op == "mul":
+        out_w = l_w + r_w
+    else:
+        out_w = max_w
+    return make_int(out_w) if result_signed else make_uint(out_w)
+
+
+# ─────────────────────────────────────────────
 # NamedTuple with automatic subscript support
 # ─────────────────────────────────────────────
 
@@ -247,7 +340,7 @@ class SimVal(int):
     def __invert__(self):
         return self._dispatch_unary("NOT", ~int(self))
 
-    def _dispatch_binary(self, op_name, other, fallback_int):
+    def _dispatch_binary(self, op_name, other, fallback_int, preserve_ctype=False):
         if self._ctype is not None:
             rc = getattr(other, "_ctype", None)
             fn = rc and _operator_registry.get(
@@ -263,24 +356,69 @@ class SimVal(int):
                     if ret_t is not None:
                         return _sim_cast(result, ret_t)
                 return result
+            # No registered operator. For shifts: PY_TO_LOGIC output type = left operand
+            # type (constant-shift built-in keeps l_type). Preserve ctype so downstream
+            # arithmetic can apply the correct unsigned/signed wrapping.
+            if preserve_ctype:
+                return _sim_cast(fallback_int, self._ctype)
         return SimVal(fallback_int)
 
     def __rshift__(self, o):
-        return self._dispatch_binary("SR", o, int(self) >> int(o))
+        return self._dispatch_binary("SR", o, int(self) >> int(o), preserve_ctype=True)
 
     def __lshift__(self, o):
-        return self._dispatch_binary("SL", o, int(self) << int(o))
+        return self._dispatch_binary("SL", o, int(self) << int(o), preserve_ctype=True)
 
-    # Arithmetic preserves SimVal type; ctype is intentionally not propagated
-    # (use _sim_cast or @hw_func return-type casting to restore type info).
+    # Arithmetic with hardware type-promotion when both operands have known ctypes.
+    # SIM_STRICT_ARITH (default True) applies _sim_cast to the result so that
+    # intermediate values wrap identically to hardware. Set False for faster sim.
+    #
+    # When the other operand is a plain Python int (no _ctype), its hardware type is
+    # inferred via _infer_literal_ctype — the same minimum-bit-width rule that
+    # PY_TO_LOGIC uses for integer literals.  This ensures that, e.g.,
+    #   uint12_t_val - 641   →  uint12_t result (unsigned wrap, not signed Python int)
+    # matching what hardware produces for the expression `signal - CONSTANT`.
     def __add__(self, o):
-        return SimVal(int(self) + int(o))
+        result = int(self) + int(o)
+        if SIM_STRICT_ARITH and self._ctype is not None:
+            rc = getattr(o, "_ctype", None)
+            if rc is None:
+                rc = _infer_literal_ctype(int(o))
+            if rc is not None:
+                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                if rsig is not None:
+                    return _sim_cast(
+                        result, _arith_output_ctype("add", eff_l, eff_r, rsig)
+                    )
+        return SimVal(result)
 
     def __sub__(self, o):
-        return SimVal(int(self) - int(o))
+        result = int(self) - int(o)
+        if SIM_STRICT_ARITH and self._ctype is not None:
+            rc = getattr(o, "_ctype", None)
+            if rc is None:
+                rc = _infer_literal_ctype(int(o))
+            if rc is not None:
+                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                if rsig is not None:
+                    return _sim_cast(
+                        result, _arith_output_ctype("sub", eff_l, eff_r, rsig)
+                    )
+        return SimVal(result)
 
     def __mul__(self, o):
-        return SimVal(int(self) * int(o))
+        result = int(self) * int(o)
+        if SIM_STRICT_ARITH and self._ctype is not None:
+            rc = getattr(o, "_ctype", None)
+            if rc is None:
+                rc = _infer_literal_ctype(int(o))
+            if rc is not None:
+                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                if rsig is not None:
+                    return _sim_cast(
+                        result, _arith_output_ctype("mul", eff_l, eff_r, rsig)
+                    )
+        return SimVal(result)
 
     def __and__(self, o):
         return SimVal(int(self) & int(o))
@@ -291,11 +429,31 @@ class SimVal(int):
     def __xor__(self, o):
         return SimVal(int(self) ^ int(o))
 
+    # Reflected arithmetic: plain-int op SimVal. Apply full SIM_STRICT_ARITH so that
+    # `CONSTANT - typed_signal` wraps the same way hardware does (e.g. 481 - uint12_t).
     def __radd__(self, o):
-        return SimVal(int(o) + int(self))
+        result = int(o) + int(self)
+        if SIM_STRICT_ARITH and self._ctype is not None:
+            lc = _infer_literal_ctype(int(o))
+            if lc is not None:
+                eff_l, eff_r, rsig = _arith_promote(lc, str(self._ctype))
+                if rsig is not None:
+                    return _sim_cast(
+                        result, _arith_output_ctype("add", eff_l, eff_r, rsig)
+                    )
+        return SimVal(result)
 
     def __rsub__(self, o):
-        return SimVal(int(o) - int(self))
+        result = int(o) - int(self)
+        if SIM_STRICT_ARITH and self._ctype is not None:
+            lc = _infer_literal_ctype(int(o))
+            if lc is not None:
+                eff_l, eff_r, rsig = _arith_promote(lc, str(self._ctype))
+                if rsig is not None:
+                    return _sim_cast(
+                        result, _arith_output_ctype("sub", eff_l, eff_r, rsig)
+                    )
+        return SimVal(result)
 
     def __rlshift__(self, o):
         return SimVal(int(o) << int(self))
@@ -874,6 +1032,11 @@ _sim_reg_state = {}
 # Combinatorial feedback must reach a fixed point in far fewer iterations than this.
 _SIM_FEEDBACK_MAX_ITER = 1000
 
+# When True (default), SimVal.__add__/__sub__/__mul__ apply hardware type-promotion rules
+# and _sim_cast on each operation, matching hardware wrap-on-overflow behaviour.
+# Set to False for faster simulation at the cost of Python-precision arithmetic.
+SIM_STRICT_ARITH: bool = True
+
 # Global wire simulation state.
 _sim_wire_state: dict = {}  # wire name → current int value
 _sim_converging: bool = False  # True during delta-cycle convergence passes
@@ -1057,6 +1220,76 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
         return node
 
 
+class _TypedAnnAssignRewriter(_ast.NodeTransformer):
+    """Rewrites typed assignments to call _sim_cast, mirroring hardware truncation.
+
+    Two rewrite rules:
+    1. `var: scalar_int_type = expr`  →  `var = _sim_cast(expr, T)` (AnnAssign with value)
+    2. `var = expr` (plain Assign) where `var` was previously declared with a scalar
+       integer annotation  →  `var = _sim_cast(expr, T)` using the declared type
+
+    Rule 2 matches hardware semantics: a signal's type is declared once and every
+    subsequent write to it truncates, even bare re-assignments (`t = t + d` in a loop
+    behaves identically to `t: int16_t = t + d` when `t: int16_t` was declared earlier).
+
+    Must be applied AFTER _GlobalWireRewriter: wire AnnAssigns have already been
+    converted to Expr(Call) nodes by that pass, so this rewriter only sees non-wire
+    annotations.  Non-integer types (structs, arrays, Reg, Feedback, Wire) are
+    left untouched.
+    """
+
+    def __init__(self, eval_ns, ann_ctypes_out):
+        self._eval_ns = eval_ns
+        self._ann_ctypes_out = ann_ctypes_out  # filled in-place: key → ctype_obj
+        self._declared_types = {}  # var_name → ctype, populated by AnnAssign visits
+
+    def _make_cast(self, value_node, ctype, ref_node):
+        """Return a _sim_cast(value_node, __sim_ann_L_C__) Call node."""
+        key = f"__sim_ann_{ref_node.lineno}_{ref_node.col_offset}__"
+        self._ann_ctypes_out[key] = ctype
+        return _ast.Call(
+            func=_ast.Name(id="_sim_cast", ctx=_ast.Load()),
+            args=[value_node, _ast.Name(id=key, ctx=_ast.Load())],
+            keywords=[],
+        )
+
+    def visit_AnnAssign(self, node):
+        self.generic_visit(node)
+        if not isinstance(node.target, _ast.Name):
+            return node  # tuple-unpack or subscript target, skip
+        try:
+            ann_val = eval(
+                compile(_ast.Expression(body=node.annotation), "<ann>", "eval"),
+                self._eval_ns,
+            )
+        except Exception:
+            return node
+        if not _is_scalar_pypeline_int(ann_val):
+            return node  # struct, array, Reg, Feedback, Wire — skip
+        # Always record: bare `var: T` declarations also type subsequent plain assigns.
+        self._declared_types[node.target.id] = ann_val
+        if node.value is None:
+            return node  # declaration-only: type recorded, nothing to rewrite
+        new_node = _ast.Assign(
+            targets=[node.target],
+            value=self._make_cast(node.value, ann_val, node),
+        )
+        return _ast.copy_location(new_node, node)
+
+    def visit_Assign(self, node):
+        self.generic_visit(node)
+        if len(node.targets) != 1 or not isinstance(node.targets[0], _ast.Name):
+            return node  # tuple-unpack or subscript target, skip
+        ctype = self._declared_types.get(node.targets[0].id)
+        if ctype is None:
+            return node  # not a previously-declared typed variable
+        new_node = _ast.Assign(
+            targets=node.targets,
+            value=self._make_cast(node.value, ctype, node),
+        )
+        return _ast.copy_location(new_node, node)
+
+
 def _build_reg_sim_func(fn):
     """Build a simulation-mode function body for fn that manages Reg[T] and Feedback[T].
 
@@ -1149,6 +1382,13 @@ def _build_reg_sim_func(fn):
         _GlobalWireRewriter(global_wire_names, module_wire_attrs).visit(func_def)
         _ast.fix_missing_locations(func_def)
 
+    # Rewrite typed local annotations AFTER _GlobalWireRewriter (wire AnnAssigns are
+    # already converted to Expr nodes) and BEFORE orig_body is sliced, so orig_body
+    # picks up the rewritten Assign nodes.
+    ann_ctypes_out: dict = {}
+    _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out).visit(func_def)
+    _ast.fix_missing_locations(func_def)
+
     # Discover register and feedback variable names by evaluating each
     # annotation-only AnnAssign against the function's eval namespace
     # (globals + closure vars so closures like vga_timing work correctly).
@@ -1180,6 +1420,7 @@ def _build_reg_sim_func(fn):
         and not feedback_names
         and not global_wire_names
         and not module_wire_attrs
+        and not ann_ctypes_out
     ):
         return None
 
@@ -1298,6 +1539,7 @@ def _build_reg_sim_func(fn):
 
     new_globals = _eval_ns.copy()  # includes globals + closure vars
     new_globals.update(
+        _sim_cast=_sim_cast,
         _sim_current_inst_path=_sim_current_inst_path,
         _sim_reg_read=_sim_reg_read,
         _sim_reg_write=_sim_reg_write,
@@ -1307,6 +1549,21 @@ def _build_reg_sim_func(fn):
     )
     for _name, _zero in reg_zeros.items():
         new_globals[f"__reg_zero_{_name}__"] = _zero
+    for _key, _ctype_obj in ann_ctypes_out.items():
+        new_globals[_key] = _ctype_obj
+    # Inject function signature annotation type names that only appear in annotations
+    # (not the body), so Python doesn't capture them in co_freevars — but exec still
+    # needs them when it re-evaluates the def statement's annotation expressions.
+    _sig_anns = getattr(orig_fn, "__annotations__", {})
+    for _arg in func_def.args.args:
+        if _arg.annotation and isinstance(_arg.annotation, _ast.Name):
+            _type_name = _arg.annotation.id
+            if _type_name not in new_globals and _arg.arg in _sig_anns:
+                new_globals[_type_name] = _sig_anns[_arg.arg]
+    if func_def.returns and isinstance(func_def.returns, _ast.Name):
+        _ret_name = func_def.returns.id
+        if _ret_name not in new_globals and "return" in _sig_anns:
+            new_globals[_ret_name] = _sig_anns["return"]
     exec(code, new_globals)  # noqa: S102
     return new_globals.get(orig_fn.__name__)
 
@@ -1387,12 +1644,21 @@ def _sim_type_wrap(fn):
                         and _is_scalar_pypeline_int(pt)
                     ):
                         new_args[i] = _sim_cast(a, pt)
+            new_kwargs = dict(kwargs)
+            for k, v in kwargs.items():
+                pt = ann.get(k)
+                if (
+                    pt is not None
+                    and isinstance(v, (int, SimVal))
+                    and _is_scalar_pypeline_int(pt)
+                ):
+                    new_kwargs[k] = _sim_cast(v, pt)
             saved = _push_scoped_registrations(fn)
             try:
                 if sim_body_fn is not None:
-                    result = sim_body_fn(*new_args, **kwargs)
+                    result = sim_body_fn(*new_args, **new_kwargs)
                 else:
-                    result = fn(*new_args, **kwargs)
+                    result = fn(*new_args, **new_kwargs)
             finally:
                 _pop_scoped_registrations(saved)
             if (
