@@ -235,7 +235,9 @@ def make_donut(c_t, co_t, lc_fn, niters, r1i, r2i, scale):
     @hw_func
     def donut(cx: co_t, cy: co_t, state: full_state_t) -> c_t:
         # cx/cy are pixel offsets from donut centre; scale converts to internal coordinate space
-        i: c_t = cx * scale
+        # X-axis math requires the 256 offset to center the CORDIC projection
+        i: c_t = (cx * scale) + 256
+        # Y-axis mathematical center natively rests at 0
         j: c_t = cy * scale
         t: c_t = 512
         vxi14: c_t = i * state.xincX - (state.cB + state.sB)
@@ -415,6 +417,7 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     b: uint8_t = 0
 
     if (cx > -DONUT_PX) and (cx < DONUT_PX) and (cy > -DONUT_PX) and (cy < DONUT_PX):
+        # if True:
         lz_raw: calc_t = donut(cx, cy, state)
         if lz_raw > 0:
             lz: uint8_t = lz_raw >> LZ_SHIFT
