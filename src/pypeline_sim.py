@@ -29,6 +29,7 @@ import argparse
 import importlib.util
 import sys
 import os
+import time
 from collections import deque
 
 # Ensure the src directory is on the path so pypeline can be imported.
@@ -57,8 +58,15 @@ def run_sim(design_file: str, num_cycles: int) -> None:
     # falling through to raw functions (which the elaborator relies on for its
     # exception-based hardware-function detection via _try_eval_const).
     pypeline._sim_active = True
+    t0 = time.perf_counter()
     for cycle in range(num_cycles):
         _run_clock_cycle(mains, cycle)
+    elapsed = time.perf_counter() - t0
+    print(
+        f"{num_cycles} cycles in {elapsed:.3f}s"
+        f"  ({elapsed / num_cycles * 1000:.2f} ms/cycle,"
+        f" {num_cycles / elapsed:.1f} cycles/s)"
+    )
 
 
 def _run_clock_cycle(mains: list, cycle: int) -> None:

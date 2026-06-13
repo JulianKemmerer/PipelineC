@@ -13,6 +13,7 @@ Usage in user design files:
 """
 
 import typing
+import functools as _functools
 
 
 # ─────────────────────────────────────────────
@@ -178,11 +179,13 @@ import re as _re_ctype
 _INT_CTYPE_RE = _re_ctype.compile(r"(u?)int(\d+)_t$")
 
 
+@_functools.lru_cache(maxsize=None)
 def _ctype_is_int(c_type: str) -> bool:
     """True if c_type is a plain integer type (uint/int)."""
     return bool(_INT_CTYPE_RE.match(c_type))
 
 
+@_functools.lru_cache(maxsize=None)
 def _infer_literal_ctype(val: int):
     """Minimum C type string for a plain Python int, matching PY_TO_LOGIC._infer_const_ctype.
 
@@ -201,6 +204,7 @@ def _infer_literal_ctype(val: int):
     return f"int{bits}_t"
 
 
+@_functools.lru_cache(maxsize=None)
 def _ctype_info(c_type: str):
     """Parse integer C type string. Returns (is_signed, width).
     e.g. 'uint32_t' -> (False, 32),  'int16_t' -> (True, 16)
@@ -216,6 +220,7 @@ def _int_ctype(is_signed: bool, width: int) -> str:
     return f"{'int' if is_signed else 'uint'}{width}_t"
 
 
+@_functools.lru_cache(maxsize=None)
 def _arith_promote(l_type: str, r_type: str):
     """Compute effective input types after sign promotion for arithmetic/compare ops.
 
@@ -238,6 +243,7 @@ def _arith_promote(l_type: str, r_type: str):
     return _int_ctype(True, l_w + 1), r_type, True  # promote l to signed
 
 
+@_functools.lru_cache(maxsize=None)
 def _arith_output_ctype(op: str, eff_l_type: str, eff_r_type: str, result_signed: bool):
     """Full-precision output ctype OBJECT for an arithmetic op (after sign promotion).
 
@@ -279,6 +285,7 @@ def _struct_class_getitem(cls, dim):
     return _make_ctype(f"{name}[{dim}]")
 
 
+@_functools.lru_cache(maxsize=None)
 def _is_scalar_pypeline_int(ctype):
     """True for scalar uint/int types; False for array types (uint32_t[N]) and structs."""
     if not hasattr(ctype, "_ctype_name"):
@@ -342,11 +349,10 @@ class SimVal(int):
 
     def _dispatch_binary(self, op_name, other, fallback_int, preserve_ctype=False):
         if self._ctype is not None:
+            l_str = _ctype_str(self._ctype)
             rc = getattr(other, "_ctype", None)
-            fn = rc and _operator_registry.get(
-                (op_name, _ctype_str(self._ctype), _ctype_str(rc))
-            )
-            fn = fn or _left_operator_registry.get((op_name, _ctype_str(self._ctype)))
+            fn = rc and _operator_registry.get((op_name, l_str, _ctype_str(rc)))
+            fn = fn or _left_operator_registry.get((op_name, l_str))
             if callable(fn):
                 result = fn(self, other)
                 if not isinstance(result, SimVal) or result._ctype is None:
@@ -364,10 +370,16 @@ class SimVal(int):
         return SimVal(fallback_int)
 
     def __rshift__(self, o):
-        return self._dispatch_binary("SR", o, int(self) >> int(o), preserve_ctype=True)
+        v = int(self) >> int(o)
+        if self._ctype is None or "SR" in _registered_binary_op_names:
+            return self._dispatch_binary("SR", o, v, preserve_ctype=True)
+        return _sim_val_make(v, self._ctype)
 
     def __lshift__(self, o):
-        return self._dispatch_binary("SL", o, int(self) << int(o), preserve_ctype=True)
+        v = int(self) << int(o)
+        if self._ctype is None or "SL" in _registered_binary_op_names:
+            return self._dispatch_binary("SL", o, v, preserve_ctype=True)
+        return _sim_cast(v, self._ctype)
 
     # Arithmetic with hardware type-promotion when both operands have known ctypes.
     # SIM_STRICT_ARITH (default True) applies _sim_cast to the result so that
@@ -385,7 +397,9 @@ class SimVal(int):
             if rc is None:
                 rc = _infer_literal_ctype(int(o))
             if rc is not None:
-                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                l_name = self._ctype._ctype_name
+                r_name = rc if isinstance(rc, str) else rc._ctype_name
+                eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
                     return _sim_cast(
                         result, _arith_output_ctype("add", eff_l, eff_r, rsig)
@@ -399,7 +413,9 @@ class SimVal(int):
             if rc is None:
                 rc = _infer_literal_ctype(int(o))
             if rc is not None:
-                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                l_name = self._ctype._ctype_name
+                r_name = rc if isinstance(rc, str) else rc._ctype_name
+                eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
                     return _sim_cast(
                         result, _arith_output_ctype("sub", eff_l, eff_r, rsig)
@@ -413,7 +429,9 @@ class SimVal(int):
             if rc is None:
                 rc = _infer_literal_ctype(int(o))
             if rc is not None:
-                eff_l, eff_r, rsig = _arith_promote(str(self._ctype), str(rc))
+                l_name = self._ctype._ctype_name
+                r_name = rc if isinstance(rc, str) else rc._ctype_name
+                eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
                     return _sim_cast(
                         result, _arith_output_ctype("mul", eff_l, eff_r, rsig)
@@ -436,7 +454,7 @@ class SimVal(int):
         if SIM_STRICT_ARITH and self._ctype is not None:
             lc = _infer_literal_ctype(int(o))
             if lc is not None:
-                eff_l, eff_r, rsig = _arith_promote(lc, str(self._ctype))
+                eff_l, eff_r, rsig = _arith_promote(lc, self._ctype._ctype_name)
                 if rsig is not None:
                     return _sim_cast(
                         result, _arith_output_ctype("add", eff_l, eff_r, rsig)
@@ -448,7 +466,7 @@ class SimVal(int):
         if SIM_STRICT_ARITH and self._ctype is not None:
             lc = _infer_literal_ctype(int(o))
             if lc is not None:
-                eff_l, eff_r, rsig = _arith_promote(lc, str(self._ctype))
+                eff_l, eff_r, rsig = _arith_promote(lc, self._ctype._ctype_name)
                 if rsig is not None:
                     return _sim_cast(
                         result, _arith_output_ctype("sub", eff_l, eff_r, rsig)
@@ -460,6 +478,19 @@ class SimVal(int):
 
     def __rrshift__(self, o):
         return SimVal(int(o) >> int(self))
+
+
+# Pre-bind low-level constructors so _sim_cast and __rshift__ can create SimVals
+# without going through SimVal.__new__ (a Python function call = ~0.1µs overhead).
+_int_new = int.__new__
+_obj_setattr = object.__setattr__
+
+
+def _sim_val_make(v, ctype):
+    """Create a typed SimVal without calling SimVal.__new__ (saves Python call overhead)."""
+    obj = _int_new(SimVal, v)
+    _obj_setattr(obj, "_ctype", ctype)
+    return obj
 
 
 class _NamedTupleBase:
@@ -639,6 +670,7 @@ def sim_output(fn):
 # ─────────────────────────────────────────────
 
 
+@_functools.lru_cache(maxsize=None)
 def _ctype_str(t) -> str:
     """Return the canonical C type name for a type object.
     Works for _CTypeMeta integer types (uint32_t) and @struct NamedTuple types.
@@ -651,12 +683,18 @@ def _ctype_str(t) -> str:
 _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> name_or_callable
 _left_operator_registry: dict = {}  # (op_str, l_type_str) -> name_or_callable
 _unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
+# Set of op_name strings that have at least one global (non-scoped) registration.
+# Used by __rshift__/__lshift__ to skip _dispatch_binary when no operators are registered.
+_registered_binary_op_names: set = set()
 
 # Scoped registrations: active only while elaborating the keyed function.
 # id(func) -> {registry_key: name_or_callable}
 _scoped_operator_registry: dict = {}
 _scoped_left_operator_registry: dict = {}
 _scoped_unary_operator_registry: dict = {}
+# Fast-lookup set: id(func) for any func that has at least one scoped registration.
+# Allows _push_scoped_registrations to short-circuit with a single O(1) check.
+_scoped_funcs: set = set()
 
 
 def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
@@ -672,7 +710,9 @@ def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
     key = (op, _ctype_str(left_type), _ctype_str(right_type))
     if scope is None:
         _operator_registry[key] = func
+        _registered_binary_op_names.add(op)
     else:
+        _scoped_funcs.add(id(scope))
         _scoped_operator_registry.setdefault(id(scope), {})[key] = func
 
 
@@ -689,7 +729,9 @@ def register_left_operator(op: str, left_type, func, scope=None) -> None:
     key = (op, _ctype_str(left_type))
     if scope is None:
         _left_operator_registry[key] = func
+        _registered_binary_op_names.add(op)
     else:
+        _scoped_funcs.add(id(scope))
         _scoped_left_operator_registry.setdefault(id(scope), {})[key] = func
 
 
@@ -705,6 +747,7 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
     if scope is None:
         _unary_operator_registry[key] = func
     else:
+        _scoped_funcs.add(id(scope))
         _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func
 
 
@@ -714,8 +757,10 @@ def _push_scoped_registrations(func):
     Scoped entries from outer elaboration frames are already present in the global
     registries, so inner callees automatically inherit them.
     """
-    saved = []
     func_id = id(func)
+    if func_id not in _scoped_funcs:
+        return _EMPTY_SAVED
+    saved = []
     for key, val in _scoped_operator_registry.get(func_id, {}).items():
         saved.append((_operator_registry, key, _operator_registry.get(key)))
         _operator_registry[key] = val
@@ -728,12 +773,15 @@ def _push_scoped_registrations(func):
     return saved
 
 
+_SCOPED_MISSING = object()  # sentinel for _pop_scoped_registrations; created once
+_EMPTY_SAVED = []  # returned by _push_scoped_registrations when nothing to push
+
+
 def _pop_scoped_registrations(saved):
     """Restore registry entries to their pre-push state."""
-    _MISSING = object()
     for registry, key, old_val in saved:
         if old_val is None:
-            registry.pop(key, _MISSING)
+            registry.pop(key, _SCOPED_MISSING)
         else:
             registry[key] = old_val
 
@@ -1036,6 +1084,14 @@ _SIM_FEEDBACK_MAX_ITER = 1000
 # and _sim_cast on each operation, matching hardware wrap-on-overflow behaviour.
 # Set to False for faster simulation at the cost of Python-precision arithmetic.
 SIM_STRICT_ARITH: bool = True
+
+# When True, @hw_func wrappers capture exact call-site column numbers via
+# co_positions() for uniquely naming multi-instance register hierarchies.
+# False (default) uses only filename+lineno, skipping the O(instructions) co_positions
+# scan and bypassing frame capture entirely for pure-combinatorial functions.
+# Enable when simulating designs where the same Reg[T] function is instantiated
+# at multiple call sites (i.e. multi-instance register hierarchies).
+SIM_TRACE_LOCATIONS: bool = False
 
 # Global wire simulation state.
 _sim_wire_state: dict = {}  # wire name → current int value
@@ -1341,15 +1397,15 @@ def _build_reg_sim_func(fn):
     try:
         src = _textwrap.dedent(_inspect.getsource(orig_fn))
     except (OSError, TypeError):
-        return None
+        return None, False
     try:
         tree = _ast.parse(src)
     except SyntaxError:
-        return None
+        return None, False
 
     func_def = next((n for n in tree.body if isinstance(n, _ast.FunctionDef)), None)
     if func_def is None:
-        return None
+        return None, False
 
     # Build eval namespace: globals + closure variables (for closures like make_vga_timing).
     # Closure variables (e.g. h_uint, V_MAX) appear in Reg[T] annotations and body
@@ -1422,7 +1478,7 @@ def _build_reg_sim_func(fn):
         and not module_wire_attrs
         and not ann_ctypes_out
     ):
-        return None
+        return None, False
 
     # Strip both Reg[T] and Feedback[T] annotation-only statements from the body.
     stripped = set(reg_names) | set(feedback_names)
@@ -1535,7 +1591,7 @@ def _build_reg_sim_func(fn):
     try:
         code = compile(tree, src_file, "exec")
     except Exception:
-        return None
+        return None, bool(reg_names or feedback_names)
 
     new_globals = _eval_ns.copy()  # includes globals + closure vars
     new_globals.update(
@@ -1565,7 +1621,21 @@ def _build_reg_sim_func(fn):
         if _ret_name not in new_globals and "return" in _sig_anns:
             new_globals[_ret_name] = _sig_anns["return"]
     exec(code, new_globals)  # noqa: S102
-    return new_globals.get(orig_fn.__name__)
+    return new_globals.get(orig_fn.__name__), bool(reg_names or feedback_names)
+
+
+@_functools.lru_cache(maxsize=None)
+def _sim_cast_params(ctype):
+    """Pre-compute mask, sign_bit, and is_signed for a ctype (cached per unique type object)."""
+    n = len(ctype)
+    mask = (1 << n) - 1
+    is_signed = str(ctype).startswith("int")
+    return mask, 1 << (n - 1), is_signed
+
+
+# Direct dict replacing the lru_cache function call in the _sim_cast hot path.
+# Avoids Python function call overhead (~0.1µs) for each of the 4M+ casts per 1K cycles.
+_sim_cast_param_cache: dict = {}
 
 
 def _sim_cast(val, ctype):
@@ -1574,12 +1644,17 @@ def _sim_cast(val, ctype):
     This is the sim equivalent of a hardware type assignment. It implements unsigned
     wrap-on-overflow and signed two's complement masking.
     """
-    n = len(ctype)  # uses _CTypeMeta.__len__ for bit width
-    mask = (1 << n) - 1
+    if type(val) is SimVal and val._ctype is ctype:
+        return val
+    try:
+        mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
+    except KeyError:
+        mask, sign_bit, is_signed = _sim_cast_params(ctype)
+        _sim_cast_param_cache[ctype] = (mask, sign_bit, is_signed)
     v = int(val) & mask
-    if str(ctype).startswith("int") and v >= (1 << (n - 1)):
-        v -= 1 << n  # sign-extend to Python negative
-    return SimVal(v, ctype=ctype)
+    if is_signed and v >= sign_bit:
+        v -= mask + 1  # sign-extend to Python negative
+    return _sim_val_make(v, ctype)
 
 
 def _sim_type_wrap(fn):
@@ -1603,37 +1678,50 @@ def _sim_type_wrap(fn):
         params = []
     ret_t = ann.get("return")
 
-    # Scan source for Reg[T] local annotations and build register-aware sim body.
-    # Done once at decoration time; returns None when no registers are present.
-    sim_body_fn = _build_reg_sim_func(fn)
+    # Scan source for Reg[T]/Feedback[T] annotations and build register-aware sim body.
+    # Returns (fn_or_None, has_state) where has_state=True means the body calls
+    # _sim_current_inst_path() so the instance stack must be maintained.
+    sim_body_fn, has_state = _build_reg_sim_func(fn)
 
-    @_functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        # When not in an active simulation run, call the raw original function.
-        # This preserves the elaborator's exception-based hardware-function detection:
-        # PY_TO_LOGIC._try_eval_const calls callable hardware closures to test whether
-        # they return a plain Python constant; if the raw closure raises (e.g.
-        # UnboundLocalError from Reg[T] vars), _try_eval_const returns None and the
-        # elaborator uses the hardware elaboration path instead.
-        if not _sim_active:
-            return fn(*args, **kwargs)
-        # Capture call-site (filename, lineno, col, end_col) from caller's frame.
-        # This mirrors the hardware elaborator's _loc_str instance-naming convention
-        # and uniquely identifies which hardware instance is being simulated.
-        caller_f = _sys._getframe(1)
-        filename = caller_f.f_code.co_filename
-        lineno = caller_f.f_lineno
-        col, end_col = None, None
-        if hasattr(caller_f.f_code, "co_positions"):
-            lasti = caller_f.f_lasti
-            instr_idx = lasti // 2
-            positions = list(caller_f.f_code.co_positions())
-            if 0 <= instr_idx < len(positions):
-                pos = positions[instr_idx]
-                if pos[2] is not None:
-                    col, end_col = pos[2], pos[3]
-        _sim_inst_stack.append((fn.__qualname__, (filename, lineno, col, end_col)))
+    # Helper: cast args and kwargs to their annotated types, run the body, cast result.
+    # Extracted so both wrapper variants share the same arg-casting logic.
+    def _run_body(new_args, kwargs):
+        new_kwargs = dict(kwargs)
+        for k, v in kwargs.items():
+            pt = ann.get(k)
+            if (
+                pt is not None
+                and isinstance(v, (int, SimVal))
+                and _is_scalar_pypeline_int(pt)
+            ):
+                new_kwargs[k] = _sim_cast(v, pt)
+        saved = _push_scoped_registrations(fn)
         try:
+            if sim_body_fn is not None:
+                result = sim_body_fn(*new_args, **new_kwargs)
+            else:
+                result = fn(*new_args, **new_kwargs)
+        finally:
+            _pop_scoped_registrations(saved)
+        if (
+            ret_t is not None
+            and isinstance(result, (int, SimVal))
+            and _is_scalar_pypeline_int(ret_t)
+        ):
+            result = _sim_cast(result, ret_t)
+        return result
+
+    if not has_state:
+        # ── Fast path: no Reg[T] / Feedback[T] in this function ─────────────
+        # _sim_current_inst_path() is never called inside this body, so the
+        # instance stack and _getframe capture are pure overhead. Skip both.
+        # Functions with typed locals but no registers take this path.
+        # Multi-instance register designs should set SIM_TRACE_LOCATIONS=True
+        # to restore full ancestor-path tracking.
+        @_functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _sim_active:
+                return fn(*args, **kwargs)
             new_args = list(args)
             for i, a in enumerate(args):
                 if i < len(params):
@@ -1644,32 +1732,54 @@ def _sim_type_wrap(fn):
                         and _is_scalar_pypeline_int(pt)
                     ):
                         new_args[i] = _sim_cast(a, pt)
-            new_kwargs = dict(kwargs)
-            for k, v in kwargs.items():
-                pt = ann.get(k)
-                if (
-                    pt is not None
-                    and isinstance(v, (int, SimVal))
-                    and _is_scalar_pypeline_int(pt)
-                ):
-                    new_kwargs[k] = _sim_cast(v, pt)
-            saved = _push_scoped_registrations(fn)
+            return _run_body(new_args, kwargs)
+    else:
+        # ── Register-aware path (has Reg[T] / Feedback[T]) ───────────────────
+        # Must push to _sim_inst_stack so _sim_current_inst_path() returns a
+        # unique path for each hardware instance.
+        # SIM_TRACE_LOCATIONS=False (default): filename+lineno only (fast).
+        # SIM_TRACE_LOCATIONS=True: also captures column via co_positions() for
+        # designs with multiple hardware instances of the same Reg[T] function.
+        @_functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _sim_active:
+                return fn(*args, **kwargs)
+            caller_f = _sys._getframe(1)
+            if SIM_TRACE_LOCATIONS:
+                filename = caller_f.f_code.co_filename
+                lineno = caller_f.f_lineno
+                col, end_col = None, None
+                if hasattr(caller_f.f_code, "co_positions"):
+                    lasti = caller_f.f_lasti
+                    instr_idx = lasti // 2
+                    positions = list(caller_f.f_code.co_positions())
+                    if 0 <= instr_idx < len(positions):
+                        pos = positions[instr_idx]
+                        if pos[2] is not None:
+                            col, end_col = pos[2], pos[3]
+                call_loc = (
+                    caller_f.f_code.co_filename,
+                    caller_f.f_lineno,
+                    col,
+                    end_col,
+                )
+            else:
+                call_loc = (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
+            _sim_inst_stack.append((fn.__qualname__, call_loc))
             try:
-                if sim_body_fn is not None:
-                    result = sim_body_fn(*new_args, **new_kwargs)
-                else:
-                    result = fn(*new_args, **new_kwargs)
+                new_args = list(args)
+                for i, a in enumerate(args):
+                    if i < len(params):
+                        pt = ann.get(params[i])
+                        if (
+                            pt is not None
+                            and isinstance(a, (int, SimVal))
+                            and _is_scalar_pypeline_int(pt)
+                        ):
+                            new_args[i] = _sim_cast(a, pt)
+                return _run_body(new_args, kwargs)
             finally:
-                _pop_scoped_registrations(saved)
-            if (
-                ret_t is not None
-                and isinstance(result, (int, SimVal))
-                and _is_scalar_pypeline_int(ret_t)
-            ):
-                result = _sim_cast(result, ret_t)
-            return result
-        finally:
-            _sim_inst_stack.pop()
+                _sim_inst_stack.pop()
 
     return wrapper
 

@@ -85,6 +85,9 @@
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
   - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 
+**Performance**
+- [Simulation Optimizations](#simulation-optimizations)
+
 ---
 
 ## Overview
@@ -3506,3 +3509,276 @@ top.py  (single-file or multi-file entry point)
   │
   └─ ParserState → VHDL backend
 ```
+
+---
+
+## Simulation Optimizations
+
+This section documents the performance optimizations applied to `src/pypeline.py` and
+`src/pypeline_sim.py` to speed up the software simulation path.
+The benchmark used throughout is:
+
+```
+python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run 1000
+```
+
+running 1000 clock cycles of the VGA donut renderer at 1280×720, which exercises the
+full hot path: `vga_donut` → `render_pixel` → `donut` → `length_cordic` (called ~32×
+per active pixel) → fixed-point arithmetic → `_sim_cast`.
+
+**Baseline: ~27.9 s / 1000 cycles.**  
+**After all optimizations: ~14.0 s / 1000 cycles (~50% speedup).**
+
+---
+
+### 1. Timing output in `pypeline_sim.py`
+
+Added `time.perf_counter()` around the cycle loop in `run_sim`, printing elapsed time,
+ms/cycle, and cycles/s after each run. This established a stable benchmark baseline for
+measuring subsequent optimizations.
+
+---
+
+### 2. `functools` import moved to top of `pypeline.py`
+
+`import functools as _functools` was added near the top of the file (after `import
+typing`) so `lru_cache` is available to the early type-helper functions. A later
+duplicate import at the bottom of the file was left harmless.
+
+---
+
+### 3. `lru_cache` on pure type helpers
+
+Seven pure functions that are called on every arithmetic operation and every
+`_sim_cast` had their regex/string/hasattr work repeated on every call.
+`@_functools.lru_cache(maxsize=None)` was added to each:
+
+| Function | Work eliminated |
+|---|---|
+| `_ctype_is_int(c_type)` | Regex match on every arithmetic type check |
+| `_infer_literal_ctype(val)` | Bit-width computation for each literal int |
+| `_ctype_info(c_type)` | Regex parse of `uint32_t` → `(signed, width)` |
+| `_arith_promote(l, r)` | Full signed-promotion logic per operator call |
+| `_arith_output_ctype(op, l, r, sig)` | Output type object construction |
+| `_is_scalar_pypeline_int(ctype)` | `hasattr` + `ctype.width` probe |
+| `_ctype_str(t)` | `str(ctype)` / `_ctype_name` lookup |
+
+A side effect of caching `_arith_output_ctype` is that the same `(op, types)` key
+always returns the **same class object**, enabling `is`-comparison fast-paths elsewhere.
+
+**Saving: ~2.1 s.**
+
+---
+
+### 4. `_sim_cast` fast-path and pre-computed parameters
+
+`_sim_cast` is the single hottest function (~6 M calls per 1000 cycles). Two changes
+reduced its per-call cost:
+
+**Identity fast-path** — if the incoming value is already a `SimVal` with the exact
+same `ctype` object, return it immediately with no work:
+
+```python
+if type(val) is SimVal and val._ctype is ctype:
+    return val
+```
+
+**Pre-computed mask/sign_bit/is_signed** — replaced the per-call `len(ctype)` + regex
+with a two-level cache:
+
+```python
+@_functools.lru_cache(maxsize=None)
+def _sim_cast_params(ctype):
+    n = len(ctype)
+    mask = (1 << n) - 1
+    is_signed = str(ctype).startswith("int")
+    return mask, 1 << (n - 1), is_signed
+
+_sim_cast_param_cache: dict = {}   # inline dict avoids lru_cache call overhead
+
+def _sim_cast(val, ctype):
+    ...
+    try:
+        mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
+    except KeyError:
+        mask, sign_bit, is_signed = _sim_cast_params(ctype)
+        _sim_cast_param_cache[ctype] = (mask, sign_bit, is_signed)
+    ...
+```
+
+The `dict` + `try/except KeyError` pattern is used instead of a direct `lru_cache`
+call because Python's lru_cache adds a function-call frame (~0.05 µs) on every hit;
+the inline dict avoids that overhead in the hot path.
+
+**Saving: ~0.4 s.**
+
+---
+
+### 5. `_sim_val_make` — bypass `SimVal.__new__`
+
+`SimVal` is a subclass of `int` that carries a `_ctype` attribute.
+Its `__new__` is a Python function, adding ~0.1 µs per allocation on top of the C-level
+`int.__new__`. With 6 M allocations per 1000 cycles that is ~0.6 s just in Python
+`__new__` overhead.
+
+Pre-binding the C-level constructors at module load time and calling them directly
+eliminates the Python `__new__` frame:
+
+```python
+_int_new = int.__new__
+_obj_setattr = object.__setattr__
+
+def _sim_val_make(v, ctype):
+    obj = _int_new(SimVal, v)
+    _obj_setattr(obj, "_ctype", ctype)
+    return obj
+```
+
+`_sim_cast` and `__rshift__` were updated to call `_sim_val_make` instead of
+`SimVal(v, ctype=ctype)`.
+
+**Saving: ~4.2 s (largest single win).**
+
+---
+
+### 6. `__rshift__` / `__lshift__` bypass `_dispatch_binary`
+
+`__rshift__` was called ~1.95 M times per 1000 cycles (CORDIC shifts). Each call
+entered `_dispatch_binary`, which looked up two registry dicts even though no `SR`
+operators are ever globally registered in typical designs.
+
+A module-level set `_registered_binary_op_names` tracks which operator names have at
+least one global registration. `__rshift__` and `__lshift__` now check this set and
+skip `_dispatch_binary` entirely when no matching registration exists:
+
+```python
+_registered_binary_op_names: set = set()
+
+def __rshift__(self, o):
+    v = int(self) >> int(o)
+    if self._ctype is None or "SR" in _registered_binary_op_names:
+        return self._dispatch_binary("SR", o, v, preserve_ctype=True)
+    return _sim_val_make(v, self._ctype)
+```
+
+`register_operator` and `register_left_operator` add to this set when `scope is None`.
+
+**Saving: ~3.3 s.**
+
+---
+
+### 7. Direct `._ctype_name` access in arithmetic methods
+
+In `__add__`, `__sub__`, `__mul__`, `__radd__`, `__rsub__`, the pattern:
+
+```python
+_arith_promote(str(self._ctype), str(rc))
+```
+
+was replaced with:
+
+```python
+l_name = self._ctype._ctype_name          # direct attribute, no __str__ call
+r_name = rc if isinstance(rc, str) else rc._ctype_name
+_arith_promote(l_name, r_name)
+```
+
+`_ctype_name` is a plain string attribute on `_CTypeMeta` classes; bypassing `__str__`
+avoids a Python method dispatch. `rc` from `_infer_literal_ctype` is already a string,
+so the `isinstance` guard avoids a redundant attribute lookup on the common literal case.
+
+**Saving: ~1.0 s.**
+
+---
+
+### 8. `_dispatch_binary` — compute `l_str` once
+
+Inside `_dispatch_binary`, `_ctype_str(self._ctype)` was called twice (once for the
+`_operator_registry` lookup and once for `_left_operator_registry`). Computing it once
+into `l_str` before both lookups eliminated the duplicate call:
+
+```python
+l_str = _ctype_str(self._ctype)
+fn = rc and _operator_registry.get((op_name, l_str, _ctype_str(rc)))
+fn = fn or _left_operator_registry.get((op_name, l_str))
+```
+
+**Saving: minor (< 0.1 s), but correct.**
+
+---
+
+### 9. `_push_scoped_registrations` short-circuit
+
+`_push_scoped_registrations` was called for every `@hw_func` invocation, iterating
+over three scoped registry dicts even for the majority of functions that have no scoped
+operator registrations at all.
+
+A module-level set `_scoped_funcs` tracks `id(func)` for any function that has ever
+had a scoped registration added via `register_operator`, `register_left_operator`, or
+`register_unary_operator`. The function now returns a module-level singleton
+`_EMPTY_SAVED = []` immediately for functions not in this set:
+
+```python
+_scoped_funcs: set = set()
+_EMPTY_SAVED = []
+
+def _push_scoped_registrations(func):
+    if id(func) not in _scoped_funcs:
+        return _EMPTY_SAVED
+    ...
+```
+
+`_pop_scoped_registrations` was also updated to use a module-level `_SCOPED_MISSING`
+sentinel object instead of creating `object()` on each pop.
+
+**Saving: ~0.2 s.**
+
+---
+
+### 10. Two-path `_sim_type_wrap` — skip `_getframe` for stateless functions
+
+`_build_reg_sim_func` now returns `(fn_or_None, has_state)` where `has_state` is
+`True` when the function contains `Reg[T]` or `Feedback[T]` annotations.
+
+`_sim_type_wrap` uses `has_state` at **decoration time** to emit two different
+`wrapper` closures:
+
+**Fast path (`has_state=False`):** Pure combinational functions (no registers). The
+wrapper skips `sys._getframe`, skips `_sim_inst_stack` push/pop, and skips the
+`co_positions()` scan entirely. `_sim_current_inst_path()` is never called inside
+these bodies so the instance stack is irrelevant.
+
+**State-aware path (`has_state=True`):** Functions with registers must push to
+`_sim_inst_stack` for correct instance naming. With the default `SIM_TRACE_LOCATIONS
+= False`, only `filename + lineno` are captured (no `co_positions()` call). Setting
+`SIM_TRACE_LOCATIONS = True` restores full column-level tracking for designs with
+multiple hardware instances of the same Reg[T] function instantiated at different call
+sites.
+
+The `co_positions()` call was particularly expensive because it allocates a list of
+`(lineno, end_lineno, col, end_col)` tuples for **every bytecode instruction** in the
+caller frame on each call.
+
+**Saving: ~1.7 s.**
+
+---
+
+### Summary table
+
+| Optimization | Saving |
+|---|---|
+| `_sim_val_make` bypassing `SimVal.__new__` | ~4.2 s |
+| `__rshift__` bypass `_dispatch_binary` | ~3.3 s |
+| Two-path `_sim_type_wrap` (skip `_getframe`) | ~1.7 s |
+| `lru_cache` on type helpers | ~2.1 s |
+| Direct `._ctype_name` in arithmetic | ~1.0 s |
+| `_sim_cast` pre-computed params + identity fast-path | ~0.4 s |
+| `_push_scoped_registrations` short-circuit | ~0.2 s |
+| `_dispatch_binary` compute `l_str` once | < 0.1 s |
+| **Total** | **~13.9 s (~50%)** |
+
+The remaining ~14 s is dominated by the irreducible cost of ~6 M Python object
+allocations per 1000 cycles (each `SimVal` requires a C-level `int.__new__` at ~0.2 µs)
+and the arithmetic dispatch chain in `__add__`/`__sub__`/`__rshift__`. Further speedup
+would require either a C extension for `SimVal` creation or a fundamentally different
+simulation strategy (e.g., numpy-vectorized evaluation).
