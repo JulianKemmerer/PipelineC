@@ -87,6 +87,8 @@
 
 **Performance**
 - [Simulation Optimizations](#simulation-optimizations)
+  - [Simulation modes](#simulation-modes)
+  - [Summary table](#summary-table)
 
 ---
 
@@ -3519,15 +3521,35 @@ This section documents the performance optimizations applied to `src/pypeline.py
 The benchmark used throughout is:
 
 ```
-python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run 1000
+python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run 1000 [--mode strict|loose|raw]
 ```
 
 running 1000 clock cycles of the VGA donut renderer at 1280×720, which exercises the
 full hot path: `vga_donut` → `render_pixel` → `donut` → `length_cordic` (called ~32×
 per active pixel) → fixed-point arithmetic → `_sim_cast`.
 
-**Baseline: ~27.9 s / 1000 cycles.**  
-**After all optimizations: ~14.0 s / 1000 cycles (~50% speedup).**
+**Baseline (before any optimizations): ~27.9 s / 1000 cycles.**
+
+### Simulation modes
+
+`pypeline_sim.py` exposes three accuracy/speed trade-offs via `--mode`:
+
+| Mode | `SIM_STRICT_ARITH` | `SIM_RAW_INTS` | 1000-cycle time | Description |
+|---|---|---|---|---|
+| `strict` (default) | `True` | `False` | ~15 s | Full hardware accuracy — every arithmetic op masks to declared bit width |
+| `loose` | `False` | `False` | ~12 s | SimVal objects preserved (bit-indexing works anywhere), but no bit-width masking |
+| `raw` | `False` | `True` | ~3 s | Maximum speed — plain Python ints throughout, no casting at any boundary |
+
+Both flags are set in `run_sim` **before** `_import_design` is called, because
+`@hw_func` decorators read them at decoration time to decide which wrapper variant
+to emit.
+
+`raw` mode limitation: bit-indexing on the *result of arithmetic* (`(a + b)[0]`) does
+not work since the result is a plain `int`. Bit-indexing on struct fields
+(`some_struct.field[0]`) still works because struct constructors still produce `SimVal`
+fields via `_typed_new`.
+
+---
 
 ---
 
@@ -3765,20 +3787,72 @@ caller frame on each call.
 
 ### Summary table
 
-| Optimization | Saving |
+**Phase 1 — strict-mode optimizations** (applied unconditionally; benefit all modes):
+
+| Optimization | Saving vs. baseline |
 |---|---|
 | `_sim_val_make` bypassing `SimVal.__new__` | ~4.2 s |
 | `__rshift__` bypass `_dispatch_binary` | ~3.3 s |
-| Two-path `_sim_type_wrap` (skip `_getframe`) | ~1.7 s |
 | `lru_cache` on type helpers | ~2.1 s |
+| Two-path `_sim_type_wrap` (skip `_getframe`) | ~1.7 s |
 | Direct `._ctype_name` in arithmetic | ~1.0 s |
 | `_sim_cast` pre-computed params + identity fast-path | ~0.4 s |
 | `_push_scoped_registrations` short-circuit | ~0.2 s |
 | `_dispatch_binary` compute `l_str` once | < 0.1 s |
-| **Total** | **~13.9 s (~50%)** |
+| **Phase 1 total (`--mode strict`)** | **~13.9 s saved → ~14 s remaining** |
 
-The remaining ~14 s is dominated by the irreducible cost of ~6 M Python object
-allocations per 1000 cycles (each `SimVal` requires a C-level `int.__new__` at ~0.2 µs)
-and the arithmetic dispatch chain in `__add__`/`__sub__`/`__rshift__`. Further speedup
-would require either a C extension for `SimVal` creation or a fundamentally different
-simulation strategy (e.g., numpy-vectorized evaluation).
+**Phase 2 — loose mode** (`SIM_STRICT_ARITH=False`):
+
+Disables the hardware type-promotion branch in `__add__`, `__sub__`, `__mul__`,
+`__radd__`, `__rsub__`. Each arithmetic op now just does `SimVal(int(self) + int(o))`
+without calling `_arith_promote`, `_arith_output_ctype`, or `_sim_cast`.
+
+| Change | Saving vs. strict |
+|---|---|
+| Skip type-promotion in arithmetic ops | ~2.5 s |
+| **`--mode loose` total** | **~12 s** |
+
+**Phase 3 — raw mode** (`SIM_RAW_INTS=True`):
+
+Three additional changes, all decided **at decoration time** so there is zero per-call
+overhead for the mode branch:
+
+1. **`_sim_type_wrap` raw wrapper** — a third wrapper variant is emitted when
+   `SIM_RAW_INTS=True` at decoration time. It calls `sim_body_fn` (or `fn`) directly
+   with no arg-casting loop and no result cast. This eliminates the
+   `isinstance(a, (int, SimVal))` + `_is_scalar_pypeline_int(pt)` + `_sim_cast(a, pt)`
+   chain for every typed parameter on every call.
+
+2. **`_build_reg_sim_func` skips `_TypedAnnAssignRewriter`** — the AST rewriter that
+   injects `_sim_cast(expr, T)` around every typed local assignment
+   (`var: uint16_t = expr`) is skipped entirely. The generated sim body runs with
+   plain Python assignments, no casting.
+
+3. **SimVal arithmetic returns plain `int`** — all arithmetic dunder methods
+   (`__add__`, `__sub__`, `__mul__`, `__and__`, `__or__`, `__xor__`, `__rshift__`,
+   `__lshift__`, `__radd__`, `__rsub__`, `__rlshift__`, `__rrshift__`) return a plain
+   Python `int` immediately when `SIM_RAW_INTS=True`. This breaks the `SimVal` chain:
+   after the first arithmetic operation on a struct-field `SimVal`, all subsequent
+   values are plain ints and bypass `SimVal` method dispatch entirely.
+
+| Change | Saving vs. loose |
+|---|---|
+| Raw wrapper (no boundary casting) | ~3 s |
+| Skip `_TypedAnnAssignRewriter` in body | ~3 s |
+| SimVal arithmetic returns plain `int` | ~3 s |
+| **`--mode raw` total** | **~3 s** (~9× faster than baseline) |
+
+**Overall benchmark (1000 cycles, VGA donut at 1280×720):**
+
+| Mode | Time | vs. original |
+|---|---|---|
+| Before any optimizations | ~27.9 s | 1× |
+| `--mode strict` | ~15 s | ~1.9× |
+| `--mode loose` | ~12 s | ~2.3× |
+| `--mode raw` | ~3 s | ~9× |
+
+The remaining ~3 s in raw mode is dominated by Python function-call overhead across
+the sim loop itself (`_run_clock_cycle`, `_convergence_loop`, `sim_call`) and the
+`_sim_reg_read`/`_sim_reg_write` dict lookups for register state. Further speedup
+would require either rewriting the sim runner in C or moving to a
+numpy-vectorised evaluation strategy.

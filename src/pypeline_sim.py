@@ -38,7 +38,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pypeline
 
 
-def run_sim(design_file: str, num_cycles: int) -> None:
+def run_sim(design_file: str, num_cycles: int, sim_mode: str = "strict") -> None:
+    # Apply sim mode before importing the design: @hw_func decorators read these
+    # flags at decoration time, so they must be set before _import_design runs.
+    if sim_mode == "strict":
+        pypeline.SIM_STRICT_ARITH = True
+        pypeline.SIM_RAW_INTS = False
+    elif sim_mode == "loose":
+        pypeline.SIM_STRICT_ARITH = False
+        pypeline.SIM_RAW_INTS = False
+    elif sim_mode == "raw":
+        pypeline.SIM_STRICT_ARITH = False
+        pypeline.SIM_RAW_INTS = True
+    else:
+        raise ValueError(
+            f"Unknown sim_mode {sim_mode!r}; expected strict, loose, or raw"
+        )
     module = _import_design(design_file)
 
     wire_info = _discover_wire_names(module)
@@ -201,8 +216,20 @@ def main() -> None:
         required=True,
         help="Number of clock cycles to simulate.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["strict", "loose", "raw"],
+        default="strict",
+        help=(
+            "Simulation accuracy mode (default: strict). "
+            "strict: full hardware accuracy, every arithmetic op masks to declared bit width. "
+            "loose: SimVal typed objects preserved (bit-indexing works), but no bit-width masking. "
+            "raw: maximum speed, plain Python ints throughout, no casting; "
+            "bit-indexing on arithmetic results will not work."
+        ),
+    )
     args = parser.parse_args()
-    run_sim(args.design_file, args.run)
+    run_sim(args.design_file, args.run, sim_mode=args.mode)
 
 
 if __name__ == "__main__":

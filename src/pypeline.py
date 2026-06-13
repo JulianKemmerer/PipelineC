@@ -371,12 +371,16 @@ class SimVal(int):
 
     def __rshift__(self, o):
         v = int(self) >> int(o)
+        if SIM_RAW_INTS:
+            return v
         if self._ctype is None or "SR" in _registered_binary_op_names:
             return self._dispatch_binary("SR", o, v, preserve_ctype=True)
         return _sim_val_make(v, self._ctype)
 
     def __lshift__(self, o):
         v = int(self) << int(o)
+        if SIM_RAW_INTS:
+            return v
         if self._ctype is None or "SL" in _registered_binary_op_names:
             return self._dispatch_binary("SL", o, v, preserve_ctype=True)
         return _sim_cast(v, self._ctype)
@@ -391,6 +395,8 @@ class SimVal(int):
     #   uint12_t_val - 641   →  uint12_t result (unsigned wrap, not signed Python int)
     # matching what hardware produces for the expression `signal - CONSTANT`.
     def __add__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) + int(o)
         result = int(self) + int(o)
         if SIM_STRICT_ARITH and self._ctype is not None:
             rc = getattr(o, "_ctype", None)
@@ -407,6 +413,8 @@ class SimVal(int):
         return SimVal(result)
 
     def __sub__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) - int(o)
         result = int(self) - int(o)
         if SIM_STRICT_ARITH and self._ctype is not None:
             rc = getattr(o, "_ctype", None)
@@ -423,6 +431,8 @@ class SimVal(int):
         return SimVal(result)
 
     def __mul__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) * int(o)
         result = int(self) * int(o)
         if SIM_STRICT_ARITH and self._ctype is not None:
             rc = getattr(o, "_ctype", None)
@@ -439,17 +449,25 @@ class SimVal(int):
         return SimVal(result)
 
     def __and__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) & int(o)
         return SimVal(int(self) & int(o))
 
     def __or__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) | int(o)
         return SimVal(int(self) | int(o))
 
     def __xor__(self, o):
+        if SIM_RAW_INTS:
+            return int(self) ^ int(o)
         return SimVal(int(self) ^ int(o))
 
     # Reflected arithmetic: plain-int op SimVal. Apply full SIM_STRICT_ARITH so that
     # `CONSTANT - typed_signal` wraps the same way hardware does (e.g. 481 - uint12_t).
     def __radd__(self, o):
+        if SIM_RAW_INTS:
+            return int(o) + int(self)
         result = int(o) + int(self)
         if SIM_STRICT_ARITH and self._ctype is not None:
             lc = _infer_literal_ctype(int(o))
@@ -462,6 +480,8 @@ class SimVal(int):
         return SimVal(result)
 
     def __rsub__(self, o):
+        if SIM_RAW_INTS:
+            return int(o) - int(self)
         result = int(o) - int(self)
         if SIM_STRICT_ARITH and self._ctype is not None:
             lc = _infer_literal_ctype(int(o))
@@ -474,9 +494,13 @@ class SimVal(int):
         return SimVal(result)
 
     def __rlshift__(self, o):
+        if SIM_RAW_INTS:
+            return int(o) << int(self)
         return SimVal(int(o) << int(self))
 
     def __rrshift__(self, o):
+        if SIM_RAW_INTS:
+            return int(o) >> int(self)
         return SimVal(int(o) >> int(self))
 
 
@@ -1080,10 +1104,31 @@ _sim_reg_state = {}
 # Combinatorial feedback must reach a fixed point in far fewer iterations than this.
 _SIM_FEEDBACK_MAX_ITER = 1000
 
-# When True (default), SimVal.__add__/__sub__/__mul__ apply hardware type-promotion rules
-# and _sim_cast on each operation, matching hardware wrap-on-overflow behaviour.
-# Set to False for faster simulation at the cost of Python-precision arithmetic.
+# Simulation accuracy mode flags.
+# These are normally set together by pypeline_sim.py --sim-mode before the
+# design is imported (decorators read them at decoration time).
+#
+# strict (default): SIM_STRICT_ARITH=True,  SIM_RAW_INTS=False
+#   Full hardware accuracy. Every arithmetic op masks to declared bit width.
+#   Slowest, but results match hardware exactly.
+#
+# loose:            SIM_STRICT_ARITH=False, SIM_RAW_INTS=False
+#   Values stay as typed SimVal objects so bit-indexing (x[n], x[hi:lo])
+#   works everywhere, but arithmetic uses Python-precision (no masking).
+#
+# raw:              SIM_STRICT_ARITH=False, SIM_RAW_INTS=True
+#   Maximum speed. Arithmetic returns plain Python ints; function boundaries
+#   do no casting. Bit-indexing on arithmetic results will not work
+#   (struct field access x.field[n] still works).
+
+# When True, SimVal arithmetic applies hardware type-promotion and _sim_cast,
+# matching hardware wrap-on-overflow. Set False for faster Python-precision sim.
 SIM_STRICT_ARITH: bool = True
+
+# When True, bypass ALL SimVal wrapping, type casting, and bit-width masking.
+# SIM_RAW_INTS=True implies SIM_STRICT_ARITH is irrelevant (casting is skipped).
+# Read at @hw_func decoration time — must be set before importing the design.
+SIM_RAW_INTS: bool = False
 
 # When True, @hw_func wrappers capture exact call-site column numbers via
 # co_positions() for uniquely naming multi-instance register hierarchies.
@@ -1441,9 +1486,12 @@ def _build_reg_sim_func(fn):
     # Rewrite typed local annotations AFTER _GlobalWireRewriter (wire AnnAssigns are
     # already converted to Expr nodes) and BEFORE orig_body is sliced, so orig_body
     # picks up the rewritten Assign nodes.
+    # Skipped in SIM_RAW_INTS mode: no _sim_cast calls injected, plain Python
+    # arithmetic flows through unchanged.
     ann_ctypes_out: dict = {}
-    _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out).visit(func_def)
-    _ast.fix_missing_locations(func_def)
+    if not SIM_RAW_INTS:
+        _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out).visit(func_def)
+        _ast.fix_missing_locations(func_def)
 
     # Discover register and feedback variable names by evaluating each
     # annotation-only AnnAssign against the function's eval namespace
@@ -1644,6 +1692,8 @@ def _sim_cast(val, ctype):
     This is the sim equivalent of a hardware type assignment. It implements unsigned
     wrap-on-overflow and signed two's complement masking.
     """
+    if SIM_RAW_INTS:
+        return val
     if type(val) is SimVal and val._ctype is ctype:
         return val
     try:
@@ -1710,6 +1760,47 @@ def _sim_type_wrap(fn):
         ):
             result = _sim_cast(result, ret_t)
         return result
+
+    if SIM_RAW_INTS:
+        # ── Raw-int mode: zero casting, zero SimVal creation ─────────────────
+        # No arg/result casting. Values are plain Python ints throughout.
+        # Decoration-time check means zero per-call overhead for the mode branch.
+        if not has_state:
+
+            @_functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                if not _sim_active:
+                    return fn(*args, **kwargs)
+                saved = _push_scoped_registrations(fn)
+                try:
+                    return (
+                        sim_body_fn(*args, **kwargs)
+                        if sim_body_fn is not None
+                        else fn(*args, **kwargs)
+                    )
+                finally:
+                    _pop_scoped_registrations(saved)
+        else:
+
+            @_functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                if not _sim_active:
+                    return fn(*args, **kwargs)
+                caller_f = _sys._getframe(1)
+                call_loc = (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
+                _sim_inst_stack.append((fn.__qualname__, call_loc))
+                saved = _push_scoped_registrations(fn)
+                try:
+                    return (
+                        sim_body_fn(*args, **kwargs)
+                        if sim_body_fn is not None
+                        else fn(*args, **kwargs)
+                    )
+                finally:
+                    _pop_scoped_registrations(saved)
+                    _sim_inst_stack.pop()
+
+        return wrapper
 
     if not has_state:
         # ── Fast path: no Reg[T] / Feedback[T] in this function ─────────────
