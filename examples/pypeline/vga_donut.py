@@ -43,11 +43,7 @@ from vga.timing import (
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 RESOLUTION = VGA_640_480  # swap: VGA_800_600 | VGA_1280_720 | VGA_1920_1080
-COORD_WIDTH = 16  # screen-coordinate integer width (16 sufficient for any res)
-CALC_WIDTH = 24  # internal CORDIC math width; increase for smoother shading:
-#   16 = original (may have overflow artifacts)
-#   20-24 = noticeably smoother, moderate resource cost
-#   32 = clean shading, ~4x more DSPs/LUTs
+CALC_FRAC_BITS = 6  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
 NCORDIC = 6  # CORDIC iterations per call  (6 = original; 8+ = smoother)
 NITERS = 16  # ray-march steps             (16 = original; 24+ = smoother)
 TORUS_R1I = 256  # tube radius x 256
@@ -68,34 +64,23 @@ FRAME_HEIGHT = RESOLUTION.frame_height
 DONUT_PX = DONUT_BOUND // SCALE  # donut half-size in pixels
 BOUNCE_MAX_X = FRAME_WIDTH // 2 - DONUT_PX
 BOUNCE_MAX_Y = FRAME_HEIGHT // 2 - DONUT_PX
+
 # lz magnitude ~5960 max with default trig-state scale; >>5 -> 0-186, fits uint8_t.
-# Holds for any CALC_WIDTH since lz is geometric (torus-space distance), not register-width scaled.
 LZ_SHIFT = 5
 
-# ── Configuration Validation ────────────────────────────────────────────────
-# 1. Validate internal CORDIC bit width
+# 1. Auto-calculate minimum screen coordinate width
+# Must hold max(FRAME_WIDTH, FRAME_HEIGHT) + sign bit
+_max_coord_val = max(FRAME_WIDTH, FRAME_HEIGHT)
+COORD_WIDTH = int(math.ceil(math.log2(_max_coord_val))) + 1
+
+# 2. Auto-calculate safe CORDIC math width
 # vyi14 reaches a theoretical max of roughly: (DONUT_BOUND * 128) + 32768
-max_calc_val = (DONUT_BOUND * 128) + 32768
-min_calc_width = int(math.ceil(math.log2(max_calc_val))) + 1  # +1 for signed
+_max_calc_val = (DONUT_BOUND * 128) + 32768
+_min_calc_width = int(math.ceil(math.log2(_max_calc_val))) + 1  # +1 for signed
+CALC_WIDTH = _min_calc_width + CALC_FRAC_BITS
 
-if CALC_WIDTH < min_calc_width:
-    raise ValueError(
-        f"CALC_WIDTH={CALC_WIDTH} is too small for DONUT_BOUND={DONUT_BOUND}.\n"
-        f"Math will overflow and create 'ghost' donuts. "
-        f"Increase CALC_WIDTH to at least {min_calc_width}."
-    )
-
-# 2. Validate screen coordinate bit width
-max_coord_val = max(FRAME_WIDTH, FRAME_HEIGHT)
-min_coord_width = int(math.ceil(math.log2(max_coord_val))) + 1
-
-if COORD_WIDTH < min_coord_width:
-    raise ValueError(
-        f"COORD_WIDTH={COORD_WIDTH} is too small for a {FRAME_WIDTH}x{FRAME_HEIGHT} screen.\n"
-        f"Increase COORD_WIDTH to at least {min_coord_width}."
-    )
-
-# 3. Validate Bounce limits
+# ── Configuration Validation ────────────────────────────────────────────────
+# Validate Bounce limits
 if BOUNCE:
     if DONUT_PX > FRAME_WIDTH // 2 or DONUT_PX > FRAME_HEIGHT // 2:
         raise ValueError(
