@@ -42,7 +42,9 @@ from vga.timing import (
 )
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-RESOLUTION = VGA_640_480  # swap: VGA_800_600 | VGA_1280_720 | VGA_1920_1080
+RESOLUTION = (
+    VGA_1280_720  # VGA_640_480  # swap: VGA_800_600 | VGA_1280_720 | VGA_1920_1080
+)
 CALC_FRAC_BITS = 6  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
 NCORDIC = 6  # CORDIC iterations per call  (6 = original; 8+ = smoother)
 NITERS = 16  # ray-march steps             (16 = original; 24+ = smoother)
@@ -50,9 +52,6 @@ TORUS_R1I = 256  # tube radius x 256
 TORUS_R2I = 512  # ring radius x 256
 CORDIC_DZ = 5  # ray-sphere offset
 SCALE = 2  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
-DONUT_BOUND = (
-    RESOLUTION.frame_height
-)  # render bounding box half-size in scaled-coordinate units
 BOUNCE = True  # True = emit bounce-animation hardware
 BOUNCE_SPEED_X = 3  # pixels per frame (horizontal)
 BOUNCE_SPEED_Y = 2  # pixels per frame (vertical)
@@ -61,31 +60,38 @@ DITHER = True  # Bayer ordered dither: smooth 4-bit PMOD output
 # ── Derived elaboration-time values ──────────────────────────────────────────
 FRAME_WIDTH = RESOLUTION.frame_width
 FRAME_HEIGHT = RESOLUTION.frame_height
-DONUT_PX = DONUT_BOUND // SCALE  # donut half-size in pixels
-BOUNCE_MAX_X = FRAME_WIDTH // 2 - DONUT_PX
-BOUNCE_MAX_Y = FRAME_HEIGHT // 2 - DONUT_PX
+
+# 1. Calculate precise physics and rendering bounds from Torus geometry
+MAX_GEOMETRY = TORUS_R1I + TORUS_R2I
+RAY_STEP_RATIO = 2  # Derived from (xincX max 64) >> 5
+
+BOUNCE_RADIUS = MAX_GEOMETRY // (RAY_STEP_RATIO * SCALE)
+DONUT_PX = (
+    BOUNCE_RADIUS + 5
+)  # Add a 5px safety margin so the edge anti-aliasing doesn't clip
+DONUT_BOUND = DONUT_PX * SCALE
+
+BOUNCE_MAX_X = FRAME_WIDTH // 2 - BOUNCE_RADIUS
+BOUNCE_MAX_Y = FRAME_HEIGHT // 2 - BOUNCE_RADIUS
 
 # lz magnitude ~5960 max with default trig-state scale; >>5 -> 0-186, fits uint8_t.
 LZ_SHIFT = 5
 
-# 1. Auto-calculate minimum screen coordinate width
-# Must hold max(FRAME_WIDTH, FRAME_HEIGHT) + sign bit
-_max_coord_val = max(FRAME_WIDTH, FRAME_HEIGHT)
-COORD_WIDTH = int(math.ceil(math.log2(_max_coord_val))) + 1
+# 2. Auto-calculate minimum screen coordinate width
+max_coord_val = max(FRAME_WIDTH, FRAME_HEIGHT)
+COORD_WIDTH = int(math.ceil(math.log2(max_coord_val))) + 1
 
-# 2. Auto-calculate safe CORDIC math width
-# vyi14 reaches a theoretical max of roughly: (DONUT_BOUND * 128) + 32768
-_max_calc_val = (DONUT_BOUND * 128) + 32768
-_min_calc_width = int(math.ceil(math.log2(_max_calc_val))) + 1  # +1 for signed
-CALC_WIDTH = _min_calc_width + CALC_FRAC_BITS
+# 3. Auto-calculate safe CORDIC math width based on the newly derived bounds
+max_calc_val = (DONUT_BOUND * 128) + 32768
+min_calc_width = int(math.ceil(math.log2(max_calc_val))) + 1  # +1 for signed
+CALC_WIDTH = min_calc_width + CALC_FRAC_BITS
 
 # ── Configuration Validation ────────────────────────────────────────────────
 # Validate Bounce limits
 if BOUNCE:
-    if DONUT_PX > FRAME_WIDTH // 2 or DONUT_PX > FRAME_HEIGHT // 2:
+    if BOUNCE_RADIUS > FRAME_WIDTH // 2 or BOUNCE_RADIUS > FRAME_HEIGHT // 2:
         raise ValueError(
-            f"DONUT_PX ({DONUT_PX}) is too large to bounce on a {FRAME_WIDTH}x{FRAME_HEIGHT} screen.\n"
-            f"Lower DONUT_BOUND or increase SCALE, or disable BOUNCE."
+            f"BOUNCE_RADIUS ({BOUNCE_RADIUS}) is too large for a {FRAME_WIDTH}x{FRAME_HEIGHT} screen."
         )
 
 # ── Hardware types ────────────────────────────────────────────────────────────
@@ -136,8 +142,8 @@ def capture_pixel(sig, px):
                 img_data[y, x, 2] = (v << 4) | v
     if int(sig.pos.y) > 0 and int(sig.pos.x) == 0:
         print("line done.", x, y, px.r, px.g, px.b)
-    ax_img.set_data(img_data)
-    fig.canvas.flush_events()
+        ax_img.set_data(img_data)
+        fig.canvas.flush_events()
 
 
 @atexit.register
@@ -418,7 +424,7 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     return sim_px_t(r=r, g=g, b=b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz + 5.0)
+@MAIN(vga_timing.pixel_clk_mhz)
 def vga_donut():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()
