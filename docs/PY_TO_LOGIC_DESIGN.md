@@ -2119,14 +2119,17 @@ prevent naive direct execution:
   annotation, the result is passed through `_sim_cast` to attach the correct `_ctype`
 - **Hardware-accurate arithmetic** — when `SIM_STRICT_ARITH = True` (default), `+`, `-`,
   and `*` apply `_arith_promote` + `_arith_output_ctype` when **both** operands carry a
-  known `_ctype`, then return `_sim_cast(result, promoted_type)` — a new `SimVal` with
-  the hardware output ctype. If either operand lacks a `_ctype` (plain int literal, shift
-  result, etc.) the result falls back to a bare `SimVal` with no `_ctype`. Bitwise ops
-  (`&`, `|`, `^`, `~`) always return bare `SimVal` (no `_ctype`).
+  known `_ctype`, then inline-mask the result to the hardware output type. If either
+  operand lacks a `_ctype` (plain int literal, shift result, etc.) the result falls back
+  to a bare `SimVal` with no `_ctype`. Bitwise ops (`&`, `|`, `^`, `~`) always return
+  bare `SimVal` (no `_ctype`).
 
 `SimVal` subclasses `int`, so it is **transparent to the hardware elaborator**: when it
 appears as a constant value during `_elab_compound_init_from_pyval`, it is seen as an
 ordinary Python int.
+
+**Performance note:** All type-checks use `type(x) is SimVal` rather than `isinstance`
+— subclassing SimVal is prohibited as a performance constraint.
 
 ### `_sim_cast(val, ctype)` — Type-Correct Masking
 
@@ -2161,7 +2164,8 @@ This means `left.exp` in `float_add` carries the correct `_ctype` (`uint8_t` for
 so `concat(x_hidden, left.man)` can infer field widths without being told.
 
 **Hardware transparency:** `SimVal` subclasses `int`, so struct instances returned by
-`as_const` or any constant helper are seen as plain integers by `_elab_compound_init_from_pyval`.
+`as_const` or any constant helper are seen as plain integers by
+`_elab_compound_init_from_pyval`.
 
 ### `concat(*args)` — Simulation Bit Concatenation
 
@@ -3174,7 +3178,7 @@ The companion module provides the types and decorators used in design files:
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
 | `concat(*args)` | Bit concatenation — works in both hardware (→ `_elab_tuple_concat`) and simulation (→ `SimVal` with inferred width) |
 | `_make_ctype(name)` | Dynamically creates array C types at elaboration time |
-| `SimVal` | Thin `int` subclass for simulation: bit-slice `__getitem__`, operator dispatch via registry, ctype-tracked (see Proto-Simulation section) |
+| `SimVal` | Simulation typed integer (`__slots__ = ('_val','_ctype')`): bit-slice `__getitem__`, operator dispatch via registry, ctype-tracked (see Proto-Simulation section) |
 | `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement signedness |
 | `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting and register state management; transparent to hardware elaboration via `inspect.unwrap` |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
@@ -3546,8 +3550,9 @@ to emit.
 
 `raw` mode limitation: bit-indexing on the *result of arithmetic* (`(a + b)[0]`) does
 not work since the result is a plain `int`. Bit-indexing on struct fields
-(`some_struct.field[0]`) still works because struct constructors still produce `SimVal`
-fields via `_typed_new`.
+(`some_struct.field[0]`) still works because struct constructors wrap scalar fields in
+`_RawField` (an `int` subclass with `__getitem__`), so the C-level `int` arithmetic
+path is preserved while bit-slicing continues to function.
 
 ---
 
@@ -3638,10 +3643,9 @@ the inline dict avoids that overhead in the hot path.
 
 ### 5. `_sim_val_make` — bypass `SimVal.__new__`
 
-`SimVal` is a subclass of `int` that carries a `_ctype` attribute.
-Its `__new__` is a Python function, adding ~0.1 µs per allocation on top of the C-level
-`int.__new__`. With 6 M allocations per 1000 cycles that is ~0.6 s just in Python
-`__new__` overhead.
+`SimVal` is a subclass of `int`. Its `__new__` is a Python function, adding ~0.1 µs per
+allocation on top of the C-level `int.__new__`. With 6 M allocations per 1000 cycles
+that is ~0.6 s just in Python `__new__` overhead.
 
 Pre-binding the C-level constructors at module load time and calling them directly
 eliminates the Python `__new__` frame:
@@ -3856,3 +3860,209 @@ the sim loop itself (`_run_clock_cycle`, `_convergence_loop`, `sim_call`) and th
 `_sim_reg_read`/`_sim_reg_write` dict lookups for register state. Further speedup
 would require either rewriting the sim runner in C or moving to a
 numpy-vectorised evaluation strategy.
+
+---
+
+## Round 2 Optimizations
+
+After the design was updated to render at 1920×1080 (replacing 1280×720), fresh
+corrected baselines were measured by reverting only `src/pypeline.py` to HEAD while
+keeping the current `vga_donut.py`:
+
+| Mode | Round 2 baseline |
+|---|---|
+| `--mode strict` | 26.057 s |
+| `--mode loose` | 20.910 s |
+| `--mode raw`   |  3.284 s |
+
+Five further optimisations (Opts A–E) were then applied, plus a raw-mode-specific
+`_RawField` optimisation.
+
+---
+
+### Opt A — `type() is SimVal` + direct `._ctype` access
+
+Replaced every `isinstance(x, SimVal)` check with `type(x) is SimVal` throughout the
+hot paths. `type(x) is C` is a C-level pointer comparison; `isinstance` requires MRO
+traversal.
+
+Replaced `getattr(o, "_ctype", None)` with `o._ctype if type(o) is SimVal else None`
+in `_dispatch_binary`, `__add__`, `__sub__`, `__mul__`. Direct slot access avoids the
+dict probe that `getattr` with a default performs.
+
+Replaced `isinstance(v, (int, SimVal))` with `type(v) is int or type(v) is SimVal` in
+`_typed_new`, `_sim_type_wrap`, `concat`, and the `@hw_func` wrappers in
+`_sim_type_wrap`.
+
+**Saving: ~0.4 s.**
+
+---
+
+### Opt B — Inline masking in arithmetic operators
+
+`__add__`, `__sub__`, `__mul__`, and `__lshift__` previously called `_sim_cast(result,
+out_ctype)` to mask and tag the result. Each such call added one Python function-call
+frame (~0.1 µs) even though the result is always a plain `int` at that point and the
+`type(val) is SimVal` check inside `_sim_cast` was therefore always false.
+
+The masking is now inlined directly in each operator:
+
+```python
+def __add__(self, o):
+    ov = int(o)
+    if SIM_RAW_INTS:
+        return int(self) + ov
+    result = int(self) + ov
+    if SIM_STRICT_ARITH and self._ctype is not None:
+        rc = o._ctype if type(o) is SimVal else _infer_literal_ctype(ov)
+        if rc is not None:
+            out_ctype = _arith_output_ctype("add", ...)
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[out_ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(out_ctype)
+            v = result & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
+            return _sim_val_make(v, out_ctype)
+    return SimVal(result)
+```
+
+The same pattern was applied to `__sub__`, `__mul__`, and `__lshift__`.
+
+**Saving: ~0.5 s.**
+
+---
+
+### Opt C — `_registered_unary_op_names` fast-path for `__neg__` / `__invert__`
+
+Parallel to the existing `_registered_binary_op_names` set, a new module-level set
+`_registered_unary_op_names` tracks which unary operator names have at least one global
+registration. `register_unary_operator` adds to this set when `scope is None`.
+
+`__neg__` and `__invert__` check this set and skip `_dispatch_unary` (two dict lookups)
+when no matching registration exists. In designs that never register a custom `NEGATE`
+or `NOT`, this eliminates the entire dispatch overhead for every negation/inversion.
+
+**Saving: ~0.15 s.**
+
+---
+
+### Opt D — Flyweight constant pool (`_SIM_CONST_CACHE`)
+
+A module-level dict `_SIM_CONST_CACHE: dict` caches `SimVal` instances for values
+0–15 per ctype, keyed by `(int_value, ctype_object)`. This mirrors CPython's own
+small-integer cache strategy.
+
+The cache is populated lazily by a new helper `_sim_type_init(ctype)`, which is called
+in the cold `except KeyError` branch of `_sim_cast_param_cache` lookups. On first use
+of any ctype it populates both `_sim_cast_param_cache` (the mask/sign_bit/is_signed
+tuple) and `_SIM_CONST_CACHE` (the 0–15 flyweight objects) in a single pass.
+
+`_sim_val_make` checks the cache before allocating:
+
+```python
+def _sim_val_make(v, ctype):
+    if 0 <= v <= _SIM_CONST_MAX:
+        cached = _SIM_CONST_CACHE.get((v, ctype))
+        if cached is not None:
+            return cached
+    obj = _int_new(SimVal, v)
+    _obj_setattr(obj, "_ctype", ctype)
+    return obj
+```
+
+VGA control signals (`hs`, `vs`, pixel-enable flags) and CORDIC step counters produce
+heavy reuse of 0 and 1 for `uint1_t`, making these flyweights highly effective.
+
+**Saving: ~0.3–0.5 s depending on design hit rate.**
+
+---
+
+### Opt E — Decouple `SimVal` from `int`; add `__slots__` *(attempted, then reverted)*
+
+The fundamental bottleneck was that `SimVal(int)` required `int.__new__` for every
+allocation (~0.22 µs each, ~6 M calls per 1000 cycles = ~1.3 s just in allocation).
+CPython's `int` normalization and interning logic cannot be bypassed, and `__slots__`
+are not supported on `int` subclasses.
+
+Changing `class SimVal(int)` to a standalone `class SimVal` with `__slots__` was
+implemented and benchmarked, saving ~0.8–1.0 s on strict/loose. However, the change
+required touching three files and introduced non-trivial ongoing complexity:
+
+- All `int(self)` / `int(o)` references in arithmetic methods needed updating
+- Python's `int.__mul__(plain_int, simval)` returns `NotImplemented` once SimVal is no
+  longer an int subclass, requiring `__rmul__`, `__rand__`, `__ror__`, `__rxor__` to be
+  added (Python only calls the reflected form when the left operand fails)
+- The hardware elaborator (`PY_TO_LOGIC.py`) uses `isinstance(val, (int, bool))` in
+  several places to identify integer constants; SimVal values in struct fields reached
+  those checks and failed, requiring fixes across `_elab_python_value`, `_elab_name`,
+  and `_try_resolve_int_constant`
+- `@struct`'s `_typed_new` needed gating on `_sim_active` to avoid wrapping during
+  elaboration, which in turn required `_sim_active = True` to be moved before
+  `_import_design` in `pypeline_sim.py` to fix register-zero initialization timing
+
+**The cross-file complexity was judged not worth the ~5% strict/loose improvement and
+the change was reverted.** `SimVal` remains `class SimVal(int)` with `_int_new` +
+`_obj_setattr`. Opts A–D and the `_RawField` raw-mode optimization were retained.
+
+---
+
+### Raw mode — `_RawField` for struct fields
+
+Profiling `--mode raw` showed that `_typed_new` (struct construction) and
+`SimVal.__new__` were together consuming ~40% of raw-mode sim time because struct
+fields were wrapped in `SimVal` objects. Once a struct field was accessed, every
+arithmetic operation entered Python `SimVal` dispatch.
+
+A new class `_RawField(int)` was added:
+
+```python
+class _RawField(int):
+    """Bare int subclass for struct fields in SIM_RAW_INTS mode.
+    Arithmetic inherits from int (C-level). Only adds __getitem__ for bit-slicing.
+    """
+    __slots__ = ()
+
+    def __getitem__(self, key):
+        v = int(self)
+        if isinstance(key, int):
+            return (v >> key) & 1
+        hi, lo = key.start, key.stop
+        return (v >> lo) & ((1 << (hi - lo + 1)) - 1)
+```
+
+`_typed_new` was split into two paths gated on `SIM_RAW_INTS`:
+- **Raw path:** wraps scalar fields in `_RawField(int(v))` — `int` subclass, so
+  arithmetic dispatches to C-level `int` methods with no Python frame overhead.
+  Arithmetic results are plain `int`s; `__getitem__` on the field itself still works.
+- **Non-raw path:** wraps scalar fields with inline `_int_new(SimVal, int(v))` +
+  `_obj_setattr(obj, "_ctype", ftype)` (bypasses `SimVal.__new__` Python call frame).
+
+**Saving: ~0.75 s in raw mode (23% improvement).**
+
+---
+
+### Round 2 summary
+
+| Optimization | Status | Benefit |
+|---|---|---|
+| Opt A: `type() is SimVal` + direct `._ctype` | **kept** | ~0.4 s |
+| Opt B: Inline masking in arith operators | **kept** | ~0.5 s |
+| Opt C: `_registered_unary_op_names` fast-path | **kept** | ~0.15 s |
+| Opt D: Flyweight `_SIM_CONST_CACHE` (0–15 per ctype) | **kept** | ~0.3–0.5 s |
+| Opt E: `SimVal` decoupled from `int` + `__slots__` | **reverted** | — |
+| `_RawField` for struct fields in raw mode | **kept** | ~0.75 s (raw only) |
+
+**Final benchmarks (1000 cycles, VGA donut at 1920×1080):**
+
+| Mode | Before Round 2 | After Round 2 (A–D + RawField) | Speedup |
+|---|---|---|---|
+| `--mode strict` | 26.06 s | ~25.3 s | ~1.03× |
+| `--mode loose`  | 20.91 s | ~20.4 s | ~1.02× |
+| `--mode raw`    |  3.28 s |  2.53 s |  1.30× |
+
+Strict/loose gains are modest: the 1920×1080 design is compute-heavier (more CORDIC
+iterations) relative to sim-infrastructure overhead, shrinking the fraction saved by
+Opts A–D. Raw mode benefitted most from `_RawField` eliminating SimVal dispatch on
+struct-field arithmetic.

@@ -313,11 +313,14 @@ class SimVal(int):
     Used in simulation mode: struct constructors produce SimVal fields, and
     arithmetic / operator-dispatch propagates type information through the call graph.
     SimVal is a subclass of int, so it is transparent to the hardware elaborator.
+
+    PERF NOTE: All type-checks use `type(x) is SimVal` rather than isinstance —
+    subclassing SimVal is prohibited as a performance constraint.
     """
 
-    def __new__(cls, value, ctype=None):
-        obj = int.__new__(cls, int(value))
-        object.__setattr__(obj, "_ctype", ctype)
+    def __new__(cls, value=0, ctype=None):
+        obj = _int_new(cls, int(value))
+        _obj_setattr(obj, "_ctype", ctype)
         return obj
 
     def __getitem__(self, key):
@@ -332,7 +335,7 @@ class SimVal(int):
             fn = _unary_operator_registry.get((op_name, _ctype_str(self._ctype)))
             if callable(fn):
                 result = fn(self)
-                if not isinstance(result, SimVal) or result._ctype is None:
+                if type(result) is not SimVal or result._ctype is None:
                     ret_t = getattr(
                         getattr(fn, "__wrapped__", fn), "__annotations__", {}
                     ).get("return")
@@ -342,20 +345,42 @@ class SimVal(int):
         return SimVal(fallback)
 
     def __neg__(self):
-        return self._dispatch_unary("NEGATE", -int(self))
+        v = -int(self)
+        if self._ctype is None or "NEGATE" in _registered_unary_op_names:
+            return self._dispatch_unary("NEGATE", v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
+        return _sim_val_make(v, self._ctype)
 
     def __invert__(self):
-        return self._dispatch_unary("NOT", ~int(self))
+        v = ~int(self)
+        if self._ctype is None or "NOT" in _registered_unary_op_names:
+            return self._dispatch_unary("NOT", v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
+        return _sim_val_make(v, self._ctype)
 
     def _dispatch_binary(self, op_name, other, fallback_int, preserve_ctype=False):
         if self._ctype is not None:
             l_str = _ctype_str(self._ctype)
-            rc = getattr(other, "_ctype", None)
+            rc = other._ctype if type(other) is SimVal else None
             fn = rc and _operator_registry.get((op_name, l_str, _ctype_str(rc)))
             fn = fn or _left_operator_registry.get((op_name, l_str))
             if callable(fn):
                 result = fn(self, other)
-                if not isinstance(result, SimVal) or result._ctype is None:
+                if type(result) is not SimVal or result._ctype is None:
                     ret_t = getattr(
                         getattr(fn, "__wrapped__", fn), "__annotations__", {}
                     ).get("return")
@@ -383,10 +408,18 @@ class SimVal(int):
             return v
         if self._ctype is None or "SL" in _registered_binary_op_names:
             return self._dispatch_binary("SL", o, v, preserve_ctype=True)
-        return _sim_cast(v, self._ctype)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
+        return _sim_val_make(v, self._ctype)
 
     # Arithmetic with hardware type-promotion when both operands have known ctypes.
-    # SIM_STRICT_ARITH (default True) applies _sim_cast to the result so that
+    # SIM_STRICT_ARITH (default True) applies masking to the result so that
     # intermediate values wrap identically to hardware. Set False for faster sim.
     #
     # When the other operand is a plain Python int (no _ctype), its hardware type is
@@ -395,57 +428,72 @@ class SimVal(int):
     #   uint12_t_val - 641   →  uint12_t result (unsigned wrap, not signed Python int)
     # matching what hardware produces for the expression `signal - CONSTANT`.
     def __add__(self, o):
+        ov = int(o)
         if SIM_RAW_INTS:
-            return int(self) + int(o)
-        result = int(self) + int(o)
+            return int(self) + ov
+        result = int(self) + ov
         if SIM_STRICT_ARITH and self._ctype is not None:
-            rc = getattr(o, "_ctype", None)
-            if rc is None:
-                rc = _infer_literal_ctype(int(o))
+            rc = o._ctype if type(o) is SimVal else _infer_literal_ctype(ov)
             if rc is not None:
                 l_name = self._ctype._ctype_name
                 r_name = rc if isinstance(rc, str) else rc._ctype_name
                 eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
-                    return _sim_cast(
-                        result, _arith_output_ctype("add", eff_l, eff_r, rsig)
-                    )
+                    out_ctype = _arith_output_ctype("add", eff_l, eff_r, rsig)
+                    try:
+                        mask, sign_bit, is_signed = _sim_cast_param_cache[out_ctype]
+                    except KeyError:
+                        mask, sign_bit, is_signed = _sim_type_init(out_ctype)
+                    v = result & mask
+                    if is_signed and v >= sign_bit:
+                        v -= mask + 1
+                    return _sim_val_make(v, out_ctype)
         return SimVal(result)
 
     def __sub__(self, o):
+        ov = int(o)
         if SIM_RAW_INTS:
-            return int(self) - int(o)
-        result = int(self) - int(o)
+            return int(self) - ov
+        result = int(self) - ov
         if SIM_STRICT_ARITH and self._ctype is not None:
-            rc = getattr(o, "_ctype", None)
-            if rc is None:
-                rc = _infer_literal_ctype(int(o))
+            rc = o._ctype if type(o) is SimVal else _infer_literal_ctype(ov)
             if rc is not None:
                 l_name = self._ctype._ctype_name
                 r_name = rc if isinstance(rc, str) else rc._ctype_name
                 eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
-                    return _sim_cast(
-                        result, _arith_output_ctype("sub", eff_l, eff_r, rsig)
-                    )
+                    out_ctype = _arith_output_ctype("sub", eff_l, eff_r, rsig)
+                    try:
+                        mask, sign_bit, is_signed = _sim_cast_param_cache[out_ctype]
+                    except KeyError:
+                        mask, sign_bit, is_signed = _sim_type_init(out_ctype)
+                    v = result & mask
+                    if is_signed and v >= sign_bit:
+                        v -= mask + 1
+                    return _sim_val_make(v, out_ctype)
         return SimVal(result)
 
     def __mul__(self, o):
+        ov = int(o)
         if SIM_RAW_INTS:
-            return int(self) * int(o)
-        result = int(self) * int(o)
+            return int(self) * ov
+        result = int(self) * ov
         if SIM_STRICT_ARITH and self._ctype is not None:
-            rc = getattr(o, "_ctype", None)
-            if rc is None:
-                rc = _infer_literal_ctype(int(o))
+            rc = o._ctype if type(o) is SimVal else _infer_literal_ctype(ov)
             if rc is not None:
                 l_name = self._ctype._ctype_name
                 r_name = rc if isinstance(rc, str) else rc._ctype_name
                 eff_l, eff_r, rsig = _arith_promote(l_name, r_name)
                 if rsig is not None:
-                    return _sim_cast(
-                        result, _arith_output_ctype("mul", eff_l, eff_r, rsig)
-                    )
+                    out_ctype = _arith_output_ctype("mul", eff_l, eff_r, rsig)
+                    try:
+                        mask, sign_bit, is_signed = _sim_cast_param_cache[out_ctype]
+                    except KeyError:
+                        mask, sign_bit, is_signed = _sim_type_init(out_ctype)
+                    v = result & mask
+                    if is_signed and v >= sign_bit:
+                        v -= mask + 1
+                    return _sim_val_make(v, out_ctype)
         return SimVal(result)
 
     def __and__(self, o):
@@ -465,6 +513,8 @@ class SimVal(int):
 
     # Reflected arithmetic: plain-int op SimVal. Apply full SIM_STRICT_ARITH so that
     # `CONSTANT - typed_signal` wraps the same way hardware does (e.g. 481 - uint12_t).
+    # `o` is always a non-SimVal here (Python only calls __radd__ when the left operand
+    # didn't handle it), so int(o) is fine.
     def __radd__(self, o):
         if SIM_RAW_INTS:
             return int(o) + int(self)
@@ -504,14 +554,41 @@ class SimVal(int):
         return SimVal(int(o) >> int(self))
 
 
-# Pre-bind low-level constructors so _sim_cast and __rshift__ can create SimVals
+class _RawField(int):
+    """Bare int subclass used for struct fields in SIM_RAW_INTS mode.
+
+    Inherits all arithmetic from int (C-level, no Python dispatch overhead).
+    Only adds __getitem__ so struct.field[bit] still works in raw mode.
+    Arithmetic results are plain Python ints — the SimVal type system is not entered.
+    """
+
+    __slots__ = ()
+
+    def __getitem__(self, key):
+        v = int(self)
+        if isinstance(key, int):
+            return (v >> key) & 1
+        hi, lo = key.start, key.stop  # hardware convention: x[hi:lo]
+        return (v >> lo) & ((1 << (hi - lo + 1)) - 1)
+
+
+# Pre-bind low-level constructors so _sim_cast and arithmetic ops can create SimVals
 # without going through SimVal.__new__ (a Python function call = ~0.1µs overhead).
 _int_new = int.__new__
 _obj_setattr = object.__setattr__
 
+# Flyweight cache: (int_value, ctype) → SimVal for values 0..15 per ctype.
+# Mirrors CPython's own small-int cache. Populated lazily via _sim_type_init.
+_SIM_CONST_CACHE: dict = {}
+_SIM_CONST_MAX = 15
+
 
 def _sim_val_make(v, ctype):
-    """Create a typed SimVal without calling SimVal.__new__ (saves Python call overhead)."""
+    """Create a typed SimVal, returning a cached flyweight for small non-negative values."""
+    if 0 <= v <= _SIM_CONST_MAX:
+        cached = _SIM_CONST_CACHE.get((v, ctype))
+        if cached is not None:
+            return cached
     obj = _int_new(SimVal, v)
     _obj_setattr(obj, "_ctype", ctype)
     return obj
@@ -599,16 +676,30 @@ def struct(cls):
         if args and not kwargs:
             kwargs = dict(zip(klass._fields, args))
         typed = {}
-        for fname, v in kwargs.items():
-            ftype = klass.__annotations__.get(fname)
-            if (
-                ftype is not None
-                and isinstance(v, (int, SimVal))
-                and _is_scalar_pypeline_int(ftype)
-            ):
-                if not isinstance(v, SimVal) or v._ctype is None:
-                    v = SimVal(int(v), ctype=ftype)
-            typed[fname] = v
+        if SIM_RAW_INTS:
+            for fname, v in kwargs.items():
+                ftype = klass.__annotations__.get(fname)
+                if (
+                    ftype is not None
+                    and (type(v) is int or type(v) is SimVal)
+                    and _is_scalar_pypeline_int(ftype)
+                ):
+                    v = _RawField(int(v))
+                typed[fname] = v
+        else:
+            for fname, v in kwargs.items():
+                ftype = klass.__annotations__.get(fname)
+                if (
+                    ftype is not None
+                    and (type(v) is int or type(v) is SimVal)
+                    and _is_scalar_pypeline_int(ftype)
+                ):
+                    if type(v) is not SimVal or v._ctype is None:
+                        # Inline allocation: bypass SimVal.__new__ Python call frame.
+                        obj = _int_new(SimVal, int(v))
+                        _obj_setattr(obj, "_ctype", ftype)
+                        v = obj
+                typed[fname] = v
         return _orig_new(klass, **typed)
 
     cls.__new__ = staticmethod(_typed_new)
@@ -711,6 +802,9 @@ _unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
 # Used by __rshift__/__lshift__ to skip _dispatch_binary when no operators are registered.
 _registered_binary_op_names: set = set()
 
+# Parallel set for unary ops — used by __neg__/__invert__ to skip _dispatch_unary.
+_registered_unary_op_names: set = set()
+
 # Scoped registrations: active only while elaborating the keyed function.
 # id(func) -> {registry_key: name_or_callable}
 _scoped_operator_registry: dict = {}
@@ -770,6 +864,7 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
     key = (op, _ctype_str(operand_type))
     if scope is None:
         _unary_operator_registry[key] = func
+        _registered_unary_op_names.add(op)
     else:
         _scoped_funcs.add(id(scope))
         _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func
@@ -1045,9 +1140,9 @@ def concat(*args):
     """
     widths = []
     for a in args:
-        if isinstance(a, SimVal) and a._ctype is not None:
+        if type(a) is SimVal and a._ctype is not None:
             widths.append(len(a._ctype))
-        elif isinstance(a, int):
+        elif type(a) is int or type(a) is SimVal:
             widths.append(max(1, int(a).bit_length()))
         else:
             raise TypeError(f"concat: cannot infer bit width for {a!r}")
@@ -1686,6 +1781,22 @@ def _sim_cast_params(ctype):
 _sim_cast_param_cache: dict = {}
 
 
+def _sim_type_init(ctype):
+    """Initialize both caches for a ctype on first use. Returns (mask, sign_bit, is_signed).
+
+    Called only in the cold `except KeyError` path — never the hot path.
+    Populates _sim_cast_param_cache and pre-builds the flyweight constants 0..15.
+    """
+    mask, sign_bit, is_signed = _sim_cast_params(ctype)
+    _sim_cast_param_cache[ctype] = (mask, sign_bit, is_signed)
+    limit = min(16, mask + 1)
+    for const_v in range(limit):
+        obj = _int_new(SimVal, const_v)
+        _obj_setattr(obj, "_ctype", ctype)
+        _SIM_CONST_CACHE[(const_v, ctype)] = obj
+    return mask, sign_bit, is_signed
+
+
 def _sim_cast(val, ctype):
     """Cast a Python int/SimVal to a pypeline ctype: mask to n bits, handle signedness.
 
@@ -1699,8 +1810,7 @@ def _sim_cast(val, ctype):
     try:
         mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
     except KeyError:
-        mask, sign_bit, is_signed = _sim_cast_params(ctype)
-        _sim_cast_param_cache[ctype] = (mask, sign_bit, is_signed)
+        mask, sign_bit, is_signed = _sim_type_init(ctype)
     v = int(val) & mask
     if is_signed and v >= sign_bit:
         v -= mask + 1  # sign-extend to Python negative
@@ -1741,7 +1851,7 @@ def _sim_type_wrap(fn):
             pt = ann.get(k)
             if (
                 pt is not None
-                and isinstance(v, (int, SimVal))
+                and (type(v) is int or type(v) is SimVal)
                 and _is_scalar_pypeline_int(pt)
             ):
                 new_kwargs[k] = _sim_cast(v, pt)
@@ -1755,7 +1865,7 @@ def _sim_type_wrap(fn):
             _pop_scoped_registrations(saved)
         if (
             ret_t is not None
-            and isinstance(result, (int, SimVal))
+            and (type(result) is int or type(result) is SimVal)
             and _is_scalar_pypeline_int(ret_t)
         ):
             result = _sim_cast(result, ret_t)
@@ -1819,7 +1929,7 @@ def _sim_type_wrap(fn):
                     pt = ann.get(params[i])
                     if (
                         pt is not None
-                        and isinstance(a, (int, SimVal))
+                        and (type(a) is int or type(a) is SimVal)
                         and _is_scalar_pypeline_int(pt)
                     ):
                         new_args[i] = _sim_cast(a, pt)
@@ -1864,7 +1974,7 @@ def _sim_type_wrap(fn):
                         pt = ann.get(params[i])
                         if (
                             pt is not None
-                            and isinstance(a, (int, SimVal))
+                            and (type(a) is int or type(a) is SimVal)
                             and _is_scalar_pypeline_int(pt)
                         ):
                             new_args[i] = _sim_cast(a, pt)
